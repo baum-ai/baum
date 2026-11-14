@@ -17,7 +17,9 @@ import (
 //     it would push a tile that must be seen (3) off the first screen. When
 //     no such place shows it, it swaps places with a tile the landing page
 //     shows that need not be seen, the last first. Pinned tiles and those
-//     always on the landing page come first, so when they fill it nothing
+//     the hard rules keep on the landing page (the overview, the risks tile
+//     ranking a critical or high risk, a change the recommendation names)
+//     come first and are never displaced, so when they fill it nothing
 //     moves; a person who hid the tile keeps it hidden.
 //  2. A change featured alone on its row at half, empty units beside it, is
 //     widened to the full row (FixLoneFeatured).
@@ -28,10 +30,12 @@ import (
 //     it ranks an active critical or high risk, a change the recommendation
 //     names, the evidence tile with gaps as in 1, or a library tile with a
 //     destructive or breaking item (Leads). And what of those the
-//     template's first screen shows stays on it. A tile a person pinned on
-//     the first screen makes the arrangement theirs: nothing is checked.
-//     Otherwise the composition takes the template's layout
-//     (FixFirstScreen); a layout in which a person hid tiles is theirs. A
+//     template's first screen shows stays on it. Otherwise the composition
+//     takes the template's layout (FixFirstScreen); a layout in which a
+//     person hid tiles is theirs. With a repository's pins, the template
+//     compared and taken is the template with the same pins, held to rules
+//     1 and 2 (templateOf): the pins can push the template's evidence place
+//     off the landing page. A
 //     change that carries a breaking change is not known to the document
 //     (the overview names the break, not its change), so it cannot stand
 //     in.

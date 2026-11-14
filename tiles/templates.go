@@ -162,13 +162,31 @@ func gapSlots(slots []slot) []slot {
 
 // templateOf returns the template's layout with this composer's own
 // composition tiles, as Template lays it out; the template's fixes are not
-// the composer's.
+// the composer's. With pins, the pinned entries go first and can push the
+// template's own places off the landing page (the evidence's beside the lead
+// change, gapSlots): the pinned template is then held to the evidence and
+// lone-featured guard rails as any composition with those pins is, so it is
+// what such a composition is compared with and falls back to
+// (guardFirstScreen).
 func (cm *composer) templateOf(pins ...string) CompositionLayout {
 	t := &composer{doc: cm.doc, mode: cm.mode, byID: cm.byID, obsolete: cm.obsolete, library: cm.library, promoted: cm.promoted,
 		authored: cm.authored, template: true}
 	layout := t.templateLayout(templateSlots(cm.doc))
 	layout.Entries = PinEntries(layout.Entries, cm.doc, pins)
-	return t.finish(&Composition{}, layout).Layout
+	out := t.finish(&Composition{}, layout)
+	if len(pins) == 0 {
+		return out.Layout
+	}
+	for range 3 {
+		before := slices.Clone(out.Layout.Entries)
+		t.guardEvidence(&out)
+		t.guardLoneFeatured(&out)
+		t.fillRows(&out)
+		if slices.Equal(before, out.Layout.Entries) {
+			break
+		}
+	}
+	return out.Layout
 }
 
 // changeKindOf returns the change kind the overview tile holds.

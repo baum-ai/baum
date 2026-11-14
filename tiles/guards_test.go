@@ -331,3 +331,32 @@ func TestPinnedWeakLayoutFallsBackToTheTemplateWithTheSamePins(t *testing.T) {
 		t.Errorf("the overview is off the landing page: %v", composed.Layout.Entries)
 	}
 }
+
+// Pins go first and can push the template's evidence place, beside the lead
+// change, off the landing page. The pinned template a weak layout falls back
+// to keeps the evidence with gaps on the landing page in the place of a tile
+// that need not be seen, so the evidence and first-screen guards agree and
+// normalising again changes nothing.
+func TestPinnedTemplateKeepsEvidenceWithGapsOnTheLandingPage(t *testing.T) {
+	normalized, doc := convert(t, withGaps("example"))
+	c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+		{Tile: tiles.TypeRisks, Size: tiles.SizeHalf, Pin: true},
+		{Tile: "sec_config_flag", Size: tiles.SizeThird, Pin: true},
+		{Tile: tiles.TypeContext, Size: tiles.SizeFull, Pin: true},
+		{Tile: tiles.TypeIntent, Size: tiles.SizeHalf, Pin: true},
+		{Tile: tiles.TypeOverview, Size: tiles.SizeFull},
+	}}}
+	_, report, composed := checkComposed(t, normalized, doc, c)
+	if report.Counts()[tiles.FixFirstScreen] != 1 {
+		t.Fatalf("fixes %v", report.Messages())
+	}
+	visible := tiles.Visible(composed.Layout)
+	if i, _ := entryOf(composed, tiles.TypeEvidence); i < 0 || !visible[i] {
+		t.Errorf("the evidence tile is not on the landing page: %v", composed.Layout.Entries)
+	}
+	for i, e := range composed.Layout.Entries {
+		if e.Pin && !visible[i] {
+			t.Errorf("pinned tile %s left the landing page: %v", e.Tile, composed.Layout.Entries)
+		}
+	}
+}

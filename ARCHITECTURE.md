@@ -2753,7 +2753,10 @@ composer's layout then passes three guard rails
 stays on the landing page, where it fits without pushing a tile that must be
 seen off the first screen, and in the place of a tile that need not be seen
 when the only room left is in the rows library and authored tiles add
-(`evidence_gaps`), a change featured alone at half takes its full row
+(`evidence_gaps`; only a landing page on which every tile is pinned or held
+there by the hard rules, the overview, a risks tile with a critical or high
+risk and the changes the recommendation names, has no place for it, and
+`CheckGenerated` invariant 14 exempts exactly that), a change featured alone at half takes its full row
 (`lone_featured`), and a first screen (the first two rows) or a landing page
 that shows fewer current changes than the template's, with nothing that must
 be seen instead
@@ -2764,10 +2767,16 @@ template's layout (`first_screen`). A repository's pins (`Settings.Tiles`,
 stamped by `tiles.PinEntries`) do not switch the guards off: the layout is
 compared with the template with the same pins applied, pins kept first, so the
 pins are honoured while the rest of the first screen is still guarded, and a
-weak composer layout with a pin falls back to that pinned template. Only a
+weak composer layout with a pin falls back to that pinned template. The pins
+can push the template's evidence place off the landing page, so the pinned
+template is itself held to the evidence and lone-featured guards; otherwise
+the evidence guard would move the evidence on and the first-screen guard take
+back the pinned template, which leaves it off. Only a
 layout a person edited (`layout.edited`) is exempt. `Compose` also brings a
 change the recommendation names back onto the landing page when any entry is
-pinned, as it does for an edited layout, and `CheckGenerated` invariant 11
+pinned, as it does for an edited layout (when pins fill the page, the named
+changes outside the changes group go before them and, if they still do not
+all fit, shrink to half and then a third, a pinned one keeping its size), and `CheckGenerated` invariant 11
 checks it for pinned layouts too (14 compares against the pinned template). `tilestest.CheckGenerated` checks the rows
 (invariant 13) and the guard rails (14). On a narrow window's two-column grid
 the page lets a block's last card span both columns when it would be alone in

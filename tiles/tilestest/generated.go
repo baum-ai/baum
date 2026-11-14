@@ -57,7 +57,9 @@ import (
 //     it, with a repository's pins applied to the template too; no change
 //     is featured alone at half on a row another follows; and the evidence
 //     tile with that many gaps is on the landing page, unless a person hid
-//     it or the landing page holds only pinned tiles and those always on it.
+//     it or every tile the landing page shows is pinned or held there by
+//     the hard rules (the overview, the risks tile ranking a critical or
+//     high risk, a change the recommendation names).
 //
 // A layout a person edited (tiles.ApplyOverlay: layout.edited) is theirs:
 // 14 does not apply to it, and 13 allows a row holding a tile they resized
@@ -534,22 +536,17 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 	}
 	if evidenceGaps(doc, current) >= tiles.EvidenceGapsShown && !slices.Contains(c.Layout.Hidden, tiles.TypeEvidence) {
 		visible := tiles.Visible(doc.Layout)
-		// No place is left when the landing page holds only pinned tiles and
-		// those always on it (the overview, the risks and the changes the
-		// recommendation names).
-		// A landing page that four or more pinned tiles share is the
-		// repository's: the evidence has no place there either.
-		pinned := 0
+		// No place is left exactly when every tile the landing page shows is
+		// pinned or held there by the hard rules (the overview, the risks
+		// tile ranking a critical or high risk, a change the recommendation
+		// names): the evidence may take the place of none of them.
+		named := tiles.RecommendedChanges(doc)
 		full := true
 		for i, entry := range doc.Layout.Entries {
-			if visible[i] && entry.Pin {
-				pinned++
-			}
-			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && entry.Tile != tiles.TypeRisks && !slices.Contains(tiles.RecommendedChanges(doc), entry.Tile) {
+			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && (entry.Tile != tiles.TypeRisks || !severeRanked(doc)) && !slices.Contains(named, entry.Tile) {
 				full = false
 			}
 		}
-		full = full || pinned >= 4
 		for i, entry := range doc.Layout.Entries {
 			if entry.Tile == tiles.TypeEvidence && !visible[i] && !full {
 				failures = append(failures, "the evidence tile has gaps and is not on the landing page")
