@@ -728,12 +728,11 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 		leading bool
 	}{
 		{"raised", nil, true, false},
-		// Three changes lead outside the group, so the first screen shows as
-		// many as the template's (the host's guard keeps that), and the group
-		// starts past the landing page.
-		{"leading", []tiles.Entry{{Tile: tiles.TypeOverview, Size: tiles.SizeHalf}, {Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
-			{Tile: members[0], Size: tiles.SizeThird}, {Tile: members[1], Size: tiles.SizeThird}, {Tile: members[2], Size: tiles.SizeThird},
-			{Tile: tiles.TypeEvidence, Size: tiles.SizeFull}}, false, true},
+		// A pinned tile (the person's own, which the host's guard keeps)
+		// and three changes lead, so the group starts past the landing page.
+		{"leading", []tiles.Entry{{Tile: tiles.TypeEvidence, Size: tiles.SizeFull, Pin: true}, {Tile: tiles.TypeOverview, Size: tiles.SizeHalf},
+			{Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
+			{Tile: members[0], Size: tiles.SizeThird}, {Tile: members[1], Size: tiles.SizeThird}, {Tile: members[2], Size: tiles.SizeThird}}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: tc.lead, ChangesShown: &one}}

@@ -289,7 +289,7 @@ func (f Fix) Message() string {
 	case FixLoneFeatured:
 		text = fmt.Sprintf("%s is featured alone at half beside empty units; it takes the full row", tile)
 	case FixFirstScreen:
-		text = "the layout shows fewer changes on the first screen than the template, with nothing that must be seen instead; the template's layout is kept"
+		text = "the layout shows fewer changes on the first screen or the landing page than the template, with nothing that must be seen instead; the template's layout is kept"
 	default:
 		text = string(f.Kind)
 	}

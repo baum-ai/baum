@@ -2435,8 +2435,9 @@ with three or more gaps beside the lead change on the second row. A composer's
 layout then passes three guard rails (`tiles/guards.go`), each a fix of its own
 kind: evidence with three or more gaps stays on the landing page
 (`evidence_gaps`), a change featured alone at half takes its full row
-(`lone_featured`), and a first screen (the first two rows) that shows fewer
-current changes than the template's, with nothing that must be seen instead
+(`lone_featured`), and a first screen (the first two rows) or a landing page
+that shows fewer current changes than the template's, with nothing that must
+be seen instead
 (the risks tile with a critical or high risk, a change the recommendation
 names, evidence with gaps, a pinned tile) or tiles a person hid, takes the
 template's layout (`first_screen`). `tilestest.CheckGenerated` checks the rows

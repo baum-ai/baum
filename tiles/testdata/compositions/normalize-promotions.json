@@ -9,8 +9,7 @@
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
     "the layout does not place tile \"table_delays\"; it is added in the default order",
-    "tile \"overview\" ended a row with empty units; it grows to fill the row",
-    "tile \"risks\" ended a row with empty units; it grows to fill the row"
+    "the layout shows fewer changes on the first screen or the landing page than the template, with nothing that must be seen instead; the template's layout is kept"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -18,15 +17,19 @@
       "entries": [
         {
           "tile": "overview",
-          "size": "full"
-        },
-        {
-          "tile": "table_flag_defaults",
-          "size": "full"
+          "size": "half"
         },
         {
           "tile": "risks",
-          "size": "full"
+          "size": "half"
+        },
+        {
+          "tile": "table_flag_defaults",
+          "size": "half"
+        },
+        {
+          "tile": "table_delays",
+          "size": "half"
         },
         {
           "tile": "sec_retry_policy",
@@ -61,10 +64,6 @@
         {
           "tile": "everything_else",
           "size": "third"
-        },
-        {
-          "tile": "table_delays",
-          "size": "half"
         }
       ]
     },
@@ -89,15 +88,19 @@
     "entries": [
       {
         "tile": "overview",
-        "size": "full"
-      },
-      {
-        "tile": "table_flag_defaults",
-        "size": "full"
+        "size": "half"
       },
       {
         "tile": "risks",
-        "size": "full"
+        "size": "half"
+      },
+      {
+        "tile": "table_flag_defaults",
+        "size": "half"
+      },
+      {
+        "tile": "table_delays",
+        "size": "half"
       },
       {
         "tile": "sec_retry_policy",
@@ -132,10 +135,6 @@
       {
         "tile": "everything_else",
         "size": "third"
-      },
-      {
-        "tile": "table_delays",
-        "size": "half"
       }
     ],
     "groups": [
@@ -144,7 +143,7 @@
         "title": "Changes"
       }
     ],
-    "landing": 3
+    "landing": 6
   },
   "tiles": [
     {

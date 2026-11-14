@@ -20,7 +20,7 @@ import (
 //     widened to the full row (FixLoneFeatured).
 //  3. The first screen, the first FirstScreenRows rows (what a 1440×900
 //     window shows unscrolled), shows at least as many current changes as
-//     the template's does, unless it shows instead something the template's
+//     the template's does, and so does the whole landing page, unless it shows instead something the template's
 //     does not: the risks tile while it ranks an active critical or high
 //     risk, a change the recommendation names, the evidence tile with gaps
 //     as in 1, or a tile a person pinned; and a layout in which a person hid
@@ -156,6 +156,8 @@ func (cm *composer) guardLoneFeatured(c *Composition) {
 // changes, and the tiles that may stand in for changes.
 type firstScreen struct {
 	changes int
+	// landing counts the current changes on the whole landing page.
+	landing int
 	others  map[string]bool
 }
 
@@ -166,6 +168,12 @@ func firstScreenOf(doc *Document) firstScreen {
 	}
 	named := RecommendedChanges(doc)
 	out := firstScreen{others: map[string]bool{}}
+	visible := Visible(doc.Layout)
+	for i, entry := range doc.Layout.Entries {
+		if visible[i] && current[entry.Tile] {
+			out.landing++
+		}
+	}
 	for k, row := range Rows(doc.Layout) {
 		if k >= FirstScreenRows || row.Entries[0] >= doc.Layout.Landing {
 			break
@@ -202,7 +210,7 @@ func (cm *composer) guardFirstScreen(c *Composition) {
 		return
 	}
 	got, want := firstScreenOf(composed), firstScreenOf(templated)
-	if got.changes >= want.changes {
+	if got.changes >= want.changes && got.landing >= want.landing {
 		return
 	}
 	for id := range got.others {

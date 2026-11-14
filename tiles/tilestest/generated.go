@@ -45,8 +45,8 @@ import (
 //     another follows and growing its tiles to allowed sizes would fill it
 //     (tiles.RowFills).
 //   - 14: the guard rails hold (tiles/guards.go): the first screen
-//     (tiles.FirstScreenRows rows) shows at least as many current changes as
-//     the template's for the same review, unless it shows a pinned tile, the
+//     (tiles.FirstScreenRows rows) and the landing page each show at least as
+//     many current changes as the template's for the same review, unless it shows a pinned tile, the
 //     risks tile ranking a critical or high risk, a change the
 //     recommendation names or the evidence tile with
 //     tiles.EvidenceGapsShown gaps that the template's does not, or a person
@@ -327,8 +327,8 @@ func stableSubject(tile *tiles.Tile) string {
 // screenFacts is what the first screen of a document shows: its current
 // changes, and the tiles that may stand in for them.
 type screenFacts struct {
-	changes int
-	others  map[string]bool
+	changes, landing int
+	others           map[string]bool
 }
 
 func firstScreenFacts(doc *tiles.Document) screenFacts {
@@ -343,6 +343,12 @@ func firstScreenFacts(doc *tiles.Document) screenFacts {
 	named := tiles.RecommendedChanges(doc)
 	gaps := evidenceGaps(doc, current)
 	out := screenFacts{others: map[string]bool{}}
+	visible := tiles.Visible(doc.Layout)
+	for i, entry := range doc.Layout.Entries {
+		if visible[i] && current[entry.Tile] {
+			out.landing++
+		}
+	}
 	for k, row := range tiles.Rows(doc.Layout) {
 		if k >= tiles.FirstScreenRows || row.Entries[0] >= doc.Layout.Landing {
 			break
@@ -381,13 +387,14 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 		return []string{"the template does not compose: " + err.Error()}
 	}
 	got, want := firstScreenFacts(doc), firstScreenFacts(templated)
-	if got.changes < want.changes && len(c.Layout.Hidden) == 0 {
+	if (got.changes < want.changes || got.landing < want.landing) && len(c.Layout.Hidden) == 0 {
 		standsIn := false
 		for id := range got.others {
 			standsIn = standsIn || !want.others[id]
 		}
 		if !standsIn {
-			failures = append(failures, fmt.Sprintf("the first screen shows %d changes, the template's %d, and nothing that must be seen instead", got.changes, want.changes))
+			failures = append(failures, fmt.Sprintf("the first screen shows %d changes and the landing page %d, the template's %d and %d, and nothing that must be seen instead",
+				got.changes, got.landing, want.changes, want.landing))
 		}
 	}
 	rows := tiles.Rows(doc.Layout)

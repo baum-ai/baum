@@ -83,8 +83,9 @@ Do not spend effort on these; they hold whatever you reply.
 - Evidence with 3 or more missing or failed items is kept on the landing
   page; the template already puts it beside the lead change on the second
   row.
-- When your first screen (the first 2 rows) shows fewer current changes than
-  the template's, the host keeps the template's layout instead of yours,
+- When your first screen (the first 2 rows), or your landing page, shows fewer
+  current changes than the template's, the host keeps the template's layout
+  instead of yours,
   unless yours shows there, and the template's does not, the risks tile with a
   critical or high risk, a change the recommendation names, or evidence with
   3 or more gaps. Two changes at `half` in place of three at `third` is fewer.
