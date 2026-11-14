@@ -2496,29 +2496,34 @@ head, the version menu, history, Compare, the side pane's tabs, the Files,
 Decisions, Sessions and Commits panes, comments and the review dialog are the
 full review's own.
 
-- **Landing page** (the Summary, `pane` absent). A strip in the same place on
-  every review: the recommendation (its decision, its sentence and the tiles
-  it cites, or "None given"), the risk score with its meaning and its
-  strongest reason, and where the version stands: current or outdated, a
-  draft, "Writing details for N of M changes" while a draft or a retry writes
-  them, and "N changes couldn't be written" with Retry. Below it, the tiles'
-  glance faces in the layout's order, on a grid of six units (a full tile six,
-  a half three, a third two) that becomes two columns and then one as the pane
-  narrows. A group shows its first members under its heading and the rest
-  behind one cell naming them ("Show N more changes"); the tiles past the
-  landing area wait behind "Show N more tiles". Both are kept in the address
-  (`expand=<group,…>`, `more=1`), so Back restores them. The rail is folded on
-  the landing page: the grid is the way in.
-- **Glance faces** say whether a tile needs opening, at one height per size,
-  fading out what does not fit. A Change shows its review score, its state,
-  what it does in a sentence, its high or critical risk or what needs
-  attention, its size and its open risks and evidence; Risks counts the open
-  risks by tier and shows every critical and high one; Evidence counts what is
-  verified, claimed, missing and failed and names the gaps; Media shows the
-  first images; Intent the issues it implements and the first stated reason;
-  Decisions who made them; Context the area; Everything else the hunks no
-  change describes. A card's ⋯ (or a right click) offers Open, Comment, Ask
-  about this tile and Open in Full review.
+- **Landing page** (the Summary, `pane` absent). The rail and the side pane
+  start folded there (`railFolded`, `sidePaneFolded`), so the grid has the
+  width; a tile's detail has them as the reader left them. A band in the same
+  place on every review leads: the recommendation (its decision, its sentence
+  and the tiles it cites) when the review gives one, the risk score on one
+  line with its strongest reason (every reason in its title), and where the
+  version stands only when that is news: outdated, a draft, "Writing details
+  for N of M changes", "N changes couldn't be written" with Retry, or an
+  earlier version. Below it, the tiles' glance faces in the layout's order,
+  on a grid of six units (a full tile six, a half three, a third two) that
+  becomes two columns and then one as the pane narrows. The Changes group
+  shows every change up to eight and otherwise its first six, the rest behind
+  a slim row naming them ("Show 3 more changes · …"); the tiles past the
+  landing area wait behind "Show N more tiles · …". Both are kept in the
+  address (`expand=<group,…>`, `more=1`), so Back restores them.
+- **Glance faces** say whether a tile needs opening. A card is as tall as its
+  row asks: it shows what it must (a change's warning, every critical or high
+  risk), then fills the rest of its row with more of its own content (more of
+  the overview, further risks, more evidence or decisions), fading at the
+  foot, under one cap; a card with little to say is short in one column. A
+  Change shows its review score, its state, its high or critical risk or what
+  needs attention, what it does, its size and its open risks and evidence;
+  Risks counts the open risks by tier and shows every critical and high one;
+  Evidence counts what is verified, claimed, missing and failed, the gaps
+  first; Media shows the first images; Intent the issues it implements and
+  the stated reasons; Decisions who made them; Context the area; Everything
+  else the hunks no change describes and their files. A card's ⋯ (or a right
+  click) offers Open, Comment, Ask about this tile and Open in Full review.
 - **Detail faces** (`pane=tile&tile=<id>&tile_item=<id>`) hold everything about
   one tile, with the rail unfolded for stepping between tiles. A Change's
   detail is its section as the full review draws it, then the tiles that

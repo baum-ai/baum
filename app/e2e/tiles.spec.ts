@@ -39,15 +39,25 @@ test("the landing page leads to each tile and back", async ({ page }) => {
   const cards = page.locator("article[data-tile]");
   await expect(cards.first()).toHaveAttribute("data-tile", "overview");
   await expect(cards.nth(1)).toHaveAttribute("data-tile", "risks");
-  // The landing grid is the way in: the rail is folded to its strip.
+  // The landing grid is the way in and takes the width: the rail and the
+  // side pane are folded to their strips, and the grid has three columns.
   await expect(page.getByRole("button", { name: "Expand sections" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Expand side pane" })).toBeVisible();
+  const [third, next] = await Promise.all([cards.nth(2).boundingBox(), cards.nth(3).boundingBox()]);
+  const [overview, risks] = await Promise.all([
+    cards.nth(0).boundingBox(),
+    cards.nth(1).boundingBox(),
+  ]);
+  expect(Math.abs(third!.y - next!.y)).toBeLessThan(2);
+  expect(third!.width).toBeLessThan(overview!.width * 0.75);
+  expect(Math.abs(overview!.y - risks!.y)).toBeLessThan(2);
 
-  // The hidden changes, then the tiles past the landing area, stay open
+  // The tiles past the landing area, then the obsolete change, stay open
   // across a tile and Back.
-  await page.getByRole("button", { name: /^Show 1 more change/ }).click();
-  await expect(page).toHaveURL(/expand=changes/);
   await page.getByRole("button", { name: /^Show \d+ more tiles/ }).click();
   await expect(page).toHaveURL(/more=1/);
+  await page.getByRole("button", { name: /^Show 1 more obsolete change/ }).click();
+  await expect(page).toHaveURL(/expand=obsolete/);
   await expect(page.locator('article[data-tile="decisions"]')).toBeVisible();
 
   // A card opens its tile; the rail unfolds to step between tiles.
@@ -55,12 +65,14 @@ test("the landing page leads to each tile and back", async ({ page }) => {
   await expect(page).toHaveURL(/pane=tile&tile=evidence/);
   await expect(page.getByRole("heading", { name: "Evidence", level: 2 })).toBeVisible();
   await expect(page.getByRole("button", { name: "Collapse sections" })).toBeVisible();
+  // One row is the place, whatever the pointer passed over.
   await expect(
     page.locator('#review-rail [aria-pressed="true"][aria-controls~="review-section"]'),
   ).toHaveText(/Evidence/);
+  await expect(page.locator('#review-rail [aria-pressed="true"]')).toHaveCount(1);
   // → steps to the next tile in the layout's order.
   await page.keyboard.press("ArrowRight");
-  await expect(page).toHaveURL(/tile=intent/);
+  await expect(page).toHaveURL(/tile=media/);
   // Escape goes back to the landing page as the reader left it.
   await page.keyboard.press("Escape");
   await expect(page).not.toHaveURL(/pane=tile/);
@@ -68,7 +80,7 @@ test("the landing page leads to each tile and back", async ({ page }) => {
   await expect(page.locator('article[data-tile="decisions"]')).toBeVisible();
   // Back walks the tiles again, and then the landing page as it was.
   await page.goBack();
-  await expect(page).toHaveURL(/tile=intent/);
+  await expect(page).toHaveURL(/tile=media/);
   await page.goBack();
   await expect(page).toHaveURL(/tile=evidence/);
   await page.goBack();

@@ -4607,8 +4607,9 @@ The page passes the viewer `places` (`useTilePlaces`): a rail of the tiles in
 the layout's order, a pane per snapshot (the landing page or a tile's detail)
 called inside the viewer's history so an earlier version and both columns of
 a comparison draw their own tiles, stepping through the Summary and the tiles,
-prose chips sent to the tile holding their item, and the rail folded on the
-landing page. Everything else is the viewer's and the page's own. The landing
+prose chips sent to the tile holding their item, and the rail and the side
+pane folded on the landing page (`railFolded`, `sidePaneFolded`), whose grid
+then has the width. Everything else is the viewer's and the page's own. The landing
 grid mirrors `tiles.Hidden` and `tiles.More`: a group member past
 `collapse_after` waits behind its group's cell wherever it stands, and the
 entries from `landing` on behind "Show N more tiles". A registry maps each
