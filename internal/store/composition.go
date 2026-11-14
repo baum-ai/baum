@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
+	"log/slog"
 
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
@@ -65,64 +65,76 @@ func compositionSelect(has bool) string {
 	return `NULL`
 }
 
-// ErrComposition reports a composition Put cannot store because it is not a
-// baum.composition/1 document.
-var ErrComposition = errors.New("invalid composition")
-
 // storableComposition returns the composition's bytes to store with a
 // document, or nil to store none. Only a normalised composition is stored: it
-// is normalised against the tile document converted from the document, with
-// the host's own parts (the generator and the hidden list) kept as given. A
-// composition that is not baum.composition/1, or whose generator is not one
-// the schema accepts, is an error; one that chooses nothing, and one the
-// document cannot take (it does not convert to tiles), is not stored, so a
-// layout never costs a review its place in the history.
-func storableComposition(document, raw []byte, generator *tiles.Generator) ([]byte, error) {
+// is normalised against the tile document converted from the document and
+// stored exactly as NormalizeComposition returns it: its host-only parts (the
+// hidden list, and any generator in its body) are dropped, since hiding tiles
+// is a personal edit that does not belong in the shared version row. The
+// generator is the caller's, given apart from the body
+// (Version.CompositionGenerator).
+//
+// A composition problem never costs the review its place in the history: a
+// composition that is too large, is not baum.composition/1 or that the
+// document cannot take (it does not convert to tiles) is not stored, and a
+// generator the schema refuses is left off; each is counted
+// (store.compositions_dropped, store.composition_generators_dropped) and
+// logged without content. One that chooses nothing is stored as none.
+func storableComposition(document, raw []byte, generator *tiles.Generator) []byte {
 	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
+		return nil
+	}
+	drop := func(reason string) []byte {
+		workstats.Inc("store.compositions_dropped")
+		slog.Debug("a composition was not stored", "reason", reason)
+		return nil
+	}
+	if len(raw) > tiles.MaxStoredComposition {
+		return drop("too large")
 	}
 	given, err := tiles.ParseComposition(raw)
 	if err != nil {
-		return nil, ErrComposition
+		return drop("not a composition")
 	}
+	// Only the host hides tiles, and not in the version row: without it, a
+	// composition that chooses nothing is empty.
+	given.Layout.Hidden = nil
 	if given.Empty() && generator == nil {
-		return nil, nil
+		return nil
 	}
 	normalized, err := review.NormalizeStored(document)
 	if err != nil {
-		workstats.Inc("store.compositions_dropped")
-		return nil, nil
+		return drop("document not readable")
 	}
 	doc, err := tiles.FromReview(normalized, tiles.Options{})
 	if err != nil {
-		workstats.Inc("store.compositions_dropped")
-		return nil, nil
+		return drop("document does not convert")
 	}
 	n, report := tiles.NormalizeComposition(doc, given)
 	if report.Counts()[tiles.FixUnusable] > 0 {
-		workstats.Inc("store.compositions_dropped")
-		return nil, nil
+		return drop("document cannot take it")
 	}
 	if generator != nil {
 		if err := n.SetGenerator(*generator); err != nil {
-			return nil, ErrComposition
+			workstats.Inc("store.composition_generators_dropped")
+			slog.Debug("a composition's generator was not stored")
 		}
 	}
 	if n.Empty() && n.Generator == nil {
-		return nil, nil
+		return nil
 	}
 	out, err := json.Marshal(n)
-	if err != nil {
-		return nil, err
+	if err != nil || len(out) > tiles.MaxStoredComposition {
+		return drop("too large after normalising")
 	}
-	return out, nil
+	return out
 }
 
 // ParseComposition parses a version's stored composition (Version.Composition)
 // for a reader, such as the compose stage reading the previous version's. It
 // returns nil for none (NULL or empty) and for one that cannot be read.
 func ParseComposition(raw []byte) *tiles.Composition {
-	if len(raw) == 0 {
+	if len(raw) == 0 || len(raw) > tiles.MaxStoredComposition {
 		return nil
 	}
 	c, err := tiles.ParseComposition(raw)

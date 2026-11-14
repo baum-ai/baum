@@ -151,6 +151,10 @@ const (
 // The types a promotion may have.
 var promotableTypes = []string{TypeTable, TypeCode}
 
+// MaxStoredComposition is the most bytes of a composition a host stores or
+// reads: a normalised one is far smaller, so a larger one is not used.
+const MaxStoredComposition = 256 << 10
+
 // Empty reports whether a composition chooses nothing: no layout entries,
 // no changes_shown or hidden tiles, no promotions, library or authored tiles. Applying an
 // empty composition, like none, gives the converted document unchanged.

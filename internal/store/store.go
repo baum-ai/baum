@@ -97,14 +97,6 @@ type Metadata struct {
 	// metadata still decodes and is stored again unchanged. Nothing reads it
 	// to resume a session, and the daemon expires the kept directories.
 	Session *ReviewSession `json:"session,omitempty"`
-	// Tiles says the version was generated with the tiles stage (a
-	// composition and library tiles); TilesPromptVersion and TilesPromptDigest
-	// identify the prompts of that stage the way PromptVersion and
-	// PromptDigest do the review's. All are absent for a version generated
-	// without it, so older versions' metadata is stored again unchanged.
-	Tiles              bool   `json:"tiles,omitempty"`
-	TilesPromptVersion string `json:"tiles_prompt_version,omitempty"`
-	TilesPromptDigest  string `json:"tiles_prompt_digest,omitempty"`
 }
 
 // ReviewSession names a Claude Code session or Codex thread an earlier
@@ -524,10 +516,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if err != nil {
 		return err
 	}
-	composition, err := storableComposition(document, v.Composition, v.CompositionGenerator)
-	if err != nil {
-		return err
-	}
+	composition := storableComposition(document, v.Composition, v.CompositionGenerator)
 	metadata, err := json.Marshal(v.Metadata)
 	if err != nil {
 		return err
@@ -541,6 +530,15 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	hasComp, err := hasComposition(ctx, db)
 	if err != nil {
 		return err
+	}
+	if !hasComp && composition != nil {
+		// A store opened before the column was added, or whose migration was
+		// refused then: try again, so a generated layout is not lost to a
+		// migration that can happen now.
+		_ = setupComposition(ctx, db)
+		if hasComp, err = hasComposition(ctx, db); err != nil {
+			return err
+		}
 	}
 	colSQL, values := ``, ``
 	args := []any{k.repository(), k.Number, v.Metadata.Version, metadata, document}

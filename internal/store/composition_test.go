@@ -5,10 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
@@ -197,29 +197,67 @@ func TestPutStoresNoCompositionWhenThereIsNothingToStore(t *testing.T) {
 	}
 }
 
-func TestPutRefusesWhatIsNotAComposition(t *testing.T) {
+// A composition problem never costs the review its place in the history: the
+// version is stored, without the composition when it is unusable, and without
+// the generator when only that is refused; each is counted.
+func TestACompositionProblemNeverCostsTheVersion(t *testing.T) {
 	ctx := context.Background()
-	for _, composition := range []string{`{"schema":"baum.composition/2","layout":{"entries":[]}}`, `not json`, `[]`} {
+	count := func(name string) int64 { return workstats.Take().Counters[name] }
+	pinned, _ := tileviewtest.PinnedComposition(t, reviewVersion(t, 1).Document)
+	for name, composition := range map[string][]byte{
+		"other schema": []byte(`{"schema":"baum.composition/2","layout":{"entries":[]}}`),
+		"not json":     []byte(`not json`),
+		"array":        []byte(`[]`),
+		"too large":    append(append([]byte(`{"schema":"baum.composition/1","x":"`), bytes.Repeat([]byte("a"), tiles.MaxStoredComposition)...), `"}`...),
+	} {
 		s := opened(t)
 		v := reviewVersion(t, 1)
-		v.Composition = []byte(composition)
-		if err := s.Put(ctx, compositionKey, Version{}, v); !errors.Is(err, ErrComposition) {
-			t.Errorf("%s: %v", composition, err)
+		v.Composition = composition
+		before := count("store.compositions_dropped")
+		if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
+			t.Errorf("%s: %v", name, err)
 		}
-		if _, err := s.Latest(ctx, compositionKey); !errors.Is(err, ErrNotFound) {
-			t.Errorf("%s: a version was stored: %v", composition, err)
+		if got, err := s.Latest(ctx, compositionKey); err != nil || got.Composition != nil || got.Metadata.Version != 1 {
+			t.Errorf("%s: version %d, composition %s, %v", name, got.Metadata.Version, got.Composition, err)
+		}
+		if count("store.compositions_dropped") != before+1 {
+			t.Errorf("%s: not counted", name)
 		}
 	}
-	// A generator the schema would not accept is refused too.
+	// A generator the schema refuses is left off; the composition is kept.
 	s := opened(t)
 	v := reviewVersion(t, 1)
-	raw, _ := tileviewtest.PinnedComposition(t, v.Document)
-	var c tiles.Composition
-	_ = json.Unmarshal(raw, &c)
-	v.CompositionGenerator = &tiles.Generator{Template: "Not A Template"}
-	v.Composition, _ = json.Marshal(c)
-	if err := s.Put(ctx, compositionKey, Version{}, v); !errors.Is(err, ErrComposition) {
-		t.Errorf("generator: %v", err)
+	v.Composition = pinned
+	v.CompositionGenerator = &tiles.Generator{Problems: make([]string, 21)}
+	before, dropped := count("store.composition_generators_dropped"), count("store.compositions_dropped")
+	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Latest(ctx, compositionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := ParseComposition(got.Composition)
+	if c == nil || c.Generator != nil || len(c.Layout.Entries) == 0 {
+		t.Fatalf("composition %s", got.Composition)
+	}
+	if count("store.composition_generators_dropped") != before+1 || count("store.compositions_dropped") != dropped {
+		t.Error("the dropped generator was not counted on its own")
+	}
+}
+
+// A composition that is only a hidden list chooses nothing once normalised,
+// and is stored as none.
+func TestAHiddenListAloneIsStoredAsNone(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	v := reviewVersion(t, 1)
+	v.Composition = []byte(`{"schema":"baum.composition/1","layout":{"entries":[],"hidden":["media"]}}`)
+	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Latest(ctx, compositionKey); err != nil || got.Composition != nil {
+		t.Errorf("composition %s, %v", got.Composition, err)
 	}
 }
 
@@ -310,37 +348,17 @@ func TestReadReturnsAnUnusableCompositionAsWritten(t *testing.T) {
 	}
 }
 
-func TestMetadataTilesFieldsAreOptional(t *testing.T) {
-	raw, err := json.Marshal(Metadata{Version: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"tiles", "tiles_prompt_version", "tiles_prompt_digest"} {
-		var m map[string]any
-		_ = json.Unmarshal(raw, &m)
-		if _, ok := m[name]; ok {
-			t.Errorf("a version without the tiles stage writes %s", name)
-		}
-	}
-	full, _ := json.Marshal(Metadata{Version: 2, Tiles: true, TilesPromptVersion: "v1", TilesPromptDigest: "sha256:x"})
-	var back Metadata
-	if err := json.Unmarshal(full, &back); err != nil || !back.Tiles || back.TilesPromptVersion != "v1" || back.TilesPromptDigest != "sha256:x" {
-		t.Errorf("%+v %v", back, err)
-	}
-	// Metadata stored by a build that knew nothing of them decodes.
-	if err := json.Unmarshal([]byte(`{"version":1,"head":"h"}`), &back); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// The schema and statements of the build before compositions existed, as it
-// wrote them.
+// The schema and statements of the build before compositions existed, as main
+// wrote them: the load query with its revision join (revisionSelect, for a
+// store whose triggers are current), the fenced refresh, and the insert and
+// version list. Rows are returned by these, never by column position past
+// the ones named.
 const (
 	oldVersionsTable = `CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version))`
 	oldInsert        = `INSERT INTO versions(repository,pr,version,metadata,document) SELECT ?,?,?,?,? WHERE COALESCE((SELECT MAX(version) FROM versions WHERE repository=? AND pr=?),0)=?`
-	oldSelect        = `SELECT v.metadata,v.document,0 FROM versions v WHERE v.repository=? AND v.pr=? ORDER BY v.version DESC LIMIT 1`
+	oldSelect        = `SELECT v.metadata,v.document,COALESCE(r.revision,0) FROM versions v LEFT JOIN document_revisions r ON r.repository=v.repository AND r.pr=v.pr AND r.version=v.version WHERE v.repository=? AND v.pr=? ORDER BY v.version DESC LIMIT 1`
 	oldVersions      = `SELECT metadata FROM versions WHERE repository=? AND pr=? ORDER BY version DESC`
-	oldUpdate        = `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=?`
+	oldUpdate        = `UPDATE versions SET document=? WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`
 )
 
 func rawDatabase(t *testing.T, s *Store, mode string) *sql.DB {
@@ -383,9 +401,9 @@ func TestOlderBuildWorksOnAStoreWithTheColumn(t *testing.T) {
 	if err := db.QueryRow(oldVersions, "acme/widgets", 42).Scan(&metadata); err != nil {
 		t.Fatal(err)
 	}
-	// Its refresh updates the document, with the triggers of this build
-	// still firing.
-	if _, err := db.Exec(oldUpdate, doc, "acme/widgets", 42, 1, doc); err != nil {
+	// Its refresh updates the document, fenced as main's is, with the
+	// triggers of this build still firing.
+	if _, err := db.Exec(oldUpdate, doc, "acme/widgets", 42, 1, doc, "acme/widgets", 42); err != nil {
 		t.Fatal(err)
 	}
 	// Its generation inserts the next version without the column.
@@ -473,21 +491,15 @@ func TestOlderStoreIsMigratedOrReadAsHavingNoComposition(t *testing.T) {
 		t.Errorf("a read added a column: %v", names)
 	}
 
-	// A write on a store that cannot take the column: the version is stored
-	// without its composition, which is counted.
+	// A write through a handle opened before the column existed adds it
+	// first, so the generated layout is kept.
 	v2 := reviewVersion(t, 2)
 	v2.Composition, _ = tileviewtest.PinnedComposition(t, v2.Document)
-	dropped := workstats.Take().Counters["store.compositions_dropped"]
-	// A handle that never ran the migration, as one on a store that cannot be
-	// altered is.
 	if err := (&Store{root: old.Root()}).Put(ctx, compositionKey, mustLatest(t, read), v2); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := read.Latest(ctx, compositionKey); err != nil || got.Metadata.Version != 2 || got.Composition != nil {
+	if got, err := read.Latest(ctx, compositionKey); err != nil || got.Metadata.Version != 2 || len(got.Composition) == 0 {
 		t.Fatalf("version 2: %s %v", got.Composition, err)
-	}
-	if workstats.Take().Counters["store.compositions_dropped"] != dropped+1 {
-		t.Error("the composition left out was not counted")
 	}
 
 	// A writable open migrates, keeping every row.
@@ -532,7 +544,8 @@ func TestParseCompositionIsNilForNoneAndUnusable(t *testing.T) {
 	if ParseComposition(raw) == nil {
 		t.Error("a stored composition did not parse")
 	}
-	for _, bad := range []string{"", "null", "not json", `{"schema":"baum.composition/9"}`} {
+	huge := `{"schema":"baum.composition/1","x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`
+	for _, bad := range []string{"", "null", "not json", `{"schema":"baum.composition/9"}`, huge} {
 		if ParseComposition([]byte(bad)) != nil {
 			t.Errorf("%q parsed", bad)
 		}
