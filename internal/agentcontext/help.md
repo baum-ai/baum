@@ -124,6 +124,14 @@ Sessions and transcripts:
 - `1–9`: answer the focused question or permission; `Enter` submits several.
 - In a transcript, `j`, `k` move between messages, `Space` shows all of one and `Enter` opens it.
 
+The session panel:
+
+- Control and the backtick key: show the panel, or write in it; from its composer, hide it. `↑` at the composer's start leaves it for the session, on its latest message.
+- `j`, `k`: next and previous message; past the last, back to the composer. `g`: the session's start. `G`: its end.
+- `Space`: show all of the message, or less again. `a`: open or close the message's agent activity.
+- `Enter`, `i`: back to the composer. `Esc`: leave the composer for the session, then give the keys back to the page. `q`: hide the panel, out of its composer.
+- `PageUp`, `PageDown`: scroll the session, from the composer too.
+
 Repositories: `a`: add repositories, or finish adding; `/`: search GitHub repositories while adding.
 
 Timeline: `/`: search the features or decisions; `Enter` opens or closes one.

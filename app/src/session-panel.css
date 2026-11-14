@@ -17,12 +17,9 @@
   box-shadow: var(--shadow-overlay);
   overflow: hidden;
   animation: session-panel-up 0.16s ease-out;
-  /* Dense, as a terminal is: what is read here is set between the scale's
-     small print (13px) and its body (16px), a size of the panel's own, and
-     the transcript's own spacing is drawn in by a fifth, so more of the
-     agent's answer fits in the panel's height. */
-  --text-base: 14.5px;
-  --text-base--line-height: 1.5;
+  /* Dense, as a terminal is: what is read here keeps the scale's reading
+     step, and the transcript's own spacing is drawn in by a fifth, so more
+     of the agent's answer fits in the panel's height. */
   font-size: var(--text-base);
   line-height: var(--text-base--line-height);
 }
