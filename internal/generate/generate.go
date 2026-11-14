@@ -194,6 +194,10 @@ type Result struct {
 	// without their details, and ContextFailed says it has no context.
 	FailedSections []string
 	ContextFailed  bool
+	// OutlineRepairs and OutlineRejections, for a staged run, count the
+	// outline stage's validation repairs and the replies its harness
+	// rejected against the schema, which tile reviews widen.
+	OutlineRepairs, OutlineRejections int
 	// Composition, for a run with Tiles, is the composition to store with
 	// the version (store.Version.Composition) and CompositionGenerator where
 	// it came from; nil when none could be made. Compose is what the compose
@@ -439,6 +443,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		var stages agent.StagedOutcome
 		stages, document, genErr = generator.StagedReview(runCtx, continued)
 		analysis = stages.Tiles
+		result.OutlineRepairs, result.OutlineRejections = stages.Outline.ValidationRepairs, stages.Outline.StructuredOutputRejections
 		if stopDrafts != nil {
 			stopDrafts()
 		}

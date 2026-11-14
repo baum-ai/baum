@@ -149,8 +149,8 @@ func TestCheckFillRefusesATileOfNothing(t *testing.T) {
 		diff []bundle.Hunk
 	}{
 		{"schema_change", queries.Data, diffOf(queries)},
-		{"schema_change", json.RawMessage(`{"engine":"unknown","summary":"No change.","migrations":[],"tables":[],"data_changes":[],"readers":[]}`), nil},
-		{"api_change", json.RawMessage(`{"summary":"No change.","endpoints":[],"consumers":[],"docs":null}`), nil},
+		{"schema_change", json.RawMessage(`{"engine":"unknown","migrations":[],"tables":[],"data_changes":[],"readers":[]}`), nil},
+		{"api_change", json.RawMessage(`{"endpoints":[],"consumers":[],"docs":null}`), nil},
 	}
 	for _, tc := range cases {
 		entry, _ := library.Get(tc.typ)

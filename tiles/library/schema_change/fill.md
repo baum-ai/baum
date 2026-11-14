@@ -21,7 +21,6 @@ Leave out DDL in tests, fixtures and test helpers, and statements that only appe
 - `indexes`: indexes, constraints and triggers, under the table they belong to; a primary key inline in `CREATE TABLE` only when it spans several columns. `online`: true for `CONCURRENTLY` or on a table created in this pull request; false for a plain index build or a validated constraint on an existing Postgres or MySQL table; always null for SQLite, and when unknown.
 - `data_changes`: statements that change existing rows as part of the schema change: backfills, `UPDATE`/`DELETE`/`INSERT … SELECT` in a migration, a one-time copy when the store opens. Not what the application writes as it runs (saving, syncing, pruning): that is the code's behaviour, not the migration's.
 - `readers`: at most eight, the code that queries a changed table directly: query files, generated code (`*.sql.go`), store methods, models. Not their callers, handlers or tests. `updated: true` and cite it when this pull request changes it for the new schema. Name a reader with `updated: false` only when you can see it still uses the old shape, and say where in `label`.
-- `summary`: one or two sentences of fact, in the Markdown subset (`code` for names). Lead with anything destructive.
 
 ## Cite
 
@@ -40,7 +39,6 @@ A Go store adds a table and a column when it opens a SQLite database:
 ```json
 {
   "engine": "sqlite",
-  "summary": "Adds `widget_tags` and a nullable `archived_at` on `widgets`, both created when the store opens.",
   "migrations": [{"kind": "embedded", "label": "store.Open", "applies": "on_start", "reversible": null, "idempotent": true,
     "cites": [{"type": "hunk", "id": "h_0a1b2c3d4e5f", "lines": [40, 52]}]}],
   "tables": [

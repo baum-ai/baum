@@ -33,7 +33,7 @@ func riskHunk(t *testing.T, doc *tiles.Document) (tiles.Risk, string) {
 // schemaData is schema change data with one destructive column, cited on
 // hunk.
 func schemaData(hunk string, destructive bool) json.RawMessage {
-	return json.RawMessage(fmt.Sprintf(`{"engine":"postgres","summary":"Drops a column.","migrations":[],"tables":[{"name":"widgets","change":"altered","renamed_from":null,"columns":[{"name":"legacy","change":"removed","before":"TEXT","after":null,"destructive":%t,"note":null}],"indexes":[],"cites":[{"type":"hunk","id":%q}]}],"data_changes":[],"readers":[]}`, destructive, hunk))
+	return json.RawMessage(fmt.Sprintf(`{"engine":"postgres","migrations":[],"tables":[{"name":"widgets","change":"altered","renamed_from":null,"columns":[{"name":"legacy","change":"removed","before":"TEXT","after":null,"destructive":%t,"note":null}],"indexes":[],"cites":[{"type":"hunk","id":%q}]}],"data_changes":[],"readers":[]}`, destructive, hunk))
 }
 
 // The inventory lists the ready fills with what they list and whether they

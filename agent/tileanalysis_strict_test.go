@@ -36,7 +36,7 @@ func TestTileAnalysisStrictSchemas(t *testing.T) {
 	if _, err := codex.StrictSchema(withLibrary); err != nil {
 		t.Errorf("outline schema: %v", err)
 	}
-	if _, err := codex.StrictSchema(agent.ExhibitsSchema()); err != nil {
+	if _, err := codex.StrictSchema(agent.ExhibitsSchema(3)); err != nil {
 		t.Errorf("exhibits schema: %v", err)
 	}
 }

@@ -59,13 +59,17 @@ func analysisReplies(t *testing.T, exhibits string, fill chan struct{}) func(con
 				{"type": "schema_change", "applies": true, "hunks": []string{h.ID}, "why": "adds the widgets table"},
 				{"type": "api_change", "applies": false, "hunks": []string{}, "why": nil},
 			}
+			outline["exhibits"] = []map[string]any{}
+			if exhibits != "" {
+				outline["exhibits"] = []map[string]any{{"kind": "table", "gives": "the order of the steps", "hunks": []string{h.ID}}}
+			}
 			encoded, _ := json.Marshal(outline)
 			return agent.Result{Document: encoded, Model: "stub-model", Calls: 1, Tokens: 100}, nil, true
 		case request.Stage == "fill-schema-change":
 			if fill != nil {
 				<-fill
 			}
-			data := fmt.Sprintf(`{"engine":"sqlite","summary":"Adds the widgets table.","migrations":[{"kind":"embedded","label":"store.Open","applies":"on_start","reversible":null,"idempotent":true,"cites":[{"type":"hunk","id":%[1]q}]}],"tables":[{"name":"widgets","change":"created","renamed_from":null,"columns":[{"name":"id","change":"added","before":null,"after":"INTEGER PRIMARY KEY","destructive":false,"note":null}],"indexes":[],"cites":[{"type":"hunk","id":%[1]q}]}],"data_changes":[],"readers":[]}`, h.ID)
+			data := fmt.Sprintf(`{"engine":"sqlite","migrations":[{"kind":"embedded","label":"store.Open","applies":"on_start","reversible":null,"idempotent":true,"cites":[{"type":"hunk","id":%[1]q}]}],"tables":[{"name":"widgets","change":"created","renamed_from":null,"columns":[{"name":"id","change":"added","before":null,"after":"INTEGER PRIMARY KEY","destructive":false,"note":null}],"indexes":[],"cites":[{"type":"hunk","id":%[1]q}]}],"data_changes":[],"readers":[]}`, h.ID)
 			return agent.Result{Document: []byte(`{"applies":true,"data":` + data + `}`), Model: "stub-model", Calls: 1, Tokens: 100}, nil, true
 		case request.Stage == agent.StageExhibits:
 			if exhibits == "" {
@@ -153,5 +157,46 @@ func TestTilesAnalysisReachesTheComposition(t *testing.T) {
 	}
 	if result.Outcome.Calls != len(f.backend.Requests)+len(f.backend.Completions) {
 		t.Errorf("the run counts %d calls for %d requests and %d completions", result.Outcome.Calls, len(f.backend.Requests), len(f.backend.Completions))
+	}
+}
+
+// A new version of an unchanged pull request reuses the previous version's
+// library and authored tiles without a call: Publish hands the analysis the
+// latest version's composition.
+func TestTilesAnalysisReusesThePreviousVersion(t *testing.T) {
+	f := newFixture(t)
+	exhibits := `[{"id":"table_order","title":"Order of the steps","adds":"The order the code runs them in.","table":{"columns":["Step","Runs when"],"rows":[["open the widgets store","the daemon starts its first job"],["close the widgets store","the last job of the run has ended"]],"source":[{"type":"hunk","id":"HUNK","lines":null,"path":null}]},"code":null,"prose":null}]`
+	f.backend.RunFunc = analysisReplies(t, exhibits, nil)
+	f.backend.CompleteFunc = keepTemplate(t, "", nil)
+	o := tilesOptions(t, f)
+	o.Backend = concurrentStub{f.backend}
+	o.Budgets.MaxCalls = 0
+	s, key, first := publishTiles(t, f, o)
+	if c := storedComposition(t, first.Composition); len(c.Library) != 1 || len(c.Authored) != 1 {
+		t.Fatalf("first version: %d library, %d authored", len(c.Library), len(c.Authored))
+	}
+	fills := func() int {
+		n := 0
+		for _, r := range f.backend.Requests {
+			if r.Stage == "fill-schema-change" {
+				n++
+			}
+		}
+		return n
+	}
+	before := fills()
+	second, err := generate.Publish(context.Background(), s, key, o, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fills() != before {
+		t.Errorf("the second version made %d fill calls", fills()-before)
+	}
+	report := second.Compose.Tiles
+	if len(report.Fills) != 1 || !report.Fills[0].Reused || report.Exhibits == nil || len(report.Exhibits.Reused) != 1 {
+		t.Fatalf("reuse: %+v / %+v", report.Fills, report.Exhibits)
+	}
+	if c := storedComposition(t, second.Composition); len(c.Library) != 1 || len(c.Authored) != 1 || c.Authored[0].ID != "table_order" {
+		t.Errorf("second version: %+v", c.Authored)
 	}
 }

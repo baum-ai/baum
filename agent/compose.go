@@ -13,6 +13,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/compose"
+	tilelibrary "github.com/baum-ai/baum/tiles/library"
 )
 
 // ComposePrompts supplies the instructions of the call that arranges a
@@ -243,7 +244,9 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 func (r ComposeRequest) extras() ([]tiles.LibraryTile, []tiles.AuthoredTile) {
 	var library []tiles.LibraryTile
 	for _, f := range r.Fills {
-		if f.Tile != nil {
+		// Only a built-in library type's tile is placed: defence in depth
+		// behind the host that made it.
+		if f.Tile != nil && builtinLibrary(f.Tile.Definition) {
 			library = append(library, *f.Tile)
 		}
 	}
@@ -253,6 +256,9 @@ func (r ComposeRequest) extras() ([]tiles.LibraryTile, []tiles.AuthoredTile) {
 	}
 	return library, authored
 }
+
+// builtinLibrary is library.IsBuiltin; tests replace it.
+var builtinLibrary = tilelibrary.IsBuiltin
 
 // errRedaction is a reply that could not be masked.
 var errRedaction = errors.New("agent: masking the composer's reply failed")

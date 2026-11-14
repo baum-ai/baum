@@ -49,7 +49,7 @@ func TestStoredLibraryTileKeepsItsDefinition(t *testing.T) {
 	if old.Digest == entry.Definition.Digest {
 		t.Fatal("the earlier definition has the current digest")
 	}
-	data := `{"engine":"sqlite","summary":"Adds widgets.","migrations":[],"tables":[{"name":"widgets","change":"created","renamed_from":null,"columns":[],"indexes":[],"cites":[{"type":"hunk","id":"` + hunk + `"}]}],"data_changes":[],"readers":[]}`
+	data := `{"engine":"sqlite","migrations":[],"tables":[{"name":"widgets","change":"created","renamed_from":null,"columns":[],"indexes":[],"cites":[{"type":"hunk","id":"` + hunk + `"}]}],"data_changes":[],"readers":[]}`
 	composition, _ := json.Marshal(tiles.Composition{Schema: tiles.CompositionName, Library: []tiles.LibraryTile{{Definition: encoded, Data: json.RawMessage(data)}}})
 	served := Build(document, composition, tiles.Options{})
 	var tile *tiles.Tile
@@ -88,5 +88,41 @@ func TestLibraryCompositionFixture(t *testing.T) {
 	}
 	if served.Tiles.Layout.Entries[0].Tile != tiles.TypeOverview {
 		t.Errorf("layout: %v", served.Tiles.Layout.Entries)
+	}
+}
+
+// The served definition says "builtin" only when the stored one is a
+// built-in type's by its content; a stored definition that claims a
+// built-in digest, or the mark itself, but differs is served without it,
+// and a tile whose definition fails its digest check is unavailable.
+func TestServedBuiltinMark(t *testing.T) {
+	document := tileviewtest.Encode(t, tileviewtest.Base(t))
+	composition := tileviewtest.LibraryComposition(t, document)
+	served := Build(document, composition, tiles.Options{})
+	for _, tile := range served.Tiles.Tiles {
+		if tile.Type == tiles.TypeCustom && !strings.Contains(string(tile.Definition), `"builtin":true`) {
+			t.Errorf("%s is not marked built in", tile.ID)
+		}
+	}
+	entry, _ := library.Get("schema_change")
+	var def map[string]any
+	_ = json.Unmarshal(entry.Encoded, &def)
+	def["title"] = "Schema changes, mine"
+	def["builtin"] = true
+	forged, _ := json.Marshal(def)
+	c, _ := tiles.ParseComposition(composition)
+	c.Library[0].Definition = forged
+	raw, _ := json.Marshal(c)
+	served = Build(document, raw, tiles.Options{})
+	for _, tile := range served.Tiles.Tiles {
+		if tile.ID != "schema_change" {
+			continue
+		}
+		if strings.Contains(string(tile.Definition), "builtin") {
+			t.Errorf("a forged definition is served marked: %s", tile.Definition)
+		}
+		if tile.State != tiles.StateUnavailable {
+			t.Errorf("a definition that fails its digest check is %s", tile.State)
+		}
 	}
 }

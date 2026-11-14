@@ -2,7 +2,6 @@
   "name": "many-tables",
   "data": {
     "engine": "sqlite",
-    "summary": "Creates eight tables for groups, inboxes and webhooks and **drops** `group_members_v1`, whose rows nothing migrates.",
     "migrations": [
       {
         "kind": "embedded",

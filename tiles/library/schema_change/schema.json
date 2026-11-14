@@ -1,17 +1,11 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["engine", "summary", "migrations", "tables", "data_changes", "readers"],
+  "required": ["engine", "migrations", "tables", "data_changes", "readers"],
   "properties": {
     "engine": {
       "enum": ["postgres", "sqlite", "mysql", "other", "unknown"],
       "description": "The database the changed schema belongs to, from the driver, the SQL dialect or the migration tool; unknown when the diff does not say."
-    },
-    "summary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 300,
-      "description": "One or two sentences in the Markdown subset: what the schema change does and the one fact a reviewer must not miss, such as a dropped column. Facts only, no advice."
     },
     "migrations": {
       "type": "array",

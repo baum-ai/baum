@@ -2,7 +2,6 @@
   "name": "nothing",
   "data": {
     "engine": "unknown",
-    "summary": "The pull request changes no database schema.",
     "migrations": [],
     "tables": [],
     "data_changes": [],

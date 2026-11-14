@@ -29,7 +29,6 @@ A configuration file or environment variable counts (surface `other`) only when 
 - `breaking`: true when an existing caller can break: the entry point is removed or renamed, a request field becomes required, a field is removed or changes type or meaning, auth is tightened, a status or error code changes, a default changes what callers get. An added entry point is not breaking. `breaking_reason` says who breaks and how, in one sentence.
 - `consumers`: callers in this repository of a changed entry point, such as the app's API module or another service; never tests or mocks. `updated: true` and cite the hunks when this pull request changes them. When you see a caller that still uses the old shape, list it with `updated: false` and name its file in `label`.
 - `docs`: the interface's reference or README section; `updated` and its hunks, or null when it has none.
-- `summary`: one or two sentences of fact, in the Markdown subset (`code` for names). Lead with what breaks.
 
 Give each entry point its own entry. When there are more than 30, group the added ones of one kind under a shared name, such as `settings_* (6 tools)`, and keep every breaking, removed and changed one on its own. Order `endpoints` with breaking ones first, then removed, changed, added.
 
@@ -47,7 +46,6 @@ When the pull request adds, removes or changes no entry point as defined above, 
 
 ```json
 {
-  "summary": "Adds `GET /api/widgets/{id}/tags`; `POST /api/widgets` now **requires** `owner`, which breaks callers that omit it.",
   "endpoints": [
     {"surface": "http", "method": "POST", "name": "/api/widgets", "change": "changed", "auth": "session cookie",
      "request": [{"field": "owner", "change": "added", "before": null, "after": "string, a user login", "required": true}],

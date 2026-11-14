@@ -18,6 +18,7 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // Response is the body of a tile route. Document is the baum.review/1
@@ -153,7 +154,8 @@ func Build(document, composition []byte, opts tiles.Options) Response {
 
 // registerFrames registers the frame document of each ready custom tile and
 // returns the document to serve, with every custom tile's definition in its
-// served form, and the registered definitions. A ready tile whose document
+// served form, marked built in when it is a built-in library type's, and the
+// registered definitions. A ready tile whose document
 // cannot be made becomes unavailable, in both documents: its frame would
 // never load.
 func registerFrames(doc *tiles.Document) (*tiles.Document, Frames) {
@@ -177,7 +179,11 @@ func registerFrames(doc *tiles.Document) (*tiles.Document, Frames) {
 				}
 			}
 		}
+		builtin := library.IsBuiltin(tile.Definition)
 		tile.Definition = ServedDefinition(tile.Definition)
+		if builtin {
+			tile.Definition = markBuiltin(tile.Definition)
+		}
 	}
 	return &served, registered
 }
@@ -206,6 +212,8 @@ func ServedDefinition(definition json.RawMessage) json.RawMessage {
 	if json.Unmarshal(definition, &members) != nil || members == nil {
 		return json.RawMessage(`{}`)
 	}
+	// Only the daemon says a type is built in (markBuiltin).
+	delete(members, "builtin")
 	source, ok := members["source"]
 	if !ok {
 		return definition
@@ -221,6 +229,18 @@ func ServedDefinition(definition json.RawMessage) json.RawMessage {
 		served["bytes"] = len(html)
 	}
 	members["source"] = mustMarshal(served)
+	return mustMarshal(members)
+}
+
+// markBuiltin adds "builtin": true to a served definition: the stored one
+// is a built-in library type's, current or past, by its content's digest
+// (library.IsBuiltin). The page names such a tile as baum's own.
+func markBuiltin(served json.RawMessage) json.RawMessage {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(served, &members) != nil || members == nil {
+		return served
+	}
+	members["builtin"] = json.RawMessage("true")
 	return mustMarshal(members)
 }
 

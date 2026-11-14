@@ -20,6 +20,8 @@ import (
 //	                                     type's own instructions
 //	review-tiles-exhibits-public-v1.md  the call that may write authored
 //	                                     tiles (exhibits)
+//	review-tiles-candidates-public-v1.md appended to the outline stage: which
+//	                                     exhibits it proposes
 //
 // They are built in and not replaceable yet.
 var (
@@ -29,6 +31,8 @@ var (
 	tilesFill string
 	//go:embed review-tiles-exhibits-public-v1.md
 	tilesExhibits string
+	//go:embed review-tiles-candidates-public-v1.md
+	tilesCandidates string
 )
 
 var _ agent.TileAnalysisPrompts = TilesPrompts{}
@@ -53,10 +57,10 @@ func (p TilesPrompts) TileAnalysisInstructions(_ context.Context, backend string
 	out := agent.TileAnalysisPrompt{
 		Version: TilesVersion, Select: tilesSelect,
 		Fill: tilesFill, FillSubmit: block("the tile's answer"),
-		Exhibits: tilesExhibits + "\n" + block("the exhibits"),
+		Exhibits: tilesExhibits + "\n" + block("the exhibits"), Candidates: tilesCandidates,
 	}
 	digest := sha256.New()
-	for _, text := range []string{out.Select, out.Fill, out.FillSubmit, out.Exhibits} {
+	for _, text := range []string{out.Select, out.Fill, out.FillSubmit, out.Exhibits, out.Candidates} {
 		digest.Write([]byte(text))
 		digest.Write([]byte{0})
 	}

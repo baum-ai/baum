@@ -311,9 +311,8 @@
     const open = opener();
     return baum.html`<div class="kit-stack" data-gap="6">
       <div class="kit-stack" data-gap="3">
-        ${baum.md(data.summary)}
         <div class="kit-row">
-          <span class="kit-small kit-muted">${noun(endpoints)} · ${changes(endpoints)}</span>
+          ${lede(endpoints)}
           ${breaking.length ? baum.html`<span class="kit-badge" data-tone="critical">${breaking.length} breaking</span>` : null}
         </div>
       </div>

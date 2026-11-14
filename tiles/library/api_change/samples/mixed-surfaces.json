@@ -1,7 +1,6 @@
 {
   "name": "mixed-surfaces",
   "data": {
-    "summary": "Removes the **`--legacy-format`** flag of `widgets export`, adds `--since` and a `widget_search` agent tool, and bounds `tags` in the published widget schema.",
     "endpoints": [
       {
         "surface": "cli",

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -32,7 +34,7 @@ func (staticTilePrompts) TileAnalysisInstructions(context.Context, string) (Tile
 // The schema change data the fills write: one table created, cited on the
 // parser's hunk.
 func schemaFill() string {
-	return fmt.Sprintf(`{"engine":"sqlite","summary":"Adds the %[2]s table.","migrations":[{"kind":"embedded","label":"store.Open","applies":"on_start","reversible":null,"idempotent":true,"cites":[{"type":"hunk","id":%[1]q,"lines":[1,3]}]}],"tables":[{"name":"%[2]s","change":"created","renamed_from":null,"columns":[{"name":"id","change":"added","before":null,"after":"INTEGER PRIMARY KEY","destructive":false,"note":null}],"indexes":[],"cites":[{"type":"hunk","id":%[1]q}]}],"data_changes":[],"readers":[]}`, testHunk, "widgets")
+	return fmt.Sprintf(`{"engine":"sqlite","migrations":[{"kind":"embedded","label":"store.Open","applies":"on_start","reversible":null,"idempotent":true,"cites":[{"type":"hunk","id":%[1]q,"lines":[1,3]}]}],"tables":[{"name":"%[2]s","change":"created","renamed_from":null,"columns":[{"name":"id","change":"added","before":null,"after":"INTEGER PRIMARY KEY","destructive":false,"note":null}],"indexes":[],"cites":[{"type":"hunk","id":%[1]q}]}],"data_changes":[],"readers":[]}`, testHunk, "widgets")
 }
 
 // tileFixture is the staged fixture over a concurrent backend with the tile
@@ -41,6 +43,12 @@ func schemaFill() string {
 // array is selection) before the defaults: the outline selects the schema
 // type on the parser's hunk, the fill writes schemaFill and the exhibits
 // call writes none.
+// withCandidate is a tileFixture selection of the schema type and one
+// exhibit candidate, so the exhibits call runs.
+func withCandidate() string {
+	return fmt.Sprintf(`{"library":[{"type":"schema_change","applies":true,"hunks":[%[1]q],"why":"adds the widgets table"}],"exhibits":[{"kind":"table","gives":"every retry state and what moves it on","hunks":[%[1]q]}]}`, testHunk)
+}
+
 func tileFixture(t *testing.T, selection string, answer func(ctx context.Context, kind string, request Request, n int) (Result, error, bool)) (*Generator, StagedRun, *stubBackend) {
 	t.Helper()
 	generator, run, backend := stagedFixture(t, nil, nil)
@@ -78,7 +86,11 @@ func tileFixture(t *testing.T, selection string, answer func(ctx context.Context
 		stage := stageOf(t, request.Prompt)
 		if stage == StageOutline {
 			outline := string(stagedOutlineDocument())
-			outline = strings.TrimSuffix(outline, "}") + `,"library":` + selection + `}`
+			part := `"library":` + selection + `,"exhibits":[]`
+			if strings.HasPrefix(selection, "{") {
+				part = strings.TrimSuffix(strings.TrimPrefix(selection, "{"), "}")
+			}
+			outline = strings.TrimSuffix(outline, "}") + `,` + part + `}`
 			return stagedResult(outline, "session-outline"), nil
 		}
 		return stagedReply(t, stage, request), nil
@@ -105,7 +117,7 @@ func callsOf(backend *stubBackend, marker string) []Request {
 // details and the context, the details are told the type's checks, and the
 // outcome counts every call once.
 func TestTileAnalysisSelectsAndFills(t *testing.T) {
-	generator, run, backend := tileFixture(t, "", nil)
+	generator, run, backend := tileFixture(t, withCandidate(), nil)
 	outcome, document, err := generator.StagedReview(context.Background(), run)
 	if err != nil || outcome.Reason != "" {
 		t.Fatalf("%v %+v", err, outcome.Outcome)
@@ -155,21 +167,53 @@ func TestTileAnalysisOffLeavesTheOutlineAlone(t *testing.T) {
 	want := callsOf(backend, stagedOutline)[0].Prompt
 	wantSchema, _ := os.ReadFile(filepath.Join(run.Directory, TaskSchemaFile(StageOutline)))
 
-	generator, tiled, tiledBackend := tileFixture(t, "", nil)
-	generator.Backend = tiledBackend // one call at a time: no analysis
-	outcome, _, err := generator.StagedReview(context.Background(), tiled)
+	generator, off, offBackend := tileFixture(t, "", nil)
+	off.Tiles = nil
+	outcome, _, err := generator.StagedReview(context.Background(), off)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := callsOf(tiledBackend, stagedOutline)[0].Prompt
-	gotSchema, _ := os.ReadFile(filepath.Join(tiled.Directory, TaskSchemaFile(StageOutline)))
-	if outcome.Tiles != nil || len(callsOf(tiledBackend, tilesFillText)) > 0 {
-		t.Error("a backend that runs one call at a time ran the analysis")
+	got := callsOf(offBackend, stagedOutline)[0].Prompt
+	gotSchema, _ := os.ReadFile(filepath.Join(off.Directory, TaskSchemaFile(StageOutline)))
+	if outcome.Tiles != nil || len(callsOf(offBackend, tilesFillText)) > 0 {
+		t.Error("a run without tiles ran the analysis")
 	}
 	// The run directories differ, so compare from the stage text on.
 	cut := func(s string) string { _, after, _ := strings.Cut(s, stagedOutline); return after }
 	if cut(got) != cut(want) || string(gotSchema) != string(wantSchema) {
 		t.Error("the outline's prompt or schema changed without the analysis")
+	}
+}
+
+// A backend that runs one call at a time still selects and fills, the fills
+// after the context, one by one; it is offered no exhibits.
+func TestTileAnalysisInTurn(t *testing.T) {
+	generator, run, backend := tileFixture(t, withCandidate(), nil)
+	generator.Backend = backend // not concurrent
+	outcome, _, err := generator.StagedReview(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.Tiles == nil || len(outcome.Tiles.Fills) != 1 || outcome.Tiles.Fills[0].State != FillReady || outcome.Tiles.Exhibits != nil {
+		t.Fatalf("tiles: %+v", outcome.Tiles)
+	}
+	var order []string
+	for _, call := range backend.calls {
+		switch {
+		case strings.Contains(call.Prompt, tilesFillText):
+			order = append(order, "fill")
+		case strings.Contains(call.Prompt, "WRITE-EXHIBITS"):
+			order = append(order, "exhibits")
+		default:
+			order = append(order, stageOf(t, call.Prompt))
+		}
+	}
+	if strings.Join(order, ",") != "outline,details,context,fill" {
+		t.Errorf("calls: %v", order)
+	}
+	schema, _ := os.ReadFile(filepath.Join(run.Directory, TaskSchemaFile(StageOutline)))
+	if strings.Contains(string(schema), `"exhibits"`) {
+		t.Error("the outline was asked for exhibit candidates")
 	}
 }
 
@@ -297,21 +341,32 @@ func TestTileAnalysisCancellation(t *testing.T) {
 	}
 }
 
-// With call budgets, the details keep their share; the context's is split
-// with the extras, and an extra left with nothing makes no call.
+// With call or token budgets the review's stages keep exactly the shares
+// they have without tiles; the extras get only what those shares leave, each
+// at least a call and a useful token budget, else nothing.
 func TestTileAnalysisBudgets(t *testing.T) {
-	contextShare, each := extraBudgets(Budgets{MaxCalls: 12}, Budgets{MaxCalls: 4, MaxTokens: 0}, 2)
-	if contextShare.MaxCalls != 2 || each.MaxCalls != 1 {
-		t.Errorf("split: context %d, each %d", contextShare.MaxCalls, each.MaxCalls)
+	for total := 1; total <= 24; total++ {
+		run := Budgets{MaxCalls: total, MaxTokens: total * 10000}
+		calls, tokens := total-1, run.MaxTokens-5000 // what the outline left
+		details, context := stageBudgets(run, calls, tokens, true)
+		for n := 1; n <= 3; n++ {
+			each := extraBudgets(run, details, context, calls, tokens, n)
+			leftCalls := calls - details.MaxCalls - context.MaxCalls
+			leftTokens := tokens - details.MaxTokens - context.MaxTokens
+			if leftCalls/n >= 1 && each.MaxCalls != leftCalls/n || leftCalls/n < 1 && each.MaxCalls != -1 {
+				t.Errorf("%d calls, %d extras: each gets %d calls, %d left", total, n, each.MaxCalls, leftCalls)
+			}
+			if leftTokens/n >= minExtraTokens && each.MaxTokens != leftTokens/n || leftTokens/n < minExtraTokens && each.MaxTokens != -1 {
+				t.Errorf("%d tokens, %d extras: each gets %d", tokens, n, each.MaxTokens)
+			}
+		}
 	}
-	contextShare, each = extraBudgets(Budgets{MaxCalls: 12}, Budgets{MaxCalls: 1}, 2)
-	if contextShare.MaxCalls != 1 || each.MaxCalls != -1 {
-		t.Errorf("exhausted split: context %d, each %d", contextShare.MaxCalls, each.MaxCalls)
-	}
-	if c, e := extraBudgets(Budgets{}, Budgets{}, 3); c.MaxCalls != 0 || e.MaxCalls != 0 {
-		t.Error("unbounded budgets were split")
+	if e := extraBudgets(Budgets{}, Budgets{}, Budgets{}, 0, 0, 3); e.MaxCalls != 0 || e.MaxTokens != 0 {
+		t.Error("unbounded budgets bounded the extras")
 	}
 
+	// Through a run: the details and the context make their calls as without
+	// tiles, and the fill, left nothing, makes none.
 	generator, run, backend := tileFixture(t, "", nil)
 	run.Budgets.MaxCalls = 4 // outline 1, details 2, context 1: nothing for the extras
 	outcome, _, err := generator.StagedReview(context.Background(), run)
@@ -321,8 +376,90 @@ func TestTileAnalysisBudgets(t *testing.T) {
 	if len(callsOf(backend, tilesFillText)) != 0 || outcome.Tiles.Fills[0].Reason != FillDroppedBudget {
 		t.Errorf("fill with no budget: %+v", outcome.Tiles.Fills)
 	}
-	if outcome.Calls > 4 {
-		t.Errorf("the run made %d calls on a budget of 4", outcome.Calls)
+	if len(callsOf(backend, stagedDetails)) != 1 || len(callsOf(backend, stagedContext)) != 1 || outcome.Calls > 4 {
+		t.Errorf("the stages' calls changed: %d calls", outcome.Calls)
+	}
+}
+
+// A fill still running near the run's deadline is stopped in time for the
+// finished review to be published; it never costs the review.
+func TestTileAnalysisNearTheDeadline(t *testing.T) {
+	generator, run, _ := tileFixture(t, "", func(ctx context.Context, kind string, _ Request, _ int) (Result, error, bool) {
+		if kind != "fill" {
+			return Result{}, nil, false
+		}
+		<-ctx.Done()
+		return Result{}, ctx.Err(), true
+	})
+	run.Tiles.Grace = 10 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	outcome, document, err := generator.StagedReview(ctx, run)
+	if err != nil || document == nil {
+		t.Fatalf("the review was lost to its fill: %v", err)
+	}
+	if f := outcome.Tiles.Fills[0]; f.State != FillDropped || f.Reason != FillDroppedStopped {
+		t.Errorf("fill: %+v", f)
+	}
+}
+
+// A fill or exhibits call that panics is dropped and the review goes on.
+func TestTileAnalysisPanics(t *testing.T) {
+	generator, run, _ := tileFixture(t, withCandidate(), func(_ context.Context, kind string, _ Request, _ int) (Result, error, bool) {
+		panic("a " + kind + " bug")
+	})
+	outcome, document, err := generator.StagedReview(context.Background(), run)
+	if err != nil || document == nil {
+		t.Fatal(err)
+	}
+	if f := outcome.Tiles.Fills[0]; f.State != FillDropped || f.Reason != FillDroppedPanic {
+		t.Errorf("fill: %+v", f)
+	}
+	if x := outcome.Tiles.Exhibits; x == nil || x.Reason != FillDroppedPanic || len(x.Tiles) != 0 {
+		t.Errorf("exhibits: %+v", x)
+	}
+}
+
+type failingTilePrompts struct{}
+
+func (failingTilePrompts) TileAnalysisInstructions(context.Context, string) (TileAnalysisPrompt, error) {
+	return TileAnalysisPrompt{}, errors.New("no texts")
+}
+
+// A tile analysis that cannot start leaves the review as it is without one.
+func TestTileAnalysisThatCannotStart(t *testing.T) {
+	generator, run, backend := tileFixture(t, "", nil)
+	run.Tiles.Prompts = failingTilePrompts{}
+	outcome, document, err := generator.StagedReview(context.Background(), run)
+	if err != nil || document == nil || outcome.Tiles != nil || len(callsOf(backend, tilesFillText)) != 0 {
+		t.Fatalf("%v %+v", err, outcome.Tiles)
+	}
+}
+
+// Cutting the tile parts out of the outline keeps the rest's bytes, so the
+// details prompt is the same with tiles on and off but for the checks.
+func TestTileAnalysisKeepsTheOutlineBytes(t *testing.T) {
+	reply := []byte(`{"library":[1], "schema":"baum.review/1","a":"<b>","exhibits":[] ,"z":{"y":1}}`)
+	got, parts := splitOutline(reply)
+	if string(got) != `{ "schema":"baum.review/1","a":"<b>" ,"z":{"y":1}}` || !strings.Contains(string(parts), `"library":[1]`) {
+		t.Errorf("split: %s / %s", got, parts)
+	}
+	if got, _ := splitOutline([]byte(`{"a":1}`)); string(got) != `{"a":1}` {
+		t.Errorf("an outline without tile parts changed: %s", got)
+	}
+
+	plain, off, offBackend := stagedFixture(t, nil, nil)
+	if _, _, err := plain.StagedReview(context.Background(), off); err != nil {
+		t.Fatal(err)
+	}
+	generator, on, onBackend := tileFixture(t, `[{"type":"schema_change","applies":false,"hunks":[],"why":null}]`, nil)
+	on.Tiles.Exhibits = false
+	if _, _, err := generator.StagedReview(context.Background(), on); err != nil {
+		t.Fatal(err)
+	}
+	cut := func(s string) string { _, after, _ := strings.Cut(s, stagedDetails); return after }
+	if cut(callsOf(onBackend, stagedDetails)[0].Prompt) != cut(callsOf(offBackend, stagedDetails)[0].Prompt) {
+		t.Error("the details prompt differs with tiles on")
 	}
 }
 
@@ -366,7 +503,9 @@ func TestTileAnalysisExhibits(t *testing.T) {
 		table("table_again", "starts a run", cite(testHunk, "null")),
 		`{"id":"table_fourth","title":"Client versions","adds":"x","table":{"columns":["Client","Works"],"rows":[["desktop seven","yes"],["browser extension two","no"]],"source":[` + cite(testHunk, "null") + `]},"code":null,"prose":null}`,
 	}
-	generator, run, _ := tileFixture(t, "", func(_ context.Context, kind string, _ Request, _ int) (Result, error, bool) {
+	// Three candidates leave room for three exhibits.
+	three := strings.Replace(withCandidate(), `"exhibits":[`, `"exhibits":[{"kind":"code","gives":"the call that opens the store","hunks":["`+testHunk+`"]},{"kind":"prose","gives":"the order a rollout must follow","hunks":["`+testHunk+`"]},`, 1)
+	generator, run, _ := tileFixture(t, three, func(_ context.Context, kind string, _ Request, _ int) (Result, error, bool) {
 		if kind != "exhibits" {
 			return Result{}, nil, false
 		}
@@ -396,8 +535,8 @@ func TestTileAnalysisExhibits(t *testing.T) {
 	}
 }
 
-// An exhibits call that returns none is the common answer: nothing is kept,
-// nothing dropped.
+// Without a candidate from the outline there is no exhibits call; with one
+// the call gets the outline, the candidate and its hunks, not the bundle.
 func TestTileAnalysisNoExhibits(t *testing.T) {
 	generator, run, backend := tileFixture(t, "", nil)
 	outcome, _, err := generator.StagedReview(context.Background(), run)
@@ -405,14 +544,123 @@ func TestTileAnalysisNoExhibits(t *testing.T) {
 		t.Fatal(err)
 	}
 	x := outcome.Tiles.Exhibits
-	if x.Returned != 0 || len(x.Tiles) != 0 || len(x.Dropped) != 0 || x.Reason != "" {
+	if x == nil || x.Called || x.Candidates != 0 || len(callsOf(backend, "WRITE-EXHIBITS")) != 0 {
+		t.Errorf("exhibits without a candidate: %+v", x)
+	}
+	generator, run, backend = tileFixture(t, withCandidate(), nil)
+	if outcome, _, err = generator.StagedReview(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if x := outcome.Tiles.Exhibits; !x.Called || x.Candidates != 1 || x.Returned != 0 {
 		t.Errorf("exhibits: %+v", x)
 	}
 	calls := callsOf(backend, "WRITE-EXHIBITS")
-	if len(calls) != 1 || calls[0].Stage != StageExhibits || !strings.Contains(calls[0].Prompt, "Accepted outline") {
-		t.Error("the exhibits call was not made with the outline")
+	if len(calls) != 1 || calls[0].Stage != StageExhibits || !strings.Contains(calls[0].Prompt, "Accepted outline") || !strings.Contains(calls[0].Prompt, "1. table: every retry state") {
+		t.Fatal("the exhibits call was not made with the outline and its candidate")
 	}
-	if strings.Index(calls[0].Prompt, "Accepted outline") > strings.Index(calls[0].Prompt, "## Submitting") {
-		t.Error("the outline comes after the exhibits call's Submitting heading")
+	if strings.Contains(calls[0].Prompt, "Input bundle") || strings.Index(calls[0].Prompt, "Accepted outline") > strings.Index(calls[0].Prompt, "## Submitting") {
+		t.Error("the exhibits call carries the bundle, or the outline after its Submitting heading")
+	}
+	if strings.Contains(callsOf(backend, tilesFillText)[0].Prompt, "Input bundle") {
+		t.Error("a fill carries the whole bundle")
+	}
+}
+
+// A previous version's fill and authored tile are reused without a call
+// when the code they cite is unchanged; a fill citing a hunk this diff no
+// longer has is written again.
+func TestTileAnalysisReuse(t *testing.T) {
+	entry, _ := library.Get("schema_change")
+	previous := func(data string) *tiles.Composition {
+		return &tiles.Composition{Schema: tiles.CompositionName,
+			Library: []tiles.LibraryTile{{Definition: entry.Encoded, Data: json.RawMessage(data)}},
+			Authored: []tiles.AuthoredTile{{ID: "table_states", Title: "States", Data: json.RawMessage(
+				`{"columns":["a","b"],"rows":[["x","y"]],"source":[{"type":"hunk","id":"` + testHunk + `"}]}`)}}}
+	}
+	withRelated := strings.TrimSuffix(schemaFill(), "}") + `,"related":[{"type":"risk","id":"rsk_old"}]}`
+	generator, run, backend := tileFixture(t, "", nil)
+	run.Tiles.Previous = previous(withRelated)
+	outcome, _, err := generator.StagedReview(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := outcome.Tiles.Fills[0]
+	if !f.Reused || f.State != FillReady || strings.Contains(string(f.Data), "related") || len(callsOf(backend, tilesFillText)) != 0 {
+		t.Errorf("fill not reused: %+v", f)
+	}
+	x := outcome.Tiles.Exhibits
+	if x.Called || len(x.Tiles) != 1 || x.Tiles[0].ID != "table_states" || len(x.Reused) != 1 {
+		t.Errorf("authored tile not kept: %+v", x)
+	}
+
+	generator, run, backend = tileFixture(t, "", nil)
+	run.Tiles.Previous = previous(strings.ReplaceAll(schemaFill(), testHunk, "h_000000000000"))
+	run.Tiles.Previous.Authored[0].Data = json.RawMessage(strings.ReplaceAll(string(run.Tiles.Previous.Authored[0].Data), testHunk, "h_000000000000"))
+	outcome, _, err = generator.StagedReview(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f := outcome.Tiles.Fills[0]; f.Reused || f.State != FillReady || len(callsOf(backend, tilesFillText)) != 1 {
+		t.Errorf("changed code was not filled again: %+v", f)
+	}
+	if x := outcome.Tiles.Exhibits; len(x.Tiles) != 0 {
+		t.Errorf("an authored tile citing changed code was kept: %+v", x)
+	}
+}
+
+// An exhibit's file citations name files of the checkout only: a path that
+// leaves it, an absolute one, a directory and a symbolic link are dropped.
+func TestTileAnalysisExhibitFiles(t *testing.T) {
+	file := func(path string) string {
+		return fmt.Sprintf(`{"type":"file","id":null,"lines":null,"path":%q}`, path)
+	}
+	cites := strings.Join([]string{file("../bundle.json"), file("/etc/passwd"), file("dir"), file("link.go"), file("main.go"),
+		`{"type":"hunk","id":"` + testHunk + `","lines":null,"path":null}`}, ",")
+	exhibit := `{"id":"prose_files","title":"Files","adds":"x","table":null,"code":null,"prose":{"text":"The store opens first.","anchors":[` + cites + `]}}`
+	generator, run, _ := tileFixture(t, withCandidate(), func(_ context.Context, kind string, _ Request, _ int) (Result, error, bool) {
+		if kind != "exhibits" {
+			return Result{}, nil, false
+		}
+		return stagedResult(`{"exhibits":[`+exhibit+`]}`, "s"), nil, true
+	})
+	head := filepath.Join(run.Directory, "head")
+	if err := os.Mkdir(filepath.Join(head, "dir"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(run.Directory, "bundle.json"), filepath.Join(head, "link.go")); err != nil {
+		t.Fatal(err)
+	}
+	outcome, _, err := generator.StagedReview(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := outcome.Tiles.Exhibits
+	if len(x.Tiles) != 1 {
+		t.Fatalf("exhibits: %+v", x)
+	}
+	data := string(x.Tiles[0].Data)
+	for _, bad := range []string{"bundle.json", "/etc/passwd", `"dir"`, "link.go"} {
+		if strings.Contains(data, bad) {
+			t.Errorf("a citation of %s was kept: %s", bad, data)
+		}
+	}
+	if !strings.Contains(data, `"path":"main.go"`) {
+		t.Errorf("the checkout's file was dropped: %s", data)
+	}
+}
+
+// The composition places only built-in library types' tiles.
+func TestComposePlacesOnlyBuiltinLibraryTiles(t *testing.T) {
+	entry, _ := library.Get("schema_change")
+	var def map[string]any
+	_ = json.Unmarshal(entry.Encoded, &def)
+	def["title"] = "Not quite"
+	other, _ := json.Marshal(def)
+	r := ComposeRequest{Fills: []compose.Fill{
+		{Type: "schema_change", Tile: &tiles.LibraryTile{Definition: entry.Encoded, Data: json.RawMessage(schemaFill())}},
+		{Type: "schema_change", Tile: &tiles.LibraryTile{Definition: other, Data: json.RawMessage(schemaFill())}},
+	}}
+	if lib, _ := r.extras(); len(lib) != 1 || string(lib[0].Definition) != string(entry.Encoded) {
+		t.Errorf("library tiles: %d", len(lib))
 	}
 }

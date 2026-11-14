@@ -44,6 +44,7 @@ type FillRecord struct {
 	State     string     `json:"state"`
 	Reason    string     `json:"reason,omitempty"`
 	Repaired  bool       `json:"repaired,omitempty"`
+	Reused    bool       `json:"reused,omitempty"`
 	Seconds   float64    `json:"seconds"`
 	CostUSD   *float64   `json:"cost_usd,omitempty"`
 	Calls     int        `json:"calls"`
@@ -52,9 +53,12 @@ type FillRecord struct {
 
 // ExhibitsRecord is the exhibits call: what it returned, kept and dropped.
 type ExhibitsRecord struct {
-	Returned int                    `json:"returned"`
-	Checked  int                    `json:"checked"`
-	Dropped  []agent.DroppedExhibit `json:"dropped,omitempty"`
+	Candidates int                    `json:"candidates"`
+	Called     bool                   `json:"called"`
+	Reused     []string               `json:"reused,omitempty"`
+	Returned   int                    `json:"returned"`
+	Checked    int                    `json:"checked"`
+	Dropped    []agent.DroppedExhibit `json:"dropped,omitempty"`
 	// Duplicates are the exhibits dropped as restating the review; Kept those
 	// the composition holds, with their placement.
 	Duplicates []string             `json:"duplicates,omitempty"`
@@ -98,7 +102,7 @@ func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport
 	record := AnalysisRecord{Schema: AnalysisRecordName, PromptVersion: t.PromptVersion, PromptDigest: t.PromptDigest,
 		Selection: t.Selection, Fills: []FillRecord{}, WaitedSeconds: t.Waited.Seconds()}
 	for _, f := range t.Fills {
-		r := FillRecord{Type: f.Type, Hunks: len(f.Hunks), Why: f.Why, State: f.State, Reason: f.Reason, Repaired: f.Repaired,
+		r := FillRecord{Type: f.Type, Hunks: len(f.Hunks), Why: f.Why, State: f.State, Reason: f.Reason, Repaired: f.Repaired, Reused: f.Reused,
 			Seconds: f.Elapsed.Seconds(), CostUSD: list.BackendOutcomeCost(backend, f.Outcome.Model, f.Outcome), Calls: f.Outcome.Calls}
 		if p, ok := placed[tiles.LibraryTileID(f.Type)]; ok {
 			r.Placement = &p
@@ -124,7 +128,7 @@ func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport
 		}
 	}
 	if x := t.Exhibits; x != nil {
-		r := &ExhibitsRecord{Returned: x.Returned, Checked: len(x.Tiles), Dropped: x.Dropped, Duplicates: report.Duplicates, Adds: x.Adds,
+		r := &ExhibitsRecord{Candidates: x.Candidates, Called: x.Called, Reused: x.Reused, Returned: x.Returned, Checked: len(x.Tiles), Dropped: x.Dropped, Duplicates: report.Duplicates, Adds: x.Adds,
 			Reason: x.Reason, Seconds: x.Elapsed.Seconds(), CostUSD: list.BackendOutcomeCost(backend, x.Outcome.Model, x.Outcome), Calls: x.Outcome.Calls}
 		if composition != nil {
 			for _, a := range composition.Authored {
@@ -155,20 +159,24 @@ func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport
 // The tile analysis metrics. The per-type ones are named with the type:
 // library_<type>_selected and so on.
 const (
-	MetricLibrarySelected   = "library_selected"
-	MetricLibraryReady      = "library_ready"
-	MetricLibraryLanding    = "library_landing"
-	MetricFillsCost         = "fills_cost_usd"
-	MetricFillsSeconds      = "fills_seconds_max"
-	MetricExhibitsReturned  = "exhibits_returned"
-	MetricExhibitsKept      = "exhibits_kept"
-	MetricExhibitsDuplicate = "exhibits_dropped_duplicate"
-	MetricExhibitsLanding   = "exhibits_landing"
-	MetricExhibitsCost      = "exhibits_cost_usd"
-	MetricExhibitsSeconds   = "exhibits_seconds"
-	MetricExtrasWait        = "extras_wait_seconds"
-	MetricDuplicatePairs    = "extras_duplicate_pairs"
-	MetricHasDuplicate      = "extras_has_duplicate"
+	MetricLibrarySelected    = "library_selected"
+	MetricLibraryReady       = "library_ready"
+	MetricLibraryLanding     = "library_landing"
+	MetricFillsCost          = "fills_cost_usd"
+	MetricFillsSeconds       = "fills_seconds_max"
+	MetricLibraryReused      = "library_reused"
+	MetricExhibitsCandidates = "exhibits_candidates"
+	MetricExhibitsCalled     = "exhibits_called"
+	MetricExhibitsReused     = "exhibits_reused"
+	MetricExhibitsReturned   = "exhibits_returned"
+	MetricExhibitsKept       = "exhibits_kept"
+	MetricExhibitsDuplicate  = "exhibits_dropped_duplicate"
+	MetricExhibitsLanding    = "exhibits_landing"
+	MetricExhibitsCost       = "exhibits_cost_usd"
+	MetricExhibitsSeconds    = "exhibits_seconds"
+	MetricExtrasWait         = "extras_wait_seconds"
+	MetricDuplicatePairs     = "extras_duplicate_pairs"
+	MetricHasDuplicate       = "extras_has_duplicate"
 )
 
 // analysisMetrics adds the metrics of analysis.json, when the case has one.
@@ -202,6 +210,8 @@ func analysisMetrics(read func(string) ([]byte, error), values map[string]float6
 		add(prefix+"not_applies", one(f.State == agent.FillNotApplies))
 		add(prefix+"dropped", one(f.State == agent.FillDropped))
 		add(prefix+"repaired", one(f.Repaired))
+		add(prefix+"reused", one(f.Reused))
+		add(MetricLibraryReused, one(f.Reused))
 		add(MetricLibraryReady, one(f.State == agent.FillReady))
 		landing := f.Placement != nil && f.Placement.Landing
 		add(prefix+"landing", one(landing))
@@ -214,6 +224,9 @@ func analysisMetrics(read func(string) ([]byte, error), values map[string]float6
 	values[MetricFillsSeconds] = fillsSeconds
 	if x := r.Exhibits; x != nil {
 		add(MetricExhibitsReturned, float64(x.Returned))
+		add(MetricExhibitsCandidates, float64(x.Candidates))
+		add(MetricExhibitsCalled, one(x.Called))
+		add(MetricExhibitsReused, float64(len(x.Reused)))
 		add(MetricExhibitsKept, float64(len(x.Kept)))
 		add(MetricExhibitsDuplicate, float64(len(x.Duplicates)))
 		for _, d := range x.Dropped {
@@ -235,23 +248,27 @@ func analysisMetrics(read func(string) ([]byte, error), values map[string]float6
 
 func analysisDefinitions() map[string]string {
 	d := map[string]string{
-		MetricLibrarySelected:   "library types the outline selected",
-		MetricLibraryReady:      "library fills whose data passed its checks",
-		MetricLibraryLanding:    "library tiles on the served page's landing page",
-		MetricFillsCost:         "what the fills cost at API prices (cost_usd includes it)",
-		MetricFillsSeconds:      "the longest fill's wall time",
-		MetricExhibitsReturned:  "exhibits the exhibits call returned",
-		MetricExhibitsKept:      "authored tiles the composition holds",
-		MetricExhibitsDuplicate: "exhibits dropped as restating the review or another exhibit",
-		MetricExhibitsLanding:   "authored tiles on the served page's landing page",
-		MetricExhibitsCost:      "what the exhibits call cost at API prices (cost_usd includes it)",
-		MetricExhibitsSeconds:   "the exhibits call's wall time",
-		MetricExtrasWait:        "how long the review waited for fills and exhibits after its own stages ended",
-		MetricDuplicatePairs:    "pairs of points two tiles state where one is a library or authored tile",
-		MetricHasDuplicate:      "1 when the page has any such pair",
+		MetricLibrarySelected:    "library types the outline selected",
+		MetricLibraryReady:       "library fills whose data passed its checks",
+		MetricLibraryLanding:     "library tiles on the served page's landing page",
+		MetricFillsCost:          "what the fills cost at API prices (cost_usd includes it)",
+		MetricFillsSeconds:       "the longest fill's wall time",
+		MetricExhibitsReturned:   "exhibits the exhibits call returned",
+		MetricLibraryReused:      "library fills taken from the previous version without a call",
+		MetricExhibitsCandidates: "exhibit candidates the outline proposed",
+		MetricExhibitsCalled:     "1 when the exhibits call ran (a candidate and room left)",
+		MetricExhibitsReused:     "authored tiles kept from the previous version without a call",
+		MetricExhibitsKept:       "authored tiles the composition holds",
+		MetricExhibitsDuplicate:  "exhibits dropped as restating the review or another exhibit",
+		MetricExhibitsLanding:    "authored tiles on the served page's landing page",
+		MetricExhibitsCost:       "what the exhibits call cost at API prices (cost_usd includes it)",
+		MetricExhibitsSeconds:    "the exhibits call's wall time",
+		MetricExtrasWait:         "how long the review waited for fills and exhibits after its own stages ended",
+		MetricDuplicatePairs:     "pairs of points two tiles state where one is a library or authored tile",
+		MetricHasDuplicate:       "1 when the page has any such pair",
 	}
 	for _, name := range library.Names {
-		for _, part := range []string{"selected", "ready", "not_applies", "dropped", "repaired", "landing"} {
+		for _, part := range []string{"selected", "ready", "not_applies", "dropped", "repaired", "reused", "landing"} {
 			d["library_"+name+"_"+part] = "the " + name + " type: " + part
 		}
 	}

@@ -193,8 +193,7 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 		return b
 	}
 	detailsBudgets, contextBudgets = exhaust(detailsBudgets), exhaust(contextBudgets)
-	var extraBudget Budgets
-	contextBudgets, extraBudget = extraBudgets(run.Budgets, contextBudgets, s.tiles.extras())
+	extraBudget := extraBudgets(run.Budgets, detailsBudgets, contextBudgets, calls, tokens, s.tiles.extras())
 	if continued {
 		detailsBudgets = run.Budgets
 	}
@@ -224,6 +223,9 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 			details()
 			if ctx.Err() == nil && !empty() {
 				s.contextStage(ctx, contextBudgets)
+				if ctx.Err() == nil {
+					s.fillsInTurn(ctx, extraBudget)
+				}
 			}
 		}
 		if err := ctx.Err(); err != nil {
@@ -348,8 +350,10 @@ func (s *stagedReview) prepare(ctx context.Context) error {
 		return err
 	}
 	s.redactor = redactor
+	// The tile analysis never fails the review: one that cannot start is
+	// left out.
 	if s.tiles, err = newTileAnalysis(ctx, g, run); err != nil {
-		return err
+		s.dropTiles("the tile analysis could not start", err)
 	}
 	if err := tilecatalogue.Validate(run.TileKinds); err != nil {
 		return fmt.Errorf("tile kinds: %w", err)
@@ -357,8 +361,10 @@ func (s *stagedReview) prepare(ctx context.Context) error {
 	if s.outlineSchema, err = g.Validator.OutlineSchema(); err != nil {
 		return err
 	}
-	if s.outlineSchema, err = s.tiles.outlineSchema(s.outlineSchema); err != nil {
-		return err
+	if withTiles, err := s.tiles.outlineSchema(s.outlineSchema); err != nil {
+		s.dropTiles("the tile analysis's outline schema could not be made", err)
+	} else {
+		s.outlineSchema = withTiles
 	}
 	if s.detailsSchema, err = g.Validator.DetailsSchema(run.TileKinds); err != nil {
 		return err
@@ -809,16 +815,32 @@ func RedactStagedOutput(ctx context.Context, validator *review.DocumentValidator
 	// The tile analysis's calls: their replies were masked as they landed,
 	// their outcomes' strings are masked here. They are not the review's,
 	// so a closed value masked in them does not reject it.
-	for _, o := range outcome.Tiles.outcomes() {
+	// A tile call whose strings cannot be masked loses them and its tile,
+	// and the review goes on.
+	mask := func(o *Outcome) bool {
 		identifiers := o.IdentifierRedaction
 		o.IdentifierRedaction = nil
 		_, _, tileErr := RedactOutput(ctx, validator, redactor, nil, b, checkout, o)
 		o.IdentifierRedaction = identifiers
-		if tileErr != nil {
-			return nil, 0, tileErr
+		if tileErr == nil {
+			o.Reason, tileErr = reasons.Text(ctx, o.Reason)
 		}
-		if o.Reason, err = reasons.Text(ctx, o.Reason); err != nil {
-			return nil, 0, err
+		if tileErr != nil {
+			o.Reason, o.Findings, o.Model, o.RejectedDocument, o.Diagnostics = "", "", "", nil, nil
+			o.Accounting.ClearStrings()
+			o.Usage.Speed = nil
+			return false
+		}
+		return true
+	}
+	if t := outcome.Tiles; t != nil {
+		for i := range t.Fills {
+			if !mask(&t.Fills[i].Outcome) {
+				t.Fills[i].State, t.Fills[i].Reason, t.Fills[i].Data = FillDropped, FillDroppedRedaction, nil
+			}
+		}
+		if x := t.Exhibits; x != nil && !mask(&x.Outcome) {
+			x.Tiles, x.Adds, x.Reason = x.Tiles[:len(x.Reused)], nil, FillDroppedRedaction
 		}
 	}
 	return redacted, closed, nil

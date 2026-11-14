@@ -2,7 +2,6 @@
   "name": "postgres-migration",
   "data": {
     "engine": "postgres",
-    "summary": "Adds `invoices`, renames `payment_events` to `ledger_entries` and **drops** `accounts.legacy_plan_code`. `Ledger.Sum` still queries the old table name.",
     "migrations": [
       {
         "kind": "migration_file",

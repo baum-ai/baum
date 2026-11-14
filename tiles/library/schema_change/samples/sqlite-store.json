@@ -2,7 +2,6 @@
   "name": "sqlite-store",
   "data": {
     "engine": "sqlite",
-    "summary": "Adds `widget_tags` and a nullable `archived_at` on `widgets`, created when the store opens. **Drops** `widgets.labels` without copying its values into `widget_tags`.",
     "migrations": [
       {
         "kind": "embedded",

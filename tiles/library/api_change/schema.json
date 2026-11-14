@@ -1,14 +1,8 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "endpoints", "consumers", "docs"],
+  "required": ["endpoints", "consumers", "docs"],
   "properties": {
-    "summary": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 300,
-      "description": "One or two sentences in the Markdown subset: what the interface change does and, first, anything breaking. Facts only, no advice."
-    },
     "endpoints": {
       "type": "array",
       "maxItems": 40,

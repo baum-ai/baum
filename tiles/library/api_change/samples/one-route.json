@@ -1,7 +1,6 @@
 {
   "name": "one-route",
   "data": {
-    "summary": "Adds `GET /api/widgets/{id}/history`, which lists a widget's changes, newest first.",
     "endpoints": [
       {
         "surface": "http",

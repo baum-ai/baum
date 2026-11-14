@@ -1,7 +1,6 @@
 {
   "name": "many-routes",
   "data": {
-    "summary": "Adds eleven routes for tiles, inboxes, prompt overrides and sessions, and **removes** `GET /api/health`.",
     "endpoints": [
       {
         "surface": "http",

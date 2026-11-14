@@ -241,7 +241,7 @@ func (t *Tiles) staged() *agent.StagedTiles {
 	if !ok {
 		prompts = prompt.TilesPrompts{}
 	}
-	out := &agent.StagedTiles{Prompts: prompts, Exhibits: !t.NoExhibits}
+	out := &agent.StagedTiles{Prompts: prompts, Exhibits: !t.NoExhibits, Previous: t.Previous}
 	if !t.NoLibrary {
 		out.Library = t.Library
 		if out.Library == nil {
@@ -274,7 +274,10 @@ func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry)
 	}
 	byName := map[string]library.Entry{}
 	for _, e := range entries {
-		byName[e.Definition.Name] = e
+		// Only built-in types become library tiles.
+		if library.IsBuiltin(e.Encoded) {
+			byName[e.Definition.Name] = e
+		}
 	}
 	var fills []compose.Fill
 	var ready []tiles.Tile

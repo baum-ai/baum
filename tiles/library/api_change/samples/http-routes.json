@@ -1,7 +1,6 @@
 {
   "name": "http-routes",
   "data": {
-    "summary": "Adds tag routes for widgets and removes `GET /api/widgets/{id}/labels`. `POST /api/widgets` now **requires** `owner`.",
     "endpoints": [
       {
         "surface": "http",

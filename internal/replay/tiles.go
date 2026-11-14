@@ -147,7 +147,8 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 	if result.ContextFailed {
 		out.Notes = append(out.Notes, "context")
 	}
-	out.Details = map[string]any{"failed_sections": result.FailedSections, "context_failed": result.ContextFailed}
+	out.Details = map[string]any{"failed_sections": result.FailedSections, "context_failed": result.ContextFailed,
+		"outline_repairs": result.OutlineRepairs, "outline_rejections": result.OutlineRejections}
 	report := result.Compose
 	if report == nil {
 		return out, errors.New("the run did not arrange the tiles")

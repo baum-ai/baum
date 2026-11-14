@@ -22,8 +22,28 @@ import (
 // same digest, so an edit must be deliberate: update the digest in the same
 // commit and say in its message what changed.
 var digests = map[string]string{
-	"schema_change": "sha256:1adc2e4348ccd7a6ec5d400b5f18a7f9654d18a5450af64b574b34770619e505",
-	"api_change":    "sha256:0ed8c133a81084fdc1810a08872afefe4dbb67613d52cacf1be95666979307f3",
+	"schema_change": "sha256:8fe2098a21c18859c66c31bb9fca0018ca1bce20bce364de40e27b04710cb8da",
+	"api_change":    "sha256:15a6db0250bf83fde84fcf86e71c2dfdd2d11dbcd7bcbd3c84b1fe0c52e8b592",
+}
+
+// A built-in definition is recognised by its content's digest, current or
+// past; one that claims a built-in digest but differs is not.
+func TestIsBuiltin(t *testing.T) {
+	for _, entry := range library.All() {
+		if !library.IsBuiltin(entry.Encoded) {
+			t.Errorf("%s is not built in", entry.Definition.Name)
+		}
+		var def map[string]any
+		_ = json.Unmarshal(entry.Encoded, &def)
+		def["title"] = "Something else"
+		changed, _ := json.Marshal(def)
+		if library.IsBuiltin(changed) {
+			t.Errorf("%s with another title, under its digest, is built in", entry.Definition.Name)
+		}
+		if digests[entry.Definition.Name] != entry.Definition.Digest || slices.Contains(library.PastDigests[entry.Definition.Name], entry.Definition.Digest) {
+			t.Errorf("%s: the current digest is not pinned, or listed as past", entry.Definition.Name)
+		}
+	}
 }
 
 func TestBuiltinTypesPassEveryCheck(t *testing.T) {
@@ -43,7 +63,7 @@ func TestBuiltinTypesPassEveryCheck(t *testing.T) {
 			t.Errorf("Get(%q) does not return the type", def.Name)
 		}
 		if def.Digest != digests[def.Name] {
-			t.Errorf("%s's definition changed: its digest is %s; if the change is deliberate, pin it in digests", def.Name, def.Digest)
+			t.Errorf("%s's definition changed: its digest is %s; if the change is deliberate, pin it in digests and append the old digest, %s, to library.PastDigests so saved tiles of it stay baum's own", def.Name, def.Digest, digests[def.Name])
 		}
 		if _, builtin := tiles.Builtin(def.Name); builtin || def.Name == tiles.TypeCustom {
 			t.Errorf("%s clashes with a built-in type", def.Name)
@@ -214,8 +234,8 @@ func TestDataSchemasRejectWrongShapes(t *testing.T) {
 		{"a hunk ID that is not one", "schema_change", "sqlite-store", "id", func(d map[string]any) {
 			table(d, 0)["cites"] = []any{map[string]any{"type": "hunk", "id": "store.go:44"}}
 		}},
-		{"too long a summary", "schema_change", "sqlite-store", "summary", func(d map[string]any) {
-			d["summary"] = strings.Repeat("a", 301)
+		{"a summary, which the tile computes", "schema_change", "sqlite-store", "summary", func(d map[string]any) {
+			d["summary"] = "Adds a table."
 		}},
 		{"endpoint without breaking", "api_change", "http-routes", "breaking", func(d map[string]any) {
 			delete(d["endpoints"].([]any)[0].(map[string]any), "breaking")
