@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/schema"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // fakeLayouts is a LayoutEditor over the real layout service and the
@@ -47,7 +48,12 @@ func (f *fakeLayouts) Shown(ctx context.Context, repository string, number int) 
 	if err != nil {
 		return ShownLayout{}, err
 	}
-	c, _ := tiles.ApplyOverlay(f.doc, nil, state.Overlay, nil)
+	fills, err := f.service.Fills(ctx, tilelayout.Key(repository, number))
+	if err != nil {
+		return ShownLayout{}, err
+	}
+	held, _ := tilelayout.AddedFor(state.AddedTypes(), fills, tilelayout.Version{Number: 2, Latest: true, Diff: library.DiffOf(f.doc)}, func(string) (json.RawMessage, bool) { return nil, false })
+	c, _ := tiles.ApplyOverlay(f.doc, nil, state.Overlay, held.Added)
 	composed, err := tiles.Compose(f.doc, &c)
 	if err != nil {
 		return ShownLayout{}, err
@@ -71,6 +77,35 @@ func (f *fakeLayouts) Edit(ctx context.Context, repository string, number int, o
 	}
 	c, err := f.service.Edit(ctx, tilelayout.Key(repository, number), "chat", shown.Document, shown.Revision, ops)
 	return change(c), err
+}
+
+// Add checks and stores the data as the daemon does (uiserver), then adds.
+func (f *fakeLayouts) Add(ctx context.Context, repository string, number int, add TileAdd) (TileAdded, error) {
+	e, ok := library.Find(add.Type)
+	if !ok {
+		return TileAdded{}, errors.New("unknown type")
+	}
+	shown, err := f.Shown(ctx, repository, number)
+	if err != nil {
+		return TileAdded{}, err
+	}
+	state := "filling"
+	if len(add.Data) > 0 {
+		if problems := library.CheckAddedFill(tiles.NewValidator(), e, add.Data, library.DiffOf(f.doc)); len(problems) > 0 {
+			return TileAdded{}, errors.New("The data does not fit: " + strings.Join(problems, "; "))
+		}
+		if err := f.service.PutFill(ctx, tilelayout.Key(repository, number), tiles.LibraryTileID(e.Definition.Name), shown.Version, e.Encoded, add.Data); err != nil {
+			return TileAdded{}, err
+		}
+		state = "ready"
+	}
+	f.edits++
+	c, err := f.service.Edit(ctx, tilelayout.Key(repository, number), "chat", shown.Document, shown.Revision,
+		[]tiles.Op{{Op: tiles.OpAdd, Size: add.Size, To: add.To, Add: &tiles.Added{Kind: "library", Name: e.Definition.Name, Digest: e.Definition.Digest, Title: e.Definition.Title}}})
+	if err != nil {
+		return TileAdded{}, err
+	}
+	return TileAdded{Tile: tiles.LibraryTileID(e.Definition.Name), State: state, Change: change(c)}, nil
 }
 
 func (f *fakeLayouts) Undo(ctx context.Context, repository string, number int) (LayoutChange, error) {
@@ -123,7 +158,7 @@ func TestLayoutToolsArePageBoundAndChatOnly(t *testing.T) {
 	if strings.Contains(text, "edit_tiles") {
 		t.Error("the Inbox lists the layout tools")
 	}
-	valid := map[string]any{"edit_tiles": map[string]any{"ops": []any{map[string]any{"op": "hide", "tile": "context"}}}, "add_tile": map[string]any{"type": "context"}}
+	valid := map[string]any{"edit_tiles": map[string]any{"ops": []any{map[string]any{"op": "hide", "tile": "context"}}}, "add_tile": map[string]any{"type": "context"}, "tile_type": map[string]any{"type": "api_change"}}
 	for _, tool := range layoutPageTools {
 		if text, failed := data(t, s, token, tool, valid[tool]); !failed || !strings.Contains(text, "open a pull request's page first") {
 			t.Errorf("%s off the pull request page: %v %s", tool, failed, text)
@@ -255,9 +290,10 @@ func TestEditUndoResetTiles(t *testing.T) {
 	if !slices.Contains(result.Hidden, "context") {
 		t.Errorf("hidden %v", result.Hidden)
 	}
-	// add_tile brings a removed tile back; it cannot fill a new one.
-	if text, failed := data(t, s, token, "add_tile", map[string]any{"type": "api_changes"}); !failed || !strings.Contains(text, "not available yet") {
-		t.Errorf("adding a new tile type: %s", text)
+	// add_tile brings a removed tile back; a type that is neither a tile of
+	// the review nor a library type is refused, naming the library types.
+	if text, failed := data(t, s, token, "add_tile", map[string]any{"type": "api_changes"}); !failed || !strings.Contains(text, "No tile type api_changes") || !strings.Contains(text, "api_change (Interface changes)") {
+		t.Errorf("adding an unknown tile type: %s", text)
 	}
 	if text, failed := data(t, s, token, "add_tile", map[string]any{"type": "media"}); !failed || !strings.Contains(text, "already on the review") {
 		t.Errorf("adding a tile already shown: %s", text)
@@ -340,5 +376,82 @@ func TestTileLayoutIsBounded(t *testing.T) {
 	text, err := boundedView(v)
 	if err != nil || len(text) > maxLayoutResult {
 		t.Fatalf("%d bytes, %v", len(text), err)
+	}
+}
+
+// apiData is api_change data for the example review: a consumer cited on one
+// of its hunks.
+func apiData(hunk, label string) map[string]any {
+	return map[string]any{"endpoints": []any{}, "docs": nil,
+		"consumers": []any{map[string]any{"label": label, "updated": true, "cites": []any{map[string]any{"type": "hunk", "id": hunk}}}}}
+}
+
+// tile_type gives what the agent needs to write a library type's data:
+// its instructions and the fill schema, without the host-written part.
+// tile_layout lists the library types the review does not show as addable.
+func TestTileTypeAndAddable(t *testing.T) {
+	s, _, token, id := layoutServer(t)
+	setPage(t, s, id, pullPage)
+	var kind struct {
+		Type         string          `json:"type"`
+		Title        string          `json:"title"`
+		Instructions string          `json:"fill_instructions"`
+		Schema       json.RawMessage `json:"fill_schema"`
+	}
+	out(t, s, token, "tile_type", map[string]any{"type": "Interface changes"}, &kind)
+	if kind.Type != "api_change" || kind.Instructions == "" || !strings.Contains(string(kind.Schema), `"endpoints"`) || strings.Contains(string(kind.Schema), `"related"`) {
+		t.Errorf("tile_type: %+v", kind)
+	}
+	if text, failed := data(t, s, token, "tile_type", map[string]any{"type": "weather"}); !failed || !strings.Contains(text, "api_change") {
+		t.Errorf("an unknown type: %s", text)
+	}
+	var view layoutView
+	out(t, s, token, "tile_layout", nil, &view)
+	if !slices.ContainsFunc(view.Addable, func(a addableType) bool { return a.Type == "api_change" && a.Source == "built-in" }) {
+		t.Errorf("addable: %+v", view.Addable)
+	}
+}
+
+// add_tile with data the agent wrote shows the tile at once with that data;
+// data that does not fit is refused, naming places and never values, and
+// changes nothing; without data the tile is pending while it is filled.
+func TestAddTileOfALibraryType(t *testing.T) {
+	s, f, token, id := layoutServer(t)
+	setPage(t, s, id, pullPage)
+	writes := f.edits
+	text, failed := data(t, s, token, "add_tile", map[string]any{"type": "api_change", "data": apiData("h_000000000000", "SENTINEL_LABEL")})
+	if !failed || !strings.Contains(text, "/consumers/0/cites/0") || strings.Contains(text, "SENTINEL_LABEL") || strings.Contains(text, "h_000000000000") {
+		t.Errorf("data citing a hunk not in the diff: %s", text)
+	}
+	if f.edits != writes {
+		t.Error("a refused add wrote")
+	}
+	var added struct {
+		Tile    string   `json:"tile"`
+		State   string   `json:"state"`
+		Applied []string `json:"applied"`
+	}
+	out(t, s, token, "add_tile", map[string]any{"type": "api_change", "to": map[string]any{"edge": "first"}, "data": apiData("h_a408875b8eaa", "api.Handler")}, &added)
+	if added.Tile != "api_change" || added.State != "ready" || len(added.Applied) != 1 {
+		t.Fatalf("add with data: %+v", added)
+	}
+	shown, err := f.Shown(context.Background(), "acme/web", 13)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tile := shown.Document.Tiles[slices.IndexFunc(shown.Document.Tiles, func(t tiles.Tile) bool { return t.ID == "api_change" })]
+	if tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "api.Handler") || shown.Document.Layout.Entries[0].Tile != "api_change" {
+		t.Errorf("the added tile: %s %s, first %s", tile.State, tile.Data, shown.Document.Layout.Entries[0].Tile)
+	}
+	if text, failed := data(t, s, token, "add_tile", map[string]any{"type": "api_change"}); !failed || !strings.Contains(text, "already on the review") {
+		t.Errorf("adding it again: %s", text)
+	}
+	out(t, s, token, "add_tile", map[string]any{"type": "schema_change"}, &added)
+	if added.State != "filling" {
+		t.Errorf("add without data: %+v", added)
+	}
+	shown, _ = f.Shown(context.Background(), "acme/web", 13)
+	if i := slices.IndexFunc(shown.Document.Tiles, func(t tiles.Tile) bool { return t.ID == "schema_change" }); i < 0 || shown.Document.Tiles[i].State != tiles.StatePending {
+		t.Errorf("the tile being filled is not pending")
 	}
 }

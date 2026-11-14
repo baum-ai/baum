@@ -83,6 +83,9 @@ type Added struct {
 	Kind   string `json:"kind"`
 	Name   string `json:"name"`
 	Digest string `json:"digest"`
+	// Title is the type's title, which the host writes for the batch's
+	// summary while the version shown has no tile of the type yet.
+	Title string `json:"title,omitempty"`
 }
 
 // The operations.
@@ -468,7 +471,8 @@ func CheckOpShape(op Op) error {
 			return fmt.Errorf("changes_shown needs a count from 1 to %d", MaxChangesShown)
 		}
 	case OpAdd:
-		if op.Add == nil || op.Add.Kind != "library" || !plain(op.Add.Name) || len(op.Add.Name) > 64 || len(op.Add.Digest) > 80 {
+		if op.Add == nil || op.Add.Kind != "library" || !plain(op.Add.Name) || len(op.Add.Name) > 64 || len(op.Add.Digest) > 80 ||
+			utf8.RuneCountInString(op.Add.Title) > MaxComposedTitle || strings.ContainsAny(op.Add.Title, "\n\r") {
 			return errors.New("an add names a library tile type")
 		}
 		if op.Tile != "" && op.Tile != LibraryTileID(op.Add.Name) {
@@ -897,10 +901,21 @@ func CheckOp(doc *Document, op Op) string {
 		id := LibraryTileID(op.Add.Name)
 		entry, ok := entries[id]
 		switch {
-		case !ok || byID[id] == nil || byID[id].Type != TypeCustom:
-			return "Adding a tile that has to be filled is not available yet; show a hidden tile with show"
-		case entry.Group != GroupHidden:
+		case ok && byID[id] != nil && byID[id].Type != TypeCustom:
+			return fmt.Sprintf("%s is a tile of its own, not a library tile type", title(id))
+		case ok && entry.Group != GroupHidden:
 			return fmt.Sprintf("%s is already on the review; move it with move", title(id))
+		case ok:
+			return ""
+		}
+		library := 0
+		for _, tile := range doc.Tiles {
+			if tile.Type == TypeCustom {
+				library++
+			}
+		}
+		if library >= MaxLibraryTiles {
+			return fmt.Sprintf("The review already has %d library tiles, the most it can have; remove one first", MaxLibraryTiles)
 		}
 		return ""
 	}
@@ -1029,7 +1044,12 @@ func OpSummary(doc *Document, op Op) string {
 	case OpChangesShown:
 		line = fmt.Sprintf("Showing %d changes before folding", *op.Count)
 	case OpAdd:
-		line = fmt.Sprintf("Added %s", title(LibraryTileID(op.Add.Name)))
+		id := LibraryTileID(op.Add.Name)
+		name := title(id)
+		if name == id && op.Add.Title != "" {
+			name = op.Add.Title
+		}
+		line = fmt.Sprintf("Added %s", name)
 	}
 	return truncate(line, maxSummaryLine)
 }

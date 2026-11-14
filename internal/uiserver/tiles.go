@@ -98,7 +98,7 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 		if !ok {
 			return
 		}
-		layout, layoutKey := a.layoutOf(r.Context(), read.clone.Repository, read.key.Number)
+		state, fills, layoutKey := a.layoutState(r.Context(), read.clone.Repository, read.key.Number)
 		withLayout := func(key string) string {
 			if key == "" || layoutKey == "" {
 				return key
@@ -111,6 +111,13 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 			if !ok {
 				return
 			}
+			latest := read.n == 0
+			if !latest {
+				if number, _, err := read.store.Revision(r.Context(), read.key, 0); err == nil {
+					latest = number == version.Metadata.Version
+				}
+			}
+			layout := a.layoutFor(r.Context(), read.clone, read.key.Number, version, latest, state, fills)
 			var err error
 			if answer, err = tileview.Encode(tileview.BuildWith(version.Document, version.Composition, layout, tiles.Options{})); err != nil {
 				apiError(w, err)

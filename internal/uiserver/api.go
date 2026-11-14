@@ -145,6 +145,9 @@ type LocalAPI struct {
 	// change. Without it no layout applies and the layout routes report the
 	// capability unavailable.
 	Layouts *tilelayout.Service
+	// Fills fills the tiles a person added to a review that a version has
+	// no data for; nil leaves them pending.
+	Fills TileFiller
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.

@@ -526,7 +526,7 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 		// does, through the pages' own saves. The layout tools read and
 		// change the person's layout through the layout editor, never the
 		// reader.
-		layout := slices.Contains([]string{"tile_layout", "edit_tiles", "add_tile", "undo_tiles", "reset_tiles"}, tool)
+		layout := slices.Contains([]string{"tile_layout", "edit_tiles", "tile_type", "add_tile", "undo_tiles", "reset_tiles"}, tool)
 		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && !layout && !strings.HasPrefix(tool, "propose_") && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" && tool != "github_repositories" {
 			t.Errorf("%s declares no route", tool)
 		}

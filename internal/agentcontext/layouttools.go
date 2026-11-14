@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // The layout tools change the person's own tile layout of the pull request
@@ -37,6 +38,27 @@ type LayoutEditor interface {
 	Undo(ctx context.Context, repository string, number int) (LayoutChange, error)
 	// Reset returns to the generated layout, as a batch an undo takes back.
 	Reset(ctx context.Context, repository string, number int) (LayoutChange, error)
+	// Add adds a library tile type to the review as one batch, with the
+	// data the agent wrote for it (checked against the version's hunks and
+	// masked) or, without data, filled in the background.
+	Add(ctx context.Context, repository string, number int, add TileAdd) (TileAdded, error)
+}
+
+// TileAdd is an add_tile of a library type: its name, size, place and the
+// data the agent wrote, if any.
+type TileAdd struct {
+	Type string
+	Size tiles.Size
+	To   *tiles.Place
+	Data json.RawMessage
+}
+
+// TileAdded is what an add did: the tile's ID, "ready" when it shows its
+// data or "filling" while it is filled, and the layout's change.
+type TileAdded struct {
+	Tile   string
+	State  string
+	Change LayoutChange
 }
 
 // ShownLayout is a version's tiles as the person is shown them.
@@ -67,7 +89,7 @@ type LayoutRefusal struct {
 }
 
 // layoutPageTools are the layout tools, which the pull request page lists.
-var layoutPageTools = []string{"tile_layout", "edit_tiles", "add_tile", "undo_tiles", "reset_tiles"}
+var layoutPageTools = []string{"tile_layout", "edit_tiles", "tile_type", "add_tile", "undo_tiles", "reset_tiles"}
 
 // errNoLayouts is a daemon without a layout editor.
 var errNoLayouts = errors.New("tile layouts are not available in this baum")
@@ -157,7 +179,18 @@ type layoutView struct {
 	Rows            [][]string   `json:"rows"`
 	Tiles           []layoutTile `json:"tiles"`
 	ChangesShown    *int         `json:"changes_shown,omitempty"`
-	Note            string       `json:"note,omitempty"`
+	// Addable are the library tile types the review does not show yet,
+	// which add_tile adds.
+	Addable []addableType `json:"addable,omitempty"`
+	Note    string        `json:"note,omitempty"`
+}
+
+// addableType is a library tile type tile_layout lists as addable.
+type addableType struct {
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	UseWhen string `json:"use_when"`
+	Source  string `json:"source"`
 }
 
 type focusTile struct {
@@ -228,6 +261,11 @@ func viewOf(c CallContext, repository string, number int, shown ShownLayout) lay
 	for _, g := range doc.Layout.Groups {
 		if g.ID == tiles.GroupChanges && g.CollapseAfter != nil {
 			out.ChangesShown = new(*g.CollapseAfter)
+		}
+	}
+	for _, e := range library.All() {
+		if _, ok := byID[tiles.LibraryTileID(e.Definition.Name)]; !ok {
+			out.Addable = append(out.Addable, addableType{Type: e.Definition.Name, Title: e.Definition.Title, UseWhen: e.Definition.UseWhen, Source: "built-in"})
 		}
 	}
 	return out
@@ -343,11 +381,47 @@ func (s *Server) layoutTools() []Tool {
 			return s.edit(ctx, c, repository, number, ops)
 		},
 	}, {
+		Name: "tile_type",
+		Description: "A library tile type the person can add to the review on the pull request page they have open (tile_layout lists them under addable): its title, when it applies, what its glance shows, the instructions for filling its data and the JSON Schema the data must match. " +
+			"Read it before add_tile, then write the data yourself from the diff and the checkout you already have, and pass it to add_tile: that shows the tile at once and costs no extra run.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"type":{"type":"string","minLength":1,"maxLength":128,"description":"The type's name from tile_layout's addable, such as api_change."}},"required":["type"],"additionalProperties":false}`),
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			if _, _, err := s.layoutPull(c, false); err != nil {
+				return "", err
+			}
+			var a struct {
+				Type string `json:"type"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			e, ok := library.Find(a.Type)
+			if !ok {
+				return "", unknownType(a.Type)
+			}
+			schema, err := e.FillSchema()
+			if err != nil {
+				return "", err
+			}
+			return compactJSON(struct {
+				Type         string          `json:"type"`
+				Title        string          `json:"title"`
+				UseWhen      string          `json:"use_when"`
+				Glance       string          `json:"glance"`
+				Sizes        []tiles.Size    `json:"sizes"`
+				Instructions string          `json:"fill_instructions"`
+				Schema       json.RawMessage `json:"fill_schema"`
+				Note         string          `json:"note"`
+			}{e.Definition.Name, e.Definition.Title, e.Definition.UseWhen, e.Glance, e.Definition.Sizes, e.Definition.Fill, schema,
+				"Write data matching fill_schema from this pull request's diff and checkout; cite hunks by the IDs the diff tool gives. The host checks it, and every hunk it cites must be in the version shown. If nothing this type shows changes, write empty lists."})
+		},
+	}, {
 		Name: "add_tile",
-		Description: "Brings a tile the person removed back onto the review on the pull request page they have open, optionally at a size and a place, at once, as one undo step: type is the tile's id or type from tile_layout (context, media, a change's id). " +
-			"Adding a tile type the review does not have yet (one that has to be filled for this pull request) is not available yet: say so." + layoutRule,
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"type":{"type":"string","minLength":1,"maxLength":128,"description":"The tile's id, or its type for a tile of which the review has one."},` +
-			size + `,` + place + `},"required":["type"],"additionalProperties":false}`),
+		Description: "Adds a tile to the review on the pull request page the person has open, at once, as one undo step, optionally at a size and a place: a library tile type the review does not show yet (tile_layout's addable, such as api_change), or a tile the person removed, which it brings back. " +
+			"For a library type, first read tile_type and write its data yourself from the diff and checkout you have, then pass it as data: the tile shows at once. The host checks the data against the type's schema and this version's hunks and says where it does not fit, never changing anything then; fix it and call again. " +
+			"Without data the tile shows as being filled and baum fills it in the background, which costs a separate model run; it fills it again for later versions of the pull request." + layoutRule,
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"type":{"type":"string","minLength":1,"maxLength":128,"description":"A library type's name from tile_layout's addable, or a removed tile's id or type."},` +
+			size + `,` + place + `,"data":{"type":"object","description":"The tile's data, matching tile_type's fill_schema."}},"required":["type"],"additionalProperties":false}`),
 		Edits: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			repository, number, err := s.layoutPull(c, true)
@@ -355,23 +429,34 @@ func (s *Server) layoutTools() []Tool {
 				return "", err
 			}
 			var a struct {
-				Type string       `json:"type"`
-				Size tiles.Size   `json:"size"`
-				To   *tiles.Place `json:"to"`
+				Type string          `json:"type"`
+				Size tiles.Size      `json:"size"`
+				To   *tiles.Place    `json:"to"`
+				Data json.RawMessage `json:"data"`
 			}
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
 			}
+			name := strings.TrimSpace(a.Type)
 			shown, err := s.layouts.Shown(ctx, repository, number)
 			if err != nil {
 				return "", err
 			}
-			id, hidden, found := tileOfType(shown.Document, strings.TrimSpace(a.Type))
+			id, hidden, found := tileOfType(shown.Document, name)
+			if e, ok := library.Find(name); ok && !found {
+				added, err := s.layouts.Add(ctx, repository, number, TileAdd{Type: e.Definition.Name, Size: a.Size, To: a.To, Data: a.Data})
+				if err != nil {
+					return "", err
+				}
+				return s.addResult(ctx, c, repository, number, added)
+			}
 			switch {
 			case !found:
-				return "", fmt.Errorf("Adding a %s tile is not available yet: baum can bring back a tile the person removed, but cannot yet fill a tile this review does not have. tile_layout lists the review's tiles", strings.TrimSpace(a.Type))
+				return "", unknownType(name)
 			case !hidden:
 				return "", fmt.Errorf("%s is already on the review: edit_tiles moves or resizes it", tiles.TileTitle(shown.Document, id))
+			case len(a.Data) > 0:
+				return "", fmt.Errorf("%s is on the review already, removed: add it without data to bring it back", tiles.TileTitle(shown.Document, id))
 			}
 			ops := []tiles.Op{{Op: tiles.OpShow, Tile: id}}
 			if a.Size != "" {
@@ -430,6 +515,35 @@ func (s *Server) edit(ctx context.Context, c CallContext, repository string, num
 		return "", fmt.Errorf("Nothing changed: %s", strings.Join(reasons, "; "))
 	}
 	return s.result(ctx, c, repository, number, change)
+}
+
+// unknownType refuses a type that is neither a library type nor a tile of
+// the review, naming the library types.
+func unknownType(name string) error {
+	names := make([]string, 0, len(library.All()))
+	for _, e := range library.All() {
+		names = append(names, e.Definition.Name+" ("+e.Definition.Title+")")
+	}
+	return fmt.Errorf("No tile type %s: the library types are %s, and tile_layout lists the review's tiles", name, strings.Join(names, ", "))
+}
+
+// addResult answers an add: what applied, the tile and whether it shows its
+// data or is being filled, and the rows of the page after it.
+func (s *Server) addResult(ctx context.Context, c CallContext, repository string, number int, added TileAdded) (string, error) {
+	text, err := s.result(ctx, c, repository, number, added.Change)
+	if err != nil {
+		return "", err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &fields); err != nil {
+		return "", err
+	}
+	fields["tile"], _ = json.Marshal(added.Tile)
+	fields["state"], _ = json.Marshal(added.State)
+	if added.State == "filling" {
+		fields["note"], _ = json.Marshal("The tile shows as being filled until baum's fill lands, usually within a minute; tell the person.")
+	}
+	return compactJSON(fields)
 }
 
 // tileOfType finds a tile by its ID, or by its type when the review has one

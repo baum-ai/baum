@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -211,12 +212,23 @@ func (s *Service) Read(ctx context.Context, pr string) (State, error) {
 
 // Layout is a pull request's layout as the tile views apply it; none when
 // it cannot be read.
+//
+// It is the layout of a version being generated (a draft): each added tile
+// that generation is not filling shows its newest fill.
 func (s *Service) Layout(repository string, number int) tileview.Layout {
-	state, err := s.Read(context.Background(), Key(repository, number))
+	ctx := context.Background()
+	pr := Key(repository, number)
+	state, err := s.Read(ctx, pr)
 	if err != nil {
 		return tileview.Layout{}
 	}
-	return tileview.Layout{Overlay: state.Overlay}
+	layout := tileview.Layout{Overlay: state.Overlay}
+	if added := state.AddedTypes(); len(added) > 0 {
+		fills, _ := s.Fills(ctx, pr)
+		held, _ := AddedFor(added, fills, Version{Number: math.MaxInt32}, func(digest string) (json.RawMessage, bool) { return s.Definition(ctx, digest) })
+		layout.Added = held.Added
+	}
+	return layout
 }
 
 // errUnchanged is a write whose every op was refused: nothing is saved.
@@ -353,8 +365,10 @@ func (s *Service) write(ctx context.Context, pr string, change func(o *tiles.Ove
 	var state State
 	refused := false
 	err = appdb.Transact(ctx, db, func(conn *sql.Conn) error {
-		if _, err := conn.ExecContext(ctx, schema); err != nil {
-			return err
+		for _, statement := range []string{schema, fillsSchema, definitionsSchema} {
+			if _, err := conn.ExecContext(ctx, statement); err != nil {
+				return err
+			}
 		}
 		var revision int64
 		var value []byte
@@ -386,6 +400,10 @@ ON CONFLICT(pr) DO UPDATE SET revision = excluded.revision, updated = excluded.u
 			return err
 		}
 		if _, err := conn.ExecContext(ctx, `DELETE FROM tile_overlays WHERE pr NOT IN (SELECT pr FROM tile_overlays ORDER BY updated DESC, pr LIMIT ?)`, Keep); err != nil {
+			return err
+		}
+		// The fills of a pull request go with its overlay.
+		if _, err := conn.ExecContext(ctx, `DELETE FROM tile_fills WHERE pr NOT IN (SELECT pr FROM tile_overlays)`); err != nil {
 			return err
 		}
 		state = State{PR: pr, Revision: revision + 1, Overlay: &next}

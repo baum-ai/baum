@@ -410,7 +410,7 @@ func TestCheckOpAndSummary(t *testing.T) {
 		{tiles.Op{Op: tiles.OpPin, Tile: "decisions"}, "Decisions is already pinned", ""},
 		{tiles.Op{Op: tiles.OpUnpin, Tile: "decisions"}, "", "Unpinned Decisions"},
 		{tiles.Op{Op: tiles.OpChangesShown, Count: ptr(2)}, "", "Showing 2 changes before folding"},
-		{tiles.Op{Op: tiles.OpAdd, Add: &tiles.Added{Kind: "library", Name: "api_changes"}}, "not available yet", ""},
+		{tiles.Op{Op: tiles.OpAdd, Add: &tiles.Added{Kind: "library", Name: "api_changes"}}, "", "Added api_changes"},
 		{tiles.Op{Op: "delete", Tile: "risks"}, "Unknown op", ""},
 	} {
 		got := tiles.CheckOp(shown, tc.op)
