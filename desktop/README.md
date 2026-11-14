@@ -776,9 +776,11 @@ doing anything (`src/zoom.rs`).
   no longer ask for a window, through the `open` action of
   `github_connection`, which opens that fixed address whatever the page
   passes.
-- Before the page's own scripts run, the main window defines
-  `window.__BAUM_DESKTOP__`, a frozen object that cannot be replaced
-  (`src/declaration.rs`): `tileFrames` says whether the page may embed
+- Before the page's own scripts run, the main window (and the check window,
+  below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
+  replaced (`src/declaration.rs`), with two fields. `checkWindow` says whether
+  the page can open the tile check window; it is `true` on Linux only (see
+  Tile check window). `tileFrames` says whether the page may embed
   sandboxed frames of untrusted content served from the daemon's origin. It
   is `true` on Linux and macOS, where the shell refuses every navigation of a
   frame away from the app and Tauri injects its scripts, including the
@@ -802,7 +804,9 @@ doing anything (`src/zoom.rs`).
   offered levels, and the updater's (`update_state`, `check_for_updates`,
   `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
   read the state, start a check, install only an update the app has already
-  downloaded and verified, and record that a notice was closed. They can call no other Tauri command or
+  downloaded and verified, and record that a notice was closed. It also
+  allows `open_check_window` and `close_check_window` (see Tile check
+  window). They can call no other Tauri command or
   plugin.
   `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled
@@ -830,6 +834,68 @@ directories it writes only what the user installs through setup or Settings: the
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
 agent marketplace plugin installations. Notifications use the operating system's
 notification service (`notify-rust`) only from Rust.
+
+## Tile check window
+
+The daemon's page checks a custom tile by rendering it in a second window,
+`tile-check` (`src/check_window.rs`), so that a tile whose script never
+yields stalls that window and not the main one. The person never sees it:
+it is hidden, 1280×900, has no decorations, cannot take focus and stays out
+of the taskbar. WebKitGTK still runs a hidden window's page, but with timers
+slowed to about once a second and no animation frames.
+
+- The main window's daemon page opens it with `open_check_window` (no
+  arguments; it does nothing when the window is open) and closes it with
+  `close_check_window` (no arguments), when a check hangs or after the window
+  has been idle. Only the main window can call them. The shell also closes it
+  when the main window starts loading another page and when the app detaches
+  from the daemon.
+- It loads `/s/<namespace>/?page=tile-check` at the origin of the daemon page
+  the main window shows, under the main window's navigation rules
+  (`navigation::decide`, without the setup screen). It never opens the
+  browser: every request for a new window is refused.
+- Its capability, `tile-check`, names only this window and grants no
+  command: the page reports its results to the daemon over HTTP. It shares
+  the main window's cookies and storage.
+- WebKitGTK gives it a web process of its own. Destroying a window leaves a
+  spinning web process at full CPU, so on Linux `close_check_window` first
+  ends the window's web process (`webkit_web_view_terminate_web_process`,
+  through the `webkit2gtk` crate at the version wry uses) and then destroys
+  the window.
+- It is offered (`checkWindow`) on Linux only. On macOS WKWebView likely gives
+  it a separate web content process, but has no public call to end one, so
+  until that is checked the app runs its checks in the main window there. On
+  Windows the page embeds no tile frames, so there is nothing to check.
+
+`just desktop::check-window-check` checks it on Linux: it builds a small Tauri
+app with `src/check_window.rs`, `src/navigation.rs`, `src/declaration.rs`, the
+`daemon-pages` capability (granting only the two commands) and the
+`tile-check` capability (`tests/check-window`), under a virtual display in
+Docker. A mock daemon's main page opens the window, whose page holds a
+sandboxed frame that spins. It fails unless the check window runs in a web
+process other than the main window's, the main window's 100 ms heartbeat
+never stops for a second while the frame spins, the spinning process's CPU
+use drops within a second of `close_check_window` and the process is gone a
+second later, a second open while the window is open loads nothing, a window
+opened again after closing works, and the check page can call neither
+command, sees the same declaration, and cannot navigate to another site. It
+takes a few minutes and is not part of CI.
+
+Before turning `checkWindow` on for macOS, a person checks on a Mac, with a
+debug build and a page that calls the commands from the Web Inspector:
+
+1. After `open_check_window`, Activity Monitor shows a second web content
+   process for the app.
+2. In the check window's page (open its inspector from the Develop menu),
+   `setTimeout(() => { for (;;) {} }, 1000)`: the main window stays
+   responsive and its timers keep running.
+3. `close_check_window`: the spinning process's CPU use drops within a second
+   and the process ends.
+4. A hidden (or out of sight) check window still runs timers, and one opened
+   again after closing works.
+
+On Windows the check window stays off with tile frames (`tileFrames`); the
+same steps apply before either is turned on there.
 
 ### Checking navigation
 

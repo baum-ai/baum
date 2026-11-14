@@ -1851,8 +1851,8 @@ The daemon's pages can call a few of the app's commands, granted to pages of
 folder picker, reading and changing the `baum` command and the user-wide agent
 hooks (as Settings does), the window's zoom, and reading, checking for,
 installing and dismissing app updates (only an update the app has already
-downloaded and verified installs). They can call no other command and no
-plugin. Only the page itself can call them: on macOS and Linux the app's
+downloaded and verified installs), and opening and closing the tile check
+window. They can call no other command and no plugin. Only the page itself can call them: on macOS and Linux the app's
 command bridge is injected into the page's main frame only, so a frame
 embedded in it, even one served from the daemon's origin, cannot reach a
 command; on Linux this is checked with a sandboxed frame trying every way the
@@ -1877,6 +1877,13 @@ is off until you turn it on; it adds one per-user entry (an XDG autostart file,
 a LaunchAgent or a Run key value) that starts the app hidden, which starts
 your daemon. Turn it off in the tray or the window's Background menu, which
 removes the entry.
+
+On Linux the daemon's page checks a custom tile in a hidden second window,
+the tile check window, which runs in a web process of its own. It loads only
+the attached daemon's check page, under the main window's navigation rules,
+opens no browser, and its page can call no app command. A tile that never
+yields there stalls only that window, and closing it ends its web process. On
+macOS and Windows there is no check window.
 
 A script that never yields, in the page or in a frame it embeds, freezes the
 whole window: the webview runs a page and its frames in one process, and the

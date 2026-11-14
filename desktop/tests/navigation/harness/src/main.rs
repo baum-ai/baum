@@ -35,7 +35,7 @@ fn main() {
         .setup(move |app| {
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.clone()))
                 .inner_size(1280.0, 900.0)
-                .initialization_script(declaration::script(declaration::TILE_FRAMES))
+                .initialization_script(declaration::script(declaration::SHELL))
                 .on_navigation(move |u| {
                     let decision = navigation::decide(u, Some(&daemon), false);
                     eprintln!("NAV {u} -> {decision:?}");

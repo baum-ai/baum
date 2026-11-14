@@ -16,7 +16,8 @@ mkdir -p "$work/harness/capabilities"
 jq 'del(."$schema") | .permissions = ["allow-record-call"]' \
     "$desktop/capabilities/daemon-pages.json" > "$work/harness/capabilities/daemon-pages.json"
 cp "$desktop/Cargo.lock" "$work/harness/Cargo.lock"
-mkdir -p "$work/harness/icons"
+mkdir -p "$work/harness/icons" "$work/harness/dist"
+echo '<!doctype html>' > "$work/harness/dist/index.html"
 cp "$desktop/icons/icon.png" "$work/harness/icons/icon.png"
 cargo build --quiet --manifest-path "$work/harness/Cargo.toml" --target-dir "$work/target"
 Xvfb :99 -screen 0 1400x1000x24 -nolisten tcp 2>/dev/null &

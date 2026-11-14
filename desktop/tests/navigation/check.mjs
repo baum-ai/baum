@@ -128,7 +128,7 @@ for (const c of CASES) {
     const { page: seen, frame } = reports;
     if (!commands.some((l) => l.endsWith("from=page")) || seen?.invoke !== "ok called")
       problems.push(`the page could not call the command: ${seen?.invoke}`);
-    if (seen?.declaration !== '{"tileFrames":true}' || !seen.frozen || seen.afterAssignment !== seen.declaration)
+    if (seen?.declaration !== '{"tileFrames":true,"checkWindow":true}' || !seen.frozen || seen.afterAssignment !== seen.declaration)
       problems.push(`the page's declaration is wrong: ${JSON.stringify(seen)}`);
     if (!frame) problems.push("the frame reported nothing");
     else if (frame.__BAUM_DESKTOP__ !== "undefined") problems.push(`the frame sees the declaration: ${frame.__BAUM_DESKTOP__}`);

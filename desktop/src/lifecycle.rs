@@ -98,6 +98,10 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     if window.label() == crate::panel::LABEL {
         return crate::panel::on_window_event(window, event);
     }
+    // Never shown, so never closed or focused by the person.
+    if window.label() == crate::check_window::LABEL {
+        return;
+    }
     let app = window.app_handle();
     match event {
         WindowEvent::CloseRequested { api, .. } => {
