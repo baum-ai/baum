@@ -26,3 +26,15 @@ e2e-webkit:
 tile-kit-screens:
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --rm --no-deps -e BAUM_KIT_COMPOSE_SRC=/oss/app/e2e/tile-kit -e BAUM_KIT_COMPOSE_OUT=/oss/app/test-results/tile-kit/frames oss-test go test ./tiles/kit -run '^TestComposeFiles$' -count=1 -v
     {{ heavy }} sh -ec 'TILE_KIT_SCREENSHOTS=1 pnpm exec playwright test -c playwright.tile-kit.config.ts'
+
+# Check tile type directories (the library's layout: type.json, fill.md,
+# schema.json, tile.html, samples/) as the built-in library's are checked,
+# then draw every sample and the schema's edge samples in sandboxed frames:
+# glances at each declared size and on a phone, details in the pane and on a
+# phone, light and dark. dirs are relative to oss/, comma separated; the
+# default is the library. Pictures, a glance contact sheet per type and
+# report.json land in test-results/tile-types. TILE_TYPE_SAMPLES (comma
+# separated sample names) narrows the pictures. See tiles/kit/GUIDE.md.
+tile-type-screens dirs="tiles/library/schema_change,tiles/library/api_change":
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --rm --no-deps -e BAUM_TILE_DIRS="{{ dirs }}" -e BAUM_TILE_OUT=/oss/app/test-results/tile-types oss-test sh -ec 'rm -rf app/test-results/tile-types && go test ./tiles/library -run "^TestRenderDirs$" -count=1 -v'
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/app -e TILE_TYPE_SAMPLES ui-test sh -ec 'TILE_TYPE_SCREENSHOTS=1 pnpm exec playwright test -c playwright.tile-types.config.ts'

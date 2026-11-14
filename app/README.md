@@ -2230,6 +2230,14 @@ frames under the frame route's headers, glance at each card size and detail at
 (`e2e/tile-kit-screens.spec.ts`, only with `TILE_KIT_SCREENSHOTS=1`); it also
 checks that a throwing, network-using, failing and height-looping tile is
 reported from a real frame. `pnpm tile-kit` regenerates the kit's tokens.
+`just local_app::tile-type-screens [dirs]` checks tile type directories (the
+tile library's by default; see `../tiles/kit/GUIDE.md`) with the Go library
+check, then draws every sample and the schema's minimal and maximal samples:
+glances at each declared size and on a phone, details at 720 and 360px, light
+and dark, into `test-results/tile-types` with a glance contact sheet per type
+(`e2e/tile-type-screens.spec.ts`, only with `TILE_TYPE_SCREENSHOTS=1`). It
+fails on a script error, sideways overflow, an unresolved citation or a glance
+that overflows its box (the maximal sample only warns).
 
 Real reviews: a review page is designed against real data with pictures of
 saved reviews from a dataset the person supplies, which is a directory of
