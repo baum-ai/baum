@@ -108,6 +108,7 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	concurrency := fs.Int("concurrency", 4, "calls at once")
 	limit := fs.Int("limit", 0, "judge at most this many cases (0 is all)")
 	only := fs.String("only", "", "only the cases whose id contains this text")
+	differing := fs.Bool("differing", false, "only the cases whose two layouts differ")
 	repeat := fs.Float64("repeat", 0.1, "ask again this share of the calls, in the same order, to measure the judge's noise")
 	seed := fs.Uint64("seed", 1, "seed choosing the repeated calls")
 	phone := fs.Bool("phone", true, "show the judge the phone pictures too")
@@ -126,7 +127,7 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	}
 	cases := 0
 	for _, id := range p.Cases() {
-		if strings.Contains(id, *only) {
+		if strings.Contains(id, *only) && (!*differing || p.Differ(id)) {
 			cases++
 		}
 	}
@@ -157,7 +158,7 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 		reportName = screens.JudgeName(p, backendName, *model)
 	}
 	_, _ = fmt.Fprintf(stdout, "judging %d cases of %s against %s with %s %s, both orders (about %d calls)\n", cases, p.X.Label(), p.Y.Label(), backendName, *model, calls)
-	report, err := screens.Judge(ctx, p, screens.JudgeOptions{Completer: completer, Backend: backendName, Model: *model, Concurrency: *concurrency, Limit: *limit, Only: *only,
+	report, err := screens.Judge(ctx, p, screens.JudgeOptions{Completer: completer, Backend: backendName, Model: *model, Concurrency: *concurrency, Limit: *limit, Only: *only, Differing: *differing,
 		Repeat: *repeat, Seed: *seed, Phone: *phone, Progress: stdout, Timeout: *timeout,
 		Price: func(m string, usage agent.Usage) *float64 {
 			return prices.BackendOutcomeCost(backendName, m, agent.Outcome{Model: m, Usage: usage, Calls: 1})

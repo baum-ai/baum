@@ -305,7 +305,9 @@ or `codex`, `--model`, `--effort`) with the developer's login, as `replay`
 does: `agent.CompleteRequest.Images` passes the pictures, which Claude Code
 reads as image blocks of one stream-json message and Codex through
 `--image`. `--max-cost-usd` refuses a run whose estimate (calls times
-`--cost-per-call`) is above it. `replay judge agree` compares two reports of
+`--cost-per-call`) is above it. `--differing` judges only the cases whose two
+layouts differ (a composition that is not its template's, or two runs'
+compositions that are not the same). `replay judge agree` compares two reports of
 the same pairing, such as two model families.
 
 **Owner labels.** `replay labels make` writes a labelling set into `--out`:

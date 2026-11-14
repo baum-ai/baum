@@ -218,6 +218,8 @@ type JudgeOptions struct {
 	// ids that contain it.
 	Limit int
 	Only  string
+	// Differing judges only the cases whose two layouts differ (Differ).
+	Differing bool
 	// Repeat asks again, in the same order, this share of the judgements,
 	// chosen with Seed, to measure the judge's noise.
 	Repeat float64
@@ -256,7 +258,7 @@ func Judge(ctx context.Context, p Pairing, o JudgeOptions) (Report, error) {
 		RubricVersion: RubricVersion, RubricDigest: hex.EncodeToString(digest[:]), StartedAt: time.Now().UTC().Format(time.RFC3339), Pairs: map[string]PairVerdict{}}
 	var ids []string
 	for _, id := range p.Cases() {
-		if strings.Contains(id, o.Only) && (o.Limit == 0 || len(ids) < o.Limit) {
+		if strings.Contains(id, o.Only) && (o.Limit == 0 || len(ids) < o.Limit) && (!o.Differing || p.Differ(id)) {
 			ids = append(ids, id)
 		}
 	}

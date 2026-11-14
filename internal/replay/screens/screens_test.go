@@ -209,6 +209,15 @@ func TestJudgeAsksBothOrdersAndCountsVerdicts(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 
+	// Only the cases whose layouts differ: the last case's are the same.
+	report, err = screens.Judge(context.Background(), p, screens.JudgeOptions{Completer: &pictureJudge{prefer: screens.Composed}, Phone: true, Differing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := report.Pairs["case-e"]; ok || report.Summary.Pairs != 4 {
+		t.Fatalf("%+v", report.Summary)
+	}
+
 	// A pair whose call failed is left out, and the run goes on.
 	report, err = screens.Judge(context.Background(), p, screens.JudgeOptions{Completer: &pictureJudge{prefer: screens.Template, failOn: "case-b"}, Phone: true})
 	if err != nil {

@@ -159,6 +159,26 @@ func sizeRank(size string) int {
 	return slices.Index([]string{"xs", "s", "m", "l", "xl"}, size)
 }
 
+// Differ reports whether a case's two layouts differ: a run's composition
+// from its template, as its compose record says, or two runs' compositions.
+func (p Pairing) Differ(id string) bool {
+	if p.X.Run == p.Y.Run {
+		return differs(p.X.Run, id)
+	}
+	layout := func(run *Run) string {
+		raw, err := os.ReadFile(filepath.Join(run.Dir, "cases", id, "composition.json"))
+		if err != nil {
+			return ""
+		}
+		var c struct {
+			Layout json.RawMessage `json:"layout"`
+		}
+		_ = json.Unmarshal(raw, &c)
+		return string(c.Layout)
+	}
+	return layout(p.X.Run) != layout(p.Y.Run)
+}
+
 // differs reports whether a run's composition of a case differs from its
 // template, as its compose record says.
 func differs(run *Run, id string) bool {
