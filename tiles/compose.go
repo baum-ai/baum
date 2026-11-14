@@ -1334,9 +1334,9 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 		}
 	}
 	hidden := map[string]bool{}
-	named := RecommendedChanges(doc)
+	must := mustSeeOf(doc)
 	for _, id := range n.Layout.Hidden {
-		hidden[id] = id != TypeOverview && (id != TypeRisks || !mustShowRisks(doc)) && !slices.Contains(named, id)
+		hidden[id] = !must.kept(id)
 	}
 	var entries, last []Entry
 	for _, entry := range n.Layout.Entries {
@@ -1368,7 +1368,7 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 	if showRecommended(doc) {
 		Arrange(doc)
 	}
-	if n.Layout.Edited && keepRecommendedOnLanding(doc, named) {
+	if n.Layout.Edited && keepRecommendedOnLanding(doc, must) {
 		Arrange(doc)
 	}
 	return doc, nil
@@ -1377,10 +1377,10 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 // keepRecommendedOnLanding brings a change the recommendation names, left
 // off the landing page by a person's edit (moved past it, outside the
 // changes group), back to its front. It reports whether it moved any.
-func keepRecommendedOnLanding(doc *Document, named []string) bool {
+func keepRecommendedOnLanding(doc *Document, must mustBeSeen) bool {
 	layout := doc.Layout
 	var stray []string
-	for _, id := range named {
+	for _, id := range must.named {
 		at := slices.IndexFunc(layout.Entries, func(e Entry) bool { return e.Tile == id })
 		if at >= 0 && layout.Entries[at].Group != GroupHidden && layout.Entries[at].Group != GroupChanges && !onLanding(layout, id) {
 			stray = append(stray, id)
@@ -1390,7 +1390,7 @@ func keepRecommendedOnLanding(doc *Document, named []string) bool {
 		return false
 	}
 	doc.Layout.Entries = frontFirst(layout.Entries, func(e Entry) bool {
-		return e.Pin || e.Tile == TypeOverview || e.Tile == TypeRisks && mustShowRisks(doc) || slices.Contains(stray, e.Tile)
+		return e.Pin || slices.Contains(stray, e.Tile) || must.kept(e.Tile) && !slices.Contains(must.named, e.Tile)
 	})
 	doc.Layout.Landing = Landing(doc.Layout)
 	return true

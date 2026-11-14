@@ -159,11 +159,11 @@ func (cm *composer) guardEvidence(c *Composition) {
 	// in front of those pushes them, and the rows they add, off. The
 	// evidence then takes the place of a tile the landing page shows that
 	// need not be seen, the last first, and that tile takes the evidence's.
-	named, leads := RecommendedChanges(doc), leadingLibrary(doc)
+	must := mustSeeOf(doc)
 	visible := Visible(doc.Layout)
 	for i := len(doc.Layout.Entries) - 1; i >= 0; i-- {
 		other := doc.Layout.Entries[i]
-		if !visible[i] || other.Tile == TypeOverview || other.Tile == TypeEvidence || mustSee(doc, other, named, leads) {
+		if !visible[i] || other.Tile == TypeOverview || other.Tile == TypeEvidence || must.stands(other) {
 			continue
 		}
 		to := slices.IndexFunc(entries, func(e Entry) bool { return e.Tile == other.Tile })
@@ -209,11 +209,51 @@ func (cm *composer) guardLoneFeatured(c *Composition) {
 	}
 }
 
+// mustBeSeen is what a document's page must show, in two strengths. The
+// hard rules (kept) hold in every layout, a person's edited one included: the
+// overview, the risks tile while it ranks an active critical or high risk and
+// a change the recommendation names are never hidden and stay on the landing
+// page (build, ApplyOverlay, CheckOp). The guard rails (stands) add the tiles
+// that may stand in for changes on the first screen and must not be pushed
+// off it: a pinned tile, the evidence with EvidenceGapsShown gaps and a
+// library tile with a destructive or breaking item (leads).
+type mustBeSeen struct {
+	severe bool
+	gaps   bool
+	named  []string
+	leads  map[string]bool
+}
+
+func mustSeeOf(doc *Document) mustBeSeen {
+	return mustBeSeen{
+		severe: mustShowRisks(doc),
+		gaps:   evidenceGaps(doc) >= EvidenceGapsShown,
+		named:  RecommendedChanges(doc),
+		leads:  leadingLibrary(doc),
+	}
+}
+
+// kept reports whether a tile is held by the hard rules.
+func (m mustBeSeen) kept(id string) bool {
+	return id == TypeOverview || id == TypeRisks && m.severe || slices.Contains(m.named, id)
+}
+
+// stands reports whether an entry may stand in for changes on the first
+// screen: every tile the hard rules keep but the overview, which every
+// layout shows first, and those the guard rails add.
+func (m mustBeSeen) stands(entry Entry) bool {
+	return entry.Tile != TypeOverview && m.kept(entry.Tile) ||
+		entry.Pin ||
+		entry.Tile == TypeEvidence && m.gaps ||
+		m.leads[entry.Tile]
+}
+
 // leadingLibrary names a document's custom tiles with a destructive or
 // breaking item (Leads): a library tile that loses data or breaks callers is
 // a tile that must be seen, as a severe risk is. Other library tiles and
 // authored tiles are not: a layout that takes a first-screen place from a
-// change for one is held to the template's.
+// change for one is held to the template's. It is a guard rail, not a hard
+// rule: a person may hide such a tile or move it down.
 func leadingLibrary(doc *Document) map[string]bool {
 	out := map[string]bool{}
 	for _, tile := range doc.Tiles {
@@ -222,19 +262,6 @@ func leadingLibrary(doc *Document) map[string]bool {
 		}
 	}
 	return out
-}
-
-// mustSee reports whether an entry is a tile that may stand in for changes
-// on the first screen and must not be pushed off it: a pinned tile, the risks
-// tile while it ranks a severe risk, a change the recommendation names (named),
-// the evidence with gaps, or a library tile with a destructive or breaking
-// item (leads).
-func mustSee(doc *Document, entry Entry, named []string, leads map[string]bool) bool {
-	return entry.Pin ||
-		entry.Tile == TypeRisks && mustShowRisks(doc) ||
-		slices.Contains(named, entry.Tile) ||
-		entry.Tile == TypeEvidence && evidenceGaps(doc) >= EvidenceGapsShown ||
-		leads[entry.Tile]
 }
 
 // firstScreen sums what a document's first screen shows: its current
@@ -251,8 +278,7 @@ func firstScreenOf(doc *Document) firstScreen {
 	for _, change := range doc.Changes {
 		current[change.ID] = currentChange(change)
 	}
-	named := RecommendedChanges(doc)
-	leads := leadingLibrary(doc)
+	must := mustSeeOf(doc)
 	out := firstScreen{others: map[string]bool{}}
 	visible := Visible(doc.Layout)
 	for i, entry := range doc.Layout.Entries {
@@ -269,7 +295,7 @@ func firstScreenOf(doc *Document) firstScreen {
 			if current[entry.Tile] {
 				out.changes++
 			}
-			if mustSee(doc, entry, named, leads) {
+			if must.stands(entry) {
 				out.others[entry.Tile] = true
 			}
 		}

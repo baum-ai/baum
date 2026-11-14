@@ -1091,8 +1091,10 @@ edits made on one version carry to the next and those whose tile vanished
 fall away. When any op applies, the layout is marked `edited`, with the tiles
 the person resized in `resized`: both are host-only, never stored
 (normalising drops them, as it drops `hidden`). An edited layout is the
-person's, so the guard rails leave it as it is, and a row holding a tile they
-resized is not grown to fill; everything else of `Compose` holds whatever the
+person's, so the guard rails leave it as it is (a pinned tile, evidence with
+gaps and a library tile with a destructive or breaking item are guard rails,
+not hard rules: a person may move them down or hide them), and a row holding a
+tile they resized is not grown to fill; everything else of `Compose` holds whatever the
 overlay, as listed above, and `Arrange` still puts pins first and keeps the
 overview and a severe risks tile on the landing page. With no op to apply the
 composition comes back unchanged, so an empty overlay serves today's answer.

@@ -613,12 +613,13 @@ type replay struct {
 	tiles     map[string]*Tile
 	obsolete  map[string]bool
 	groupable map[string]bool
-	// named are the changes the recommendation names, which stay shown.
-	named []string
+	// must is what the page must show: the hard rules hold in a person's
+	// edits.
+	must mustBeSeen
 }
 
 func newReplay(doc *Document, c *Composition) *replay {
-	r := &replay{doc: doc, named: RecommendedChanges(doc), resized: map[string]bool{}, tiles: map[string]*Tile{}, obsolete: map[string]bool{}, groupable: map[string]bool{}}
+	r := &replay{doc: doc, must: mustSeeOf(doc), resized: map[string]bool{}, tiles: map[string]*Tile{}, obsolete: map[string]bool{}, groupable: map[string]bool{}}
 	for i := range doc.Tiles {
 		r.tiles[doc.Tiles[i].ID] = &doc.Tiles[i]
 	}
@@ -679,11 +680,6 @@ func (r *replay) missing(id string) DropReason {
 	return DropGone
 }
 
-// mustShow reports whether a tile may never be hidden.
-func (r *replay) mustShow(id string) bool {
-	return id == TypeOverview || id == TypeRisks && mustShowRisks(r.doc) || slices.Contains(r.named, id)
-}
-
 func (r *replay) apply(op Op, added []LibraryTile) DropReason {
 	if CheckOpShape(op) != nil {
 		return DropInvalid
@@ -705,7 +701,7 @@ func (r *replay) apply(op Op, added []LibraryTile) DropReason {
 		if r.index(op.Tile) < 0 {
 			return r.missing(op.Tile)
 		}
-		if r.mustShow(op.Tile) {
+		if r.must.kept(op.Tile) {
 			return DropKept
 		}
 		if !slices.Contains(r.hidden, op.Tile) {
@@ -748,7 +744,7 @@ func (r *replay) move(id string, to Place) DropReason {
 		}
 		return DropAnchorGone
 	}
-	if to.Edge == EdgeLast && slices.Contains(r.named, id) {
+	if to.Edge == EdgeLast && slices.Contains(r.must.named, id) {
 		return DropKept
 	}
 	entry := r.entries[at]
@@ -869,18 +865,18 @@ func CheckOp(doc *Document, op Op) string {
 	unknown := func(id string) string {
 		return fmt.Sprintf("No tile %s on this review; tile_layout lists them", id)
 	}
-	severe := mustShowRisks(doc)
-	named := RecommendedChanges(doc)
+	must := mustSeeOf(doc)
 	keeps := func(id string) string {
-		switch {
-		case id == TypeOverview:
-			return "The overview always stays on the landing page"
-		case id == TypeRisks && severe:
-			return "The risks tile stays on the landing page while it lists a critical or high risk"
-		case slices.Contains(named, id):
-			return "baum's recommendation points at this change, so it stays on the page"
+		if !must.kept(id) {
+			return ""
 		}
-		return ""
+		switch id {
+		case TypeOverview:
+			return "The overview always stays on the landing page"
+		case TypeRisks:
+			return "The risks tile stays on the landing page while it lists a critical or high risk"
+		}
+		return "baum's recommendation points at this change, so it stays on the page"
 	}
 	if op.Op == OpChangesShown {
 		group := false
