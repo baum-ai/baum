@@ -1,9 +1,11 @@
 package uiserver
 
 import (
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles/kit"
@@ -27,12 +29,15 @@ var framePath = regexp.MustCompile(`^/tile-frames/[0-9a-f]{64}$`)
 //   - The method is GET or HEAD: nothing else reads a document.
 //   - Sec-Fetch-Dest is iframe and Sec-Fetch-Mode navigate: the request
 //     loads a frame. A script's fetch, an <object> or <embed>, a top-level
-//     page or a client that sends no fetch metadata (anything but a browser
-//     loading a frame) is refused, so the document is never a top-level page
-//     on the app's origin, never read as data by another page, and never
-//     handed to a local process that did not authenticate. The document's own
-//     CSP sandbox makes it opaque-origin wherever it is loaded; these checks
-//     keep it from being loaded anywhere else at all.
+//     page or a client that sends no fetch metadata is refused, so a browser
+//     never shows the document as a top-level page on the app's origin and
+//     another page never reads it as data. The document's own CSP sandbox
+//     makes it opaque-origin wherever it is loaded; these checks keep a
+//     browser from loading it anywhere but a frame. They are not
+//     authentication: a local process that knows a digest can send the three
+//     headers itself and read that type's HTML (never a tile's data, which is
+//     not in the document). A request without them is counted and logged at
+//     debug level, so a webview that omits them can be diagnosed.
 //   - Sec-Fetch-Site is same-origin: a document of the daemon's own origin
 //     started the navigation. Under the Host check those are the app and the
 //     launch and status pages; a tile's frame is opaque, so its requests are
@@ -71,9 +76,18 @@ func serveFrame(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// framesWithoutMetadata counts frame requests that carried none of the
+// Sec-Fetch-* headers.
+var framesWithoutMetadata atomic.Int64
+
 // frameDocument applies serveFrame's checks and returns the document.
 func frameDocument(r *http.Request) ([]byte, bool) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return nil, false
+	}
+	if r.Header.Get("Sec-Fetch-Dest") == "" && r.Header.Get("Sec-Fetch-Mode") == "" && r.Header.Get("Sec-Fetch-Site") == "" {
+		framesWithoutMetadata.Add(1)
+		slog.Debug("tile frame request without fetch metadata; the webview may not send Sec-Fetch-* headers")
 		return nil, false
 	}
 	if r.Header.Get("Sec-Fetch-Dest") != "iframe" || r.Header.Get("Sec-Fetch-Mode") != "navigate" || r.Header.Get("Sec-Fetch-Site") != "same-origin" {

@@ -138,6 +138,11 @@ func TestFrameRouteRefusesWithOneAnswer(t *testing.T) {
 	if reference.Code != 404 {
 		t.Fatalf("unknown digest: %d", reference.Code)
 	}
+	// A refusal carries the server's own policy, never the frame's.
+	if policy := request(t, s, "GET", "/", "", "", "", "", "").Header().Values("Content-Security-Policy"); !reflect.DeepEqual(reference.Header().Values("Content-Security-Policy"), policy) ||
+		strings.Contains(policy[0], "sandbox") || !strings.Contains(policy[0], "frame-ancestors 'none'") {
+		t.Fatalf("a refusal's policy %q, the server's %q", reference.Header().Values("Content-Security-Policy"), policy)
+	}
 	tileview.FrameRegistry().MarkHung(hung.Digest)
 	refused := []struct {
 		name, method, target string
@@ -187,6 +192,14 @@ func TestFrameRouteRefusesWithOneAnswer(t *testing.T) {
 		if len(w.Result().Cookies()) != 0 {
 			t.Errorf("%s: set a cookie", tc.name)
 		}
+	}
+	// A request without any fetch metadata is counted, for a webview that
+	// omits it; one that sends some is not.
+	before := framesWithoutMetadata.Load()
+	frameRequest(t, s, "GET", path, map[string]string{"Sec-Fetch-Dest": "", "Sec-Fetch-Mode": "", "Sec-Fetch-Site": ""})
+	frameRequest(t, s, "GET", path, map[string]string{"Sec-Fetch-Site": "cross-site"})
+	if got := framesWithoutMetadata.Load() - before; got != 1 {
+		t.Errorf("%d requests counted without fetch metadata", got)
 	}
 	// The Host check still comes first.
 	r := httptest.NewRequest("GET", s.Origin()+path, nil)
