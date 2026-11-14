@@ -1495,10 +1495,13 @@ referrerpolicy="no-referrer" allow="" title="<tile title>">`; never
   `keydown`, so the page's own keys (Escape and `u` back, the arrows and
   brackets stepping) act on it. `open` is ignored: only a glance would send
   it, and a glance is inert. A glance takes no focus: it is under its card's
-  link with `tabindex=-1`. When the page's window loses focus to a frame
-  the reader did not give it to (a glance, or a detail without a Tab press
-  in the last second or the pointer over it), the page takes it back with
-  `iframe.blur()`; a frame that takes it a fourth time is unmounted.
+  link with `tabindex=-1`. When a frame holds the keyboard the reader did
+  not give it (a glance, or a detail without a Tab press in the last second
+  or the pointer over it), the page takes it back: it looks as its window
+  loses or regains focus and whenever the frame speaks, and calls
+  `iframe.blur()`, which Chromium honours; WebKit keeps the focus in the
+  frame, so the page's element that last had it, or else the body, is
+  focused. A frame that takes it a fourth time is unmounted.
 - **Failure.** A frame that sends no `hello` within 5 seconds is mounted
   again once after the page read its tile routes again
   (`TileHost.reread`), then shows "This tile couldn't load". So does a frame

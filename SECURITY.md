@@ -1551,7 +1551,8 @@ The answer is `no-store`, sets no cookie, ignores `Range` and carries
   WebView2 can reach the desktop shell's commands has not been checked.
 
 The browser suite (`app/custom-tile-tests/tile-frames.spec.ts`) runs hostile
-tiles on the real frame route in Chromium: every way out it tries (reading
+tiles on the real frame route in Chromium, and in WebKit where Playwright's
+WebKit is installed: every way out it tries (reading
 the page, cookies and storage, top and parent navigation, `window.open`,
 dialogs, form submission, nested frames, fetch, XHR, WebSocket,
 EventSource, beacons, images, fonts, stylesheets and CSS `url()` to the
@@ -1578,9 +1579,10 @@ by the chat's agent.
   fresh realm gets around such a script. It minimises what a tile receives
   instead.
 - A tile that runs a busy loop freezes the app's window until it is closed,
-  where the engine runs the frame on the page's thread (Chromium does in some
-  runs and not in others; WebKit is not yet verified). The host unmounts a frame that does
-  not draw in time, but cannot interrupt one that holds the thread.
+  where the engine runs the frame on the page's thread: in the browser suite
+  a 1.5-second loop held the page for its length in WebKit, and in Chromium
+  in some runs and not others. The host unmounts a frame that does not draw
+  in time, but cannot interrupt one that holds the thread.
 - A frame can navigate itself to a page of the daemon's own origin: the
   request reaches the daemon without the cookie, the namespace or any data,
   and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
