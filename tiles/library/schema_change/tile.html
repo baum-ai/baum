@@ -1,0 +1,368 @@
+<style>
+  /* A list row of two lines: its lines take the row's width, so a long
+     name or chip wraps or truncates within it. */
+  .kit-list > li.kit-stack {
+    align-items: stretch;
+  }
+  .delta {
+    flex: none;
+    white-space: nowrap;
+  }
+  .delta > * + * {
+    margin-left: var(--space-1);
+  }
+  .name {
+    min-width: 0;
+  }
+  .glance-rows {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .glance-rows > li {
+    align-items: center;
+  }
+  .glance-rows.across {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-8);
+  }
+  .change {
+    flex: none;
+    min-width: 4.75rem;
+    justify-content: center;
+  }
+  .kit-table .mark {
+    width: 1ch;
+    padding-right: 0;
+    font-weight: 600;
+  }
+  .kit-table .ident {
+    white-space: nowrap;
+  }
+  .kit-table .code {
+    min-width: 9rem;
+    overflow-wrap: break-word;
+  }
+  .kit-table .note {
+    min-width: 8rem;
+  }
+  /* On a phone the columns share what there is and wrap. */
+  @media (max-width: 480px) {
+    .kit-table .code,
+    .kit-table .note {
+      min-width: 0;
+    }
+  }
+</style>
+<script>
+  // The order tables are read in: what loses data first, then what other
+  // code notices, then what only adds.
+  const ORDER = { dropped: 0, renamed: 1, altered: 2, created: 3 };
+  const ROW_TONE = { added: "positive", removed: "critical", altered: "caution", renamed: "caution" };
+  const APPLIES = { on_deploy: "Runs on deploy", on_start: "Runs on start", manual: "Run by hand", unknown: null };
+  const KIND = {
+    migration_file: "migration",
+    embedded: "in code",
+    schema_dump: "schema dump",
+    orm_model: "model",
+    query_file: "queries",
+  };
+  const ENGINE = { postgres: "Postgres", sqlite: "SQLite", mysql: "MySQL", other: null, unknown: null };
+
+  const plural = (count, one, many) => `${count} ${count === 1 ? one : many || `${one}s`}`;
+  const destructiveColumns = (table) => table.columns.filter((column) => column.destructive);
+  const destructive = (table) => table.change === "dropped" || destructiveColumns(table).length > 0;
+  const blocking = (table) => table.indexes.filter((index) => index.online === false && index.change !== "removed");
+
+  function sorted(tables) {
+    return [...tables].sort(
+      (a, b) =>
+        Number(destructive(b)) - Number(destructive(a)) ||
+        ORDER[a.change] - ORDER[b.change] ||
+        a.name.localeCompare(b.name),
+    );
+  }
+
+  function counts(tables) {
+    const parts = [];
+    for (const change of ["created", "altered", "renamed", "dropped"]) {
+      const count = tables.filter((table) => table.change === change).length;
+      if (count) parts.push(`${count} ${change}`);
+    }
+    return parts;
+  }
+
+  /** The lead: the count in bold, the kinds of change after it. */
+  function lede(data) {
+    if (data.tables.length === 0) {
+      return baum.html`<span class="kit-lede kit-truncate kit-grow">Queries change; the schema does not</span>`;
+    }
+    return baum.html`<span class="kit-truncate kit-grow">
+      <span class="kit-lede">${plural(data.tables.length, "table")}</span>
+      <span class="kit-muted">${counts(data.tables).map((part) => ` · ${part}`)}</span>
+    </span>`;
+  }
+
+  /** Facts about how the change runs, for the foot and the detail. */
+  function runFacts(data) {
+    const facts = [];
+    const engine = ENGINE[data.engine];
+    if (engine) facts.push(engine);
+    const applies = [...new Set(data.migrations.map((m) => APPLIES[m.applies]).filter(Boolean))];
+    facts.push(...applies);
+    return facts;
+  }
+
+  function delta(table) {
+    const count = (...changes) => table.columns.filter((column) => changes.includes(column.change)).length;
+    const added = count("added");
+    const removed = count("removed");
+    const altered = count("altered", "renamed");
+    if (table.change === "dropped" && table.columns.length === 0) return null;
+    return baum.html`<span class="delta kit-small kit-num" title="Columns added, removed and altered">
+      ${added ? baum.html`<span class="kit-added">+${added}</span>` : null}
+      ${removed ? baum.html`<span class="kit-removed">−${removed}</span>` : null}
+      ${altered ? baum.html`<span class="kit-muted">~${altered}</span>` : null}
+    </span>`;
+  }
+
+  function glanceRow(table) {
+    return baum.html`<li>
+      <span class="kit-tag change">${table.change}</span>
+      <span class="kit-mono kit-truncate kit-grow name" title=${table.name}>${table.name}</span>
+      ${destructive(table) ? baum.html`<span class="kit-dot" data-tone="critical" title="Destructive"></span>` : null}
+      ${delta(table)}
+    </li>`;
+  }
+
+  /** Badges for what a reviewer must weigh: destructive changes, migrations
+   *  that cannot be undone, index builds that block writes. */
+  function warnings(data, short) {
+    const badges = [];
+    const lost = data.tables.filter(destructive).length;
+    if (lost) badges.push(baum.html`<span class="kit-badge" data-tone="critical">${short ? `${lost} destructive` : plural(lost, "destructive change")}</span>`);
+    const irreversible = data.migrations.filter((m) => m.reversible === false).length;
+    if (irreversible) badges.push(baum.html`<span class="kit-badge" data-tone="caution">${short ? "No rollback" : plural(irreversible, "migration") + " without a rollback"}</span>`);
+    const blocks = data.tables.reduce((sum, table) => sum + blocking(table).length, 0);
+    if (blocks) badges.push(baum.html`<span class="kit-badge" data-tone="caution">${short ? "Blocks writes" : plural(blocks, "index build") + " blocking writes"}</span>`);
+    return badges;
+  }
+
+  function glance({ data, size }) {
+    if (data.tables.length === 0 && data.migrations.length === 0 && data.data_changes.length === 0) {
+      return baum.empty("No schema changes.");
+    }
+    const tables = sorted(data.tables);
+    // Rows a box holds: four in a half, three in a third, two rows of two
+    // across a full one.
+    const room = size === "third" ? 3 : 4;
+    const shown = room;
+    const rest = tables.length - Math.min(tables.length, shown);
+    const rows =
+      tables.length > 0
+        ? tables.slice(0, shown).map(glanceRow)
+        : data.migrations.slice(0, room).map(
+            (m) => baum.html`<li>
+              <span class="kit-tag change">${KIND[m.kind]}</span>
+              <span class="kit-mono kit-truncate kit-grow name" title=${m.label}>${m.label}</span>
+            </li>`,
+          );
+    const badges = warnings(data, true);
+    const foot = runFacts(data);
+    if (rest > 0) foot.push(`${rest} more`);
+    if (data.data_changes.length) foot.push(plural(data.data_changes.length, "data change"));
+    return baum.html`<div class="kit-glance">
+      <div class="kit-row" data-wrap="no">
+        ${lede(data)}
+        ${size === "third" ? badges.slice(0, 1) : badges.slice(0, 2)}
+      </div>
+      <ul class=${["kit-list", "glance-rows", size === "full" ? "across" : null]} data-gap="1">
+        ${rows}
+      </ul>
+      ${foot.length ? baum.html`<p class="kit-foot">${foot.map((fact) => baum.html`<span>${fact}</span>`)}</p>` : null}
+    </div>`;
+  }
+
+  function cites(list) {
+    if (!list || list.length === 0) return null;
+    return baum.html`<span class="kit-row" data-gap="1">${list.map((citation) => baum.cite(citation))}</span>`;
+  }
+
+  const MARK = { added: "+", removed: "−", altered: "~", renamed: "~" };
+  const MARK_CLASS = { added: "kit-added", removed: "kit-removed", altered: "kit-muted", renamed: "kit-muted" };
+
+  /** A definition before and after: the old one struck through. */
+  function change(before, after) {
+    if (before && after) return baum.html`<s class="kit-subtle">${before}</s> → ${after}`;
+    if (before) return baum.html`<s class="kit-subtle">${before}</s>`;
+    return after ?? "—";
+  }
+
+  function columnTable(table) {
+    if (table.columns.length === 0) return null;
+    const created = table.change === "created";
+    return baum.html`<div class="kit-scroll">
+      <table class="kit-table">
+        <thead>
+          <tr>${created ? null : baum.html`<th class="mark"></th>`}<th>Column</th><th>Definition</th><th>Note</th></tr>
+        </thead>
+        <tbody>
+          ${table.columns.map(
+            (column) => baum.html`<tr data-tone=${created ? null : column.destructive ? "critical" : ROW_TONE[column.change]}>
+              ${created ? null : baum.html`<td class=${["mark", "kit-mono", MARK_CLASS[column.change]]} title=${column.change}>${MARK[column.change]}</td>`}
+              <td class="kit-mono ident">${column.name}</td>
+              <td class="kit-mono code">${created ? column.after ?? "—" : change(column.before, column.after)}</td>
+              <td class="kit-muted note">${column.note ?? ""}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  function indexList(table) {
+    if (table.indexes.length === 0) return null;
+    return baum.html`<ul class="kit-list" data-gap="1">
+      ${table.indexes.map(
+        (index) => baum.html`<li>
+          <span class="kit-tag change">${index.change}</span>
+          <span class="kit-grow kit-break">
+            ${index.unique ? baum.html`<span class="kit-subtle kit-small">UNIQUE </span>` : null}<span class="kit-mono">${index.name ?? ""}</span>
+            <span class="kit-mono kit-muted">${index.definition}</span>
+          </span>
+          ${index.online === false && index.change !== "removed" ? baum.html`<span class="kit-badge" data-tone="caution">Blocks writes</span>` : null}
+        </li>`,
+      )}
+    </ul>`;
+  }
+
+  function tableCard(table, open) {
+    const lost = destructive(table);
+    return baum.html`<article class="kit-card kit-stack" data-tone=${lost ? "critical" : null}>
+      <div class="kit-row">
+        <span class="kit-mono kit-strong kit-break">${table.name}</span>
+        <span class="kit-tag">${table.change}</span>
+        ${table.renamed_from ? baum.html`<span class="kit-small kit-subtle">from <span class="kit-mono">${table.renamed_from}</span></span>` : null}
+        ${lost ? baum.html`<span class="kit-badge" data-tone="critical">Destructive</span>` : null}
+        <span class="kit-grow"></span>
+        ${delta(table)}
+      </div>
+      ${columnTable(table)}
+      ${indexList(table)}
+      <details class="kit-details" open=${open}>
+        <summary>Statement</summary>
+        <div class="kit-stack" data-gap="2">
+          ${baum.diff(table.cites[0], { maxLines: 14 })}
+          ${table.cites.length > 1 ? cites(table.cites.slice(1)) : null}
+        </div>
+      </details>
+    </article>`;
+  }
+
+  function attention(data) {
+    const items = [];
+    for (const table of sorted(data.tables)) {
+      if (table.change === "dropped") {
+        items.push({ text: baum.html`Drops table <span class="kit-mono">${table.name}</span>`, cite: table.cites[0] });
+      }
+      for (const column of destructiveColumns(table)) {
+        items.push({
+          text: baum.html`<span class="kit-mono">${table.name}.${column.name}</span> ${column.change}${column.note ? baum.html`<span class="kit-muted">: ${column.note}</span>` : null}`,
+          cite: table.cites[0],
+        });
+      }
+    }
+    if (items.length === 0) return null;
+    return baum.html`<div class="kit-callout kit-stack" data-tone="critical" data-gap="2">
+      <span class="kit-strong">Loses or rejects existing data</span>
+      <ul class="kit-list" data-gap="1">
+        ${items.slice(0, 12).map((item) => baum.html`<li><span class="kit-grow kit-break">${item.text}</span>${baum.cite(item.cite)}</li>`)}
+      </ul>
+      ${items.length > 12 ? baum.html`<span class="kit-small kit-muted">${plural(items.length - 12, "more")} in the tables below</span>` : null}
+    </div>`;
+  }
+
+  function section(title, content) {
+    return baum.html`<section class="kit-section"><h2 class="kit-heading">${title}</h2>${content}</section>`;
+  }
+
+  function migrationList(data) {
+    if (data.migrations.length === 0) return null;
+    return section(
+      "Migrations",
+      baum.html`<ul class="kit-list" data-divided>
+        ${data.migrations.map(
+          (m) => baum.html`<li class="kit-stack" data-gap="2">
+            <div class="kit-row">
+              <span class="kit-tag">${KIND[m.kind]}</span>
+              <span class="kit-mono kit-break kit-grow">${m.label}</span>
+              ${APPLIES[m.applies] ? baum.html`<span class="kit-small kit-muted">${APPLIES[m.applies]}</span>` : null}
+            </div>
+            <div class="kit-row">
+              ${m.reversible === true ? baum.html`<span class="kit-badge" data-tone="positive">Reversible</span>` : null}
+              ${m.reversible === false ? baum.html`<span class="kit-badge" data-tone="caution">No rollback</span>` : null}
+              ${m.idempotent === true ? baum.html`<span class="kit-badge">Safe to rerun</span>` : null}
+              ${m.idempotent === false ? baum.html`<span class="kit-badge" data-tone="caution">Not safe to rerun</span>` : null}
+              ${cites(m.cites)}
+            </div>
+          </li>`,
+        )}
+      </ul>`,
+    );
+  }
+
+  function detail({ data }) {
+    if (data.tables.length === 0 && data.migrations.length === 0 && data.data_changes.length === 0) {
+      return baum.empty("No schema changes in this pull request.");
+    }
+    const tables = sorted(data.tables);
+    const facts = runFacts(data);
+    const badges = warnings(data, false);
+    return baum.html`<div class="kit-stack" data-gap="6">
+      <div class="kit-stack" data-gap="3">
+        ${baum.md(data.summary)}
+        ${facts.length || badges.length
+          ? baum.html`<div class="kit-row">
+              ${facts.map((fact) => baum.html`<span class="kit-tag">${fact}</span>`)}
+              ${badges}
+            </div>`
+          : null}
+      </div>
+      ${attention(data)}
+      ${data.related && data.related.length
+        ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
+        : null}
+      ${tables.length
+        ? section("Tables", baum.html`<div class="kit-stack">${tables.map((table, i) => tableCard(table, i < 3))}</div>`)
+        : null}
+      ${migrationList(data)}
+      ${data.data_changes.length
+        ? section(
+            "Data changes",
+            baum.html`<ul class="kit-list" data-divided>
+              ${data.data_changes.map((change) => baum.html`<li class="kit-row"><span class="kit-grow">${baum.md(change.text, { inline: true })}</span>${cites(change.cites)}</li>`)}
+            </ul>`,
+          )
+        : null}
+      ${data.readers.length
+        ? section(
+            "Code that reads these tables",
+            baum.html`<ul class="kit-list" data-divided>
+              ${data.readers.map(
+                (reader) => baum.html`<li class="kit-stack" data-gap="1">
+                  <div class="kit-row" data-wrap="no" data-align="baseline">
+                    <span class="kit-dot" data-tone=${reader.updated === true ? "positive" : reader.updated === false ? "caution" : "neutral"}></span>
+                    <span class="kit-mono kit-break kit-grow">${reader.label}</span>
+                    <span class="kit-small kit-subtle kit-natural">${reader.updated === true ? "updated" : reader.updated === false ? "not updated" : "unknown"}</span>
+                  </div>
+                  ${cites(reader.cites)}
+                </li>`,
+              )}
+            </ul>`,
+          )
+        : null}
+    </div>`;
+  }
+
+  baum.tile({ glance, detail });
+</script>

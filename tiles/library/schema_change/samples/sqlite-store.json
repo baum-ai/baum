@@ -1,0 +1,358 @@
+{
+  "name": "sqlite-store",
+  "data": {
+    "engine": "sqlite",
+    "summary": "Adds `widget_tags` and a nullable `archived_at` on `widgets`, created when the store opens. **Drops** `widgets.labels` without copying its values into `widget_tags`.",
+    "migrations": [
+      {
+        "kind": "embedded",
+        "label": "store.Open",
+        "applies": "on_start",
+        "reversible": null,
+        "idempotent": false,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_5a0c31e7b2d4",
+            "lines": [
+              44,
+              60
+            ]
+          }
+        ]
+      }
+    ],
+    "tables": [
+      {
+        "name": "widget_tags",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "widget_id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER NOT NULL REFERENCES widgets(id) ON DELETE CASCADE",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "tag",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "created_at",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL DEFAULT (datetime('now'))",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [
+          {
+            "name": null,
+            "change": "added",
+            "definition": "PRIMARY KEY (widget_id, tag)",
+            "unique": true,
+            "online": null
+          },
+          {
+            "name": "widget_tags_by_tag",
+            "change": "added",
+            "definition": "(tag)",
+            "unique": false,
+            "online": null
+          }
+        ],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_5a0c31e7b2d4",
+            "lines": [
+              44,
+              54
+            ]
+          }
+        ]
+      },
+      {
+        "name": "widgets",
+        "change": "altered",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "archived_at",
+            "change": "added",
+            "before": null,
+            "after": "TEXT",
+            "destructive": false,
+            "note": "NULL for existing rows"
+          },
+          {
+            "name": "labels",
+            "change": "removed",
+            "before": "TEXT NOT NULL DEFAULT ''",
+            "after": null,
+            "destructive": true,
+            "note": "Values are not copied to widget_tags"
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_5a0c31e7b2d4",
+            "lines": [
+              55,
+              60
+            ]
+          }
+        ]
+      }
+    ],
+    "data_changes": [],
+    "readers": [
+      {
+        "label": "Store.List",
+        "updated": true,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d21f6a09c3e",
+            "lines": [
+              12,
+              16
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "hunks": {
+    "h_5a0c31e7b2d4": {
+      "path": "internal/widgets/store.go",
+      "change": "modified",
+      "range": [
+        36,
+        62
+      ],
+      "additions": 17,
+      "deletions": 1,
+      "header": "@@ -36,11 +36,27 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 36,
+          "new": 36,
+          "text": "func Open(path string) (*Store, error) {"
+        },
+        {
+          "kind": "context",
+          "old": 37,
+          "new": 37,
+          "text": "\tdb, err := sql.Open(\"sqlite\", path)"
+        },
+        {
+          "kind": "context",
+          "old": 38,
+          "new": 38,
+          "text": "\tif err != nil {"
+        },
+        {
+          "kind": "context",
+          "old": 39,
+          "new": 39,
+          "text": "\t\treturn nil, err"
+        },
+        {
+          "kind": "context",
+          "old": 40,
+          "new": 40,
+          "text": "\t}"
+        },
+        {
+          "kind": "context",
+          "old": 41,
+          "new": 41,
+          "text": "\tif _, err := db.Exec(`CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, name TEXT)`); err != nil {"
+        },
+        {
+          "kind": "context",
+          "old": 42,
+          "new": 42,
+          "text": "\t\treturn nil, err"
+        },
+        {
+          "kind": "context",
+          "old": 43,
+          "new": 43,
+          "text": "\t}"
+        },
+        {
+          "kind": "add",
+          "new": 44,
+          "text": "\tif _, err := db.Exec(`CREATE TABLE IF NOT EXISTS widget_tags ("
+        },
+        {
+          "kind": "add",
+          "new": 45,
+          "text": "\t\twidget_id INTEGER NOT NULL REFERENCES widgets(id) ON DELETE CASCADE,"
+        },
+        {
+          "kind": "add",
+          "new": 46,
+          "text": "\t\ttag TEXT NOT NULL,"
+        },
+        {
+          "kind": "add",
+          "new": 47,
+          "text": "\t\tcreated_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        },
+        {
+          "kind": "add",
+          "new": 48,
+          "text": "\t\tPRIMARY KEY (widget_id, tag)"
+        },
+        {
+          "kind": "add",
+          "new": 49,
+          "text": "\t)`); err != nil {"
+        },
+        {
+          "kind": "add",
+          "new": 50,
+          "text": "\t\treturn nil, err"
+        },
+        {
+          "kind": "add",
+          "new": 51,
+          "text": "\t}"
+        },
+        {
+          "kind": "add",
+          "new": 52,
+          "text": "\tif _, err := db.Exec(`CREATE INDEX IF NOT EXISTS widget_tags_by_tag ON widget_tags(tag)`); err != nil {"
+        },
+        {
+          "kind": "add",
+          "new": 53,
+          "text": "\t\treturn nil, err"
+        },
+        {
+          "kind": "add",
+          "new": 54,
+          "text": "\t}"
+        },
+        {
+          "kind": "add",
+          "new": 55,
+          "text": "\tif err := addColumn(db, \"widgets\", \"archived_at TEXT\"); err != nil {"
+        },
+        {
+          "kind": "add",
+          "new": 56,
+          "text": "\t\treturn nil, err"
+        },
+        {
+          "kind": "add",
+          "new": 57,
+          "text": "\t}"
+        },
+        {
+          "kind": "remove",
+          "old": 44,
+          "text": "\t// labels stay until every reader moves to widget_tags"
+        },
+        {
+          "kind": "add",
+          "new": 58,
+          "text": "\tif err := dropColumn(db, \"widgets\", \"labels\"); err != nil {"
+        },
+        {
+          "kind": "add",
+          "new": 59,
+          "text": "\t\treturn nil, err"
+        },
+        {
+          "kind": "add",
+          "new": 60,
+          "text": "\t}"
+        },
+        {
+          "kind": "context",
+          "old": 45,
+          "new": 61,
+          "text": "\treturn &Store{db: db}, nil"
+        },
+        {
+          "kind": "context",
+          "old": 46,
+          "new": 62,
+          "text": "}"
+        }
+      ]
+    },
+    "h_8d21f6a09c3e": {
+      "path": "internal/widgets/query.go",
+      "change": "modified",
+      "range": [
+        12,
+        18
+      ],
+      "additions": 3,
+      "deletions": 1,
+      "header": "@@ -12,5 +12,7 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 12,
+          "new": 12,
+          "text": "func (s *Store) List(ctx context.Context) ([]Widget, error) {"
+        },
+        {
+          "kind": "remove",
+          "old": 13,
+          "text": "\trows, err := s.db.QueryContext(ctx, `SELECT id, name, labels FROM widgets ORDER BY name`)"
+        },
+        {
+          "kind": "add",
+          "new": 13,
+          "text": "\trows, err := s.db.QueryContext(ctx, `SELECT w.id, w.name, group_concat(t.tag) FROM widgets w"
+        },
+        {
+          "kind": "add",
+          "new": 14,
+          "text": "\t\tLEFT JOIN widget_tags t ON t.widget_id = w.id"
+        },
+        {
+          "kind": "add",
+          "new": 15,
+          "text": "\t\tWHERE w.archived_at IS NULL GROUP BY w.id ORDER BY w.name`)"
+        },
+        {
+          "kind": "context",
+          "old": 14,
+          "new": 16,
+          "text": "\tif err != nil {"
+        },
+        {
+          "kind": "context",
+          "old": 15,
+          "new": 17,
+          "text": "\t\treturn nil, err"
+        },
+        {
+          "kind": "context",
+          "old": 16,
+          "new": 18,
+          "text": "\t}"
+        }
+      ]
+    }
+  }
+}

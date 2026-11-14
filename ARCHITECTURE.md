@@ -1546,6 +1546,67 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   glance gets no code. A comment on a custom tile is placed on the hunks
   its data cites.
 
+**Writing a type.** `tiles/kit/GUIDE.md` (`kit.Guide()`) is the contract for
+an author, person or model: the files of a type, the rules and why, the two
+faces and their boxes, the data schema dialect, citations, every API name,
+class and token of the manifest (a test fails when the manifest gains a name
+the guide lacks), how to write fill instructions and samples, and the
+definition of done. `tiles/kit/starter/` (`kit.Starter()`) is a minimal type
+in the library's layout that passes every check; a new type starts as a copy
+of it. `just local_app::tile-type-screens <dirs>` checks type directories as
+the library's are checked and draws them.
+
+### Tile library
+
+`tiles/library` holds baum's built-in custom tile types, which a generation
+offers to the analysis and fills for a pull request they apply to:
+`schema_change` (tables, columns, indexes and constraints a pull request
+creates, alters, drops or renames, with how the migration runs) and
+`api_change` (HTTP routes, RPC and agent tools, CLI commands, published
+schemas and library exports added, changed, deprecated or removed, with
+their fields and callers). Each is a directory: `type.json` (name, title,
+use-when line, a one-line description of the glance, sizes, kit),
+`fill.md` (the filling model's instructions), `review_checks.md` (what the
+review's details stage should check when the type applies), `schema.json`,
+`tile.html` (kit 1 only) and synthetic `samples/` in a fake repository, each
+with the hunks and items its data cites.
+
+- `library.All()` returns them in offer order (`library.Names`), each an
+  `Entry`: the definition with its digest written, the definition encoded as
+  a custom tile embeds it (`tiles.LibraryTile.Definition`), the glance line
+  (`compose.Fill.Glance`), the review checks and the samples. `Get(name)`
+  finds one; `Load(fs.FS)` reads any directory of the layout.
+- **Structural facts, not findings.** A fill writes facts only: what changed,
+  `breaking`, `destructive`, `reversible`, `idempotent`, whether an index
+  build blocks writes, which callers and readers the pull request updated.
+  Judgements are the review's risks, which keep their lifecycle: the type's
+  `review_checks` go to the details stage, and the host writes the top-level
+  `related` property, item references to the risks and evidence whose hunks
+  the tile cites. `Entry.FillSchema()` is the data schema without `related`,
+  with the reserved definitions it uses merged in
+  (`tiles.StandaloneDataSchema`), ready to use as structured output.
+- Every fact cites hunks through a schema-local hunks-only citation
+  (`{type: "hunk", id, lines?}`), so a fill cannot cite a risk, evidence item
+  or tile, which do not exist while it runs. `library.CheckFill` checks a
+  fill's data against a pull request's diff: no `related`, the type's data
+  checks (`tiles.Validator.CheckData`), and every hunk in the diff with its
+  lines inside the hunk's new range. Its problems name places, not values,
+  so they can go back to the model in a repair.
+- `library.Check(entry)` is every static check a type passes:
+  `CheckDefinition` (the dialect included), the kit's lint with warnings as
+  errors, the glance line and review checks within their limits, the
+  samples against the schema with every citation resolving to the sample's
+  own hunks and items, the schema's edge samples, and composition. The
+  library's tests run it on both types and on the kit's starter, pin each
+  definition's digest (a saved review embeds the definition, so an edit is
+  deliberate), register the frame documents and compose a document with
+  both tiles ready.
+- Glances lead with the count and the kinds of change, put destructive or
+  breaking items first with a critical badge, and keep how the change runs
+  (engine, when a migration applies) or who calls it in the foot. Details
+  open with a summary and a critical callout of what loses data or breaks,
+  then a card per table or entry point with its fields and the cited code.
+
 ### Tiles
 
 The tile catalogue (`catalogue.json`) and the tile guidance are public and

@@ -1,0 +1,404 @@
+{
+  "name": "many-tables",
+  "data": {
+    "engine": "sqlite",
+    "summary": "Creates eight tables for groups, inboxes and webhooks and **drops** `group_members_v1`, whose rows nothing migrates.",
+    "migrations": [
+      {
+        "kind": "embedded",
+        "label": "store.groupsSchema",
+        "applies": "on_start",
+        "reversible": null,
+        "idempotent": true,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              201,
+              209
+            ]
+          }
+        ]
+      }
+    ],
+    "tables": [
+      {
+        "name": "review_group_membership_history_snapshots",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              201,
+              201
+            ]
+          }
+        ]
+      },
+      {
+        "name": "inbox_items",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              202,
+              202
+            ]
+          }
+        ]
+      },
+      {
+        "name": "inbox_item_reads",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              203,
+              203
+            ]
+          }
+        ]
+      },
+      {
+        "name": "agent_session_links",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              204,
+              204
+            ]
+          }
+        ]
+      },
+      {
+        "name": "prompt_overrides",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              205,
+              205
+            ]
+          }
+        ]
+      },
+      {
+        "name": "notification_deliveries",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              206,
+              206
+            ]
+          }
+        ]
+      },
+      {
+        "name": "webhook_attempts",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              207,
+              207
+            ]
+          }
+        ]
+      },
+      {
+        "name": "repository_settings_audit_log",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER PRIMARY KEY",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "payload",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              208,
+              208
+            ]
+          }
+        ]
+      },
+      {
+        "name": "group_members_v1",
+        "change": "dropped",
+        "renamed_from": null,
+        "columns": [],
+        "indexes": [],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_8d4f2061c3eb",
+            "lines": [
+              209,
+              209
+            ]
+          }
+        ]
+      }
+    ],
+    "data_changes": [],
+    "readers": [],
+    "related": [
+      {
+        "type": "risk",
+        "id": "rsk_group_members_dropped"
+      }
+    ]
+  },
+  "hunks": {
+    "h_8d4f2061c3eb": {
+      "path": "internal/store/schema.go",
+      "change": "modified",
+      "range": [
+        200,
+        210
+      ],
+      "additions": 9,
+      "deletions": 0,
+      "header": "@@ -200,2 +200,11 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 200,
+          "new": 200,
+          "text": "const groupsSchema = `"
+        },
+        {
+          "kind": "add",
+          "new": 201,
+          "text": "CREATE TABLE IF NOT EXISTS review_group_membership_history_snapshots (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 202,
+          "text": "CREATE TABLE IF NOT EXISTS inbox_items (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 203,
+          "text": "CREATE TABLE IF NOT EXISTS inbox_item_reads (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 204,
+          "text": "CREATE TABLE IF NOT EXISTS agent_session_links (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 205,
+          "text": "CREATE TABLE IF NOT EXISTS prompt_overrides (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 206,
+          "text": "CREATE TABLE IF NOT EXISTS notification_deliveries (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 207,
+          "text": "CREATE TABLE IF NOT EXISTS webhook_attempts (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 208,
+          "text": "CREATE TABLE IF NOT EXISTS repository_settings_audit_log (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 209,
+          "text": "DROP TABLE IF EXISTS group_members_v1;"
+        },
+        {
+          "kind": "context",
+          "old": 201,
+          "new": 210,
+          "text": "`"
+        }
+      ]
+    }
+  },
+  "items": {
+    "rsk_group_members_dropped": {
+      "label": "Old group members are lost",
+      "tier": "high",
+      "text": "Dropping group_members_v1 loses memberships that were never copied."
+    }
+  }
+}

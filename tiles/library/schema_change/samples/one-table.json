@@ -1,0 +1,143 @@
+{
+  "name": "one-table",
+  "data": {
+    "engine": "sqlite",
+    "summary": "Adds `session_notes`, created with the other tables when the store opens.",
+    "migrations": [
+      {
+        "kind": "embedded",
+        "label": "sessions.schema",
+        "applies": "on_start",
+        "reversible": null,
+        "idempotent": true,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_6b2d0e4fa1c9",
+            "lines": [
+              90,
+              95
+            ]
+          }
+        ]
+      }
+    ],
+    "tables": [
+      {
+        "name": "session_notes",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "session_id",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL REFERENCES sessions(id)",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "seq",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER NOT NULL",
+            "destructive": false,
+            "note": null
+          },
+          {
+            "name": "body",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": null
+          }
+        ],
+        "indexes": [
+          {
+            "name": null,
+            "change": "added",
+            "definition": "PRIMARY KEY (session_id, seq)",
+            "unique": true,
+            "online": null
+          }
+        ],
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_6b2d0e4fa1c9",
+            "lines": [
+              90,
+              95
+            ]
+          }
+        ]
+      }
+    ],
+    "data_changes": [],
+    "readers": []
+  },
+  "hunks": {
+    "h_6b2d0e4fa1c9": {
+      "path": "internal/sessions/store.go",
+      "change": "modified",
+      "range": [
+        88,
+        96
+      ],
+      "additions": 6,
+      "deletions": 0,
+      "header": "@@ -88,3 +88,9 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 88,
+          "new": 88,
+          "text": "const schema = `"
+        },
+        {
+          "kind": "context",
+          "old": 89,
+          "new": 89,
+          "text": "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, started TEXT NOT NULL);"
+        },
+        {
+          "kind": "add",
+          "new": 90,
+          "text": "CREATE TABLE IF NOT EXISTS session_notes ("
+        },
+        {
+          "kind": "add",
+          "new": 91,
+          "text": "\tsession_id TEXT NOT NULL REFERENCES sessions(id),"
+        },
+        {
+          "kind": "add",
+          "new": 92,
+          "text": "\tseq INTEGER NOT NULL,"
+        },
+        {
+          "kind": "add",
+          "new": 93,
+          "text": "\tbody TEXT NOT NULL,"
+        },
+        {
+          "kind": "add",
+          "new": 94,
+          "text": "\tPRIMARY KEY (session_id, seq)"
+        },
+        {
+          "kind": "add",
+          "new": 95,
+          "text": ");"
+        },
+        {
+          "kind": "context",
+          "old": 90,
+          "new": 96,
+          "text": "`"
+        }
+      ]
+    }
+  }
+}

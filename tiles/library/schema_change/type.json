@@ -1,0 +1,8 @@
+{
+  "name": "schema_change",
+  "title": "Schema changes",
+  "use_when": "When the pull request creates, alters or drops database tables, columns, indexes or constraints: migrations, schema dumps, ORM models, a store's DDL. Not JSON Schemas, new rows, queries or tests.",
+  "glance": "Tables created, altered, dropped and renamed with column counts, destructive changes first, and how the migration runs.",
+  "sizes": ["half", "full", "third"],
+  "kit": 1
+}

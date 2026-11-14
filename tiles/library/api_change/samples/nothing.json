@@ -1,0 +1,9 @@
+{
+  "name": "nothing",
+  "data": {
+    "summary": "The pull request changes no interface other code calls.",
+    "endpoints": [],
+    "consumers": [],
+    "docs": null
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "name": "queries-only",
+  "data": {
+    "engine": "postgres",
+    "summary": "Only `ListWidgets` changes: it skips archived widgets and takes a limit. No table changes.",
+    "migrations": [
+      {
+        "kind": "query_file",
+        "label": "db/queries/widgets.sql",
+        "applies": "unknown",
+        "reversible": null,
+        "idempotent": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_7c3e1f50b2da",
+            "lines": [
+              5,
+              5
+            ]
+          }
+        ]
+      }
+    ],
+    "tables": [],
+    "data_changes": [],
+    "readers": []
+  },
+  "hunks": {
+    "h_7c3e1f50b2da": {
+      "path": "db/queries/widgets.sql",
+      "change": "modified",
+      "range": [
+        4,
+        5
+      ],
+      "additions": 1,
+      "deletions": 1,
+      "header": "@@ -4,2 +4,2 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 4,
+          "new": 4,
+          "text": "-- name: ListWidgets :many"
+        },
+        {
+          "kind": "remove",
+          "old": 5,
+          "text": "SELECT id, name FROM widgets ORDER BY name;"
+        },
+        {
+          "kind": "add",
+          "new": 5,
+          "text": "SELECT id, name FROM widgets WHERE archived_at IS NULL ORDER BY name LIMIT $1;"
+        }
+      ]
+    }
+  }
+}
