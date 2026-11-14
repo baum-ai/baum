@@ -143,3 +143,27 @@ func TestMetricsCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestScreenSubcommandsCheckTheirArguments(t *testing.T) {
+	notRun := t.TempDir()
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"sheet without a run":    {[]string{"sheet"}, "usage: replay sheet"},
+		"sheet of no run":        {[]string{"sheet", notRun}, "is not a replay run"},
+		"sheet with two runs":    {[]string{"sheet", notRun, notRun}, "unexpected argument"},
+		"judge of no run":        {[]string{"judge", notRun, "--backend", "codex"}, "is not a replay run"},
+		"judge agree one report": {[]string{"judge", "agree", "a.json"}, "usage: replay judge agree"},
+		"labels without a verb":  {[]string{"labels"}, "usage: replay labels"},
+		"labels make no out":     {[]string{"labels", "make", notRun}, "--out"},
+		"labels agree no report": {[]string{"labels", "agree", notRun}, "usage: replay labels agree"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := run(context.Background(), tc.args, io.Discard, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%v, want %q", err, tc.want)
+			}
+		})
+	}
+}

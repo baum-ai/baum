@@ -1,6 +1,7 @@
 // Command replay runs review generation again on the frozen cases of a dataset
 // directory, with no GitHub access, and saves what it generates. Its metrics
-// subcommand measures a finished run. See README.md.
+// subcommand measures a finished run; sheet, judge and labels work on the
+// pictures `just replay-screens` takes of a run's layouts. See README.md.
 package main
 
 import (
@@ -88,8 +89,20 @@ func (e errFailed) Error() string {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) > 0 && args[0] == "metrics" {
-		return runMetrics(args[1:], stdout, stderr)
+	if len(args) > 0 {
+		switch args[0] {
+		case "metrics":
+			return runMetrics(args[1:], stdout, stderr)
+		case "sheet":
+			return runSheet(args[1:], stdout, stderr)
+		case "judge":
+			if len(args) > 1 && args[1] == "agree" {
+				return runJudgeAgree(args[2:], stdout)
+			}
+			return runJudge(ctx, args[1:], stdout, stderr)
+		case "labels":
+			return runLabels(args[1:], stdout, stderr)
+		}
 	}
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
 	fs.SetOutput(stderr)
