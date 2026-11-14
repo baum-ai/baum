@@ -2562,8 +2562,10 @@ no group (a heading only from three), keep active risks beside the overview for
 docs and CI, and put evidence with two or more gaps beside the lead change on
 the second row. A composition's library tile with a destructive or breaking
 item (`tiles.Leads`) takes a half right after the first row in every
-template, another library tile and promoted tiles stand before the changes,
-and authored tiles after them; a row they leave short is filled like any. A
+template (a dropped table counts as destructive), another library tile and
+promoted tiles stand before the changes, and authored tiles after them, a
+table of four columns or more at full; a row they leave short is filled like
+any. A
 composer's layout then passes three guard rails
 (`tiles/guards.go`), each a fix of its own kind: evidence with two or more gaps
 stays on the landing page, where it fits without pushing a tile that must be
