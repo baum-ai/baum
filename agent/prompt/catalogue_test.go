@@ -47,7 +47,7 @@ var baseline = map[string]string{
 	"fix 13":              "dd115a648650fa176de95287b3997141ea7fc68c798cf78519d2b30b6c06ce84",
 	"fix 14":              "741d2786e9150947a1ef445a7f5b7a6c28984adc0584bfc338f95fc03ac9ecc2",
 	"fix 15":              "2b4db4dd265428b3a70d920ebc12441f681457c9afa20559799f21d662d729a1",
-	"tiles compose":       "1635e8fe509290516aefe0f7e6037c933dd99f9160e8fd6b4831c220c4062b92",
+	"tiles compose":       "5a3484bd6545875ed218890ecab8267ac931020b557b98c8c6783fad8fd1e6d0",
 }
 
 func sha(s string) string {
