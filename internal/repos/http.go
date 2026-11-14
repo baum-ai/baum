@@ -37,6 +37,10 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		if errors.Is(err, ErrInvalidRepository) {
 			status = http.StatusBadRequest
 		}
+		if errors.Is(err, ErrInvalidSettings) {
+			http.Error(w, invalidReason(err), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, http.StatusText(status), status)
 	}
 	writeStatus := func(w http.ResponseWriter, status int, v any) {
@@ -79,6 +83,11 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		req.Body = io.NopCloser(bytes.NewReader(raw))
 		var s Settings
 		if !decode(w, req, &s) {
+			return Settings{}, false
+		}
+		s, err = s.Checked()
+		if err != nil {
+			fail(w, err)
 			return Settings{}, false
 		}
 		return s, true
@@ -136,6 +145,14 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 			http.Error(w, "path is required", 400)
 			return
 		}
+		if input.Settings != nil {
+			checked, e := input.Settings.Checked()
+			if e != nil {
+				fail(w, e)
+				return
+			}
+			input.Settings = &checked
+		}
 		var c Clone
 		var e error
 		if input.Repository != "" {
@@ -192,6 +209,14 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		}
 		if !decode(w, req, &input) {
 			return
+		}
+		if input.Settings != nil {
+			checked, e := input.Settings.Checked()
+			if e != nil {
+				fail(w, e)
+				return
+			}
+			input.Settings = &checked
 		}
 		v, e := r.Pick(req.Context(), input.Repository, input.Settings)
 		if e != nil {
@@ -303,4 +328,9 @@ func withoutRetired(raw []byte) []byte {
 	}
 	return out
 
+}
+
+// invalidReason is the reason an ErrInvalidSettings carries.
+func invalidReason(err error) string {
+	return strings.TrimPrefix(err.Error(), ErrInvalidSettings.Error()+": ")
 }

@@ -9,7 +9,7 @@ its HTTP handler uses.
 
 - `repositories(identity, settings)`: settings shared by every clone of a
   repository. `identity` is the lowercase `owner/name` on github.com and
-  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `decisions`); a `daily_cap`, `backend` or
+  `host/owner/name` elsewhere. `settings` is JSON (`automatic`, `decisions`, `tiles`); a `daily_cap`, `backend` or
   `model` an older baum stored is ignored and dropped on the next write, and
   dropped from a request an older app sends: the harnesses and models are
   global preferences.
@@ -185,8 +185,11 @@ While the stamp is unchanged the answer is reused, for at most `ProbeMaxAge`
 `url.insteadOf`, therefore shows within that time. A clone whose directory or
 `.git` is gone is unavailable without running git.
 
-Settings PUTs replace the whole object and require `automatic`, `null` for
-the default. A `daily_cap` an older app still sends, in a settings PUT or in
+`tiles` holds a repository's standing tile preferences (`TileSettings`: `text`,
+at most 1000 characters, and `pins`, at most 8 tile types); `Settings.Checked`
+trims and validates them on every write, and a route answers a refusal with
+its reason and a 400. Settings PUTs replace the whole object and require
+`automatic`, `null` for the default. A `daily_cap` an older app still sends, in a settings PUT or in
 the settings of a `POST`, is dropped rather than refused: baum sets no
 spending limits.
 

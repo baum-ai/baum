@@ -448,6 +448,14 @@ func proposalCases() []proposalCase {
 		route:  fixed("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"decisions":null}`),
 		change: fixed("PUT", "/api/repositories/owner/repo/settings", `{"automatic":null,"decisions":false}`),
 	}, {
+		name: "tile preferences", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}
+		},
+		tool: "propose_tile_preferences", args: map[string]any{"text": " Lead with the schema. ", "pins": []string{"Schema changes", "risks"}},
+		// The page sends the whole settings object, tidied by the registry.
+		route:  fixed("PUT", "/api/repositories/owner/repo/settings", `{"automatic":null,"decisions":null,"tiles":{"text":"Lead with the schema.","pins":["schema_change","risks"]}}`),
+		change: fixed("PUT", "/api/repositories/owner/repo/settings", `{"automatic":null,"decisions":null,"tiles":{"text":"Edited by hand."}}`),
+	}, {
 		name: "new inbox", page: func(*proposalFixture) agentcontext.PageContext {
 			return agentcontext.PageContext{Page: agentcontext.PageInbox}
 		},
@@ -650,6 +658,7 @@ func TestInvalidProposalsAreRefusedWithThePagesReason(t *testing.T) {
 		{"prompt heading", agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "prompts"}, "propose_prompt", map[string]any{"id": "review-group", "text": "Review.\n\n## Submitting\n"}, "PUT", "/api/settings/prompts/review-group", `{"text":"Review.\n\n## Submitting\n"}`},
 		{"inbox color", agentcontext.PageContext{Page: agentcontext.PageInbox}, "propose_inbox", map[string]any{"name": "Pink", "color": "pink"}, "", "", ""},
 		{"group size", agentcontext.PageContext{Page: agentcontext.PageGroup}, "propose_group", map[string]any{"remove": []int{1}}, "PATCH", "", `{"members":[2]}`},
+		{"pin", agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}, "propose_tile_preferences", map[string]any{"pins": []string{"change"}}, "PUT", "/api/repositories/owner/repo/settings", `{"automatic":null,"tiles":{"pins":["change"]}}`},
 		{"comment side", agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}, "propose_review_comment", map[string]any{"body": "x", "place": map[string]any{"path": "a.go", "line": 3, "side": "UP"}}, "", "", ""},
 		{"comment body", agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}, "propose_review_comment", map[string]any{"body": "   "}, "", "", ""},
 	} {
@@ -749,6 +758,9 @@ func TestProposalsBelongToTheOpenPage(t *testing.T) {
 		{"pull request", agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7},
 			[]agentcontext.PageContext{{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 8}, {Page: agentcontext.PagePullRequest, Repository: "other/repo", PullRequest: 7}},
 			"propose_review_comment", map[string]any{"body": "Later."}},
+		{"tile preferences", agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7},
+			[]agentcontext.PageContext{{Page: agentcontext.PagePullRequest, Repository: "other/repo", PullRequest: 7}, {Page: agentcontext.PageRepositories, Repository: "owner/repo", Section: "reviews"}},
+			"propose_tile_preferences", map[string]any{"pins": []string{"schema_change"}}},
 	} {
 		f.page(tc.page)
 		p, err := f.propose(tc.tool, tc.args)
@@ -988,5 +1000,57 @@ func TestAgentEnvironmentRemovalKeepsToTheName(t *testing.T) {
 	}
 	if prefs := f.prefs(); strings.Contains(prefs, "ZED_TOKEN") || !strings.Contains(prefs, `"OTHER":"y"`) {
 		t.Errorf("saved %s", prefs)
+	}
+}
+
+// A proposed preference outlives the pull request, so it is the person's save
+// alone that writes it: it applies to the repository's next review, keeps the
+// repository's other choices, and a tile preference of another repository is
+// refused.
+func TestTilePreferencesAreSavedAsAProposalAndKeepTheRepositorysOtherChoices(t *testing.T) {
+	ctx := context.Background()
+	f := newProposalFixture(t)
+	f.must("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"decisions":false,"tiles":{"text":"Lead with the data model.","pins":["risks"]}}`)
+	f.page(agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7})
+	stored := func() repos.Settings {
+		s, _, err := f.registry.RepositorySettings(ctx, "owner/repo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	// Only the fields given change: pins replace the list, null clears text.
+	p, err := f.propose("propose_tile_preferences", map[string]any{"pins": []string{"schema_change"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); got.Tiles == nil || !slices.Equal(got.Tiles.Pins, []string{"risks"}) {
+		t.Fatalf("a proposal wrote %+v", got.Tiles)
+	}
+	if err := f.save(p, agentcontext.SaveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	got := stored()
+	if got.Tiles == nil || got.Tiles.Text != "Lead with the data model." || !slices.Equal(got.Tiles.Pins, []string{"schema_change"}) || got.Automatic == nil || *got.Automatic || got.Decisions == nil || *got.Decisions {
+		t.Fatalf("saved %+v, tiles %+v", got, got.Tiles)
+	}
+	p, err = f.propose("propose_tile_preferences", map[string]any{"text": nil, "pins": []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.save(p, agentcontext.SaveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if got = stored(); got.Tiles != nil || got.Automatic == nil {
+		t.Fatalf("cleared %+v", got)
+	}
+	if _, err := f.propose("propose_tile_preferences", map[string]any{"pins": []string{"schema_change"}, "repository": "other/repo"}); err == nil {
+		t.Error("another repository's preferences were proposed")
+	}
+	if _, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PagePullRequest, Target: agentcontext.RepositoryTarget("other/repo", agentcontext.TargetTilePreferences), After: json.RawMessage(`{"text":"x"}`)}); err == nil {
+		t.Error("another repository's target was accepted")
+	}
+	if _, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PagePullRequest, Target: agentcontext.RepositoryTarget("owner/repo", agentcontext.TargetTilePreferences), After: json.RawMessage(`{"colour":"x"}`)}); err == nil {
+		t.Error("an unknown field was accepted")
 	}
 }

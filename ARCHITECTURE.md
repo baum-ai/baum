@@ -7622,6 +7622,7 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
 | `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
 | `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
+| `pull_request` | `propose_tile_preferences` | `<owner/name>:tile_preferences`, the page's repository | `UpdateRepositoryIf` of the repository's `Settings.Tiles` (`repos.TileSettings`), only the fields given (`text`, null clears it; `pins`, the whole list), tidied and checked as the settings route checks them; refused as stale if the stored tiles changed since the proposal |
 | `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | Save appends the comment through `uistate.Store.Replace`, as `PUT /api/ui-state/review?key=` saves the pending review; other comments, note and sent reviews are kept. The panel reloads that record after Save. Nothing is sent to GitHub. |
 
 A target of another section than the open one (General when none is named;
@@ -7716,6 +7717,39 @@ open in the detail (`tile`), so "make this wider" needs no question; the
 shared `testdata/page-contexts.json` carries both shapes, which the Go and the
 app's tests read. On the full review the tools still apply and say that the
 edit shows on the tiles page.
+
+#### Tile preferences
+
+A repository's standing tile preferences are `repos.Settings.Tiles`
+(`repos.TileSettings`, `internal/repos/tilesettings.go`): `text`, at most 1000
+characters, the instruction the composer follows, and `pins`, at most 8 tile
+IDs, each a single built-in tile type or a library type name
+(`compose.CheckPin`; a library name is stored as its tile's ID, repeats are
+dropped). `Settings.Checked` trims and validates them on every write (the
+settings routes, `Update`, `UpdateRepository`, `UpdateRepositoryIf`), and a
+refusal wraps `ErrInvalidSettings`, whose message the routes answer with a 400.
+They are shared by all clones of the repository and replaced with the rest of
+the settings object.
+
+`jobs.Local` reads them when it prepares a review's tiles (`tilesFor`) and
+passes them as `generate.Tiles.Preferences`. The compose inventory carries them
+as its `preferences`, the one part of the inventory that instructs the
+composer, and `agent.pin` stamps the pins on the composition (a pin naming a
+tile the review lacks is ignored). They are read once per job and only with
+`labs.tile_reviews` on; reviews already written keep their layout.
+
+Two tools (`tilepreferences.go`) serve the pull request page, bound to it as
+the layout tools are (`layoutPage`), and global like them: `tile_preferences
+{repository?}` answers `{repository, text, pins}` from `/api/repositories`, and
+`propose_tile_preferences {text?: string | null, pins?: [id]}` records a
+proposal on the `pull_request` page whose target is
+`<owner/name>:tile_preferences`, refusing a pin `compose.CheckPin` refuses.
+Unlike the layout edits it is a proposal (`Proposes: true`), because the
+preference outlives the pull request. Its description tells the agent to also
+call `edit_tiles` to change the open page. `uiserver.Proposers`
+(`tilePreferencesTarget`) saves it through `UpdateRepositoryIf`, so the
+repository's other choices are kept and a change since the proposal is
+`ErrStale`.
 
 #### Operations
 

@@ -2870,6 +2870,24 @@ const automaticMode = (clone: Clone): AutomaticMode =>
       ? "on"
       : "off";
 
+/** The tiles a repository can pin to the front of its reviews' tile pages: the
+ *  single built-in types and the library's (the daemon refuses any other). */
+export const PINNABLE_TILES: { id: string; title: string }[] = [
+  { id: "overview", title: "Overview" },
+  { id: "risks", title: "Risks" },
+  { id: "evidence", title: "Evidence" },
+  { id: "intent", title: "Intent" },
+  { id: "decisions", title: "Decisions" },
+  { id: "context", title: "Context" },
+  { id: "media", title: "Media" },
+  { id: "everything_else", title: "Everything else" },
+  { id: "schema_change", title: "Schema changes" },
+  { id: "api_change", title: "API changes" },
+];
+const MAX_TILE_TEXT = 1000;
+const MAX_TILE_PINS = 8;
+const pinTitle = (id: string) => PINNABLE_TILES.find((tile) => tile.id === id)?.title ?? id;
+
 /** A repository's Reviews section, saved as it changes, as Settings' are. */
 function RepositoryReviews({
   clone,
@@ -2886,6 +2904,8 @@ function RepositoryReviews({
   const stored = () => ({
     mode: automaticMode(clone),
     decisions: clone.settings.decisions !== false,
+    tileText: clone.settings.tiles?.text ?? "",
+    pins: clone.settings.tiles?.pins ?? [],
   });
   const [draft, setDraft] = useState(stored);
   // A failed save puts the controls back to what is stored.
@@ -2896,9 +2916,14 @@ function RepositoryReviews({
   const change = (patch: Partial<ReturnType<typeof stored>>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
+    // The whole settings object is saved, so stored tile preferences go with
+    // every change, and clearing them says so.
+    const text = next.tileText.trim();
+    const tiles = text || next.pins.length ? { text, pins: next.pins } : null;
     saver.save({
       automatic: next.mode === "default" ? null : next.mode === "on",
       decisions: next.decisions ? null : false,
+      ...(tiles || clone.settings.tiles ? { tiles } : {}),
     });
   };
   const notice = status ? automaticNotice(status) : null;
@@ -2961,6 +2986,65 @@ function RepositoryReviews({
             checked={draft.decisions}
             onChange={(event) => change({ decisions: event.target.checked })}
           />
+        </SettingRow>
+        <SettingRow
+          label="Tile layout"
+          htmlFor="repository-tile-text"
+          detail="What you want the tile page of this repository's reviews to do, for example lead with what changed in the data model. It applies to the next review, with tile reviews on."
+        >
+          <textarea
+            id="repository-tile-text"
+            className="local-field min-h-20 w-full resize-y"
+            rows={3}
+            maxLength={MAX_TILE_TEXT}
+            value={draft.tileText}
+            onChange={(event) => setDraft({ ...draft, tileText: event.target.value })}
+            onBlur={() => {
+              if (draft.tileText.trim() !== (clone.settings.tiles?.text ?? "")) change({});
+            }}
+          />
+        </SettingRow>
+        <SettingRow
+          label="Pinned tiles"
+          htmlFor="repository-tile-pin"
+          detail="These tiles lead the page whenever the review has them."
+        >
+          <div className="flex flex-col items-end gap-2">
+            {draft.pins.length ? (
+              <ul className="flex flex-col items-end gap-1" aria-label="Pinned tiles">
+                {draft.pins.map((pin) => (
+                  <li key={pin} className="flex items-center gap-2">
+                    <span>{pinTitle(pin)}</span>
+                    <Button
+                      size="tiny"
+                      variant="ghost"
+                      aria-label={`Unpin ${pinTitle(pin)}`}
+                      onClick={() => change({ pins: draft.pins.filter((id) => id !== pin) })}
+                    >
+                      Unpin
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {draft.pins.length < MAX_TILE_PINS ? (
+              <select
+                id="repository-tile-pin"
+                className="local-field settings-select"
+                value=""
+                onChange={(event) => {
+                  if (event.target.value) change({ pins: [...draft.pins, event.target.value] });
+                }}
+              >
+                <option value="">Pin a tile…</option>
+                {PINNABLE_TILES.filter((tile) => !draft.pins.includes(tile.id)).map((tile) => (
+                  <option key={tile.id} value={tile.id}>
+                    {tile.title}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
         </SettingRow>
       </div>
     </section>

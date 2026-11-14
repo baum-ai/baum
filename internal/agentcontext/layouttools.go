@@ -111,6 +111,12 @@ func (s *Server) layoutPull(c CallContext, edits bool) (string, int, error) {
 	if s.layouts == nil {
 		return "", 0, errNoLayouts
 	}
+	return layoutPage(c, edits)
+}
+
+// layoutPage is layoutPull's page binding alone: the pull request page the
+// person has open, from a chat, and for an edit from a turn begun on it.
+func layoutPage(c CallContext, edits bool) (string, int, error) {
 	if c.Consumer.Kind == Action || !c.HasPage || c.Page.Page != PagePullRequest || c.Page.Repository == "" || c.Page.PullRequest < 1 {
 		return "", 0, errors.New("the layout tools change the tiles of the pull request page the person has open: open a pull request's page first")
 	}

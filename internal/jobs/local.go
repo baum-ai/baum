@@ -32,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -439,7 +440,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if group == nil && p.Kind != KindDetails && prefs.Labs.TileReviewsOn() {
 		// The library types the person added to the pull request's review
 		// are filled, or their last data reused, in the new version.
-		options.Tiles = &generate.Tiles{Always: l.alwaysTiles(ctx, versions, key)}
+		options.Tiles = l.tilesFor(ctx, versions, key, p.Repository)
 	}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
@@ -946,4 +947,22 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 func groupReviewTimeout(review time.Duration, members int) time.Duration {
 	extra := min(max(members-1, 0), 4)
 	return review + time.Duration(extra)*review/2
+}
+
+// tilesFor is how a new review of the pull request is arranged as tiles: the
+// library types the person added, and the repository's standing preferences.
+func (l *Local) tilesFor(ctx context.Context, versions *store.Store, key store.Key, repository string) *generate.Tiles {
+	return &generate.Tiles{Always: l.alwaysTiles(ctx, versions, key), Preferences: l.tilePreferences(ctx, repository)}
+}
+
+// tilePreferences are the repository's standing tile preferences, which
+// instruct the composer of its new reviews and pin tiles to the front of their
+// pages. A repository without any, or whose settings cannot be read now, has
+// none: the review is generated as it would be without them.
+func (l *Local) tilePreferences(ctx context.Context, repository string) compose.Preferences {
+	settings, _, err := l.Registry.RepositorySettings(ctx, repository)
+	if err != nil || settings.Tiles == nil {
+		return compose.Preferences{}
+	}
+	return compose.Preferences{Text: settings.Tiles.Text, Pins: settings.Tiles.Pins}
 }

@@ -1983,6 +1983,14 @@ page, visibly, undoably and within fixed rules:
   pull request cannot change another's layout. Edits stay on this computer, in `app.sqlite`,
   for that pull request; the event that tells the page carries only the pull
   request's key and a revision.
+- A repository's standing tile preferences are not an edit. They outlive the
+  pull request and instruct the composer of every later review in the
+  repository, so a chat can only propose them (`propose_tile_preferences`):
+  the person sees the instruction and the pins as a diff and saves or
+  dismisses it, and the save is refused if the preference changed since. The
+  composer reads the saved text as the one instructing part of its input; a
+  pin must be a single tile type or a library type. The person's own click on
+  the repository's page saves directly.
 - Bounded: 20 ops a call, 100 undo steps (older ones are folded and kept),
   64 KiB per pull request (undone steps included), the 200 most recently
   edited pull requests. A reset always fits, dropping the oldest steps when

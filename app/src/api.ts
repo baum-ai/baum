@@ -17,8 +17,14 @@ export type Clone = {
     /** Decision capture for this repository: false turns it off, null and
      *  true follow the global switches. Absent from an older daemon. */
     decisions?: boolean | null;
+    /** Standing preferences for the tile pages of this repository's
+     *  reviews; absent when there are none. */
+    tiles?: TileSettings | null;
   };
 };
+/** What a repository asks of its reviews' tile pages: an instruction for the
+ *  composer, and tiles pinned to the front. */
+export type TileSettings = { text?: string; pins?: string[] };
 export type Repository = {
   repository: string;
   settings: Clone["settings"];

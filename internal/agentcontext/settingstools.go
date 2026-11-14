@@ -695,6 +695,10 @@ type registeredRow struct {
 	Settings   struct {
 		Automatic *bool `json:"automatic"`
 		Decisions *bool `json:"decisions"`
+		Tiles     *struct {
+			Text string   `json:"text"`
+			Pins []string `json:"pins"`
+		} `json:"tiles"`
 	} `json:"settings"`
 	Clones []struct {
 		ID        string `json:"id"`
