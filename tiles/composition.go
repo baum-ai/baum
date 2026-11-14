@@ -148,11 +148,8 @@ const (
 	MaxMoves = 20
 )
 
-// The types a promotion or an authored tile may have.
-var (
-	promotableTypes = []string{TypeTable, TypeCode}
-	authoredTypes   = []string{TypeTable, TypeCode, TypeProse}
-)
+// The types a promotion may have.
+var promotableTypes = []string{TypeTable, TypeCode}
 
 // Empty reports whether a composition chooses nothing: no layout entries,
 // no changes_shown or hidden tiles, no promotions, library or authored tiles. Applying an

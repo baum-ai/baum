@@ -280,7 +280,7 @@ func check(normalized []byte, doc *tiles.Document, generated bool) []string {
 		}
 	}
 	for _, entry := range doc.Layout.Entries {
-		if entry.Tile == tiles.TypeRisks && entry.Group != "" && !(generated && entry.Group == tiles.GroupHidden) {
+		if entry.Tile == tiles.TypeRisks && entry.Group != "" && (!generated || entry.Group != tiles.GroupHidden) {
 			fail(6, "the risks tile is in a group")
 		}
 	}

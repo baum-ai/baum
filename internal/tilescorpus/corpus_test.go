@@ -251,7 +251,7 @@ func compose(stats *tally, v version, normalized []byte, doc *tiles.Document) {
 	}
 
 	seed := fnv.New64a()
-	fmt.Fprintf(seed, "%d %s %d", v.store, v.pullRequest, v.number)
+	_, _ = fmt.Fprintf(seed, "%d %s %d", v.store, v.pullRequest, v.number)
 	for i := range randomCompositions {
 		hostile := i%2 == 1
 		rng := rand.New(rand.NewPCG(seed.Sum64(), uint64(i)))

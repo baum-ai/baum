@@ -1235,7 +1235,7 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 	}
 	hidden := map[string]bool{}
 	for _, id := range n.Layout.Hidden {
-		hidden[id] = id != TypeOverview && !(id == TypeRisks && mustShowRisks(doc))
+		hidden[id] = id != TypeOverview && (id != TypeRisks || !mustShowRisks(doc))
 	}
 	var entries, last []Entry
 	for _, entry := range n.Layout.Entries {
