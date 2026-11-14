@@ -7595,6 +7595,39 @@ and send the page's request to a twin fixture and compare the stores and
 what followed each save, and change each target through its route before the
 save, and after `Save` checked the revision, to see the save refused.
 
+#### Layout tools
+
+The layout tools (`layouttools.go`) are the one way a chat changes baum
+without a proposal: they change the person's own tile layout of the pull
+request page they have open, at once, through `Options.Layouts`, an
+`agentcontext.LayoutEditor` (the daemon's is `uiserver.LayoutEditor`, over
+`tilelayout.Service`, the service the page's own buttons use). Like the
+propose tools they are global, so an action neither lists nor calls them, and
+each refuses any page but a pull request's. `Tool.Edits` marks the four that
+write; `tools/list` reports them `readOnlyHint: false, destructiveHint:
+false`. The pull request page's `current_page` lists them.
+
+| Tool | Arguments | Answers |
+| --- | --- | --- |
+| `tile_layout` | none | `{pull_request, version, view: "tiles"\|"full", edited, can_undo, focus: {tile, title}\|null, first_screen_rows, landing_rows, rows: [["overview:half", …], …], tiles: [{id, type, title, size, sizes, group, pinned, hidden, on_landing, row, state, can_hide, why_not}], changes_shown, note}`, at most 32 KiB (the tiles past the landing page are left out first) |
+| `edit_tiles` | `{ops: [{op, tile?, to?, size?, count?}]}`, 1 to 20, `op` one of `move`, `resize`, `hide`, `show`, `pin`, `unpin`, `changes_shown` | `{applied: [summary lines], refused: [{index, reason}], revision, edited, can_undo, rows, hidden}`; every op refused is an error naming the reasons, and nothing is written |
+| `add_tile` | `{type, size?, to?}` | brings a hidden tile back (a show, with a resize and a move when asked) as one batch; a tile the review does not have is "not available yet", since filling a new tile is not part of this version |
+| `undo_tiles` | none | `{undone: [summary lines], revision, …}`, or "Nothing to undo" |
+| `reset_tiles` | none | `{revision, can_undo: true, …}`, or "The layout is already the generated one" |
+
+Each op is checked against the tiles of the pull request's latest saved
+version as the person is shown them (`tiles.CheckOp`), so the reasons are the
+host's: an unknown tile, a size the tile cannot have, hiding the overview or
+a risks tile ranking a critical or high risk, moving one of them off the
+landing page, an obsolete change, a tile next to itself, and what would
+change nothing. The summary lines are the host's (`tiles.OpSummary`), never
+the agent's text. The focus is the page context's: a tile an Ask picked
+(`{kind: "tile", id}`, Ask about this tile or `a` on a card) or else the tile
+open in the detail (`tile`), so "make this wider" needs no question; the
+shared `testdata/page-contexts.json` carries both shapes, which the Go and the
+app's tests read. On the full review the tools still apply and say that the
+edit shows on the tiles page.
+
 #### Operations
 
 An operation proposal (`agentcontext.Operation`, `operations.go`, the list in

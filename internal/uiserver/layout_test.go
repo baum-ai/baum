@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/tilelayout"
@@ -23,6 +24,7 @@ import (
 // layout events it published.
 type layoutFixture struct {
 	*tilesFixture
+	api    *LocalAPI
 	mu     sync.Mutex
 	events []string
 }
@@ -35,7 +37,7 @@ func newLayoutFixture(t *testing.T) *layoutFixture {
 		defer f.mu.Unlock()
 		f.events = append(f.events, fmt.Sprintf("%s@%d", pr, revision))
 	}}
-	f.tilesFixture = newTilesFixture(t, func(a *LocalAPI) { a.Layouts = service })
+	f.tilesFixture = newTilesFixture(t, func(a *LocalAPI) { a.Layouts = service; f.api = a })
 	return f
 }
 
@@ -225,5 +227,70 @@ func TestTilesWithoutLayouts(t *testing.T) {
 	f.put(t, tileviewtest.Encode(t, tileviewtest.Base(t)))
 	if body := decodeTiles(t, f.get("/api/tiles", "", "")); body.Tiles.Origin.Kind != tiles.OriginConverted {
 		t.Errorf("origin %s", body.Tiles.Origin.Kind)
+	}
+}
+
+// The session panel's tools change the layout through the same service: an
+// edit_tiles call shows on the next read of the tile route, and the tools
+// read the tiles the person is shown.
+func TestLayoutEditorServesThePanelsTools(t *testing.T) {
+	f := newLayoutFixture(t)
+	f.put(t, titled(t, "First title"))
+	mcp := agentcontext.New(agentcontext.Options{API: f.handler, Layouts: LayoutEditor{API: *f.api}})
+	token, id, revoke, err := mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer revoke()
+	if err := mcp.Registry.SetPage(id, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/widgets", PullRequest: 42,
+		Focus: json.RawMessage(`{"view":"tiles","kind":"tile","id":"evidence","title":"Evidence"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	callTool := func(name string, args any) (string, bool) {
+		params, _ := json.Marshal(map[string]any{"name": name, "arguments": args})
+		r := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":`+string(params)+`}`))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		mcp.ServeHTTP(w, r)
+		var reply struct {
+			Result struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+				IsError bool `json:"isError"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &reply); err != nil || len(reply.Result.Content) != 1 {
+			t.Fatalf("%s: %s", name, w.Body.String())
+		}
+		return reply.Result.Content[0].Text, reply.Result.IsError
+	}
+	text, failed := callTool("tile_layout", nil)
+	if failed || !strings.Contains(text, `"focus":{"tile":"evidence","title":"Evidence"}`) || !strings.Contains(text, `"rows":[["overview:half","risks:half"]`) {
+		t.Fatalf("tile_layout: %s", text)
+	}
+	text, failed = callTool("edit_tiles", map[string]any{"ops": []any{map[string]any{"op": "resize", "tile": "evidence", "size": "full"}, map[string]any{"op": "move", "tile": "evidence", "to": map[string]any{"edge": "first"}}}})
+	if failed || !strings.Contains(text, "Made Evidence full width") || !strings.Contains(text, `"rows":[["evidence:full"]`) {
+		t.Fatalf("edit_tiles: %s", text)
+	}
+	if body := decodeTiles(t, f.get("/api/tiles", "", "")); body.Tiles.Layout.Entries[0].Tile != "evidence" || body.Tiles.Layout.Entries[0].Size != tiles.SizeFull {
+		t.Errorf("the tile route does not show the edit: %+v", body.Tiles.Layout.Entries[0])
+	}
+	summary := layoutOf(t, f.get("/api/tiles/layout", "", ""))
+	if summary.Last == nil || summary.Last.By != "chat" {
+		t.Errorf("the batch is not the chat's: %+v", summary)
+	}
+	if text, failed = callTool("undo_tiles", nil); failed || !strings.Contains(text, `"undone":["Made Evidence full width","Moved Evidence to the top"]`) {
+		t.Errorf("undo_tiles: %s", text)
+	}
+	if text, failed = callTool("tile_layout", nil); failed || strings.Contains(text, `"edited":true`) {
+		t.Errorf("after the undo: %s", text)
+	}
+	if err := mcp.Registry.SetPage(id, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/widgets", PullRequest: 99}); err != nil {
+		t.Fatal(err)
+	}
+	if text, failed = callTool("tile_layout", nil); !failed || !strings.Contains(text, "no saved review yet") {
+		t.Errorf("a pull request with no review: %s", text)
 	}
 }

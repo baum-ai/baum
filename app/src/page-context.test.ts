@@ -1,6 +1,14 @@
 import { beforeEach, expect, it } from "vitest";
 import shared from "../../internal/agentcontext/testdata/page-contexts.json";
-import { hrefOf, pageContextOf, pageLabel, samePage, type PageContext } from "./page-context";
+import type { ChatFocus } from "./api";
+import {
+  hrefOf,
+  pageContextOf,
+  pageLabel,
+  samePage,
+  withPicked,
+  type PageContext,
+} from "./page-context";
 
 // The cases the MCP server's own test checks too (TestAppPageContextsAreValid).
 const clones: Record<string, string> = shared.clones;
@@ -14,6 +22,21 @@ beforeEach(() => {
 it("derives the page context of every address the app opens", () => {
   for (const c of shared.cases as { query: string; hash?: string; context: PageContext }[])
     expect(of(c.query, c.hash), c.query).toEqual(c.context);
+});
+
+it("adds a tile an Ask picked to the focus, as the layout tools read it", () => {
+  const picked = shared.picked as {
+    query: string;
+    focus?: ChatFocus;
+    context: PageContext;
+  }[];
+  for (const c of picked) {
+    const context = of(c.query);
+    const pull = { repository: "acme/demo", pull_request: 7 };
+    expect(withPicked(context, c.focus ? { ...pull, focus: c.focus } : null), c.query).toEqual(
+      c.context,
+    );
+  }
 });
 
 it("names a subject only as the MCP server takes it", () => {

@@ -1951,6 +1951,41 @@ or logged. Nothing outside that list can be changed through a saved
 proposal: not your GitHub connection, a repository's registration or clones,
 nor any GitHub write.
 
+One change takes no save: the layout of a review's tiles, your own, on the
+pull request page you have open. A chat may move, resize, remove, bring back
+and pin tiles, undo, and reset the layout to the generated one (`edit_tiles`,
+`add_tile`, `undo_tiles`, `reset_tiles`), and it applies at once. The agent
+reads untrusted pull request text (the diff, the description, threads and
+transcripts), which can tell it to rearrange or hide tiles, and baum accepts
+that without asking, because the worst such text can do is rearrange your own
+page, visibly, undoably and within fixed rules:
+
+- No content changes. An edit only places, sizes, hides and shows tiles of
+  the review as it is; every risk, evidence item, decision and block is still
+  presented once, and the saved version, the repository and GitHub are never
+  touched.
+- What must be seen stays seen. The recommendation and risk score are in the
+  fixed strip; the overview, and the risks tile while it lists a critical or
+  high risk, cannot be hidden or pushed off the landing page, whatever an
+  edit says; a change the recommendation names is never folded.
+- Every edit shows, and is undone in one step. The page shows what changed
+  in baum's own words, never the agent's, with Undo; the strip says
+  **Your layout** with Undo and Reset; a hidden tile stays in the last group,
+  with Show.
+- Scope is one page. The tools are global, so an action never sees them; they
+  refuse any page but the pull request's, and the edit is checked against
+  the tiles that page shows. Edits stay on this computer, in `app.sqlite`,
+  for that pull request; the event that tells the page carries only the pull
+  request's key and a revision.
+- Bounded: 20 ops a call, 100 undo steps (older ones are folded and kept),
+  64 KiB per pull request, the 200 most recently edited pull requests.
+
+There is no confirmation and no rate cap on purpose: each would make "move
+this" slower for everyone to guard against an attack whose worst result is a
+layout you see and undo. Anything that lasts beyond the page you have open
+(standing preferences for a repository's future reviews, for instance) stays
+a proposal.
+
 A chat may also propose an operation: one of the buttons of the page you
 have open, for something that page shows. The agent never runs anything.
 Nothing runs until you confirm it in the app, and then the daemon runs the

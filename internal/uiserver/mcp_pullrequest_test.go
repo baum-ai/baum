@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -522,8 +523,11 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 		// plan_usage reads the daemon's cache through an accessor, and the
 		// projected tools read one exact route each (ToolProjected). The
 		// propose tools read nothing: their proposers save, when the person
-		// does, through the pages' own saves.
-		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && !strings.HasPrefix(tool, "propose_") && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" && tool != "github_repositories" {
+		// does, through the pages' own saves. The layout tools read and
+		// change the person's layout through the layout editor, never the
+		// reader.
+		layout := slices.Contains([]string{"tile_layout", "edit_tiles", "add_tile", "undo_tiles", "reset_tiles"}, tool)
+		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && !layout && !strings.HasPrefix(tool, "propose_") && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" && tool != "github_repositories" {
 			t.Errorf("%s declares no route", tool)
 		}
 		prefixes = append(prefixes, tp...)

@@ -20,6 +20,10 @@ func TestAppPageContextsAreValid(t *testing.T) {
 			Query   string      `json:"query"`
 			Context PageContext `json:"context"`
 		} `json:"cases"`
+		Picked []struct {
+			Context PageContext `json:"context"`
+			Tile    string      `json:"tile"`
+		} `json:"picked"`
 	}
 	if err := json.Unmarshal(raw, &file); err != nil {
 		t.Fatal(err)
@@ -35,6 +39,19 @@ func TestAppPageContextsAreValid(t *testing.T) {
 		}
 		if _, err := linkOf(p.Page, p.Repository, p.PullRequest, p.Group, p.Session, p.Job, p.Feature, p.Section, "", p.Filters); err != nil {
 			t.Errorf("%q: %+v has no link: %v", c.Query, p, err)
+		}
+	}
+	// A tile picked by an Ask, or open in its detail, is the tile the layout
+	// tools take "this" to mean.
+	if len(file.Picked) == 0 {
+		t.Fatal("no picked cases")
+	}
+	for _, c := range file.Picked {
+		if err := c.Context.Validate(); err != nil {
+			t.Errorf("%+v refused: %v", c.Context, err)
+		}
+		if got := focusOf(CallContext{Page: c.Context, HasPage: true}); got != c.Tile {
+			t.Errorf("%+v: the focused tile is %q, want %q", c.Context, got, c.Tile)
 		}
 	}
 }
