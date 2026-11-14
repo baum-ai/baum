@@ -1249,9 +1249,17 @@ the document.
   registry and skip the checks), `Cross-Origin-Resource-Policy: same-origin`
   and `Vary` on the three fetch metadata headers; the query and `Range` are
   ignored. `SECURITY.md` ("Custom tiles") gives the reasons for each check.
-- **Library.** `GET /api/tile-library` lists the custom tile types this
-  version ships, as `{"types": [{name, title, use_when, sizes, kit,
-  digest}]}`. It ships none yet, so the list is empty.
+- **Library.** `GET /api/tile-library` lists the built-in library types
+  (`tileview.Library`), as `{"types": [{name, title, use_when, glance, sizes,
+  kit, digest}]}`, never their source. The daemon registers their frame
+  documents at start-up (`tileview.Warm`), and the tile routes register a
+  stored tile's definition as they serve it, so a version whose library tile
+  embeds an earlier definition keeps serving it under its own digest. The
+  page names a custom tile whose definition's digest the listing has as
+  baum's own: its kicker and rail entry are the type's title, not "Custom ·",
+  and its detail has no "Custom tile" mark, while it still draws in its
+  sandboxed frame. The listing decides, never the tile: a definition that
+  differs in any byte has another digest.
 
 Tests serve custom tiles through `tileview.SetFixture`, which runs a function
 on every converted tile document before its tiles are checked and panics
@@ -1572,6 +1580,8 @@ review's details stage should check when the type applies), `schema.json`,
 `tile.html` (kit 1 only) and synthetic `samples/` in a fake repository, each
 with the hunks and items its data cites.
 
+- A generation with tile reviews on offers them all to the outline and
+  fills the ones it selects (see "Tile analysis" under "Staged review").
 - `library.All()` returns them in offer order (`library.Names`), each an
   `Entry`: the definition with its digest written, the definition encoded as
   a custom tile embeds it (`tiles.LibraryTile.Definition`), the glance line
@@ -2212,6 +2222,62 @@ completion reconciles against. An outline that no longer validates fails the
 run before any call. The daemon's details retry is its only host (see
 "Persistent generation jobs").
 
+**Tile analysis.** A run given `StagedRun.Tiles` (`agent.StagedTiles`: the
+library types to offer, whether to ask for exhibits, and the texts of
+`prompt.TilesPrompts.TileAnalysisInstructions`) adds what a tile review needs
+beside the review, and nothing of it can fail or change the review. It runs
+only for a backend that may run calls at once and never when continuing a
+version; without it the stages' prompts and schemas are byte for byte as
+above.
+
+- **Selection.** The outline stage's prompt gets the selection text
+  (`review-tiles-select`) and the offered types (name, title, use-when line)
+  inserted before its Submitting heading, and its schema a required `library`
+  array, one `{type, applies, hunks, why}` per offered type in offer order.
+  The host takes the array out of each reply before `PrepareOutline`, so the
+  outline is prepared, repaired and stored exactly as without it, and reads
+  it leniently, never repairing the outline for it: a type answered with no
+  hunk of the diff, or not answered, does not apply; unknown hunks are
+  dropped; the reasons are masked as a task's output.
+- **Review checks.** The details stage's prompt gets, after the outline, each
+  selected type's `review_checks` under its title, so what a type knows goes
+  wrong becomes the review's risks.
+- **Fills.** Each selected type gets a task (`fill-<type>`, its files named
+  so) beside the details and the context: the stage prefix, the fill text
+  (`review-tiles-fill`), the type's own `fill` instructions, the outline and
+  the selected hunks, with the read-only tools the details have. Its schema
+  is `{applies, data}`, `data` the type's `Entry.FillSchema()` or null, its
+  definitions at the root. The reply is masked as a task's output, Codex's
+  null `lines` are dropped, and `library.CheckFill` checks it; one repair
+  sends the host's problems back. A fill that answers the type does not apply
+  is not a tile; one that fails, or is still invalid after its repair, is
+  dropped with the host's reason.
+- **Exhibits.** With `Exhibits`, one task (`exhibits`) beside them may return
+  up to three authored tiles (`agent.ExhibitsSchema`: an ID, a title, what it
+  adds, and exactly one of a table, a code excerpt or a short prose note,
+  each with hunk or file citations). Nothing is repaired; each exhibit passes
+  the host's checks or is dropped with a reason: its shape is the one its ID
+  names, its sizes are bounded (6 columns, 20 rows, 200-character cells, 60
+  lines of code, 800 characters of prose), every hunk it cites is in the
+  diff (lines outside the hunk are dropped, citing the whole hunk) with at
+  least one hunk, a code excerpt's lines are the cited hunks' or the head
+  checkout's (one line in ten may differ, elisions aside), and it does not
+  restate an earlier exhibit (`review.NearDuplicate`). At most three are
+  kept.
+- **Time and budgets.** The fills and exhibits start with the details and
+  the context, on the run's context. Once those end, the extras get
+  `StagedTiles.Grace` (`DefaultTilesGrace`, 45 seconds) more, then are
+  stopped and dropped, so they hold a review up by at most that. With call
+  or token budgets, the details keep their share; the context keeps half of
+  its share and the extras split the other half evenly, and an extra left
+  with nothing makes no call.
+- **Outcome.** `StagedOutcome.Tiles` holds the selection, each fill (state,
+  reason, masked data, whether it was repaired, its outcome and time), the
+  exhibits and how long the review waited for them; their calls are added
+  to the run's outcome once. `RedactStagedOutput` masks their outcomes'
+  strings as a stage's. Drafts carry the analysis so far
+  (`StagedProgress.Tiles`).
+
 ### Tasks
 
 ```go
@@ -2278,8 +2344,13 @@ the composer's user message, JSON on one line:
   risks tile's critical and high risks and the next three with their text; the
   evidence tile's gaps; counts for decisions (by a human, by an agent nobody
   approved), media, intent lines and everything else;
-- `library`: the library tiles the analysis selected (`compose.Fill`), none
-  until library fills exist;
+- `library`: each selected type's fill (`compose.FillOf`): its title,
+  use-when and glance lines, sizes, the hunks the outline chose and why, its
+  state, how many items each of its arrays lists and whether one is
+  destructive or breaking (`tiles.Leads`); the template places the ready
+  ones;
+- `authored`: the authored tiles the analysis kept, each with its type,
+  title, rows and columns or lines, and what it adds;
 - `previous`: the previous composition's entries that name a tile this
   version has, its promoted tiles (each with the handle of the block it
   promoted while this version has it) and its reasons;
@@ -2354,14 +2425,29 @@ only for what moves, and two synthetic examples.
 run of one pull request that does not continue a version (a details retry and
 a review group never compose). The order is analyse, then compose:
 
-1. The outline, the details and the context run exactly as without it, with
-   the run's whole wall clock and budgets: the optional layout never costs the
-   review a call or a second of its analysis.
+1. The outline, the details and the context run as without it, with the
+   run's whole wall clock and budgets, plus the tile analysis (see "Staged
+   review"): the outline also answers which library types apply, the details
+   are told the selected types' checks, and the fills and exhibits run
+   beside them. The optional layout never costs the review a call or a
+   second of its analysis; the analysis may hold it up by its grace period.
 2. The review is masked, completed and checked as it always is. It is final
    before the composer is asked, and the composer cannot change it: a run with
    tiles publishes the same review bytes a run without them would.
-3. `ComposeRun` arranges the converted document (`tiles.FromReview` of the
-   stored form, as `Put` converts it) with the previous version's composition
+3. The ready fills become library tiles, each with the host-written
+   `related` items (`library.WithRelated`: the active risks, most severe
+   first, then the evidence items, whose hunk anchors share a hunk with the
+   tile's citations, at most 12), and an exhibit that restates the review is
+   dropped (`compose.DuplicatesTile`: half or more of its sentences or rows
+   state a point another tile states, by `review.NearDuplicate`, or it is a
+   table or code block a change already holds).
+   `ComposeRun` arranges the converted document (`tiles.FromReview` of the
+   stored form, as `Put` converts it), with the library and authored tiles,
+   which the composition holds whatever the composer replies (a tile it
+   leaves out is placed by `tiles.PlaceExtras`: a library tile with a
+   destructive or breaking item right after the leading overview and risks
+   tiles, another just before the changes group, an authored tile just after
+   it), with the previous version's composition
    (`Publish` reads it from the latest version with `store.ParseComposition`)
    and the repository's preferences, through the backend's `agent.Completer`
    (`generate.CompleterOf`: nil for a backend that cannot complete, such as
@@ -2391,9 +2477,13 @@ is interrupted as at any other point before `Put`: nothing is stored.
 Drafts (`Options.OnDraft`, a `generate.Draft`) carry a layout for the tile
 view: while the review is written, the previous version's composition
 renormalised against the draft when there is one, else the change kind's
-template with the pins (`agent.TemplateComposition`, the layout a fallback
-stores); once the composition is made, one last draft of the finished review
-carries it. A composer that keeps that layout therefore moves nothing on the
+template with the pins (`agent.TemplateCompositionWith`, the layout a
+fallback stores), with each selected library type's tile in its place,
+pending until its fill lands and then filled there (a fill that fails or
+finds the type does not apply leaves it out); once the composition is made,
+one last draft of the finished review carries it. Authored tiles appear only
+with the composition: most reviews have none, and a pending card for one that
+may never come would move the page for nothing. A composer that keeps that layout therefore moves nothing on the
 page, and one that does not moves it once. Making a draft's layout cannot fail
 a run: any failure, a panic included, shows that draft without a layout, and a
 panic while preparing a draft skips it. A details retry's drafts carry the
@@ -5316,6 +5406,16 @@ host" under "Custom tile kit"). An unknown, unavailable or failing tile
 renders unavailable inside its own error boundary. Comments use
 the `tile` target except on a Change tile (its section's target) and a risk
 (the risk's), so a full review and an older daemon read them as before.
+
+A tile route's answer, and a draft's, is used once the built-in tile library
+(`GET /api/tile-library`, read once a page) is known too, so a library tile is
+named as baum's own on its first draw. Table, code and prose tiles, promoted or
+authored, have their own faces: a table's first rows, a code excerpt's first
+lines cut with an ellipsis, a note's first sentence, and in the detail the
+whole of it with its citations, which open the cited code. A change's detail
+lists, under "Also gathered in", beside the aggregate tiles holding its items,
+the tiles made of it: a block promoted out of it and the library and authored
+tiles whose citations include its hunks (`covers`).
 
 ### Free background synchronization
 

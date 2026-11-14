@@ -2218,6 +2218,8 @@ Custom tiles on the tiles page: `pnpm test:custom-tiles`
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`:
 the well-behaved tile's card and detail at 1440, 900 and 390px in light and
 dark (pictures into `test-results/custom-tiles` with `CUSTOM_TILE_SHOTS=1`),
+a review generated with library and authored tiles (`library-tiles.spec.ts`,
+acme/demo#13, with the same widths, themes and pictures),
 and the escape probes on the real frame route (`tile-frames.spec.ts`), with
 a server on port 4170 that must hear nothing. `just local_app::e2e-webkit`
 runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
@@ -2595,7 +2597,10 @@ full review's own.
   tile's headline under its title), the body is the tile's. A glance's box
   is reserved before it loads and lies under the card's link; a detail is as
   tall as the tile draws, inside a faint edge under a "Custom tile" caption,
-and Tab reaches it. The kicker reads "Custom ·" and the type's title. A citation the tile's reader
+and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
+  of a built-in library type, whose definition digest `GET /api/tile-library`
+  lists, is baum's own: its kicker and rail entry are its title alone and its
+  detail has no caption or edge, though it draws in the same frame. A citation the tile's reader
   clicks opens the cited code, item or tile on the page. Frames mount near
   the visible area, at most 16 glances at once, and follow the app's theme.
   A frame that doesn't start, draw or behave says "This tile couldn't load"

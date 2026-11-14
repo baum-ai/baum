@@ -192,8 +192,13 @@ a fallback.
 ### The whole pipeline with tiles
 
 `--generator tiles` generates each case as the desktop does with tile reviews
-on: the staged review, then the compose stage at its end, within the time it
-leaves (`generate.Options.Tiles`).
+on: the staged review with its tile analysis (library selection in the
+outline, a fill per selected library type and the exhibits call beside the
+details and the context), then the compose stage at its end, within the time
+it leaves (`generate.Options.Tiles`). `--generator-option library=off` offers
+no library type and `--generator-option exhibits=off` writes no authored
+tile; both off is the pipeline as it was before the analysis, a baseline for
+its cost, time and effect on the review.
 
 ```sh
 oss/bin/replay --dataset <dir> --generator tiles --case-file <file outside git> --model sonnet
@@ -211,12 +216,21 @@ document:
 | `tiles.json` | The tile document the tile route would serve (`tileview.Build`). |
 | `provisional.json` | The template layout drafts showed while the review was written. |
 | `inventory.txt`, `reply.json` | What the composer read and answered. |
+| `analysis.json` | The tile analysis: the outline's selection, each fill's state, reason, repair, time, cost and place on the served page, the exhibits returned, dropped by reason, dropped as restating the review and kept with their places, how long the review waited for them, and the points a library or authored tile states that another tile states too (`compose.Duplicates`). |
+| `fills/<type>.json`, `exhibits.json` | Each fill as it ended, its data included, and the exhibits call's result. |
 
 Validation is the review's (`ValidateStored`) plus the composition's, as
 above. `replay metrics` adds the review metrics, the compose metrics from
 `compose.json`, `compose_cost_usd` (the stage's share of `cost_usd`),
 `compose_jump` (landing entries whose tile or size moved from the provisional
-layout to the composition) and `compose_no_composition`. In a chain each
+layout to the composition) and `compose_no_composition`, and from
+`analysis.json`: `library_selected`, `library_ready`, `library_landing` and
+per type `library_<type>_selected`, `_ready`, `_not_applies`, `_dropped`,
+`_repaired` and `_landing`; `fills_cost_usd`, `fills_seconds_max`;
+`exhibits_returned`, `exhibits_kept`, `exhibits_landing`,
+`exhibits_dropped_<reason>`, `exhibits_cost_usd`, `exhibits_seconds`;
+`extras_wait_seconds`; and `extras_duplicate_pairs` and
+`extras_has_duplicate`. In a chain each
 revision is offered the composition the one before it got, when the same run
 generated it.
 
