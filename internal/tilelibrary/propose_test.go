@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestProposeFromACheck(t *testing.T) {
 	c := change(t, "env_vars", "")
 	checks := fakeChecks{"chk_ok": passing(t, c)}
 
-	got, err := s.Propose(ctx, checks, tilelibrary.Request{FromTile: "env_vars", Check: "chk_ok", Glance: str("New variables with their defaults."), UseWhen: str("When env vars change. Not tests."), Title: str("Environment variables")})
+	got, err := s.Propose(ctx, checks, tilelibrary.Request{Check: "chk_ok", Glance: str("New variables with their defaults."), UseWhen: str("When env vars change. Not tests."), Title: str("Environment variables")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func TestProposeKeepsOnlyPassedSyntheticSamples(t *testing.T) {
 		tilelibrary.CheckedSample{Sample: library.Sample{Name: "failed", Data: c.Samples[0].Data, Hunks: c.Samples[0].Hunks, Items: c.Samples[0].Items}, Passed: false, Synthetic: true},
 		tilelibrary.CheckedSample{Sample: library.Sample{Name: "real", Data: c.Samples[0].Data}, Passed: true, Synthetic: false},
 		tilelibrary.CheckedSample{Sample: library.Sample{Name: "claims", Data: c.Samples[0].Data}, Passed: true, Synthetic: true})
-	got, err := s.Propose(ctx, fakeChecks{"chk_ok": result}, tilelibrary.Request{FromTile: "t", Check: "chk_ok", Glance: str("A glance.")})
+	got, err := s.Propose(ctx, fakeChecks{"chk_ok": result}, tilelibrary.Request{Check: "chk_ok", Glance: str("A glance.")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestProposeKeepsOnlyPassedSyntheticSamples(t *testing.T) {
 	} {
 		r := passing(t, c)
 		r.Samples = only
-		if _, err := s.Propose(ctx, fakeChecks{"chk_ok": r}, tilelibrary.Request{FromTile: "t", Check: "chk_ok"}); err == nil || !strings.Contains(err.Error(), "synthetic") {
+		if _, err := s.Propose(ctx, fakeChecks{"chk_ok": r}, tilelibrary.Request{Check: "chk_ok"}); err == nil || !strings.Contains(err.Error(), "synthetic") {
 			t.Errorf("a check with %d samples: %v", len(only), err)
 		}
 	}
@@ -126,17 +127,17 @@ func TestProposeRefusals(t *testing.T) {
 		req  tilelibrary.Request
 		want string
 	}{
-		{"unknown check", tilelibrary.Request{FromTile: "t", Check: "chk_none"}, "unknown or has expired"},
-		{"failed check", tilelibrary.Request{FromTile: "t", Check: "chk_fail"}, "did not pass"},
-		{"digest mismatch", tilelibrary.Request{FromTile: "t", Check: "chk_digest"}, "digest"},
-		{"built-in name", tilelibrary.Request{FromTile: "t", Check: "chk_ok", Name: str("schema_change")}, "baum's own"},
-		{"reserved name", tilelibrary.Request{FromTile: "t", Check: "chk_ok", Name: str("sec_x")}, "cannot start"},
-		{"custom", tilelibrary.Request{FromTile: "t", Check: "chk_ok", Name: str("custom")}, "custom"},
-		{"taken name from a tile", tilelibrary.Request{FromTile: "t", Check: "chk_ok", Name: str("taken")}, "already in your library"},
-		{"deleted name", tilelibrary.Request{FromTile: "t", Check: "chk_ok", Name: str("gone")}, "deleted"},
+		{"unknown check", tilelibrary.Request{Check: "chk_none"}, "unknown or has expired"},
+		{"failed check", tilelibrary.Request{Check: "chk_fail"}, "did not pass"},
+		{"digest mismatch", tilelibrary.Request{Check: "chk_digest"}, "digest"},
+		{"built-in name", tilelibrary.Request{Check: "chk_ok", Name: str("schema_change")}, "baum's own"},
+		{"reserved name", tilelibrary.Request{Check: "chk_ok", Name: str("sec_x")}, "cannot start"},
+		{"custom", tilelibrary.Request{Check: "chk_ok", Name: str("custom")}, "custom"},
+		{"taken name from a tile", tilelibrary.Request{Check: "chk_ok", Name: str("taken")}, "already in your library"},
+		{"deleted name", tilelibrary.Request{Check: "chk_ok", Name: str("gone")}, "deleted"},
 		{"unknown source", tilelibrary.Request{FromName: "nothing", Check: "chk_ok"}, "no tile type"},
 		{"built-in edited in place", tilelibrary.Request{FromName: "schema_change", Check: "chk_ok", Name: str("schema_change")}, "baum's own"},
-		{"no glance", tilelibrary.Request{FromTile: "t", Check: "chk_ok", Glance: str("")}, "glance"},
+		{"no glance", tilelibrary.Request{Check: "chk_ok", Glance: str("")}, "glance"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,7 +147,7 @@ func TestProposeRefusals(t *testing.T) {
 			}
 		})
 	}
-	if _, err := s.Propose(ctx, nil, tilelibrary.Request{FromTile: "t", Check: "chk_ok"}); err == nil {
+	if _, err := s.Propose(ctx, nil, tilelibrary.Request{Check: "chk_ok"}); err == nil {
 		t.Error("no checker")
 	}
 }
@@ -194,5 +195,55 @@ func TestProposeFromATypeEditsOrCopies(t *testing.T) {
 	}
 	if _, err := s.Create(ctx, copied, nil); !errors.Is(err, tilelibrary.ErrExists) {
 		t.Error(err)
+	}
+}
+
+// A sample whose hunks share three or more non-trivial lines with the open
+// pull request's diff is a copy of its code and is refused; fewer lines, or
+// trivial ones, are not; with no pull request page there is nothing to
+// compare with.
+func TestProposeRefusesSamplesCopiedFromThePullRequest(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	c := change(t, "env_vars", "")
+	checks := fakeChecks{"chk_ok": passing(t, c)}
+	var shared []string
+	for _, h := range c.Samples[0].Hunks {
+		for _, l := range h.Lines {
+			if strings.HasPrefix(l.Text, "CREATE TABLE") && !slices.Contains(shared, l.Text) {
+				shared = append(shared, l.Text)
+			}
+		}
+	}
+	if len(shared) < 3 {
+		t.Fatalf("the sample has %d table lines", len(shared))
+	}
+	diff := func(lines ...string) func(context.Context) ([]string, error) {
+		return func(context.Context) ([]string, error) { return lines, nil }
+	}
+	req := func(f func(context.Context) ([]string, error)) tilelibrary.Request {
+		return tilelibrary.Request{Check: "chk_ok", Glance: str("A glance."), PullDiff: f}
+	}
+	trivial := []string{"", "}", "  });", "import \"os\"", "package main", "if err != nil {", "return nil, err", "x := 1"}
+
+	for name, f := range map[string]func(context.Context) ([]string, error){
+		"no pull request":                nil,
+		"two shared lines and trivial":   diff(append([]string{"  " + shared[0], shared[1] + " "}, trivial...)...),
+		"the same line three times":      diff(shared[0], shared[0], shared[0]),
+		"trivial lines of the sample":    diff(trivial...),
+		"lines of another pull request":  diff("func unrelatedFunction() {", "\treturn unrelatedValue()", "}"),
+		"a diff with a patch of nothing": diff(),
+	} {
+		if _, err := s.Propose(ctx, checks, req(f)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	_, err := s.Propose(ctx, checks, req(diff("\t"+shared[0], shared[1], shared[2]+"  ")))
+	if err == nil || !strings.Contains(err.Error(), "fake repository") || strings.Contains(err.Error(), shared[0]) {
+		t.Errorf("a copy: %v", err)
+	}
+	failing := func(context.Context) ([]string, error) { return nil, errors.New("no diff") }
+	if _, err := s.Propose(ctx, checks, req(failing)); err == nil || !strings.Contains(err.Error(), "diff") {
+		t.Errorf("a diff that cannot be read: %v", err)
 	}
 }

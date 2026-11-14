@@ -30,12 +30,14 @@ const SectionTiles = "tiles"
 // TileTypes is the person's tile library as the tile type tools use it; the
 // daemon's is uiserver's, over internal/tilelibrary and the render checker.
 type TileTypes interface {
-	// Read returns a saved or built-in type in full as JSON: its definition
-	// with HTML, glance, review checks, samples and versions. It fails with a
-	// message for an unknown name.
+	// Read returns a saved or built-in type in full as JSON (for the
+	// tile_type tool, the agent's only way to read a type's source): its
+	// definition with HTML, glance, review checks, samples and versions. It
+	// fails with a message for an unknown name.
 	Read(ctx context.Context, name string) (json.RawMessage, error)
 	// Propose checks a request and returns the target and After of its
-	// proposal. It refuses a check that did not pass on a synthetic sample,
+	// proposal, a card in the shape of the person's Before (the type now),
+	// so the two diff field by field. It refuses a check that did not pass on a synthetic sample,
 	// a name the library does not allow and an edit of a built-in type.
 	Propose(ctx context.Context, req TileTypeRequest) (target string, after json.RawMessage, err error)
 }
@@ -56,6 +58,9 @@ type TileTypeRequest struct {
 	ReviewChecks *string
 	// Check is the id of the render check the proposal rests on.
 	Check string
+	// PullDiff reads the lines of the diff of the pull request whose page
+	// the proposal is made on; nil on Settings. A sample must not copy them.
+	PullDiff func(ctx context.Context) ([]string, error)
 }
 
 // tileTypePageTools are the tools the pull request page and Settings' Tile
@@ -101,8 +106,8 @@ func (s *Server) tileTypeTools() []Tool {
 		},
 	}, {
 		Name: "propose_tile_type",
-		Description: "Proposes saving a tile type to the person's tile library, or a new version of one: the person sees the title, the use-when line, the fill instructions' diff, whether the component changed and a preview drawn from the check's sample, and saves it or dismisses it. Nothing is saved until they do. " +
-			"from is the tile of this page the type comes from (tile) or a saved or built-in type to start from (name; built-in types are never changed, so a copy needs its own name). check is a render check that passed on at least one synthetic sample: a sample whose hunks and items are its own, in a made-up repository, never data of a real pull request; only synthetic samples that passed are saved. " +
+		Description: "Proposes saving a tile type to the person's tile library, or a new version of one: the person sees what it would save against what is saved now, field by field (title, use-when line, glance, review checks, paths, fill instructions, the definition with its HTML component, and the samples), and saves it or dismisses it. Nothing is saved until they do. " +
+			"from is the tile of this page the type comes from (tile) or a saved or built-in type to start from (name; built-in types are never changed, so a copy needs its own name). check is a render check that passed on at least one synthetic sample: a sample whose hunks and items are its own, in a made-up repository, never data of a real pull request; only synthetic samples that passed are saved. On a pull request's page a sample whose code copies lines of that pull request's diff is refused: write sample code for a fake repository. " +
 			"name defaults to the definition's. Optional title, use_when, glance, paths (globs of the files it is for) and review_checks replace what the definition or type has. You get the proposal's id, never the type's current value.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"from":{"type":"object","description":"Where the type comes from: exactly one of tile (a tile id of this page) or name (a saved or built-in type).","properties":{"tile":{"type":"string","minLength":1,"maxLength":128},"name":{"type":"string","minLength":1,"maxLength":64}},"minProperties":1,"maxProperties":1,"additionalProperties":false},` +
@@ -115,6 +120,7 @@ func (s *Server) tileTypeTools() []Tool {
 			`"check":{"type":"string","pattern":"^chk_[A-Za-z0-9_]{1,64}$","description":"The id of the render check the proposal rests on."}},` +
 			`"required":["from","check"],"additionalProperties":false}`),
 		Proposes: true,
+		Reads:    []string{"/api/index", "/api/facts", "/api/document", "/api/patch"},
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			page, err := s.tileTypePage(c)
 			if err != nil {
@@ -142,8 +148,12 @@ func (s *Server) tileTypeTools() []Tool {
 			if a.From.Tile != "" && page != PagePullRequest {
 				return "", errors.New("a tile is on a pull request's page: from.name starts from a type on Settings' Tile library")
 			}
-			target, after, err := s.tileTypes.Propose(ctx, TileTypeRequest{FromTile: a.From.Tile, FromName: a.From.Name,
-				Name: a.Name, Title: a.Title, UseWhen: a.UseWhen, Glance: a.Glance, Paths: a.Paths, ReviewChecks: a.ReviewChecks, Check: a.Check})
+			request := TileTypeRequest{FromTile: a.From.Tile, FromName: a.From.Name,
+				Name: a.Name, Title: a.Title, UseWhen: a.UseWhen, Glance: a.Glance, Paths: a.Paths, ReviewChecks: a.ReviewChecks, Check: a.Check}
+			if page == PagePullRequest {
+				request.PullDiff = func(ctx context.Context) ([]string, error) { return pullDiffLines(ctx, c) }
+			}
+			target, after, err := s.tileTypes.Propose(ctx, request)
 			if err != nil {
 				return "", err
 			}
@@ -195,4 +205,45 @@ func (s *Server) readTileType(ctx context.Context, c CallContext, name string) (
 		}
 	}
 	return compactJSON(out)
+}
+
+// pullDiffLines reads the open pull request's diff as the diff tool does (the
+// saved review's patches, else the facts') and returns its lines: each
+// patch's added, removed and context lines without their marker. Patches the
+// diff tool leaves out for size are not read.
+func pullDiffLines(ctx context.Context, c CallContext) ([]string, error) {
+	out, err := callDiff(ctx, c, json.RawMessage(`{}`))
+	if err != nil {
+		return nil, err
+	}
+	var diff struct {
+		Files []struct {
+			Patch json.RawMessage `json:"patch"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(out), &diff); err != nil {
+		return nil, err
+	}
+	var lines []string
+	read := 0
+	for _, f := range diff.Files {
+		var patch string
+		if json.Unmarshal(f.Patch, &patch) != nil {
+			continue
+		}
+		read++
+		for _, line := range strings.Split(patch, "\n") {
+			if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "@@") {
+				continue
+			}
+			if line != "" && strings.ContainsRune("+- ", rune(line[0])) {
+				line = line[1:]
+			}
+			lines = append(lines, line)
+		}
+	}
+	if len(diff.Files) > 0 && read == 0 {
+		return nil, errors.New("the pull request's patches are not available")
+	}
+	return lines, nil
 }

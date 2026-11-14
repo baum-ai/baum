@@ -1799,10 +1799,16 @@ computer by `internal/tilelibrary`, in the private application database
   `applies_with`, path globs, samples, origin `chat` or `import`, created and
   updated times, `used_at` and `used_in` for the last fill that used it, and
   `deleted`), `tile_type_versions` (name, digest, time) and `tile_definitions`
-  (digest, the definition with its HTML). A version is a definition digest,
-  and a saved type's name is its tiles' ID. The tiles' layout edits name
-  digests in `tile_definitions` too, so a definition is removed only when no
-  type version, layout overlay or stored fill names it.
+  (digest, the definition with its HTML, time of the first save). A version is
+  a definition digest, and a saved type's name is its tiles' ID. On this
+  branch only type versions hold definitions: layout edits (`tile_overlays`)
+  name no digest. The sweep that removes unreferenced definitions still keeps
+  one that a `tile_overlays` value or a `tile_fills` row (when those tables
+  exist) names, so a later feature can share the table; a missing table names
+  nothing, and any other error reading one keeps the definition. Reads run in
+  one transaction, so a type's row and the definition it names are read at the
+  same moment, and `List` leaves out (and logs) a type that cannot be loaded
+  rather than failing.
 - `tilelibrary.BuildEntry` writes a saved type in the built-in library's own
   file layout into an in-memory `fs.FS` and reads it with `library.Load`, so
   `library.Check` applies to a saved type exactly as to `schema_change`.
@@ -1821,8 +1827,10 @@ computer by `internal/tilelibrary`, in the private application database
 - A tile of a saved type in a generated review is a `tiles.LibraryTile`
   that embeds its full definition (`tilelibrary.LibraryTile`), as a built-in
   type's does, so editing, restoring or deleting a type never changes a saved
-  review: the tests serve a stored composition before and after an edit and a
-  purge and compare the bytes.
+  review: a test in `internal/uiserver` stores a review version whose
+  composition has a library tile built from a saved type, serves it through
+  `/api/tiles` (a fresh handler each time, so no answer is cached), then edits,
+  renames, deletes and purges the type and compares the served bytes.
 - Two chat tools work on it, on the pull request page and on Settings'
   Tile library section. `tile_type {type}` returns a saved or built-in type in
   full (definition with HTML, glance, review checks, samples, versions): the
@@ -1830,17 +1838,31 @@ computer by `internal/tilelibrary`, in the private application database
   definition without its HTML. It is the layout tools' `tile_type` too: on the
   pull request page a built-in type also carries what `add_tile` needs (below),
   and without a library it answers only that. `propose_tile_type` is a proposal, with
-  `Proposes: true`: nothing is saved until the person saves it in the panel,
-  which shows the title, the use-when line, the fill text's diff, whether the
-  component changed and a preview of the check's sample. It rests on a render
+  `Proposes: true`: nothing is saved until the person saves it in the panel.
+  The proposal's After and the current value (Before) are one shape,
+  `tilelibrary.Card` (`CardOf`, `CardOfType`): name, title, `use_when`,
+  `glance`, `review_checks`, `paths`, `applies_with`, the `fill` instructions,
+  origin, `based_on`, the definition with its HTML and the samples, so the
+  panel's generic change view diffs them field by field and the person sees
+  the texts that will instruct future fill models. A richer card with a
+  preview drawn from the check's sample is later UI work. It rests on a render
   check, which `tilelibrary.Checks` looks up by id (verdict, the checked
   definition and its digest, and per sample whether it passed and is
   synthetic); it needs a pass on at least one synthetic sample (hunks and
   items of its own, every citation resolving to them), and saves only the
-  samples that passed and are synthetic. The proposal's target is
+  samples that passed and are synthetic. On a pull request's page the tool
+  also reads the open pull request's diff as `diff` does (so it declares those
+  reads) and refuses a sample whose hunks share three or more distinct
+  non-trivial lines with it (trivial: blank, brackets and punctuation,
+  imports, a few common boilerplate lines, short lines), with a reason telling
+  the agent to write sample code for a fake repository; a diff that cannot be
+  read refuses too. The proposal's target is
   `tile_type:<name>` and its revision covers whether the type exists and its
   current digest, so a type saved, edited or deleted meanwhile makes the save
-  stale. Built-in types are never edited: starting from one makes a copy
+  stale. A proposal for an existing type also names the digest and updated
+  time it started from (`based_on`), which must still be current when the
+  proposal is recorded and when it is saved, so a save never reverts texts the
+  person saved after the agent read the type. Built-in types are never edited: starting from one makes a copy
   under a name of its own.
 - `GET /api/tile-types/{name}/preview?sample=` draws a built-in or saved
   type without a review: the served definition (no HTML; `builtin` only by

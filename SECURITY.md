@@ -1504,11 +1504,17 @@ data.
   built-in type is (`library.Check`, which includes the kit's lint) and its name
   may not shadow a built-in tile type, a built-in library type or a tile ID
   prefix.
-- Samples are synthetic. The library never stores data of a real pull request:
-  a proposal needs a render check that passed on a sample whose hunks and
+- Samples are self-contained and checked not to copy the open pull request.
+  A proposal needs a render check that passed on a sample whose hunks and
   items are its own, only such samples are saved, and a sample whose citations
-  do not resolve to its own hunks and items is refused. A type's preview and
-  its picture draw only those samples.
+  do not resolve to its own hunks and items is refused. On a pull request's
+  page the proposal is also refused when a sample's hunks share three or more
+  distinct non-trivial lines (not blank, brackets, imports or common
+  boilerplate) with that pull request's diff, and when its diff cannot be
+  read to check. This is a heuristic on lines, not proof that a sample holds
+  none of a pull request's data: the person sees every sample, in the
+  proposal's Before and After, before they press Save, and nothing is saved
+  until they do.
 - "Built in" is decided by digest only. A saved type is never marked built in
   unless its content is byte for byte a built-in type's, which then is baum's
   own code; nothing a proposal, a name or a stored row carries can claim it.

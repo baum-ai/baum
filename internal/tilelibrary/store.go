@@ -8,7 +8,9 @@
 // static check a built-in type passes (library.Check) applies to it
 // unchanged. Its definition, with its HTML, is kept by digest in
 // tile_definitions, and every version of a type is a digest. A type's
-// samples are synthetic: a save never stores data of a real pull request.
+// samples are self-contained (their citations name only their own hunks and
+// items), and a proposal made on a pull request's page is checked not to copy
+// that pull request's code.
 //
 // A review that uses a type embeds its full definition (LibraryTile), so
 // editing, restoring or deleting a type never changes a saved review.
@@ -21,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -36,9 +39,9 @@ const UndoWindow = 30 * 24 * time.Hour
 
 // schema is created when a write opens the database; an older app ignores
 // the tables, and a read of a database without them finds an empty library.
-// tile_definitions holds the definitions by digest, as a custom tile of a
-// layout edit names them; its columns are the ones the layout fills create
-// it with, so whichever opens a database first, the other's inserts work.
+// tile_definitions holds the definitions by digest. Its columns are the ones
+// a layout fill creates it with, so whichever opens a database first, the
+// other's inserts work.
 const schema = `CREATE TABLE IF NOT EXISTS tile_definitions(
   digest TEXT PRIMARY KEY,
   definition BLOB NOT NULL,
@@ -123,8 +126,10 @@ type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
+// noTable reports an error that says a table is missing: the only error that
+// counts as an absent library (or an absent table of another feature).
 func noTable(err error) bool {
-	return err != nil && (strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "no such column"))
+	return err != nil && strings.Contains(err.Error(), "no such table")
 }
 
 type row struct {
@@ -157,7 +162,14 @@ func (s *Store) read(ctx context.Context, f func(q queryer) error) error {
 		return err
 	}
 	defer release()
-	if err := f(db); err != nil && !noTable(err) {
+	// One transaction, so a row and the definition it names are read at the
+	// same moment: a write between them cannot sweep the definition.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := f(tx); err != nil && !noTable(err) {
 		return err
 	}
 	return nil
@@ -273,7 +285,9 @@ func (s *Store) List(ctx context.Context, deleted bool) ([]Type, error) {
 			}
 			t, err := load(ctx, q, r)
 			if err != nil {
-				return err
+				// One type that cannot be read must not hide the others.
+				slog.Warn("tile library: a type could not be read and is left out", "name", r.name, "error", err)
+				continue
 			}
 			out = append(out, t)
 		}
@@ -379,7 +393,7 @@ func (s *Store) save(ctx context.Context, c Change, create bool, unchanged func(
 		if create && live >= MaxTypes {
 			return ErrTooMany
 		}
-		if err := checkSize(ctx, conn, int64(len(encoded)+len(samples))); err != nil {
+		if err := checkSize(ctx, conn, name, def.Digest, int64(len(encoded)), int64(len(samples))); err != nil {
 			return err
 		}
 		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO tile_definitions(digest, definition, at) VALUES (?, ?, ?)`, def.Digest, encoded, now); err != nil {
@@ -420,17 +434,30 @@ func nonNil(list []string) []string {
 	return list
 }
 
-// checkSize refuses a write that would take the library past MaxBytes.
-func checkSize(ctx context.Context, q queryer, adding int64) error {
-	var definitions, samples int64
-	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(LENGTH(definition)), 0) FROM tile_definitions WHERE digest IN (
-  SELECT digest FROM tile_type_versions UNION SELECT digest FROM tile_types)`).Scan(&definitions); err != nil {
+// checkSize refuses a write that would take the library past MaxBytes. The
+// write adds its definition unless a version of some type already holds that
+// digest (it is stored once), and its samples replace the type's own.
+func checkSize(ctx context.Context, q queryer, name, digest string, definition, samples int64) error {
+	var definitions, held, replaced int64
+	const counted = `SELECT digest FROM tile_type_versions UNION SELECT digest FROM tile_types`
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(LENGTH(definition)), 0) FROM tile_definitions WHERE digest IN (`+counted+`)`).Scan(&definitions); err != nil {
 		return err
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(LENGTH(samples)), 0) FROM tile_types`).Scan(&samples); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(LENGTH(samples)), 0) FROM tile_types`).Scan(&held); err != nil {
 		return err
 	}
-	if definitions+samples+adding > maxBytes {
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(LENGTH(samples)), 0) FROM tile_types WHERE name = ?`, name).Scan(&replaced); err != nil {
+		return err
+	}
+	var counts int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM tile_definitions WHERE digest = ? AND digest IN (`+counted+`)`, digest).Scan(&counts); err != nil {
+		return err
+	}
+	adding := samples - replaced
+	if counts == 0 {
+		adding += definition
+	}
+	if definitions+held+adding > maxBytes {
 		return ErrTooLarge
 	}
 	return nil
@@ -552,9 +579,9 @@ func purge(ctx context.Context, conn querierExec, now time.Time) error {
 	return sweep(ctx, conn)
 }
 
-// sweep removes the definitions no type version names and no layout edit
-// or stored fill (tile_overlays, tile_fills, when they exist) names by
-// digest: a definition kept while named elsewhere.
+// sweep removes the definitions no type version names and no other feature's
+// table (tile_overlays, tile_fills, when they exist) names by digest: a
+// definition is kept while named elsewhere.
 func sweep(ctx context.Context, conn querierExec) error {
 	rows, err := conn.QueryContext(ctx, `SELECT digest FROM tile_definitions WHERE digest NOT IN (
   SELECT digest FROM tile_type_versions UNION SELECT digest FROM tile_types)`)
@@ -574,11 +601,7 @@ func sweep(ctx context.Context, conn querierExec) error {
 		return err
 	}
 	for _, digest := range candidates {
-		named, err := namedElsewhere(ctx, conn, digest)
-		if err != nil {
-			return err
-		}
-		if !named {
+		if !namedElsewhere(ctx, conn, digest) {
 			if _, err := conn.ExecContext(ctx, `DELETE FROM tile_definitions WHERE digest = ?`, digest); err != nil {
 				return err
 			}
@@ -587,21 +610,23 @@ func sweep(ctx context.Context, conn querierExec) error {
 	return nil
 }
 
-func namedElsewhere(ctx context.Context, q queryer, digest string) (bool, error) {
-	var one int
-	err := q.QueryRowContext(ctx, `SELECT 1 FROM tile_overlays WHERE instr(CAST(value AS TEXT), ?) > 0 LIMIT 1`, digest).Scan(&one)
-	switch {
-	case err == nil:
-		return true, nil
-	case !errors.Is(err, sql.ErrNoRows) && !noTable(err):
-		return false, err
+// namedElsewhere reports whether another feature's table names a digest. A
+// missing table names nothing; any other error keeps the definition, since
+// removing one a stored review or layout may name cannot be undone.
+func namedElsewhere(ctx context.Context, q queryer, digest string) bool {
+	for _, query := range []string{
+		`SELECT 1 FROM tile_overlays WHERE instr(CAST(value AS TEXT), ?) > 0 LIMIT 1`,
+		`SELECT 1 FROM tile_fills WHERE digest = ? LIMIT 1`,
+	} {
+		var one int
+		err := q.QueryRowContext(ctx, query, digest).Scan(&one)
+		switch {
+		case err == nil:
+			return true
+		case errors.Is(err, sql.ErrNoRows), noTable(err):
+		default:
+			return true
+		}
 	}
-	err = q.QueryRowContext(ctx, `SELECT 1 FROM tile_fills WHERE digest = ? LIMIT 1`, digest).Scan(&one)
-	switch {
-	case err == nil:
-		return true, nil
-	case errors.Is(err, sql.ErrNoRows) || noTable(err):
-		return false, nil
-	}
-	return false, err
+	return false
 }

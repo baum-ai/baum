@@ -13,8 +13,6 @@ import (
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/tilelibrary"
-	"github.com/baum-ai/baum/internal/tileview"
-	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 )
@@ -503,66 +501,83 @@ func TestPurgeKeepsDefinitionsNamedElsewhere(t *testing.T) {
 	}
 }
 
-// Editing and then deleting a type leaves a stored version's served tiles
-// byte for byte what they were: a review embeds the definition it was made
-// with.
-func TestEditingAndDeletingATypeKeepsAStoredVersionsTiles(t *testing.T) {
+// A save of a definition the library already holds adds only what is new: a
+// text-only edit of a type that fills the library does not count its
+// definition and samples twice.
+func TestResavingAHeldDefinitionIsNotCountedTwice(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	defer tilelibrary.SetMaxBytes(1 << 30)()
+	first := mustCreate(t, s, change(t, "first", ""))
+	db, err := appdb.Open(s.Path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var held int64
+	if err := db.QueryRow(`SELECT (SELECT SUM(LENGTH(definition)) FROM tile_definitions) + (SELECT SUM(LENGTH(samples)) FROM tile_types)`).Scan(&held); err != nil {
+		t.Fatal(err)
+	}
+	tilelibrary.SetMaxBytes(held + 10)
+	edit := change(t, "first", "")
+	edit.Glance = "Another glance."
+	got, err := s.Update(ctx, edit, nil)
+	if err != nil || got.Entry.Definition.Digest != first.Entry.Definition.Digest || got.Entry.Glance != "Another glance." {
+		t.Fatalf("a text-only edit of a type that fills the library: %v", err)
+	}
+	// A new definition does not fit.
+	if _, err := s.Update(ctx, change(t, "first", " More."), nil); !errors.Is(err, tilelibrary.ErrTooLarge) {
+		t.Errorf("a larger definition: %v", err)
+	}
+}
+
+// A table another feature owns that cannot be read keeps the definitions it
+// may name; only a missing table names nothing.
+func TestSweepKeepsDefinitionsWhenAnotherTableCannotBeRead(t *testing.T) {
 	s, c := newStore(t)
 	ctx := context.Background()
-	saved := mustCreate(t, s, change(t, "migrations", ""))
-
-	document := tileviewtest.Encode(t, tileviewtest.Base(t))
-	var hunk string
-	for _, tile := range tileview.Build(document, nil, tiles.Options{}).Tiles.Tiles {
-		if len(tile.Covers) > 0 {
-			hunk = tile.Covers[0]
-			break
-		}
-	}
-	if hunk == "" {
-		t.Fatal("no hunk")
-	}
-	data := `{"engine":"sqlite","migrations":[],"tables":[{"name":"widgets","change":"created","renamed_from":null,"columns":[],"indexes":[],"cites":[{"type":"hunk","id":"` + hunk + `"}]}],"data_changes":[],"readers":[]}`
-	entry, err := s.Entry(ctx, "migrations")
+	mustCreate(t, s, change(t, "migrations", ""))
+	db, err := appdb.Open(s.Path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	composition, err := json.Marshal(tiles.Composition{Schema: tiles.CompositionName, Library: []tiles.LibraryTile{tilelibrary.LibraryTile(entry, json.RawMessage(data))}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	serve := func() string {
-		served := tileview.Build(document, composition, tiles.Options{})
-		out, err := json.Marshal(served.Tiles)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(out)
-	}
-	before := serve()
-	if !strings.Contains(before, saved.Entry.Definition.Digest) || !strings.Contains(before, `"state":"ready"`) {
-		t.Fatalf("the saved type's tile is not served ready: %.300s", before)
-	}
-
-	c.now = c.now.Add(time.Hour)
-	edited, err := s.Update(ctx, change(t, "migrations", " Changed."), nil)
-	if err != nil || edited.Entry.Definition.Digest == saved.Entry.Definition.Digest {
-		t.Fatalf("edit: %v", err)
-	}
-	if _, err := s.Rename(ctx, "migrations", "Renamed"); err != nil {
+	defer func() { _ = db.Close() }()
+	// A tile_overlays of a shape this code does not know: no such column.
+	if _, err := db.Exec(`CREATE TABLE tile_overlays(pr TEXT PRIMARY KEY, other BLOB)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Delete(ctx, "migrations"); err != nil {
 		t.Fatal(err)
 	}
-	c.now = c.now.Add(40 * 24 * time.Hour)
+	c.now = c.now.Add(31 * 24 * time.Hour)
 	if err := s.Purge(ctx); err != nil {
+		t.Fatalf("a purge fails on an unreadable table: %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tile_definitions`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("%d definitions kept, %v", n, err)
+	}
+}
+
+// A type that cannot be loaded is left out of the list, not a failure of it.
+func TestListSkipsATypeThatCannotBeLoaded(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	mustCreate(t, s, change(t, "good", ""))
+	mustCreate(t, s, change(t, "broken", ""))
+	db, err := appdb.Open(s.Path, false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Get(ctx, "migrations"); !errors.Is(err, tilelibrary.ErrUnknown) {
-		t.Fatal("the type is still there")
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`UPDATE tile_types SET samples = 'not json' WHERE name = 'broken'`); err != nil {
+		t.Fatal(err)
 	}
-	if after := serve(); after != before {
-		t.Errorf("the served tiles changed:\n%.400s\n%.400s", before, after)
+	list, err := s.List(ctx, false)
+	if err != nil || len(list) != 1 || list[0].Name != "good" {
+		t.Fatalf("list: %d types, %v", len(list), err)
+	}
+	if _, err := s.Get(ctx, "broken"); err == nil {
+		t.Error("a broken type was read")
 	}
 }

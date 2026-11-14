@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -66,13 +67,36 @@ type tileTypeFixture struct {
 	token  string
 	id     string
 	read   *readFixture
+	// patch is the patch of a.go in pull request 13 of acme/web, which the
+	// daemon's routes answer with.
+	patch string
+}
+
+// pullAPI is the daemon's routes for acme/web#13 as the diff tool reads
+// them: the review index, the facts and the patch of a.go.
+func (f *tileTypeFixture) pullAPI() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/index":
+			_, _ = w.Write([]byte(`{"entries":[{"pull_request":{"repository":"acme/web","number":13,"head_sha":"h13"},"clone_id":"c-web","status":"none","version_count":0}]}`))
+		case "/api/facts":
+			_, _ = w.Write([]byte(`{"review":{"head":"h13","clone":"c-web","version":0},"index":{"hunks":[{"path":"a.go","change":"modified","additions":3,"deletions":1}]}}`))
+		case "/api/facts/patch":
+			patch, _ := json.Marshal(f.patch)
+			_, _ = w.Write([]byte(`{"patch":` + string(patch) + `}`))
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
 
 func newTileTypeFixture(t *testing.T) *tileTypeFixture {
 	t.Helper()
 	f := &tileTypeFixture{store: &tilelibrary.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}, checks: fakeChecks{}}
 	proposers := &uiserver.Proposers{TileTypes: f.store}
-	f.mcp = agentcontext.New(agentcontext.Options{API: http.NotFoundHandler(), Version: "test", Proposers: proposers.Pages(),
+	f.patch = "@@ -1,2 +1,3 @@\n func unrelated() {\n+\tprintln(\"nothing in common with the samples\")\n }\n"
+	f.mcp = agentcontext.New(agentcontext.Options{API: f.pullAPI(), Version: "test", Proposers: proposers.Pages(),
 		TileTypes: uiserver.TileTypes{Store: f.store, Checks: f.checks}})
 	token, id, revoke, err := f.mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
 	if err != nil {
@@ -163,6 +187,155 @@ func TestProposeTileTypeAndSave(t *testing.T) {
 	}
 	if got, _ := f.store.Get(context.Background(), "env_vars"); len(got.Versions) != 2 || !strings.Contains(got.Entry.Definition.Fill, "removed variables") {
 		t.Errorf("after the edit: %d versions", len(got.Versions))
+	}
+}
+
+// diffOf is the patch of a diff that adds the lines.
+func diffOf(lines ...string) string {
+	return "@@ -1,1 +1,1 @@\n" + strings.Join(lines, "\n") + "\n"
+}
+
+// copiedSampleLines are lines of a synthetic sample of the built-in
+// schema_change type, which the test's proposals carry.
+func copiedSampleLines(t *testing.T) []string {
+	t.Helper()
+	want := []string{
+		"CREATE TABLE IF NOT EXISTS inbox_items (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);",
+		"CREATE TABLE IF NOT EXISTS webhook_attempts (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);",
+		"DROP TABLE IF EXISTS group_members_v1;",
+	}
+	entry, _ := library.Get("schema_change")
+	for _, line := range want {
+		found := false
+		for _, s := range entry.Samples {
+			for _, h := range s.Hunks {
+				for _, l := range h.Lines {
+					found = found || l.Text == line
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("the built-in sample has no line %q", line)
+		}
+	}
+	return want
+}
+
+// On a pull request's page a sample that copies the open pull request's code
+// is refused with a reason for the agent; a few shared lines, and shared
+// trivial lines, are not a copy; on Settings there is no pull request.
+func TestProposeRefusesASampleCopiedFromThePullRequest(t *testing.T) {
+	f := newTileTypeFixture(t)
+	f.page(t, prPage)
+	f.checks["chk_ok"] = passedCheck(t, typeChange(t, "env_vars", ""))
+	propose := func() (string, bool) {
+		return f.call(t, "propose_tile_type", map[string]any{"from": map[string]any{"tile": "env_vars"}, "check": "chk_ok", "glance": "A glance."})
+	}
+	lines := copiedSampleLines(t)
+	added := func(lines ...string) []string {
+		out := []string{}
+		for _, l := range lines {
+			out = append(out, "+"+l)
+		}
+		return out
+	}
+
+	f.patch = diffOf(append(added(lines[:2]...), "+}", "+import \"os\"", "+", " });", "+x := 1")...)
+	if text, bad := propose(); bad {
+		t.Fatalf("two shared lines and trivial ones are a copy: %s", text)
+	}
+	f.patch = diffOf(added(lines...)...)
+	text, bad := propose()
+	if !bad || !strings.Contains(text, "fake repository") {
+		t.Fatalf("a copy of the pull request: %v %s", bad, text)
+	}
+	if strings.Contains(text, lines[0]) {
+		t.Error("the refusal echoes the pull request's code")
+	}
+	// Removed and context lines are the pull request's code too.
+	f.patch = diffOf("-"+lines[0], " "+lines[1], "-"+lines[2])
+	if _, bad := propose(); !bad {
+		t.Error("a sample copying removed and context lines was proposed")
+	}
+	if n := len(f.mcp.Proposals.List(f.id)); n != 1 {
+		t.Errorf("%d proposals", n)
+	}
+	// A diff that cannot be read refuses rather than skips the check.
+	f.patch = diffOf(added(lines...)...)
+	f.page(t, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/web", PullRequest: 99})
+	if _, bad := propose(); !bad {
+		t.Error("proposed with no diff to check against")
+	}
+
+	// Settings has no open pull request: the same sample is proposed.
+	f.page(t, tileSettings)
+	if _, err := f.store.Create(context.Background(), typeChange(t, "env_vars", ""), nil); err != nil {
+		t.Fatal(err)
+	}
+	f.checks["chk_ok"] = passedCheck(t, typeChange(t, "env_vars", " More."))
+	if text, bad := f.call(t, "propose_tile_type", map[string]any{"from": map[string]any{"name": "env_vars"}, "check": "chk_ok"}); bad {
+		t.Fatalf("on Settings: %s", text)
+	}
+}
+
+// What the person compares is one shape: the type now (Before) and the
+// change (After) have the same fields, the texts that instruct fills among
+// them at the top level, so the panel diffs them field by field.
+func TestProposalBeforeAndAfterHaveTheSameShape(t *testing.T) {
+	f := newTileTypeFixture(t)
+	f.page(t, prPage)
+	ctx := context.Background()
+	if _, err := f.store.Create(ctx, typeChange(t, "env_vars", ""), nil); err != nil {
+		t.Fatal(err)
+	}
+	f.checks["chk_ok"] = passedCheck(t, typeChange(t, "env_vars", " Also list removed variables."))
+	if text, bad := f.call(t, "propose_tile_type", map[string]any{"from": map[string]any{"name": "env_vars"}, "check": "chk_ok",
+		"glance": "Changed glance.", "review_checks": "Check the defaults.", "paths": []string{"**/.env*"}, "use_when": "When env changes."}); bad {
+		t.Fatal(text)
+	}
+	p := f.proposal(t)
+	var before, after map[string]json.RawMessage
+	if err := json.Unmarshal(p.Before, &before); err != nil {
+		t.Fatalf("before: %s %v", p.Before, err)
+	}
+	if err := json.Unmarshal(p.After, &after); err != nil {
+		t.Fatal(err)
+	}
+	keys := func(m map[string]json.RawMessage) []string {
+		var out []string
+		for k := range m {
+			out = append(out, k)
+		}
+		slices.Sort(out)
+		return out
+	}
+	if !slices.Equal(keys(before), keys(after)) {
+		t.Errorf("before %v, after %v", keys(before), keys(after))
+	}
+	for _, field := range []string{"name", "title", "use_when", "glance", "review_checks", "paths", "fill", "definition", "samples", "based_on"} {
+		if _, ok := before[field]; !ok {
+			t.Errorf("before has no %s", field)
+		}
+	}
+	text := func(m map[string]json.RawMessage, field string) string {
+		var s string
+		_ = json.Unmarshal(m[field], &s)
+		return s
+	}
+	if text(after, "glance") != "Changed glance." || text(after, "use_when") != "When env changes." || text(after, "review_checks") != "Check the defaults." ||
+		!strings.Contains(text(after, "fill"), "removed variables") || strings.Contains(text(before, "fill"), "removed variables") {
+		t.Errorf("the texts the person compares: before %s / after %s", p.Before, p.After)
+	}
+	if string(before["paths"]) != `[]` || string(after["paths"]) != `["**/.env*"]` {
+		t.Errorf("paths: %s %s", before["paths"], after["paths"])
+	}
+	// It saves as shown: the texts of the card are the saved type's.
+	if err := f.mcp.Proposals.Save(ctx, f.id, p.ID, agentcontext.SaveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := f.store.Get(ctx, "env_vars")
+	if got.Entry.Glance != "Changed glance." || got.Entry.Definition.UseWhen != "When env changes." || got.Entry.ReviewChecks != "Check the defaults." || got.Paths[0] != "**/.env*" {
+		t.Errorf("saved %+v", got.Entry.Glance)
 	}
 }
 
