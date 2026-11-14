@@ -31,6 +31,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 type Local struct {
@@ -650,9 +651,17 @@ func callName(r agent.Request) string {
 		name = "Details"
 	case agent.StageContext:
 		name = "Codebase context"
+	case agent.StageExhibits:
+		name = "Exhibits"
 	case "":
 	default:
 		name = r.Stage
+		if kind, ok := strings.CutPrefix(r.Stage, "fill-"); ok {
+			name = "Library tile · " + strings.ReplaceAll(kind, "-", "_")
+			if entry, found := library.Get(strings.ReplaceAll(kind, "-", "_")); found {
+				name = "Library tile · " + entry.Definition.Title
+			}
+		}
 	}
 	if r.Pass > 1 {
 		name += fmt.Sprintf(" · repair %d", r.Pass-1)
