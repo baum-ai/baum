@@ -174,9 +174,6 @@ func (s *stagedReview) exhibitsStage(ctx context.Context, budgets Budgets) {
 	var kept []string
 	for _, ex := range reply.Exhibits {
 		tile, reason := s.checkExhibit(ex)
-		if reason == "" && len(result.Tiles) >= tiles.MaxAuthored {
-			reason = ExhibitLimit
-		}
 		if reason == "" {
 			text := ExhibitText(tile)
 			for _, other := range kept {
@@ -186,6 +183,9 @@ func (s *stagedReview) exhibitsStage(ctx context.Context, budgets Budgets) {
 				}
 			}
 			kept = append(kept, text)
+		}
+		if reason == "" && len(result.Tiles) >= tiles.MaxAuthored {
+			reason = ExhibitLimit
 		}
 		if reason != "" {
 			result.Dropped = append(result.Dropped, DroppedExhibit{ID: plainExhibitID(ex.ID), Reason: reason})

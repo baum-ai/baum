@@ -343,3 +343,76 @@ func TestTileAnalysisStrictNullLines(t *testing.T) {
 		t.Fatalf("%v %+v", err, outcome.Tiles.Fills)
 	}
 }
+
+// The exhibits call's tiles pass the host's checks against the bundle or are
+// dropped with their reason: a hunk not in the diff, code that is not the
+// cited code, a shape other than the ID's, a restatement of an earlier
+// exhibit, and any past three. Lines outside the hunk are dropped, citing
+// the whole hunk.
+func TestTileAnalysisExhibits(t *testing.T) {
+	cite := func(id string, lines string) string {
+		return fmt.Sprintf(`{"type":"hunk","id":%q,"lines":%s,"path":null}`, id, lines)
+	}
+	table := func(id, cell string, source string) string {
+		return fmt.Sprintf(`{"id":%q,"title":"Retry states","adds":"Every state and what moves it on.","table":{"columns":["State","On failure"],"rows":[["idle","%s"],["running","waits ten seconds before it tries again"]],"source":[%s]},"code":null,"prose":null}`, id, cell, source)
+	}
+	exhibits := []string{
+		table("table_states", "starts a run", cite(testHunk, "[1,3]")),
+		`{"id":"code_open","title":"Where the store opens","adds":"The call that opens it.","table":null,"code":{"language":"go","content":"func main() {\n\t// …\n\topen()\n}","caption":"The store opens first.","source":[` + cite(testHunk, "[40,50]") + `]},"prose":null}`,
+		`{"id":"prose_order","title":"Rollout order","adds":"The order.","table":null,"code":null,"prose":{"text":"Deploy the reader before the writer.","anchors":[` + cite(testHunk, "null") + `]}}`,
+		table("table_ghost", "starts a run", cite("h_000000000000", "null")),
+		`{"id":"code_made_up","title":"Code","adds":"x","table":null,"code":{"language":"go","content":"func invented() {\n\treturn nil\n}","caption":"","source":[` + cite(testHunk, "null") + `]},"prose":null}`,
+		`{"id":"table_wrong","title":"Wrong","adds":"x","table":null,"code":null,"prose":{"text":"Hello.","anchors":[` + cite(testHunk, "null") + `]}}`,
+		table("table_again", "starts a run", cite(testHunk, "null")),
+		`{"id":"table_fourth","title":"Client versions","adds":"x","table":{"columns":["Client","Works"],"rows":[["desktop seven","yes"],["browser extension two","no"]],"source":[` + cite(testHunk, "null") + `]},"code":null,"prose":null}`,
+	}
+	generator, run, _ := tileFixture(t, "", func(_ context.Context, kind string, _ Request, _ int) (Result, error, bool) {
+		if kind != "exhibits" {
+			return Result{}, nil, false
+		}
+		return stagedResult(`{"exhibits":[`+strings.Join(exhibits, ",")+`]}`, "s"), nil, true
+	})
+	outcome, _, err := generator.StagedReview(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := outcome.Tiles.Exhibits
+	var kept []string
+	for _, tile := range x.Tiles {
+		kept = append(kept, tile.ID)
+	}
+	if x.Returned != 8 || strings.Join(kept, ",") != "table_states,code_open,prose_order" {
+		t.Fatalf("returned %d, kept %v", x.Returned, kept)
+	}
+	want := []DroppedExhibit{{"table_ghost", ExhibitCitation}, {"code_made_up", ExhibitCode}, {"table_wrong", ExhibitShape}, {"table_again", ExhibitDuplicate}, {"table_fourth", ExhibitLimit}}
+	if fmt.Sprint(x.Dropped) != fmt.Sprint(want) {
+		t.Errorf("dropped %v, want %v", x.Dropped, want)
+	}
+	if !strings.Contains(string(x.Tiles[0].Data), `"lines":[1,3]`) || strings.Contains(string(x.Tiles[1].Data), `"lines"`) {
+		t.Errorf("citations: %s / %s", x.Tiles[0].Data, x.Tiles[1].Data)
+	}
+	if x.Adds["table_states"] != "Every state and what moves it on." {
+		t.Errorf("adds: %v", x.Adds)
+	}
+}
+
+// An exhibits call that returns none is the common answer: nothing is kept,
+// nothing dropped.
+func TestTileAnalysisNoExhibits(t *testing.T) {
+	generator, run, backend := tileFixture(t, "", nil)
+	outcome, _, err := generator.StagedReview(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := outcome.Tiles.Exhibits
+	if x.Returned != 0 || len(x.Tiles) != 0 || len(x.Dropped) != 0 || x.Reason != "" {
+		t.Errorf("exhibits: %+v", x)
+	}
+	calls := callsOf(backend, "WRITE-EXHIBITS")
+	if len(calls) != 1 || calls[0].Stage != StageExhibits || !strings.Contains(calls[0].Prompt, "Accepted outline") {
+		t.Error("the exhibits call was not made with the outline")
+	}
+	if strings.Index(calls[0].Prompt, "Accepted outline") > strings.Index(calls[0].Prompt, "## Submitting") {
+		t.Error("the outline comes after the exhibits call's Submitting heading")
+	}
+}
