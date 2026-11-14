@@ -419,7 +419,7 @@ func (s *Server) layoutTools() []Tool {
 		Name: "add_tile",
 		Description: "Adds a tile to the review on the pull request page the person has open, at once, as one undo step, optionally at a size and a place: a library tile type the review does not show yet (tile_layout's addable, such as api_change), or a tile the person removed, which it brings back. " +
 			"For a library type, first read tile_type and write its data yourself from the diff and checkout you have, then pass it as data: the tile shows at once. The host checks the data against the type's schema and this version's hunks and says where it does not fit, never changing anything then; fix it and call again. " +
-			"Without data the tile shows as being filled and baum fills it in the background, which costs a separate model run; it fills it again for later versions of the pull request." + layoutRule,
+			"With no place, a new tile stands right after the overview. Without data the tile shows as being filled and baum fills it in the background, which costs a separate model run; it fills it again for later versions of the pull request." + layoutRule,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"type":{"type":"string","minLength":1,"maxLength":128,"description":"A library type's name from tile_layout's addable, or a removed tile's id or type."},` +
 			size + `,` + place + `,"data":{"type":"object","description":"The tile's data, matching tile_type's fill_schema."}},"required":["type"],"additionalProperties":false}`),
 		Edits: true,

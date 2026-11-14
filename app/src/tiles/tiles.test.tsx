@@ -12,7 +12,7 @@ import { blocksOf, landingOf, narrowFills } from "./layout";
 import { TileHostContext } from "./host";
 import { tileFace } from "./registry";
 import { golden } from "./goldens-test-helper";
-import type { Tile, TileDocument } from "./tile-document";
+import { addedNoteText, withAddedNotes, type Tile, type TileDocument } from "./tile-document";
 import type { TileContext } from "./types";
 
 declare global {
@@ -362,6 +362,49 @@ describe("tiles that cannot be drawn", () => {
       />,
     );
     expect(page.querySelector('[data-tile="intent"]')?.textContent).toContain("Writing details…");
+  });
+
+  it("show a tile the person added as being filled, then from an earlier version", () => {
+    const pending = withAddedNotes(structuredClone(golden("base")), [
+      { tile: "intent", filling: true },
+    ]);
+    const intent = tileOf(pending, "intent");
+    intent.state = "pending";
+    intent.data = {};
+    let page = render(
+      <TileLanding
+        ctx={contextFor(pending, baseReview as unknown as ReviewDocument)}
+        generation={null}
+        memory={{ current: null }}
+      />,
+    );
+    let card = page.querySelector('[data-tile="intent"]');
+    expect(card?.textContent).toContain("Filling this tile…");
+    expect(card?.querySelector("[data-added-note]")?.textContent).toBe("Filling for this version");
+    act(() => root?.unmount());
+    root = null;
+
+    const stale = withAddedNotes(structuredClone(golden("base")), [
+      { tile: "intent", from: 2, filling: true },
+      { tile: 7 },
+    ]);
+    page = render(
+      <TileLanding
+        ctx={contextFor(stale, baseReview as unknown as ReviewDocument)}
+        generation={null}
+        memory={{ current: null }}
+      />,
+    );
+    card = page.querySelector('[data-tile="intent"]');
+    expect(card?.querySelector("[data-added-note]")?.textContent).toBe(
+      "From version 2; filling for this version",
+    );
+    expect(card?.textContent).not.toContain("Filling this tile…");
+
+    const ready = withAddedNotes(structuredClone(golden("base")), []);
+    expect(tileOf(ready, "intent").added).toBeUndefined();
+    expect(addedNoteText({ from: 3 })).toBe("From version 3");
+    expect(addedNoteText({})).toBeNull();
   });
 });
 

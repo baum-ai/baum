@@ -2648,6 +2648,14 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   why. A group, a draft and an earlier version have no layout controls, and
   there is no dragging: the layout changes through the panel, Undo, Reset
   and Show.
+- **Added tiles.** The panel can add a library tile the review does not show
+  ("add the API changes tile"). The tile route's `added` notes
+  (`[{tile, from?, filling?}]`, put on the tiles by `withAddedNotes` in
+  `src/tiles/tile-document.ts`) say which added tiles are being filled: a
+  card without data yet shows "Filling this tile…" with the live dot, and
+  one showing an earlier version's data says "From version N; filling for
+  this version" under its title until the fill lands, which the `layout`
+  event brings.
 
 The session panel's page context names the page in its `focus`: `view`
 `tiles`, and the `tile` open with its `item`. Ask about this tile, in a

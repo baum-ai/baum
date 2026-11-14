@@ -137,6 +137,11 @@ func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by str
 		return AddedTile{}, err
 	}
 	id := tiles.LibraryTileID(entry.Definition.Name)
+	// With no place, an added tile stands right after the overview, where
+	// the person sees it, rather than past the landing page.
+	if add.To == nil && slices.ContainsFunc(shown.Document.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == tiles.TypeOverview && e.Group != tiles.GroupHidden }) {
+		add.To = &tiles.Place{After: tiles.TypeOverview}
+	}
 	op := tiles.Op{Op: tiles.OpAdd, Size: add.Size, To: add.To, Add: &tiles.Added{Kind: "library", Name: entry.Definition.Name, Digest: entry.Definition.Digest}}
 	if reason := tiles.CheckOp(shown.Document, op); reason != "" {
 		return AddedTile{}, errors.New(reason)

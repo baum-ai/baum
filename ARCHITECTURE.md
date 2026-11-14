@@ -1084,9 +1084,11 @@ overview, the risks tile while it ranks an active critical or high risk, and
 the changes the recommendation names (`tiles.RecommendedChanges`) are never
 hidden, a move of a named change to the end is dropped, and a named change an
 edit leaves past the landing page is brought back to its front. A pinned change leaves the group. An `add` places a library
-tile the composition already has, or one the host holds data for (none yet:
-adding a type that must be filled is not available), and is otherwise
-dropped. An op whose tile or anchor the version lacks is dropped silently, so
+tile the composition already has (generation filled it), or else appends the
+one the host holds for this version (`added`: its fill, an earlier version's
+fill, or a pending tile while it is filled; see "Added tiles"), and is
+dropped when the host holds nothing for it (an unknown type) or the review
+already has `MaxLibraryTiles` (8) library tiles. An op whose tile or anchor the version lacks is dropped silently, so
 edits made on one version carry to the next and those whose tile vanished
 fall away. When any op applies, the layout is marked `edited`, with the tiles
 the person resized in `resized`: both are host-only, never stored
@@ -1264,6 +1266,42 @@ no edits gives exactly `Build`'s answer, so a review nobody edited is served
 as before; ops a version drops are counted in the daemon's work statistics
 (`tileview.overlay_ops_dropped`), never shown. Review groups have no layout
 of their own yet.
+
+**Added tiles.** An `add` names a built-in library type and the digest of
+its definition, both host-written (`library.Find` resolves a name, tile ID or
+title); a type the library does not have is refused. What a version shows for
+an added type is `tilelayout.AddedFor`: nothing when the version's
+generation filled it (the replay only places it); else its fill for that
+version; else, on the latest version, the newest earlier fill while every
+hunk it cites is still in this version's diff (`library.CheckAddedFill`),
+marked as from that version, or a pending tile, and a fill starts; an earlier
+version shows the newest earlier fill, marked, or nothing. The tile route
+answers these notes as `added: [{tile, from?, filling?}]` beside the
+document, and its cache key includes the pull request's fills. Fills live in
+`tile_fills(pr, tile, version, digest, data, at)`, at most 64 KiB of data each,
+the two newest versions per added tile, deleted with their pull request's
+overlay; the definition a fill was written against is kept in
+`tile_definitions(digest, definition, at)` while an overlay's add or a fill
+names its digest. A stored fill moves the overlay's revision and publishes
+the `layout` event. `Service.Sweep`, when the daemon starts, drops fills
+without an overlay and definitions nothing names. An added built-in type
+keeps its built-in label: the served definition is marked by its digest
+(`library.IsBuiltin`), never by data.
+
+A fill comes from one of three places. The session panel's agent writes the
+data itself (`add_tile` with `data`, after `tile_type`), which is checked
+against the latest version's hunks, masked like every model output
+(`agent.RedactTaskOutput`) and stored as that version's fill before the add,
+so the tile shows at once. Without data, `jobs.TileFills` (kind `tile_fill`)
+runs one fill beside the queue, one at a time, once per version and type, not
+again for ten minutes after a failure: `jobs.Local.FillTile` assembles the
+pull request at the version's head (standing down when the pull request moved
+or the version is no longer the latest) and calls `generate.FillTile`, one
+task with the type's fill schema and one repair (`agent.Generator.FillTile`),
+with the review's agent and model; the data is checked against the saved
+version's hunks and stored. Its spend is logged, not a job's. And a review
+of the pull request fills every added type itself (`generate.Tiles.Always`,
+see "Tile analysis").
 
 - `GET /api/tiles/layout?clone=&pr=` answers `{revision, edited, can_undo,
   last: {id, by, reset?, summary, tiles?} | null, batches, can_redo,
@@ -2375,6 +2413,20 @@ stage is told the selected types' checks.
   against this diff, is taken without a call (`FillResult.Reused`); its
   `related` items are written again. A previous authored tile every hunk of
   which is in this diff, its lines inside the hunk, is kept with its ID.
+- **Added types.** `StagedTiles.Always` are the library types the person
+  added to the pull request's review (`jobs.Local` reads their overlay into
+  `generate.Tiles.Always`), each with its last data: the newest of its fills
+  and of the latest version's composition, with the hunks of the version it
+  was written for. Such a type is offered even when the run offers no other,
+  counts as selected whatever the outline answers (so it is filled beside the
+  details and appears in the composition, and the replay only places it), and
+  is reused by its own rule instead of the previous composition's: with no
+  call when every hunk its last data cites is in this diff and no hunk new to
+  this diff touches a file it cites, and the data passes
+  `library.CheckAddedFill` (`CheckFill` without the rule that data must show
+  something). Its fill is told the person added it, checked with
+  `CheckAddedFill`, and an answer that the type does not apply is sent back
+  once.
 - **Fills.** Each other selected type gets a task (`fill-<type>`, its files
   named so) with a focused prefix in place of the stages' (the pull request's
   title, the selected hunks with their patches, an index of the other hunks
@@ -7634,9 +7686,13 @@ page.
 | --- | --- | --- |
 | `tile_layout` | none | `{pull_request, version, view: "tiles"\|"full", edited, can_undo, focus: {tile, title}\|null, first_screen_rows, landing_rows, rows: [["overview:half", …], …], tiles: [{id, type, title, size, sizes, group, pinned, hidden, on_landing, row, state, can_hide, why_not}], changes_shown, note}`, at most 32 KiB (the tiles past the landing page are left out first) |
 | `edit_tiles` | `{ops: [{op, tile?, to?, size?, count?}]}`, 1 to 20, `op` one of `move`, `resize`, `hide`, `show`, `pin`, `unpin`, `changes_shown` | `{applied: [summary lines], refused: [{index, reason}], revision, edited, can_undo, rows, hidden}`; every op refused is an error naming the reasons, and nothing is written |
-| `add_tile` | `{type, size?, to?}` | brings a hidden tile back (a show, with a resize and a move when asked) as one batch; a tile the review does not have is "not available yet", since filling a new tile is not part of this version |
+| `tile_type` | `{type}` | a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself; read-only, page-bound like the others |
+| `add_tile` | `{type, size?, to?, data?}` | a library type the review does not show (tile_layout's `addable`): one `add` batch, placed after the overview unless `to` says otherwise, with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background (`{tile, state: "ready" \| "filling", applied, …}`); a removed tile is brought back (a show, with a resize and a move when asked); an unknown type names the library's types |
 | `undo_tiles` | none | `{undone: [summary lines], revision, …}`, or "Nothing to undo" |
 | `reset_tiles` | none | `{revision, can_undo: true, …}`, or "The layout is already the generated one" |
+
+`tile_layout` also lists `addable`: the library types the review does not
+show, `{type, title, use_when, source: "built-in"}`.
 
 Each op is checked against the tiles of the pull request's latest saved
 version as the person is shown them (`tiles.CheckOp`), so the reasons are the

@@ -76,7 +76,46 @@ export type Tile = {
   state: TileState;
   problems?: string[];
   definition?: unknown;
+  /** Page-only, from the tile route's `added`: a tile the person added whose
+   *  data is from an earlier version (`from`) or that is being filled for
+   *  this version. */
+  added?: AddedNote;
 };
+
+/** What the tile route says of a tile the person added (tileview.AddedNote). */
+export type AddedNote = { from?: number; filling?: boolean };
+
+/** Puts the tile route's notes on the added tiles they name; a note that
+ *  is not well formed is left out. */
+export function withAddedNotes(doc: TileDocument, notes: unknown): TileDocument {
+  if (!Array.isArray(notes) || notes.length === 0) return doc;
+  const byTile = new Map<string, AddedNote>();
+  for (const note of notes) {
+    if (!isObject(note) || typeof note.tile !== "string") continue;
+    const added: AddedNote = {};
+    if (typeof note.from === "number" && note.from > 0) added.from = note.from;
+    if (note.filling === true) added.filling = true;
+    byTile.set(note.tile, added);
+  }
+  if (byTile.size === 0) return doc;
+  return {
+    ...doc,
+    tiles: doc.tiles.map((tile) =>
+      byTile.has(tile.id) ? { ...tile, added: byTile.get(tile.id) } : tile,
+    ),
+  };
+}
+
+/** The line a card shows under an added tile's title: where its data is
+ *  from while it is filled, or nothing. */
+export function addedNoteText(added: AddedNote | undefined): string | null {
+  if (!added) return null;
+  if (added.from)
+    return added.filling
+      ? `From version ${added.from}; filling for this version`
+      : `From version ${added.from}`;
+  return added.filling ? "Filling for this version" : null;
+}
 
 export type TileLayoutEntry = { tile: string; size: TileSize; group?: string; pin?: boolean };
 export type TileGroup = { id: string; title: string; collapse_after?: number };

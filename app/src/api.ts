@@ -1,6 +1,11 @@
 import { formatUSD } from "@baum/viewer/components/format";
 import type { ReviewDocument } from "@baum/viewer/review-document";
-import { parseTileDocument, withTiles, type TiledDocument } from "./tiles/tile-document";
+import {
+  parseTileDocument,
+  withAddedNotes,
+  withTiles,
+  type TiledDocument,
+} from "./tiles/tile-document";
 export type Clone = {
   id: string;
   path: string;
@@ -1214,12 +1219,15 @@ export function groupTilesRequest(id: string, version?: number, signal?: AbortSi
 }
 /** The daemon's answer for a review's tiles: `tiles` is null, with a
  *  `problem`, when the review could not be converted. */
-export type TilesAnswer = { document: ReviewDocument; tiles: unknown; problem?: string };
+export type TilesAnswer = {
+  document: ReviewDocument;
+  tiles: unknown;
+  problem?: string;
+  added?: unknown;
+};
 export function tiledDocument(body: TilesAnswer): TiledDocument {
-  return withTiles(
-    validDocument(body.document),
-    body.tiles === null ? null : parseTileDocument(body.tiles),
-  );
+  const tiles = body.tiles === null ? null : parseTileDocument(body.tiles);
+  return withTiles(validDocument(body.document), tiles && withAddedNotes(tiles, body.added));
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(

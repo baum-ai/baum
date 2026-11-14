@@ -1953,8 +1953,9 @@ nor any GitHub write.
 
 One change takes no save: the layout of a review's tiles, your own, on the
 pull request page you have open. A chat may move, resize, remove, bring back
-and pin tiles, undo, and reset the layout to the generated one (`edit_tiles`,
-`add_tile`, `undo_tiles`, `reset_tiles`), and it applies at once. The agent
+and pin tiles, add a library tile type, undo, and reset the layout to the
+generated one (`edit_tiles`, `add_tile`, `undo_tiles`, `reset_tiles`), and it
+applies at once. The agent
 reads untrusted pull request text (the diff, the description, threads and
 transcripts), which can tell it to rearrange or hide tiles, and baum accepts
 that without asking, because the worst such text can do is rearrange your own
@@ -1986,6 +1987,15 @@ page, visibly, undoably and within fixed rules:
   64 KiB per pull request (undone steps included), the 200 most recently
   edited pull requests. A reset always fits, dropping the oldest steps when
   it must.
+
+An added tile is the one place an edit brings data. Data the agent writes
+for it is checked against the type's schema, every hunk it cites must be in
+the diff of the version shown (a refusal names the place in the data, never
+its values), and it is masked for secrets, as every model output is, before
+it is stored on this computer. The type is one of baum's built-in library
+types, named by the host; the page labels the tile as baum's own by its
+definition's digest, which data cannot change. A fill baum runs itself for an
+added tile is checked and masked the same way.
 
 There is no confirmation and no rate cap on purpose: each would make "move
 this" slower for everyone to guard against an attack whose worst result is a
