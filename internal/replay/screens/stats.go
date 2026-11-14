@@ -44,7 +44,7 @@ func Wilson(successes, n int) (low, high float64) {
 // Recall counts, over cases, how many must-know signals of each kind were
 // given and how many the first screen showed.
 type Recall struct {
-	Recommendation, SevereRisks, NamedChanges, Breaking, MissingEvidence Count
+	Recommendation, SevereRisks, NamedChanges, RiskiestChanges, MediumRisks, Breaking, MissingEvidence Count
 	// All pools every signal.
 	All Count
 }
@@ -83,10 +83,16 @@ func RecallOf(screens []FirstScreen) Recall {
 		for _, s := range f.NamedChanges {
 			r.NamedChanges.add(true, s.Visible)
 		}
+		for _, s := range f.RiskiestChanges {
+			r.RiskiestChanges.add(true, s.Visible)
+		}
+		for _, s := range f.MediumRisks {
+			r.MediumRisks.add(true, s.Visible)
+		}
 		r.Breaking.add(f.Breaking.Given, f.Breaking.Visible)
 		r.MissingEvidence.add(f.MissingEvidence.Count > 0, f.MissingEvidence.Visible)
 	}
-	for _, c := range []Count{r.Recommendation, r.SevereRisks, r.NamedChanges, r.Breaking, r.MissingEvidence} {
+	for _, c := range []Count{r.Recommendation, r.SevereRisks, r.NamedChanges, r.RiskiestChanges, r.MediumRisks, r.Breaking, r.MissingEvidence} {
 		r.All.Given += c.Given
 		r.All.Shown += c.Shown
 	}
@@ -103,6 +109,6 @@ func (r Recall) Kinds() []struct {
 		Count Count
 	}{
 		{"recommendation", r.Recommendation}, {"critical/high risks", r.SevereRisks}, {"changes the recommendation names", r.NamedChanges},
-		{"breaking change", r.Breaking}, {"missing evidence", r.MissingEvidence}, {"all", r.All},
+		{"riskiest changes", r.RiskiestChanges}, {"top medium risks", r.MediumRisks}, {"breaking change", r.Breaking}, {"missing evidence", r.MissingEvidence}, {"all", r.All},
 	}
 }

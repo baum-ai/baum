@@ -61,6 +61,10 @@ type FirstScreen struct {
 	} `json:"recommendation"`
 	SevereRisks  []Signal `json:"severeRisks"`
 	NamedChanges []Signal `json:"namedChanges"`
+	// RiskiestChanges are the current changes rated highest (level 3 or
+	// more), MediumRisks the first three medium risks the Risks tile ranks.
+	RiskiestChanges []Signal `json:"riskiestChanges"`
+	MediumRisks     []Signal `json:"mediumRisks"`
 	Breaking     struct {
 		Given   bool `json:"given"`
 		Visible bool `json:"visible"`

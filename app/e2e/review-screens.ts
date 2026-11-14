@@ -165,4 +165,3 @@ export async function capture(
   await page.setViewportSize(size);
   await page.waitForTimeout(200);
 }
-

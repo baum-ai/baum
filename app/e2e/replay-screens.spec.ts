@@ -69,7 +69,8 @@ export type FirstScreen = {
   landingTiles: number;
   belowTiles: number;
   /** Grid units (6 a row) left empty on rows another row follows, on the
-   *  first screen and on the whole landing page. */
+   *  first screen and on the whole landing page, from the cards' widths, so
+   *  a one-column phone grid wastes none. */
   wastedUnits: number;
   wastedUnitsLanding: number;
   recommendation: { given: boolean; visible: boolean };
@@ -77,6 +78,11 @@ export type FirstScreen = {
   severeRisks: Signal[];
   /** The changes the recommendation cites, as their tiles. */
   namedChanges: Signal[];
+  /** The current changes rated highest (assessment level 3 or more), as
+   *  their tiles. */
+  riskiestChanges: Signal[];
+  /** The first three active medium risks the Risks tile ranks. */
+  mediumRisks: Signal[];
   breaking: { given: boolean; visible: boolean };
   missingEvidence: { count: number; visible: boolean };
   /** The share of signals given that are visible; null with none given. */
@@ -127,7 +133,8 @@ test("pictures of a replay run's layouts", async ({ page }) => {
           for (const theme of THEMES) {
             await page.emulateMedia({ colorScheme: theme });
             for (const size of SIZES) {
-              if (Date.now() - started > BUDGET_MS) throw new Error("the case's time budget ran out");
+              if (Date.now() - started > BUDGET_MS)
+                throw new Error("the case's time budget ran out");
               const name = `${pick.variant}-${size.width}-${theme}`;
               await page.setViewportSize(size);
               await page.goto(address());
@@ -204,7 +211,12 @@ async function firstScreen(page: Page, pick: Pick): Promise<FirstScreen> {
       });
       const answer = await fetch(`api/tiles?${query}`);
       type Doc = {
-        changes: { id: string; derived: { state: string } }[];
+        changes: {
+          id: string;
+          kind: string;
+          derived: { state: string };
+          assessment?: { level?: number } | null;
+        }[];
         risks: { id: string; change: string; tier: string; state?: string }[];
         evidence: { id: string; change: string; status: string }[];
         tiles: { id: string; type: string; data: unknown }[];
@@ -239,7 +251,6 @@ async function firstScreen(page: Page, pick: Pick): Promise<FirstScreen> {
       };
       const visible = (element: Element | null) => shown(element) >= 0.5;
 
-      const UNITS: Record<string, number> = { full: 6, half: 3, third: 2 };
       const cards = [...document.querySelectorAll<HTMLElement>("article[data-tile]")];
       const tiles = cards.flatMap((card) => {
         const part = shown(card);
@@ -253,21 +264,37 @@ async function firstScreen(page: Page, pick: Pick): Promise<FirstScreen> {
           },
         ];
       });
-      // Rows of the six-unit grid, by the cards' tops; a row with units
-      // left over while another row follows wastes them.
+      // Rows of the grid, by the cards' tops; a row whose cards leave part
+      // of the grid's width empty while another row follows wastes it,
+      // counted in sixths of the width (the wide grid's units).
+      const grid = cards[0]?.parentElement?.getBoundingClientRect();
+      const gap = cards[0]?.parentElement
+        ? parseFloat(getComputedStyle(cards[0].parentElement).columnGap) || 0
+        : 0;
       const wasted = (list: HTMLElement[]) => {
+        if (!grid) return 0;
         const rows = new Map<number, number>();
         for (const card of list) {
-          const top = Math.round(card.getBoundingClientRect().top);
-          rows.set(top, (rows.get(top) ?? 0) + (UNITS[card.dataset.tileSize ?? ""] ?? 6));
+          const box = card.getBoundingClientRect();
+          const top = Math.round(box.top);
+          rows.set(top, (rows.get(top) ?? -gap) + box.width + gap);
         }
         const tops = [...rows.keys()].sort((a, b) => a - b);
-        return tops.slice(0, -1).reduce((sum, top) => sum + Math.max(6 - rows.get(top)!, 0), 0);
+        return tops
+          .slice(0, -1)
+          .reduce(
+            (sum, top) =>
+              sum +
+              Math.max(Math.round((6 * (grid.width - rows.get(top)!)) / (grid.width + gap)), 0),
+            0,
+          );
       };
       const firstScreenCards = cards.filter((card) => shown(card) > 0);
       // A row of the first screen counts while a further row exists below,
       // seen or not.
-      const firstRows = new Set(firstScreenCards.map((c) => Math.round(c.getBoundingClientRect().top)));
+      const firstRows = new Set(
+        firstScreenCards.map((c) => Math.round(c.getBoundingClientRect().top)),
+      );
       const nextRow = cards.find(
         (c) => Math.round(c.getBoundingClientRect().top) > Math.max(...firstRows),
       );
@@ -310,6 +337,32 @@ async function firstScreen(page: Page, pick: Pick): Promise<FirstScreen> {
         const tile = tileOfChange(change);
         return { id: change, visible: tile ? cardVisible(tile.id) : false };
       });
+      const levels = doc.changes
+        .filter((c) => current.has(c.id) && c.kind !== "mechanical")
+        .map((c) => ({ id: c.id, level: c.assessment?.level ?? 0 }));
+      const highest = Math.max(0, ...levels.map((c) => c.level));
+      const riskiestChanges =
+        highest >= 3
+          ? levels
+              .filter((c) => c.level === highest)
+              .map((c) => {
+                const tile = tileOfChange(c.id);
+                return { id: c.id, visible: tile ? cardVisible(tile.id) : false };
+              })
+          : [];
+      const risksTile = doc.tiles.find((t) => t.type === "risks");
+      const ranked = ((risksTile?.data as { ranked?: string[] } | undefined)?.ranked ?? []).flatMap(
+        (id) => doc.risks.filter((r) => r.id === id),
+      );
+      const mediumRisks = ranked
+        .filter((r) => r.tier === "medium" && r.state !== "mitigated" && current.has(r.change))
+        .slice(0, 3)
+        .map((r) => ({
+          id: r.id,
+          visible: [...document.querySelectorAll(`[data-risk="${CSS.escape(r.id)}"]`)].some(
+            visible,
+          ),
+        }));
       const overview = doc.tiles.find((t) => t.type === "overview");
       const breakingGiven = Boolean(
         (overview?.data as { breaking_change?: string } | undefined)?.breaking_change,
@@ -333,6 +386,8 @@ async function firstScreen(page: Page, pick: Pick): Promise<FirstScreen> {
         ...(recommendation.given ? [recommendation.visible] : []),
         ...severeRisks.map((s) => s.visible),
         ...namedChanges.map((s) => s.visible),
+        ...riskiestChanges.map((s) => s.visible),
+        ...mediumRisks.map((s) => s.visible),
         ...(breaking.given ? [breaking.visible] : []),
         ...(missingEvidence.count > 0 ? [missingEvidence.visible] : []),
       ];
@@ -348,6 +403,8 @@ async function firstScreen(page: Page, pick: Pick): Promise<FirstScreen> {
         recommendation,
         severeRisks,
         namedChanges,
+        riskiestChanges,
+        mediumRisks,
         breaking,
         missingEvidence,
         recall: signals.length ? signals.filter(Boolean).length / signals.length : null,
