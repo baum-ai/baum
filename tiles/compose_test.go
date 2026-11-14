@@ -937,3 +937,55 @@ func TestNormalizeStripsControlCharacters(t *testing.T) {
 		}
 	}
 }
+
+// quiet is the exhibits fixture whose risks are all low.
+var quiet = fixture{name: "quiet", mutate: func(doc map[string]any) {
+	exhibits.mutate(doc)
+	for _, s := range array(doc, "sections") {
+		for _, r := range array(s.(map[string]any), "risks") {
+			r.(map[string]any)["tier"] = "low"
+		}
+	}
+}}
+
+// When the risks tile ranks nothing above low, a template does not give it
+// half of the first row: the lead change takes it in the feature and refactor
+// templates, everything else keeps it in the dependency template, and the
+// risks tile follows at a third.
+func TestTemplatesWithQuietRisks(t *testing.T) {
+	for _, tc := range []struct {
+		kind  string
+		first []string
+	}{
+		{"feature", []string{tiles.TypeOverview, "sec_retry_policy"}},
+		{"refactor", []string{tiles.TypeOverview, "sec_retry_policy"}},
+		{"dependency", []string{tiles.TypeOverview, tiles.TypeEverythingElse}},
+		{"docs", []string{tiles.TypeOverview}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			normalized, doc := convert(t, withKind(quiet, tc.kind))
+			n, report := tiles.Template(doc, nil)
+			if len(report.Fixes) > 0 {
+				t.Errorf("the template needed fixes: %v", report.Messages())
+			}
+			_, _, composed := checkComposed(t, normalized, doc, &n)
+			for _, failure := range tilestest.CheckGenerated(normalized, &n, composed) {
+				t.Error(failure)
+			}
+			var first []string
+			units := 0
+			for _, entry := range composed.Layout.Entries {
+				if entry.Tile == tiles.TypeRisks && entry.Size != tiles.SizeThird {
+					t.Errorf("the quiet risks tile is %s", entry.Size)
+				}
+				if units += entry.Size.Units(); units <= tiles.GridUnits {
+					first = append(first, entry.Tile)
+				}
+			}
+			if !slices.Equal(first, tc.first) {
+				t.Errorf("the first row is %v, want %v", first, tc.first)
+			}
+			goldentest.Golden(t, "testdata/compositions/template-"+tc.kind+"-quiet.json", viewOf(t, n, report, composed))
+		})
+	}
+}

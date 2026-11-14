@@ -56,6 +56,9 @@ const (
 	// slotRest places every tile not yet placed, in the converter's order
 	// and sizes, then the composition's.
 	slotRest = "*rest"
+	// slotLead places the first change in review order outside the changes
+	// group: a quiet review's lead (quietSlots).
+	slotLead = "*lead"
 )
 
 var templates = map[string][]slot{
@@ -82,7 +85,9 @@ var templates = map[string][]slot{
 // named. content gives the composition's tiles (library, promoted and
 // authored), normalised as NormalizeComposition does and reported; its
 // layout is not used, and its generator and notes are kept. The changes
-// group shows the converter's default number of changes.
+// group shows the converter's default number of changes. When the risks
+// tile ranks no active risk above low, it gives its place on the first row
+// to the lead change (quietSlots).
 func Template(doc *Document, content *Composition) (Composition, Report) {
 	if content == nil {
 		content = &Composition{}
@@ -92,7 +97,11 @@ func Template(doc *Document, content *Composition) (Composition, Report) {
 	if err := cm.prepare(content); err != nil {
 		return Composition{Schema: CompositionName}, Report{Fixes: []Fix{{Kind: FixUnusable, Detail: err.Error()}}}
 	}
-	out := cm.finish(content, cm.templateLayout(name))
+	slots := templates[name]
+	if quietRisks(doc) {
+		slots = quietSlots(slots)
+	}
+	out := cm.finish(content, cm.templateLayout(slots))
 	generator := Generator{}
 	if out.Generator != nil {
 		generator = *out.Generator
@@ -114,7 +123,67 @@ func changeKindOf(doc *Document) string {
 	return ""
 }
 
-func (cm *composer) templateLayout(name string) CompositionLayout {
+// quietRisks reports whether the risks tile ranks no active risk above low:
+// its glance then says only that nothing needs a decision, which the strip's
+// risk score already says.
+func quietRisks(doc *Document) bool {
+	ranked := map[string]bool{}
+	for _, tile := range doc.Tiles {
+		if tile.Type == TypeRisks {
+			var data RisksData
+			_ = json.Unmarshal(tile.Data, &data)
+			for _, id := range data.Ranked {
+				ranked[id] = true
+			}
+		}
+	}
+	for _, risk := range doc.Risks {
+		if ranked[risk.ID] && risk.State == "active" && risk.Tier != "low" {
+			return false
+		}
+	}
+	return true
+}
+
+// quietSlots adapts a template to a review whose risks tile is quiet: the
+// risks tile leaves the first rows and takes a third after the changes group
+// (after evidence in the dependency template, whose everything else leads).
+// In the feature and refactor templates the lead change, the first in review
+// order, takes the half of the first row the risks tile held. The docs
+// template, which places the risks tile with the rest, places it at a third
+// before them.
+func quietSlots(slots []slot) []slot {
+	if len(slots) < 2 {
+		return slots
+	}
+	if slots[0] != (slot{TypeOverview, SizeHalf}) {
+		rest := slices.IndexFunc(slots, func(s slot) bool { return s.tile == slotRest })
+		if rest < 0 || slices.ContainsFunc(slots, func(s slot) bool { return s.tile == TypeRisks }) {
+			return slots
+		}
+		return slices.Insert(slices.Clone(slots), rest, slot{TypeRisks, SizeThird})
+	}
+	after, lead := slotChanges, true
+	if slots[1].tile == TypeEverythingElse {
+		after, lead = TypeEvidence, false
+	}
+	out := []slot{slots[0]}
+	if lead {
+		out = append(out, slot{slotLead, SizeHalf})
+	}
+	for _, s := range slots[1:] {
+		if s.tile == TypeRisks {
+			continue
+		}
+		out = append(out, s)
+		if s.tile == after {
+			out = append(out, slot{TypeRisks, SizeThird})
+		}
+	}
+	return out
+}
+
+func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 	var composed []*Tile
 	for _, cands := range [][]candidate{cm.library, cm.promoted, cm.authored} {
 		for i := range cands {
@@ -141,8 +210,15 @@ func (cm *composer) templateLayout(name string) CompositionLayout {
 		placed[tile.ID] = true
 		entries = append(entries, Entry{Tile: tile.ID, Size: size})
 	}
-	for _, s := range templates[name] {
+	for _, s := range slots {
 		switch s.tile {
+		case slotLead:
+			for _, entry := range cm.doc.Layout.Entries {
+				if entry.Group == GroupChanges {
+					add(entry.Tile, s.size, "")
+					break
+				}
+			}
 		case slotComposed:
 			for _, tile := range composed {
 				addComposed(tile, s.size)

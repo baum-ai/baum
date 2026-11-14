@@ -47,7 +47,7 @@ import (
 //     MaxComposedTitle characters, the type's catalogue title when blank.
 //  6. Layout: an entry naming no tile, a second entry for a tile and an entry
 //     for an obsolete change (the host places those last) are dropped; a
-//     size the tile's type does not allow (AllowedSizes) becomes its default
+//     size the tile does not allow (SizesIn) becomes its default
 //     size; only a current change tile that is not pinned may be in the
 //     changes group, the only group a composition sets; tiles the layout
 //     omits are appended in the converter's order with its sizes (a change
@@ -309,6 +309,16 @@ func AllowedSizes(tile Tile) []Size {
 		}
 	}
 	return all
+}
+
+// SizesIn returns the sizes a tile of a document may have: AllowedSizes, and
+// a third for the risks tile while it ranks no active risk above low, when
+// its glance has nothing that needs the width.
+func SizesIn(doc *Document, tile Tile) []Size {
+	if tile.Type == TypeRisks && quietRisks(doc) {
+		return []Size{SizeFull, SizeHalf, SizeThird}
+	}
+	return AllowedSizes(tile)
 }
 
 // BlockDigest returns a block's digest: "sha256:" and the lowercase hex
@@ -1052,7 +1062,7 @@ func (cm *composer) layout(in CompositionLayout) CompositionLayout {
 			continue
 		}
 		placed[entry.Tile] = true
-		if !slices.Contains(AllowedSizes(*tile), entry.Size) {
+		if !slices.Contains(SizesIn(cm.doc, *tile), entry.Size) {
 			cm.fix(FixSize, entry.Tile, "")
 			entry.Size = defaultSize(tile)
 		}
