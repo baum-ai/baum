@@ -87,13 +87,15 @@ var templates = map[string][]slot{
 // layout is not used, and its generator and notes are kept. The changes
 // group shows the converter's default number of changes. When the risks
 // tile ranks no active risk above low, it gives its place on the first row
-// to the lead change (quietSlots).
+// to the lead change (quietSlots). A landing row the slots leave short is
+// filled as RowFills says, as part of the template, not as a fix.
 func Template(doc *Document, content *Composition) (Composition, Report) {
 	if content == nil {
 		content = &Composition{}
 	}
 	name := TemplateName(changeKindOf(doc))
 	cm := newComposer(doc, modeWrite)
+	cm.template = true
 	if err := cm.prepare(content); err != nil {
 		return Composition{Schema: CompositionName}, Report{Fixes: []Fix{{Kind: FixUnusable, Detail: err.Error()}}}
 	}

@@ -168,6 +168,10 @@ const (
 	FixControl FixKind = "control"
 	// FixUnusable is reported when the document cannot take a composition.
 	FixUnusable FixKind = "unusable"
+	// FixRowFill is a landing row's last tile grown so the row has no empty
+	// units (RowFills). It is the host's layout rule, not a repair of what
+	// a composer wrote.
+	FixRowFill FixKind = "row_fill"
 )
 
 // Fix is one repair. Tile is the tile's ID when it is a plain identifier;
@@ -278,6 +282,8 @@ func (f Fix) Message() string {
 		text = "a note names a tile the review does not have or is too long; it is dropped or shortened"
 	case FixUnusable:
 		text = "the composition cannot be applied to this document"
+	case FixRowFill:
+		text = fmt.Sprintf("%s ended a landing row with empty units; it grows to fill the row", tile)
 	default:
 		text = string(f.Kind)
 	}
@@ -464,6 +470,9 @@ type composer struct {
 	library  []candidate
 	promoted []candidate
 	authored []candidate
+	// template fills rows as part of a template's own layout, which is not
+	// a fix (Template).
+	template bool
 }
 
 // candidate is a composition tile being normalised.
@@ -588,8 +597,31 @@ func (cm *composer) finish(c *Composition, layout CompositionLayout) Composition
 		out.Authored = append(out.Authored, cand.authored)
 	}
 	out.Layout = cm.layout(layout)
+	cm.fillRows(&out)
 	out.Notes = cm.notes(c.Notes)
 	return out
+}
+
+// fillRows grows the last tile of each landing row of the generated
+// document that would end with empty units, as RowFills says, in the
+// composition's layout, where the sizes are final. Growing fills a row
+// exactly, so no row breaks move and the arrangement stays the same.
+func (cm *composer) fillRows(c *Composition) {
+	trial := *c
+	trial.Layout.Entries = slices.Clone(c.Layout.Entries)
+	doc, err := cm.build(&trial)
+	if err != nil {
+		return
+	}
+	fills := RowFills(doc)
+	for i, entry := range c.Layout.Entries {
+		if size, ok := fills[entry.Tile]; ok {
+			c.Layout.Entries[i].Size = size
+			if !cm.template {
+				cm.fix(FixRowFill, entry.Tile, "")
+			}
+		}
+	}
 }
 
 // taken reports whether a converted tile or an obsolete change has the ID.

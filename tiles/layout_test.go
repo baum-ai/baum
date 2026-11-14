@@ -185,3 +185,48 @@ func TestArrangeMovesTheOverviewOntoTheLandingPage(t *testing.T) {
 		}
 	}
 }
+
+// RowFills grows a short landing row's last tile to its next larger allowed
+// size when that fills the row exactly and a tile follows; it never grows a
+// pinned tile, one whose next size overfills the row, or the last row with
+// nothing after it.
+func TestRowFills(t *testing.T) {
+	const h, third, full = tiles.SizeHalf, tiles.SizeThird, tiles.SizeFull
+	tilesOf := func(n int) []tiles.Tile {
+		out := make([]tiles.Tile, n)
+		for i := range out {
+			out[i] = tiles.Tile{ID: string(rune('a' + i)), Type: tiles.TypeEvidence}
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name  string
+		sizes []tiles.Size
+		pin   int
+		want  map[string]tiles.Size
+	}{
+		{name: "half and third before a half", sizes: []tiles.Size{h, third, h}, pin: -1, want: map[string]tiles.Size{"b": h}},
+		{name: "half before a full", sizes: []tiles.Size{h, full}, pin: -1, want: map[string]tiles.Size{"a": full}},
+		{name: "two thirds before a half", sizes: []tiles.Size{third, third, h}, pin: -1},
+		{name: "pinned", sizes: []tiles.Size{h, third, h}, pin: 1},
+		{name: "full rows", sizes: []tiles.Size{h, h, third, third, third}, pin: -1},
+		{name: "last row with nothing after", sizes: []tiles.Size{h, h, h}, pin: -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := &tiles.Document{Tiles: tilesOf(len(tc.sizes)), Layout: tiles.Layout{Entries: entries(tc.sizes...)}}
+			if tc.pin >= 0 {
+				doc.Layout.Entries[tc.pin].Pin = true
+			}
+			doc.Layout.Landing = tiles.Landing(doc.Layout)
+			got := tiles.RowFills(doc)
+			if len(got) != len(tc.want) {
+				t.Fatalf("fills %v, want %v", got, tc.want)
+			}
+			for id, size := range tc.want {
+				if got[id] != size {
+					t.Errorf("fills %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}

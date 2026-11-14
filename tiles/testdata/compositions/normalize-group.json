@@ -8,7 +8,8 @@
     "the layout does not place tile \"media\"; it is added in the default order",
     "the layout does not place tile \"intent\"; it is added in the default order",
     "the layout does not place tile \"context\"; it is added in the default order",
-    "the layout does not place tile \"decisions\"; it is added in the default order"
+    "the layout does not place tile \"decisions\"; it is added in the default order",
+    "tile \"evidence\" ended a landing row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -37,7 +38,7 @@
         },
         {
           "tile": "evidence",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "media",
@@ -83,7 +84,7 @@
       },
       {
         "tile": "evidence",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "media",

@@ -8,7 +8,9 @@
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
-    "the layout does not place tile \"table_delays\"; it is added in the default order"
+    "the layout does not place tile \"table_delays\"; it is added in the default order",
+    "tile \"overview\" ended a landing row with empty units; it grows to fill the row",
+    "tile \"sec_retry_policy\" ended a landing row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -16,7 +18,7 @@
       "entries": [
         {
           "tile": "overview",
-          "size": "half"
+          "size": "full"
         },
         {
           "tile": "table_flag_defaults",
@@ -28,7 +30,7 @@
         },
         {
           "tile": "sec_retry_policy",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
@@ -87,7 +89,7 @@
     "entries": [
       {
         "tile": "overview",
-        "size": "half"
+        "size": "full"
       },
       {
         "tile": "table_flag_defaults",
@@ -99,7 +101,7 @@
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {

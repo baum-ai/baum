@@ -21,7 +21,7 @@
         },
         {
           "tile": "evidence",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "retry_budget",
@@ -154,7 +154,7 @@
       },
       {
         "tile": "evidence",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "retry_budget",

@@ -7,7 +7,9 @@
     "the layout does not place tile \"intent\"; it is added in the default order",
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
-    "the layout does not place tile \"everything_else\"; it is added in the default order"
+    "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "tile \"sec_config_flag\" ended a landing row with empty units; it grows to fill the row",
+    "tile \"media\" ended a landing row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -19,7 +21,7 @@
         },
         {
           "tile": "sec_config_flag",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
@@ -37,7 +39,7 @@
         },
         {
           "tile": "media",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "intent",
@@ -66,7 +68,7 @@
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -84,7 +86,7 @@
       },
       {
         "tile": "media",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "intent",

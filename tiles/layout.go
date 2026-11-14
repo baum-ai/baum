@@ -213,3 +213,61 @@ func More(layout Layout) int {
 	}
 	return n
 }
+
+// RowFills returns, by tile ID, the size each landing row's last tile grows
+// to so the row has no empty units: a row that ends short because the tile
+// after it does not fit, while a tile follows it, gets its last tile's next
+// larger allowed size (SizesIn) when that fills it exactly. A pinned tile is
+// never grown, nothing shrinks and the order is kept. An arranged document
+// (Arrange) has its Landing set; nil means every row is full or cannot be
+// filled that way.
+func RowFills(doc *Document) map[string]Size {
+	layout := doc.Layout
+	hidden := Hidden(layout)
+	byID := map[string]*Tile{}
+	for i := range doc.Tiles {
+		byID[doc.Tiles[i].ID] = &doc.Tiles[i]
+	}
+	var fills map[string]Size
+	used, last := 0, -1
+	closeRow := func() {
+		if last < 0 || used >= GridUnits {
+			return
+		}
+		entry := layout.Entries[last]
+		tile := byID[entry.Tile]
+		if entry.Pin || tile == nil {
+			return
+		}
+		next := Size("")
+		for _, size := range SizesIn(doc, *tile) {
+			if size.Units() > entry.Size.Units() && (next == "" || size.Units() < next.Units()) {
+				next = size
+			}
+		}
+		if next != "" && used-entry.Size.Units()+next.Units() == GridUnits {
+			if fills == nil {
+				fills = map[string]Size{}
+			}
+			fills[entry.Tile] = next
+		}
+	}
+	for i, entry := range layout.Entries {
+		if hidden[i] {
+			continue
+		}
+		if i >= layout.Landing {
+			// A tile follows the landing page's last row.
+			closeRow()
+			break
+		}
+		units := entry.Size.Units()
+		if used+units > GridUnits {
+			closeRow()
+			used = 0
+		}
+		used += units
+		last = i
+	}
+	return fills
+}

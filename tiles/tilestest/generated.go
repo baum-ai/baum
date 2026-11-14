@@ -40,6 +40,9 @@ import (
 //     the changes group.
 //   - 12: the encoded document passes the tile schema and the
 //     document-level rules (tiles.Validator.Validate).
+//   - 13: no landing row of a composed document ends with empty units
+//     while growing its last tile to an allowed size would fill it
+//     (tiles.RowFills).
 func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document) []string {
 	failures := check(normalized, doc, true)
 	fail := func(invariant int, format string, args ...any) {
@@ -191,6 +194,13 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 			if entry.Group == tiles.GroupChanges && hidden[i] && slices.Contains(named, entry.Tile) {
 				fail(11, "change %s, which the recommendation names, is folded in the changes group", entry.Tile)
 			}
+		}
+	}
+
+	// 13. Landing rows are filled where they can be.
+	if !c.Empty() {
+		for id, size := range tiles.RowFills(doc) {
+			fail(13, "tile %s ends a landing row with empty units; at %s it would fill it", id, size)
 		}
 	}
 

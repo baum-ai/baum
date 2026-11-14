@@ -29,7 +29,7 @@
         },
         {
           "tile": "sec_retry_policy",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
@@ -162,7 +162,7 @@
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {

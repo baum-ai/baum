@@ -458,6 +458,7 @@ const (
 	MetricComposeWasted   = "compose_wasted_rows"
 	MetricComposeQuiet    = "compose_quiet_risks_half"
 	MetricComposeBreaking = "compose_breaking_featured"
+	MetricComposeRowFill  = "compose_row_fill"
 	// metricTemplate prefixes the template's own value of a metric.
 	metricTemplate = "template_"
 	// metricComposeFix prefixes the count of one kind of fix.
@@ -488,7 +489,13 @@ func (g *ComposeGenerator) DocumentMetrics(document []byte) (map[string]float64,
 		values[MetricComposeBreaking] = flag(record.BreakingFeatured)
 	}
 	total := 0
+	values[MetricComposeRowFill] = 0
 	for kind, n := range record.Fixes {
+		if kind == tiles.FixRowFill {
+			// The host's layout rule, not a repair of the composer's reply.
+			values[MetricComposeRowFill] = float64(n)
+			continue
+		}
 		values[metricComposeFix+string(kind)] = float64(n)
 		total += n
 	}
@@ -506,7 +513,8 @@ func (g *ComposeGenerator) Definitions() map[string]string {
 	return map[string]string{
 		MetricComposeFallback: "1 when the composition is the template because the stage could not use the composer's layout (see the record's fallback_reason)",
 		MetricComposeRepaired: "1 when an invalid reply needed the repair call",
-		MetricComposeFixes:    "fixes normalisation made to the composer's layout (compose_fix_<kind> by kind)",
+		MetricComposeFixes:    "fixes normalisation made to the composer's layout (compose_fix_<kind> by kind), row fills aside",
+		MetricComposeRowFill:  "landing rows the host filled by growing their last tile (tiles.RowFills); the host's layout rule, not a fix of the reply",
 		MetricComposeDiffers:  "1 when the layout differs from the template's",
 		MetricComposeLanding:  "1 when the landing page shows other tiles, or in another order, than the template's",
 		MetricComposeFeatured: "current changes placed outside the changes group",

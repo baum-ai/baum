@@ -158,6 +158,7 @@ func TestComposeRunReplyShapes(t *testing.T) {
 	hostile.Entries[1].Why = &hostileWhy
 	hostile.Moves = []tiles.Move{{Tile: "sec_api", Why: "key AKIA" + "UJZDEGXDNCF32EPF leaked"}}
 	hostile.Entries[0].Size = tiles.SizeThird // the overview takes half or full
+	rowFill := map[tiles.FixKind]int{tiles.FixRowFill: 1}
 
 	for _, c := range []struct {
 		name     string
@@ -168,9 +169,11 @@ func TestComposeRunReplyShapes(t *testing.T) {
 		repaired bool
 		fixes    map[tiles.FixKind]int
 	}{
-		{name: "valid", replies: []string{valid}, calls: 1},
-		{name: "invalid JSON then valid", replies: []string{`{"entries": [`, valid}, calls: 2, repaired: true},
-		{name: "schema-invalid then valid", replies: []string{`{"entries": []}`, valid}, calls: 2, repaired: true},
+		// Leading a change at half leaves its row a unit short: the host
+		// grows the row's last tile (a row fill, not a repair).
+		{name: "valid", replies: []string{valid}, calls: 1, fixes: rowFill},
+		{name: "invalid JSON then valid", replies: []string{`{"entries": [`, valid}, calls: 2, repaired: true, fixes: rowFill},
+		{name: "schema-invalid then valid", replies: []string{`{"entries": []}`, valid}, calls: 2, repaired: true, fixes: rowFill},
 		{name: "repair fails", replies: []string{`not json`, `{"entries": "x"}`}, calls: 2, repaired: true, fallback: agent.FallbackInvalid},
 		{name: "empty", replies: []string{``, ``}, calls: 2, repaired: true, fallback: agent.FallbackInvalid},
 		{name: "empty entries", replies: []string{emptyEntries, emptyEntries}, calls: 2, repaired: true, fallback: agent.FallbackInvalid},
