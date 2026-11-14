@@ -221,7 +221,7 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 	// An edited or pinned layout keeps a change the recommendation names,
 	// outside the changes group, on the landing page; an unedited, unpinned
 	// one does through the guards and invariants above.
-	if !c.Empty() && (c.Layout.Edited || slices.ContainsFunc(c.Layout.Entries, func(e tiles.Entry) bool { return e.Pin })) {
+	if !c.Empty() && (c.Layout.Edited || slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Pin })) {
 		for i, entry := range doc.Layout.Entries {
 			if entry.Group != tiles.GroupChanges && entry.Group != tiles.GroupHidden && entry.Group != tiles.GroupObsolete &&
 				slices.Contains(tiles.RecommendedChanges(doc), entry.Tile) && !tiles.Visible(doc.Layout)[i] {
@@ -535,10 +535,11 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 	if evidenceGaps(doc, current) >= tiles.EvidenceGapsShown && !slices.Contains(c.Layout.Hidden, tiles.TypeEvidence) {
 		visible := tiles.Visible(doc.Layout)
 		// No place is left when the landing page holds only pinned tiles and
-		// those always on it.
+		// those always on it (the overview, the risks and the changes the
+		// recommendation names).
 		full := true
 		for i, entry := range doc.Layout.Entries {
-			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && entry.Tile != tiles.TypeRisks {
+			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && entry.Tile != tiles.TypeRisks && !slices.Contains(tiles.RecommendedChanges(doc), entry.Tile) {
 				full = false
 			}
 		}

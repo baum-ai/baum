@@ -36,7 +36,7 @@ func TestTileLibraryRoute(t *testing.T) {
 		t.Fatalf("status %d", response.StatusCode)
 	}
 	var got struct {
-		Types  []map[string]any  `json:"types"`
+		Types  []map[string]any    `json:"types"`
 		Single []map[string]string `json:"single"`
 	}
 	if err := json.Unmarshal(body, &got); err != nil {
