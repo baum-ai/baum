@@ -49,7 +49,7 @@ func newAddedFixture(t *testing.T) (*layoutFixture, *fakeFiller) {
 }
 
 type addedBody struct {
-	Tiles *tiles.Document       `json:"tiles"`
+	Tiles *tiles.Document      `json:"tiles"`
 	Added []tileview.AddedNote `json:"added"`
 }
 
