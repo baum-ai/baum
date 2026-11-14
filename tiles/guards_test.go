@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
 // withGaps is a fixture whose evidence has at least three gaps in current
@@ -205,5 +206,63 @@ func TestGuardKeepsTheTemplatesMustSeeTilesOnTheFirstScreen(t *testing.T) {
 	n, report, _ := checkComposed(t, normalized, doc, c)
 	if report.Counts()[tiles.FixFirstScreen] != 1 || !slices.Equal(n.Layout.Entries, template.Layout.Entries) {
 		t.Errorf("fixes %v; entries %v", report.Messages(), n.Layout.Entries)
+	}
+}
+
+// When pinned tiles and the overview fill the landing page's own rows, the
+// only room left is in the rows that authored tiles add. Moving the evidence
+// in front of those tiles would push them, and the rows they add, off the
+// landing page, so the evidence with gaps takes the place of a change shown
+// there instead, and the change takes the evidence's.
+func TestGuardShowsEvidenceInTheRowsAuthoredTilesAdd(t *testing.T) {
+	normalized, doc := convert(t, withGaps("example"))
+	c := &tiles.Composition{
+		Authored: []tiles.AuthoredTile{
+			tilestest.AuthoredTile("prose_lead", "h_000000000001"),
+			tilestest.AuthoredTile("prose_aside", "h_000000000002"),
+		},
+		Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+			{Tile: "prose_lead", Size: tiles.SizeFull},
+			{Tile: "sec_retry_policy", Size: tiles.SizeThird},
+			{Tile: "prose_aside", Size: tiles.SizeHalf},
+			{Tile: "sec_config_flag", Size: tiles.SizeFull, Pin: true},
+			{Tile: tiles.TypeOverview, Size: tiles.SizeFull},
+			{Tile: tiles.TypeContext, Size: tiles.SizeFull},
+			{Tile: tiles.TypeIntent, Size: tiles.SizeThird, Pin: true},
+			{Tile: tiles.TypeEvidence, Size: tiles.SizeThird},
+			{Tile: tiles.TypeRisks, Size: tiles.SizeHalf, Pin: true},
+		}},
+	}
+	n, report, composed := checkComposed(t, normalized, doc, c)
+	if report.Counts()[tiles.FixEvidenceGaps] != 1 {
+		t.Fatalf("fixes %v", report.Messages())
+	}
+	visible := tiles.Visible(composed.Layout)
+	for _, id := range []string{tiles.TypeEvidence, "prose_lead", "prose_aside", tiles.TypeOverview} {
+		if i, _ := entryOf(composed, id); i < 0 || !visible[i] {
+			t.Errorf("tile %s is not on the landing page: %v", id, n.Layout.Entries)
+		}
+	}
+	if i, _ := entryOf(composed, "sec_retry_policy"); i < 0 || visible[i] {
+		t.Errorf("the change the evidence displaces is still on the landing page: %v", n.Layout.Entries)
+	}
+}
+
+// A layout that leaves the evidence with gaps out has it placed after
+// everything it lists; the guard moves it from there onto the landing page.
+func TestGuardMovesUnlistedEvidenceOntoTheLandingPage(t *testing.T) {
+	normalized, doc := convert(t, withGaps("example"))
+	c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+		{Tile: tiles.TypeOverview, Size: tiles.SizeHalf}, {Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
+		{Tile: "sec_retry_policy", Size: tiles.SizeHalf}, {Tile: "sec_config_flag", Size: tiles.SizeHalf},
+		{Tile: tiles.TypeIntent, Size: tiles.SizeFull}, {Tile: tiles.TypeContext, Size: tiles.SizeFull},
+		{Tile: tiles.TypeMedia, Size: tiles.SizeFull}, {Tile: tiles.TypeDecisions, Size: tiles.SizeFull},
+	}}}
+	n, report, composed := checkComposed(t, normalized, doc, c)
+	if report.Counts()[tiles.FixEvidenceGaps] != 1 {
+		t.Fatalf("fixes %v", report.Messages())
+	}
+	if i, _ := entryOf(composed, tiles.TypeEvidence); i < 0 || !tiles.Visible(composed.Layout)[i] {
+		t.Errorf("the evidence tile is not on the landing page: %v", n.Layout.Entries)
 	}
 }

@@ -2562,19 +2562,21 @@ host's layout rule rather than a repair of the reply (replay reports it as
 no group (a heading only from three), keep active risks beside the overview for
 docs and CI, and put evidence with two or more gaps beside the lead change on
 the second row. A composition's library tile with a destructive or breaking
-item (`tiles.Leads`) takes a half right after the first row in every
-template (a dropped table counts as destructive), another library tile (at
-half when it lists three items or fewer, else full) and promoted tiles stand
-before the changes, and authored tiles after them, a table of four columns or
-more at full; a row they leave short is filled like any. They add to the
-landing page rather than displace: it grows by one row for each of its rows
-that holds such a tile, at most two (`tiles.ExtraRows`, served as the
+item (`tiles.Leads`) stands right after the first row in every
+template (a dropped table in its `tables` counts as destructive), another
+library tile and promoted tiles stand before the changes (a library tile,
+leading or not, at half when it lists three items or fewer, else full), and
+authored tiles after them, a table of four columns or more at full; a row
+they leave short is filled like any. They add to the landing page rather
+than displace: it grows by one row for each of its rows that holds such a
+tile, at most two (`tiles.ExtraRows`, served as the
 layout's `extra_rows`, which `landing` already counts), so the other tiles
 keep three rows (`CheckGenerated` invariant 15). A
 composer's layout then passes three guard rails
 (`tiles/guards.go`), each a fix of its own kind: evidence with two or more gaps
 stays on the landing page, where it fits without pushing a tile that must be
-seen off the first screen
+seen off the first screen, and in the place of a tile that need not be seen
+when the only room left is in the rows library and authored tiles add
 (`evidence_gaps`), a change featured alone at half takes its full row
 (`lone_featured`), and a first screen (the first two rows) or a landing page
 that shows fewer current changes than the template's, with nothing that must

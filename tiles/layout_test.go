@@ -259,3 +259,40 @@ func TestRowFills(t *testing.T) {
 		})
 	}
 }
+
+// The landing page grows by a row for each of its rows that holds a
+// composition's tile, counting the rows it grows into, at most MaxExtraRows.
+func TestExtraRows(t *testing.T) {
+	const full = tiles.SizeFull
+	doc := &tiles.Document{}
+	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		doc.Tiles = append(doc.Tiles, tiles.Tile{ID: id, Type: tiles.TypeIntent})
+	}
+	extra := func(ids ...string) *tiles.Document {
+		d := &tiles.Document{Tiles: slices.Clone(doc.Tiles)}
+		for i := range d.Tiles {
+			if slices.Contains(ids, d.Tiles[i].ID) {
+				d.Tiles[i].Type = tiles.TypeProse
+			}
+		}
+		return d
+	}
+	layout := tiles.Layout{Entries: entries(full, full, full, full, full, full, full)}
+	for _, tc := range []struct {
+		name  string
+		extra []string
+		want  int
+	}{
+		{"none", nil, 0},
+		{"one in the first rows", []string{"b"}, 1},
+		{"one in the row it grows into", []string{"a", "d"}, 2},
+		{"past the rows it grows into", []string{"a", "f"}, 1},
+		{"at most MaxExtraRows", []string{"a", "b", "c", "d", "e"}, tiles.MaxExtraRows},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tiles.ExtraRows(extra(tc.extra...), layout); got != tc.want {
+				t.Errorf("ExtraRows = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

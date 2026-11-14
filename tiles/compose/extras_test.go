@@ -225,6 +225,11 @@ func TestLeadsOnADroppedTable(t *testing.T) {
 	if tiles.Leads(json.RawMessage(`{"tables":[{"name":"new","change":"created","columns":[{"destructive":false}]}]}`)) {
 		t.Error("a created table leads")
 	}
+	// Another tile's "change" of "dropped" is its own vocabulary, not a
+	// dropped table.
+	if tiles.Leads(json.RawMessage(`{"items":[{"name":"flag","change":"dropped"}]}`)) {
+		t.Error("a dropped item outside tables leads")
+	}
 }
 
 // A wide authored table takes the full row; a narrow one half of it.
@@ -280,5 +285,44 @@ func TestExtrasAddToTheLandingPage(t *testing.T) {
 	}
 	if !after["schema_change"] {
 		t.Error("the destructive schema tile is not on the landing page")
+	}
+}
+
+// Three library tiles that lead fill more than the row after the first in
+// the template; the landing page grows for them and the template's document
+// still holds every invariant: the overview, the severe risks and the
+// changes the recommendation names stay on the landing page.
+func TestTemplateWithThreeLeadingTiles(t *testing.T) {
+	normalized, doc := example(t)
+	_, hunk := riskHunk(t, doc)
+	var lib []tiles.LibraryTile
+	for _, name := range []string{"lead_one", "lead_two", "lead_three"} {
+		def := tilestest.LibraryDefinition(name)
+		def.DataSchema = json.RawMessage(`{
+			"type": "object", "additionalProperties": false, "required": ["summary", "destructive", "cites"],
+			"properties": {
+				"summary": {"$ref": "#/$defs/markdown"},
+				"destructive": {"type": "boolean"},
+				"cites": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"$ref": "#/$defs/citation"}}
+			}
+		}`)
+		data := json.RawMessage(fmt.Sprintf(`{"summary":"Drops data.","destructive":true,"cites":[{"type":"hunk","id":%q}]}`, hunk))
+		lib = append(lib, tiles.LibraryTile{Definition: tilestest.SealDefinition(def), Data: data})
+	}
+	template, _ := tiles.Template(doc, &tiles.Composition{Schema: tiles.CompositionName, Library: lib})
+	composed, err := tiles.Compose(doc, &template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, failure := range tilestest.CheckGenerated(normalized, &template, composed) {
+		t.Error(failure)
+	}
+	visible := tiles.Visible(composed.Layout)
+	must := append([]string{tiles.TypeOverview, "lead_one", "lead_two", "lead_three"}, tiles.RecommendedChanges(composed)...)
+	for _, id := range must {
+		i := slices.IndexFunc(composed.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == id })
+		if i < 0 || !visible[i] {
+			t.Errorf("tile %s is not on the landing page: %v", id, composed.Layout.Entries)
+		}
 	}
 }

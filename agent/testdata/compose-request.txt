@@ -153,9 +153,10 @@ Otherwise keep the template: the same order, sizes and groups.
 
 **Library and authored tiles** are placed by their `id`, like any tile, and
 the template already places them: a library tile with
-`destructive_or_breaking` right after the first row at `half`, a tile that
-must be seen, so keep it on the first screen; another library tile at `half`
-before the changes group; an authored tile after the group. Keep them there,
+`destructive_or_breaking` right after the first row, a tile that must be
+seen, so keep it on the first screen; another library tile before the
+changes group; an authored tile after the group. A library tile stands at
+`half`, or at `full` when it lists more than three items. Keep them there,
 unless an authored tile shows what a featured change needs to be judged: then
 it may stand beside that change, the two filling a row at `half`. Never put a
 library or authored tile where it pushes a change off the first screen; the

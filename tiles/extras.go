@@ -91,12 +91,23 @@ func PlaceExtras(c *Composition, doc *Document) {
 
 // Leads reports whether a library tile's data has an item a reviewer must
 // see first, as the built-in types draw it: a member "destructive" or
-// "breaking" that is true, or an item whose "change" is "dropped" (a
-// dropped table), at any depth.
+// "breaking" that is true, at any depth, or a dropped table, an item of its
+// top-level "tables" whose "change" is "dropped" (as schema_change draws
+// one). A "change" elsewhere, as in another tile's own vocabulary, does not
+// lead.
 func Leads(data json.RawMessage) bool {
 	var value any
 	if json.Unmarshal(data, &value) != nil {
 		return false
+	}
+	if top, ok := value.(map[string]any); ok {
+		if tables, ok := top["tables"].([]any); ok {
+			for _, table := range tables {
+				if item, ok := table.(map[string]any); ok && item["change"] == "dropped" {
+					return true
+				}
+			}
+		}
 	}
 	var walk func(any) bool
 	walk = func(v any) bool {
@@ -105,7 +116,7 @@ func Leads(data json.RawMessage) bool {
 			return slices.ContainsFunc(v, walk)
 		case map[string]any:
 			for key, item := range v {
-				if (key == "destructive" || key == "breaking") && item == true || key == "change" && item == "dropped" {
+				if (key == "destructive" || key == "breaking") && item == true {
 					return true
 				}
 				if walk(item) {

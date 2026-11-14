@@ -14,9 +14,11 @@ import (
 //     layout puts the evidence tile past it, the tile moves up to the
 //     changes group's start, or as far up as it takes to be shown, at its
 //     size or, when that does not fit, at half or a third, and never where
-//     it would push a tile that must be seen (3) off the first screen. Pinned
-//     tiles and those always on the landing page come first, so when they
-//     fill it nothing moves; a person who hid the tile keeps it hidden.
+//     it would push a tile that must be seen (3) off the first screen. When
+//     no such place shows it, it swaps places with a tile the landing page
+//     shows that need not be seen, the last first. Pinned tiles and those
+//     always on the landing page come first, so when they fill it nothing
+//     moves; a person who hid the tile keeps it hidden.
 //  2. A change featured alone on its row at half, empty units beside it, is
 //     widened to the full row (FixLoneFeatured).
 //  3. The first screen, the first FirstScreenRows rows (what a 1440×900
@@ -149,6 +151,36 @@ func (cm *composer) guardEvidence(c *Composition) {
 			}
 		}
 	}
+	// No place before the changes shows it when the landing page's own rows
+	// hold only pinned tiles and those always on it, and the room left is in
+	// the rows that library and authored tiles add (ExtraRows): a tile moved
+	// in front of those pushes them, and the rows they add, off. The
+	// evidence then takes the place of a tile the landing page shows that
+	// need not be seen, the last first, and that tile takes the evidence's.
+	named, leads := RecommendedChanges(doc), leadingLibrary(doc)
+	visible := Visible(doc.Layout)
+	for i := len(doc.Layout.Entries) - 1; i >= 0; i-- {
+		other := doc.Layout.Entries[i]
+		if !visible[i] || other.Tile == TypeOverview || other.Tile == TypeEvidence || mustSee(doc, other, named, leads) {
+			continue
+		}
+		to := slices.IndexFunc(entries, func(e Entry) bool { return e.Tile == other.Tile })
+		if to < 0 {
+			continue
+		}
+		for _, size := range sizes {
+			moved := evidence
+			moved.Size = size
+			trial := *c
+			trial.Layout.Entries = slices.Clone(entries)
+			trial.Layout.Entries[to], trial.Layout.Entries[at] = moved, entries[to]
+			if doc := cm.trialDoc(&trial); doc != nil && shown(doc, TypeEvidence) && keeps(doc) {
+				c.Layout.Entries = trial.Layout.Entries
+				cm.fix(FixEvidenceGaps, TypeEvidence, "")
+				return
+			}
+		}
+	}
 }
 
 func (cm *composer) guardLoneFeatured(c *Composition) {
@@ -190,6 +222,19 @@ func leadingLibrary(doc *Document) map[string]bool {
 	return out
 }
 
+// mustSee reports whether an entry is a tile that may stand in for changes
+// on the first screen and must not be pushed off it: a pinned tile, the risks
+// tile while it ranks a severe risk, a change the recommendation names (named),
+// the evidence with gaps, or a library tile with a destructive or breaking
+// item (leads).
+func mustSee(doc *Document, entry Entry, named []string, leads map[string]bool) bool {
+	return entry.Pin ||
+		entry.Tile == TypeRisks && mustShowRisks(doc) ||
+		slices.Contains(named, entry.Tile) ||
+		entry.Tile == TypeEvidence && evidenceGaps(doc) >= EvidenceGapsShown ||
+		leads[entry.Tile]
+}
+
 // firstScreen sums what a document's first screen shows: its current
 // changes, and the tiles that may stand in for changes.
 type firstScreen struct {
@@ -222,12 +267,7 @@ func firstScreenOf(doc *Document) firstScreen {
 			if current[entry.Tile] {
 				out.changes++
 			}
-			switch {
-			case entry.Pin,
-				entry.Tile == TypeRisks && mustShowRisks(doc),
-				slices.Contains(named, entry.Tile),
-				entry.Tile == TypeEvidence && evidenceGaps(doc) >= EvidenceGapsShown,
-				leads[entry.Tile]:
+			if mustSee(doc, entry, named, leads) {
 				out.others[entry.Tile] = true
 			}
 		}
