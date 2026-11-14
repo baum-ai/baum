@@ -259,6 +259,7 @@ a `tile` selection in the URL reads as the Summary. The host supplies:
 | `jump(section, item)` | where a reference chip in prose to a section, or to a risk, evidence or decision of one, goes; a selection redirects it, null leaves it to the viewer |
 | `railFolded(selection)` | whether the rail starts folded to a strip beside the pane for that selection, once the page is wide. The answer applies whenever it changes, as the reader moves between places. The reader can unfold the rail, or fold it again, with the button on it (focus moves to the other button), and that choice holds until the answer changes. Where the panes stack the rail is a sheet and does not fold. Without `places` the rail has no fold |
 | `sidePaneFolded(selection)` | whether the side pane starts folded to its strip for that selection, once the page is wide, as `railFolded` does for the rail: the answer applies whenever it changes, and the reader's unfold or fold (the strip's button, `]`, a tab opened from elsewhere) holds until then. Where it answers false, or is absent, the side pane is as the reader last chose it. Without `places` nothing changes |
+| `quietHistory` | when true, an earlier version read alone opens without the viewer's "Historical · Review vN" line, which stays for assistive technology, for a host whose version bar already says which version is read. Two compared versions keep their labels |
 
 `ReviewPlaceContext` is passed to each of them, and keeps its identity across
 renders that change nothing it carries: the `selection` and a `select`

@@ -376,6 +376,33 @@ const goTo = (container: HTMLElement, row: string) =>
     .find((button) => button.textContent?.includes(row))!
     .click();
 
+describe("ReviewViewer places and an earlier version's label", () => {
+  it("keeps the label for assistive technology alone when the host's version bar says it", async () => {
+    const loadVersion = vi.fn(async () => ({ status: "ready" as const, document: earlier() }));
+    const quiet = await render(
+      <Host initial="pane=tile&tile=tile-a&review=2">
+        {viewer({ places: dummyPlaces({ quietHistory: true }), versions: [2], loadVersion })}
+      </Host>,
+    );
+    const label = [...quiet.querySelectorAll("p")].find((p) =>
+      p.textContent?.startsWith("Historical · Review v2"),
+    );
+    expect(label?.className).toContain("sr-only");
+    act(() => root?.unmount());
+    root = null;
+    document.body.replaceChildren();
+    const plain = await render(
+      <Host initial="pane=tile&tile=tile-a&review=2">
+        {viewer({ places: dummyPlaces(), versions: [2], loadVersion })}
+      </Host>,
+    );
+    const shown = [...plain.querySelectorAll("p")].find((p) =>
+      p.textContent?.startsWith("Historical · Review v2"),
+    );
+    expect(shown?.className).not.toContain("sr-only");
+  });
+});
+
 describe("ReviewViewer places and the side pane's fold", () => {
   it("starts folded where the host says so and as the reader left it elsewhere", async () => {
     const container = await render(

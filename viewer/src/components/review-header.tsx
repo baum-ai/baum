@@ -357,7 +357,28 @@ export function ReviewHeader({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-secondary">
-            {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+            {/* The GitHub link stays with the repository's name, never on a
+                line of its own. */}
+            {repositoryFullName || githubUrl ? (
+              <span className="inline-flex items-center gap-1">
+                {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+                {githubUrl ? (
+                  <a
+                    href={githubUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="View on GitHub"
+                    title="View on GitHub"
+                    className={cn(
+                      "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
+                      FOCUS_RING,
+                    )}
+                  >
+                    <GitHubIcon size={16} />
+                  </a>
+                ) : null}
+              </span>
+            ) : null}
             {/* Beside the repository from sm; on a phone, a row of their own. */}
             {facts.branches ? (
               <span className="hidden sm:contents">
@@ -380,21 +401,6 @@ export function ReviewHeader({
                   ~{reviewMinutes} min to review
                 </span>
               </>
-            ) : null}
-            {githubUrl ? (
-              <a
-                href={githubUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="View on GitHub"
-                title="View on GitHub"
-                className={cn(
-                  "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
-                  FOCUS_RING,
-                )}
-              >
-                <GitHubIcon size={16} />
-              </a>
             ) : null}
             {slots.subtitle ? (
               <span className="flex min-w-0 flex-wrap items-center gap-2">

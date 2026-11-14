@@ -377,6 +377,11 @@ export type ReviewPlaces = {
    *  reader's toggle holding until then. Where it answers false the side pane
    *  is as the reader last chose it. */
   sidePaneFolded?: (selection: Selection) => boolean;
+  /** An earlier version read alone opens without the viewer's "Historical ·
+   *  Review vN" line (it stays for assistive technology), for a host whose
+   *  version bar already says so on a page that needs the room. Two compared
+   *  versions keep their labels. */
+  quietHistory?: boolean;
 };
 
 export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
@@ -2349,6 +2354,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                         key={document.review.version}
                         document={document}
                         view={historyView}
+                        labelled={!places?.quietHistory}
                       >
                         {(snapshot, historical) => (
                           <ReviewRefsProvider document={snapshot}>
