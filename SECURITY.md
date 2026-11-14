@@ -1568,10 +1568,12 @@ which never says whether a digest exists:
 - the path is exactly `/tile-frames/` and the digits, with no encoding, extra
   segment or trailing slash; the query is ignored;
 - the daemon itself handed that type to the authenticated app: the tile
-  routes register the types of the custom tiles they serve, and the tile
-  type preview route the type it draws (see "Saved tile types"), and nothing a
-  request carries is ever registered, so the route serves only HTML the app
-  already received. At most 32 MiB of documents are kept, the least recently
+  routes register the types of the custom tiles they serve, the tile type
+  preview route the type it draws (see "Saved tile types"), and a
+  render-check candidate is registered when the daemon hands it to the app's
+  check runner; nothing a request carries is ever registered, so the route
+  serves only HTML the app already received. At most 32 MiB of documents are
+  kept, the least recently
   used going first; reading the tile route again registers its types again.
 
 The answer is `no-store`, sets no cookie, ignores `Range` and carries
@@ -1691,8 +1693,12 @@ by the chat's agent.
   freezes again. In the browser suite a 1.5-second loop held the page for
   its length in WebKit every time, and in Chromium in some runs and not
   others. The host unmounts a frame that does not draw in time, but cannot
-  interrupt one that holds the thread. (A guard that keeps such a tile from
-  mounting again after a freeze is planned, not built.)
+  interrupt one that holds the thread. On Linux, where the desktop shell
+  gives the render check a window with its own web process, that window
+  takes the freeze instead (see "The render check" below). Elsewhere (a
+  browser, the macOS app) the render check draws in the app's own page, so a
+  candidate that loops freezes it, and the daemon then answers `hang` and
+  refuses that type until it restarts.
 - A frame can navigate itself to a page of the daemon's own origin: the
   request reaches the daemon without the cookie, the namespace or any data,
   and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
@@ -1712,6 +1718,39 @@ by the chat's agent.
 
 Tile code is never read from repository content: a pull request cannot
 supply a tile.
+
+
+**The render check.** Before a tile made in the app is shown, the daemon
+checks its type (`internal/tilechecks`) and the app's check runner draws it
+in the same sandboxed frames, under the same policy, with the type's own
+samples and the data it will show. It is a quality gate for honest
+mistakes, not a security control: a tile can fake its `ready`, swallow its
+errors or behave differently later. What it does protect against is a
+freeze where it would hurt:
+
+- On Linux the runner draws in a hidden check window with its own web
+  process. A candidate that never finishes drawing leaves its job without a
+  report; after 10 s the daemon answers `hang`, marks the type's digest hung
+  (the frame route then refuses it until the daemon restarts) and tells the
+  main page, which has the shell close the window, ending its process and
+  the loop. The main window is not affected.
+- The first time the Linux app shows a custom tile that is not of a
+  built-in type, with data it has not drawn before, it first draws that
+  pair in the check window (the first-show preflight). A pair that hangs
+  stays down, with "This tile stopped responding when it was checked."; a
+  pair that drew, or failed in a way the frame's own failure faces show,
+  is shown. Verdicts are kept per pair (the type's digest and the data's
+  SHA-256) in `app.sqlite`, the newest 10,000.
+- The runner's routes (`/api/tile-checks/next`, `/{id}/result`,
+  `/preflight`) sit behind the app server's Host, session, Origin and JSON
+  checks, and refuse a browser request that is not same-origin: claiming a
+  job registers its frame document, so only the app may claim. A job
+  carries the candidate's served definition (no HTML: the frame route
+  serves that by digest), its samples and their citations' payloads, and
+  never more than the page itself would give the frame. The `tile_check`
+  event names a check's ID and state only.
+- Only the daemon marks a digest hung, from its own timer: no message from a
+  frame or a runner can.
 
 ### MCP server for agents
 

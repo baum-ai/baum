@@ -2225,6 +2225,12 @@ a server on port 4170 that must hear nothing. `just local_app::e2e-webkit`
 runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
 macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
 The main suite starts the fixture without custom tiles.
+`e2e/tile-check.spec.ts` (main suite) submits candidates through a route
+only the fixture has (`POST api/tile-checks/submit`) and lets the page's own
+runner draw them: one tile per problem in `e2e/tile-check/`, the built-in
+library types and the starter, which pass, and a busy tile that a runner
+claims and never answers, which hangs. `just local_app::e2e-webkit` runs it
+in WebKit too.
 `just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
 (synthetic data) with the Go kit and takes pictures of them in sandboxed
 frames under the frame route's headers, glance at each card size and detail at
@@ -2609,6 +2615,26 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   shows custom tiles as not available yet. The protocol, its checks and the
   states are in `ARCHITECTURE.md` ("The app's host"); what a frame cannot
   reach is in `SECURITY.md` ("Custom tiles").
+- **Render check** (`src/tiles/custom/check-runner.tsx`). The daemon's render
+  check has the app draw a candidate tile type: the runner claims a job from
+  `api/tile-checks/next`, draws it in invisible sandboxed frames (each
+  sample as a glance at each declared size and a detail at 720 and 360px,
+  the pull request's data in dark too, 8 at a time) and reports what it saw
+  to `api/tile-checks/{id}/result`. It reads sizes from the layout and from
+  the frame's messages only, never animation frames, ResizeObserver or
+  tight timers, so it works in a hidden window. On Linux, where the desktop
+  shell declares `window.__BAUM_DESKTOP__.checkWindow`, the main page opens
+  the shell's check window (`open_check_window`, which loads
+  `?page=tile-check`, the runner alone) on a `tile_check` event and closes it
+  (`close_check_window`) when a check hangs or after 2 minutes without one.
+  In a browser and on macOS the runner draws inside the page; a desktop shell
+  without frames draws nothing.
+- **First-show preflight** (`src/tiles/custom/preflight.ts`). Where the check
+  window exists, a custom tile that is not of a built-in type waits (its
+  box's `data-frame-state` reads `checking`) while the daemon draws its data
+  once in that window, unless it already has. A tile that hung there says
+  "This tile stopped responding when it was checked." instead of mounting;
+  every other answer mounts it.
 - **Links.** A full review's address still works: a section opens its tile
   (the mechanical change's is Everything else), a risk opens Risks at it, and
   the Changes overview scrolls the landing page to the Changes group. A chip

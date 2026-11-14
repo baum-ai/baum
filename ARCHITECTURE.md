@@ -1385,7 +1385,10 @@ the document.
   `unavailable` instead; an unavailable or pending tile is never registered.
   Each route's kept answers carry the definitions they registered and
   register them again whenever they are served, so a document the registry
-  dropped comes back with the next read of a tile route that names it.
+  dropped comes back with the next read of a tile route that names it. The
+  render check registers a candidate's definition when the app's check
+  runner claims its job (see "Render check"): that too is a definition the
+  daemon hands the authenticated app, never one a request carries.
 - **What the tile routes serve.** Every custom tile's `definition` is served
   without its HTML: `source` is `{"format": "html", "bytes": <length of the
   HTML in UTF-8>}`, and every other member, `digest` included, is as stored
@@ -1554,7 +1557,9 @@ bootstrap hears only its parent, only plain JSON values within its limits
 malformed. It sends `hello {kit, registered}` once the author's scripts ran;
 takes one `init {face, size, theme, lang, data, refs, check?}`, then `update
 {data, refs}` (a fresh `#baum-root` each time) and `theme {theme}`; and sends
-`ready {metrics}` two frames after a render (with the fonts loaded), `resize
+`ready {metrics}` two frames after a render (with the fonts loaded; the
+metrics are the height, `text_chars`, `elements`, `media`, `empty_state`,
+`failed`, `unresolved`, `overflow_x`, `overflow_y` and `render_ms`), `resize
 {height}` for a detail once per frame (stopped, with a `layout_loop` error,
 when it grows ten times in a second by the same amount), `error {code,
 message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
@@ -1562,6 +1567,10 @@ message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
 `render_failed`, `timeout`, `layout_loop`; at most 10 of each), `jump {key}`, `ask`,
 `open`, and `key {key, shift}` for Escape, u, j, k, the arrows, `[`, `]` and
 `?` from a detail when the tile did not handle them and no field has focus.
+An `init` with `check` (sent only by the render check's runner) settles on
+the frame's fonts and a message turn instead of two animation frames, since
+a hidden window runs none, and the runner may then send `measure`, which a
+detail answers with a `resize` of its height, changed or not.
 A detail frame keeps a 4px inset on every side for focus rings and draws
 nothing else around its content; the host pads the pane, places the frame in
 the pane's content column where a built-in detail's body goes, and sets it
@@ -1729,6 +1738,113 @@ definition of done. `tiles/kit/starter/` (`kit.Starter()`) is a minimal type
 in the library's layout that passes every check; a new type starts as a copy
 of it. `just local_app::tile-type-screens <dirs>` checks type directories as
 the library's are checked and draws them.
+
+### Render check
+
+`internal/tilechecks` checks a candidate custom tile type before anything
+shows it: a definition (without a digest), up to 3 samples of its own (data
+and the code it cites, as a library sample's) and optionally the data it
+would show on a pull request with that version's `{clone, pr, version}`.
+`Checker.Submit(ctx, candidate)` is its Go API, which the agent tools call;
+it waits up to 30 s and answers `{check, digest, kit, verdict, reason?,
+errors[], warnings[], runs[], engine}`, each problem `{code, message, hint,
+sample, face, size, theme, line?, column?}`, `verdict` one of `pass` (no
+errors), `fail`, `hang` and `unavailable`. The codes and their hints are in
+`tiles/kit/GUIDE.md` ("The render check"), which a test keeps equal to
+`tilechecks.Hints`.
+
+- **Before drawing.** `Validator.CheckDefinition` (`definition_invalid`, or
+  `data_schema_invalid` for the schema), `kit.Lint` (errors are `lint`
+  errors and end the check; warnings are reported), each sample against the
+  schema (`sample_invalid`) and against its own hunks and items
+  (`unresolved_citation`, which does not end it), the data against the
+  schema (`data_invalid`; data needs its version), then `tiles.EdgeSamples`
+  (`minimal`, `maximal`), whose citations come from the samples' hunks and
+  resolve against them.
+- **Queue.** A check is a job `chk_<random>`: one runs at a time, at most 4
+  wait (a fifth is `ErrBusy`), and first-show preflights wait beside them (at
+  most 16). Each job publishes `tile_check {id, state}` (`queued`, `running`,
+  `done`, `hung`; never its content) on the app's event stream.
+- **Runner routes.** `GET /api/tile-checks/next?wait=<s>` (a long poll, at
+  most 25 s; 204 when none came) claims the next job and answers `{id, kind,
+  digest, kit, title, sizes, definition, context?, samples}`: the served
+  definition (without its HTML) and each sample's `{name, kind, data,
+  refs?}`, its citations' payloads for each face resolved from the samples'
+  hunks and items (`library.Sample.Refs`). The data of a check with a version
+  has none: the runner reads that version's tile document through
+  `GET /api/tiles` and resolves them with the page's `refs.ts`. Claiming
+  registers the definition's frame document. `PUT
+  /api/tile-checks/{id}/result {problems, runs, engine}` ends the running job;
+  the daemon sorts the problems: `slow` warns, an overflowing glance warns
+  for the `maximal` sample, an unresolved citation counts for the data and
+  the author's samples only, every other known code is an error, and
+  problems are de-duplicated by code, sample, face and size.
+- **Hang and unavailable.** A claimed job with no report within 10 s is
+  `hang`: the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
+  until it restarts) and publishes `hung`. A job no runner claims within 10 s
+  of being queued (or of the last poll; a running job keeps the others
+  waiting) is `unavailable` with a reason, and at once when no page of the
+  app is connected and no runner polled lately.
+- **Preflight.** `POST /api/tile-checks/preflight {digest, data, size,
+  refs: {glance, detail}}` draws a tile the page is about to show for the
+  first time, as a light glance at its size and a light detail, unless the
+  pair's verdict is kept. Verdicts of preflights and of checks with data are
+  kept in `tile_checked(digest, data_sha, verdict, at)` in `app.sqlite`, the
+  newest 10,000 rows; `data_sha` is the SHA-256 of the data decoded and
+  encoded again (`tilechecks.DataSHA`), so the page's and an agent's spelling
+  of the same value match. A hung digest answers `hang` at once; one the
+  registry does not hold answers `unavailable`. A hang kept from before a
+  restart is drawn again.
+- **Routes' boundary.** The routes sit behind the app server's Host, session
+  (cookie or bearer), Origin and JSON checks like every other route, and a
+  browser request whose `Sec-Fetch-Site` is not `same-origin` is refused.
+
+**The runner** (`app/src/tiles/custom/check-runner.tsx`) claims jobs and
+draws each in sandboxed frames through the frame route, the page's router
+and protocol, in a `position: fixed` container inside the viewport at
+`opacity: 0`, at most 8 at a time: the data (when given), each sample,
+`minimal` and `maximal`, as glances at each declared size in the guide's
+boxes (third 310×164, half 488×180, full 1022×116) and details at 720 and
+360px, and the data also in the dark theme. It reports `no_hello` (5 s),
+`timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
+`render_failed`, `empty`, `overflow_glance`, `overflow_x`,
+`unresolved_citation` and `slow` from the ready metrics, and `layout_loop`
+when a detail set to the height it asks for keeps growing by the same
+amount. It may run in a hidden window, which on Linux WebKitGTK runs no
+animation frames, ResizeObserver or IntersectionObserver callbacks and runs
+timers about once a second while its layout and fonts are right; so it
+measures with layout reads and messages after the kit settled on its fonts,
+and uses timers only as deadlines. For the same reason it drives frames
+itself rather than through `TileFrame`, which mounts on an
+IntersectionObserver and follows heights by animation frame.
+
+Where it runs: when the desktop shell declares
+`window.__BAUM_DESKTOP__.checkWindow === true` (Linux), the main page calls
+the shell's `open_check_window` on a queued check, which loads
+`?page=tile-check` in a hidden window with its own web process, and
+`close_check_window` on `hung` (ending that process and the loop with it) or
+after 2 minutes without a check. Anywhere else frames are allowed (a
+browser, the macOS shell) the main page draws queued checks inside itself,
+where a hang freezes the page until the daemon gives up on the job. A shell
+that allows no frames draws nothing, and checks are `unavailable`.
+
+**First-show preflight** (`app/src/tiles/custom/preflight.ts`). Where the
+check window exists, before `TileFrame` mounts a custom tile not of a
+built-in type it posts a preflight of the tile's data and waits (the box
+reads `data-frame-state="checking"`). `pass` and render errors mount (the
+frame's own failure faces show those); `hang` shows "This tile stopped
+responding when it was checked." and the frame route refuses the type. Each
+pair is asked about once per page; a browser skips the preflight.
+
+Tests: `internal/tilechecks` (the queue, timeouts, hang and `MarkHung`, the
+checks before drawing, the classification, preflights and the store),
+`internal/uiserver` (the routes' boundary), and `app/e2e/tile-check.spec.ts`,
+which submits the tiles in `app/e2e/tile-check/` (good, empty, overflowing,
+throwing, network, height loop, slow, failing, never settling, busy) and the
+built-in types and the starter through a route only the browser fixture has
+(`POST /api/tile-checks/submit`), the page's runner drawing them; the busy
+one is claimed by a runner that never answers, so the daemon's hang timer is
+what is tested, not a frozen page.
 
 ### Tile library
 
