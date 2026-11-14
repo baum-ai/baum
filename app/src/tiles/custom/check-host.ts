@@ -49,10 +49,17 @@ export function setInPageRunner(run: ((event: TileCheckEvent) => void) | null) {
   inPage = run;
 }
 
+/** The shell's commands, one after another: a close after a hang and the
+ *  open for a check still waiting must reach the shell in that order. */
+let commands: Promise<unknown> = Promise.resolve();
+function command(name: "open_check_window" | "close_check_window") {
+  commands = commands.then(() => invoke(name)).catch(() => undefined);
+}
+
 function closeWindow() {
   clearTimeout(idle);
   idle = undefined;
-  void invoke("close_check_window").catch(() => undefined);
+  command("close_check_window");
 }
 
 /** What the main page does with a `tile_check` event. */
@@ -68,7 +75,9 @@ export function onTileCheckEvent(raw: unknown, win: Shell = window) {
     if (event.state === "hung") return closeWindow();
     // Opening is idempotent, and the shell may have closed the window
     // itself (a reconnection), so every new check asks.
-    if (event.state === "queued") void invoke("open_check_window").catch(() => undefined);
+    // After a hang the daemon announces the checks still waiting again, so
+    // the window closed for the hang opens afresh for them.
+    if (event.state === "queued") command("open_check_window");
     clearTimeout(idle);
     idle = setTimeout(closeWindow, IDLE_CLOSE);
     return;

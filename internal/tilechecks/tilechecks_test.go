@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -339,6 +340,14 @@ func TestHangBlocksTheDigest(t *testing.T) {
 	if err := f.checker.Report(job.ID, Report{}); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("a late report: %v", err)
 	}
+	// Checking the same type again answers hang at once, drawing nothing.
+	again, err := f.checker.Submit(context.Background(), candidate)
+	if err != nil || again.Verdict != VerdictHang || !slices.Equal(codes(again.Errors), []string{CodeHang}) {
+		t.Fatalf("a second check = %+v, %v", again, err)
+	}
+	if extra, ok := f.checker.Next(context.Background(), 0); ok {
+		t.Fatalf("a hung type was queued again: %+v", extra)
+	}
 	// A preflight of the same type answers hang at once.
 	pre, err := f.checker.Preflight(context.Background(), PreflightRequest{Digest: job.Digest, Data: candidate.Data})
 	if err != nil || pre.Verdict != VerdictHang {
@@ -529,7 +538,142 @@ func TestDataSHA(t *testing.T) {
 	if a != b {
 		t.Fatalf("%s != %s", a, b)
 	}
+	c, _ := DataSHA(json.RawMessage(`{"a":"<x>","b":10e-1}`))
+	if a != c {
+		t.Fatalf("1.0 and 10e-1 differ: %s != %s", a, c)
+	}
+	// Integers a double cannot tell apart are different data.
+	big1, _ := DataSHA(json.RawMessage(`{"n":9007199254740993}`))
+	big2, _ := DataSHA(json.RawMessage(`{"n":9007199254740992}`))
+	if big1 == big2 {
+		t.Fatal("integers past a double's precision were named alike")
+	}
+	if huge, err := DataSHA(json.RawMessage(`{"n":1e999999999}`)); err != nil || huge == "" {
+		t.Fatalf("a huge exponent: %q, %v", huge, err)
+	}
 	if _, err := DataSHA(json.RawMessage(`{`)); err == nil {
 		t.Fatal("not JSON was named")
+	}
+}
+
+func TestAliveKeepsALongCheckFromHanging(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.Hang = 200 * time.Millisecond })
+	done := f.submit(starter(t))
+	job := f.claim(t)
+	// Drawing takes three times the hang window, the runner saying it is
+	// alive as it goes.
+	for range 12 {
+		time.Sleep(50 * time.Millisecond)
+		if err := f.checker.Alive(job.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.checker.Report(job.ID, Report{Problems: []Problem{{Code: CodeTimeout, Message: "slow", Sample: "example"}}}); err != nil {
+		t.Fatalf("the job hung while its runner was alive: %v", err)
+	}
+	result := <-done
+	if result.Verdict != VerdictFail || f.frames.Hung(job.Digest) {
+		t.Fatalf("result = %+v", result)
+	}
+	if err := f.checker.Alive(job.ID); !errors.Is(err, ErrUnknown) {
+		t.Fatalf("alive after the end: %v", err)
+	}
+}
+
+func TestAnAliveCheckStillEndsAtItsLimit(t *testing.T) {
+	defer func(d time.Duration) { frameBudget = d }(frameBudget)
+	frameBudget = 10 * time.Millisecond
+	f := newFixture(t, func(o *Options) { o.Hang = 200 * time.Millisecond })
+	done := f.submit(starter(t))
+	job := f.claim(t)
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(30 * time.Millisecond):
+				_ = f.checker.Alive(job.ID)
+			}
+		}
+	}()
+	defer close(stop)
+	select {
+	case result := <-done:
+		if result.Verdict != VerdictHang || !f.frames.Hung(job.Digest) {
+			t.Fatalf("result = %+v", result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a job past its limit did not end")
+	}
+}
+
+func TestAGoneClientsJobIsQueuedAgain(t *testing.T) {
+	f := newFixture(t, nil)
+	done := f.submit(starter(t))
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		f.checker.mu.Lock()
+		n := len(f.checker.queue)
+		f.checker.mu.Unlock()
+		if n == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// A long poll whose client has gone claims nothing.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	f.checker.Handler().ServeHTTP(w, httptest.NewRequestWithContext(ctx, "GET", "/api/tile-checks/next?wait=0", nil))
+	job := f.claim(t)
+	if got := f.events.states(job.ID); len(got) < 4 || got[1] != StateRunning || got[2] != StateQueued || f.frames.Hung(job.Digest) {
+		t.Fatalf("events = %v: claimed, put back and claimed again", got)
+	}
+	_ = f.checker.Report(job.ID, Report{})
+	if r := <-done; r.Verdict != VerdictPass {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+func TestAnAbandonedCheckIsUnavailableNotHung(t *testing.T) {
+	f := newFixture(t, nil)
+	done := f.submit(starter(t))
+	job := f.claim(t)
+	if err := f.checker.Report(job.ID, Report{Abandoned: true}); err != nil {
+		t.Fatal(err)
+	}
+	result := <-done
+	if result.Verdict != VerdictUnavailable || f.frames.Hung(job.Digest) {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAHangAnnouncesTheWaitingChecksAgain(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.Hang = time.Second; o.Wait = 10 * time.Second })
+	first := f.submit(starter(t))
+	f.claim(t)
+	other := starter(t)
+	other.Definition.Title = "Another"
+	second := f.submit(other)
+	for {
+		f.checker.mu.Lock()
+		n := len(f.checker.queue)
+		f.checker.mu.Unlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if r := <-first; r.Verdict != VerdictHang {
+		t.Fatalf("first = %+v", r)
+	}
+	job := f.claim(t)
+	if got := f.events.states(job.ID); len(got) < 2 || !slices.Equal(got[:2], []string{StateQueued, StateQueued}) {
+		t.Fatalf("events of the waiting check = %v", got)
+	}
+	_ = f.checker.Report(job.ID, Report{})
+	if r := <-second; r.Verdict != VerdictPass {
+		t.Fatalf("second = %+v", r)
 	}
 }

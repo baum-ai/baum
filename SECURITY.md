@@ -1693,10 +1693,11 @@ by the chat's agent.
   freezes again. In the browser suite a 1.5-second loop held the page for
   its length in WebKit every time, and in Chromium in some runs and not
   others. The host unmounts a frame that does not draw in time, but cannot
-  interrupt one that holds the thread. On Linux, where the desktop shell
-  gives the render check a window with its own web process, that window
-  takes the freeze instead (see "The render check" below). Elsewhere (a
-  browser, the macOS app) the render check draws in the app's own page, so a
+  interrupt one that holds the thread. Where the desktop shell provides the
+  render check a window with its own web process (currently Linux), that
+  window takes the freeze instead (see "The render check" below). Elsewhere
+  (a browser, a shell without one) the render check draws in the app's own
+  page, so a
   candidate that loops freezes it, and the daemon then answers `hang` and
   refuses that type until it restarts.
 - A frame can navigate itself to a page of the daemon's own origin: the
@@ -1728,13 +1729,16 @@ mistakes, not a security control: a tile can fake its `ready`, swallow its
 errors or behave differently later. What it does protect against is a
 freeze where it would hurt:
 
-- On Linux the runner draws in a hidden check window with its own web
-  process. A candidate that never finishes drawing leaves its job without a
-  report; after 10 s the daemon answers `hang`, marks the type's digest hung
+- Where the desktop shell provides a check window (currently Linux), the
+  runner draws in that hidden window with its own web process. While it
+  draws, the runner tells the daemon it is alive every 2 seconds and as
+  frames finish; a candidate that never finishes drawing freezes it, so
+  after 10 s without a sign of life (or past a limit scaled by the frames
+  the check draws) the daemon answers `hang`, marks the type's digest hung
   (the frame route then refuses it until the daemon restarts) and tells the
   main page, which has the shell close the window, ending its process and
   the loop. The main window is not affected.
-- The first time the Linux app shows a custom tile that is not of a
+- Where that window exists, the first time the app shows a custom tile that is not of a
   built-in type, with data it has not drawn before, it first draws that
   pair in the check window (the first-show preflight). A pair that hangs
   stays down, with "This tile stopped responding when it was checked."; a
@@ -1750,7 +1754,9 @@ freeze where it would hurt:
   never more than the page itself would give the frame. The `tile_check`
   event names a check's ID and state only.
 - Only the daemon marks a digest hung, from its own timer: no message from a
-  frame or a runner can.
+  frame or a runner can. A runner whose page goes away mid-check reports the
+  job abandoned, which ends it unavailable without blocking the type, and a
+  long poll whose client left puts its job back.
 
 ### MCP server for agents
 

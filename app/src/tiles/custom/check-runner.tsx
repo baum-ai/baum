@@ -246,10 +246,15 @@ export function drawFrame(
         // The page's layout first, so the frame measures in its new box.
         iframe.getBoundingClientRect();
         // A frame in a process of its own learns its new size a moment
-        // later: an unchanged answer is asked again, a few times.
+        // later: an unchanged answer is asked again, after message turns
+        // (which a hidden window does not slow) and once after a short
+        // timer. In a hidden window the frame shares the page's process and
+        // the first answer is already right; a loop missed here is still
+        // reported by the kit itself wherever ResizeObserver runs.
         let next: number | null = height;
         for (let ask = 0; ask < 4 && next === height && !done; ask++) {
-          if (ask > 0) await new Promise((wait) => window.setTimeout(wait, 50));
+          if (ask === 3) await new Promise((wait) => window.setTimeout(wait, 50));
+          else if (ask > 0) await turn();
           next = await new Promise<number | null>((answer) => {
             measuring = answer;
             send(measureMessage());
@@ -288,7 +293,8 @@ export function drawFrame(
               lang: "en",
               data: spec.sample.data,
               refs,
-              check: { id: job.id },
+              // The kit needs only to know it is under a check, not which.
+              check: { id: "" },
             }),
           );
           readyTimer = window.setTimeout(() => {
@@ -393,6 +399,7 @@ export async function runJob(
   job: CheckJob,
   stage: HTMLElement,
   draw: typeof drawFrame = drawFrame,
+  onFrame: () => void = () => {},
 ): Promise<CheckReport> {
   const refs = new Map<
     CheckSample,
@@ -410,6 +417,7 @@ export async function runJob(
       const resolved = refs.get(spec.sample);
       const outcome = await draw(stage, spec, job, resolved?.[spec.face] ?? {});
       runs.push(outcome.run);
+      onFrame();
       for (const problem of outcome.problems) {
         // Without the version's document, the data's citations could not be
         // resolved: that is not the tile's fault.
@@ -455,6 +463,65 @@ export async function report(id: string, body: CheckReport): Promise<void> {
   });
 }
 
+/** A turn of the event loop that is neither a timer nor an animation frame,
+ *  which a hidden window does not slow. */
+export function turn(): Promise<void> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
+/** How often, at most and at least, the runner tells the daemon it is still
+ *  drawing a job. A hidden window runs timers about once a second, which is
+ *  enough; a page that froze sends nothing, and the daemon calls it a hang. */
+const BEAT = 2000;
+
+/** Tells the daemon the runner is alive while it draws job `id`: every BEAT
+ *  ms and as frames finish (at most once a second). If the page goes away
+ *  meanwhile, it reports the job abandoned, so the daemon ends it as
+ *  unavailable rather than blocking a type that did nothing wrong. Returns
+ *  the function that stops it, with `frame` to call as each frame ends. */
+export function heartbeat(id: string): (() => void) & { frame: () => void } {
+  let last = 0;
+  const beat = () => {
+    last = performance.now();
+    void fetch(appURL(`api/tile-checks/${encodeURIComponent(id)}/alive`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }).catch(() => undefined);
+  };
+  const timer = window.setInterval(beat, BEAT);
+  const gone = () => {
+    void fetch(appURL(`api/tile-checks/${encodeURIComponent(id)}/result`), {
+      method: "PUT",
+      keepalive: true,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        problems: [],
+        runs: [],
+        engine: navigator.userAgent,
+        abandoned: true,
+      }),
+    }).catch(() => undefined);
+  };
+  window.addEventListener("pagehide", gone);
+  const stop = () => {
+    window.clearInterval(timer);
+    window.removeEventListener("pagehide", gone);
+  };
+  return Object.assign(stop, {
+    frame: () => {
+      if (performance.now() - last >= 1000) beat();
+    },
+  });
+}
+
 /** A container for check frames: fixed inside the viewport (engines throttle
  *  frames off screen), invisible and out of the reader's way. */
 export function makeStage(): HTMLElement {
@@ -497,7 +564,9 @@ export async function drain(
       return;
     }
     onJob?.(job);
-    const result = await runJob(job, stage);
+    const stopBeating = heartbeat(job.id);
+    const result = await runJob(job, stage, drawFrame, stopBeating.frame);
+    stopBeating();
     try {
       await report(job.id, result);
     } catch {

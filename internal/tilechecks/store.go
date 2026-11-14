@@ -1,12 +1,19 @@
 package tilechecks
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"math/big"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/internal/appdb"
@@ -58,20 +65,80 @@ func (s *store) lookup(ctx context.Context, digest, dataSHA string) (string, boo
 func (s *store) close() error { return s.db.Close() }
 
 // DataSHA names a tile's data by value: the lowercase hex SHA-256 of the
-// data decoded and encoded again, with object members sorted and nothing
-// escaped that JSON does not require. The page sends data it parsed, the
-// tools data an agent wrote: the same value has the same name whichever way
-// it was spelled.
+// data in a canonical form, with object members sorted, strings as JSON
+// writes them without escaping HTML, and each number as the exact rational
+// it spells (so 1, 1.0 and 1e0 are one value, and integers beyond a
+// double's precision stay apart). The page sends data it parsed, the tools
+// data an agent wrote: the same value has the same name whichever way it
+// was spelled.
 func DataSHA(data json.RawMessage) (string, error) {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
 	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := d.Decode(&value); err != nil {
 		return "", err
 	}
+	if _, err := d.Token(); err != io.EOF {
+		return "", errors.New("tilechecks: more than one JSON value")
+	}
 	h := sha256.New()
-	encoder := json.NewEncoder(h)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
+	if err := canonicalData(h, value); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func canonicalData(w io.Writer, value any) error {
+	switch v := value.(type) {
+	case map[string]any:
+		_, _ = io.WriteString(w, "{")
+		for i, key := range slices.Sorted(maps.Keys(v)) {
+			if i > 0 {
+				_, _ = io.WriteString(w, ",")
+			}
+			if err := canonicalData(w, key); err != nil {
+				return err
+			}
+			_, _ = io.WriteString(w, ":")
+			if err := canonicalData(w, v[key]); err != nil {
+				return err
+			}
+		}
+		_, _ = io.WriteString(w, "}")
+	case []any:
+		_, _ = io.WriteString(w, "[")
+		for i, item := range v {
+			if i > 0 {
+				_, _ = io.WriteString(w, ",")
+			}
+			if err := canonicalData(w, item); err != nil {
+				return err
+			}
+		}
+		_, _ = io.WriteString(w, "]")
+	case json.Number:
+		// An exponent this large would make the rational enormous: such a
+		// number is named by its spelling.
+		if _, exponent, found := strings.Cut(strings.ToLower(string(v)), "e"); found && len(strings.TrimLeft(exponent, "+-0")) > 4 {
+			_, _ = io.WriteString(w, "~"+string(v))
+			return nil
+		}
+		r, ok := new(big.Rat).SetString(string(v))
+		if !ok {
+			return fmt.Errorf("tilechecks: %q is not a number", string(v))
+		}
+		// A rational is not a JSON number, so no string can spell it.
+		_, _ = io.WriteString(w, r.RatString())
+	case string:
+		encoder := json.NewEncoder(w)
+		encoder.SetEscapeHTML(false)
+		return encoder.Encode(v)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
+		}
+		_, _ = w.Write(b)
+	}
+	return nil
 }

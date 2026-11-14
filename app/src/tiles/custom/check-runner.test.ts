@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkWindowHere, inPageChecksHere, onTileCheckEvent, setInPageRunner } from "./check-host";
-import { AT_ONCE, matrix, measured, runJob, type CheckJob, type FrameSpec } from "./check-runner";
+import {
+  AT_ONCE,
+  heartbeat,
+  matrix,
+  measured,
+  runJob,
+  type CheckJob,
+  type FrameSpec,
+} from "./check-runner";
 import type { ReadyMetrics } from "./protocol";
 
 const job = (fields: Partial<CheckJob> = {}): CheckJob => ({
@@ -112,8 +120,11 @@ describe("running a job", () => {
       };
     };
     // The data's version cannot be read: its citations are not counted.
-    const result = await runJob(job({ context: null }), document.body, draw);
+    let frames = 0;
+    const result = await runJob(job({ context: null }), document.body, draw, () => frames++);
     expect(most).toBe(AT_ONCE);
+    // Each frame drawn is a sign of life for the daemon.
+    expect(frames).toBe(matrix(job()).length);
     expect(result.runs).toHaveLength(matrix(job()).length);
     expect(new Set(result.problems.map((p) => p.sample))).toEqual(new Set(["example", "minimal"]));
     expect(result.problems[0]).toMatchObject({ code: "unresolved_citation", face: "glance" });
@@ -147,7 +158,10 @@ describe("where checks draw", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it("opens the check window, and closes it on a hang and when idle", () => {
+  it("opens the check window, and closes it on a hang and when idle", async () => {
+    const flush = async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
     vi.useFakeTimers();
     const invoke = vi.fn((_command: string, _args?: unknown) => Promise.resolve());
     const win = shell({ tileFrames: true, checkWindow: true }, invoke);
@@ -157,16 +171,57 @@ describe("where checks draw", () => {
       const run = vi.fn();
       setInPageRunner(run);
       onTileCheckEvent({ id: "chk_1", state: "queued" }, win);
+      await flush();
       expect(invoke).toHaveBeenLastCalledWith("open_check_window", undefined);
+      // A hang, then a check that was waiting announced again: the shell
+      // gets the close, then the open, in that order.
       onTileCheckEvent({ id: "chk_1", state: "hung" }, win);
-      expect(invoke).toHaveBeenLastCalledWith("close_check_window", undefined);
       onTileCheckEvent({ id: "chk_2", state: "queued" }, win);
-      expect(invoke).toHaveBeenLastCalledWith("open_check_window", undefined);
+      await flush();
+      expect(invoke.mock.calls.map((call) => call[0])).toEqual([
+        "open_check_window",
+        "close_check_window",
+        "open_check_window",
+      ]);
       vi.advanceTimersByTime(2 * 60 * 1000);
+      await flush();
       expect(invoke).toHaveBeenLastCalledWith("close_check_window", undefined);
       expect(run).not.toHaveBeenCalled();
     } finally {
       (window as Bridge).__TAURI_INTERNALS__ = previous;
     }
+  });
+});
+
+describe("the heartbeat", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("says the runner is alive, and reports the job abandoned if the page goes", () => {
+    vi.useFakeTimers();
+    const fetched = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(new Response()));
+    vi.stubGlobal("fetch", fetched);
+    const stop = heartbeat("chk_7");
+    const urls = () => fetched.mock.calls.map((call) => String(call[0]).replace(/^.*api\//, ""));
+    vi.advanceTimersByTime(4100);
+    expect(urls()).toEqual(["tile-checks/chk_7/alive", "tile-checks/chk_7/alive"]);
+    // A frame just after a beat sends nothing more; one a second later does.
+    stop.frame();
+    expect(fetched).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1000);
+    stop.frame();
+    expect(fetched).toHaveBeenCalledTimes(3);
+    window.dispatchEvent(new Event("pagehide"));
+    const [url, init] = fetched.mock.calls.at(-1)!;
+    expect(String(url)).toContain("tile-checks/chk_7/result");
+    expect(init).toMatchObject({ method: "PUT", keepalive: true });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ abandoned: true });
+    stop();
+    const count = fetched.mock.calls.length;
+    vi.advanceTimersByTime(10000);
+    window.dispatchEvent(new Event("pagehide"));
+    expect(fetched).toHaveBeenCalledTimes(count);
   });
 });

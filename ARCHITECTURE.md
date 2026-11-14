@@ -1779,9 +1779,18 @@ errors), `fail`, `hang` and `unavailable`. The codes and their hints are in
   for the `maximal` sample, an unresolved citation counts for the data and
   the author's samples only, every other known code is an error, and
   problems are de-duplicated by code, sample, face and size.
-- **Hang and unavailable.** A claimed job with no report within 10 s is
+- **Hang and unavailable.** While it draws, the runner posts `POST
+  /api/tile-checks/{id}/alive` every 2 s and as frames finish (`Alive`). A
+  claimed job with neither a report nor a sign of life for 10 s, or still
+  running 10 s plus 3 s per frame of its matrix after it was claimed, is
   `hang`: the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
-  until it restarts) and publishes `hung`. A job no runner claims within 10 s
+  until it restarts), publishes `hung`, and announces each check still
+  waiting as `queued` again, so a page that closed a hung runner brings one
+  back. A candidate whose digest is already hung answers `hang` at once. A
+  long poll whose client left before the job was written puts it back at
+  the head of the queue (`Requeue`), and a report marked `abandoned` (the
+  runner's page went away mid-draw) ends the job `unavailable` without
+  blocking its type. A job no runner claims within 10 s
   of being queued (or of the last poll; a running job keeps the others
   waiting) is `unavailable` with a reason, and at once when no page of the
   app is connected and no runner polled lately.
@@ -1791,8 +1800,9 @@ errors), `fail`, `hang` and `unavailable`. The codes and their hints are in
   pair's verdict is kept. Verdicts of preflights and of checks with data are
   kept in `tile_checked(digest, data_sha, verdict, at)` in `app.sqlite`, the
   newest 10,000 rows; `data_sha` is the SHA-256 of the data decoded and
-  encoded again (`tilechecks.DataSHA`), so the page's and an agent's spelling
-  of the same value match. A hung digest answers `hang` at once; one the
+  encoded canonically with each number as the exact rational it spells
+  (`tilechecks.DataSHA`), so the page's and an agent's spelling of the same
+  value match. A hung digest answers `hang` at once; one the
   registry does not hold answers `unavailable`. A hang kept from before a
   restart is drawn again.
 - **Routes' boundary.** The routes sit behind the app server's Host, session
@@ -1819,11 +1829,14 @@ itself rather than through `TileFrame`, which mounts on an
 IntersectionObserver and follows heights by animation frame.
 
 Where it runs: when the desktop shell declares
-`window.__BAUM_DESKTOP__.checkWindow === true` (Linux), the main page calls
+`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one,
+currently Linux), the main page calls
 the shell's `open_check_window` on a queued check, which loads
 `?page=tile-check` in a hidden window with its own web process, and
 `close_check_window` on `hung` (ending that process and the loop with it) or
-after 2 minutes without a check. Anywhere else frames are allowed (a
+after 2 minutes without a check; the shell's commands are sent one after
+another, so the `queued` the daemon announces again for waiting checks after
+a hang reopens the window. Anywhere else frames are allowed (a
 browser, the macOS shell) the main page draws queued checks inside itself,
 where a hang freezes the page until the daemon gives up on the job. A shell
 that allows no frames draws nothing, and checks are `unavailable`.

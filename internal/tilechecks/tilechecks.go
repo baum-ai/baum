@@ -74,6 +74,11 @@ const (
 	defaultLongest = 25 * time.Second
 )
 
+// frameBudget is what a claimed job may take per frame it draws, however
+// often the runner says it is alive: Hang plus this per frame is the most a
+// job may run.
+var frameBudget = 3 * time.Second
+
 var (
 	// ErrBusy is a check refused because maxQueued checks already wait.
 	ErrBusy = errors.New("tilechecks: other checks are waiting; try again in a few seconds")
@@ -130,6 +135,10 @@ type Report struct {
 	Problems []Problem `json:"problems"`
 	Runs     []Run     `json:"runs"`
 	Engine   string    `json:"engine"`
+	// Abandoned says the runner stopped before it drew everything (its
+	// page went away): the job ends unavailable, and its type is not
+	// blocked.
+	Abandoned bool `json:"abandoned,omitempty"`
 }
 
 // Event is a tile_check event's data.
@@ -233,8 +242,11 @@ type job struct {
 	queued  time.Time
 	claimed bool
 	timer   *time.Timer
-	done    chan struct{}
-	result  Result
+	// alive is when the runner last showed it was still drawing the job;
+	// limit is when the job ends as a hang however alive it is.
+	alive, limit time.Time
+	done         chan struct{}
+	result       Result
 }
 
 // New returns a Checker. It opens the verdict store when opts.Database is
@@ -344,6 +356,13 @@ func (c *Checker) prepare(candidate Candidate) (*job, bool) {
 	}
 	j.def, j.encoded = def, encoded
 	j.Definition = tileview.ServedDefinition(encoded)
+	// A type that already hung is refused by the frame route until the
+	// daemon restarts: drawing it again could only fail to start.
+	if c.frames.Hung(def.Digest) {
+		j.errors = append(j.errors, problem(CodeHang, "This type stopped responding when it was checked before; it stays blocked until baum restarts. Change the code."))
+		j.result = c.result(j, VerdictHang)
+		return j, true
+	}
 	var lintErrors []Problem
 	for _, f := range kit.Lint(def.Kit, def.Source.HTML) {
 		p := problem(CodeLint, fmt.Sprintf("tile.html:%d:%d: %s (%s)", f.Line, f.Column, f.Message, f.Rule))
@@ -652,7 +671,9 @@ func (c *Checker) Next(ctx context.Context, wait time.Duration) (Job, bool) {
 			}
 			c.mu.Lock()
 			if c.running == j {
-				j.timer = time.AfterFunc(c.opts.Hang, func() { c.hung(j) })
+				now := time.Now()
+				j.alive, j.limit = now, now.Add(c.opts.Hang+time.Duration(frames(j.Job))*frameBudget)
+				j.timer = time.AfterFunc(c.opts.Hang, func() { c.expire(j) })
 			}
 			c.mu.Unlock()
 			c.publish(j.ID, StateRunning)
@@ -685,6 +706,10 @@ func (c *Checker) Report(id string, report Report) error {
 	c.polled, c.freed = time.Now(), time.Now()
 	c.poke()
 	c.mu.Unlock()
+	if report.Abandoned {
+		c.finish(j, unavailable(j, "The app's check runner went away before it finished; try again."))
+		return nil
+	}
 	errs, warnings := classify(report.Problems, j.kinds)
 	j.errors = append(j.errors, errs...)
 	j.warnings = append(j.warnings, warnings...)
@@ -715,11 +740,91 @@ func (c *Checker) hung(j *job) {
 	}
 	c.running, c.freed = nil, time.Now()
 	c.poke()
+	waiting := slices.Clone(c.queue)
 	c.mu.Unlock()
 	c.frames.MarkHung(j.Digest)
 	c.publish(j.ID, StateHung)
-	j.errors = append(j.errors, problem(CodeHang, fmt.Sprintf("The component never finished drawing; it was stopped after %s (an endless loop?).", c.opts.Hang)))
+	j.errors = append(j.errors, problem(CodeHang, "The component never finished drawing, and the app stopped answering while it drew (an endless loop?)."))
 	c.finish(j, c.result(j, VerdictHang))
+	// The page closes a runner that hung; the jobs still waiting need it
+	// back, so they are announced again.
+	for _, w := range waiting {
+		c.publish(w.ID, StateQueued)
+	}
+}
+
+// expire runs when a claimed job's hang timer fires: a job whose runner
+// said it was alive within Options.Hang gets more time, up to its limit;
+// otherwise it hung.
+func (c *Checker) expire(j *job) {
+	c.mu.Lock()
+	if c.running != j {
+		c.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	deadline := j.alive.Add(c.opts.Hang)
+	if j.limit.Before(deadline) {
+		deadline = j.limit
+	}
+	if now.Before(deadline) {
+		j.timer.Reset(deadline.Sub(now))
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+	c.hung(j)
+}
+
+// Alive records that the runner is still drawing the running job id, which
+// keeps it from being a hang for another Options.Hang. A runner whose page
+// froze cannot say so: a real hang is still caught.
+func (c *Checker) Alive(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	j := c.running
+	if j == nil || j.ID != id {
+		return ErrUnknown
+	}
+	j.alive = time.Now()
+	c.polled = j.alive
+	return nil
+}
+
+// Requeue puts the running job id back at the head of the queue, unclaimed:
+// its runner never got it (the long poll's client went away).
+func (c *Checker) Requeue(id string) {
+	c.mu.Lock()
+	j := c.running
+	if j == nil || j.ID != id {
+		c.mu.Unlock()
+		return
+	}
+	if j.timer != nil {
+		j.timer.Stop()
+	}
+	c.running, j.claimed = nil, false
+	c.queue = append([]*job{j}, c.queue...)
+	c.poke()
+	c.mu.Unlock()
+	c.publish(j.ID, StateQueued)
+}
+
+// frames is how many frames the runner draws for a job, as its matrix has
+// them: for a check, each sample as a glance at each size and two details,
+// and the data twice more in the dark theme; for a preflight, two.
+func frames(j Job) int {
+	if j.Kind == JobPreflight {
+		return 2 * len(j.Samples)
+	}
+	n := 0
+	for _, s := range j.Samples {
+		n += max(len(j.Sizes), 1) + 2
+		if s.Kind == KindData {
+			n += 2
+		}
+	}
+	return n
 }
 
 // finish ends a job: its result is kept, its pair's verdict recorded and

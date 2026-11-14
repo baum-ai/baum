@@ -25,7 +25,10 @@ const (
 //     waiting up to wait seconds (at most 25, the default): 200 with the
 //     job, or 204 when none came.
 //   - PUT /api/tile-checks/{id}/result ends the running job id with the
-//     runner's report: 204, or 404 when no such job is running.
+//     runner's report: 204, or 404 when no such job is running. A report
+//     marked abandoned (the runner's page went away) ends it unavailable.
+//   - POST /api/tile-checks/{id}/alive says the runner is still drawing the
+//     running job id (Alive), which keeps it from being a hang: 204, or 404.
 //   - POST /api/tile-checks/preflight runs a first-show preflight
 //     (Preflight) and answers its result.
 //
@@ -36,6 +39,7 @@ func (c *Checker) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tile-checks/next", c.serveNext)
 	mux.HandleFunc("PUT /api/tile-checks/{id}/result", c.serveResult)
+	mux.HandleFunc("POST /api/tile-checks/{id}/alive", c.serveAlive)
 	mux.HandleFunc("POST /api/tile-checks/preflight", c.servePreflight)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
@@ -61,7 +65,31 @@ func (c *Checker) serveNext(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeJSON(w, job)
+	// A client that went away while it waited (a reload, an aborted poll)
+	// never gets the job: it goes back to the head of the queue rather
+	// than hang.
+	if r.Context().Err() != nil {
+		c.Requeue(job.ID)
+		return
+	}
+	body, err := json.Marshal(job)
+	if err != nil {
+		c.Requeue(job.ID)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(append(body, '\n')); err != nil {
+		c.Requeue(job.ID)
+	}
+}
+
+func (c *Checker) serveAlive(w http.ResponseWriter, r *http.Request) {
+	if err := c.Alive(r.PathValue("id")); err != nil {
+		http.Error(w, "no such running check", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (c *Checker) serveResult(w http.ResponseWriter, r *http.Request) {

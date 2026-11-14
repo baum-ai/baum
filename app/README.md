@@ -2622,7 +2622,9 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   the pull request's data in dark too, 8 at a time) and reports what it saw
   to `api/tile-checks/{id}/result`. It reads sizes from the layout and from
   the frame's messages only, never animation frames, ResizeObserver or
-  tight timers, so it works in a hidden window. On Linux, where the desktop
+  tight timers, so it works in a hidden window, and tells the daemon it is
+  alive every 2 seconds while it draws (reporting the job abandoned if its
+  page goes away). Where the desktop
   shell declares `window.__BAUM_DESKTOP__.checkWindow`, the main page opens
   the shell's check window (`open_check_window`, which loads
   `?page=tile-check`, the runner alone) on a `tile_check` event and closes it
