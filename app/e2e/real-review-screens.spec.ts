@@ -87,10 +87,14 @@ export const STATES: State[] = [
     },
   },
   {
-    // The tiles page with every tile and every group shown.
+    // The tiles page with every tile and every group shown, where the
+    // landing page holds some back.
     name: "more",
     views: ["tiles"],
     open: async ({ page, address }) => {
+      await page.goto(address());
+      await steady(page, "more");
+      if ((await page.getByRole("button", { name: /^Show \d+ more / }).count()) === 0) return false;
       await page.goto(address({ more: "1", expand: "changes,obsolete" }));
     },
   },
@@ -150,9 +154,51 @@ async function settle(page: Page, where: string): Promise<Issue[]> {
       what: `the page did not settle: ${(await pending()).join(", ")} still loading`,
     });
   }
-  // Layout and transitions after the last load.
-  await page.waitForTimeout(400);
+  issues.push(...(await steady(page, where)));
   return issues;
+}
+
+/** Waits until the review pane holds its content (the review page's own
+ *  loading status gone; on the tiles page, the landing page's band or a
+ *  tile's heading drawn), every finite animation has finished, and its
+ *  layout is the same twice running: the first picture of a run was taken
+ *  while the pane was still arriving. */
+async function steady(page: Page, where: string): Promise<Issue[]> {
+  const layout = () =>
+    page.evaluate((tiles) => {
+      const pane = document.querySelector("#review-section");
+      if (!pane || pane.querySelector(".loading-status")) return "loading";
+      if (tiles && !pane.querySelector('[aria-label="Review at a glance"], h2:not(.sr-only)'))
+        return "no content";
+      const moving = document
+        .getAnimations()
+        .some(
+          (animation) =>
+            animation.playState === "running" &&
+            animation.effect?.getComputedTiming().iterations !== Infinity,
+        );
+      if (moving) return "animating";
+      return [pane, ...pane.querySelectorAll("article, h2, h3, section")]
+        .slice(0, 40)
+        .map((element) => {
+          const box = element.getBoundingClientRect();
+          return `${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}`;
+        })
+        .join(";");
+    }, VIEW === "tiles");
+  const deadline = Date.now() + 20_000;
+  let previous = "";
+  while (Date.now() < deadline) {
+    const now = await layout();
+    if (now === previous && !["loading", "no content", "animating"].includes(now)) {
+      // Transitions after the last change.
+      await page.waitForTimeout(200);
+      return [];
+    }
+    previous = now;
+    await page.waitForTimeout(250);
+  }
+  return [{ where, what: `the review pane did not settle (${previous.split(";")[0]})` }];
 }
 
 /** What is wrong with a settled page that a picture would not show clearly. */
@@ -164,7 +210,15 @@ async function inspect(page: Page, where: string): Promise<Issue[]> {
       if (text) what.push(`notice: ${text.slice(0, 160)}`);
     }
     const body = document.body.innerText;
-    if (body.includes("Excerpt unavailable")) what.push("an excerpt is unavailable");
+    // An excerpt of a binary file is unavailable by nature: there is no text
+    // to show. Said apart, so it is not taken for a missing commit.
+    const unavailable = [...body.matchAll(/Excerpt unavailable\s*·\s*View (\S+)/g)].map(
+      (match) => match[1]!,
+    );
+    const binary = /\.(png|jpe?g|gif|webp|ico|mp4|webm|mov|pdf|zip|gz|woff2?|ttf|otf|sqlite)$/i;
+    if (unavailable.some((path) => !binary.test(path))) what.push("an excerpt is unavailable");
+    else if (unavailable.length > 0)
+      what.push("an excerpt of a binary file has no text (expected)");
     if ([...document.images].some((i) => i.complete && i.naturalWidth === 0 && i.currentSrc))
       what.push("an image failed to load");
     if (document.documentElement.scrollWidth > innerWidth + 1)
