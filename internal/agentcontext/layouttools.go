@@ -546,8 +546,8 @@ func (s *Server) addResult(ctx context.Context, c CallContext, repository string
 	return compactJSON(fields)
 }
 
-// tileOfType finds a tile by its ID, or by its type when the review has one
-// tile of it, and says whether it is hidden.
+// tileOfType finds a tile by its ID or its title, or by its type when the
+// review has one tile of it, and says whether it is hidden.
 func tileOfType(doc *tiles.Document, name string) (id string, hidden, found bool) {
 	groups := map[string]string{}
 	for _, entry := range doc.Layout.Entries {
@@ -555,7 +555,7 @@ func tileOfType(doc *tiles.Document, name string) (id string, hidden, found bool
 	}
 	var ofType []string
 	for _, tile := range doc.Tiles {
-		if tile.ID == name || tiles.LibraryTileID(name) == tile.ID {
+		if tile.ID == name || tiles.LibraryTileID(name) == tile.ID || strings.EqualFold(strings.TrimSpace(tile.Title), name) {
 			return tile.ID, groups[tile.ID] == tiles.GroupHidden, true
 		}
 		if tile.Type == name {

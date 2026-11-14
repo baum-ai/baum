@@ -1278,28 +1278,37 @@ marked as from that version, or a pending tile, and a fill starts; an earlier
 version shows the newest earlier fill, marked, or nothing. The tile route
 answers these notes as `added: [{tile, from?, filling?}]` beside the
 document, and its cache key includes the pull request's fills. Fills live in
-`tile_fills(pr, tile, version, digest, data, at)`, at most 64 KiB of data each,
+`tile_fills(pr, tile, version, digest, data, at, origin)`, at most 64 KiB of
+data each, `origin` `chat` (the panel's agent wrote it) or `fill` (baum's own
+fill run),
 the two newest versions per added tile, deleted with their pull request's
 overlay; the definition a fill was written against is kept in
 `tile_definitions(digest, definition, at)` while an overlay's add or a fill
-names its digest. A stored fill moves the overlay's revision and publishes
-the `layout` event. `Service.Sweep`, when the daemon starts, drops fills
-without an overlay and definitions nothing names. An added built-in type
+names its digest (the tile library keeps saved types' definitions in the same
+table). A stored fill moves the overlay's revision and publishes the `layout`
+event. `Service.Sweep`, when the daemon starts, drops fills without an
+overlay and definitions no overlay, fill or saved tile type (`tile_types`,
+`tile_type_versions`, when they exist) names, and removes no definition when
+the tile library cannot be read. An added built-in type
 keeps its built-in label: the served definition is marked by its digest
 (`library.IsBuiltin`), never by data.
 
 A fill comes from one of three places. The session panel's agent writes the
 data itself (`add_tile` with `data`, after `tile_type`), which is checked
 against the latest version's hunks, masked like every model output
-(`agent.RedactTaskOutput`) and stored as that version's fill before the add,
-so the tile shows at once. Without data, `jobs.TileFills` (kind `tile_fill`)
-runs one fill beside the queue, one at a time, once per version and type, not
+(`agent.RedactTaskOutput`) and stored as that version's fill (`chat`) once the add
+is saved, so the tile shows at once. Without data, unless the version already
+has a fill for the type (an add undone and made again shows it), `jobs.TileFills`
+(kind `tile_fill`) runs one fill beside the queue, one at a time: a version's
+type is filled once while the daemon runs (a success is remembered), and not
 again for ten minutes after a failure: `jobs.Local.FillTile` assembles the
 pull request at the version's head (standing down when the pull request moved
 or the version is no longer the latest) and calls `generate.FillTile`, one
 task with the type's fill schema and one repair (`agent.Generator.FillTile`),
-with the review's agent and model; the data is checked against the saved
-version's hunks and stored. Its spend is logged, not a job's. And a review
+with the review's agent and model and its token budget; the data is checked
+against the saved version's hunks and stored (`fill`). Its spend is logged,
+not a job's: the cost views read the job journal and the decision log, and a
+fill is neither. And a review
 of the pull request fills every added type itself (`generate.Tiles.Always`,
 see "Tile analysis").
 
@@ -2416,8 +2425,9 @@ stage is told the selected types' checks.
 - **Added types.** `StagedTiles.Always` are the library types the person
   added to the pull request's review (`jobs.Local` reads their overlay into
   `generate.Tiles.Always`), each with its last data: the newest of its fills
-  and of the latest version's composition, with the hunks of the version it
-  was written for. Such a type is offered even when the run offers no other,
+  (baum's own, never the agent's `chat` data, which stays the person's) and of
+  the latest version's composition, with the hunks of the version it was
+  written for. Such a type is offered even when the run offers no other,
   counts as selected whatever the outline answers (so it is filled beside the
   details and appears in the composition, and the replay only places it), and
   is reused by its own rule instead of the previous composition's: with no

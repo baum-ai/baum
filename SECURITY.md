@@ -1994,8 +1994,13 @@ the diff of the version shown (a refusal names the place in the data, never
 its values), and it is masked for secrets, as every model output is, before
 it is stored on this computer. The type is one of baum's built-in library
 types, named by the host; the page labels the tile as baum's own by its
-definition's digest, which data cannot change. A fill baum runs itself for an
-added tile is checked and masked the same way.
+definition's digest, which data cannot change. A review never takes the
+agent's data as its own: only fills baum ran itself are reused in a later
+version. An add without data starts one fill run with your review agent (a
+model call at your expense, as a review's fill is): each version's tile type
+is filled at most once while baum runs, however often it is added and
+undone, and a failed run is not retried for ten minutes. The run is checked
+and masked like any fill.
 
 There is no confirmation and no rate cap on purpose: each would make "move
 this" slower for everyone to guard against an attack whose worst result is a

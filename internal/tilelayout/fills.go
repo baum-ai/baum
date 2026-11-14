@@ -33,7 +33,11 @@ const (
   digest TEXT NOT NULL,
   data BLOB NOT NULL,
   at TEXT NOT NULL,
+  origin TEXT NOT NULL DEFAULT 'chat',
   PRIMARY KEY(pr, tile, version))`
+	// fillsOrigin adds origin to a tile_fills table made before it had
+	// one; its rows read as the agent's.
+	fillsOrigin       = `ALTER TABLE tile_fills ADD COLUMN origin TEXT NOT NULL DEFAULT 'chat'`
 	definitionsSchema = `CREATE TABLE IF NOT EXISTS tile_definitions(
   digest TEXT PRIMARY KEY,
   definition BLOB NOT NULL,
@@ -52,13 +56,36 @@ const MaxFillBytes = 64 << 10
 const maxDefinitionBytes = 512 << 10
 
 // Fill is the data held for an added tile on one version: the tile's ID,
-// the version, the digest of the definition it was written against and the
-// data, masked and checked when it was stored.
+// the version, the digest of the definition it was written against, the
+// data, masked and checked when it was stored, and who wrote it (Origin).
 type Fill struct {
 	Tile    string
 	Version int
 	Digest  string
 	Data    json.RawMessage
+	Origin  string
+}
+
+// The origins of a fill: the session panel's agent (add_tile with data), a
+// person's own data, shown on their page only; or baum's own fill run, which
+// a later review may reuse as its generated tile.
+const (
+	OriginChat = "chat"
+	OriginFill = "fill"
+)
+
+// ensureFills creates the layout tables, and adds origin to a fills table
+// that lacks it.
+func ensureFills(ctx context.Context, conn *sql.Conn) error {
+	for _, statement := range []string{schema, fillsSchema, definitionsSchema} {
+		if _, err := conn.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	if _, err := conn.ExecContext(ctx, fillsOrigin); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 // PutFill stores data for an added tile on one version of the pull request,
@@ -66,8 +93,8 @@ type Fill struct {
 // the KeepFills newest versions' fills of that tile, and moves the layout's
 // revision, so the page reads its tiles again. The caller has checked the
 // data (library.CheckAddedFill) and masked it.
-func (s *Service) PutFill(ctx context.Context, pr, tile string, version int, definition, data json.RawMessage) error {
-	if !ValidKey(pr) || version < 1 || !tileIDPattern(tile) {
+func (s *Service) PutFill(ctx context.Context, pr, tile string, version int, origin string, definition, data json.RawMessage) error {
+	if !ValidKey(pr) || version < 1 || !tileIDPattern(tile) || origin != OriginChat && origin != OriginFill {
 		return errors.New("invalid fill")
 	}
 	if len(data) > MaxFillBytes || len(definition) > maxDefinitionBytes || !json.Valid(data) {
@@ -87,17 +114,15 @@ func (s *Service) PutFill(ctx context.Context, pr, tile string, version int, def
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	var revision int64
 	err = appdb.Transact(ctx, db, func(conn *sql.Conn) error {
-		for _, statement := range []string{schema, fillsSchema, definitionsSchema} {
-			if _, err := conn.ExecContext(ctx, statement); err != nil {
-				return err
-			}
+		if err := ensureFills(ctx, conn); err != nil {
+			return err
 		}
 		if _, err := conn.ExecContext(ctx, `INSERT INTO tile_definitions(digest, definition, at) VALUES (?, ?, ?)
 ON CONFLICT(digest) DO UPDATE SET at = excluded.at`, def.Digest, []byte(definition), now); err != nil {
 			return err
 		}
-		if _, err := conn.ExecContext(ctx, `INSERT INTO tile_fills(pr, tile, version, digest, data, at) VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(pr, tile, version) DO UPDATE SET digest = excluded.digest, data = excluded.data, at = excluded.at`, pr, tile, version, def.Digest, []byte(data), now); err != nil {
+		if _, err := conn.ExecContext(ctx, `INSERT INTO tile_fills(pr, tile, version, digest, data, at, origin) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(pr, tile, version) DO UPDATE SET digest = excluded.digest, data = excluded.data, at = excluded.at, origin = excluded.origin`, pr, tile, version, def.Digest, []byte(data), now, origin); err != nil {
 			return err
 		}
 		if _, err := conn.ExecContext(ctx, `DELETE FROM tile_fills WHERE pr = ? AND tile = ? AND version NOT IN
@@ -138,7 +163,11 @@ func (s *Service) Fills(ctx context.Context, pr string) ([]Fill, error) {
 		return nil, err
 	}
 	defer release()
-	rows, err := db.QueryContext(ctx, `SELECT tile, version, digest, data FROM tile_fills WHERE pr = ? ORDER BY version DESC, tile`, pr)
+	rows, err := db.QueryContext(ctx, `SELECT tile, version, digest, data, origin FROM tile_fills WHERE pr = ? ORDER BY version DESC, tile`, pr)
+	if err != nil && strings.Contains(err.Error(), "no such column") {
+		// A table made before fills had an origin: every row is the agent's.
+		rows, err = db.QueryContext(ctx, `SELECT tile, version, digest, data, 'chat' FROM tile_fills WHERE pr = ? ORDER BY version DESC, tile`, pr)
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			return nil, nil
@@ -150,7 +179,7 @@ func (s *Service) Fills(ctx context.Context, pr string) ([]Fill, error) {
 	for rows.Next() {
 		var f Fill
 		var data []byte
-		if err := rows.Scan(&f.Tile, &f.Version, &f.Digest, &data); err != nil {
+		if err := rows.Scan(&f.Tile, &f.Version, &f.Digest, &data, &f.Origin); err != nil {
 			return nil, err
 		}
 		f.Data = data
@@ -175,7 +204,9 @@ func (s *Service) Definition(ctx context.Context, digest string) (json.RawMessag
 
 // Sweep removes what no overlay needs any more: the fills of pull requests
 // whose overlay is gone, and the definitions no overlay's add (an undone one
-// included) or fill names. The daemon runs it when it starts.
+// included), fill or saved tile type (the tile library's tile_types and
+// tile_type_versions, when they exist) names; when the tile library cannot
+// be read, no definition is removed. The daemon runs it when it starts.
 func (s *Service) Sweep(ctx context.Context) error {
 	db, release, err := appdb.Acquire(s.Path, false)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -186,10 +217,8 @@ func (s *Service) Sweep(ctx context.Context) error {
 	}
 	defer release()
 	return appdb.Transact(ctx, db, func(conn *sql.Conn) error {
-		for _, statement := range []string{schema, fillsSchema, definitionsSchema} {
-			if _, err := conn.ExecContext(ctx, statement); err != nil {
-				return err
-			}
+		if err := ensureFills(ctx, conn); err != nil {
+			return err
 		}
 		if _, err := conn.ExecContext(ctx, `DELETE FROM tile_fills WHERE pr NOT IN (SELECT pr FROM tile_overlays)`); err != nil {
 			return err
@@ -232,6 +261,36 @@ func (s *Service) Sweep(ctx context.Context) error {
 		}
 		if err := rows.Close(); err != nil {
 			return err
+		}
+		// The tile library (saved tile types) keeps its definitions in the
+		// same table; what it names is kept. When it cannot be read, no
+		// definition is removed.
+		for _, table := range []string{"tile_types", "tile_type_versions"} {
+			var exists int
+			if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&exists); err != nil {
+				return nil
+			}
+			if exists == 0 {
+				continue
+			}
+			digests, err := conn.QueryContext(ctx, `SELECT digest FROM `+table)
+			if err != nil {
+				if strings.Contains(err.Error(), "no such table") {
+					continue
+				}
+				return nil
+			}
+			for digests.Next() {
+				var digest string
+				if err := digests.Scan(&digest); err != nil {
+					_ = digests.Close()
+					return nil
+				}
+				named[digest] = true
+			}
+			if err := digests.Close(); err != nil {
+				return nil
+			}
 		}
 		rows, err = conn.QueryContext(ctx, `SELECT digest FROM tile_definitions`)
 		if err != nil {

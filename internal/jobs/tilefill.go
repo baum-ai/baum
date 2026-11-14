@@ -50,8 +50,8 @@ type TileFiller interface {
 }
 
 // TileFills fills the tiles people added to reviews (tilelayout.Filler for
-// the tile routes): each request runs once at a time per pull request
-// version and type, one fill at a time, in the background, and stores what
+// the tile routes): a pull request version's type is filled once while the
+// daemon runs, one fill at a time, in the background, and stores what
 // it wrote as the version's fill, which tells the page to read its tiles
 // again. A failed fill is not tried again for a while; the next version's
 // generation fills the type in any case.
@@ -67,8 +67,11 @@ type TileFills struct {
 	mu      sync.Mutex
 	running map[string]bool
 	failed  map[string]time.Time
-	slot    chan struct{}
-	wg      sync.WaitGroup
+	// done are the fills that succeeded: each version's type is filled once
+	// for as long as the daemon runs, however often it is added and undone.
+	done map[string]bool
+	slot chan struct{}
+	wg   sync.WaitGroup
 }
 
 func (t *TileFills) now() time.Time {
@@ -85,8 +88,8 @@ func (t *TileFills) log() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// Fill starts a fill unless one of the same version and type runs or
-// failed recently.
+// Fill starts a fill unless one of the same version and type runs, already
+// succeeded, or failed recently.
 func (t *TileFills) Fill(r tilelayout.FillRequest) {
 	if t == nil || t.Filler == nil || t.Layouts == nil {
 		return
@@ -94,9 +97,9 @@ func (t *TileFills) Fill(r tilelayout.FillRequest) {
 	key := tilelayout.Key(r.Repository, r.Number) + "@" + strconv.Itoa(r.Version) + "/" + r.Type
 	t.mu.Lock()
 	if t.running == nil {
-		t.running, t.failed, t.slot = map[string]bool{}, map[string]time.Time{}, make(chan struct{}, 1)
+		t.running, t.failed, t.done, t.slot = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, make(chan struct{}, 1)
 	}
-	if t.running[key] || t.now().Sub(t.failed[key]) < tileFillRetry {
+	if t.running[key] || t.done[key] || t.now().Sub(t.failed[key]) < tileFillRetry {
 		t.mu.Unlock()
 		return
 	}
@@ -111,6 +114,7 @@ func (t *TileFills) Fill(r tilelayout.FillRequest) {
 			t.failed[key] = t.now()
 		} else {
 			delete(t.failed, key)
+			t.done[key] = true
 		}
 	})
 }
@@ -141,7 +145,7 @@ func (t *TileFills) run(r tilelayout.FillRequest) error {
 		t.log().Warn("an added tile was not filled", append(attrs, "error", err.Error())...)
 		return err
 	}
-	if err := t.Layouts.PutFill(context.WithoutCancel(ctx), tilelayout.Key(r.Repository, r.Number), tiles.LibraryTileID(r.Type), r.Version, definition, data); err != nil {
+	if err := t.Layouts.PutFill(context.WithoutCancel(ctx), tilelayout.Key(r.Repository, r.Number), tiles.LibraryTileID(r.Type), r.Version, tilelayout.OriginFill, definition, data); err != nil {
 		t.log().Warn("an added tile's fill was not stored", append(attrs, "error", err.Error())...)
 		return err
 	}
@@ -227,7 +231,7 @@ func (l *Local) FillTile(ctx context.Context, r tilelayout.FillRequest) (json.Ra
 		Assembler: headAssembler{Assembler: assembler, head: latest.Metadata.Head},
 		Request:   assemble.Request{Repository: repository, Number: r.Number, Limits: assemble.LimitsFrom(caps)},
 		Backend:   selected.Backend, BackendVersion: selected.Version, Model: selected.Model,
-		Budgets:     agent.Budgets{WallClock: tileFillTimeout, MaxCalls: 2, MaxProviderAttempts: 3, MaxRepairAttempts: 1},
+		Budgets:     agent.Budgets{WallClock: tileFillTimeout, MaxCalls: 2, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 1},
 		PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), tileFillTimeout),
 	}
 	result, err := generate.FillTile(ctx, options, entry)
@@ -254,8 +258,9 @@ func (l *Local) FillTile(ctx context.Context, r tilelayout.FillRequest) (json.Ra
 
 // alwaysTiles are the library types the person added to the pull request's
 // review (generate.Tiles.Always), each with the last data held for it: the
-// newest of its fills and of the latest version's composition, with the
-// hunks of the version it was written for.
+// newest of baum's own fills (never data the agent wrote, which stays the
+// person's) and of the latest version's composition, with the hunks of the
+// version it was written for.
 func (l *Local) alwaysTiles(ctx context.Context, versions *store.Store, key store.Key) []agent.AlwaysTile {
 	if l.Layouts == nil {
 		return nil
@@ -297,7 +302,9 @@ func (l *Local) alwaysTiles(ctx context.Context, versions *store.Store, key stor
 		always := agent.AlwaysTile{Name: a.Name}
 		version := 0
 		for _, f := range fills {
-			if f.Tile == tiles.LibraryTileID(a.Name) && f.Version > version {
+			// Data the agent wrote stays the person's: only baum's own fill
+			// runs may stand for a generated tile.
+			if f.Origin == tilelayout.OriginFill && f.Tile == tiles.LibraryTileID(a.Name) && f.Version > version {
 				version, always.Last = f.Version, f.Data
 			}
 		}

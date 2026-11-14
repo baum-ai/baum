@@ -293,6 +293,6 @@ func (f fixtureFiller) Fill(r tilelayout.FillRequest) {
 			return
 		}
 		data := fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the demo client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID)
-		_ = f.layouts.PutFill(ctx, tilelayout.Key(r.Repository, r.Number), tiles.LibraryTileID(r.Type), r.Version, entry.Encoded, json.RawMessage(data))
+		_ = f.layouts.PutFill(ctx, tilelayout.Key(r.Repository, r.Number), tiles.LibraryTileID(r.Type), r.Version, tilelayout.OriginFill, entry.Encoded, json.RawMessage(data))
 	}()
 }

@@ -94,7 +94,7 @@ func (f *fakeLayouts) Add(ctx context.Context, repository string, number int, ad
 		if problems := library.CheckAddedFill(tiles.NewValidator(), e, add.Data, library.DiffOf(f.doc)); len(problems) > 0 {
 			return TileAdded{}, errors.New("The data does not fit: " + strings.Join(problems, "; "))
 		}
-		if err := f.service.PutFill(ctx, tilelayout.Key(repository, number), tiles.LibraryTileID(e.Definition.Name), shown.Version, e.Encoded, add.Data); err != nil {
+		if err := f.service.PutFill(ctx, tilelayout.Key(repository, number), tiles.LibraryTileID(e.Definition.Name), shown.Version, tilelayout.OriginChat, e.Encoded, add.Data); err != nil {
 			return TileAdded{}, err
 		}
 		state = "ready"
@@ -453,5 +453,21 @@ func TestAddTileOfALibraryType(t *testing.T) {
 	shown, _ = f.Shown(context.Background(), "acme/web", 13)
 	if i := slices.IndexFunc(shown.Document.Tiles, func(t tiles.Tile) bool { return t.ID == "schema_change" }); i < 0 || shown.Document.Tiles[i].State != tiles.StatePending {
 		t.Errorf("the tile being filled is not pending")
+	}
+}
+
+// add_tile finds a removed tile by its title too, as a person names it.
+func TestAddTileFindsARemovedTileByItsTitle(t *testing.T) {
+	s, _, token, id := layoutServer(t)
+	setPage(t, s, id, pullPage)
+	var result layoutResult
+	// A removed tile is found by its title too.
+	var view layoutView
+	out(t, s, token, "tile_layout", nil, &view)
+	title := view.Tiles[slices.IndexFunc(view.Tiles, func(t layoutTile) bool { return t.ID == "sec_api" })].Title
+	out(t, s, token, "edit_tiles", map[string]any{"ops": []any{map[string]any{"op": "hide", "tile": "sec_api"}}}, &result)
+	out(t, s, token, "add_tile", map[string]any{"type": strings.ToLower(title)}, &result)
+	if slices.Contains(result.Hidden, "sec_api") || title == "sec_api" {
+		t.Errorf("add_tile did not bring %q back by its title", title)
 	}
 }

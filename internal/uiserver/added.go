@@ -125,8 +125,9 @@ var ErrUnknownType = errors.New("unknown tile type")
 // version, as one batch. With data, the data is checked against that
 // version's hunks (library.CheckAddedFill: its problems name places, never
 // values), masked as every model output is and stored as the version's
-// fill before the add, so the tile shows at once. Without data, a fill
-// starts once the add is saved and the tile is pending until it lands.
+// fill (the agent's, OriginChat) once the add is saved, so the tile shows
+// at once. Without data, a fill starts once the add is saved and the tile is
+// pending until it lands, unless the version already has a fill for it.
 func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by string, add AddTile) (AddedTile, error) {
 	entry, ok := library.Find(add.Type)
 	if !ok {
@@ -146,20 +147,15 @@ func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by str
 	if reason := tiles.CheckOp(shown.Document, op); reason != "" {
 		return AddedTile{}, errors.New(reason)
 	}
-	data := add.Data
-	if len(data) > 0 && string(data) != "null" {
-		if problems := library.CheckAddedFill(fillValidator(), entry, data, library.DiffOf(shown.Document)); len(problems) > 0 {
+	pr := tilelayout.Key(c.Repository, number)
+	var masked json.RawMessage
+	if len(add.Data) > 0 && string(add.Data) != "null" {
+		if problems := library.CheckAddedFill(fillValidator(), entry, add.Data, library.DiffOf(shown.Document)); len(problems) > 0 {
 			return AddedTile{}, fmt.Errorf("The data does not fit the %s tile, so nothing changed: %s", entry.Definition.Title, strings.Join(problems[:min(len(problems), 12)], "; "))
 		}
-		masked, err := maskData(ctx, data)
-		if err != nil {
+		if masked, err = maskData(ctx, add.Data); err != nil {
 			return AddedTile{}, err
 		}
-		if err := a.Layouts.PutFill(ctx, tilelayout.Key(c.Repository, number), id, shown.Version, entry.Encoded, masked); err != nil {
-			return AddedTile{}, err
-		}
-	} else {
-		data = nil
 	}
 	change, err := a.editLayout(ctx, c, number, by, []tiles.Op{op})
 	if err != nil {
@@ -173,11 +169,24 @@ func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by str
 		return AddedTile{Change: change}, errors.New(strings.Join(reasons, "; "))
 	}
 	out := AddedTile{Tile: id, State: "ready", Change: change}
-	if data == nil && !slices.Contains(shownLibrary(shown.Document), id) {
-		out.State = "filling"
-		if a.Fills != nil {
-			a.Fills.Fill(tilelayout.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: shown.Version, Type: entry.Definition.Name})
+	// The agent's data is stored once the add is saved, so a refused add
+	// leaves nothing behind.
+	if masked != nil {
+		if err := a.Layouts.PutFill(ctx, pr, id, shown.Version, tilelayout.OriginChat, entry.Encoded, masked); err == nil {
+			return out, nil
 		}
+	}
+	if slices.Contains(shownLibrary(shown.Document), id) {
+		return out, nil
+	}
+	// A fill held for this version (an add undone and made again) is shown
+	// as it is: a version's type is filled once.
+	if fills, err := a.Layouts.Fills(ctx, pr); err == nil && slices.ContainsFunc(fills, func(f tilelayout.Fill) bool { return f.Tile == id && f.Version == shown.Version }) {
+		return out, nil
+	}
+	out.State = "filling"
+	if a.Fills != nil {
+		a.Fills.Fill(tilelayout.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: shown.Version, Type: entry.Definition.Name})
 	}
 	return out, nil
 }

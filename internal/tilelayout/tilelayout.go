@@ -226,7 +226,7 @@ func (s *Service) Layout(repository string, number int) tileview.Layout {
 	if added := state.AddedTypes(); len(added) > 0 {
 		fills, _ := s.Fills(ctx, pr)
 		held, _ := AddedFor(added, fills, Version{Number: math.MaxInt32}, func(digest string) (json.RawMessage, bool) { return s.Definition(ctx, digest) })
-		layout.Added = held.Added
+		layout.Added, layout.Notes = held.Added, held.Notes
 	}
 	return layout
 }
@@ -365,10 +365,8 @@ func (s *Service) write(ctx context.Context, pr string, change func(o *tiles.Ove
 	var state State
 	refused := false
 	err = appdb.Transact(ctx, db, func(conn *sql.Conn) error {
-		for _, statement := range []string{schema, fillsSchema, definitionsSchema} {
-			if _, err := conn.ExecContext(ctx, statement); err != nil {
-				return err
-			}
+		if err := ensureFills(ctx, conn); err != nil {
+			return err
 		}
 		var revision int64
 		var value []byte

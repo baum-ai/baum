@@ -111,7 +111,7 @@ func TestAnAddedTileIsPendingThenFilledAndRefilled(t *testing.T) {
 	entry, _ := library.Get("api_change")
 	data := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
 	events := len(f.events)
-	if err := f.api.Layouts.PutFill(context.Background(), "acme/widgets#42", "api_change", 1, entry.Encoded, data); err != nil {
+	if err := f.api.Layouts.PutFill(context.Background(), "acme/widgets#42", "api_change", 1, tilelayout.OriginFill, entry.Encoded, data); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.events) != events+1 {
@@ -174,5 +174,65 @@ func TestAddTileThroughTheLayoutEditor(t *testing.T) {
 	}
 	if _, err := editor.Add(context.Background(), "acme/widgets", 42, agentcontext.TileAdd{Type: "weather"}); err == nil || !strings.Contains(err.Error(), "No tile type weather") {
 		t.Errorf("an unknown type: %v", err)
+	}
+}
+
+// An add undone and made again on a version that already has a fill shows
+// that fill and starts no other: a version's type is filled once, however
+// often the agent is steered to add it. An add refused with data leaves no
+// fill behind, and the agent's data is stored as the agent's.
+func TestAnAddMadeAgainIsNotFilledAgain(t *testing.T) {
+	f, filler := newAddedFixture(t)
+	f.put(t, titled(t, "First title"))
+	editor := LayoutEditor{API: *f.api}
+	ctx := context.Background()
+	added, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change"})
+	if err != nil || added.State != "filling" || len(filler.asked()) != 1 {
+		t.Fatalf("first add: %+v %v, asked %d", added, err, len(filler.asked()))
+	}
+	diff := library.DiffOf(f.added(t, "").Tiles)
+	entry, _ := library.Get("api_change")
+	data := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
+	if err := f.api.Layouts.PutFill(ctx, "acme/widgets#42", "api_change", 1, tilelayout.OriginFill, entry.Encoded, data); err != nil {
+		t.Fatal(err)
+	}
+	// Serving the pending tile above asked for its fill too (the fake
+	// filler does not keep TileFills' once-per-version rule).
+	asked := len(filler.asked())
+	for range 3 {
+		if _, err := editor.Undo(ctx, "acme/widgets", 42); err != nil {
+			t.Fatal(err)
+		}
+		again, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change"})
+		if err != nil || again.State != "ready" {
+			t.Fatalf("add again: %+v %v", again, err)
+		}
+	}
+	if len(filler.asked()) != asked {
+		t.Errorf("adding again asked for %d more fills", len(filler.asked())-asked)
+	}
+	// Already on the review: refused, and the data is not stored.
+	if _, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Data: data}); err == nil {
+		t.Fatal("a second add of a shown type was not refused")
+	}
+	if _, err := editor.Undo(ctx, "acme/widgets", 42); err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, titled(t, "Second title"))
+	if _, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "schema_change", Data: data}); err == nil {
+		t.Fatal("data that does not fit schema_change was accepted")
+	}
+	fills, _ := f.api.Layouts.Fills(ctx, "acme/widgets#42")
+	for _, fill := range fills {
+		if fill.Version == 2 || fill.Tile == "schema_change" {
+			t.Errorf("a refused add left a fill: %+v", fill)
+		}
+	}
+	if _, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	fills, _ = f.api.Layouts.Fills(ctx, "acme/widgets#42")
+	if len(fills) == 0 || fills[0].Version != 2 || fills[0].Origin != tilelayout.OriginChat {
+		t.Errorf("the agent's data: %+v", fills)
 	}
 }

@@ -144,3 +144,41 @@ func TestCheckOpAdd(t *testing.T) {
 		t.Errorf("adding past the limit: %q", reason)
 	}
 }
+
+// An add placed right after the overview, as the host places one with no
+// place, keeps the landing page's rules: the overview and a severe risks
+// tile stay on it, the recommended change is not folded, and every rule of
+// a generated document holds.
+func TestApplyOverlayAddAfterTheOverviewKeepsTheLandingRules(t *testing.T) {
+	for _, f := range []fixture{{name: "example", example: true}, {name: "base"}} {
+		normalized, doc := convert(t, f)
+		op := addOp("api_change")
+		op.To = &tiles.Place{After: tiles.TypeOverview}
+		out, report := tiles.ApplyOverlay(doc, nil, overlayOf(t, []tiles.Op{op}), []tiles.LibraryTile{pendingTile(t, "api_change")})
+		if report.Applied != 1 {
+			t.Fatalf("%s: %+v", f.name, report)
+		}
+		composed, err := tiles.Compose(doc, &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, failure := range tilestest.CheckGenerated(normalized, &out, composed) {
+			t.Errorf("%s: %s", f.name, failure)
+		}
+		at := -1
+		for i, e := range composed.Layout.Entries {
+			if e.Tile == "api_change" {
+				at = i
+			}
+		}
+		if at < 0 || at > 2 {
+			t.Errorf("%s: the added tile is at %d", f.name, at)
+		}
+		visible := tiles.Visible(composed.Layout)
+		for i, e := range composed.Layout.Entries {
+			if e.Tile == tiles.TypeOverview && !visible[i] {
+				t.Errorf("%s: the overview left the landing page", f.name)
+			}
+		}
+	}
+}

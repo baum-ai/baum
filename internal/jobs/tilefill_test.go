@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -64,6 +65,12 @@ func TestTileFillsRunOnceAndStoreTheData(t *testing.T) {
 	fills.Wait()
 	if filler.count() != 1 {
 		t.Fatalf("%d fills for one request", filler.count())
+	}
+	// Filled once: asking again (an add undone and made again) runs nothing.
+	fills.Fill(request)
+	fills.Wait()
+	if filler.count() != 1 {
+		t.Errorf("a filled version's type was filled again: %d calls", filler.count())
 	}
 	held, err := service.Fills(context.Background(), "acme/widgets#42")
 	if err != nil || len(held) != 1 || held[0].Version != 3 || held[0].Tile != "api_change" || len(events) != 1 {
@@ -124,7 +131,12 @@ func TestAlwaysTilesComeFromTheLayout(t *testing.T) {
 	}
 	diff := library.DiffOf(doc)
 	data := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"x","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
-	if err := service.PutFill(ctx, pr, "api_change", 1, entry.Encoded, data); err != nil {
+	if err := service.PutFill(ctx, pr, "api_change", 1, tilelayout.OriginFill, entry.Encoded, data); err != nil {
+		t.Fatal(err)
+	}
+	// Data the agent wrote is the person's: a review never reuses it.
+	chatData := json.RawMessage(strings.Replace(string(data), `"label":"x"`, `"label":"the agent's"`, 1))
+	if err := service.PutFill(ctx, pr, "api_change", 2, tilelayout.OriginChat, entry.Encoded, chatData); err != nil {
 		t.Fatal(err)
 	}
 	got := l.alwaysTiles(ctx, versions, key)
