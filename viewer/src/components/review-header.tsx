@@ -94,9 +94,9 @@ function StateMark({ state }: { state: string }) {
   );
 }
 
-function Dot() {
+function Dot({ className }: { className?: string }) {
   return (
-    <span aria-hidden className="text-disabled">
+    <span aria-hidden className={cn("text-disabled", className)}>
       •
     </span>
   );
@@ -391,8 +391,10 @@ export function ReviewHeader({
               </span>
             ) : null}
             {reviewMinutes !== null ? (
-              <>
-                {repositoryFullName ? <Dot /> : null}
+              // The dot goes with the time, so a line never ends on it; on a
+              // phone, where the time takes a line of its own, there is none.
+              <span className="inline-flex items-center gap-2">
+                {repositoryFullName ? <Dot className="hidden sm:inline" /> : null}
                 <span
                   title={`Estimated time to read this review: about ${reviewMinutes} ${
                     reviewMinutes === 1 ? "minute" : "minutes"
@@ -400,7 +402,7 @@ export function ReviewHeader({
                 >
                   ~{reviewMinutes} min to review
                 </span>
-              </>
+              </span>
             ) : null}
             {slots.subtitle ? (
               <span className="flex min-w-0 flex-wrap items-center gap-2">
