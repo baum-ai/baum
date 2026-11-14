@@ -404,6 +404,13 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A connection with no cursor is a page loading: it is not sent the
+	// render check's events from before it connected (a check long over would
+	// open or close the check window again). The page asks the daemon what
+	// is waiting instead. A reconnection, which has a cursor, is replayed
+	// them.
+	fresh := r.Header.Get("Last-Event-ID") == ""
+	var skipChecksUpTo uint64
 	ch := make(chan struct{}, 1)
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
@@ -430,8 +437,15 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintf(w, "id: %d\nevent: reset\ndata: {}\n\n", latest)
 			after = latest
 		}
+		if fresh {
+			skipChecksUpTo, fresh = latest, false
+		}
 		for _, e := range events {
 			if e.ID > after {
+				if e.Kind == "tile_check" && e.ID <= skipChecksUpTo {
+					after = e.ID
+					continue
+				}
 				if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Kind, e.Data); err != nil {
 					return
 				}

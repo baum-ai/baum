@@ -1764,7 +1764,12 @@ errors), `fail`, `hang` and `unavailable`. The codes and their hints are in
 - **Queue.** A check is a job `chk_<random>`: one runs at a time, at most 4
   wait (a fifth is `ErrBusy`), and first-show preflights wait beside them (at
   most 16). Each job publishes `tile_check {id, state}` (`queued`, `running`,
-  `done`, `hung`; never its content) on the app's event stream.
+  `done`, `hung`; never its content) on the app's event stream. A connection
+  that sends no `Last-Event-ID` (a page loading) is not replayed `tile_check`
+  events from before it connected, since a check long over would open or close
+  the check window again; the page asks `GET /api/tile-checks/state`
+  (`{waiting, running}`) once on load and acts as for a `queued` event if
+  checks wait. A reconnection with an ID is replayed them.
 - **Runner routes.** `GET /api/tile-checks/next?wait=<s>` (a long poll, at
   most 25 s; 204 when none came) claims the next job and answers `{id, kind,
   digest, kit, title, sizes, definition, context?, samples}`: the served

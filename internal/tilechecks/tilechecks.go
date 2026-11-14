@@ -791,6 +791,21 @@ func (c *Checker) Alive(id string) error {
 	return nil
 }
 
+// State is what a page asks when it loads: the checks waiting for a runner
+// and whether one is being drawn. It lets a page that missed the
+// `tile_check` events open the check window for jobs still waiting.
+type State struct {
+	Waiting int  `json:"waiting"`
+	Running bool `json:"running"`
+}
+
+// State reports the queue.
+func (c *Checker) State() State {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return State{Waiting: len(c.queue), Running: c.running != nil}
+}
+
 // Requeue puts the running job id back at the head of the queue, unclaimed:
 // its runner never got it (the long poll's client went away).
 func (c *Checker) Requeue(id string) {

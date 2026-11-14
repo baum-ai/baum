@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkWindowHere, inPageChecksHere, onTileCheckEvent, setInPageRunner } from "./check-host";
+import {
+  checkWaitingJobs,
+  checkWindowHere,
+  inPageChecksHere,
+  onTileCheckEvent,
+  setInPageRunner,
+} from "./check-host";
 import {
   AT_ONCE,
   heartbeat,
@@ -189,6 +195,42 @@ describe("where checks draw", () => {
       expect(run).not.toHaveBeenCalled();
     } finally {
       (window as Bridge).__TAURI_INTERNALS__ = previous;
+    }
+  });
+
+  it("asks once on load whether checks wait, and opens the window only if so", async () => {
+    const flush = async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    };
+    vi.useFakeTimers();
+    const invoke = vi.fn((_command: string, _args?: unknown) => Promise.resolve());
+    const win = shell({ tileFrames: true, checkWindow: true }, invoke);
+    const previous = (window as Bridge).__TAURI_INTERNALS__;
+    (window as Bridge).__TAURI_INTERNALS__ = { invoke };
+    const answer = (body: unknown) =>
+      vi.fn((_url: string) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) }));
+    try {
+      const fetched = answer({ waiting: 0, running: false });
+      vi.stubGlobal("fetch", fetched);
+      await checkWaitingJobs(win);
+      await flush();
+      expect(String(fetched.mock.calls[0]?.[0])).toContain("api/tile-checks/state");
+      expect(invoke).not.toHaveBeenCalled();
+      vi.stubGlobal("fetch", answer({ waiting: 2, running: false }));
+      await checkWaitingJobs(win);
+      await flush();
+      expect(invoke).toHaveBeenCalledTimes(1);
+      expect(invoke).toHaveBeenLastCalledWith("open_check_window", undefined);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => Promise.reject(new Error("offline"))),
+      );
+      await checkWaitingJobs(win);
+      expect(invoke).toHaveBeenCalledTimes(1);
+    } finally {
+      (window as Bridge).__TAURI_INTERNALS__ = previous;
+      vi.unstubAllGlobals();
+      onTileCheckEvent({ id: "x", state: "hung" }, win);
     }
   });
 });

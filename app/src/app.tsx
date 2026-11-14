@@ -1,5 +1,5 @@
 import { SavedStateNotice } from "./ui-state";
-import { onTileCheckEvent } from "./tiles/custom/check-host";
+import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
 import { TileCheckPage } from "./tiles/custom/check-runner";
 import { PreferencesProvider, usePreferences } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
@@ -711,6 +711,8 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("tile_check", (event) =>
       onTileCheckEvent((event as MessageEvent).data),
     );
+    // A new connection is not sent past checks: ask once what is waiting.
+    void checkWaitingJobs();
     source.addEventListener("reset", () => markStale(allReloadParts));
     const refreshTimeline = () => gate.run("timeline", () => setTimelineTick((n) => n + 1));
     source.addEventListener("timeline", refreshTimeline);

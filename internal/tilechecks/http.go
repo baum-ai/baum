@@ -29,6 +29,8 @@ const (
 //     marked abandoned (the runner's page went away) ends it unavailable.
 //   - POST /api/tile-checks/{id}/alive says the runner is still drawing the
 //     running job id (Alive), which keeps it from being a hang: 204, or 404.
+//   - GET /api/tile-checks/state answers {"waiting": n, "running": bool}
+//     (State): the checks waiting and whether one is being drawn.
 //   - POST /api/tile-checks/preflight runs a first-show preflight
 //     (Preflight) and answers its result.
 //
@@ -38,6 +40,7 @@ const (
 func (c *Checker) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/tile-checks/next", c.serveNext)
+	mux.HandleFunc("GET /api/tile-checks/state", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, c.State()) })
 	mux.HandleFunc("PUT /api/tile-checks/{id}/result", c.serveResult)
 	mux.HandleFunc("POST /api/tile-checks/{id}/alive", c.serveAlive)
 	mux.HandleFunc("POST /api/tile-checks/preflight", c.servePreflight)

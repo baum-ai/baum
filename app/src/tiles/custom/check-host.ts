@@ -1,3 +1,4 @@
+import { appURL } from "../../api";
 import { invoke } from "../../desktop/native";
 import { framesAllowedHere } from "./environment";
 
@@ -83,4 +84,22 @@ export function onTileCheckEvent(raw: unknown, win: Shell = window) {
     return;
   }
   if (event.state === "queued" && inPageChecksHere(win)) inPage?.(event);
+}
+
+/** What the main page does once when it loads: the daemon does not replay
+ *  `tile_check` events to a new connection, so the page asks whether checks
+ *  are waiting and treats them like a `queued` event (opening the check
+ *  window, or drawing in the page). Nothing waiting does nothing. */
+export async function checkWaitingJobs(win: Shell = window) {
+  if (!checkWindowHere(win) && !inPageChecksHere(win)) return;
+  try {
+    const response = await fetch(appURL("api/tile-checks/state"));
+    if (!response.ok) return;
+    const state = (await response.json()) as { waiting?: unknown };
+    if (typeof state.waiting === "number" && state.waiting > 0) {
+      onTileCheckEvent({ id: "waiting", state: "queued" }, win);
+    }
+  } catch {
+    // The next check's event opens it.
+  }
 }

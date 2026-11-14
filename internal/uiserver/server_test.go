@@ -360,3 +360,55 @@ func TestShutdownClosesEventStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestEventsDoNotReplayChecksToANewConnection checks that a connection with
+// no cursor (a page loading) is not sent tile_check events from before it
+// connected, nor misses one published after, and that a reconnection with a
+// cursor is replayed them.
+func TestEventsDoNotReplayChecksToANewConnection(t *testing.T) {
+	s := testServer(t)
+	for _, kind := range []string{"tile_check", "index", "tile_check"} {
+		if err := s.Publish(kind, map[string]string{"k": kind}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(cursor string, until string, publish func()) string {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		r, _ := http.NewRequestWithContext(ctx, "GET", s.origin+"/api/events", nil)
+		r.Header.Set("Authorization", "Bearer "+s.launch)
+		if cursor != "" {
+			r.Header.Set("Last-Event-ID", cursor)
+		}
+		resp, err := http.DefaultClient.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		reader := bufio.NewReader(resp.Body)
+		var got strings.Builder
+		published := publish == nil
+		for !strings.Contains(got.String(), until) {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			got.WriteString(line)
+			if !published && strings.HasPrefix(line, ": connected") {
+				published = true
+				publish()
+			}
+		}
+		return got.String()
+	}
+	fresh := read("", "id: 4\n", func() {
+		_ = s.Publish("tile_check", map[string]string{"k": "tile_check", "after": "1"})
+	})
+	if strings.Contains(fresh, "id: 1\n") || strings.Contains(fresh, "id: 3\n") || !strings.Contains(fresh, "event: index") || !strings.Contains(fresh, "id: 4\n") {
+		t.Fatalf("a new connection: %q", fresh)
+	}
+	again := read("0", "id: 4\n", nil)
+	if !strings.Contains(again, "id: 1\n") || !strings.Contains(again, "id: 3\n") {
+		t.Fatalf("a reconnection: %q", again)
+	}
+}
