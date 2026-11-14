@@ -75,9 +75,15 @@ func (f Frames) Size() int {
 }
 
 // Warm compiles the schemas the tile checks use, which the first Build would
-// otherwise do (about 0.4 s). The daemon calls it in the background at start-up
-// so the first review a person opens does not wait for it.
-func Warm() error { return validator.CheckTiles(&tiles.Document{}) }
+// otherwise do (about 0.4 s), and registers the built-in library types' frame
+// documents (RegisterLibrary). The daemon calls it in the background at
+// start-up so the first review a person opens does not wait for it.
+func Warm() error {
+	if err := validator.CheckTiles(&tiles.Document{}); err != nil {
+		return err
+	}
+	return RegisterLibrary()
+}
 
 // Builds counts the conversions Build has run, for tests.
 var Builds atomic.Int64

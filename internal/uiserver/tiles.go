@@ -69,20 +69,13 @@ func (rr reviewRead) version(ctx context.Context, w http.ResponseWriter) (store.
 	return version, true
 }
 
-// libraryType is an entry of GET /api/tile-library.
-type libraryType struct {
-	Name    string       `json:"name"`
-	Title   string       `json:"title"`
-	UseWhen string       `json:"use_when"`
-	Sizes   []tiles.Size `json:"sizes"`
-	Kit     int          `json:"kit"`
-	Digest  string       `json:"digest"`
-}
-
-// tileLibrary serves GET /api/tile-library: the custom tile types this
-// version ships, which it lists as {"types": [...]}. It ships none yet.
+// tileLibrary serves GET /api/tile-library: the built-in library tile types
+// this version ships (tileview.Library), as {"types": [...]}, each with its
+// name, title, use-when line, glance line, sizes, kit and digest, never its
+// source. The tiles page names a custom tile whose digest is listed as baum's
+// own.
 func tileLibrary(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string][]libraryType{"types": {}})
+	writeJSON(w, map[string][]tileview.LibraryType{"types": tileview.Library()})
 }
 
 // tilesHandler serves GET /api/tiles: the review document and the tile

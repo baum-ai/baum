@@ -341,12 +341,3 @@ func TestCustomTileFromTheTilesRouteLoadsItsFrame(t *testing.T) {
 	}
 }
 
-// The library lists the types this version ships: none yet.
-func TestTileLibraryIsEmpty(t *testing.T) {
-	f := newTilesFixture(t)
-	w := httptest.NewRecorder()
-	f.handler.ServeHTTP(w, httptest.NewRequest("GET", "http://local/api/tile-library", nil))
-	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"types":[]}` {
-		t.Fatalf("%d %s", w.Code, w.Body.String())
-	}
-}
