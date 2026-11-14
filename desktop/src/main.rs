@@ -362,6 +362,7 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
+            let limit = Mutex::new(navigation::OpenLimit::default());
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
             zoom::install(app.handle())?;
@@ -398,11 +399,30 @@ fn main() {
                         return true;
                     }
                     // Never opens anything: frames ask here too (see `decide`).
-                    navigation::decide(url, daemon.as_ref(), setup) == Decision::Allow
+                    let allowed =
+                        navigation::decide(url, daemon.as_ref(), setup) == Decision::Allow;
+                    if !allowed && cfg!(debug_assertions) {
+                        eprintln!(
+                            "baum desktop: refused a navigation to {}",
+                            navigation::scheme_and_host(url)
+                        );
+                    }
+                    allowed
                 })
                 .on_new_window(move |url, _| {
                     if navigation::decide_new_window(&url) == NewWindow::OpenInBrowser {
-                        open_externally(&opener, &url);
+                        let allowed = limit
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .allow(std::time::Instant::now());
+                        if allowed {
+                            open_externally(&opener, &url);
+                        } else if cfg!(debug_assertions) {
+                            eprintln!(
+                                "baum desktop: dropped a second link to {} within a second",
+                                navigation::scheme_and_host(&url)
+                            );
+                        }
                     }
                     tauri::webview::NewWindowResponse::Deny
                 })
