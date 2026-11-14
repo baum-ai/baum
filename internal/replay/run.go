@@ -430,6 +430,12 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 	return result, err
 }
 
+// canComplete reports whether the backend can make a single structured call.
+func (b *trackedBackend) canComplete() bool {
+	_, ok := b.CheckedBackend.(agent.Completer)
+	return ok
+}
+
 // Complete forwards a single structured call (agent.Completer), logging it
 // as a call of the "compose" stage.
 func (b *trackedBackend) Complete(ctx context.Context, r agent.CompleteRequest) (agent.Completion, error) {

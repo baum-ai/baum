@@ -23,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
@@ -98,6 +99,17 @@ func init() {
 
 func (g *ComposeGenerator) Name() string { return "compose" }
 
+// Close closes the copied review stores and removes their directory. The
+// driver calls it when a run ends; a generator never opened is a no-op.
+func (g *ComposeGenerator) Close() error {
+	if g.stores == nil {
+		return nil
+	}
+	err := g.stores.Close()
+	g.stores = nil
+	return err
+}
+
 func (g *ComposeGenerator) prompts() prompt.TilesPrompts {
 	return prompt.TilesPrompts{Overrides: g.PromptOverrides}
 }
@@ -149,13 +161,25 @@ type ComposeRecord struct {
 	// order, sizes, groups or changes_shown.
 	DiffersFromTemplate bool `json:"differs_from_template"`
 	// Featured counts the current changes outside the changes group.
-	Featured       int      `json:"featured"`
-	Promotions     int      `json:"promotions"`
-	Reasons        int      `json:"reasons"`
-	ChangesShown   *int     `json:"changes_shown,omitempty"`
-	Changes        int      `json:"changes"`
-	InventoryBytes int      `json:"inventory_bytes"`
-	InventoryCut   []string `json:"inventory_cut,omitempty"`
+	Featured int `json:"featured"`
+	// WastedRows and TemplateWastedRows count the landing rows each layout
+	// leaves units of empty while a tile follows.
+	WastedRows         int `json:"wasted_rows"`
+	TemplateWastedRows int `json:"template_wasted_rows"`
+	// QuietRisksHalf and TemplateQuietRisksHalf say a risks tile ranking
+	// nothing above low takes half of the first row.
+	QuietRisksHalf         bool `json:"quiet_risks_half"`
+	TemplateQuietRisksHalf bool `json:"template_quiet_risks_half"`
+	// Breaking says the review names a breaking change, and BreakingFeatured
+	// that a change is featured then (a proxy for the change carrying it).
+	Breaking         bool     `json:"breaking"`
+	BreakingFeatured bool     `json:"breaking_featured"`
+	Promotions       int      `json:"promotions"`
+	Reasons          int      `json:"reasons"`
+	ChangesShown     *int     `json:"changes_shown,omitempty"`
+	Changes          int      `json:"changes"`
+	InventoryBytes   int      `json:"inventory_bytes"`
+	InventoryCut     []string `json:"inventory_cut,omitempty"`
 	// Seconds is how long the stage took, its calls included.
 	Seconds float64 `json:"seconds"`
 }
@@ -207,16 +231,21 @@ func (g *ComposeGenerator) Generate(ctx context.Context, base generate.Options, 
 	if err != nil {
 		return Generated{}, fmt.Errorf("case %s: %w", c.ID, err)
 	}
+	// A backend that cannot complete gets no completer, so the fallback
+	// says so rather than that a call failed.
 	completer, _ := base.Backend.(agent.Completer)
+	if c, ok := base.Backend.(interface{ canComplete() bool }); ok && !c.canComplete() {
+		completer = nil
+	}
 	started := time.Now()
 	result, err := agent.ComposeRun(ctx, agent.ComposeRequest{Completer: completer, Backend: base.Backend.Name(), Prompts: g.prompts(), Document: doc,
 		Redactor: g.redactor, CallTimeout: base.PassTimeout})
 	out := Generated{Outcome: result.Outcome}
+	if errors.Is(err, agent.ErrComposeInterrupted) || ctx.Err() != nil {
+		return out, &generate.Error{Category: generate.CategoryInterrupted, Err: errors.Join(err, ctx.Err())}
+	}
 	if err != nil {
 		return out, err
-	}
-	if ctx.Err() != nil {
-		return out, &generate.Error{Category: generate.CategoryInterrupted, Err: ctx.Err()}
 	}
 	record, composed, template, err := recordOf(doc, result)
 	if err != nil {
@@ -274,6 +303,8 @@ func recordOf(doc *tiles.Document, result agent.ComposeOutcome) (ComposeRecord, 
 		return record, nil, nil, err
 	}
 	record.Landing, record.TemplateLanding = landing(composed.Layout), landing(templateDoc.Layout)
+	record.WastedRows, record.TemplateWastedRows = wastedRows(composed.Layout), wastedRows(templateDoc.Layout)
+	record.QuietRisksHalf, record.TemplateQuietRisksHalf = quietRisksHalf(doc, composed.Layout), quietRisksHalf(doc, templateDoc.Layout)
 	record.DiffersFromTemplate = !slices.Equal(composition.Layout.Entries, template.Layout.Entries) ||
 		!equalInt(composition.Layout.ChangesShown, template.Layout.ChangesShown) || len(composition.Promotions) > 0
 	record.Promotions = len(composition.Promotions)
@@ -288,6 +319,14 @@ func recordOf(doc *tiles.Document, result agent.ComposeOutcome) (ComposeRecord, 
 		_ = json.Unmarshal(change.Derived, &derived)
 		current[change.ID] = derived.State != "stale"
 	}
+	for _, tile := range doc.Tiles {
+		if tile.Type == tiles.TypeOverview {
+			var data tiles.OverviewData
+			_ = json.Unmarshal(tile.Data, &data)
+			var text string
+			record.Breaking = json.Unmarshal(data.BreakingChange, &text) == nil && text != ""
+		}
+	}
 	for _, entry := range composition.Layout.Entries {
 		if current[entry.Tile] {
 			record.Changes++
@@ -296,6 +335,7 @@ func recordOf(doc *tiles.Document, result agent.ComposeOutcome) (ComposeRecord, 
 			}
 		}
 	}
+	record.BreakingFeatured = record.Breaking && record.Featured > 0
 	if result.Inventory != "" {
 		var inv struct {
 			Cut []string `json:"cut"`
@@ -304,6 +344,35 @@ func recordOf(doc *tiles.Document, result agent.ComposeOutcome) (ComposeRecord, 
 		record.InventoryCut = inv.Cut
 	}
 	return record, composed, templateDoc, nil
+}
+
+// wastedRows counts the landing rows a layout leaves units of empty while a
+// tile follows them.
+func wastedRows(layout tiles.Layout) int {
+	rows := compose.LandingRows(layout)
+	wasted := 0
+	for i, row := range rows {
+		if row.Empty > 0 && (i < len(rows)-1 || tiles.More(layout) > 0) {
+			wasted++
+		}
+	}
+	return wasted
+}
+
+// quietRisksHalf reports whether a risks tile ranking nothing above low takes
+// half of the landing page's first row.
+func quietRisksHalf(doc *tiles.Document, layout tiles.Layout) bool {
+	for _, tile := range doc.Tiles {
+		if tile.Type == tiles.TypeRisks && !slices.Contains(tiles.SizesIn(doc, tile), tiles.SizeThird) {
+			return false
+		}
+	}
+	rows := compose.LandingRows(layout)
+	if len(rows) == 0 || !slices.Contains(rows[0].Tiles, tiles.TypeRisks) {
+		return false
+	}
+	i := slices.IndexFunc(layout.Entries, func(e tiles.Entry) bool { return e.Tile == tiles.TypeRisks })
+	return i >= 0 && layout.Entries[i].Size == tiles.SizeHalf
 }
 
 func equalInt(a, b *int) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
@@ -376,6 +445,11 @@ const (
 	MetricComposeBytes    = "compose_inventory_bytes"
 	MetricComposeCut      = "compose_inventory_cut"
 	MetricComposeSeconds  = "compose_seconds"
+	MetricComposeWasted   = "compose_wasted_rows"
+	MetricComposeQuiet    = "compose_quiet_risks_half"
+	MetricComposeBreaking = "compose_breaking_featured"
+	// metricTemplate prefixes the template's own value of a metric.
+	metricTemplate = "template_"
 	// metricComposeFix prefixes the count of one kind of fix.
 	metricComposeFix = "compose_fix_"
 )
@@ -398,6 +472,11 @@ func (g *ComposeGenerator) DocumentMetrics(document []byte) (map[string]float64,
 		MetricComposePromoted: float64(record.Promotions), MetricComposeReasons: float64(record.Reasons), MetricComposeTiles: float64(len(record.Landing)),
 		MetricComposeBytes: float64(record.InventoryBytes), MetricComposeCut: flag(len(record.InventoryCut) > 0), MetricComposeSeconds: record.Seconds,
 	}
+	values[MetricComposeWasted], values[metricTemplate+MetricComposeWasted] = float64(record.WastedRows), float64(record.TemplateWastedRows)
+	values[MetricComposeQuiet], values[metricTemplate+MetricComposeQuiet] = flag(record.QuietRisksHalf), flag(record.TemplateQuietRisksHalf)
+	if record.Breaking {
+		values[MetricComposeBreaking] = flag(record.BreakingFeatured)
+	}
 	total := 0
 	for kind, n := range record.Fixes {
 		values[metricComposeFix+string(kind)] = float64(n)
@@ -415,7 +494,7 @@ func (g *ComposeGenerator) PairMetrics(_, _ []byte) (map[string]float64, error) 
 // Definitions says what each compose metric means.
 func (g *ComposeGenerator) Definitions() map[string]string {
 	return map[string]string{
-		MetricComposeFallback: "1 when the composition is the template because the compose call failed",
+		MetricComposeFallback: "1 when the composition is the template because the stage could not use the composer's layout (see the record's fallback_reason)",
 		MetricComposeRepaired: "1 when an invalid reply needed the repair call",
 		MetricComposeFixes:    "fixes normalisation made to the composer's layout (compose_fix_<kind> by kind)",
 		MetricComposeDiffers:  "1 when the layout differs from the template's",
@@ -427,6 +506,9 @@ func (g *ComposeGenerator) Definitions() map[string]string {
 		MetricComposeBytes:    "bytes of the composer's user message",
 		MetricComposeCut:      "1 when the inventory was cut to fit its budget",
 		MetricComposeSeconds:  "seconds the compose stage took",
+		MetricComposeWasted:   "landing rows left with empty units while a tile follows (template_ prefix: the template's)",
+		MetricComposeQuiet:    "1 when a risks tile ranking nothing above low takes half of the first row (template_ prefix: the template's)",
+		MetricComposeBreaking: "on reviews with a breaking change: 1 when a change is featured",
 	}
 }
 
@@ -469,6 +551,12 @@ func openReviewStores(dir string) (*reviewStores, error) {
 		return nil, err
 	}
 	s := &reviewStores{dir: tmp, versions: map[string][]storedVersion{}}
+	opened := false
+	defer func() {
+		if !opened {
+			_ = s.Close()
+		}
+	}()
 	for n, path := range paths {
 		copied := filepath.Join(tmp, fmt.Sprintf("%d.sqlite", n))
 		for _, suffix := range []string{"", "-wal", "-shm"} {
@@ -512,7 +600,19 @@ func openReviewStores(dir string) (*reviewStores, error) {
 			return nil, err
 		}
 	}
+	opened = true
 	return s, nil
+}
+
+// Close closes the stores' copies and removes them.
+func (s *reviewStores) Close() error {
+	var errs []error
+	for _, db := range s.dbs {
+		errs = append(errs, db.Close())
+	}
+	s.dbs = nil
+	errs = append(errs, os.RemoveAll(s.dir))
+	return errors.Join(errs...)
 }
 
 // find returns the saved review a case composes.

@@ -149,6 +149,12 @@ func TestComposeFromStoreReadsTheCasesSavedReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// One connection, in WAL mode, kept open through the run: the rows stay
+	// in the write-ahead log, as a running app's store holds them.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`CREATE TABLE versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version))`); err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +168,14 @@ func TestComposeFromStoreReadsTheCasesSavedReview(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_ = db.Close()
+	defer func() { _ = db.Close() }()
+	if _, err := os.Stat(store + "-wal"); err != nil {
+		t.Fatalf("the store has no write-ahead log: %v", err)
+	}
 	before := snapshot(t, filepath.Join(d.dir, "reviews"))
+	// The copies go to the temporary directory and are removed with the run.
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 
 	ds, _ := replay.OpenDataset(d.dir)
 	backend := &completing{Backend: &generatetest.Backend{Version: "1.0.0"}}
@@ -182,6 +194,9 @@ func TestComposeFromStoreReadsTheCasesSavedReview(t *testing.T) {
 	if snapshot(t, filepath.Join(d.dir, "reviews")) != before {
 		t.Error("the run wrote into the dataset's review stores")
 	}
+	if left, _ := filepath.Glob(filepath.Join(tmp, "baum-replay-reviews-*")); len(left) != 0 {
+		t.Errorf("the run left its copies of the stores: %v", left)
+	}
 }
 
 func TestComposeFallsBackWhenTheBackendCannotComplete(t *testing.T) {
@@ -199,7 +214,7 @@ func TestComposeFallsBackWhenTheBackendCannotComplete(t *testing.T) {
 	}
 	caseDir := filepath.Join(outDir, "run", "cases", "c1")
 	record := readRecord(t, caseDir)
-	if !record.Fallback || record.FallbackReason != agent.FallbackProvider || record.DiffersFromTemplate {
+	if !record.Fallback || record.FallbackReason != agent.FallbackNoCompleter || record.DiffersFromTemplate {
 		t.Errorf("record %+v", record)
 	}
 	out, _ := replay.ReadOutcome(caseDir)
