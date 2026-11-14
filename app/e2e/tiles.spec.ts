@@ -78,9 +78,8 @@ test("the landing page leads to each tile and back", async ({ page }) => {
   await expect(page).not.toHaveURL(/pane=tile/);
   await expect(page).toHaveURL(/more=1/);
   await expect(page.locator('article[data-tile="decisions"]')).toBeVisible();
-  // Back walks the tiles again, and then the landing page as it was.
-  await page.goBack();
-  await expect(page).toHaveURL(/tile=media/);
+  // Escape took the place of the tile it left: Back finds the tile stepped
+  // from, and then the landing page as it was.
   await page.goBack();
   await expect(page).toHaveURL(/tile=evidence/);
   await page.goBack();
@@ -239,4 +238,108 @@ test("changes still being written read as such", async ({ page }) => {
   );
   await page.getByRole("button", { name: /^Show \d+ more tiles/ }).click();
   await expect(page.locator('article[data-tile="context"]')).toContainText("Writing");
+});
+
+test("the keys never drop to the page, and Back does not reopen a tile", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // A link to a tile, with nothing remembered: Escape gives the keys to that
+  // tile's card on the landing page.
+  await open(page, `${PR7}&pane=tile&tile=evidence`);
+  await expect(page.getByRole("heading", { name: "Evidence", level: 2 })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page).not.toHaveURL(/pane=tile/);
+  await expect(page.locator('article[data-tile="evidence"] [data-block-open]')).toBeFocused();
+  // A link to an item: brought into view, marked and given the keys.
+  await open(page, `${PR7}&pane=tile&tile=risks&tile_item=rsk_api_header`);
+  await expect(page.locator("#tile-item-rsk_api_header")).toBeFocused();
+
+  // From the landing page into a tile and back with Escape, which goes back
+  // through history: Forward opens the tile again, Back returns.
+  await open(page, PR7);
+  await page.locator('article[data-tile="risks"] [data-block-open]').click();
+  await expect(page).toHaveURL(/tile=risks/);
+  await page.keyboard.press("Escape");
+  await expect(page).not.toHaveURL(/pane=tile/);
+  await page.goForward();
+  await expect(page).toHaveURL(/tile=risks/);
+  await page.goBack();
+  await expect(page).not.toHaveURL(/pane=tile/);
+  // Stepping on to another tile, Escape takes the tile's place and comes back
+  // to the card of the tile read last; Back then finds the tile stepped from.
+  await page.locator('article[data-tile="risks"] [data-block-open]').click();
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL(/tile=sec_api/);
+  await page.keyboard.press("Escape");
+  await expect(page).not.toHaveURL(/pane=tile/);
+  await expect(page.locator('article[data-tile="sec_api"] [data-block-open]')).toBeFocused();
+  await page.goBack();
+  await expect(page).toHaveURL(/tile=risks/);
+});
+
+test("a comment on a card or an item is sent on the line it cites", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const submitted: { comments: { path: string; line: number; body: string }[] }[] = [];
+  await page.route("**/api/prs/review", async (route) => {
+    submitted.push(route.request().postDataJSON());
+    await route.fulfill({
+      json: { url: "https://github.com/acme/demo/pull/7#pullrequestreview-2" },
+    });
+  });
+  // c on the card the keys are on comments on that tile.
+  await open(page, PR7);
+  await expect(page.locator("article[data-tile]").first()).toBeVisible();
+  const active = page.locator("article[data-tile][data-review-block-active]");
+  for (let i = 0; i < 4 && (await active.count()) === 0; i++) await page.keyboard.press("j");
+  const id = await active.getAttribute("data-tile");
+  await page.keyboard.press("c");
+  const titles: Record<string, RegExp> = {
+    overview: /^Comment on Add retry budgets/,
+    risks: /^Comment on Risks/,
+  };
+  await expect(page.getByLabel(titles[id!] ?? /^Comment on /)).toBeFocused();
+  await page.keyboard.press("Escape");
+  // An evidence item opened by its link, then c: placed on the code it cites.
+  await open(page, `${PR7}&pane=tile&tile=evidence&tile_item=ev_retry_tests`);
+  await expect(page.locator("#tile-item-ev_retry_tests")).toBeFocused();
+  await page.keyboard.press("c");
+  await expect(page.getByLabel(/^Comment on Evidence: Delays double/)).toBeFocused();
+  await page.keyboard.type("Is the cap tested at the boundary?");
+  await page.keyboard.press("Control+Enter");
+  await page.keyboard.press("v");
+  await page.getByRole("menuitem", { name: "Comment", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /Review pull request #7/ });
+  await dialog.getByRole("button", { name: "Comment", exact: true }).click();
+  await expect.poll(() => submitted.length).toBe(1);
+  expect(submitted[0]!.comments).toContainEqual(
+    expect.objectContaining({
+      body: "Is the cap tested at the boundary?",
+      path: expect.stringMatching(/\.go$/),
+      line: expect.any(Number),
+    }),
+  );
+});
+
+test("the setting chooses the page, and old links land on their tiles", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, "page=settings");
+  const select = page.locator("#review-page");
+  await expect(select).toHaveValue("full");
+  await select.selectOption("tiles");
+  await open(page, "repository=acme%2Fdemo&pr=7");
+  await expect(page.locator("article[data-tile]").first()).toBeVisible();
+  // A link the full review wrote: a risk opens Risks at it, the Changes
+  // overview scrolls the landing page to its group.
+  await open(
+    page,
+    "repository=acme%2Fdemo&pr=7&pane=risk&risk_section=sec_api&risk_id=rsk_api_header",
+  );
+  await expect(page.locator("#tile-item-rsk_api_header")).toBeFocused();
+  await open(page, "repository=acme%2Fdemo&pr=7&pane=changes");
+  await expect(page.locator('[data-tile-group="changes"]')).toBeInViewport();
+  // Back to the full review, mid-session.
+  await open(page, "page=settings");
+  await page.locator("#review-page").selectOption("full");
+  await open(page, "repository=acme%2Fdemo&pr=7");
+  await expect(page.getByRole("heading", { name: "Summary", level: 2 })).toBeVisible();
+  await expect(page.locator("article[data-tile]")).toHaveCount(0);
 });

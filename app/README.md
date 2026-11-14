@@ -2496,29 +2496,39 @@ head, the version menu, history, Compare, the side pane's tabs, the Files,
 Decisions, Sessions and Commits panes, comments and the review dialog are the
 full review's own.
 
-- **Landing page** (the Summary, `pane` absent). The rail and the side pane
-  start folded there (`railFolded`, `sidePaneFolded`), so the grid has the
-  width; a tile's detail has them as the reader left them. A band in the same
-  place on every review leads: the recommendation (its decision, its sentence
-  and the tiles it cites) when the review gives one, the risk score on one
-  line with its strongest reason (every reason in its title), and where the
-  version stands only when that is news: outdated, a draft, "Writing details
-  for N of M changes", "N changes couldn't be written" with Retry, or an
-  earlier version. Below it, the tiles' glance faces in the layout's order,
+- **Landing page** (the Summary, `pane` absent). The rail starts folded
+  there (`railFolded`) and opens in a tile's detail for stepping; the side
+  pane starts folded on every place of the tiles page (`sidePaneFolded`), so
+  the reader's own unfold holds as they move between them. At 1440×900 the
+  first screen shows the band, the Overview and Risks cards side by side, and
+  the first row of changes. A band in the same place on every review leads:
+  the recommendation (its decision, its sentence and the tiles it cites) when
+  the review gives one, the risk score on one line with its strongest reason
+  (every reason in its title; on a phone the meaning takes two lines and the
+  reason waits in the title), "N missing · N failed evidence" whenever any
+  evidence of a current change is missing or failed, leading to the Evidence
+  tile at the first, and where the version stands only when that is news:
+  outdated, a draft, "Writing details for N of M changes", "N changes
+  couldn't be written" with Retry, or an earlier version. Below it, the tiles' glance faces in the layout's order,
   on a grid of six units (a full tile six, a half three, a third two) that
   becomes two columns and then one as the pane narrows. The Changes group
   shows every change up to eight and otherwise its first six, the rest behind
-  a slim row naming them ("Show 3 more changes · …"); the tiles past the
+  a slim row naming the first three ("Show 4 more changes · …, … and 1
+  more"); the tiles past the
   landing area wait behind "Show N more tiles · …". Both are kept in the
   address (`expand=<group,…>`, `more=1`), so Back restores them.
 - **Glance faces** say whether a tile needs opening. A card is as tall as its
   row asks: it shows what it must (a change's warning, every critical or high
   risk), then fills the rest of its row with more of its own content (more of
   the overview, further risks, more evidence or decisions), fading at the
-  foot, under one cap; a card with little to say is short in one column. A
-  Change shows its review score, its state, its high or critical risk or what
-  needs attention, what it does, its size and its open risks and evidence;
-  Risks counts the open risks by tier and shows every critical and high one;
+  foot; a card with little to say is short in one column. The Overview card
+  leaves the title to the page and shows the kind, the reading time, a
+  breaking change, what needs attention and the summary. A Change shows its
+  review score, its state, its high or critical risk (named by tier and
+  category when the Risks card beside it says it in full) or what needs
+  attention, what it does, its size and its open risks and evidence; Risks
+  counts the open risks by tier and shows every critical and high one in
+  full, never cut;
   Evidence counts what is verified, claimed, missing and failed, the gaps
   first; Media shows the first images; Intent the issues it implements and
   the stated reasons; Decisions who made them; Context the area; Everything
@@ -2527,13 +2537,17 @@ full review's own.
 - **Detail faces** (`pane=tile&tile=<id>&tile_item=<id>`) hold everything about
   one tile, with the rail unfolded for stepping between tiles. A Change's
   detail is its section as the full review draws it, then the tiles that
-  gather its risks, evidence, intent, decisions and media. "Summary", Escape
-  and `u` lead back to the landing page where the reader left it, with the
-  card they opened under the keys.
-- **Always shown.** The recommendation is in the strip; every active critical
-  or high risk is on the landing page, in the Risks tile or, while that tile
-  is not ready or not on the landing page, in a "Read before approving" band
-  over the grid.
+  gather its risks, evidence, intent, decisions and media. The detail is held
+  to a reading measure on a wide window. A link to an item scrolls to it,
+  marks it and gives it the keys. "Summary", Escape and `u` lead back to the
+  landing page: back through history when the entry before is that landing
+  page, so Back does not open the tile again, else in the tile's place. The
+  landing page comes back where the reader left it, with the card of the tile
+  read last under the keys (the first card when that tile is not on it).
+- **Always shown.** The recommendation and any missing or failed evidence are
+  in the band; every active critical or high risk is on the landing page, in
+  the Risks tile or, while that tile is not ready or not on the landing page,
+  in a "Read before approving" band over the grid.
 - **Tiles that cannot be drawn** (unavailable, of a type this version does not
   know, a custom tile, or one that fails while drawing) show a quiet
   "unavailable" face; the rest of the page is unaffected. A tile still being
@@ -2574,7 +2588,8 @@ On the PR page, `c` comments on the item being read (`commentTarget`): the
 selected section or risk, placed on the first line its anchors cite (else the
 section's first hunk), a changed file, on its first hunk, or else the pull
 request as a whole. On the tiles page a comment is on a tile: a Change tile's
-is its section's and a risk in Risks keeps the risk; any other tile is a
+is its section's, and one on a risk in it or in Risks is the risk's, each
+targeted and placed exactly as the full review does; any other tile is a
 `tile` target, placed on the first line it cites (an evidence item's or a
 decision's anchors, Everything else's first hunk) or, for the Overview,
 Intent, Context and Media, put in the review's body under its title. Each card
