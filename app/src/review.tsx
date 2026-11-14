@@ -578,6 +578,16 @@ export function LocalReview({
   // full review, which has no tiles.
   const latestHost = useRef({ viewedDocument, canReview, showingDraft, search: url.search });
   latestHost.current = { viewedDocument, canReview, showingDraft, search: url.search };
+  // A custom tile's frame that never answered: read the tile route of every
+  // version on screen again, which registers their frame documents again.
+  const rereadTiles = useRef<() => Promise<unknown>>(async () => undefined);
+  rereadTiles.current = () =>
+    Promise.all([
+      showingDraft && job
+        ? request(`api/jobs/${encodeURIComponent(job.id)}/draft?tiles=1`)
+        : tilesRequest(clone, pr.number),
+      ...(history.selection ? [tilesRequest(clone, pr.number, history.selection.version)] : []),
+    ]);
   const counts = useMemo(
     () => (onTiles ? commentCounts(viewedDocument ?? null, pending.value.comments) : NO_COUNTS),
     [onTiles, viewedDocument, pending.value.comments],
@@ -601,6 +611,7 @@ export function LocalReview({
           }
         : undefined,
       ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
+      reread: () => rereadTiles.current(),
       fullReview: (tile) =>
         appURL(
           `?${withView(withSelection(latestHost.current.search, fullReviewPlace(tile)), "full")}`,

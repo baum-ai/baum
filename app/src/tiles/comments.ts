@@ -27,7 +27,7 @@ export function tileCommentTarget(
   if (!doc || !tile) return null;
   const type = tileType(tile.type);
   const anchors =
-    type?.commentAnchors && type.valid(tile.data)
+    type?.commentAnchors && type.valid(tile.data, tile)
       ? type.commentAnchors({ doc, review: document }, tile, item)
       : [];
   const risk = item ? doc.risks.find((each) => each.id === item) : undefined;

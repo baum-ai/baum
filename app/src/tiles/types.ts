@@ -55,6 +55,9 @@ export type TileType = {
   type: string;
   /** The type's name, as the kicker over a tile and in the rail. */
   label: string;
+  /** A tile's own kicker where it differs by tile, as a custom tile's is its
+   *  definition's title. */
+  labelOf?: (tile: Tile) => string;
   icon: (props: IconProps) => ReactElement;
   /** A tile whose title the page already shows, as the Overview's is the pull
    *  request's: its card names it only for assistive technology. */
@@ -63,9 +66,13 @@ export type TileType = {
   Glance: ComponentType<TileFaceProps>;
   /** Everything about the tile. */
   Detail: ComponentType<TileFaceProps>;
-  /** A light check of the tile's data before either face reads it; a tile
-   *  that fails it is drawn unavailable. */
-  valid: (data: unknown) => boolean;
+  /** A light check of the tile's data (and, for a custom tile, of its
+   *  definition) before either face reads it; a tile that fails it is drawn
+   *  unavailable. */
+  valid: (data: unknown, tile?: Tile) => boolean;
+  /** Why a tile the daemon marked unavailable is, in the type's own words,
+   *  where they differ from the daemon's first problem; null to keep it. */
+  unavailableWhy?: (tile: Tile) => string | null;
   /** The code a comment on the tile (or on one of its items) is placed on, or
    *  null for a comment that belongs in the review's body. */
   commentAnchors?: (

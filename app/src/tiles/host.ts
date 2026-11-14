@@ -18,6 +18,10 @@ export type TileHost = {
   /** The address of the full review at the place a tile shows. */
   fullReview?: (tile: Tile | null) => string;
   renderSectionLabels?: (section: Section, document: ReviewDocument) => ReactNode;
+  /** Reads the shown version's tile route again, which registers its custom
+   *  tiles' frame documents with the daemon again; a custom tile whose frame
+   *  never answered calls it once before mounting the frame afresh. */
+  reread?: () => Promise<unknown>;
 };
 
 const NO_COUNTS: ReadonlyMap<string, number> = new Map();

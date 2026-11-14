@@ -59,7 +59,7 @@ export function GlanceCard({
       <header className="flex min-h-7 items-center gap-2">
         <Icon size={14} className="flex-none text-tertiary" />
         <span className="min-w-0 truncate text-xs font-medium tracking-[0.08em] text-tertiary uppercase">
-          {type?.label ?? "Tile"}
+          {type ? (type.labelOf?.(tile) ?? type.label) : "Tile"}
         </span>
         {urgent ? (
           <span role="img" aria-label="Holds a high or critical risk" className="flex-none">

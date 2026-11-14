@@ -460,6 +460,13 @@ export function GroupPage({
   const tileHost: TileHost = {
     draft: false,
     commentCounts: new Map(),
+    // A custom tile's frame that never answered: read the tile route of every
+    // version on screen again, which registers their frame documents again.
+    reread: () =>
+      Promise.all([
+        groupTilesRequest(group.id),
+        ...(history.selection ? [groupTilesRequest(group.id, history.selection.version)] : []),
+      ]),
     renderSectionLabels: sectionLabels,
     fullReview: (tile) =>
       appURL(`?${withView(withSelection(url.search, fullReviewPlace(tile)), "full")}`),

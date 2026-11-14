@@ -56,7 +56,7 @@ export function TileDetail({
         </button>
         <span className="inline-flex items-center gap-1.5 text-xs font-medium tracking-[0.08em] text-tertiary uppercase">
           <Icon size={13} />
-          {face.type?.label ?? "Tile"}
+          {face.type ? (face.type.labelOf?.(tile) ?? face.type.label) : "Tile"}
         </span>
         {tile.state === "pending" ? (
           <Badge size="compact" tone="info">

@@ -35,6 +35,7 @@
     "./components/pane-divider": "./src/components/pane-divider.tsx",
     "./components/review-checks": "./src/components/review-checks.tsx",
     "./components/review-context": "./src/components/review-context.tsx",
+    "./components/review-contexts": "./src/components/review-contexts.ts",
     "./components/review-details": "./src/components/review-details.tsx",
     "./components/review-exchange": "./src/components/review-exchange.tsx",
     "./components/review-groups": "./src/components/review-groups.tsx",
