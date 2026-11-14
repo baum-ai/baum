@@ -1021,6 +1021,7 @@ function ReviewsSection({
           defaults={defaults}
           onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
         />
+        <TileReviewsRow />
       </div>
       <p className="settings-footnote">
         Changes save as you make them and apply to the next review in every repository.
@@ -2000,6 +2001,63 @@ const MAX_JOB_CONCURRENCY = 4;
 
 /** How many reviews, fixes and feature builds run at once; questions to a
  *  review's agent run beside them. The daemon applies a change at once. */
+/** The labs switch that arranges new reviews as tiles: one more model call
+ *  after a review is written chooses which tiles lead. Off by default. */
+function TileReviewsRow() {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    request<{ tile_reviews?: boolean }>("api/settings/labs").then(
+      (labs) => setOn(labs.tile_reviews ?? false),
+      (e) => setError(errorText(e)),
+    );
+  }, []);
+  async function choose(next: boolean) {
+    if (saving) return;
+    const before = on;
+    setOn(next);
+    setSaving(true);
+    setError("");
+    try {
+      const answer = await request<{ tile_reviews: boolean }>(
+        "api/settings/labs",
+        { tile_reviews: next },
+        "PUT",
+      );
+      setOn(answer.tile_reviews);
+    } catch (e) {
+      setOn(before);
+      setError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <SettingRow
+      label="Generate reviews as tiles (experimental)"
+      htmlFor="review-tiles"
+      detail={
+        error ? (
+          <Alert>{error}</Alert>
+        ) : (
+          "After a review is written, one more short call arranges its tile page: which tiles lead and how large they are."
+        )
+      }
+    >
+      <input
+        id="review-tiles"
+        type="checkbox"
+        role="switch"
+        className="local-switch"
+        disabled={on === null}
+        checked={on ?? false}
+        onChange={(event) => void choose(event.target.checked)}
+      />
+    </SettingRow>
+  );
+}
+
 function JobConcurrencyRow() {
   const [value, setValue] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);

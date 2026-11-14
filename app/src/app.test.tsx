@@ -932,7 +932,8 @@ function stubAutomatic(
       if (
         path.endsWith("api/settings/agent-env") ||
         path.endsWith("api/settings/job-concurrency") ||
-        path.endsWith("api/settings/time-limits")
+        path.endsWith("api/settings/time-limits") ||
+        path.endsWith("api/settings/labs")
       )
         return Promise.resolve(Response.json(puts.at(-1)!.body));
       if (path.endsWith("api/settings/decisions")) {
@@ -950,6 +951,8 @@ function stubAutomatic(
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
     if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
+    if (path === "/s/test-ns/api/settings/labs")
+      return Promise.resolve(Response.json({ tile_reviews: false }));
     if (path === "/s/test-ns/api/settings/decisions")
       return Promise.resolve(
         Response.json({ decisions: (settings as { decisions?: unknown }).decisions }),
@@ -1458,6 +1461,29 @@ it("edits the environment agents run with and shows server errors inline", async
   await type(names()[2]!, "GIT_DIR");
   await act(async () => save().click());
   expect(section().textContent).toContain("GIT_DIR cannot be set");
+});
+it("turns tile reviews on, off by default, and puts the switch back when refused", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const toggle = () => node.querySelector<HTMLInputElement>("#review-tiles")!;
+  expect(toggle().checked).toBe(false);
+  await act(async () => toggle().click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/labs",
+    body: { tile_reviews: true },
+  });
+  expect(toggle().checked).toBe(true);
+  const accepted = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/labs")
+      ? Promise.resolve(Response.json({ message: "settings unavailable" }, { status: 500 }))
+      : accepted(...args),
+  );
+  await act(async () => toggle().click());
+  expect(toggle().checked).toBe(true);
+  expect(node.textContent).toContain("settings unavailable");
 });
 it("sets how many jobs run at once and puts it back when refused", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
