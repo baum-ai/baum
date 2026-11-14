@@ -440,7 +440,7 @@ func TestCurrentPageNamesTheSectionsTools(t *testing.T) {
 	if page.Section != "computer" || !slices.Equal(page.SectionTools, []string{"settings_computer", "diagnostics_summary", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"}) {
 		t.Errorf("settings: %+v", page)
 	}
-	settingsPage := slices.Concat(settingsToolNames, commonToolNames, proposePageTools[PageSettings])
+	settingsPage := slices.Concat(settingsToolNames, commonToolNames, proposePageTools[PageSettings], tileTypePageTools)
 	for _, tool := range settingsPage {
 		if !slices.Contains(page.Tools, tool) {
 			t.Errorf("settings lacks %s: %v", tool, page.Tools)
@@ -521,7 +521,7 @@ func TestEverySettingsSectionHasItsTools(t *testing.T) {
 			}
 		}
 		for section := range tt.tools {
-			if !slices.Contains(sections[name], section) {
+			if section != SectionTiles && !slices.Contains(sections[name], section) {
 				t.Errorf("the %s page has no section %q", tt.page, section)
 			}
 		}

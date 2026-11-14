@@ -23,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -148,6 +149,10 @@ type LocalAPI struct {
 	// Fills fills the tiles a person added to a review that a version has
 	// no data for; nil leaves them pending.
 	Fills TileFiller
+	// TileTypes is the person's tile library, which GET
+	// /api/tile-types/{name}/preview draws a type from. Without it only
+	// baum's own types preview.
+	TileTypes *tilelibrary.Store
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -563,6 +568,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
 	mux.HandleFunc("GET /api/tile-library", tileLibrary)
+	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
 	a.layoutRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)

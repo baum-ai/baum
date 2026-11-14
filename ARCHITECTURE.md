@@ -1789,6 +1789,66 @@ with the hunks and items its data cites.
   then a card per table or entry point with its fields, its citation chips
   and the cited code, opened only on the first card that cites a hunk.
 
+**Saved types.** A person's own library of tile types is kept on this
+computer by `internal/tilelibrary`, in the private application database
+(`app.sqlite`) and never in a review store.
+
+- Tables, created with `CREATE TABLE IF NOT EXISTS` when a write opens the
+  database (a read of one without them finds an empty library; an older app
+  ignores them): `tile_types` (name, current digest, glance, review checks,
+  `applies_with`, path globs, samples, origin `chat` or `import`, created and
+  updated times, `used_at` and `used_in` for the last fill that used it, and
+  `deleted`), `tile_type_versions` (name, digest, time) and `tile_definitions`
+  (digest, the definition with its HTML). A version is a definition digest,
+  and a saved type's name is its tiles' ID. The tiles' layout edits name
+  digests in `tile_definitions` too, so a definition is removed only when no
+  type version, layout overlay or stored fill names it.
+- `tilelibrary.BuildEntry` writes a saved type in the built-in library's own
+  file layout into an in-memory `fs.FS` and reads it with `library.Load`, so
+  `library.Check` applies to a saved type exactly as to `schema_change`.
+  Saving runs it, and also refuses a name that is `custom`, a built-in tile
+  type's, a built-in library type's, or that starts with `sec_`, `table_`,
+  `code_`, `prose_`, `diagram_` or `library_` (so a tile's ID is always its
+  name), a name already in the library, a sample that is not synthetic and
+  more than 16 paths. Renaming changes the title only (a new version); the
+  name stays.
+- Bounds: 200 types, 20 versions per type (the oldest go first, never the
+  current one), 5 samples of at most 64 KiB each, and 64 MiB of definitions
+  and samples. Deleting sets `deleted` and hides the type with Undo for 30
+  days; then a purge removes it, its versions and the definitions nothing
+  else names. A version can be restored: the earlier digest becomes current
+  again, if it still fits the type's samples.
+- A tile of a saved type in a generated review is a `tiles.LibraryTile`
+  that embeds its full definition (`tilelibrary.LibraryTile`), as a built-in
+  type's does, so editing, restoring or deleting a type never changes a saved
+  review: the tests serve a stored composition before and after an edit and a
+  purge and compare the bytes.
+- Two chat tools work on it, on the pull request page and on Settings'
+  Tile library section. `tile_type {type}` returns a saved or built-in type in
+  full (definition with HTML, glance, review checks, samples, versions): the
+  only way an agent reads a type's source, since the tile routes serve a
+  definition without its HTML. It is the layout tools' `tile_type` too: on the
+  pull request page a built-in type also carries what `add_tile` needs (below),
+  and without a library it answers only that. `propose_tile_type` is a proposal, with
+  `Proposes: true`: nothing is saved until the person saves it in the panel,
+  which shows the title, the use-when line, the fill text's diff, whether the
+  component changed and a preview of the check's sample. It rests on a render
+  check, which `tilelibrary.Checks` looks up by id (verdict, the checked
+  definition and its digest, and per sample whether it passed and is
+  synthetic); it needs a pass on at least one synthetic sample (hunks and
+  items of its own, every citation resolving to them), and saves only the
+  samples that passed and are synthetic. The proposal's target is
+  `tile_type:<name>` and its revision covers whether the type exists and its
+  current digest, so a type saved, edited or deleted meanwhile makes the save
+  stale. Built-in types are never edited: starting from one makes a copy
+  under a name of its own.
+- `GET /api/tile-types/{name}/preview?sample=` draws a built-in or saved
+  type without a review: the served definition (no HTML; `builtin` only by
+  the content's digest), the sample's data, and `Sample.Refs` for the glance
+  and the detail. It registers the definition's digest in the frame registry,
+  as the tile routes do, and has the same authentication as every other
+  `/api` route.
+
 ### Tiles
 
 The tile catalogue (`catalogue.json`) and the tile guidance are public and
@@ -7696,7 +7756,7 @@ page.
 | --- | --- | --- |
 | `tile_layout` | none | `{pull_request, version, view: "tiles"\|"full", edited, can_undo, focus: {tile, title}\|null, first_screen_rows, landing_rows, rows: [["overview:half", …], …], tiles: [{id, type, title, size, sizes, group, pinned, hidden, on_landing, row, state, can_hide, why_not}], changes_shown, note}`, at most 32 KiB (the tiles past the landing page are left out first) |
 | `edit_tiles` | `{ops: [{op, tile?, to?, size?, count?}]}`, 1 to 20, `op` one of `move`, `resize`, `hide`, `show`, `pin`, `unpin`, `changes_shown` | `{applied: [summary lines], refused: [{index, reason}], revision, edited, can_undo, rows, hidden}`; every op refused is an error naming the reasons, and nothing is written |
-| `tile_type` | `{type}` | a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself; read-only, page-bound like the others |
+| `tile_type` | `{type}` | a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself, beside the type in full from the tile library (its definition with HTML, samples and versions); read-only, page-bound like the others |
 | `add_tile` | `{type, size?, to?, data?}` | a library type the review does not show (tile_layout's `addable`): one `add` batch, placed after the overview unless `to` says otherwise, with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background (`{tile, state: "ready" \| "filling", applied, …}`); a removed tile is brought back (a show, with a resize and a move when asked); an unknown type names the library's types |
 | `undo_tiles` | none | `{undone: [summary lines], revision, …}`, or "Nothing to undo" |
 | `reset_tiles` | none | `{revision, can_undo: true, …}`, or "The layout is already the generated one" |

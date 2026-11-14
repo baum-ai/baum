@@ -34,6 +34,7 @@ var (
 		"connections": {"settings_connections"},
 		"computer":    {"settings_computer", "diagnostics_summary"},
 		"prompts":     {"prompts", "prompt"},
+		SectionTiles:  {"tile_type"},
 	}
 	repositorySectionTools = map[string][]string{
 		"reviews":      {"repository_reviews"},

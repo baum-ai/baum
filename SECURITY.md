@@ -1490,6 +1490,39 @@ Table cells, code and captions are drawn as text. A note's Markdown draws
 paragraphs, emphasis, code spans and lists only: a link reads as its text and
 raw HTML is not rendered.
 
+**Saved tile types.** A person's library of tile types (`internal/tilelibrary`)
+lives in the private application database on this computer. A type's code and
+instructions are the person's: they are never read from repository content, and
+a type's fill and review checks enter the fill and details prompts as
+instructions of the same trust as a custom prompt, while the pull request stays
+data.
+
+- Persistence needs the person. A chat can only propose saving or changing a
+  type (`propose_tile_type`); the person's Save in the panel writes it, the same
+  way every other proposal is saved, and a proposal that is stale (the type
+  changed since it was read) saves nothing. A saved type is checked as a
+  built-in type is (`library.Check`, which includes the kit's lint) and its name
+  may not shadow a built-in tile type, a built-in library type or a tile ID
+  prefix.
+- Samples are synthetic. The library never stores data of a real pull request:
+  a proposal needs a render check that passed on a sample whose hunks and
+  items are its own, only such samples are saved, and a sample whose citations
+  do not resolve to its own hunks and items is refused. A type's preview and
+  its picture draw only those samples.
+- "Built in" is decided by digest only. A saved type is never marked built in
+  unless its content is byte for byte a built-in type's, which then is baum's
+  own code; nothing a proposal, a name or a stored row carries can claim it.
+- An agent reads a type's source only through `tile_type`, a chat tool on the
+  pull request page and Settings' Tile library section; an action never sees
+  it, and the tile routes still serve definitions without their HTML.
+- The preview route `GET /api/tile-types/{name}/preview` registers the type's
+  digest in the frame registry like the tile routes, and has the session
+  namespace's cookie or the launch token like every other `/api` route; a
+  request that carries a definition registers nothing.
+- A review keeps the definition it was made with: its library tiles embed
+  the full definition, so editing or deleting a saved type changes no saved
+  review.
+
 **What a tile's frame cannot reach.** The sandbox gives the frame an opaque
 origin, so it cannot read the app's page, its cookies or storage, or the
 desktop app's bridge, and it cannot open windows, submit forms or navigate
@@ -1529,7 +1562,8 @@ which never says whether a digest exists:
 - the path is exactly `/tile-frames/` and the digits, with no encoding, extra
   segment or trailing slash; the query is ignored;
 - the daemon itself handed that type to the authenticated app: the tile
-  routes register the types of the custom tiles they serve, and nothing a
+  routes register the types of the custom tiles they serve, and the tile
+  type preview route the type it draws (see "Saved tile types"), and nothing a
   request carries is ever registered, so the route serves only HTML the app
   already received. At most 32 MiB of documents are kept, the least recently
   used going first; reading the tile route again registers its types again.

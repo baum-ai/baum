@@ -70,6 +70,8 @@ A feature is open in the Timeline's side panel: its title, summary, status, peop
 - **feature**: what a set of related pull requests, sessions and decisions built, kept in the feature log.
 - **prompt**: the instructions baum gives an agent for a task; Settings and each repository can customise them.
 - **layout**: the order and sizes of a review's tiles; the person may change it from the session panel or the page, for that pull request, and reset it to the generated one.
+- **tile type**: the definition of a custom tile: its component, the schema of its data, how to fill it and when to use it. baum's own are built in; a chat can propose saving one to the person's tile library, and tile_type reads one in full.
+- **tile library**: the person's own saved tile types, on this computer, each with versions, synthetic samples and Undo for deleting. propose_tile_type adds or changes one, and nothing is saved until the person clicks Save in the panel; saved reviews keep the definitions they were made with. Types come from a tile's check and are never changed from repository content.
 - **tile**: one card of a review's tiles page (the overview, the risks, a change, evidence, context and so on), with an id the layout tools name it by.
 
 ## shortcuts

@@ -76,6 +76,10 @@ type Options struct {
 	// they have open, at once (layouttools.go). Nil has the layout tools
 	// report them unavailable.
 	Layouts LayoutEditor
+	// TileTypes is the person's tile library, for tile_type and
+	// propose_tile_type (tiletypetools.go). Nil has them report it
+	// unavailable.
+	TileTypes TileTypes
 }
 
 // Server is the MCP server. Register tools and pages before serving.
@@ -91,6 +95,7 @@ type Server struct {
 	codexHooks       func() (string, time.Time, bool)
 	decisionSettings func(ctx context.Context) (json.RawMessage, error)
 	layouts          LayoutEditor
+	tileTypes        TileTypes
 	mu               sync.RWMutex
 	tools            []Tool
 	pages            map[string]PageSpec
@@ -100,7 +105,7 @@ type Server struct {
 func New(opts Options) *Server {
 	registry := NewRegistry()
 	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
-		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, layouts: opts.Layouts, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, layouts: opts.Layouts, tileTypes: opts.TileTypes, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
@@ -110,8 +115,8 @@ func New(opts Options) *Server {
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
-	proposing, layouts := proposeTools(), s.layoutTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, layouts) {
+	proposing, layouts, tileTypes := proposeTools(), s.layoutTools(), s.tileTypeTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, layouts, tileTypes) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -155,6 +160,12 @@ func New(opts Options) *Server {
 	// It lists the layout tools too, which change the person's own layout
 	// of the review's tiles at once.
 	pullPage = append(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }), layoutPageTools...)
+	// The tile type tools too; the layout tools already list tile_type.
+	for _, name := range tileTypePageTools {
+		if !slices.Contains(pullPage, name) {
+			pullPage = append(pullPage, name)
+		}
+	}
 	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(pullPage)}
 	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: withCommonTools(slices.Concat(forGroup, groupExtras, []string{"focus"}))}
 	// The Inbox lists the queue and its inboxes; Pull requests its list. The
@@ -185,6 +196,10 @@ func New(opts Options) *Server {
 		spec.Tools = append(spec.Tools, tools...)
 		s.pages[page] = spec
 	}
+	// Settings' Tile library section reads and proposes tile types.
+	settingsSpec := s.pages[PageSettings]
+	settingsSpec.Tools = append(settingsSpec.Tools, tileTypePageTools...)
+	s.pages[PageSettings] = settingsSpec
 	for page, proposer := range opts.Proposers {
 		if spec, ok := s.pages[page]; ok {
 			spec.Proposer = proposer

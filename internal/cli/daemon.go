@@ -71,6 +71,7 @@ import (
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -490,6 +491,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// version and draft the tile routes serve; a write tells the app's
 		// open page to read its tiles again. Reviews fill the tiles people
 		// added (jobs.Local.Layouts).
+		tileLibrary := &tilelibrary.Store{Path: database}
 		layouts := &tilelayout.Service{Path: database, Changed: func(pr string, revision int64) {
 			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
 		}}
@@ -826,13 +828,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts, Fills: tileFills}
+			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts, Fills: tileFills, TileTypes: tileLibrary}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		// What a chat proposes is saved, when the person saves it, through
 		// the pages' own saves.
-		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState}
+		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState, TileTypes: tileLibrary}
 		if requests != nil {
 			proposers.CodexApprovals = func() bool { return requests.Settings().CodexApprovals }
 			proposers.SetCodexApprovals = func(on bool, check func(bool) error) error {
@@ -842,7 +844,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Layouts: uiserver.LayoutEditor{API: local}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Layouts: uiserver.LayoutEditor{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
 			listing, loaded, err := pickList.Cached(ctx, query)
 			if err != nil {
 				return agentcontext.PickList{}, err
