@@ -73,6 +73,13 @@ type realPick struct {
 	Versions   []int    `json:"versions"`
 	Clone      string   `json:"clone"`
 	Tags       []string `json:"tags,omitempty"`
+	// Case, Variant and Size are set when the fixture serves a replay run's
+	// layouts (BAUM_APP_REPLAY_RUN): the run's case, which layout this
+	// clone's latest version carries (composed or template), and the case's
+	// size bucket.
+	Case    string `json:"case,omitempty"`
+	Variant string `json:"variant,omitempty"`
+	Size    string `json:"size,omitempty"`
 
 	machine string
 }
@@ -151,16 +158,20 @@ func (d *realDataset) pullsWhere(keep func(realIndexPull) bool) []realIndexPull 
 }
 
 func (d *realDataset) store(machine, repository string) *store.Store {
+	return d.storeAt(machine + "/" + realSlug(repository) + ".versions.sqlite")
+}
+
+// storeAt opens a copy of the saved review store at reviews/<name>.
+func (d *realDataset) storeAt(name string) *store.Store {
 	d.t.Helper()
-	key := machine + "/" + repository
-	if s := d.stores[key]; s != nil {
+	if s := d.stores[name]; s != nil {
 		return s
 	}
-	dir := filepath.Join(d.work, "stores", machine, realSlug(repository))
+	dir := filepath.Join(d.work, "stores", strings.TrimSuffix(filepath.FromSlash(name), ".versions.sqlite"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		d.t.Fatal(err)
 	}
-	source := filepath.Join(d.root, "reviews", machine, realSlug(repository)+".versions.sqlite")
+	source := filepath.Join(d.root, "reviews", filepath.FromSlash(name))
 	for _, suffix := range []string{"", "-wal"} {
 		raw, err := os.ReadFile(source + suffix)
 		if errors.Is(err, os.ErrNotExist) || (err == nil && len(raw) == 0) {
@@ -177,7 +188,7 @@ func (d *realDataset) store(machine, repository string) *store.Store {
 	if err != nil {
 		d.t.Fatal(err)
 	}
-	d.stores[key] = s
+	d.stores[name] = s
 	return s
 }
 
@@ -437,7 +448,13 @@ func realPullRequests(t *testing.T, root string, picks []realPick, heads map[str
 			_ = db.Close()
 		}
 	}()
+	seen := map[string]bool{}
 	for _, p := range picks {
+		// A replay run shows one pull request in several clones.
+		if seen[p.id()] {
+			continue
+		}
+		seen[p.id()] = true
 		db := databases[p.machine]
 		if db == nil {
 			// Immutable, because the dataset is mounted read-only and may
@@ -507,6 +524,17 @@ func TestLocalAppRealReviews(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	registry, err := repos.Open(filepath.Join(home, "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	if run := os.Getenv(replayRunEnv); run != "" {
+		picks, heads, titles := seedReplayRun(t, dataset, registry, state, run)
+		serveRealReviews(t, home, state, registry, videoDiscovery(realPullRequests(t, root, picks, heads, titles)))
+		return
+	}
+
 	list := os.Getenv("BAUM_APP_REAL_PICK")
 	var picks []realPick
 	if strings.TrimSpace(list) != "" {
@@ -544,11 +572,6 @@ func TestLocalAppRealReviews(t *testing.T) {
 		t.Logf("pick %s %s", p.id(), strings.Join(p.Tags, " "))
 	}
 
-	registry, err := repos.Open(filepath.Join(home, "app.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = registry.Close() }()
 	clones := map[string]repos.Clone{}
 	stores := map[string]*store.Store{}
 	heads := map[string]string{}
@@ -624,7 +647,13 @@ func TestLocalAppRealReviews(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	disc := videoDiscovery(realPullRequests(t, root, picks, heads, titles))
+	serveRealReviews(t, home, state, registry, videoDiscovery(realPullRequests(t, root, picks, heads, titles)))
+}
+
+// serveRealReviews runs the real daemon on the registry's clones until it is
+// stopped, with discovery answering from disc and no model or GitHub.
+func serveRealReviews(t *testing.T, home, state string, registry *repos.Registry, disc videoDiscovery) {
+	ctx := context.Background()
 	cfg := config.Default()
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
@@ -637,7 +666,7 @@ func TestLocalAppRealReviews(t *testing.T) {
 	paths := daemon.Paths{State: state, Socket: filepath.Join(state, "daemon.sock")}
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = daemon.Run(runCtx, daemon.Options{Paths: paths, Version: "fixture", Port: realFixturePort, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
+	err := daemon.Run(runCtx, daemon.Options{Paths: paths, Version: "fixture", Port: realFixturePort, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		groups, err := reviewgroups.Open(filepath.Join(home, "app.sqlite"))
 		if err != nil {
 			return daemon.App{}, err

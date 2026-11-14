@@ -227,15 +227,24 @@ func infoOf(m Manifest) RunInfo {
 		GeneratorSettings: string(settings), Backend: m.Backend, Model: m.Model, Effort: m.Effort}
 }
 
-// ReadMetrics reads a finished run directory and measures it. It calls no model.
-func ReadMetrics(dir string) (RunMetrics, error) {
+// ReadManifest reads a run directory's manifest.json.
+func ReadManifest(dir string) (Manifest, error) {
 	var manifest Manifest
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	if err != nil {
-		return RunMetrics{}, fmt.Errorf("%s is not a replay run: %w", dir, err)
+		return manifest, fmt.Errorf("%s is not a replay run: %w", dir, err)
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return RunMetrics{}, fmt.Errorf("%s: manifest.json: %w", dir, err)
+		return manifest, fmt.Errorf("%s: manifest.json: %w", dir, err)
+	}
+	return manifest, nil
+}
+
+// ReadMetrics reads a finished run directory and measures it. It calls no model.
+func ReadMetrics(dir string) (RunMetrics, error) {
+	manifest, err := ReadManifest(dir)
+	if err != nil {
+		return RunMetrics{}, err
 	}
 	meter := MeterFor(manifest.Generator)
 	m := RunMetrics{Run: manifest.Run, Generator: manifest.Generator, Info: infoOf(manifest)}

@@ -534,8 +534,11 @@ func (g *ComposeGenerator) Definitions() map[string]string {
 // The stores are copied, with their write-ahead logs, and the copies opened
 // read-only; the dataset is never opened for writing.
 type reviewStores struct {
-	dir      string
-	dbs      []*sql.DB
+	dir string
+	dbs []*sql.DB
+	// names are the stores' paths relative to the reviews directory, by
+	// index in dbs.
+	names    []string
 	versions map[string][]storedVersion
 }
 
@@ -594,6 +597,8 @@ func openReviewStores(dir string) (*reviewStores, error) {
 			return nil, err
 		}
 		s.dbs = append(s.dbs, db)
+		name, _ := filepath.Rel(dir, path)
+		s.names = append(s.names, filepath.ToSlash(name))
 		rows, err := db.Query(`SELECT repository, pr, version, metadata FROM versions ORDER BY repository, pr, version`)
 		if err != nil {
 			return nil, fmt.Errorf("reading saved review store %d: %w", n, err)
