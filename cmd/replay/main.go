@@ -1,6 +1,6 @@
 // Command replay runs review generation again on the frozen cases of a dataset
-// directory, with no GitHub access, and saves what it generates. See
-// README.md.
+// directory, with no GitHub access, and saves what it generates. Its metrics
+// subcommand measures a finished run. See README.md.
 package main
 
 import (
@@ -27,6 +27,44 @@ type list []string
 func (l *list) String() string     { return strings.Join(*l, ",") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
+// triState is a flag that is true, false or not given; a bare flag is true.
+type triState struct{ value *bool }
+
+func (t *triState) String() string {
+	if t == nil || t.value == nil {
+		return ""
+	}
+	return strconv.FormatBool(*t.value)
+}
+
+func (t *triState) IsBoolFlag() bool { return true }
+
+func (t *triState) Set(v string) error {
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return errors.New("use true or false")
+	}
+	t.value = &b
+	return nil
+}
+
+// readCaseFile reads case ids, one per line; blank lines and # comments are
+// ignored.
+func readCaseFile(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		if id := strings.TrimSpace(line); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -49,6 +87,9 @@ func (e errFailed) Error() string {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "metrics" {
+		return runMetrics(args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
@@ -79,7 +120,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		resume                 = fs.Bool("resume", false, "skip cases that already succeeded in --name's run")
 		dryRun                 = fs.Bool("dry-run", false, "list what would run and call no model")
 		noTranscript           = fs.Bool("no-transcript", false, "do not keep the agent's transcript")
+		caseFile               = fs.String("case-file", "", "file with one case id per line (# starts a comment); like --case")
+		detector               = fs.String("detector", "", "keep cases a structural detector matches: schema, api, any or none")
+		chain                  = fs.Bool("chain", false, "replay each pull request's revisions in order, each reading the previous one's generated document as its previous version")
+		images, threads, prev  triState
 	)
+	fs.Var(&images, "with-images", "keep cases whose bundle has images (--with-images=false: has none)")
+	fs.Var(&threads, "with-threads", "keep cases whose bundle has review threads (=false: none)")
+	fs.Var(&prev, "with-previous", "keep cases whose bundle has a previous version (=false: none)")
 	fs.Var(&cases, "case", "case id; repeatable")
 	fs.Var(&sizes, "size", "size bucket xs, s, m, l or xl; repeatable or comma separated")
 	fs.Var(&agentEnv, "agent-env", "KEY=VALUE set for the agent, as the app's agent_env does; repeatable")
@@ -100,7 +148,18 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	sel := replay.Selection{IDs: cases, Split: *split, Representative: *representative, Primary: *primary, Sessions: *sessions, Limit: *limit}
+	if *caseFile != "" {
+		ids, err := readCaseFile(*caseFile)
+		if err != nil {
+			return err
+		}
+		cases = append(cases, ids...)
+		if len(ids) == 0 {
+			return fmt.Errorf("--case-file %s names no case", *caseFile)
+		}
+	}
+	sel := replay.Selection{IDs: cases, Split: *split, Representative: *representative, Primary: *primary, Sessions: *sessions, Limit: *limit,
+		Images: images.value, Threads: threads.value, Previous: prev.value, Detector: *detector}
 	for _, s := range sizes {
 		sel.Sizes = append(sel.Sizes, strings.Split(s, ",")...)
 	}
@@ -139,7 +198,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		generator.PromptOverrides[prompt.ID(id)] = string(text)
 	}
 	summary, err := replay.Execute(ctx, replay.Plan{Dataset: d, OutDir: *out, Name: *name, Selection: sel, Settings: settings, Concurrency: *concurrency,
-		MaxCostUSD: *maxCost, MaxCases: *maxCases, Resume: *resume, ResumeAnyway: *resumeAnyway, DryRun: *dryRun, Out: stdout})
+		MaxCostUSD: *maxCost, MaxCases: *maxCases, Chain: *chain, Resume: *resume, ResumeAnyway: *resumeAnyway, DryRun: *dryRun, Out: stdout})
 	if err != nil {
 		return err
 	}
