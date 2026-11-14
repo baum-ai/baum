@@ -260,7 +260,7 @@ func (l *linter) names(manifest *Manifest) {
 			if prefixes[first] && match[4] >= 0 {
 				name = first + "." + l.code[s.start+match[4]:s.start+match[5]]
 			}
-			if !api[name] && !(prefixes[first] && match[4] < 0) {
+			if !api[name] && (!prefixes[first] || match[4] >= 0) {
 				l.add(Error, "unknown_api", fmt.Sprintf("%s isn't part of kit %d.", name, manifest.Kit), at)
 			}
 		}
@@ -365,7 +365,7 @@ func blankLiterals(b []byte) {
 			i = end
 		case c == '/' && i+1 < len(b) && b[i+1] == '*':
 			end := i + 2
-			for end+1 < len(b) && !(b[end] == '*' && b[end+1] == '/') {
+			for end+1 < len(b) && (b[end] != '*' || b[end+1] != '/') {
 				end++
 			}
 			blank(i, end+2)
