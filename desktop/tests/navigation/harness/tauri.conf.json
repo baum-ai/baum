@@ -4,6 +4,6 @@
   "version": "0.0.0",
   "identifier": "com.baum.navigationharness",
   "build": { "frontendDist": "dist" },
-  "app": { "windows": [], "withGlobalTauri": false, "security": { "csp": null } },
+  "app": { "windows": [], "withGlobalTauri": false, "security": { "csp": null, "capabilities": ["daemon-pages"] } },
   "bundle": { "active": false, "icon": ["icons/icon.png"] }
 }
