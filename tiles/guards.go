@@ -20,14 +20,17 @@ import (
 //     widened to the full row (FixLoneFeatured).
 //  3. The first screen, the first FirstScreenRows rows (what a 1440×900
 //     window shows unscrolled), shows at least as many current changes as
-//     the template's does, and so does the whole landing page, unless it shows instead something the template's
-//     does not: the risks tile while it ranks an active critical or high
-//     risk, a change the recommendation names, the evidence tile with gaps
-//     as in 1, or a tile a person pinned; and a layout in which a person hid
-//     tiles is theirs. Otherwise the composition takes the
-//     template's layout (FixFirstScreen). A change that carries a breaking
-//     change is not known to the document (the overview names the break,
-//     not its change), so it cannot stand in.
+//     the template's does, and so does the whole landing page, unless it
+//     shows instead something the template's does not: the risks tile while
+//     it ranks an active critical or high risk, a change the recommendation
+//     names, the evidence tile with gaps as in 1, or a tile a person pinned.
+//     And what of those the template's first screen shows stays on it,
+//     unless a tile a person pinned is on the first screen.
+//     Otherwise the composition takes the template's layout
+//     (FixFirstScreen); a layout in which a person hid tiles is theirs. A
+//     change that carries a breaking change is not known to the document
+//     (the overview names the break, not its change), so it cannot stand
+//     in.
 const (
 	// FirstScreenRows is how many rows of the canonical grid the first
 	// screen of a wide window shows under the review's band.
@@ -210,11 +213,17 @@ func (cm *composer) guardFirstScreen(c *Composition) {
 		return
 	}
 	got, want := firstScreenOf(composed), firstScreenOf(templated)
-	if got.changes >= want.changes && got.landing >= want.landing {
+	// A pinned tile on the first screen makes the arrangement the person's.
+	pinned := slices.ContainsFunc(c.Layout.Entries, func(e Entry) bool { return e.Pin && got.others[e.Tile] })
+	lost := false
+	for id := range want.others {
+		lost = lost || !got.others[id] && !pinned
+	}
+	if got.changes >= want.changes && got.landing >= want.landing && !lost {
 		return
 	}
 	for id := range got.others {
-		if !want.others[id] {
+		if !want.others[id] && !lost {
 			return
 		}
 	}

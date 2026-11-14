@@ -49,7 +49,8 @@ import (
 //     risks tile ranking a critical or high risk, a change the
 //     recommendation names or the evidence tile with
 //     tiles.EvidenceGapsShown gaps that the template's does not, or a person
-//     hid tiles; no change
+//     hid tiles; what must be seen on the template's first screen stays on
+//     it unless a pinned tile is on the first screen; no change
 //     is featured alone at half on a row another follows; and the evidence
 //     tile with that many gaps is on the landing page, unless a person hid
 //     it or the landing page holds only pinned tiles and those always on it.
@@ -386,6 +387,14 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 		return []string{"the template does not compose: " + err.Error()}
 	}
 	got, want := firstScreenFacts(doc), firstScreenFacts(templated)
+	pinned := slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Pin && got.others[e.Tile] })
+	if len(c.Layout.Hidden) == 0 && !pinned {
+		for id := range want.others {
+			if !got.others[id] {
+				failures = append(failures, fmt.Sprintf("tile %s, which must be seen, is on the template's first screen and not on this one", id))
+			}
+		}
+	}
 	if (got.changes < want.changes || got.landing < want.landing) && len(c.Layout.Hidden) == 0 {
 		standsIn := false
 		for id := range got.others {

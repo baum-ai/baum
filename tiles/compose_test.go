@@ -713,7 +713,9 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 			members = append(members, entry.Tile)
 		}
 	}
-	named := members[len(members)-1]
+	// The fifth: raising the group to it fits the landing page, now that
+	// the group is a block of its own rows.
+	named := members[4]
 	many := withManyBlocks()
 	f := fixture{name: "recommended", mutate: func(doc map[string]any) {
 		many.mutate(doc)
@@ -727,7 +729,9 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 		raised  bool
 		leading bool
 	}{
-		{"raised", nil, true, false},
+		// The person pinned the overview, which leads anyway: the
+		// arrangement is theirs, which the host's guard keeps.
+		{"raised", []tiles.Entry{{Tile: tiles.TypeOverview, Size: tiles.SizeHalf, Pin: true}}, true, false},
 		// A pinned tile (the person's own, which the host's guard keeps)
 		// and three changes lead, so the group starts past the landing page.
 		{"leading", []tiles.Entry{{Tile: tiles.TypeEvidence, Size: tiles.SizeFull, Pin: true}, {Tile: tiles.TypeOverview, Size: tiles.SizeHalf},
@@ -756,8 +760,8 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 				}
 			}
 			shown := *composed.Layout.Groups[0].CollapseAfter
-			if tc.raised && (shown != len(group) || group[len(group)-1] != named) {
-				t.Errorf("the group shows %d with %v last, want all %d with %s last", shown, group[len(group)-1], len(members), named)
+			if want := slices.Index(group, named) + 1; tc.raised && shown != want {
+				t.Errorf("the group shows %d, want %d, up to %s", shown, want, named)
 			}
 			if tc.leading && (shown != 1 || group[0] != named) {
 				t.Errorf("the group shows %d led by %s, want 1 led by %s", shown, group[0], named)

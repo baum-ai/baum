@@ -6,30 +6,12 @@
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
-    "tile \"sec_config_flag\" ended a row with empty units; it grows to fill the row",
-    "tile \"sec_retry_policy\" ended a row with empty units; it grows to fill the row",
-    "tile \"evidence\" ended a row with empty units; it grows to fill the row",
-    "tile \"media\" ended a row with empty units; it grows to fill the row",
-    "tile \"everything_else\" ended a row with empty units; it grows to fill the row"
+    "the layout shows fewer changes on the first screen or the landing page than the template, with nothing that must be seen instead; the template's layout is kept"
   ],
   "composition": {
     "schema": "baum.composition/1",
     "layout": {
       "entries": [
-        {
-          "tile": "sec_config_flag",
-          "size": "half",
-          "group": "changes"
-        },
-        {
-          "tile": "sec_retry_policy",
-          "size": "half",
-          "group": "changes"
-        },
-        {
-          "tile": "evidence",
-          "size": "half"
-        },
         {
           "tile": "overview",
           "size": "half"
@@ -39,8 +21,22 @@
           "size": "half"
         },
         {
+          "tile": "sec_retry_policy",
+          "size": "half",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_config_flag",
+          "size": "half",
+          "group": "changes"
+        },
+        {
+          "tile": "evidence",
+          "size": "third"
+        },
+        {
           "tile": "media",
-          "size": "half"
+          "size": "third"
         },
         {
           "tile": "intent",
@@ -56,27 +52,13 @@
         },
         {
           "tile": "everything_else",
-          "size": "full"
+          "size": "third"
         }
       ]
     }
   },
   "layout": {
     "entries": [
-      {
-        "tile": "sec_config_flag",
-        "size": "half",
-        "group": "changes"
-      },
-      {
-        "tile": "sec_retry_policy",
-        "size": "half",
-        "group": "changes"
-      },
-      {
-        "tile": "evidence",
-        "size": "half"
-      },
       {
         "tile": "overview",
         "size": "half"
@@ -86,8 +68,22 @@
         "size": "half"
       },
       {
+        "tile": "sec_retry_policy",
+        "size": "half",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_config_flag",
+        "size": "half",
+        "group": "changes"
+      },
+      {
+        "tile": "evidence",
+        "size": "third"
+      },
+      {
         "tile": "media",
-        "size": "half"
+        "size": "third"
       },
       {
         "tile": "intent",
@@ -103,7 +99,7 @@
       },
       {
         "tile": "everything_else",
-        "size": "full"
+        "size": "third"
       }
     ],
     "groups": [
@@ -112,7 +108,7 @@
         "title": "Changes"
       }
     ],
-    "landing": 6
+    "landing": 7
   },
   "tiles": [
     {

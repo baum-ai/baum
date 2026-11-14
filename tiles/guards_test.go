@@ -182,3 +182,26 @@ func TestDocsTemplateKeepsActiveRisksOnTheLandingPage(t *testing.T) {
 		}
 	}
 }
+
+// What must be seen on the template's first screen stays on the
+// composition's: evidence with gaps beside the lead change on the second row
+// is not pushed down to the third, even with as many changes shown.
+func TestGuardKeepsTheTemplatesMustSeeTilesOnTheFirstScreen(t *testing.T) {
+	normalized, doc := convert(t, withGaps("example"))
+	template, _ := tiles.Template(doc, nil)
+	c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: slices.Clone(template.Layout.Entries)}}
+	// Swap the evidence tile with the first tile of the third row.
+	composed, err := tiles.Compose(doc, &template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := tiles.Rows(composed.Layout)
+	third := composed.Layout.Entries[rows[2].Entries[0]].Tile
+	at := slices.IndexFunc(c.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == tiles.TypeEvidence })
+	to := slices.IndexFunc(c.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == third })
+	c.Layout.Entries[at].Tile, c.Layout.Entries[to].Tile = c.Layout.Entries[to].Tile, c.Layout.Entries[at].Tile
+	n, report, _ := checkComposed(t, normalized, doc, c)
+	if report.Counts()[tiles.FixFirstScreen] != 1 || !slices.Equal(n.Layout.Entries, template.Layout.Entries) {
+		t.Errorf("fixes %v; entries %v", report.Messages(), n.Layout.Entries)
+	}
+}
