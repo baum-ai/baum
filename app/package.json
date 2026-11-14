@@ -22,6 +22,7 @@
     "test:e2e": "playwright test",
     "test:desktop": "node ../desktop/tests/onboarding.cjs",
     "test:development": "playwright test --config playwright.development.config.ts",
+    "test:custom-tiles": "playwright test --config playwright.custom-tiles.config.ts",
     "check": "pnpm lint && pnpm format:check && pnpm tile-kit:check && pnpm typecheck && pnpm test:unit"
   },
   "devDependencies": {

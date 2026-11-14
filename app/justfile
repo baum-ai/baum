@@ -10,7 +10,7 @@ build:
 e2e:
     {{ heavy }} pnpm build
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
-    {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:development && pnpm test:desktop'
+    {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:custom-tiles && pnpm test:development && pnpm test:desktop'
 
 # Pictures of the custom tile kit's demo tiles (e2e/tile-kit) in sandboxed
 # frames under the frame route's headers, glance and detail, light and dark,
