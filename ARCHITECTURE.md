@@ -1038,8 +1038,11 @@ land in the body, where the parser drops them; `<meta http-equiv>` outside
 script or comment only swallows the closing tags. Compose refuses HTML that is
 not valid UTF-8 or holds a NUL, HTML over 256 KiB, a document over 512 KiB and
 an unsupported major. A major's own scripts and styles as inlined stay under
-48 KiB (`kit.MaxKit`, held by a test); the shared tokens add about 11 KiB and
-the fonts 72 KiB. The document is served with `kit.CSP`: `default-src 'none'`,
+64 KiB (`kit.MaxKit`, held by a test); the shared tokens add about 11 KiB and
+the fonts 72 KiB. `testdata/v1.sha256` pins every file of `v1/`: a change
+fails the test until the digests are updated in the same commit, whose
+message says what was added. `testdata/v1.inlined.js` is the compacted script
+as inlined; the app's unit tests run against it as well as the sources. The document is served with `kit.CSP`: `default-src 'none'`,
 inline script and style, `data:`/`blob:` images and `data:` fonts.
 
 **`kit.Lint`** scans a fragment for honest mistakes at creation, with lines
@@ -1049,17 +1052,30 @@ and columns: errors for external URLs, resource hints, `<link>`, `<base>`,
 access in scripts, inline event handlers, `javascript:` URLs, and `baum.*`
 names or `kit-*` classes the manifest lacks; warnings for viewport units,
 `prefers-color-scheme`, tokens neither the manifest nor the tile defines,
-`innerHTML` and static markup. It is not a security boundary: the sandbox and
-the CSP are.
+`innerHTML` and static markup. Script rules read code with its strings,
+template text and comments blanked, and skip member accesses (`api.fetch(`,
+`item.location`), so ordinary code does not trip them. It is not a security
+boundary: the sandbox and the CSP are.
 
 **The author API** (`window.baum`, frozen): `baum.tile({glance, detail})`
 registers once; each render function gets `{data, face, size, theme, lang,
 root}` and returns a node (or text, or an array) or appends to `root`, within
 3 seconds when it returns a promise. `baum.html` is an escaping tagged
-template: values become text, nodes or attribute values, never markup, and
-`on*` attributes, URLs with a scheme other than `data:` or `blob:` and
-`<script>`, `<iframe>`, `<object>`, `<embed>`, `<form>`, `<base>`, `<meta>` and
-`<link>` throw. `baum.cite` draws a citation chip (a button that asks to jump
+template: values become text, nodes or attribute values, never markup. It
+throws, for static parts and values alike, on `on*` attributes; an `href` of
+`<a>`, `<area>` or SVG `<use>` that is not a `#fragment` (nothing in a tile
+navigates); any other URL attribute (`src`, `poster`, an SVG `<image>` href and
+the like) that is not a `data:image/…` (SVG included: images run no script) or
+`blob:` URL, so a relative or schemeless URL never reaches the daemon; a value
+in a `style` attribute holding `;`, `:`, braces, parentheses, quotes, a
+backslash, `<`, `>`, `/*` or `url` (data sets sizes through custom properties:
+`style="--value:${share}"` on a `kit-bar`, `style="--columns:${n}"` on a
+`kit-columns`); values inside `style`, `script`, `title`, `textarea` and other
+raw-text elements in any namespace, comments, tag or attribute names, or a
+`<template>`; and `<script>`, `<iframe>`, `<object>`, `<embed>`, `<form>`,
+`<base>`, `<meta>` and `<link>`. The kit takes the document's methods from
+`Document.prototype` when it starts, so an element named `createElement` or
+`body` cannot shadow them. `baum.cite` draws a citation chip (a button that asks to jump
 in a detail, text in a glance, dashed when unresolved), `baum.diff` a cited
 hunk (one line in a glance; numbered lines from the excerpt the page sent,
 coloured by the page's tokens, in a detail), `baum.md` a small Markdown subset
@@ -1080,13 +1096,64 @@ takes one `init {face, size, theme, lang, data, refs, check?}`, then `update
 when it grows ten times in a second by the same amount), `error {code,
 message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
 `console_error`, `csp_violation` with the scheme and host only,
-`render_failed`, `timeout`, `layout_loop`; at most 50), `jump {key}`, `ask`,
+`render_failed`, `timeout`, `layout_loop`; at most 10 of each), `jump {key}`, `ask`,
 `open`, and `key {key, shift}` for Escape, u, j, k, the arrows, `[`, `]` and
 `?` from a detail when the tile did not handle them and no field has focus.
-A citation's key is its type and its identifying fields
-(`hunk:<id>[:<a>-<b>]`, `file:<path>`, `prompt:<session>#<index>`,
-`check:<id>[#<test>]`, `risk:<id>` and so on), which the page uses for
-`refs` too.
+A detail frame keeps a 4px inset on every side for focus rings and draws
+nothing else around its content; the host pads the pane, places the frame in
+the pane's content column where a built-in detail's body goes, and sets it
+4px out on every side (`margin: -4px; width: calc(100% + 8px)`), so the
+tile's text lines up with the pane's heading.
+
+**Citation keys.** `refs` is keyed by each citation's key, which the page,
+the kit (`baum.refs.get`, `jump`) and Go compute alike: `JSON.stringify([type,
+...fields])`, with the fields of the type in this order, an absent optional
+field (`?`) as `null`, and a value kept as the string or number it is:
+
+| type | fields |
+|---|---|
+| `hunk` | `id`, `lines?` (as `[a, b]` when two integers) |
+| `file` | `path` |
+| `commit` | `sha` |
+| `pr` | `number` |
+| `pr_body` | `section?` |
+| `pr_comment`, `review_thread`, `bot_report`, `risk`, `evidence`, `change`, `tile` | `id` |
+| `prompt` | `session`, `index` |
+| `session_event` | `session`, `event` |
+| `check` | `id`, `test?` |
+| `issue` | `system`, `key` |
+| `spec` | `page`, `assertion?` |
+| `external_url` | `url` |
+| `attachment` | `id?`, `url?` (one of them) |
+
+So `{type: "hunk", id: "h_0123456789ab", lines: [12, 20]}` is
+`["hunk","h_0123456789ab",[12,20]]`, `{type: "check", id: "rspec#User", test:
+"save"}` is `["check","rspec#User","save"]` (distinct from `id: "rspec", test:
+"User#save"`), and `{type: "pr_body"}` is `["pr_body",null]`. The JSON is
+`JSON.stringify`'s: no spaces, non-ASCII characters (U+2028 and U+2029
+included) as they are, only quotes, backslashes and control characters
+escaped; Go writes it with `SetEscapeHTML(false)` and without escaping U+2028
+and U+2029. Anything else (an unknown type, a missing required field) has no
+key. `tiles/testdata/citation-keys.json` lists citations and their keys for
+every implementation's tests.
+
+**What the host must do.** The frame's author can post any message, so these
+are rules for whoever writes the page's side:
+
+- Route by `event.source`; drop anything from an unknown window, and read
+  every field with strict type checks.
+- Honour `jump`, `ask`, `open` and `key` only while that iframe is
+  `document.activeElement`. A `jump` key must be one the page resolved for
+  that frame and marked navigable.
+- Cap every string (1 KiB) and show tile-supplied text only as text.
+  `error.message` and `blocked` are written by the author and may hold review
+  data: they go to the local UI and the render check's result, nowhere else.
+- Clamp `resize` (120 to 20,000px), rate-limit messages, and unmount a frame
+  that floods.
+- Treat `hello`, `ready` and `error` as signals from honest authors only: a
+  tile can fake `ready`, swallow its errors or replace `console.error`. The
+  render check is a quality gate, not a security control; the sandbox, the
+  CSP and what the page gives a frame are the boundary.
 
 ### Tiles
 
