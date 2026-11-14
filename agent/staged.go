@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/review"
@@ -54,6 +55,11 @@ type StagedRun struct {
 	// version could supply. Tools that measure the prompts, not the reuse, set
 	// it; the desktop never does.
 	NoReuse bool
+	// Tiles, when set, adds the tile analysis of a tile review: library
+	// selection in the outline, fills and exhibits beside the details and
+	// the context (see StagedTiles). It is ignored when continuing a version
+	// and for a backend that runs one call at a time.
+	Tiles *StagedTiles
 }
 
 // StagedProgress is one stage result of a staged review.
@@ -74,6 +80,9 @@ type StagedProgress struct {
 	// MaskedClosed says the identifier pass has masked a secret in a closed
 	// value: the host rejects the run (RejectSecrets), so it shows no draft.
 	MaskedClosed bool
+	// Tiles is the tile analysis so far, for a run with StagedRun.Tiles:
+	// the selection and each selected type's fill. It is masked.
+	Tiles *TilesProgress
 }
 
 // StagedOutcome is what a staged review reports besides the document. Its
@@ -88,6 +97,23 @@ type StagedOutcome struct {
 	Outline StageOutcome
 	Details StageOutcome
 	Context StageOutcome
+	// Tiles is what the tile analysis did, for a run with StagedRun.Tiles
+	// that ran it; nil otherwise. Its calls are in Outcome.
+	Tiles *TilesOutcome
+}
+
+// TilesOutcome is what a staged review's tile analysis did: the outline's
+// selection, each selected type's fill and the exhibits, with the version
+// and digest of the texts it sent. The fills' and exhibits' strings are
+// masked.
+type TilesOutcome struct {
+	PromptVersion, PromptDigest string
+	Selection                   []Selection
+	Fills                       []FillResult
+	Exhibits                    *ExhibitsResult
+	// Waited is how long the review waited for the fills and exhibits once
+	// its details and context had ended (at most StagedTiles.Grace).
+	Waited time.Duration
 }
 
 // StageOutcome is what one stage of a staged review did and spent. Its
@@ -136,6 +162,7 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 		for _, stage := range []StageOutcome{outcome.Outline, outcome.Details, outcome.Context} {
 			outcome.add(stage.Outcome)
 		}
+		s.tilesOutcome()
 		outcome.SchemaRevision = g.Validator.Revision
 		outcome.IdentifierRedaction = s.redaction()
 	}()
@@ -166,6 +193,8 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 		return b
 	}
 	detailsBudgets, contextBudgets = exhaust(detailsBudgets), exhaust(contextBudgets)
+	var extraBudget Budgets
+	contextBudgets, extraBudget = extraBudgets(run.Budgets, contextBudgets, s.tiles.extras())
 	if continued {
 		detailsBudgets = run.Budgets
 	}
@@ -183,10 +212,12 @@ func (g *Generator) StagedReview(ctx context.Context, run StagedRun) (outcome St
 		if continued {
 			details()
 		} else if concurrentCalls(g.Backend) {
+			stopExtras := s.startExtras(ctx, extraBudget)
 			var wg sync.WaitGroup
 			wg.Go(details)
 			wg.Go(func() { s.contextStage(ctx, contextBudgets) })
 			wg.Wait()
+			stopExtras()
 		} else {
 			// A backend that shares per-call state in the run directory runs
 			// one stage at a time, the details first.
@@ -272,6 +303,9 @@ type stagedReview struct {
 	run     StagedRun
 	outcome *StagedOutcome
 	prompt  StagedPrompt
+	// tiles is the tile analysis, nil without one.
+	tiles    *tileAnalysis
+	redactor *bundle.Redactor
 	// prefix starts every stage's prompt: the shared instructions, the
 	// bundle and the source excerpts.
 	prefix, tileText, repairEnding string
@@ -313,10 +347,17 @@ func (s *stagedReview) prepare(ctx context.Context) error {
 	if s.identifiers, err = review.NewOutputRedactor(g.Validator, redactor, run.Bundle, nil); err != nil {
 		return err
 	}
+	s.redactor = redactor
+	if s.tiles, err = newTileAnalysis(ctx, g, run); err != nil {
+		return err
+	}
 	if err := tilecatalogue.Validate(run.TileKinds); err != nil {
 		return fmt.Errorf("tile kinds: %w", err)
 	}
 	if s.outlineSchema, err = g.Validator.OutlineSchema(); err != nil {
+		return err
+	}
+	if s.outlineSchema, err = s.tiles.outlineSchema(s.outlineSchema); err != nil {
 		return err
 	}
 	if s.detailsSchema, err = g.Validator.DetailsSchema(run.TileKinds); err != nil {
@@ -405,6 +446,7 @@ func (s *stagedReview) report(progress StagedProgress) {
 		return
 	}
 	progress.Document, progress.MaskedClosed = draft, s.closed() > 0
+	progress.Tiles = s.tiles.progress()
 	s.run.Progress(progress)
 }
 
@@ -419,13 +461,19 @@ func (s *stagedReview) outlineStage(ctx context.Context) error {
 	var outline []byte
 	task := s.task(StageOutline, s.outlineSchema, outlineBudgets(s.run.Budgets))
 	task.PassPrompt = func(pass TaskPass) (string, error) {
-		text := s.prefix + "\n\n" + s.prompt.Outline
+		text := s.prefix + "\n\n" + s.tiles.outlinePrompt(s.prompt.Outline)
 		if pass.Number == 1 {
 			return text, nil
 		}
 		return text + s.repair(pass, "outline"), nil
 	}
+	var selection json.RawMessage
 	task.Accept = func(ctx context.Context, pass TaskPass, reply []byte, outcome *Outcome) (Verdict, error) {
+		if s.tiles != nil {
+			// The library selection is the tile analysis's, not the
+			// review's: the outline is prepared exactly as without it.
+			reply, selection = splitOutline(reply)
+		}
 		masked, err := s.mask(ctx, reply, outcome)
 		if err != nil {
 			return Verdict{}, err
@@ -445,6 +493,9 @@ func (s *stagedReview) outlineStage(ctx context.Context) error {
 		s.outcome.Reason, s.outcome.Findings, s.outcome.RejectedDocument = stage.Reason, stage.Findings, stage.RejectedDocument
 		s.rejected = rejected
 		return nil
+	}
+	if err := s.tiles.choose(ctx, s.redactor, selection); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -531,7 +582,7 @@ func (s *stagedReview) detailsStage(ctx context.Context, ids []string, budgets B
 	// them, whose risk omissions a repair preserves.
 	first := map[string][]byte{}
 	var firstSession string
-	asked := s.prefix + "\n\n" + s.prompt.Details + s.tileText + s.outlineBlock()
+	asked := s.prefix + "\n\n" + s.prompt.Details + s.tileText + s.outlineBlock() + s.tiles.reviewChecks()
 	task := s.task(StageDetails, s.detailsSchema, budgets)
 	task.PassPrompt = func(pass TaskPass) (string, error) {
 		if pass.Number == 1 {
@@ -727,6 +778,11 @@ func RedactStagedOutput(ctx context.Context, validator *review.DocumentValidator
 				stage.Accounting.ClearStrings()
 				stage.Usage.Speed = nil
 			}
+			for _, o := range outcome.Tiles.outcomes() {
+				o.Reason, o.Findings, o.Model, o.RejectedDocument, o.Diagnostics = "", "", "", nil, nil
+				o.Accounting.ClearStrings()
+				o.Usage.Speed = nil
+			}
 		}
 	}()
 	if redacted, closed, err = RedactOutput(ctx, validator, redactor, document, b, checkout, &outcome.Outcome); err != nil {
@@ -747,6 +803,21 @@ func RedactStagedOutput(ctx context.Context, validator *review.DocumentValidator
 		}
 		closed = saturatingSum(closed, stageClosed)
 		if stage.Reason, err = reasons.Text(ctx, stage.Reason); err != nil {
+			return nil, 0, err
+		}
+	}
+	// The tile analysis's calls: their replies were masked as they landed,
+	// their outcomes' strings are masked here. They are not the review's,
+	// so a closed value masked in them does not reject it.
+	for _, o := range outcome.Tiles.outcomes() {
+		identifiers := o.IdentifierRedaction
+		o.IdentifierRedaction = nil
+		_, _, tileErr := RedactOutput(ctx, validator, redactor, nil, b, checkout, o)
+		o.IdentifierRedaction = identifiers
+		if tileErr != nil {
+			return nil, 0, tileErr
+		}
+		if o.Reason, err = reasons.Text(ctx, o.Reason); err != nil {
 			return nil, 0, err
 		}
 	}
