@@ -65,7 +65,7 @@ type FirstScreen struct {
 	// more), MediumRisks the first three medium risks the Risks tile ranks.
 	RiskiestChanges []Signal `json:"riskiestChanges"`
 	MediumRisks     []Signal `json:"mediumRisks"`
-	Breaking     struct {
+	Breaking        struct {
 		Given   bool `json:"given"`
 		Visible bool `json:"visible"`
 	} `json:"breaking"`

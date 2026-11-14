@@ -298,7 +298,7 @@ func Judge(ctx context.Context, p Pairing, o JudgeOptions) (Report, error) {
 					if j.CostUSD != nil {
 						cost = fmt.Sprintf(" $%.3f", *j.CostUSD)
 					}
-					fmt.Fprintf(o.Progress, "%d/%d %s %s %s %.0fs%s\n", done, len(tasks), t.id, t.order, status, j.Seconds, cost)
+					_, _ = fmt.Fprintf(o.Progress, "%d/%d %s %s %s %.0fs%s\n", done, len(tasks), t.id, t.order, status, j.Seconds, cost)
 				}
 				mu.Unlock()
 			}
