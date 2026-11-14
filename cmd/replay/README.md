@@ -74,6 +74,7 @@ deterministically, and `--limit` cuts the list):
 | `--detector-report` | Write the case ids by kind of detector evidence; see [Detectors](#detectors). |
 | `--case-file <path>` | Case ids from a file, one per line; blank lines and `#` comments are ignored. Same as repeating `--case`, and not combined with filters. |
 | `--chain` | Replay each pull request's revisions in order; see [Chains](#chains). |
+| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the compose stage over reviews that already exist; see [Composing tiles](#composing-tiles). |
 | `--limit N`, `--shuffle-seed N` | Cut the selection, after a seeded shuffle if given. |
 
 Settings. The defaults are the desktop app's built-in ones: Claude Code, the
@@ -86,7 +87,7 @@ so a run does not depend on them; the backend is `claude` unless named.
 | `--backend claude\|codex`, `--model`, `--effort` | The agent. Empty model and effort are the agent's own. `--model` takes what the agent takes, such as an alias like `sonnet`. |
 | `--staged` (default), `--no-staged` | Write the review in stages, or in one pass. `--no-staged` wins over `--staged`. |
 | `--reuse` | See [Previous versions](#previous-versions). |
-| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. |
+| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. With the compose stage the only id is `review-tiles-compose`, which replaces the whole composition prompt. |
 | `--time-limit 10m` | Time limit of one case. |
 | `--claude-config-dir`, `--codex-home`, `--agent-env KEY=VALUE` | The config fields the app sets for its agents (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `agent_env`); repeatable for `--agent-env`. Without them the agent runs with the ambient login. |
 | `--no-transcript` | Do not keep the agent's transcript. |
@@ -119,6 +120,60 @@ leaves no files, so `--resume` runs it again.
 `--out` is `baum/replay-runs` under the user cache directory by default (or
 `BAUM_REPLAY_OUT`), which is outside any repository. Outputs hold private
 content and are never committed.
+
+## Composing tiles
+
+The compose stage arranges a review's tiles (`agent.ComposeRun`): one call with
+no tools reads an inventory of the review and returns a layout, which the host
+normalises into a `baum.composition/1` composition, falling back to the change
+kind's template when the call fails. Two flags run that stage alone, through the
+`compose` generator, over reviews that already exist, so a composition prompt
+can be tried for a few cents a case without running the analysis again:
+
+```sh
+oss/bin/replay --dataset <dir> --compose-from-store --split calibration --representative --limit 60 --max-cases 60 --model sonnet
+oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-run> --model sonnet
+```
+
+- `--compose-from-store` composes the dataset's saved reviews
+  (`reviews/<machine>/<repository>.versions.sqlite`, copied and read
+  read-only). Cases are selected as usual; each composes the saved version
+  generated from its bundle (its metadata's `bundle_digest`), else the latest
+  version at the case's head, else the pull request's latest version. The
+  record says which (`review.match`: `bundle`, `head` or `latest`). A pull
+  request with no saved review fails with reason `internal`.
+- `--compose-only --from-run <run>` composes the review documents an earlier
+  run generated (`<run>/cases/<id>/document.json`), so the same analysis can be
+  arranged by several prompts.
+
+Saved reviews have no composition, so neither mode passes a previous
+composition; `--chain` is refused. Each case's `document.json` is a compose
+record (`replay.compose/1`): the composition, the template's, whether it fell
+back and why, whether the reply needed its repair, the normalisation fixes by
+kind, the landing tiles of both layouts, whether the layout differs from the
+template's, the featured changes and promotions, the inventory's size and cuts,
+and the stage's seconds. Beside it:
+
+| File | Holds |
+| --- | --- |
+| `composition.json` | The normalised composition, with its generator (prompt, model, template, fallback, fixes). |
+| `tiles.json` | The tile document the composition gives (`tiles.Compose`). |
+| `template.json`, `template-tiles.json` | The change kind's template and its tile document, for comparison. |
+| `inventory.txt` | The user message the composer read. |
+| `reply.json` | The composer's last reply, masked. |
+
+Validation normalises the stored composition again (it must change nothing),
+checks the composed document with the tile validator, and asserts every
+invariant of a generated document (`tilestest.CheckGenerated`): exact coverage,
+the overview and any severe risk on the landing page, every item presented
+once, the round trip back to the review.
+
+`replay metrics` adds, per case: `compose_fallback`, `compose_repaired`,
+`compose_fixes` and `compose_fix_<kind>`, `compose_differs_from_template`,
+`compose_landing_differs`, `compose_featured_changes`, `compose_promotions`,
+`compose_reasons`, `compose_landing_tiles`, `compose_inventory_bytes`,
+`compose_inventory_cut` and `compose_seconds`; their sums are the run's
+counters (fallbacks, repaired replies, cases that differ from the template).
 
 ## Detectors
 

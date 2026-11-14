@@ -1049,7 +1049,9 @@ by the template of its change kind (`tiles.TemplateName`), places the
 content's library, promoted and authored tiles, and returns the normalised
 composition with its generator naming the template. Templates are where a
 composer starts, a draft's layout until its composition is written, and the
-fallback when a composition is missing or unusable.
+fallback when a composition is missing or unusable. A composer reads the
+template it starts from in its inventory (`tiles/compose`; see "Composing
+tiles").
 
 | Template | Change kinds | Order |
 | --- | --- | --- |
@@ -1735,7 +1737,9 @@ ones did, absent when every prompt was built in. The daemon's jobs and
 `baum decisions` use the prompts resolved for the repository (repository, then
 global, then built in); `baum internal generate` opens no registry and uses the
 built-in prompts. The replaceable review prompts are the four of a staged
-review and a review group's (`review-group`), which is the whole text before
+review, the tile composition's (`review-tiles-compose`, which Settings ›
+Prompts lists though no job composes tiles yet), and a review group's
+(`review-group`), which is the whole text before
 the Submitting heading, the review instructions included; the one-pass review
 prompt (`prompt.Prompts`) is not replaceable, as no job writes one pull
 request's review in one pass. A retry of a staged review's details refuses to run when the
@@ -1761,6 +1765,13 @@ review group's prompt (`group-review-public-v6`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
+
+The arrangement of a review's tiles (see "Composing tiles") takes its system
+prompt through `ComposePrompts`; the module's `prompt.TilesPrompts` embeds
+`review-tiles-compose-public-v1.md` (`review-tiles-compose`, version
+`review-tiles-public-v1`), which a host can replace like the stage prompts. It
+has no Submitting heading: the call is a single completion whose backend says
+how to submit.
 
 A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
@@ -2046,6 +2057,95 @@ included, is free text, and none is a closed value. A task with a `Label`
 `rejected-<label>-N.json` instead (`TaskSchemaFile`), so tasks running in
 one directory at once, such as a staged review's stages, keep their own
 files; without one the names are unchanged.
+
+### Composing tiles
+
+```go
+out, err := agent.ComposeRun(ctx, agent.ComposeRequest{Completer: completer, Backend: name,
+	Prompts: prompt.TilesPrompts{}, Document: converted, Previous: previous, Preferences: prefs})
+```
+
+After a review is analysed, one structured call with no tools and no files
+chooses and arranges its tiles. It goes through `agent.Completer` (Claude
+Code with no tools but StructuredOutput, Codex with its shell off and the
+schema as a strict output schema), so it reads no bundle and costs a few
+thousand tokens. Nothing calls it yet but replay; the pipeline, publishing and
+storage wire it in later.
+
+**Inventory.** `compose.BuildInventory(doc, fills, previous, prefs)`
+(`tiles/compose`) turns the tile document `tiles.FromReview` converted into
+the composer's user message, JSON on one line:
+
+- `pull_request`: title, change kind, breaking change, the recommendation with
+  the changes it names (`tiles.RecommendedChanges`), risk score, reading time,
+  whether there is a previous version;
+- `template`: the change kind's template (`tiles.Template`), its entries and
+  the tiles it shows on the landing page;
+- `tiles`: every tile the template places, in its order, with the sizes it
+  allows and what its glance shows: a change's title, kind, state against the
+  previous version, assessed level and factors, review score, worst risk tier,
+  summary (300 characters) and attention (200), hunks, files and up to three
+  paths, added and deleted lines, evidence by status and up to three missing or
+  failed claims, its active risks, and its table and code blocks under handles
+  (`blk_1`, …: rows and column names, or language, lines and caption); the
+  risks tile's critical and high risks and the next three with their text; the
+  evidence tile's gaps; counts for decisions (by a human, by an agent nobody
+  approved), media, intent lines and everything else;
+- `library`: the library tiles the analysis selected (`compose.Fill`), none
+  until library fills exist;
+- `previous`: the previous composition's entries that name a tile this
+  version has, its promoted tiles and its reasons;
+- `preferences`: the repository's text (1,000 characters) and pins.
+
+Text is stripped of control characters and folded onto one line. The
+inventory is deterministic and aims at 40 KiB: past that it cuts, in order,
+block details, paths, the previous reasons, the text of risks below high,
+missing claims, attention, summaries to 100 characters, the summaries of
+changes scored 2 or less, every summary, severe risk texts to 60 characters
+and titles, and names the cuts in `cut`. IDs, types, sizes, scores and
+headlines are never cut, since a composer cannot place a tile it is not told
+of. A typical review's inventory is 2–12 KB.
+
+**Reply.** `compose.ReplySchema()` is strict-mode ready (every property
+required, objects closed, nulls explicit, so `codex.StrictSchema` leaves it as
+it is): `entries` (`{tile, size, group, why}`, `group` `changes` or null),
+`changes_shown` (1–8 or null), `promote` (`{block, id, title}` by handle, at
+most 3), `moves` (`{tile, why}`) and `custom_suggestion`.
+`Inventory.Composition` maps a reply onto a composition: the entries become
+the layout, their reasons `notes.why`, a handle becomes the change and block
+position of a promotion (an unknown handle a promotion of no change, which
+normalisation drops and counts).
+
+**Repair and fallback.** A reply that is not JSON of the reply schema (the
+host checks everything but string lengths, which normalisation bounds) gets
+one repair call: the inventory again, the problems and the rejected reply as
+data. Problems the host can fix (unknown tiles, sizes, groups, omissions) are
+not repaired but normalised. Then `tiles.StabilizeIDs` against the previous
+composition, the repository's pins stamped (an entry pinned and out of its
+group, a pinned tile the layout omits added at the front),
+`tiles.NormalizeComposition`, and `SetGenerator` with the prompt's version and
+digest, the model, the time, the template's name and the fixes by kind. When
+anything fails (no completer, the prompt, the call, a reply still invalid
+after the repair, masking, a layout that cannot be applied), the composition
+is the template with the pins, the generator's `fallback` set and the reason,
+the host's own words, its only problem. `ComposeRun` errs only for a document
+that takes no composition.
+
+**Redaction and metering.** Every reply is masked with `RedactTaskOutput`
+before it is read, so the reasons, titles and suggestion of a stored
+composition never hold a secret, and so are the outcome's model and
+accounting strings. Each call adds to the `Outcome` as a stage's does: calls,
+provider attempts, charged tokens, usage, an accounting attempt, rejections the
+harness made against the schema, and the repair.
+
+**Prompt.** `prompt.TilesPrompts` (`review-tiles-compose`, version
+`review-tiles-public-v1`) is the system prompt, the same for every backend
+since the backend adds how to submit: the reader and the landing grid, what
+each glance shows, the inventory as model-written data (only `preferences`
+instructs), the rules the host enforces anyway, how to lead (risks and changes
+that need a decision at half, at most three featured changes, the rest in the
+group by score, sizes by importance, small pull requests left alone), reasons
+only for what moves, and two synthetic examples.
 
 ## `decisions`
 
@@ -3421,7 +3521,11 @@ generator's own through a `Meter` registered under its name (for reviews:
 sections, risks by tier, evidence by status, hunk coverage and, between consecutive
 revisions, section ID survival, content continuity, reverse matching with splits
 and merges, and risk lifecycle checks), with a comparison of
-two runs by case. It is developer tooling, not a command of the `baum` binary;
+two runs by case. `--compose-from-store` and `--compose-only --from-run`
+run only the compose stage (`agent.ComposeRun`) over the dataset's saved
+reviews or an earlier run's documents, writing each case's composition, its
+tile document and the template's for comparison, with fallback, repair and
+normalisation counters. It is developer tooling, not a command of the `baum` binary;
 its [README](cmd/replay/README.md) describes the dataset layout, the flags and
 the files written.
 

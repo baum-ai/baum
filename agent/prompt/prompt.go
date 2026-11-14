@@ -38,11 +38,20 @@
 // submit-stage-codex.md, submit-stage-cursor.md, with {part} replaced by what
 // the stage returns), and names its schema file (agent.TaskSchemaFile).
 //
+// The arrangement of a review's tiles (agent.ComposeRun) has one more,
+// returned by TilesPrompts:
+//
+//	review-tiles-compose-public-v1.md  the system prompt of the single call
+//	                                   that chooses and arranges the tiles
+//	                                   from an inventory; it has no
+//	                                   Submitting heading, as the completing
+//	                                   backend says how to submit
+//
 // # Custom prompts
 //
 // A host may replace the text of any prompt by passing Overrides (a map from
-// ID to text) in the Overrides field of GroupPrompts or StagedPrompts, or to
-// FixWith. The one-pass review (Prompts) is not replaceable: a review of one
+// ID to text) in the Overrides field of GroupPrompts, StagedPrompts or
+// TilesPrompts, or to FixWith. The one-pass review (Prompts) is not replaceable: a review of one
 // pull request is staged, and a group's prompt (review-group) is the whole
 // text, the review instructions included. An override replaces the built-in text of its part only: the
 // Submitting heading and the backend's submit block (the output contract)
