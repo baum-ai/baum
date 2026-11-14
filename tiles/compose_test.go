@@ -334,7 +334,7 @@ func TestNormalizeRules(t *testing.T) {
 			Library:    []tiles.LibraryTile{tilestest.LibraryTile("table_flag_defaults", "h_000000000003")},
 			Promotions: []tiles.Promotion{table},
 			Authored:   []tiles.AuthoredTile{tilestest.AuthoredTile("table_flag_defaults", "h_000000000003"), tilestest.AuthoredTile("table_flag_defaults_2", "h_000000000003")},
-			Layout:     tiles.CompositionLayout{Entries: sizes("table_flag_defaults:half", "overview:half")},
+			Layout:     tiles.CompositionLayout{Entries: sizes("overview:half", "risks:half", "table_flag_defaults:half", "sec_retry_policy:half", "sec_config_flag:half")},
 		}},
 		{"renamed-long", exhibits, tiles.Composition{
 			Authored: []tiles.AuthoredTile{

@@ -2702,34 +2702,43 @@ than displace: it grows by one row for each of its rows that holds such a
 tile, at most two (`tiles.ExtraRows`, served as the
 layout's `extra_rows`, which `landing` already counts), so the other tiles
 keep three rows (`CheckGenerated` invariant 15). A
-composer's layout then passes four guard rails
-(`tiles/guards.go`), each a fix of its own kind. A library tile without a
-destructive or breaking item, or an authored tile, never pushes a core tile
-off the first screen (`extra_place`; the templates hold it too): the core
-tiles are the overview, the risks and evidence tiles, a current change with
-an active critical, high or medium risk, a change the recommendation names, a
-library tile that leads and a pinned tile. When the first screen shows fewer
-of them than it would with those tiles at the end, the first of them on the
-first screen moves, at its default size when the composer gave it a larger
-one: beside the change it supports (`tiles.SupportedChange`), the two at
-half, when that change stands outside the group and the core tiles stay in
-view; else just after the later of the risks and evidence tiles; else to the
-first place further down that shows them, never inside the changes group. A
-pinned tile stays, and a layout in which a person hid tiles is theirs. Then
-evidence with two or more gaps
-stays on the landing page, where it fits without pushing a tile that must be
-seen off the first screen, and in the place of a tile that need not be seen
-when the only room left is in the rows library and authored tiles add
-(`evidence_gaps`; the tile it displaces is the last shown, one that is not a
-current change, such as context or decisions, before a change), a change
-featured alone at half takes its full row
-(`lone_featured`), and a first screen (the first two rows) or a landing page
-that shows fewer current changes than the template's, with nothing that must
-be seen instead
-(the risks tile with a critical or high risk, a change the recommendation
-names, evidence with gaps, a library tile with a destructive or breaking item,
-a pinned tile) or tiles a person hid, takes the
-template's layout (`first_screen`). `tilestest.CheckGenerated` checks the rows
+composer's layout then passes five guard rails
+(`tiles/guards.go`), each a fix of its own kind; a layout a person edited
+skips all five.
+
+1. A library tile without a destructive or breaking item, or an authored
+   tile, never pushes a core tile off the first screen (`extra_place`; the
+   templates hold it too). The core tiles are the overview, the risks and
+   evidence tiles, a current change with an active critical, high or medium
+   risk, and what must be seen (a change the recommendation names, a library
+   tile that leads, a pinned tile). When the first screen shows fewer of them
+   than it would with those tiles at the end, the first of them on the first
+   screen moves, at its default size when the composer gave it a larger one:
+   beside the change it supports (`tiles.SupportedChange`), the two at half,
+   when that change stands outside the group and the core tiles stay in view
+   (the change taking half is recorded as a fix too); else just after the
+   changes group when that change is a member; else just after the later of
+   the risks and evidence tiles; else to the first place further down that
+   shows them, never inside the changes group. A pinned tile stays, and a
+   layout in which a person hid tiles is theirs.
+2. Such a tile that the layout gives the full row while its content takes
+   less (three items or fewer, a table of fewer than four columns) takes its
+   content's size when it then shares its row with the tile after it
+   (`extra_size`); alone on its row it keeps the full row, which the row fill
+   would give it back anyway.
+3. Evidence with two or more gaps stays on the landing page, where it fits
+   without pushing a tile that must be seen off the first screen, and in the
+   place of a tile that need not be seen when the only room left is in the
+   rows library and authored tiles add (`evidence_gaps`; the tile it
+   displaces is the last shown, one that is not a current change, such as
+   context or decisions, before a change).
+4. A change featured alone at half takes its full row (`lone_featured`).
+5. A first screen (the first two rows) or a landing page that shows fewer
+   current changes than the template's, with nothing that must be seen
+   instead (the risks tile with a critical or high risk, a change the
+   recommendation names, evidence with gaps, a library tile with a
+   destructive or breaking item, a pinned tile) or tiles a person hid, takes
+   the template's layout (`first_screen`). `tilestest.CheckGenerated` checks the rows
 (invariant 13) and the guard rails (14). On a narrow window's two-column grid
 the page lets a block's last card span both columns when it would be alone in
 its row, which changes no row of the canonical grid.

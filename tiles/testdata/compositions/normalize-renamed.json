@@ -2,9 +2,6 @@
   "fixes": [
     "tile \"table_flag_defaults\" has the ID of another tile; it is renamed",
     "tile \"table_flag_defaults_2\" has the ID of another tile; it is renamed",
-    "the layout does not place tile \"risks\"; it is added in the default order",
-    "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
-    "the layout does not place tile \"sec_config_flag\"; it is added in the default order",
     "the layout does not place tile \"evidence\"; it is added in the default order",
     "the layout does not place tile \"media\"; it is added in the default order",
     "the layout does not place tile \"intent\"; it is added in the default order",
@@ -14,7 +11,10 @@
     "the layout does not place tile \"library_table_flag_defaults\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2_2\"; it is added in the default order",
-    "the layout shows fewer changes on the first screen or the landing page than the template, with nothing that must be seen instead; the template's layout is kept"
+    "tile \"evidence\" ended a row with empty units; it grows to fill the row",
+    "tile \"decisions\" ended a row with empty units; it grows to fill the row",
+    "tile \"everything_else\" ended a row with empty units; it grows to fill the row",
+    "tile \"table_flag_defaults_2_2\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -45,20 +45,8 @@
           "size": "half"
         },
         {
-          "tile": "library_table_flag_defaults",
-          "size": "half"
-        },
-        {
-          "tile": "table_flag_defaults_2",
-          "size": "half"
-        },
-        {
-          "tile": "table_flag_defaults_2_2",
-          "size": "half"
-        },
-        {
           "tile": "media",
-          "size": "half"
+          "size": "third"
         },
         {
           "tile": "intent",
@@ -70,10 +58,22 @@
         },
         {
           "tile": "decisions",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "everything_else",
+          "size": "half"
+        },
+        {
+          "tile": "library_table_flag_defaults",
+          "size": "half"
+        },
+        {
+          "tile": "table_flag_defaults_2",
+          "size": "half"
+        },
+        {
+          "tile": "table_flag_defaults_2_2",
           "size": "full"
         }
       ]
@@ -219,20 +219,8 @@
         "size": "half"
       },
       {
-        "tile": "library_table_flag_defaults",
-        "size": "half"
-      },
-      {
-        "tile": "table_flag_defaults_2",
-        "size": "half"
-      },
-      {
-        "tile": "table_flag_defaults_2_2",
-        "size": "half"
-      },
-      {
         "tile": "media",
-        "size": "half"
+        "size": "third"
       },
       {
         "tile": "intent",
@@ -244,16 +232,28 @@
       },
       {
         "tile": "decisions",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "everything_else",
+        "size": "half"
+      },
+      {
+        "tile": "library_table_flag_defaults",
+        "size": "half"
+      },
+      {
+        "tile": "table_flag_defaults_2",
+        "size": "half"
+      },
+      {
+        "tile": "table_flag_defaults_2_2",
         "size": "full"
       }
     ],
     "groups": [],
-    "landing": 10,
-    "extra_rows": 2
+    "landing": 9,
+    "extra_rows": 1
   },
   "tiles": [
     {

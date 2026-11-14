@@ -87,6 +87,9 @@ var templates = map[string][]slot{
 		{TypeOverview, SizeHalf}, {TypeEverythingElse, SizeHalf}, {TypeRisks, SizeHalf}, {TypeEvidence, SizeThird},
 		{slotLibrary, ""}, {slotComposed, SizeHalf}, {slotChanges, SizeThird}, {slotAuthored, ""}, {slotRest, ""},
 	},
+	// The docs template places the evidence with the rest, so its library
+	// and authored tiles come last, after it: placed after the changes they
+	// would stand above the evidence.
 	TemplateDocs: {
 		{TypeOverview, SizeFull}, {slotChanges, SizeThird}, {TypeEverythingElse, SizeThird}, {slotRest, ""},
 	},

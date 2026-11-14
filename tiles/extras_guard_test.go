@@ -90,11 +90,12 @@ func TestTemplatesPlaceSupportingTilesAfterRisksAndEvidence(t *testing.T) {
 
 // A library tile that does not lead and takes the second row from the lead
 // change and the evidence moves down to just after the evidence, at the
-// size its content needs.
+// size its content needs: beside the change it supports (sec_api, the lead
+// change) it would push the evidence off the first screen.
 func TestGuardMovesASupportingTileOffTheSecondRow(t *testing.T) {
 	normalized, doc := convert(t, fixtureNamed(t, "example"))
 	c := &tiles.Composition{
-		Library: []tiles.LibraryTile{tilestest.LibraryTile("retry_budget", docsHunk)},
+		Library: []tiles.LibraryTile{tilestest.LibraryTile("retry_budget", "h_578603ca5fc8")},
 		Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
 			{Tile: tiles.TypeOverview, Size: tiles.SizeHalf}, {Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
 			{Tile: "retry_budget", Size: tiles.SizeFull},
@@ -250,5 +251,145 @@ func TestGuardSizesSupportingTilesByContent(t *testing.T) {
 	c.Layout.Entries = slices.DeleteFunc(c.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == "table_delays" })
 	if _, report, composed := checkComposed(t, normalized, doc, &c); report.Counts()[tiles.FixExtraSize] != 0 {
 		t.Errorf("a lone supporting tile shrank: %v; rows %v", report.Messages(), rowsOf(composed))
+	}
+}
+
+// displacingLayout puts a library tile citing hunk on the second row, at
+// full, above the lead change and the evidence of the example review.
+func displacingLayout(hunk string) *tiles.Composition {
+	return &tiles.Composition{
+		Library: []tiles.LibraryTile{tilestest.LibraryTile("retry_budget", hunk)},
+		Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+			{Tile: tiles.TypeOverview, Size: tiles.SizeHalf}, {Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
+			{Tile: "retry_budget", Size: tiles.SizeFull},
+			{Tile: "sec_api", Size: tiles.SizeHalf}, {Tile: tiles.TypeEvidence, Size: tiles.SizeHalf},
+			{Tile: "sec_retry", Size: tiles.SizeThird, Group: tiles.GroupChanges}, {Tile: "sec_deadletter", Size: tiles.SizeThird, Group: tiles.GroupChanges},
+			{Tile: "sec_ackfix", Size: tiles.SizeThird, Group: tiles.GroupChanges}, {Tile: "sec_docs", Size: tiles.SizeThird, Group: tiles.GroupChanges},
+		}},
+	}
+}
+
+// A supporting tile whose change is a member of the changes group moves to
+// just after the group, the nearest it can stand to that change.
+func TestGuardPutsASupportingTileAfterTheGroupOfItsChange(t *testing.T) {
+	normalized, doc := convert(t, fixtureNamed(t, "example"))
+	n, report, composed := checkComposed(t, normalized, doc, displacingLayout("h_141757b19901")) // sec_retry's
+	if report.Counts()[tiles.FixExtraPlace] != 1 {
+		t.Fatalf("fixes %v", report.Messages())
+	}
+	if at := indexOf(n.Layout.Entries, "retry_budget"); at != indexOf(n.Layout.Entries, "sec_docs")+1 {
+		t.Errorf("rows %v", rowsOf(composed))
+	}
+}
+
+// Moving a supporting tile beside its change records the change taking half.
+func TestGuardRecordsTheChangeItResizes(t *testing.T) {
+	normalized, doc := convert(t, fixtureNamed(t, "example"))
+	c := &tiles.Composition{
+		Library: []tiles.LibraryTile{tilestest.LibraryTile("retry_budget", deadletterHunk)},
+		Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+			{Tile: tiles.TypeRisks, Size: tiles.SizeHalf}, {Tile: tiles.TypeEvidence, Size: tiles.SizeHalf},
+			{Tile: "retry_budget", Size: tiles.SizeFull},
+			{Tile: "sec_deadletter", Size: tiles.SizeFull},
+			{Tile: tiles.TypeOverview, Size: tiles.SizeHalf}, {Tile: "sec_docs", Size: tiles.SizeHalf},
+			{Tile: "sec_api", Size: tiles.SizeThird, Group: tiles.GroupChanges}, {Tile: "sec_retry", Size: tiles.SizeThird, Group: tiles.GroupChanges},
+			{Tile: "sec_ackfix", Size: tiles.SizeThird, Group: tiles.GroupChanges},
+		}},
+	}
+	_, report, composed := checkComposed(t, normalized, doc, c)
+	if !slices.ContainsFunc(report.Fixes, func(f tiles.Fix) bool { return f.Kind == tiles.FixExtraPlace && f.Tile == "sec_deadletter" }) {
+		t.Errorf("the resized change is not recorded: %v; rows %v", report.Messages(), rowsOf(composed))
+	}
+}
+
+// The new guard rails leave a layout a person edited, or one in which a
+// person hid tiles, as it is; and guarding a guarded layout changes nothing.
+func TestSupportingTileGuardsLeaveEditedAndHiddenLayouts(t *testing.T) {
+	normalized, doc := convert(t, fixtureNamed(t, "example"))
+	n, report := tiles.NormalizeComposition(doc, displacingLayout(docsHunk))
+	if report.Counts()[tiles.FixExtraPlace] != 1 {
+		t.Fatalf("the layout does not trigger the guard: %v", report.Messages())
+	}
+	// Idempotence: composing the guarded layout keeps its order, and
+	// normalising again fixes nothing (checkComposed also checks this).
+	composed, err := tiles.Compose(doc, &n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, e := range composed.Layout.Entries {
+		if e.Group != tiles.GroupObsolete {
+			order = append(order, e.Tile)
+		}
+	}
+	var want []string
+	for _, e := range n.Layout.Entries {
+		want = append(want, e.Tile)
+	}
+	if !slices.Equal(order, want) {
+		t.Errorf("composing moved tiles again: %v, want %v", order, want)
+	}
+	if _, again := tiles.NormalizeComposition(doc, &n); len(again.Fixes) != 0 {
+		t.Errorf("normalising twice fixes: %v", again.Messages())
+	}
+
+	for _, tc := range []struct {
+		name string
+		edit func(*tiles.Composition)
+	}{
+		{"edited", func(c *tiles.Composition) { c.Layout.Edited = true }},
+		{"hidden", func(c *tiles.Composition) { c.Layout.Hidden = []string{tiles.TypeContext} }},
+	} {
+		c := displacingLayout(docsHunk)
+		tc.edit(c)
+		composed, err := tiles.Compose(doc, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !onFirstScreen(composed, "retry_budget") {
+			t.Errorf("%s: the supporting tile moved: %v", tc.name, rowsOf(composed))
+		}
+		for _, failure := range tilestest.CheckGenerated(normalized, c, composed) {
+			if tc.name == "hidden" {
+				t.Errorf("%s: %s", tc.name, failure)
+			}
+		}
+	}
+	// A full supporting tile that would share its row keeps the full row in
+	// an edited layout.
+	sized := displacingLayout(docsHunk)
+	sized.Layout.Entries = append(slices.Delete(sized.Layout.Entries, 2, 3), tiles.Entry{Tile: "retry_budget", Size: tiles.SizeFull})
+	sized.Layout.Entries = append(sized.Layout.Entries, tiles.Entry{Tile: tiles.TypeIntent, Size: tiles.SizeHalf})
+	sized.Layout.Edited = true
+	if composed, err := tiles.Compose(doc, sized); err != nil || slices.ContainsFunc(composed.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == "retry_budget" && e.Size != tiles.SizeFull }) {
+		t.Errorf("an edited layout's size changed: %v %v", err, rowsOf(composed))
+	}
+}
+
+// SupportedChange takes the change whose hunks the data cites most, the
+// first in review order on a tie, and none for data citing no current
+// change's hunk.
+func TestSupportedChangeTieBreaking(t *testing.T) {
+	_, doc := convert(t, fixtureNamed(t, "example"))
+	cite := func(hunks ...string) json.RawMessage {
+		var parts []string
+		for _, h := range hunks {
+			parts = append(parts, fmt.Sprintf(`{"type":"hunk","id":%q}`, h))
+		}
+		return json.RawMessage(`{"items":[{"cites":[` + strings.Join(parts, ",") + `]}]}`)
+	}
+	for _, tc := range []struct {
+		data json.RawMessage
+		want string
+	}{
+		{cite(docsHunk, deadletterHunk), "sec_deadletter"},             // a tie: sec_deadletter comes first in review order
+		{cite(deadletterHunk, docsHunk), "sec_deadletter"},             // the order of the citations does not matter
+		{cite(docsHunk, "h_3d1ee52461f5", deadletterHunk), "sec_docs"}, // more of sec_docs's hunks
+		{cite("h_ffffffffffff"), ""},
+		{json.RawMessage(`not json`), ""},
+	} {
+		if got := tiles.SupportedChange(doc, tc.data); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.data, got, tc.want)
+		}
 	}
 }

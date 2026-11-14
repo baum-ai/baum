@@ -17,8 +17,10 @@ import (
 //     shows fewer of them than it would with those tiles moved to the end,
 //     the first of them on the first screen moves: beside the change it
 //     supports (SupportedChange) at half when that change stands outside
-//     the group and the two still leave the core tiles in view, else just
-//     after the later of the risks and evidence tiles, else to the first
+//     the group and the two still leave the core tiles in view (the change
+//     taking half is recorded as a fix of its own), else just after the
+//     changes group when that change is a member, else just after the later
+//     of the risks and evidence tiles, else to the first
 //     place further down that shows the core tiles. It takes its default
 //     size (LibrarySize, AuthoredSize) when the composer gave it a larger
 //     one. A pinned tile stays; a layout in which a person hid tiles is
@@ -398,6 +400,9 @@ func (cm *composer) moveExtra(c *Composition, at int, size Size, target map[stri
 		entry.Size = size
 	}
 	rest := slices.Delete(slices.Clone(c.Layout.Entries), at, at+1)
+	// resized names the change accept records as taking half beside the
+	// tile, when it did.
+	resized := ""
 	accept := func(entries []Entry) bool {
 		trial := *c
 		trial.Layout.Entries = entries
@@ -408,21 +413,34 @@ func (cm *composer) moveExtra(c *Composition, at int, size Size, target map[stri
 		c.Layout.Entries = entries
 		if !cm.template {
 			cm.fix(FixExtraPlace, entry.Tile, "")
+			if resized != "" {
+				cm.fix(FixExtraPlace, resized, "it takes half beside a tile that supports it")
+			}
 		}
 		return true
 	}
 	index := func(id string) int { return slices.IndexFunc(rest, func(e Entry) bool { return e.Tile == id }) }
+	change := cm.supportedChange(entry.Tile)
+	k := index(change)
 	// Beside the change it supports, the two at half.
-	if change := cm.supportedChange(entry.Tile); change != "" {
-		if k := index(change); k >= 0 && rest[k].Group == "" && !rest[k].Pin && cm.byID[change] != nil &&
-			slices.Contains(SizesIn(cm.doc, *cm.byID[change]), SizeHalf) && slices.Contains(cm.sizesOf(entry.Tile), SizeHalf) {
-			beside := slices.Clone(rest)
-			beside[k].Size = SizeHalf
-			half := entry
-			half.Size = SizeHalf
-			if accept(slices.Insert(beside, k+1, half)) {
-				return true
-			}
+	if change != "" && k >= 0 && rest[k].Group == "" && !rest[k].Pin && cm.byID[change] != nil &&
+		slices.Contains(SizesIn(cm.doc, *cm.byID[change]), SizeHalf) && slices.Contains(cm.sizesOf(entry.Tile), SizeHalf) {
+		beside := slices.Clone(rest)
+		if beside[k].Size != SizeHalf {
+			beside[k].Size, resized = SizeHalf, change
+		}
+		half := entry
+		half.Size = SizeHalf
+		if accept(slices.Insert(beside, k+1, half)) {
+			return true
+		}
+		resized = ""
+	}
+	// Just after the changes group, when the change it supports is a member
+	// (a tile cannot join the group).
+	if k >= 0 && rest[k].Group != "" {
+		if last := lastIndex(rest, rest[k].Group); accept(slices.Insert(slices.Clone(rest), last+1, entry)) {
+			return true
 		}
 	}
 	// After the later of the risks and evidence tiles.
