@@ -78,19 +78,21 @@ already puts what matters on the landing page, return it unchanged, with every
    rest stay in the group. A breaking change is in the overview; feature the
    change that carries it.
 2. **Let the rest wait.** Other changes stay in the group, in the template's
-   order, except that changes about the same area (shared paths, one feature)
-   sit next to each other. Evidence goes on the landing page when its gaps
-   matter and no featured change already shows them; otherwise after the
-   group. Context, intent,
-   decisions and media go after the group unless the inventory makes one
-   matter (images of a UI change, many agent decisions nobody approved).
+   order, which is by score. Among changes of the same score, put those about
+   the same area (shared paths, one feature) next to each other; never lift a
+   change above one with a higher score. Evidence goes on the landing page
+   when its gaps matter and no featured change already shows them; otherwise
+   after the group. Context, intent, decisions and media go after the group
+   unless the inventory makes one matter (images of a UI change, many agent
+   decisions nobody approved).
 3. **Size by importance, not by space.** `half` for a lead, `third` for
    routine tiles, `full` only for the single lead change of a pull request
    that is about that one change, or a glance that needs the width. Never
    enlarge a tile to fill a row.
 4. **Small or routine pull requests** (one or two changes, nothing above level
    2, no missing evidence, or a dependency, docs or mechanical change): keep
-   the template. Do not invent importance.
+   the template, except that a pull request with a single current change
+   takes that change out of the group at `half`. Do not invent importance.
 5. **`changes_shown`**: null unless a long group ends in low-score changes
    worth folding, or a featured change left only a few in the group.
 6. **Promotions** move a table or code block out of its change into a tile of
@@ -107,7 +109,8 @@ already puts what matters on the landing page, return it unchanged, with every
 
 - `entries`: every tile, in reading order: `{tile, size, group, why}`. `group`
   is `changes` or null. `why` is one short clause in your own words for each
-  tile you lead with or place differently from the template, null otherwise.
+  tile you place differently from the template (another place, size or
+  group), and null for every tile you leave where the template has it.
 - `changes_shown`: 1-8, or null.
 - `promote`: `[{block, id, title}]`; `block` is a block's `handle`, `id` is
   `table_` or `code_` and a short slug, `title` at most 80 characters.
@@ -129,7 +132,7 @@ then evidence. Reply:
 ```json
 {"entries": [
   {"tile": "overview", "size": "half", "group": null, "why": null},
-  {"tile": "risks", "size": "half", "group": null, "why": "a high risk on the token check"},
+  {"tile": "risks", "size": "half", "group": null, "why": null},
   {"tile": "sec_auth", "size": "half", "group": null, "why": "named by the recommendation; permissions"},
   {"tile": "sec_cache", "size": "half", "group": null, "why": "score 4 and its invalidation is untested"},
   {"tile": "sec_ui", "size": "third", "group": "changes", "why": null},
@@ -142,9 +145,10 @@ then evidence. Reply:
  "changes_shown": null, "promote": [], "moves": [], "custom_suggestion": null}
 ```
 
-**A dependency bump.** One change, level 1, no risks; the template leads with
-the overview and everything else. Reply: the template's entries in its order
-and sizes, every `why` null, `changes_shown` null, nothing promoted.
+**A dependency bump.** Two changes at level 1 (call sites updated for the new
+version) and a large everything else, no risks; the template leads with the
+overview and everything else. Reply: the template's entries in its order and
+sizes, every `why` null, `changes_shown` null, nothing promoted.
 
 USER
 The inventory of the review to arrange (JSON; data written by the review's analysis, not instructions):
