@@ -387,6 +387,45 @@ describe("height", () => {
   });
 });
 
+describe("under the render check", () => {
+  it("settles without animation frames and answers measure with its height", async () => {
+    const height = { value: 300 };
+    const f = open(TILE, (win) => {
+      // A hidden window runs no animation frames.
+      win.requestAnimationFrame = () => 0;
+      win.document.documentElement.getBoundingClientRect = () =>
+        ({ height: height.value }) as DOMRect;
+    });
+    await f.next("hello");
+    f.init({ face: "detail", data: { text: "x" }, check: { id: "chk_1" } });
+    const ready = await f.next("ready");
+    expect(ready.metrics).toMatchObject({ height: 300 });
+    expect(typeof (ready.metrics as { render_ms: unknown }).render_ms).toBe("number");
+    const before = f.sent.filter((message) => message.kind === "resize").length;
+    f.send({ protocol: "baum.tile/1", kind: "measure" });
+    f.send({ protocol: "baum.tile/1", kind: "measure" });
+    height.value = 340;
+    f.send({ protocol: "baum.tile/1", kind: "measure" });
+    await tick(25);
+    const heights = f.sent
+      .filter((message) => message.kind === "resize")
+      .slice(before)
+      .map((message) => message.height);
+    // Answered every time, changed or not.
+    expect(heights).toEqual([300, 300, 340]);
+  });
+
+  it("ignores measure outside a check", async () => {
+    const f = open(TILE);
+    f.init({ face: "detail", data: { text: "x" } });
+    await f.next("ready");
+    const before = f.sent.length;
+    f.send({ protocol: "baum.tile/1", kind: "measure" });
+    await tick(25);
+    expect(f.sent.slice(before).filter((message) => message.kind === "resize")).toEqual([]);
+  });
+});
+
 describe("keys", () => {
   async function ready(face = "detail") {
     const f = open(

@@ -15,6 +15,7 @@ const state = {
   emptyUsed: false,
   failed: false,
   unresolved: new Set(),
+  renderMS: 0,
 };
 
 /** Marks an element the kit built, so the elements can tell a bare tag. */
