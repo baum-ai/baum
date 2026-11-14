@@ -66,8 +66,8 @@ const (
 
 // Fill is a library tile the analysis selected for the review: its type, as a
 // library entry describes it, the hunks the outline chose for it and the fill's
-// state ("planned" while it runs, "ready", or "failed"). Library fills are not
-// generated yet; hosts pass none.
+// state ("planned" while it runs, "ready", or "failed"). Tile, for a ready
+// fill, is the library tile to place (FillOf).
 type Fill struct {
 	Type    string       `json:"type"`
 	Title   string       `json:"title"`
@@ -77,6 +77,11 @@ type Fill struct {
 	Hunks   []string     `json:"hunks,omitempty"`
 	Why     string       `json:"why,omitempty"`
 	State   string       `json:"state"`
+	// Items counts the data's top-level arrays and Leads says it has a
+	// destructive or breaking item (tiles.Leads).
+	Items map[string]int     `json:"items,omitempty"`
+	Leads bool               `json:"leads,omitempty"`
+	Tile  *tiles.LibraryTile `json:"-"`
 }
 
 // Preferences are a repository's standing instructions for its reviews'
@@ -93,6 +98,8 @@ type Inventory struct {
 	Template    TemplateFacts `json:"template"`
 	Tiles       []TileFacts   `json:"tiles"`
 	Library     []LibraryFact `json:"library,omitempty"`
+	// Authored are the authored tiles (exhibits) the analysis wrote.
+	Authored []AuthoredFact `json:"authored,omitempty"`
 	// Previous is the previous version's composition, nil without one.
 	Previous *PreviousFacts `json:"previous"`
 	// Preferences are the repository's, nil without any.
@@ -256,6 +263,10 @@ type LibraryFact struct {
 	Hunks   int          `json:"hunks"`
 	Why     string       `json:"why,omitempty"`
 	State   string       `json:"state"`
+	// Items counts what the tile lists, by kind (its data's arrays), and
+	// Leads says it lists a destructive or breaking item.
+	Items map[string]int `json:"items,omitempty"`
+	Leads bool           `json:"destructive_or_breaking,omitempty"`
 }
 
 // PreviousFacts is the previous version's composition as a composer sees it:
@@ -283,7 +294,7 @@ type PromotedFact struct {
 // library tiles (fills); the previous version's composition, when there is
 // one; and the repository's preferences. It is deterministic, and stays under
 // MaxInventoryBytes by cutting detail in a fixed order (Inventory.Cut).
-func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Composition, prefs Preferences) (*Inventory, error) {
+func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Composition, prefs Preferences, authored ...Authored) (*Inventory, error) {
 	if doc == nil {
 		return nil, errors.New("compose: no document")
 	}
@@ -294,7 +305,7 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 	inv.PullRequest = pullRequest(doc)
 	inv.PullRequest.Previous = previousVersion(doc)
 
-	template, _ := tiles.Template(doc, nil)
+	template, _ := tiles.Template(doc, extrasContent(fills, authored))
 	inv.Template = TemplateFacts{Name: template.Generator.Template, Entries: entryFacts(template.Layout.Entries), ChangesShown: template.Layout.ChangesShown}
 	composed, err := tiles.Compose(doc, &template)
 	if err != nil {
@@ -366,8 +377,9 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 	for _, fill := range fills {
 		inv.Library = append(inv.Library, LibraryFact{ID: tiles.LibraryTileID(fill.Type), Type: fill.Type, Title: clip(fill.Title, maxTitle),
 			UseWhen: clip(fill.UseWhen, maxSummary), Glance: clip(fill.Glance, maxSummary), Sizes: slices.Clone(fill.Sizes), Hunks: len(fill.Hunks),
-			Why: clip(fill.Why, maxAttention), State: fill.State})
+			Why: clip(fill.Why, maxAttention), State: fill.State, Items: fill.Items, Leads: fill.Leads})
 	}
+	inv.Authored = authoredFacts(doc, authored)
 	inv.Previous = previousFacts(previous, byID, inv.Blocks)
 	if text := clip(strings.TrimSpace(prefs.Text), maxPreference); text != "" || len(prefs.Pins) > 0 {
 		inv.Preferences = &Preferences{Text: text}

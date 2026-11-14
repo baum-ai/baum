@@ -57,6 +57,12 @@ follow them where they do not break the rules below.
   missing evidence, and the table and code `blocks` it holds. A tile with a
   `state` (`pending`, `failed`, `unavailable`) has no content to show yet:
   never lead with it.
+- `library`: library tiles, each a structure view of one kind of change (a
+  schema's tables and columns, an interface's entry points), with what its
+  glance shows, how many items it lists (`items`), and
+  `destructive_or_breaking` when one of them loses data or breaks callers.
+- `authored`: exhibits written for this review (a table, a code excerpt or a
+  note), each with what it `adds` that no other tile shows.
 - `previous`: the previous version's layout, its promoted tiles (each with the
   `block` handle of the block it promoted, when that block still exists) and
   its reasons, or null.
@@ -144,6 +150,14 @@ Otherwise keep the template: the same order, sizes and groups.
    importance changed: a new or changed change with a higher level, a new high
    risk, a change the recommendation now names. Add a `moves` item for each
    tile you move against it.
+
+**Library and authored tiles** are placed by their `id`, like any tile, and
+the template already places them. A library tile with
+`destructive_or_breaking` leads at `half`, right after the overview and the
+risks tile; another library tile stays at `half` before the changes group,
+or beside the change it is about when that change leads. An authored tile
+goes on the landing page only when it shows what the lead change needs to be
+judged, beside it; otherwise after the group.
 
 ## The reply
 

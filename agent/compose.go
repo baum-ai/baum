@@ -33,10 +33,14 @@ type ComposeRequest struct {
 	// Document is the tile document tiles.FromReview converted from the
 	// review.
 	Document *tiles.Document
-	// Fills are the library tiles the analysis selected (none until library
-	// fills exist); Previous is the previous version's stored composition,
-	// nil without one; Preferences are the repository's.
+	// Fills are the library tiles the analysis selected, the ready ones with
+	// their tiles (compose.FillOf); Authored are the authored tiles it wrote
+	// that passed the host's checks. The composition holds both, whatever
+	// the composer replies: a tile it leaves out gets a default place
+	// (tiles.PlaceExtras). Previous is the previous version's stored
+	// composition, nil without one; Preferences are the repository's.
 	Fills       []compose.Fill
+	Authored    []compose.Authored
 	Previous    *tiles.Composition
 	Preferences compose.Preferences
 	// Redactor masks secrets in the replies before they are read; nil uses
@@ -174,7 +178,7 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 	if prompt, err = r.Prompts.ComposeInstructions(ctx, r.Backend); err != nil {
 		return fallback(FallbackPrompt)
 	}
-	inventory, err := compose.BuildInventory(r.Document, r.Fills, r.Previous, r.Preferences)
+	inventory, err := compose.BuildInventory(r.Document, r.Fills, r.Previous, r.Preferences, r.Authored...)
 	if err != nil {
 		return fallback(FallbackInventory)
 	}
@@ -217,6 +221,8 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 	}
 
 	c := inventory.Composition(reply)
+	c.Library, c.Authored = r.extras()
+	tiles.PlaceExtras(&c, r.Document)
 	c = tiles.StabilizeIDs(r.Previous, &c)
 	pin(&c, r.Document, r.Preferences.Pins)
 	if c.Empty() {
@@ -231,6 +237,21 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 		return fallback(FallbackUnusable)
 	}
 	return out, nil
+}
+
+// extras are the library tiles of the ready fills and the authored tiles.
+func (r ComposeRequest) extras() ([]tiles.LibraryTile, []tiles.AuthoredTile) {
+	var library []tiles.LibraryTile
+	for _, f := range r.Fills {
+		if f.Tile != nil {
+			library = append(library, *f.Tile)
+		}
+	}
+	var authored []tiles.AuthoredTile
+	for _, a := range r.Authored {
+		authored = append(authored, a.Tile)
+	}
+	return library, authored
 }
 
 // errRedaction is a reply that could not be masked.
@@ -302,7 +323,8 @@ func repairMessage(inventory string, rejected []byte, problems []string) string 
 // fallback sets the outcome's composition to the template of the change
 // kind, with the reason.
 func (r ComposeRequest) fallback(out ComposeOutcome, prompt Prompt, reason string, now func() time.Time) (ComposeOutcome, error) {
-	n, report, err := TemplateComposition(r.Document, r.Preferences.Pins)
+	library, authored := r.extras()
+	n, report, err := TemplateCompositionWith(r.Document, r.Preferences.Pins, &tiles.Composition{Library: library, Authored: authored})
 	if err != nil {
 		return out, err
 	}
@@ -320,7 +342,14 @@ func (r ComposeRequest) fallback(out ComposeOutcome, prompt Prompt, reason strin
 // composer has not answered, so a composer that keeps the template moves
 // nothing on the page.
 func TemplateComposition(doc *tiles.Document, pins []string) (tiles.Composition, tiles.Report, error) {
-	template, _ := tiles.Template(doc, nil)
+	return TemplateCompositionWith(doc, pins, nil)
+}
+
+// TemplateCompositionWith is TemplateComposition with a composition's tiles
+// (library, promoted and authored; its layout is not used), which the
+// template places after the leading tiles.
+func TemplateCompositionWith(doc *tiles.Document, pins []string, content *tiles.Composition) (tiles.Composition, tiles.Report, error) {
+	template, _ := tiles.Template(doc, content)
 	template.Generator = nil // the host sets it
 	pin(&template, doc, pins)
 	n, report := tiles.NormalizeComposition(doc, &template)
