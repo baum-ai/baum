@@ -51,6 +51,9 @@ type Plan struct {
 	// reading the previous revision's generated document as its previous
 	// version (see Dataset.SelectChains); a revision that fails ends the chain.
 	Chain bool
+	// DetectorReport writes, into the run directory's detectors folder, the case
+	// ids by kind of detector evidence for the cases passing the index filters.
+	DetectorReport bool
 	// Resume skips cases whose outcome in the run directory succeeded.
 	Resume, DryRun bool
 	// ResumeAnyway continues a run whose saved settings differ from these.
@@ -193,6 +196,19 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 	}
 	var ids []string
 	var units []unit
+	if p.DetectorReport {
+		if len(p.Selection.IDs) > 0 {
+			return Summary{}, errors.New("--detector-report reads the index filters; it does not take --case or --case-file")
+		}
+		report, err := p.Dataset.DetectorReport(p.Selection)
+		if err != nil {
+			return Summary{}, err
+		}
+		if err := WriteDetectorReport(filepath.Join(p.RunDir(), "detectors"), report); err != nil {
+			return Summary{}, err
+		}
+		_, _ = fmt.Fprintf(p.Out, "wrote the detector report (case ids per kind of evidence) to %s\n", filepath.Join(p.RunDir(), "detectors"))
+	}
 	if p.Chain {
 		if g := p.Settings.Generator; g != nil {
 			if _, ok := g.(Chainer); !ok {
@@ -248,6 +264,9 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 		remaining += len(u.ids) - u.done
 	}
 	if p.MaxCases > 0 && remaining > p.MaxCases {
+		if p.Chain {
+			return Summary{}, fmt.Errorf("the selection is %d cases in %d chains, above --max-cases %d; a chain runs whole, so lower --limit (it counts cases, and keeps whole chains) or raise the guard", remaining, len(units), p.MaxCases)
+		}
 		return Summary{}, fmt.Errorf("the selection is %d cases, above --max-cases %d; narrow it with --limit or raise the guard", remaining, p.MaxCases)
 	}
 	if p.DryRun {
@@ -264,7 +283,21 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 				_, _ = fmt.Fprintln(p.Out, id)
 			}
 		}
-		if len(p.Selection.IDs) == 0 {
+		if p.Chain {
+			if eligible, err := p.Dataset.SelectChains(Selection{Split: p.Selection.Split, Representative: p.Selection.Representative, Sizes: p.Selection.Sizes,
+				Sessions: p.Selection.Sessions, Images: p.Selection.Images, Threads: p.Selection.Threads, Previous: p.Selection.Previous, Detector: p.Selection.Detector, IDs: p.Selection.IDs}); err == nil {
+				revisions := 0
+				for _, c := range eligible {
+					revisions += len(c.IDs)
+				}
+				_, _ = fmt.Fprintf(p.Out, "%d chain(s) with %d revision(s) are eligible before --limit; %d chain(s), %d case(s) are selected\n", len(eligible), revisions, len(units), remaining+len(rows))
+			}
+			for _, u := range units {
+				for _, w := range u.chain.Warnings {
+					_, _ = fmt.Fprintf(p.Out, "warning: chain %s: %s\n", u.chain.Name(), w)
+				}
+			}
+		} else if len(p.Selection.IDs) == 0 {
 			if b, err := p.Dataset.Break(p.Selection); err == nil {
 				b.Print(p.Out)
 			}
@@ -389,22 +422,15 @@ func (p Plan) runCase(ctx context.Context, runner *Runner, id string, prepare fu
 	if err != nil {
 		return fail("case", err)
 	}
+	// A rerun starts the case's directory over: nothing of an earlier run stays.
+	_ = os.RemoveAll(caseDir)
 	if prepare != nil {
 		if c, err = prepare(c); err != nil {
-			return fail("case", err)
+			return fail(cmp.Or(string(generate.CategoryOf(err)), "case"), err)
 		}
 	}
 	if err := os.MkdirAll(caseDir, 0o700); err != nil {
 		return fail("internal", err)
-	}
-	// A rerun replaces the case's earlier files.
-	if earlier, err := ReadOutcome(caseDir); err == nil {
-		for _, name := range earlier.Artifacts {
-			_ = os.Remove(filepath.Join(caseDir, name))
-		}
-	}
-	for _, name := range caseFiles {
-		_ = os.Remove(filepath.Join(caseDir, name))
 	}
 	run := *runner
 	run.Settings.OutputDir = caseDir

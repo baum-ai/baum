@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
@@ -46,10 +47,12 @@ type Generator interface {
 // Chainer is implemented by a generator whose document can be the previous
 // version of the next revision of a pull request, which a chain run needs.
 type Chainer interface {
-	// Next returns c with document, which the generator produced for an earlier
-	// revision of the pull request, as its previous version number version, the
-	// way the app carries a stored version into the next generation.
-	Next(c Case, document []byte, version int) (Case, error)
+	// Next returns c's bundle with document, which the generator produced for an
+	// earlier revision of the pull request, carried as its previous version the
+	// way the app carries a stored version into the next generation (the version
+	// number is the document's own). The runner then masks and fits the bundle
+	// as assembly does (Case.Refit).
+	Next(c Case, document []byte) (bundle.Bundle, error)
 }
 
 // Generated is what a generator produced for one case.
@@ -134,7 +137,13 @@ type Outcome struct {
 	PromptVersion  string `json:"prompt_version,omitempty"`
 	PromptDigest   string `json:"prompt_digest,omitempty"`
 	BundleDigest   string `json:"bundle_digest,omitempty"`
-	SchemaRevision string `json:"schema_revision,omitempty"`
+	// BundleBytes is the encoded size of the bundle the model read. BundleFitted
+	// says that a chain fitted the bundle to the evidence budget and cut
+	// something, and BundleNotes are the notes that cut recorded.
+	BundleBytes    int      `json:"bundle_bytes,omitempty"`
+	BundleFitted   bool     `json:"bundle_fitted,omitempty"`
+	BundleNotes    []string `json:"bundle_notes,omitempty"`
+	SchemaRevision string   `json:"schema_revision,omitempty"`
 
 	Calls    int               `json:"calls"`
 	Tokens   int               `json:"tokens"`
@@ -227,7 +236,7 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 	s := r.Settings
 	started := time.Now()
 	out := Outcome{CaseID: c.ID, Generator: r.generator.Name(), StartedAt: started.UTC(), Backend: r.Selected.Backend.Name(), BackendVersion: r.Selected.Version,
-		Model: r.Selected.Model, BundleDigest: c.Digest}
+		Model: r.Selected.Model, BundleDigest: c.Digest, BundleBytes: len(c.BundleJSON), BundleFitted: c.Fitted, BundleNotes: c.FitNotes}
 	// The progress log is written as the run goes, so a long case can be watched.
 	progress := &syncWriter{}
 	if s.OutputDir != "" {
@@ -311,12 +320,27 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 // caseFiles are the files a case's run writes.
 var caseFiles = []string{"document.json", "transcript.jsonl", "progress.log", "diagnostics.json", "outcome.json"}
 
-// checkArtifacts refuses a name that leaves the case directory or replaces one
-// of the runner's files.
+// checkArtifacts refuses a name that leaves the case directory, one that is
+// (ignoring case, as some file systems do) one of the runner's files or
+// another artifact's name, and one that is both a file and a directory that
+// holds another artifact.
 func checkArtifacts(artifacts map[string][]byte) error {
-	for name := range artifacts {
-		if !filepath.IsLocal(name) || strings.ContainsAny(name, `\`) || slices.Contains(caseFiles, filepath.ToSlash(filepath.Clean(name))) {
+	seen := map[string]string{}
+	for _, name := range slices.Sorted(maps.Keys(artifacts)) {
+		clean := strings.ToLower(filepath.ToSlash(filepath.Clean(name)))
+		if !filepath.IsLocal(name) || strings.ContainsAny(name, `\`) || slices.Contains(caseFiles, clean) {
 			return fmt.Errorf("the generator's artifact name %q is not a file name below the case directory, or it is one of the runner's own files", name)
+		}
+		if other, ok := seen[clean]; ok {
+			return fmt.Errorf("the generator's artifact names %q and %q are the same file", other, name)
+		}
+		seen[clean] = name
+	}
+	for clean, name := range seen {
+		for other, otherName := range seen {
+			if strings.HasPrefix(other, clean+"/") {
+				return fmt.Errorf("the generator's artifact %q is a file and also a directory that holds %q", name, otherName)
+			}
 		}
 	}
 	return nil

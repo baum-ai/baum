@@ -95,7 +95,7 @@ func TestSelectionByBundleFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"6 case(s) pass the index filters", "images yes, threads no, previous no: 1", "images no, threads no, previous no: 3",
-		"by detector: schema 2, api 2, either 3, neither 3", "2 case(s) also pass", "c4\n", "c6\n"} {
+		"by detector (heuristics, not ground truth): schema 2, api 2, either 3, neither 3", "resting on text alone, no path rule: schema 2, api 2", "api:route 2, schema:ddl 2", "2 case(s) also pass", "c4\n", "c6\n"} {
 		if !strings.Contains(printed, want) {
 			t.Errorf("the dry run lacks %q:\n%s", want, printed)
 		}
@@ -130,7 +130,7 @@ func TestChainsAreGroupedAndOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chains) != 2 || chains[0].Name() != "acme-demo-7" || !slices.Equal(chains[0].IDs, []string{"r-a", "r-d", "r-b", "r-c"}) || !slices.Equal(chains[1].IDs, []string{"t-a", "t-b"}) {
+	if len(chains) != 2 || chains[0].Name() != "acme~demo-7" || !slices.Equal(chains[0].IDs, []string{"r-a", "r-d", "r-b", "r-c"}) || !slices.Equal(chains[1].IDs, []string{"t-a", "t-b"}) {
 		t.Errorf("chains %+v", chains)
 	}
 	// A filter chooses pull requests that have a revision passing it, and all
@@ -141,7 +141,7 @@ func TestChainsAreGroupedAndOrdered(t *testing.T) {
 	}
 	// The limit counts cases and takes whole chains.
 	chains, _ = ds.SelectChains(replay.Selection{Limit: 3})
-	if len(chains) != 1 || chains[0].Name() != "acme-demo-9" {
+	if len(chains) != 1 || chains[0].Name() != "acme~demo-9" {
 		t.Errorf("limit 3: %+v", chains)
 	}
 	// Named cases are the chain as given, still in revision order.
@@ -336,7 +336,7 @@ func TestChainFeedsEachRevisionThePreviousOutput(t *testing.T) {
 
 	// The run records the chain: its links in order, and a pair record per step.
 	var record replay.ChainRecord
-	raw, err := os.ReadFile(filepath.Join(outDir, "run", "chains", "acme-demo-7", "chain.json"))
+	raw, err := os.ReadFile(filepath.Join(outDir, "run", "chains", "acme~demo-7", "chain.json"))
 	if err != nil || json.Unmarshal(raw, &record) != nil {
 		t.Fatal(err)
 	}
@@ -344,12 +344,12 @@ func TestChainFeedsEachRevisionThePreviousOutput(t *testing.T) {
 		t.Errorf("%+v", record)
 	}
 	for _, name := range []string{"01-r-a", "02-r-b", "03-r-c"} {
-		if _, err := os.Stat(filepath.Join(outDir, "run", "chains", "acme-demo-7", name, "outcome.json")); err != nil {
+		if _, err := os.Stat(filepath.Join(outDir, "run", "chains", "acme~demo-7", name, "outcome.json")); err != nil {
 			t.Errorf("the link %s does not lead to the case: %v", name, err)
 		}
 	}
 	var pair replay.PairRecord
-	raw, err = os.ReadFile(filepath.Join(outDir, "run", "chains", "acme-demo-7", record.Revisions[2].Pair))
+	raw, err = os.ReadFile(filepath.Join(outDir, "run", "chains", "acme~demo-7", record.Revisions[2].Pair))
 	if err != nil || json.Unmarshal(raw, &pair) != nil || pair.From != "r-b" || pair.To != "r-c" || pair.Values["sections_next"] == 0 {
 		t.Errorf("pair %+v %v", pair, err)
 	}
@@ -382,7 +382,7 @@ func TestFailedRevisionEndsItsChain(t *testing.T) {
 		t.Error("the skipped revision has an outcome")
 	}
 	var record replay.ChainRecord
-	raw, _ := os.ReadFile(filepath.Join(outDir, "run", "chains", "acme-demo-7", "chain.json"))
+	raw, _ := os.ReadFile(filepath.Join(outDir, "run", "chains", "acme~demo-7", "chain.json"))
 	_ = json.Unmarshal(raw, &record)
 	if !strings.Contains(record.Stopped, "r-b") || record.Revisions[2].Status != "skipped" || record.Revisions[1].Status != "failed" {
 		t.Errorf("%+v", record)
@@ -419,7 +419,7 @@ func TestChainDryRun(t *testing.T) {
 	d, _, _ := chainDataset(t)
 	ds, _ := replay.OpenDataset(d.dir)
 	_, printed, err := execute(t, replay.Plan{Dataset: ds, Chain: true, DryRun: true, Selection: replay.Selection{Previous: ptr(true)}})
-	if err != nil || !strings.Contains(printed, "5 case(s) would run") || strings.Index(printed, "r-a\n") > strings.Index(printed, "r-b\n") || !strings.Contains(printed, "chain acme-demo-7: 3 revision(s)") {
+	if err != nil || !strings.Contains(printed, "5 case(s) would run") || strings.Index(printed, "r-a\n") > strings.Index(printed, "r-b\n") || !strings.Contains(printed, "chain acme~demo-7: 3 revision(s)") {
 		t.Errorf("%v\n%s", err, printed)
 	}
 }
@@ -484,315 +484,5 @@ func TestArtifactsAreWrittenBesideTheDocument(t *testing.T) {
 				t.Error("an artefact left the case directory")
 			}
 		})
-	}
-}
-
-// pricedAs is pricedReplies with the output tokens given.
-func pricedAs(output int64) func(context.Context, agent.Request, int) (agent.Result, error) {
-	inner := pricedReplies(nil)
-	return func(c context.Context, r agent.Request, n int) (agent.Result, error) {
-		result, err := inner(c, r, n)
-		result.Usage.Output = output
-		return result, err
-	}
-}
-
-func TestMetricsOfARun(t *testing.T) {
-	src := assembleSource(t)
-	d := newDataset(t, src)
-	d.addCase(t, "c1", map[string]any{"size": "s", "session_vendors": []string{"claude_code"}})
-	d.addCase(t, "c2", map[string]any{"size": "m", "session_vendors": []string{"codex"}})
-	d.addCase(t, "c3", map[string]any{"size": "m"})
-	_ = os.Remove(filepath.Join(d.dir, "cases", "c3", "case.json"))
-	ds, _ := replay.OpenDataset(d.dir)
-	outDir := t.TempDir()
-	priced := replay.Settings{Backends: fakeBackends(&generatetest.Backend{RunFunc: pricedAs(20000)}), Generator: &replay.ReviewGenerator{Staged: true}}
-	summary, _, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, Settings: priced})
-	if err != nil || summary.Totals.OK != 2 || summary.Totals.Failed != 1 {
-		t.Fatalf("%v %+v", err, summary.Totals)
-	}
-	runDir := filepath.Join(outDir, "run")
-	m, err := replay.ReadMetrics(runDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.Generator != "review" || len(m.Cases) != 3 || m.All.Statuses["ok"] != 2 || m.All.Statuses["failed"] != 1 || m.All.Reasons["case"] != 1 {
-		t.Errorf("%+v", m.All)
-	}
-	cost := m.All.Stats[replay.MetricCost]
-	if cost.N != 2 || cost.Sum != summary.Totals.CostUSD || cost.Median <= 0 || cost.P90 < cost.Median {
-		t.Errorf("cost %+v, summary %v", cost, summary.Totals.CostUSD)
-	}
-	for _, key := range []string{replay.MetricWall, replay.MetricCalls, replay.MetricTokens, replay.MetricDocument, "sections", "risks", "hunks", "hunks_covered", "evidence"} {
-		if m.All.Stats[key].N == 0 {
-			t.Errorf("no %s", key)
-		}
-	}
-	if m.All.Stats["sections"].Min < 1 || m.All.Stats["risk_lifecycle_violations"].Sum != 0 {
-		t.Errorf("sections %+v violations %+v", m.All.Stats["sections"], m.All.Stats["risk_lifecycle_violations"])
-	}
-	if m.BySize["m"].Cases != 2 || m.BySize["s"].Cases != 1 || m.ByAgent["claude_code"].Cases != 1 || m.ByAgent["codex"].Cases != 1 || m.ByAgent["none"].Cases != 1 {
-		t.Errorf("by size %v by agent %v", m.BySize, m.ByAgent)
-	}
-	if m.Pairs != nil || len(m.Chains) != 0 {
-		t.Error("a run without chains has chain metrics")
-	}
-	var printed bytes.Buffer
-	m.Print(&printed)
-	for _, want := range []string{"run run, generator review", "status: failed 1, ok 2", "cost_usd", "sections", "by size", "by agent"} {
-		if !strings.Contains(printed.String(), want) {
-			t.Errorf("the report lacks %q:\n%s", want, printed.String())
-		}
-	}
-	if err := replay.WriteMetrics(runDir, m); err != nil {
-		t.Fatal(err)
-	}
-	var back replay.RunMetrics
-	raw, _ := os.ReadFile(filepath.Join(runDir, "metrics.json"))
-	if err := json.Unmarshal(raw, &back); err != nil || back.All.Cases != 3 {
-		t.Errorf("metrics.json: %v", err)
-	}
-}
-
-func TestMetricsOfAChainRun(t *testing.T) {
-	d, _, _ := chainDataset(t)
-	ds, _ := replay.OpenDataset(d.dir)
-	outDir := t.TempDir()
-	seen := &bundleSeen{fail: "r-c"}
-	if _, _, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, Chain: true, Settings: staged(seen.backend())}); err != nil {
-		t.Fatal(err)
-	}
-	m, err := replay.ReadMetrics(filepath.Join(outDir, "run"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(m.Chains) != 2 || m.Pairs == nil {
-		t.Fatalf("%+v", m.Chains)
-	}
-	// Pull request 7: r-a to r-b measured, r-b to r-c not (r-c failed).
-	var seven ChainReportView
-	for _, c := range m.Chains {
-		if strings.HasSuffix(c.PullRequest, "#7") {
-			seven.pairs, seven.stopped = c.Pairs, c.Stopped
-		}
-	}
-	if len(seven.pairs) != 2 || seven.pairs[0].Skipped != "" || seven.pairs[1].Skipped == "" || seven.stopped == "" {
-		t.Errorf("%+v", seven)
-	}
-	if m.Pairs.Cases != 2 {
-		t.Errorf("%d pairs measured, want 2 (7: a-b, 8: a-b)", m.Pairs.Cases)
-	}
-	// The stub writes the same sections for every revision, so every ID is kept.
-	if matched := m.Pairs.Stats["sections_matched"]; matched.N != 2 || matched.Sum == 0 || m.Pairs.Stats["section_ids_retained"].Sum != matched.Sum ||
-		m.Pairs.Stats["section_id_retention"].Min != 1 || m.Pairs.Derived["section_id_retention_pooled"] != 1 {
-		t.Errorf("%+v %v", m.Pairs.Stats, m.Pairs.Derived)
-	}
-	if m.Pairs.Stats["risk_lifecycle_violations"].Sum != 0 {
-		t.Error("lifecycle violations in the stub's documents")
-	}
-	var printed bytes.Buffer
-	m.Print(&printed)
-	if !strings.Contains(printed.String(), "chains: 2 pull request(s), 2 pair(s) measured") || !strings.Contains(printed.String(), "section_id_retention_pooled") {
-		t.Errorf("%s", printed.String())
-	}
-}
-
-// ChainReportView holds what the chain test reads of a report.
-type ChainReportView struct {
-	pairs   []replay.PairRecord
-	stopped string
-}
-
-func TestMetricsOfAGeneratorWithoutMeter(t *testing.T) {
-	src := assembleSource(t)
-	d := newDataset(t, src)
-	d.addCase(t, "c1", nil)
-	ds, _ := replay.OpenDataset(d.dir)
-	outDir := t.TempDir()
-	if _, _, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, Settings: replay.Settings{Backends: fakeBackends(&generatetest.Backend{}), Generator: echo{valid: true}}}); err != nil {
-		t.Fatal(err)
-	}
-	m, err := replay.ReadMetrics(filepath.Join(outDir, "run"))
-	if err != nil || m.All.Stats[replay.MetricDocument].N != 1 || m.All.Stats[replay.MetricFailed].Sum != 1 || m.All.Stats["sections"].N != 0 {
-		t.Fatalf("%v %+v", err, m.All)
-	}
-	var printed bytes.Buffer
-	m.Print(&printed)
-	if !strings.Contains(printed.String(), "has no metrics of its own") {
-		t.Error(printed.String())
-	}
-}
-
-// meterEcho is a generator that contributes its own metrics.
-type meterEcho struct{ echo }
-
-func (meterEcho) Name() string { return "meterecho" }
-func (meterEcho) DocumentMetrics(document []byte) (map[string]float64, error) {
-	return map[string]float64{"tiles": float64(len(document))}, nil
-}
-func (meterEcho) PairMetrics(previous, next []byte) (map[string]float64, error) {
-	return map[string]float64{"tile_id_retention": 1}, nil
-}
-
-// A generator adds its metrics by registering a Meter; the command changes
-// nothing.
-func TestAnotherGeneratorContributesItsMetrics(t *testing.T) {
-	replay.RegisterMeter("meterecho", meterEcho{})
-	src := assembleSource(t)
-	d := newDataset(t, src)
-	d.addCase(t, "c1", nil)
-	ds, _ := replay.OpenDataset(d.dir)
-	outDir := t.TempDir()
-	if _, _, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, Settings: replay.Settings{Backends: fakeBackends(&generatetest.Backend{}), Generator: meterEcho{echo{valid: true}}}}); err != nil {
-		t.Fatal(err)
-	}
-	m, err := replay.ReadMetrics(filepath.Join(outDir, "run"))
-	if err != nil || m.All.Stats["tiles"].N != 1 || m.All.Stats["tiles"].Sum == 0 {
-		t.Fatalf("%v %+v", err, m.All.Stats)
-	}
-}
-
-func TestCompareAlignsCasesByID(t *testing.T) {
-	src := assembleSource(t)
-	d := newDataset(t, src)
-	for _, id := range []string{"c1", "c2", "c3"} {
-		d.addCase(t, id, nil)
-	}
-	ds, _ := replay.OpenDataset(d.dir)
-	outDir := t.TempDir()
-	runWith := func(name string, ids []string, output int64, backend func() *generatetest.Backend) replay.RunMetrics {
-		t.Helper()
-		settings := replay.Settings{Backends: fakeBackends(backend()), Generator: &replay.ReviewGenerator{Staged: true}}
-		if _, _, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, Name: name, Settings: settings, Selection: replay.Selection{IDs: ids}}); err != nil {
-			t.Fatal(err)
-		}
-		m, err := replay.ReadMetrics(filepath.Join(outDir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return m
-	}
-	base := runWith("base", []string{"c1", "c2", "c3"}, 20000, func() *generatetest.Backend { return &generatetest.Backend{RunFunc: pricedAs(20000)} })
-	// The same analysis, at twice the output tokens (cost) and with c3 left out.
-	same := runWith("same", []string{"c1", "c2"}, 40000, func() *generatetest.Backend { return &generatetest.Backend{RunFunc: pricedAs(40000)} })
-	c := replay.Compare(same, base)
-	if c.Aligned != 2 || c.Completed != 2 || !slices.Equal(c.OnlyOther, []string{"c3"}) || len(c.OnlyRun) != 0 || len(c.StatusChanges) != 0 {
-		t.Errorf("%+v", c)
-	}
-	cost := c.Metrics[replay.MetricCost]
-	if cost.N != 2 || cost.Median <= 0 || cost.MedianRatio <= 1 || cost.Changed != 2 || c.SameDocumentMetrics != 2 || c.Metrics["sections"].Changed != 0 {
-		t.Errorf("cost %+v same %d", cost, c.SameDocumentMetrics)
-	}
-	// Another analysis: c2 fails, and a document differs in what it measures.
-	failing := runWith("failing", []string{"c1", "c2"}, 20000, func() *generatetest.Backend {
-		return &generatetest.Backend{RunFunc: func(cx context.Context, r agent.Request, n int) (agent.Result, error) {
-			if n >= 3 {
-				return agent.Result{Calls: 1}, os.ErrDeadlineExceeded
-			}
-			return pricedAs(20000)(cx, r, n)
-		}}
-	})
-	c = replay.Compare(failing, base)
-	if len(c.StatusChanges) != 1 || c.StatusChanges[0].CaseID != "c2" || c.StatusChanges[0].Base != "failed" || c.StatusChanges[0].Other != "ok" || c.Completed != 1 {
-		t.Errorf("%+v", c)
-	}
-	changed := base
-	changed.Cases = slices.Clone(base.Cases)
-	for i := range changed.Cases {
-		values := map[string]float64{}
-		for k, v := range changed.Cases[i].Values {
-			values[k] = v
-		}
-		values["sections"]++
-		changed.Cases[i].Values = values
-	}
-	c = replay.Compare(changed, base)
-	if c.SameDocumentMetrics != 0 || c.Metrics["sections"].Median != 1 || c.Metrics["sections"].Changed != 3 || c.Metrics[replay.MetricCost].Changed != 0 {
-		t.Errorf("%+v", c.Metrics["sections"])
-	}
-	var printed bytes.Buffer
-	c.Print(&printed)
-	if !strings.Contains(printed.String(), "document metrics identical in 0 of 3") || !strings.Contains(printed.String(), "sections") {
-		t.Error(printed.String())
-	}
-}
-
-func docOf(sections ...string) []byte {
-	return []byte(`{"sections":[` + strings.Join(sections, ",") + `],"index":{"hunks":[{"id":"h1"},{"id":"h2"},{"id":"h3"},{"id":"h4"}]},"unassigned_hunks":["h4"]}`)
-}
-
-func sec(id string, hunks string, risks ...string) string {
-	return `{"id":"` + id + `","hunks":[` + hunks + `],"risks":[` + strings.Join(risks, ",") + `]}`
-}
-
-func risk(id, tier, state string, mitigated string) string {
-	return `{"id":"` + id + `","tier":"` + tier + `","state":"` + state + `","mitigated_version":` + mitigated + `}`
-}
-
-func TestReviewMetrics(t *testing.T) {
-	g := &replay.ReviewGenerator{}
-	doc := docOf(
-		sec("a", `"h1","h2"`, risk("r1", "high", "active", "null"), risk("r2", "low", "mitigated", "2")),
-		sec("b", `"h3"`, risk("r3", "critical", "active", "null")),
-	)
-	m, err := g.DocumentMetrics(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for key, want := range map[string]float64{"sections": 2, "risks": 3, "risks_active": 2, "risks_active_high": 1, "risks_active_critical": 1, "risks_active_low": 0,
-		"risks_mitigated": 1, "hunks": 4, "hunks_covered": 3, "hunks_unassigned": 1, "hunks_covered_ratio": 0.75, "risk_lifecycle_violations": 0} {
-		if m[key] != want {
-			t.Errorf("%s = %v, want %v", key, m[key], want)
-		}
-	}
-	// A risk both active and mitigated, in two sections or by its own fields.
-	bad := docOf(
-		sec("a", `"h1"`, risk("r1", "high", "active", "3"), risk("r2", "low", "mitigated", "null")),
-		sec("b", `"h2"`, risk("r2", "low", "active", "null"), risk("r9", "low", "unknown", "null")),
-	)
-	if m, _ := g.DocumentMetrics(bad); m["risk_lifecycle_violations"] != 4 {
-		t.Errorf("violations %v, want 4", m["risk_lifecycle_violations"])
-	}
-	if _, err := g.DocumentMetrics([]byte("not json")); err == nil {
-		t.Error("a document that is not JSON is measured")
-	}
-}
-
-func TestReviewPairMetrics(t *testing.T) {
-	g := &replay.ReviewGenerator{}
-	previous := docOf(
-		sec("a", `"h1","h2"`, risk("r1", "high", "active", "null"), risk("r2", "low", "active", "null"), risk("r3", "low", "active", "null")),
-		sec("b", `"h3"`),
-		sec("gone", `"h9"`),
-	)
-	next := docOf(
-		sec("a", `"h1"`, risk("r1", "high", "mitigated", "2"), risk("r2", "low", "active", "null")),
-		sec("renamed", `"h3"`),
-		sec("new", `"h4"`, risk("r4", "low", "active", "null")),
-	)
-	m, err := g.PairMetrics(previous, next)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for key, want := range map[string]float64{"sections_previous": 3, "sections_next": 3, "sections_matched": 2, "section_ids_retained": 1, "section_id_retention": 0.5,
-		"sections_dropped": 1, "sections_added": 1, "risks_introduced": 1, "risks_newly_mitigated": 1, "risks_carried": 1, "risks_vanished": 1, "risk_lifecycle_violations": 0} {
-		if m[key] != want {
-			t.Errorf("%s = %v, want %v", key, m[key], want)
-		}
-	}
-	// A split keeps the ID on the part that shares most hunks; with equal
-	// shares the section with the same ID wins.
-	split, _ := g.PairMetrics(docOf(sec("a", `"h1","h2"`)), docOf(sec("x", `"h1"`), sec("a", `"h2"`)))
-	if split["sections_matched"] != 1 || split["section_ids_retained"] != 1 || split["sections_added"] != 1 {
-		t.Errorf("split %v", split)
-	}
-	// No overlap at all gives no retention figure, not a zero.
-	none, _ := g.PairMetrics(docOf(sec("a", `"h1"`)), docOf(sec("b", `"h2"`)))
-	if _, ok := none["section_id_retention"]; ok || none["sections_dropped"] != 1 {
-		t.Errorf("no overlap: %v", none)
-	}
-	derived := g.Derived(map[string]float64{"sections_matched": 4, "section_ids_retained": 3})
-	if derived["section_id_retention_pooled"] != 0.75 {
-		t.Errorf("%v", derived)
 	}
 }

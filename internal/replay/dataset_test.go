@@ -43,6 +43,11 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 	}
 	limits := assemble.LimitsFrom(caps)
 	scratch := t.TempDir()
+	redactor, err := bundle.NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var refitSame, refitChecked, refitFailed int
 	var withPrevious, previousAndImages, loaded, lossless, withImages, unpacked, indexed, noMergeBase int
 	for i, id := range ids {
 		c, err := ds.LoadCase(ctx(), id)
@@ -63,6 +68,17 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 		}
 		if c.Entry != nil {
 			indexed++
+		}
+		// Fitting a frozen bundle again, as a chain does with a new previous
+		// version, should change nothing: masking and fitting are idempotent.
+		if i%5 == 0 {
+			b, _ := c.FreshBundle()
+			refitChecked++
+			if again, err := c.Refit(ctx(), b, limits.Caps, redactor); err != nil {
+				refitFailed++
+			} else if bytes.Equal(again.BundleJSON, c.BundleJSON) {
+				refitSame++
+			}
 		}
 		result, err := replay.Assembler{Case: c}.Assemble(ctx(), assemble.Request{Repository: c.Repository, Number: c.Bundle.PullRequest.Number, Limits: limits})
 		if err != nil || result.Bundle.Digest != c.Digest || string(result.JSON) != string(c.BundleJSON) {
@@ -88,6 +104,7 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 		unpacked++
 	}
 	t.Logf("with a previous version %d, of which also offering images %d", withPrevious, previousAndImages)
+	t.Logf("fitting a frozen bundle again: %d checked, %d unchanged, %d failed", refitChecked, refitSame, refitFailed)
 	t.Logf("cases %d, loaded %d, archives checked %d, bundle type lossless %d, with images %d, indexed %d, bundles without a merge base %d", len(ids), loaded, unpacked, lossless, withImages, indexed, noMergeBase)
 	if len(ds.Index) > 0 && len(ds.Index) != len(ids) {
 		t.Logf("the index has %d entries for %d case directories", len(ds.Index), len(ids))

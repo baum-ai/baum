@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 )
 
@@ -36,14 +37,43 @@ type Deriver interface {
 	Derived(sums map[string]float64) map[string]float64
 }
 
-var meters = map[string]Meter{}
+// Definer is implemented by a Meter that says what each of its metrics
+// means; the report prints the definitions of the metrics it shows.
+type Definer interface {
+	Definitions() map[string]string
+}
+
+var (
+	metersMu sync.Mutex
+	meters   = map[string]Meter{}
+)
 
 // RegisterMeter makes a generator's metrics available to `replay metrics` for
-// runs whose manifest names it. Call it at initialisation.
-func RegisterMeter(generator string, m Meter) { meters[generator] = m }
+// runs whose manifest names it. Call it at initialisation. It panics when the
+// name is taken.
+func RegisterMeter(generator string, m Meter) {
+	metersMu.Lock()
+	defer metersMu.Unlock()
+	if _, ok := meters[generator]; ok {
+		panic("replay: metrics of generator " + generator + " registered twice")
+	}
+	meters[generator] = m
+}
+
+// UnregisterMeter removes a generator's metrics, for tests that register their
+// own.
+func UnregisterMeter(generator string) {
+	metersMu.Lock()
+	defer metersMu.Unlock()
+	delete(meters, generator)
+}
 
 // MeterFor returns the metrics of a generator, or nil when it has none.
-func MeterFor(generator string) Meter { return meters[generator] }
+func MeterFor(generator string) Meter {
+	metersMu.Lock()
+	defer metersMu.Unlock()
+	return meters[generator]
+}
 
 // Stat summarises the values of one metric.
 type Stat struct {
@@ -96,7 +126,9 @@ type CaseMetrics struct {
 	Reason string `json:"reason,omitempty"`
 	Size   string `json:"size,omitempty"`
 	// Agent is the agent of the case's sessions: claude_code, codex, both or none.
-	Agent  string             `json:"agent,omitempty"`
+	Agent string `json:"agent,omitempty"`
+	// Values are the case's metrics; a metric that is undefined for the case (a
+	// cost nobody priced, a ratio over nothing) is absent, not zero.
 	Values map[string]float64 `json:"values,omitempty"`
 	// Problem says why the generator's metrics could not be read.
 	Problem string `json:"problem,omitempty"`
@@ -104,11 +136,16 @@ type CaseMetrics struct {
 
 // Group aggregates a set of cases (or of chain pairs).
 type Group struct {
-	Cases    int                `json:"cases"`
-	Statuses map[string]int     `json:"statuses,omitempty"`
-	Reasons  map[string]int     `json:"reasons,omitempty"`
-	Stats    map[string]Stat    `json:"stats"`
-	Derived  map[string]float64 `json:"derived,omitempty"`
+	// Cases counts every case of the group, whatever its status.
+	Cases    int            `json:"cases"`
+	Statuses map[string]int `json:"statuses,omitempty"`
+	Reasons  map[string]int `json:"reasons,omitempty"`
+	// Stats are over the cases that succeeded: a failed case has no document and
+	// its time and cost stop where it failed. Failed has the runner's metrics of
+	// the cases that ran and did not succeed, apart.
+	Stats   map[string]Stat    `json:"stats"`
+	Failed  map[string]Stat    `json:"failed,omitempty"`
+	Derived map[string]float64 `json:"derived,omitempty"`
 }
 
 // PairRecord is the metrics of one revision against the one before it.
@@ -116,6 +153,9 @@ type PairRecord struct {
 	From   string             `json:"from"`
 	To     string             `json:"to"`
 	Values map[string]float64 `json:"values,omitempty"`
+	// First marks the pair of a chain's first two revisions: the earlier one
+	// was generated from a previous version other code wrote.
+	First bool `json:"first,omitempty"`
 	// Skipped says why the pair was not measured.
 	Skipped string `json:"skipped,omitempty"`
 }
@@ -125,20 +165,39 @@ type ChainReport struct {
 	PullRequest string       `json:"pull_request"`
 	Cases       []string     `json:"cases"`
 	Stopped     string       `json:"stopped,omitempty"`
+	Warnings    []string     `json:"warnings,omitempty"`
 	Pairs       []PairRecord `json:"pairs"`
+	// Totals are the sums of the measured pairs' metrics and Derived the
+	// generator's figures over them: the chain's own, for comparing pull requests.
+	Totals  map[string]float64 `json:"totals,omitempty"`
+	Derived map[string]float64 `json:"derived,omitempty"`
+}
+
+// RunInfo is what a run was asked to do, as far as comparing two runs needs.
+type RunInfo struct {
+	DatasetIndexSHA256 string `json:"dataset_index_sha256,omitempty"`
+	Chain              bool   `json:"chain,omitempty"`
+	Selection          string `json:"selection,omitempty"`
+	Generator          string `json:"generator"`
+	GeneratorSettings  string `json:"generator_settings,omitempty"`
+	Backend            string `json:"backend,omitempty"`
+	Model              string `json:"model,omitempty"`
+	Effort             string `json:"effort,omitempty"`
 }
 
 // RunMetrics is metrics.json.
 type RunMetrics struct {
 	Run       string           `json:"run"`
 	Generator string           `json:"generator"`
+	Info      RunInfo          `json:"info"`
 	Cases     []CaseMetrics    `json:"cases"`
 	All       Group            `json:"all"`
 	BySize    map[string]Group `json:"by_size,omitempty"`
 	ByAgent   map[string]Group `json:"by_agent,omitempty"`
 	Chains    []ChainReport    `json:"chains,omitempty"`
-	// Pairs aggregates the measured pairs of every chain.
-	Pairs *Group `json:"pairs,omitempty"`
+	// FirstPairs aggregates the first pair of each chain, LaterPairs the rest.
+	FirstPairs *Group `json:"first_pairs,omitempty"`
+	LaterPairs *Group `json:"later_pairs,omitempty"`
 }
 
 func agentOf(vendors []string) string {
@@ -154,6 +213,13 @@ func agentOf(vendors []string) string {
 	return "none"
 }
 
+func infoOf(m Manifest) RunInfo {
+	selection, _ := json.Marshal(m.Selection)
+	settings, _ := json.Marshal(m.GeneratorSettings)
+	return RunInfo{DatasetIndexSHA256: m.DatasetIndexSHA256, Chain: m.Chain, Selection: string(selection), Generator: m.Generator,
+		GeneratorSettings: string(settings), Backend: m.Backend, Model: m.Model, Effort: m.Effort}
+}
+
 // ReadMetrics reads a finished run directory and measures it. It calls no model.
 func ReadMetrics(dir string) (RunMetrics, error) {
 	var manifest Manifest
@@ -165,7 +231,7 @@ func ReadMetrics(dir string) (RunMetrics, error) {
 		return RunMetrics{}, fmt.Errorf("%s: manifest.json: %w", dir, err)
 	}
 	meter := MeterFor(manifest.Generator)
-	m := RunMetrics{Run: manifest.Run, Generator: manifest.Generator}
+	m := RunMetrics{Run: manifest.Run, Generator: manifest.Generator, Info: infoOf(manifest)}
 	entries, err := os.ReadDir(filepath.Join(dir, "cases"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return m, err
@@ -234,7 +300,7 @@ func readCase(dir, id string, manifest Manifest, meter Meter) CaseMetrics {
 		return c
 	}
 	c.Values[MetricDocument] = float64(len(document))
-	if meter != nil {
+	if meter != nil && out.OK() {
 		if values, err := meter.DocumentMetrics(document); err != nil {
 			c.Problem = err.Error()
 		} else {
@@ -246,17 +312,25 @@ func readCase(dir, id string, manifest Manifest, meter Meter) CaseMetrics {
 
 func group(cases []CaseMetrics, meter Meter) Group {
 	g := Group{Cases: len(cases), Statuses: map[string]int{}, Reasons: map[string]int{}}
-	values := map[string][]float64{}
+	ok, failed := map[string][]float64{}, map[string][]float64{}
 	for _, c := range cases {
 		g.Statuses[c.Status]++
 		if c.Status != "ok" && c.Reason != "" {
 			g.Reasons[c.Reason]++
 		}
 		for key, v := range c.Values {
-			values[key] = append(values[key], v)
+			switch {
+			case c.Status == "ok":
+				ok[key] = append(ok[key], v)
+			case slices.Contains(runMetrics, key):
+				failed[key] = append(failed[key], v)
+			}
 		}
 	}
-	g.Stats = statsOf(values)
+	g.Stats = statsOf(ok)
+	if len(failed) > 0 {
+		g.Failed = statsOf(failed)
+	}
 	g.Derived = derive(g.Stats, meter)
 	return g
 }
@@ -269,16 +343,19 @@ func statsOf(values map[string][]float64) map[string]Stat {
 	return stats
 }
 
-func derive(stats map[string]Stat, meter Meter) map[string]float64 {
-	deriver, ok := meter.(Deriver)
-	if !ok {
-		return nil
-	}
+func sumsOf(stats map[string]Stat) map[string]float64 {
 	sums := map[string]float64{}
 	for key, s := range stats {
 		sums[key] = s.Sum
 	}
-	return deriver.Derived(sums)
+	return sums
+}
+
+func derive(stats map[string]Stat, meter Meter) map[string]float64 {
+	if deriver, ok := meter.(Deriver); ok {
+		return deriver.Derived(sumsOf(stats))
+	}
+	return nil
 }
 
 // readChains measures each pair of consecutive revisions whose documents both
@@ -291,21 +368,22 @@ func readChains(dir string, m *RunMetrics, meter Meter) error {
 	if err != nil {
 		return err
 	}
-	values := map[string][]float64{}
-	pairs := 0
+	first, later := map[string][]float64{}, map[string][]float64{}
+	var measuredFirst, measuredLater int
 	for _, entry := range entries {
 		var record ChainRecord
 		raw, err := os.ReadFile(filepath.Join(dir, "chains", entry.Name(), "chain.json"))
 		if err != nil || json.Unmarshal(raw, &record) != nil {
 			continue
 		}
-		report := ChainReport{PullRequest: record.PullRequest, Stopped: record.Stopped}
+		report := ChainReport{PullRequest: record.PullRequest, Stopped: record.Stopped, Warnings: record.Warnings}
+		perChain := map[string][]float64{}
 		var previous []byte
 		for i, rev := range record.Revisions {
 			report.Cases = append(report.Cases, rev.CaseID)
 			document, _ := os.ReadFile(filepath.Join(dir, "cases", rev.CaseID, "document.json"))
 			if i > 0 {
-				pair := PairRecord{From: record.Revisions[i-1].CaseID, To: rev.CaseID}
+				pair := PairRecord{From: record.Revisions[i-1].CaseID, To: rev.CaseID, First: i == 1}
 				switch {
 				case meter == nil:
 					pair.Skipped = "the generator has no metrics"
@@ -316,23 +394,40 @@ func readChains(dir string, m *RunMetrics, meter Meter) error {
 						pair.Skipped, pair.Values = err.Error(), nil
 					}
 				}
-				for key, v := range pair.Values {
-					values[key] = append(values[key], v)
-				}
 				if pair.Skipped == "" {
-					pairs++
+					target := later
+					if pair.First {
+						target = first
+						measuredFirst++
+					} else {
+						measuredLater++
+					}
+					for key, v := range pair.Values {
+						target[key] = append(target[key], v)
+						perChain[key] = append(perChain[key], v)
+					}
 				}
 				report.Pairs = append(report.Pairs, pair)
 			}
 			previous = document
 		}
+		if len(perChain) > 0 {
+			stats := statsOf(perChain)
+			report.Totals = sumsOf(stats)
+			if deriver, ok := meter.(Deriver); ok {
+				report.Derived = deriver.Derived(report.Totals)
+			}
+		}
 		m.Chains = append(m.Chains, report)
 	}
 	slices.SortFunc(m.Chains, func(a, b ChainReport) int { return strings.Compare(a.PullRequest, b.PullRequest) })
 	if len(m.Chains) > 0 {
-		g := Group{Cases: pairs, Stats: statsOf(values)}
-		g.Derived = derive(g.Stats, meter)
-		m.Pairs = &g
+		pairs := func(n int, values map[string][]float64) *Group {
+			g := Group{Cases: n, Stats: statsOf(values)}
+			g.Derived = derive(g.Stats, meter)
+			return &g
+		}
+		m.FirstPairs, m.LaterPairs = pairs(measuredFirst, first), pairs(measuredLater, later)
 	}
 	return nil
 }
@@ -371,21 +466,39 @@ func number(v float64) string {
 	return fmt.Sprintf("%.3g", v)
 }
 
-func (g Group) printStats(w io.Writer) {
+// smallN is the sample size below which a statistic is marked: with fewer
+// values a median and a p90 are examples, not estimates.
+const smallN = 5
+
+func nText(n int) string {
+	if n < smallN {
+		return fmt.Sprintf("%d*", n)
+	}
+	return fmt.Sprint(n)
+}
+
+func (g Group) printStats(w io.Writer, title string) {
+	_, _ = fmt.Fprintln(w, title)
 	table := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	_, _ = fmt.Fprintln(table, "METRIC\tN\tMEDIAN\tP90\tMEAN\tMIN\tMAX\tSUM")
+	small := false
 	for _, key := range orderedKeys(g.Stats) {
 		s := g.Stats[key]
-		_, _ = fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", key, s.N, number(s.Median), number(s.P90), number(s.Mean), number(s.Min), number(s.Max), number(s.Sum))
+		small = small || s.N < smallN
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", key, nText(s.N), number(s.Median), number(s.P90), number(s.Mean), number(s.Min), number(s.Max), number(s.Sum))
 	}
 	for _, key := range slices.Sorted(maps.Keys(g.Derived)) {
 		_, _ = fmt.Fprintf(table, "%s\t\t\t\t\t\t\t%.4f\n", key, g.Derived[key])
 	}
 	_ = table.Flush()
+	if small {
+		_, _ = fmt.Fprintf(w, "* N below %d: read these as examples, not estimates\n", smallN)
+	}
 }
 
-// Print writes the run's metrics: statuses, every metric over all cases, the
-// key metrics by size bucket and by agent, and the chains.
+// Print writes the run's metrics: statuses, every metric over the cases that
+// succeeded, the key metrics by size bucket and by agent, the cases that
+// failed apart, and the chains.
 func (m RunMetrics) Print(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "run %s, generator %s: %d case(s)\n", m.Run, m.Generator, len(m.Cases))
 	_, _ = fmt.Fprintf(w, "status: %s\n", countsText(m.All.Statuses))
@@ -400,8 +513,17 @@ func (m RunMetrics) Print(w io.Writer) {
 			_, _ = fmt.Fprintf(w, "%s: %s\n", c.CaseID, c.Problem)
 		}
 	}
-	_, _ = fmt.Fprintln(w, "\nall cases")
-	m.All.printStats(w)
+	_, _ = fmt.Fprintln(w)
+	m.All.printStats(w, fmt.Sprintf("cases that succeeded (%d of %d)", m.All.Statuses["ok"], m.All.Cases))
+	if len(m.All.Failed) > 0 {
+		table := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		_, _ = fmt.Fprintln(table, "\ncases that ran and did not succeed, apart\nMETRIC\tN\tMEDIAN\tSUM")
+		for _, key := range orderedKeys(m.All.Failed) {
+			s := m.All.Failed[key]
+			_, _ = fmt.Fprintf(table, "%s\t%d\t%s\t%s\n", key, s.N, number(s.Median), number(s.Sum))
+		}
+		_ = table.Flush()
+	}
 	for _, part := range []struct {
 		title  string
 		groups map[string]Group
@@ -409,33 +531,65 @@ func (m RunMetrics) Print(w io.Writer) {
 		if len(part.groups) == 0 {
 			continue
 		}
-		_, _ = fmt.Fprintf(w, "\nby %s\n", part.title)
+		_, _ = fmt.Fprintf(w, "\nby %s, over the cases that succeeded\n", part.title)
 		table := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-		_, _ = fmt.Fprintln(table, strings.ToUpper(part.title)+"\tCASES\tSTATUS\tWALL MEDIAN\tWALL P90\tCALLS MEDIAN\tCOST MEDIAN\tCOST P90\tCOST SUM")
+		_, _ = fmt.Fprintln(table, strings.ToUpper(part.title)+"\tCASES\tSTATUS\tOK\tWALL MEDIAN\tWALL P90\tCALLS MEDIAN\tCOST N\tCOST MEDIAN\tCOST P90\tCOST SUM")
 		for _, key := range sortedGroupKeys(part.groups) {
 			g := part.groups[key]
-			_, _ = fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", key, g.Cases, countsText(g.Statuses),
+			cost := g.Stats[MetricCost]
+			_, _ = fmt.Fprintf(table, "%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", key, g.Cases, countsText(g.Statuses), nText(g.Statuses["ok"]),
 				number(g.Stats[MetricWall].Median), number(g.Stats[MetricWall].P90), number(g.Stats[MetricCalls].Median),
-				money(g.Stats[MetricCost], g.Stats[MetricCost].Median), money(g.Stats[MetricCost], g.Stats[MetricCost].P90), money(g.Stats[MetricCost], g.Stats[MetricCost].Sum))
+				nText(cost.N), money(cost, cost.Median), money(cost, cost.P90), money(cost, cost.Sum))
 		}
 		_ = table.Flush()
 	}
 	if len(m.Chains) > 0 {
-		_, _ = fmt.Fprintf(w, "\nchains: %d pull request(s), %d pair(s) measured\n", len(m.Chains), m.Pairs.Cases)
+		_, _ = fmt.Fprintf(w, "\nchains: %d pull request(s)\n", len(m.Chains))
 		for _, c := range m.Chains {
 			note := ""
 			if c.Stopped != "" {
 				note = " (ended: " + c.Stopped + ")"
 			}
 			_, _ = fmt.Fprintf(w, "  %s: %d revision(s)%s\n", c.PullRequest, len(c.Cases), note)
+			for _, warning := range c.Warnings {
+				_, _ = fmt.Fprintf(w, "    order guessed: %s\n", warning)
+			}
 			for _, p := range c.Pairs {
 				if p.Skipped != "" {
 					_, _ = fmt.Fprintf(w, "    %s -> %s: not measured: %s\n", p.From, p.To, p.Skipped)
 				}
 			}
+			for _, key := range slices.Sorted(maps.Keys(c.Derived)) {
+				_, _ = fmt.Fprintf(w, "    %s %.4f\n", key, c.Derived[key])
+			}
 		}
-		if m.Pairs.Cases > 0 {
-			m.Pairs.printStats(w)
+		if m.FirstPairs.Cases > 0 {
+			_, _ = fmt.Fprintln(w)
+			m.FirstPairs.printStats(w, fmt.Sprintf("first pair of each chain (%d), which starts from a previous version other code wrote", m.FirstPairs.Cases))
+		}
+		if m.LaterPairs.Cases > 0 {
+			_, _ = fmt.Fprintln(w)
+			m.LaterPairs.printStats(w, fmt.Sprintf("later pairs (%d), whose earlier document this generator wrote from its own previous one", m.LaterPairs.Cases))
+		}
+	}
+	if definer, ok := MeterFor(m.Generator).(Definer); ok {
+		shown := map[string]bool{}
+		for _, g := range []*Group{&m.All, m.FirstPairs, m.LaterPairs} {
+			if g != nil {
+				for key := range g.Stats {
+					shown[key] = true
+				}
+				for key := range g.Derived {
+					shown[key] = true
+				}
+			}
+		}
+		definitions := definer.Definitions()
+		_, _ = fmt.Fprintln(w, "\ndefinitions")
+		for _, key := range slices.Sorted(maps.Keys(definitions)) {
+			if shown[key] {
+				_, _ = fmt.Fprintf(w, "  %s: %s\n", key, definitions[key])
+			}
 		}
 	}
 }
@@ -471,59 +625,89 @@ func WriteMetrics(dir string, m RunMetrics) error {
 	return writeJSON(filepath.Join(dir, "metrics.json"), m)
 }
 
-// Delta is how one metric moved between two runs over the cases both have.
+// Delta is how one metric moved between a run and a baseline over the cases both
+// completed.
 type Delta struct {
-	N int `json:"n"`
-	// Base and Other are the metric's sums over the aligned cases.
-	Base  float64 `json:"base"`
-	Other float64 `json:"other"`
+	// N counts the cases that have the metric in both runs; Missing the cases
+	// that have it in only one.
+	N       int `json:"n"`
+	Missing int `json:"missing,omitempty"`
+	// Run and Baseline are the metric's sums over those N cases.
+	Run      float64 `json:"run"`
+	Baseline float64 `json:"baseline"`
 	// Changed counts the cases whose value differs.
 	Changed int `json:"changed"`
-	// The distribution of the per-case difference (this run minus the other).
+	// The distribution of the per-case difference (the run minus the baseline).
 	Mean   float64 `json:"mean"`
 	Median float64 `json:"median"`
 	P10    float64 `json:"p10"`
 	P90    float64 `json:"p90"`
-	// MedianRatio is the median of this run's value over the other's, for cases
-	// where the other's is above zero; zero when there is none.
+	// MedianRatio is the median of the run's value over the baseline's, for
+	// cases where the baseline's is above zero; zero when there is none.
 	MedianRatio float64 `json:"median_ratio,omitempty"`
 }
 
 // StatusChange is a case whose status differs between the runs.
 type StatusChange struct {
-	CaseID string `json:"case_id"`
-	Base   string `json:"base"`
-	Other  string `json:"other"`
+	CaseID   string `json:"case_id"`
+	Run      string `json:"run"`
+	Baseline string `json:"baseline"`
 }
 
-// Comparison is the alignment of two runs by case id.
+// equality is the rule "identical" uses, stated in the comparison.
+const equality = "a case is identical when both runs completed it, its generator metrics decoded in both, and every metric that is not the runner's (cost, time, calls, tokens, repairs, size) is present in both with exactly equal values"
+
+// Comparison is the alignment of a run with a baseline by case id.
 type Comparison struct {
-	Run   string `json:"run"`
-	Other string `json:"other"`
+	Run      string `json:"run"`
+	Baseline string `json:"baseline"`
+	// Warnings say where the runs differ in more than the settings under test:
+	// the deltas then mix effects.
+	Warnings []string `json:"warnings,omitempty"`
 	// Aligned counts the cases both runs have.
-	Aligned   int      `json:"aligned"`
-	OnlyRun   []string `json:"only_run,omitempty"`
-	OnlyOther []string `json:"only_other,omitempty"`
+	Aligned      int      `json:"aligned"`
+	OnlyRun      []string `json:"only_run,omitempty"`
+	OnlyBaseline []string `json:"only_baseline,omitempty"`
 	// StatusChanges lists aligned cases whose status differs.
 	StatusChanges []StatusChange `json:"status_changes,omitempty"`
-	// Metrics has a Delta per metric, for the cases both runs completed.
+	// Metrics has a Delta per metric, over the cases both runs completed.
 	Metrics map[string]Delta `json:"metrics"`
-	// SameDocumentMetrics counts, among the cases both completed, those whose
-	// generator metrics (every metric but the runner's: cost, time, calls...)
-	// are all equal in both runs: the analysis the metrics see is unchanged.
-	SameDocumentMetrics int `json:"same_document_metrics"`
-	Completed           int `json:"completed"`
+	// Identical counts, among the Completed cases, those equal by the rule in
+	// Equality; Undecoded counts those left out of that count because the
+	// generator's metrics could not be read in one of the runs.
+	Identical int    `json:"identical"`
+	Completed int    `json:"completed"`
+	Undecoded int    `json:"undecoded,omitempty"`
+	Equality  string `json:"equality"`
 }
 
-// Compare aligns two runs by case id. Deltas are this run minus other, over
-// the cases both completed (status ok).
-func Compare(run, other RunMetrics) Comparison {
-	c := Comparison{Run: run.Run, Other: other.Run, Metrics: map[string]Delta{}}
+// Compare aligns a run with a baseline by case id. Deltas are the run minus the
+// baseline, over the cases both completed (status ok), for every metric either
+// run has.
+func Compare(run, baseline RunMetrics) Comparison {
+	c := Comparison{Run: run.Run, Baseline: baseline.Run, Metrics: map[string]Delta{}, Equality: equality}
+	for _, w := range []struct {
+		name      string
+		a, b      string
+		unlessSet bool
+	}{
+		{"dataset (index hash)", run.Info.DatasetIndexSHA256, baseline.Info.DatasetIndexSHA256, false},
+		{"generator", run.Info.Generator, baseline.Info.Generator, false},
+		{"model", run.Info.Model, baseline.Info.Model, false},
+		{"selection", run.Info.Selection, baseline.Info.Selection, false},
+	} {
+		if w.a != w.b {
+			c.Warnings = append(c.Warnings, fmt.Sprintf("the runs differ in %s", w.name))
+		}
+	}
+	if run.Info.Chain != baseline.Info.Chain {
+		c.Warnings = append(c.Warnings, "one run is a chain run and the other is not")
+	}
 	theirs := map[string]CaseMetrics{}
-	for _, o := range other.Cases {
+	for _, o := range baseline.Cases {
 		theirs[o.CaseID] = o
 	}
-	deltas, ratios := map[string][]float64{}, map[string][]float64{}
+	deltas, ratios, missing := map[string][]float64{}, map[string][]float64{}, map[string]int{}
 	sums := map[string][2]float64{}
 	changed := map[string]int{}
 	for _, mine := range run.Cases {
@@ -535,16 +719,21 @@ func Compare(run, other RunMetrics) Comparison {
 		delete(theirs, mine.CaseID)
 		c.Aligned++
 		if mine.Status != o.Status {
-			c.StatusChanges = append(c.StatusChanges, StatusChange{CaseID: mine.CaseID, Base: mine.Status, Other: o.Status})
+			c.StatusChanges = append(c.StatusChanges, StatusChange{CaseID: mine.CaseID, Run: mine.Status, Baseline: o.Status})
 		}
 		if mine.Status != "ok" || o.Status != "ok" {
 			continue
 		}
 		c.Completed++
 		same := true
-		for key, v := range mine.Values {
-			w, ok := o.Values[key]
-			if !ok {
+		for key := range maps.Keys(unionKeys(mine.Values, o.Values)) {
+			v, inRun := mine.Values[key]
+			w, inBase := o.Values[key]
+			if !inRun || !inBase {
+				missing[key]++
+				if !slices.Contains(runMetrics, key) {
+					same = false
+				}
 				continue
 			}
 			deltas[key] = append(deltas[key], v-w)
@@ -560,20 +749,22 @@ func Compare(run, other RunMetrics) Comparison {
 				}
 			}
 		}
-		for key := range o.Values {
-			if _, ok := mine.Values[key]; !ok && !slices.Contains(runMetrics, key) {
-				same = false
-			}
-		}
-		if same {
-			c.SameDocumentMetrics++
+		switch {
+		case mine.Problem != "" || o.Problem != "":
+			c.Undecoded++
+		case same:
+			c.Identical++
 		}
 	}
-	c.OnlyOther = slices.Sorted(maps.Keys(theirs))
-	for key, values := range deltas {
+	c.OnlyBaseline = slices.Sorted(maps.Keys(theirs))
+	for key := range unionKeys(deltas, missing) {
+		values := deltas[key]
 		sorted := slices.Sorted(slices.Values(values))
-		d := Delta{N: len(sorted), Base: sums[key][0], Other: sums[key][1], Changed: changed[key], Median: quantile(sorted, 0.5), P10: quantile(sorted, 0.1), P90: quantile(sorted, 0.9)}
-		d.Mean = (d.Base - d.Other) / float64(d.N)
+		d := Delta{N: len(sorted), Missing: missing[key], Run: sums[key][0], Baseline: sums[key][1], Changed: changed[key]}
+		if len(sorted) > 0 {
+			d.Median, d.P10, d.P90 = quantile(sorted, 0.5), quantile(sorted, 0.1), quantile(sorted, 0.9)
+			d.Mean = (d.Run - d.Baseline) / float64(d.N)
+		}
 		if r := ratios[key]; len(r) > 0 {
 			d.MedianRatio = quantile(slices.Sorted(slices.Values(r)), 0.5)
 		}
@@ -582,27 +773,45 @@ func Compare(run, other RunMetrics) Comparison {
 	return c
 }
 
+func unionKeys[A, B any](a map[string]A, b map[string]B) map[string]struct{} {
+	out := map[string]struct{}{}
+	for k := range a {
+		out[k] = struct{}{}
+	}
+	for k := range b {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
 // Print writes the comparison.
 func (c Comparison) Print(w io.Writer) {
-	_, _ = fmt.Fprintf(w, "%s against %s (deltas are %s minus %s)\n", c.Run, c.Other, c.Run, c.Other)
-	_, _ = fmt.Fprintf(w, "%d case(s) in both runs, %d completed in both; %d only in %s, %d only in %s\n", c.Aligned, c.Completed, len(c.OnlyRun), c.Run, len(c.OnlyOther), c.Other)
-	for _, s := range c.StatusChanges {
-		_, _ = fmt.Fprintf(w, "status changed: %s: %s -> %s\n", s.CaseID, s.Other, s.Base)
+	_, _ = fmt.Fprintf(w, "%s against the baseline %s (deltas are %s minus the baseline)\n", c.Run, c.Baseline, c.Run)
+	for _, warning := range c.Warnings {
+		_, _ = fmt.Fprintf(w, "warning: %s\n", warning)
 	}
-	_, _ = fmt.Fprintf(w, "document metrics identical in %d of %d completed case(s)\n", c.SameDocumentMetrics, c.Completed)
+	_, _ = fmt.Fprintf(w, "%d case(s) in both runs, %d completed in both; %d only in the run, %d only in the baseline\n", c.Aligned, c.Completed, len(c.OnlyRun), len(c.OnlyBaseline))
+	for _, s := range c.StatusChanges {
+		_, _ = fmt.Fprintf(w, "status changed: %s: %s (baseline) -> %s\n", s.CaseID, s.Baseline, s.Run)
+	}
+	_, _ = fmt.Fprintf(w, "identical document metrics in %d of %d completed case(s)", c.Identical, c.Completed)
+	if c.Undecoded > 0 {
+		_, _ = fmt.Fprintf(w, "; %d left out because their metrics did not decode", c.Undecoded)
+	}
+	_, _ = fmt.Fprintf(w, "\n(%s)\n", c.Equality)
 	stats := map[string]Stat{}
 	for key := range c.Metrics {
 		stats[key] = Stat{}
 	}
 	table := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "METRIC\tN\tCHANGED\tTHIS SUM\tOTHER SUM\tMEAN\tMEDIAN\tP10\tP90\tMEDIAN RATIO")
+	_, _ = fmt.Fprintln(table, "METRIC\tN\tMISSING\tCHANGED\tRUN SUM\tBASELINE SUM\tMEAN\tMEDIAN\tP10\tP90\tMEDIAN RATIO")
 	for _, key := range orderedKeys(stats) {
 		d := c.Metrics[key]
 		ratio := "-"
 		if d.MedianRatio != 0 {
 			ratio = fmt.Sprintf("%.2f", d.MedianRatio)
 		}
-		_, _ = fmt.Fprintf(table, "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", key, d.N, d.Changed, number(d.Base), number(d.Other), signed(d.Mean), signed(d.Median), signed(d.P10), signed(d.P90), ratio)
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", key, nText(d.N), d.Missing, d.Changed, number(d.Run), number(d.Baseline), signed(d.Mean), signed(d.Median), signed(d.P10), signed(d.P90), ratio)
 	}
 	_ = table.Flush()
 }

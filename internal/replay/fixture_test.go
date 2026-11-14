@@ -164,7 +164,7 @@ func (d *dataset) addCaseJSON(t *testing.T, id string, facts map[string]any, bun
 	meta, _ := json.Marshal(map[string]string{"id": id, "bundle_sha256": hex.EncodeToString(sum[:]), "head_tree": trees["head"], "merge_base_tree": trees["merge-base"]})
 	write(filepath.Join(dir, "case.json"), meta)
 
-	entry := map[string]any{"id": id, "repository": "acme/demo", "number": 7, "split": "calibration", "representative": false, "primary": true, "size": "s", "session_vendors": []string{}}
+	entry := map[string]any{"id": id, "repository": "acme/demo", "number": 7, "split": "calibration", "representative": false, "primary": true, "size": "s", "session_vendors": []string{}, "attachments": 0, "threads": 0}
 	for k, v := range facts {
 		entry[k] = v
 	}

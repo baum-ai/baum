@@ -27,22 +27,45 @@ func TestFlagsAreChecked(t *testing.T) {
 		args []string
 		want string
 	}{
-		"no dataset":      {nil, "--dataset"},
-		"not a dataset":   {[]string{"--dataset", t.TempDir()}, "not a replay dataset"},
-		"resume no name":  {[]string{"--dataset", dir, "--resume"}, "--resume needs --name"},
-		"override syntax": {[]string{"--dataset", dir, "-prompt-override", "review-staged-outline"}, "<id>=<file>"},
-		"seed":            {[]string{"--dataset", dir, "--shuffle-seed", "x"}, "--shuffle-seed"},
-		"empty selection": {[]string{"--dataset", dir, "--dry-run", "--case", "a", "--split", "calibration"}, "cannot be combined"},
-		"tri-state":       {[]string{"--dataset", dir, "--with-images=maybe"}, "use true or false"},
-		"case file":       {[]string{"--dataset", dir, "--case-file", filepath.Join(dir, "missing.txt")}, "missing.txt"},
-		"empty case file": {[]string{"--dataset", dir, "--case-file", empty}, "names no case"},
-		"detector":        {[]string{"--dataset", dir, "--dry-run", "--detector", "tables"}, "no index"},
+		"no dataset":        {nil, "--dataset"},
+		"not a dataset":     {[]string{"--dataset", t.TempDir()}, "not a replay dataset"},
+		"resume no name":    {[]string{"--dataset", dir, "--resume"}, "--resume needs --name"},
+		"override syntax":   {[]string{"--dataset", dir, "-prompt-override", "review-staged-outline"}, "<id>=<file>"},
+		"seed":              {[]string{"--dataset", dir, "--shuffle-seed", "x"}, "--shuffle-seed"},
+		"empty selection":   {[]string{"--dataset", dir, "--dry-run", "--case", "a", "--split", "calibration"}, "cannot be combined"},
+		"positional value":  {[]string{"--dataset", dir, "--with-images", "false", "--limit", "3", "--dry-run"}, `unexpected argument "false"`},
+		"unknown generator": {[]string{"--dataset", dir, "--generator", "tiles"}, "unknown generator"},
+		"generator option":  {[]string{"--dataset", dir, "--generator-option", "x"}, "KEY=VALUE"},
+		"review option":     {[]string{"--dataset", dir, "--generator-option", "x=y"}, "takes no --generator-option"},
+		"tri-state":         {[]string{"--dataset", dir, "--with-images=maybe"}, "use true or false"},
+		"case file":         {[]string{"--dataset", dir, "--case-file", filepath.Join(dir, "missing.txt")}, "missing.txt"},
+		"empty case file":   {[]string{"--dataset", dir, "--case-file", empty}, "names no case"},
+		"detector":          {[]string{"--dataset", dir, "--dry-run", "--detector", "tables"}, "no index"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := run(context.Background(), tc.args, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestPositionalArgumentsAreRefused(t *testing.T) {
+	dir := t.TempDir()
+	for _, sub := range []string{"cases", "checkouts.git"} {
+		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := run(context.Background(), []string{"--dataset", dir, "--with-images", "false", "--limit", "3", "--dry-run"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "--with-images=false") || !strings.Contains(err.Error(), "ignored") {
+		t.Errorf("error %v", err)
+	}
+	if err := run(context.Background(), []string{"--dataset", dir, "stray"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), `"stray"`) {
+		t.Errorf("error %v", err)
+	}
+	if err := run(context.Background(), []string{"metrics", dir, "--compare", dir, "extra"}, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), `"extra"`) {
+		t.Errorf("error %v", err)
 	}
 }
 

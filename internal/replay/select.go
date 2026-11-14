@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/baum-ai/baum/bundle"
 )
@@ -86,8 +87,11 @@ func (d *Dataset) base(sel Selection) ([]Entry, error) {
 func (d *Dataset) facets(entries []Entry, sel Selection) ([]Entry, error) {
 	var kept []Entry
 	for _, e := range entries {
-		if sel.Images != nil && (e.Attachments > 0) != *sel.Images ||
-			sel.Threads != nil && (e.Threads > 0) != *sel.Threads ||
+		if sel.Images != nil && e.Attachments == nil || sel.Threads != nil && e.Threads == nil {
+			return nil, fmt.Errorf("index entry %s has no attachments or threads count, which --with-images and --with-threads need; rebuild the index or leave the filter out", e.ID)
+		}
+		if sel.Images != nil && (*e.Attachments > 0) != *sel.Images ||
+			sel.Threads != nil && (*e.Threads > 0) != *sel.Threads ||
 			sel.Previous != nil && (e.PreviousVersion != nil) != *sel.Previous {
 			continue
 		}
@@ -171,13 +175,17 @@ type Chain struct {
 	Repository string
 	Number     int
 	IDs        []string
+	// Warnings say where the order rests on a guess.
+	Warnings []string
 }
 
-var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._~-]+`)
 
-// Name is the chain's directory name.
+// Name is the chain's directory name: the repository with its slash written
+// as ~ (which a repository name cannot hold, so no two chains share a name),
+// and the pull request number.
 func (c Chain) Name() string {
-	return unsafeName.ReplaceAllString(c.Repository, "-") + "-" + strconv.Itoa(c.Number)
+	return unsafeName.ReplaceAllString(strings.ReplaceAll(c.Repository, "/", "~"), "-") + "-" + strconv.Itoa(c.Number)
 }
 
 // pullFacts are the facts of a case that place it in a pull request's history.
@@ -187,8 +195,16 @@ type pullFacts struct {
 	// Previous is the version number of the previous review in the bundle, 0
 	// when it has none.
 	Previous   int
-	CapturedAt string
+	NoPrevious bool
+	CapturedAt time.Time
 	Revision   string
+}
+
+// parseCapture reads a capture time (RFC 3339, with any offset); one that does
+// not parse is the zero time, which sorts first.
+func parseCapture(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339Nano, s)
+	return t
 }
 
 // facts reads them from the index entry, or from the bundle when the dataset
@@ -197,7 +213,7 @@ func (d *Dataset) facts(id string) (pullFacts, error) {
 	for i := range d.Index {
 		e := &d.Index[i]
 		if e.ID == id && e.Repository != "" && e.Number > 0 {
-			f := pullFacts{Repository: e.Repository, Number: e.Number, CapturedAt: e.CapturedAt, Revision: cmp.Or(e.Revision, e.ID)}
+			f := pullFacts{Repository: e.Repository, Number: e.Number, CapturedAt: parseCapture(e.CapturedAt), Revision: cmp.Or(e.Revision, e.ID), NoPrevious: e.PreviousVersion == nil}
 			if e.PreviousVersion != nil {
 				f.Previous = *e.PreviousVersion
 			}
@@ -221,7 +237,7 @@ func (d *Dataset) facts(id string) (pullFacts, error) {
 	if err != nil {
 		return pullFacts{}, fmt.Errorf("case %s: reading the pull request: %w", id, err)
 	}
-	f := pullFacts{Repository: header.Repository, Number: header.PullRequest.Number, Revision: cmp.Or(header.PullRequest.HeadSHA, id)}
+	f := pullFacts{Repository: header.Repository, Number: header.PullRequest.Number, Revision: cmp.Or(header.PullRequest.HeadSHA, id), NoPrevious: header.Previous == nil}
 	if header.Previous != nil {
 		f.Previous = header.Previous.Version
 	}
@@ -230,23 +246,22 @@ func (d *Dataset) facts(id string) (pullFacts, error) {
 
 // SelectChains groups the selection by pull request and orders each group's
 // revisions. A revision comes after the ones with a lower previous version
-// number in its bundle (the version of the review the app had when the case
-// was captured), and among equal numbers after the one captured earlier; the
-// case id settles the rest.
+// number in its bundle (the version of the review the app held when the case
+// was captured; none counts as 0), and among equal numbers after the one
+// captured earlier (capture times are parsed, so offsets count); the case id
+// settles the rest.
 //
 // Named cases (IDs) are the revisions exactly as given. Otherwise the filters
 // choose pull requests: a pull request is taken when it has two or more
-// primary cases, one per revision, and at least one of them passes every
-// filter; all its primary cases are then replayed. Limit counts cases and
-// takes whole chains, skipping one that no longer fits.
+// revisions and at least one of its primary cases passes every filter; all its
+// revisions are then replayed, one primary case each. When the index marks
+// several primary cases of a revision, the earliest captured wins, then the
+// lowest id. Limit counts cases and takes whole chains; a chain that does not
+// fit is left out, and when none fits the error says so.
 func (d *Dataset) SelectChains(sel Selection) ([]Chain, error) {
 	groups := map[string][]string{}
-	var order []string
 	add := func(id string, f pullFacts) {
 		key := f.Repository + "#" + strconv.Itoa(f.Number)
-		if _, ok := groups[key]; !ok {
-			order = append(order, key)
-		}
 		groups[key] = append(groups[key], id)
 	}
 	if len(sel.IDs) > 0 {
@@ -273,33 +288,38 @@ func (d *Dataset) SelectChains(sel Selection) ([]Chain, error) {
 		for _, e := range entries {
 			matched[e.ID] = true
 		}
-		// The pull requests' primary cases, one per revision.
-		all := map[string][]string{}
-		seen := map[string]bool{}
+		// The primary case of each revision.
+		type pick struct {
+			id string
+			f  pullFacts
+		}
+		best := map[string]pick{}
 		for _, e := range d.Index {
 			if !e.Primary || e.Repository == "" || e.Number <= 0 {
 				continue
 			}
 			f, _ := d.facts(e.ID)
-			key := f.Repository + "#" + strconv.Itoa(f.Number)
-			if seen[key+"@"+f.Revision] {
+			key := f.Repository + "#" + strconv.Itoa(f.Number) + "@" + f.Revision
+			if old, ok := best[key]; ok && (old.f.CapturedAt.Before(f.CapturedAt) || old.f.CapturedAt.Equal(f.CapturedAt) && old.id < e.ID) {
 				continue
 			}
-			seen[key+"@"+f.Revision] = true
-			all[key] = append(all[key], e.ID)
+			best[key] = pick{e.ID, f}
 		}
-		for _, ids := range all {
-			if len(ids) >= 2 && slices.ContainsFunc(ids, func(id string) bool { return matched[id] }) {
-				for _, id := range ids {
-					f, _ := d.facts(id)
-					add(id, f)
+		all := map[string][]pick{}
+		for _, p := range best {
+			key := p.f.Repository + "#" + strconv.Itoa(p.f.Number)
+			all[key] = append(all[key], p)
+		}
+		for _, picks := range all {
+			if len(picks) >= 2 && slices.ContainsFunc(picks, func(p pick) bool { return matched[p.id] }) {
+				for _, p := range picks {
+					add(p.id, p.f)
 				}
 			}
 		}
 	}
 	var chains []Chain
-	for _, key := range order {
-		ids := groups[key]
+	for _, ids := range groups {
 		byID := map[string]pullFacts{}
 		for _, id := range ids {
 			f, err := d.facts(id)
@@ -309,10 +329,21 @@ func (d *Dataset) SelectChains(sel Selection) ([]Chain, error) {
 			byID[id] = f
 		}
 		slices.SortFunc(ids, func(a, b string) int {
-			return cmp.Or(cmp.Compare(byID[a].Previous, byID[b].Previous), cmp.Compare(byID[a].CapturedAt, byID[b].CapturedAt), cmp.Compare(a, b))
+			return cmp.Or(cmp.Compare(byID[a].Previous, byID[b].Previous), byID[a].CapturedAt.Compare(byID[b].CapturedAt), cmp.Compare(a, b))
 		})
 		f := byID[ids[0]]
-		chains = append(chains, Chain{Repository: f.Repository, Number: f.Number, IDs: ids})
+		chain := Chain{Repository: f.Repository, Number: f.Number, IDs: ids}
+		// A revision with no previous version number sorts first as version 0;
+		// that is a guess when an earlier-captured revision has a number.
+		for i, id := range ids {
+			if byID[id].NoPrevious && i > 0 && slices.ContainsFunc(ids[:i], func(o string) bool { return !byID[o].NoPrevious }) {
+				chain.Warnings = append(chain.Warnings, fmt.Sprintf("case %s has no previous version number but follows one that has", id))
+			}
+			if i > 0 && byID[id].CapturedAt.Before(byID[ids[i-1]].CapturedAt) {
+				chain.Warnings = append(chain.Warnings, fmt.Sprintf("case %s was captured before the case ordered ahead of it", id))
+			}
+		}
+		chains = append(chains, chain)
 	}
 	slices.SortFunc(chains, func(a, b Chain) int {
 		return cmp.Or(cmp.Compare(a.Repository, b.Repository), cmp.Compare(a.Number, b.Number))
@@ -320,7 +351,7 @@ func (d *Dataset) SelectChains(sel Selection) ([]Chain, error) {
 	if sel.ShuffleSeed != nil {
 		shuffle(chains, *sel.ShuffleSeed)
 	}
-	if sel.Limit > 0 {
+	if sel.Limit > 0 && len(chains) > 0 {
 		var kept []Chain
 		total := 0
 		for _, c := range chains {
@@ -328,6 +359,13 @@ func (d *Dataset) SelectChains(sel Selection) ([]Chain, error) {
 				kept = append(kept, c)
 				total += len(c.IDs)
 			}
+		}
+		if len(kept) == 0 {
+			shortest := len(chains[0].IDs)
+			for _, c := range chains {
+				shortest = min(shortest, len(c.IDs))
+			}
+			return nil, fmt.Errorf("--limit %d is below the %d revisions of the shortest of the %d selected chains: a chain is replayed whole, so raise --limit (it counts cases)", sel.Limit, shortest, len(chains))
 		}
 		chains = kept
 	}
@@ -341,13 +379,34 @@ type Breakdown struct {
 	// sessions, primary, representative).
 	Candidates int
 	// Combinations counts them by images, threads and previous version
-	// ("images threads previous", each yes or no).
+	// ("images threads previous", each yes, no or unknown).
 	Combinations map[string]int
 	// Detectors counts them by what the detectors matched: schema, api, any,
 	// none.
 	Detectors map[string]int
+	// Evidence counts the matches by kind of evidence (a case can have several);
+	// TextOnly counts, per detector, the matches no path rule supports: they
+	// rest on the text of changed lines alone. Blind counts the cases whose every
+	// hunk lacks patch text, which the detectors can only read by path.
+	Evidence map[string]int
+	TextOnly map[string]int
+	Blind    int
 	// Matching also pass the images, threads, previous and detector filters.
 	Matching int
+}
+
+var pathEvidence = map[string]bool{EvidenceSchemaPath: true, EvidenceAPISchemaFile: true, EvidenceAPIRoutesFile: true}
+
+// textOnly reports the detector kinds a case matches by text alone.
+func (f Detections) textOnly() (schema, api bool) {
+	var schemaPath, apiPath bool
+	for _, e := range f.Evidence {
+		if pathEvidence[e] {
+			schemaPath = schemaPath || strings.HasPrefix(e, "schema:")
+			apiPath = apiPath || strings.HasPrefix(e, "api:")
+		}
+	}
+	return f.Schema && !schemaPath, f.API && !apiPath
 }
 
 // Break counts the candidates of the selection. It reads every candidate's
@@ -357,10 +416,20 @@ func (d *Dataset) Break(sel Selection) (Breakdown, error) {
 	if err != nil {
 		return Breakdown{}, err
 	}
-	b := Breakdown{Candidates: len(entries), Combinations: map[string]int{}, Detectors: map[string]int{}}
-	yes := func(v bool) string { return map[bool]string{true: "yes", false: "no"}[v] }
+	b := Breakdown{Candidates: len(entries), Combinations: map[string]int{}, Detectors: map[string]int{}, Evidence: map[string]int{}, TextOnly: map[string]int{}}
+	answer := func(known, yes bool) string {
+		switch {
+		case !known:
+			return "unknown"
+		case yes:
+			return "yes"
+		}
+		return "no"
+	}
 	for _, e := range entries {
-		b.Combinations[strings.Join([]string{yes(e.Attachments > 0), yes(e.Threads > 0), yes(e.PreviousVersion != nil)}, " ")]++
+		images := answer(e.Attachments != nil, e.Attachments != nil && *e.Attachments > 0)
+		threads := answer(e.Threads != nil, e.Threads != nil && *e.Threads > 0)
+		b.Combinations[strings.Join([]string{images, threads, answer(true, e.PreviousVersion != nil)}, " ")]++
 		found, err := d.detections(e.ID)
 		if err != nil {
 			return Breakdown{}, err
@@ -370,6 +439,20 @@ func (d *Dataset) Break(sel Selection) (Breakdown, error) {
 				b.Detectors[string(name)]++
 			}
 		}
+		for _, kind := range found.Evidence {
+			b.Evidence[kind]++
+		}
+		if schema, api := found.textOnly(); schema || api {
+			if schema {
+				b.TextOnly["schema"]++
+			}
+			if api {
+				b.TextOnly["api"]++
+			}
+		}
+		if found.Blind {
+			b.Blind++
+		}
 	}
 	matching, err := d.facets(entries, sel)
 	b.Matching = len(matching)
@@ -377,13 +460,64 @@ func (d *Dataset) Break(sel Selection) (Breakdown, error) {
 }
 
 // Print writes the counts: the candidates by images, threads and previous
-// version, by detector, and the cases that pass every filter.
+// version, by detector and what the detectors rest on, and the cases that pass
+// every filter.
 func (b Breakdown) Print(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "%d case(s) pass the index filters; counts by images, threads, previous version:\n", b.Candidates)
 	for _, key := range slices.Sorted(maps.Keys(b.Combinations)) {
 		parts := strings.Fields(key)
 		_, _ = fmt.Fprintf(w, "  images %s, threads %s, previous %s: %d\n", parts[0], parts[1], parts[2], b.Combinations[key])
 	}
-	_, _ = fmt.Fprintf(w, "by detector: schema %d, api %d, either %d, neither %d\n", b.Detectors["schema"], b.Detectors["api"], b.Detectors["any"], b.Detectors["none"])
+	_, _ = fmt.Fprintf(w, "by detector (heuristics, not ground truth): schema %d, api %d, either %d, neither %d\n", b.Detectors["schema"], b.Detectors["api"], b.Detectors["any"], b.Detectors["none"])
+	_, _ = fmt.Fprintf(w, "  matches resting on text alone, no path rule: schema %d, api %d; cases whose every hunk lacks patch text: %d\n", b.TextOnly["schema"], b.TextOnly["api"], b.Blind)
+	_, _ = fmt.Fprintf(w, "  by evidence: %s\n", countsText(b.Evidence))
 	_, _ = fmt.Fprintf(w, "%d case(s) also pass the images, threads, previous and detector filters\n", b.Matching)
+}
+
+// DetectorReport lists, for the candidates of the selection, the case ids by
+// kind of evidence (and "schema-text-only", "api-text-only" and "blind"), so a
+// person can label a sample of each. Ids only.
+func (d *Dataset) DetectorReport(sel Selection) (map[string][]string, error) {
+	entries, err := d.base(sel)
+	if err != nil {
+		return nil, err
+	}
+	report := map[string][]string{}
+	for _, e := range entries {
+		found, err := d.detections(e.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, kind := range found.Evidence {
+			report[kind] = append(report[kind], e.ID)
+		}
+		schema, api := found.textOnly()
+		if schema {
+			report["schema-text-only"] = append(report["schema-text-only"], e.ID)
+		}
+		if api {
+			report["api-text-only"] = append(report["api-text-only"], e.ID)
+		}
+		if found.Blind {
+			report["blind"] = append(report["blind"], e.ID)
+		}
+		if !found.Schema && !found.API {
+			report["none"] = append(report["none"], e.ID)
+		}
+	}
+	return report, nil
+}
+
+// WriteDetectorReport writes a DetectorReport as one file of ids per kind into dir.
+func WriteDetectorReport(dir string, report map[string][]string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	for kind, ids := range report {
+		name := strings.ReplaceAll(kind, ":", "-") + ".txt"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(strings.Join(ids, "\n")+"\n"), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
 }

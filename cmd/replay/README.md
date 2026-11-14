@@ -70,6 +70,8 @@ deterministically, and `--limit` cuts the list):
 | `--with-sessions claude_code\|codex\|none` | Keep cases whose bundle has sessions of that agent, or none. |
 | `--with-images`, `--with-threads`, `--with-previous` | Keep cases that have images, review threads or a previous version. Each is yes or no: `--with-images` or `--with-images=true` keeps cases with images, `--with-images=false` those without, and leaving it out keeps both. |
 | `--detector schema\|api\|any\|none` | Keep cases a structural detector matches, either one (`any`) or neither (`none`); see [Detectors](#detectors). |
+| `--generator`, `--generator-option KEY=VALUE` | What to generate (`review`, the default), by name from the generator registry, and options for generators that take them; see [Adding another kind of output](#adding-another-kind-of-output). |
+| `--detector-report` | Write the case ids by kind of detector evidence; see [Detectors](#detectors). |
 | `--case-file <path>` | Case ids from a file, one per line; blank lines and `#` comments are ignored. Same as repeating `--case`, and not combined with filters. |
 | `--chain` | Replay each pull request's revisions in order; see [Chains](#chains). |
 | `--limit N`, `--shuffle-seed N` | Cut the selection, after a seeded shuffle if given. |
@@ -105,6 +107,10 @@ Guards and control:
 | `--resume` | With `--name`, skip the cases whose outcome there succeeded and run the rest. It refuses when the saved backend, model, effort, generator settings (staged, reuse, prompt version and digest, override hashes) differ from the current ones, unless `--resume-anyway` is given. |
 | `--dry-run` | List the cases that would run, checking that each loads, and call no model. It also prints how many cases pass the index filters, how many of them have images, threads and a previous version in each combination, how many each detector matches, and how many pass every filter: counts only. |
 
+An argument that is not a flag is refused: the flag package would stop reading
+flags at it and ignore the rest, so `--with-images false --dry-run` would not be
+a dry run. Write a boolean flag's value as `--with-images=false`.
+
 Exit status: zero when every selected case succeeded (and for `--help` and
 `--dry-run`); non-zero when any case failed or was not run, after the summary is
 written, and when the run is interrupted with Ctrl+C. An interrupted case
@@ -117,21 +123,39 @@ content and are never committed.
 ## Detectors
 
 A detector is a small pure function over a case's diff (`detect.go`), so a
-selection can pick cases where a specialised view of the review would apply. Both
-look at hunks outside tests, docs, generated and vendored files, and at the
-lines a hunk adds or removes.
+selection can pick cases where a specialised view of the review would apply.
+They are heuristics for stratified selection, not ground truth: they miss
+changes written in ways they do not know, and some matches are not changes of
+that kind. `--dry-run` says so and counts what each match rests on. Both skip
+tests, docs, generated and vendored hunks and comment lines, and read the lines a
+hunk adds or removes.
 
-- `schema`: a DDL statement (`create`, `alter` or `drop` of a table, index, view,
-  type, trigger, function and so on, or `add column`), a migration, or a `.sql`
-  file (which covers `queries/*.sql`).
-- `api`: an HTTP route registration (`HandleFunc`, `Get`/`Post`/... with a path,
-  a `@router.get` decorator, `.route("/...")`), an agent tool definition
-  (`NewTool`, `AddTool`, `input_schema`, `@tool`), or a published JSON schema
-  file (a `.json` file under a `schema` or `schemas` directory, `*.schema.json`,
-  OpenAPI and Swagger files).
+- `schema`: a migration or a `.sql` file (which covers `queries/*.sql`), kind
+  `schema:path`; or a DDL statement in a changed line, kind `schema:ddl`. A
+  statement reads as one (`create table runs (`, `alter table runs add`,
+  `drop index if exists x;`), so prose and labels with the same words do not match.
+- `api`: a published JSON schema file (a `.json` file under a `schema` or
+  `schemas` directory, `*.schema.json`, OpenAPI and Swagger files), kind
+  `api:schema-file`; a Rails `routes.rb`, kind `api:routes-file`; a route
+  registration, kind `api:route` (`Handle` and `HandleFunc` with a path,
+  `Get`/`Post`/... with a path on a receiver named like a router, mux, app,
+  server or group but not a client, `.Route`, `.Mount`, `@app.get` decorators,
+  Spring mapping annotations); or an agent tool definition, kind `api:tool`
+  (`NewTool`, `AddTool`, `@tool`, and `input_schema` beside a tool `name`).
 
-They are heuristics for stratified selection, not a classification. `--detector`
-reads each candidate's bundle, so it takes a moment on a whole dataset.
+The path kinds rest on a file's name. The text kinds rest on a regular
+expression over changed lines and are where false positives and misses are:
+`--dry-run` prints how many matches have no path kind (`text alone`), how many
+cases have no patch text at all in any hunk (`blind`: the patch text was cut or
+never there, so only paths could match) and the count per kind.
+
+`--detector-report` writes, into `<out>/<name>/detectors/`, one file of case ids
+per kind (`schema-path.txt`, `schema-ddl.txt`, `api-route.txt`, ...,
+`schema-text-only.txt`, `api-text-only.txt`, `blind.txt`, `none.txt`) for the cases
+that pass the index filters, so a person can label a sample of each. Ids only; it
+never leaves the output directory.
+
+`--detector` reads each candidate's bundle, so it takes a moment on a whole dataset.
 
 ## Chains
 
@@ -146,31 +170,48 @@ replay --dataset <dir> --split calibration --chain --with-previous --limit 4 --m
 ```
 
 - **Which cases.** The filters choose pull requests: a pull request is taken when
-  it has two or more primary cases (one per revision) and at least one of them
-  passes every filter, and then all its primary cases run. `--with-previous` thus
-  selects pull requests with a later revision. `--limit` counts cases and takes
-  whole chains, skipping one that no longer fits. `--case` and `--case-file`
-  name the revisions exactly (they are grouped by pull request and ordered).
-- **Order.** A revision comes after those with a lower previous version number
-  in their bundle (the version of the review the app held when it captured the
-  case), and among equal numbers after the one captured earlier; the case id
-  settles the rest. The bundle's own number is used first because it is how the
-  app counted versions, where capture times can tie or differ by machine; the
-  capture time breaks ties.
+  it has two or more revisions and at least one of its primary cases passes every
+  filter; all its revisions are then replayed, one primary case each (when the
+  index marks several primary cases of one revision, the earliest captured wins,
+  then the lowest id). `--with-previous` thus selects pull requests with a later
+  revision, and a larger sibling revision can come with a small one. `--limit`
+  counts cases and takes whole chains; a chain that does not fit is left out, and
+  when none fits the error says so. `--max-cases` counts cases too, so it also
+  limits whole chains. `--case` and `--case-file` name the revisions exactly (they
+  are grouped by pull request and ordered). `--dry-run` prints the number of
+  eligible chains and revisions, the chains and their order.
+- **Order.** A revision comes after those with a lower previous version number in
+  their bundle (the version of the review the app held when it captured the case;
+  none counts as 0), and among equal numbers after the one captured earlier
+  (capture times are parsed as RFC 3339 instants, so offsets count; one that does
+  not parse sorts first); the case id settles the rest. The bundle's own number is
+  used first because it is how the app counted versions, where capture times can
+  tie or differ by machine. A revision with no number that follows one that has a
+  number, or that was captured before the one ordered ahead of it, is listed in
+  `chain.json` and the dry run as a guess.
 - **Handoff.** The first revision keeps its bundle, frozen previous version
-  included. For each later one, the generator turns the previous revision's
-  document into the previous version as the app does (`review.PreviousVersionOf`)
-  and moves its hunk anchors to where the hunks sit in this revision's diff
-  (`review.FitPreviousHunkAnchors`, which assembly runs). The case's bundle is
-  encoded again with it, so the digest in `outcome.json` is that of the bundle the
-  model read. The version number is the previous revision's position in the
-  chain. Everything else in the bundle is the capture's. With `--reuse`, details
-  are reused as in the app, including when the images are unchanged, because the
-  carried version knows which images it was offered.
+  included. For each later one the generator turns the previous revision's
+  document into the previous version as the app does (`review.PreviousVersionOf`,
+  with the document's own `review.version`, which the pipeline set above the
+  version it was given), and moves its hunk anchors to where the hunks sit in this
+  revision's diff (`review.FitPreviousHunkAnchors`). The runner then does what
+  assembly does to a bundle it has built: masks it (`bundle.Redact`, which covers
+  the carried content), fits it to the evidence byte budget (`bundle.Fit`, whose
+  budget counts the previous version, so a larger one trims other evidence and
+  adds notes to `truncated`, or fails the revision with the app's
+  `evidence byte budget exceeded` as an `input` failure), and stamps the digest.
+  The outcome records `bundle_bytes` (the encoded size the model read),
+  `bundle_fitted` (fitting cut something) and `bundle_notes`; `chain.json` records
+  them per revision with the version number carried. Everything else in the
+  bundle is the capture's. With `--reuse`, details are reused as in the app,
+  including when the images are unchanged, because the carried version knows
+  which images it was offered.
 - **Failure.** A revision that fails ends its pull request's chain: the later
   ones are skipped (reason `chain`) and `chain.json` says why. Other pull requests
-  go on. `--resume` keeps the leading revisions that succeeded and replays the
-  rest, the first of them reading the stored document of the last kept.
+  go on. The cost guard is checked before each revision. `--resume` keeps the
+  leading revisions that succeeded and replays the rest, the first of them reading
+  the stored document of the last kept; a rerun clears the chain's links and the
+  pair records of the revisions it runs again.
 - **Generators.** A generator that can chain implements `Chainer` (the review
   generator does). The runner and driver do not know the document's format.
 
@@ -185,51 +226,86 @@ replay metrics ~/.cache/baum/replay-runs/20261114T101500Z
 replay metrics <new-run> --compare <baseline-run>
 ```
 
-Every generator has the runner's metrics, per case and aggregated (count, sum,
-mean, median, p90, min, max) over all cases, by size bucket and by the agent of the
+Every generator has the runner's metrics, per case and aggregated (N, sum, mean,
+median, p90, min, max) over all cases, by size bucket and by the agent of the
 case's sessions (`claude_code`, `codex`, `both`, `none`; the manifest records
-each case's size and sessions): status and failure reasons, `wall_seconds`,
-`calls`, `tokens`, `cost_usd` (cases with no cost are left out), `repairs`,
-`failed_parts` (the outcome's notes, failed sections for a review),
-`validation_findings` and `document_bytes`.
+each case's size and sessions). The statistics are over the cases that succeeded:
+a failed case has no document and its time and cost stop where it failed, so the
+cases that ran and failed are reported apart, with the count by reason. The
+metrics are `wall_seconds`, `calls`, `tokens`, `cost_usd` (a case with no cost is
+left out of its statistics, never counted as zero), `repairs`, `failed_parts` (the
+outcome's notes, failed sections for a review), `validation_findings` and
+`document_bytes`. Every statistic shows its N, and an N below 5 is marked: read it
+as an example.
 
 A generator adds its own through the `Meter` interface, registered under the
 generator's name with `RegisterMeter` (the manifest names the generator, so
-`replay metrics` finds it). For the review generator, per document:
+`replay metrics` finds it; a second registration of a name panics, and tests use
+`UnregisterMeter`). A `Definer` gives each metric's meaning, which the report
+prints. Every count is present for every case, as zero when there is none, so a
+mean is over all cases; only a ratio with a zero denominator is absent. For the
+review generator, per document:
 
-- `sections`, `sections_without_hunks`;
-- `risks`, `risks_active`, `risks_active_<tier>` (`critical`, `high`, `medium`,
-  `low`), `risks_mitigated`;
-- `evidence` and `evidence_<status>`;
-- `hunks`, `hunks_covered`, `hunks_unassigned`, `hunks_covered_ratio`;
+- `sections`, `sections_without_hunks`; `risks`, `risks_active`,
+  `risks_active_<tier>` (`critical`, `high`, `medium`, `low`), `risks_mitigated`;
+  `evidence` and `evidence_<status>` for every status;
+- `hunks`, `hunks_covered`, `hunks_unassigned`, `hunks_covered_ratio`: coverage is
+  the hunks some section lists over the hunks in the document's index; a fitted
+  or collapsed index (large pull requests) varies that denominator between cases;
 - `risk_lifecycle_violations`: risks whose state contradicts itself (active with a
-  mitigated version, mitigated without one, listed in two sections in different
-  states, or an unknown state).
+  mitigated version, mitigated without one, an unknown state, listed in two
+  sections in different states) or whose versions are impossible (above the
+  document's own `review.version`, or mitigated before it was introduced).
 
 For a chain run, each pair of consecutive revisions that both have a document is
-measured (`pairs` in `metrics.json`; the run also wrote the pair's record next to
-`chain.json`):
+measured (the run also wrote the pair's record next to `chain.json`). The first
+pair of each chain is aggregated apart from the later ones: its earlier document
+was generated from a previous version other code wrote, while a later pair has
+the generator's own output on both sides. Each chain also reports its own totals
+and derived figures. The keys:
 
-- `sections_matched`, `section_ids_retained`, `section_id_retention`: each section
-  of the earlier version that shares hunks with a section of the later one is
-  matched to the later section it shares most hunks with (the same ID wins a tie);
-  retention is the share of matches that kept the ID;
-- `sections_dropped`, `sections_added`, `sections_previous`, `sections_next`;
-- `risks_carried`, `risks_newly_mitigated`, `risks_introduced`, `risks_vanished`
-  and the next version's `risk_lifecycle_violations`.
+- **ID survival.** `ids_previous`, `ids_survived`, `ids_unmatched`, `id_survival`:
+  the share of the earlier version's section IDs that the later one still has.
+  For the review generator the validator already forces earlier IDs to stay, in
+  order and never removed, so survival is 1 by construction and is a sanity check
+  there; it is meant to discriminate for generators without that constraint.
+- **Content continuity of surviving IDs.** `survived_matched_hunk` (the later
+  section shares a hunk ID with the earlier one), `survived_matched_path_only`
+  (no shared hunk, but a shared file path, as when a hunk's lines changed, which
+  changes its ID, or its file was renamed), `survived_no_overlap`, and
+  `survived_empty` (the earlier section had no hunks, so it has nothing to
+  continue); `continuity` is (hunk + path only) over (survived - empty).
+- **Reverse matching.** Each later section is matched to the earlier section it
+  resembles most: most shared hunks, then most shared paths, then a similar title
+  (at least half of the words in common). `reverse_matched`, `reverse_same_id`,
+  and `reverse_id_agreement` (whether the ID follows the content: the share of
+  matched later sections carrying the matched earlier section's ID),
+  `sections_new` (later sections matching nothing), `sections_dropped` (earlier
+  sections matching nothing later), `splits` (earlier sections that two or more
+  later sections match best) and `merges` (later sections that two or more earlier
+  sections match best).
+- **Risk lifecycle.** `risks_carried` (same state in both), `risks_newly_mitigated`
+  (active, then mitigated), `risks_reopened` (mitigated, then active),
+  `risks_introduced`, `risks_vanished` (active before, absent now),
+  `risk_introduced_changed` (a carried risk whose `introduced_version` changed),
+  and the later document's `risk_lifecycle_violations` plus the changed ones.
 
-`section_id_retention_pooled` (derived, over all matched sections of all pairs) is
-the figure to follow; the per-pair statistics show the spread. A pair with no
-shared hunks has no retention figure.
+`id_survival_pooled`, `continuity_pooled`, `reverse_id_agreement_pooled` and
+`hunks_covered_ratio_pooled` are ratios over the sums of a group (every matched
+section of every pair), not the mean of each pair's.
 
-`--compare <other-run>` aligns the two runs by case id and prints, for the cases
-both completed, each metric's change (this run minus the other): the sums, the
-number of cases that changed, and the mean, median, p10 and p90 of the per-case
-difference and the median ratio. Pass the baseline to `--compare` and the new run
-first. It also lists cases only one run has and status changes, and counts the
-cases whose generator metrics (all but cost, time and the runner's counts) are
-equal in both runs: when that is all of them, the analysis the metrics see is
-unchanged. It writes `compare.json`.
+`--compare <baseline-run>` aligns the run with the baseline by case id and
+prints, for the cases both completed and for every metric either has, the change
+(the run minus the baseline): N (cases that have it in both), how many have it in
+one only, how many changed, the sums, and the mean, median, p10 and p90 of the
+per-case difference and the median ratio. It lists cases only one run has and
+status changes, and warns when the runs differ in dataset, selection, generator,
+model or chain mode, since the deltas then mix effects. A case counts as
+identical when both runs completed it, its generator metrics decoded in both, and
+every metric that is not the runner's (cost, time, calls, tokens, repairs, size)
+is present in both with exactly equal values; when that is all of the completed
+cases the analysis the metrics see is unchanged. It writes `compare.json` with
+`run` and `baseline` fields.
 
 ## What is written
 
@@ -312,21 +388,29 @@ not depend on the document's format.
 
 `Generated.Artifacts` maps names to bytes. The runner writes each beside the
 document, in the case's directory (a name may have directories, and cannot leave
-the directory or be one of the runner's files, or the case fails), and lists them
-in `outcome.json` under `artifacts`; a rerun of the case replaces them. A
+the directory, be one of the runner's files, be the same file as another name
+ignoring case, or be both a file and a directory that holds another artifact, or
+the case fails), and lists them
+in `outcome.json` under `artifacts`; a rerun of the case starts its directory over. A
 generator that produces more than one file, such as a layout next to the review
 it was composed from, returns the rest this way.
 
 Two optional interfaces add what depends on the format:
 
-- `Chainer` (`Next(c Case, document []byte, version int) (Case, error)`) makes
-  `--chain` available: it returns the case with a generated document as its
-  previous version.
+- `Chainer` (`Next(c Case, document []byte) (bundle.Bundle, error)`) makes
+  `--chain` available: it returns the case's bundle with a generated document
+  carried as its previous version; the runner masks and fits it.
 - `Meter` (`DocumentMetrics` and `PairMetrics`, each returning numbers by name,
   and optionally `Deriver` for figures over sums) makes `replay metrics`
   report the generator's own measures. Register it with
   `RegisterMeter(<generator name>, meter)` at initialisation; the command and the
   aggregation do not change.
+
+A generator also registers a constructor with `RegisterGenerator(name, build)`,
+which receives the command line's `GeneratorConfig` (staged, reuse, prompt
+overrides, and `--generator-option` values); `replay --generator <name>` then
+selects it with no change to `cmd/replay`. The review generator registers itself
+as `review`, the default.
 
 ## Tests
 

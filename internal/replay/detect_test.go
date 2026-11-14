@@ -1,6 +1,7 @@
 package replay_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/baum-ai/baum/bundle"
@@ -58,7 +59,8 @@ func TestAPIDetector(t *testing.T) {
 		{"express route", []bundle.Hunk{hunk("server/index.js", "+app.get('/health', handler)")}, true},
 		{"a verb call that is not a route", []bundle.Hunk{hunk("client/client.go", `+	resp, err := c.Get(url)`)}, false},
 		{"tool definition", []bundle.Hunk{hunk("agent/tools.go", `+	server.AddTool(mcp.NewTool("search"), search)`)}, true},
-		{"input schema", []bundle.Hunk{hunk("agent/tools.ts", `+  input_schema: { type: "object" },`)}, true},
+		{"input schema beside a tool name", []bundle.Hunk{hunk("agent/tools.ts", `+  name: "search",`, `+  input_schema: { type: "object" },`)}, true},
+		{"input schema in a call to a model", []bundle.Hunk{hunk("agent/client.ts", `+  input_schema: { type: "object" },`)}, false},
 		{"published schema file", []bundle.Hunk{hunk("oss/schema/review-1.json", "+  \"x\": 1")}, true},
 		{"schema suffix", []bundle.Hunk{hunk("api/run.schema.json", "+{}")}, true},
 		{"openapi", []bundle.Hunk{hunk("openapi.yaml", "+paths: {}")}, true},
@@ -71,6 +73,46 @@ func TestAPIDetector(t *testing.T) {
 				t.Errorf("APIChange = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDetectorsAvoidTheObviousFalsePositives(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		diff         []bundle.Hunk
+		schema, apis bool
+	}{
+		{"a comment that mentions ddl", []bundle.Hunk{hunk("store/store.go", "+// create table runs (id int) happens at startup")}, false, false},
+		{"a ui string", []bundle.Hunk{hunk("ui/dialog.tsx", `+  <Button>Drop table?</Button>`, `+  label="Create table of values"`)}, false, false},
+		{"statement in a string", []bundle.Hunk{hunk("store/store.go", "+\tdb.Exec(`DROP TABLE IF EXISTS runs;`)")}, true, false},
+		{"a client call with a path", []bundle.Hunk{hunk("client/api.go", `+	resp, err := client.Get("/v1/runs")`, `+	http.Post("/x", "", nil)`)}, false, false},
+		{"a route on a router", []bundle.Hunk{hunk("server/api.go", `+	router.Get("/v1/runs", list)`)}, false, true},
+		{"rails routes", []bundle.Hunk{hunk("config/routes.rb", "+  resources :runs")}, false, true},
+		{"a decorator", []bundle.Hunk{hunk("app/main.py", `+@app.post("/runs")`)}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replay.SchemaChange(tc.diff); got != tc.schema {
+				t.Errorf("SchemaChange = %v, want %v", got, tc.schema)
+			}
+			if got := replay.APIChange(tc.diff); got != tc.apis {
+				t.Errorf("APIChange = %v, want %v", got, tc.apis)
+			}
+		})
+	}
+}
+
+func TestDetectionsSayWhatTheyRestOn(t *testing.T) {
+	found := replay.Detect([]bundle.Hunk{hunk("db/migrations/1.sql", "+x"), hunk("server/api.go", `+	mux.HandleFunc("GET /x", h)`), hunk("config/routes.rb", "+get 'x'")})
+	if !found.Schema || !found.API || found.Blind || !slices.Equal(found.Evidence, []string{replay.EvidenceAPIRoute, replay.EvidenceAPIRoutesFile, replay.EvidenceSchemaPath}) {
+		t.Errorf("%+v", found)
+	}
+	// A case with no patch text is invisible to the text rules.
+	blind := replay.Detect([]bundle.Hunk{{Path: "server/api.go", Role: "code"}, {Path: "db/migrations/1.sql", Role: "migration"}})
+	if !blind.Blind || !blind.Schema || blind.API {
+		t.Errorf("%+v", blind)
+	}
+	if replay.Detect(nil).Blind {
+		t.Error("an empty diff is blind")
 	}
 }
 

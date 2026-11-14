@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -48,9 +49,10 @@ type Entry struct {
 	Primary        bool     `json:"primary"`
 	Size           string   `json:"size"`
 	SessionVendors []string `json:"session_vendors"`
-	// Attachments and Threads count the bundle's images and review threads.
-	Attachments int `json:"attachments"`
-	Threads     int `json:"threads"`
+	// Attachments and Threads count the bundle's images and review threads;
+	// nil when the index does not say, which a filter on them refuses.
+	Attachments *int `json:"attachments"`
+	Threads     *int `json:"threads"`
 	// PreviousVersion is the version number of the previous review the bundle
 	// carries, nil when it has none.
 	PreviousVersion *int `json:"previous_version"`
@@ -135,7 +137,12 @@ type Case struct {
 	HeadTree, MergeBaseTree string
 
 	dir, gitDir string
-	// carried is the previous version a chain handed to WithBundle, with the
+	// Fitted says that fitting the bundle to the evidence budget (Refit) cut
+	// something; Notes are the cuts it recorded in Bundle.Truncated.
+	Fitted   bool
+	FitNotes []string
+
+	// carried is the previous version a chain handed to Refit, with the
 	// fields the bundle's encoding leaves out.
 	carried *bundle.PreviousVersion
 }
@@ -231,17 +238,34 @@ func (c Case) FreshBundle() (bundle.Bundle, error) {
 	return b, nil
 }
 
-// WithBundle returns the case with b as its bundle: generation reads b's
-// encoding, and the digest is the one the pipeline's assembly computes for it.
-// The checkout and images are the case's own.
-func (c Case) WithBundle(b bundle.Bundle) (Case, error) {
+// Refit returns the case with b as its bundle after the steps assembly runs on
+// a bundle it has built: masking, the evidence byte budget (which counts the
+// previous version) and the digest, so the model reads what the app could have
+// produced for these inputs. The checkout and images are the case's own. An
+// error from fitting is the one assembly returns, such as a bundle that cannot
+// fit the budget.
+func (c Case) Refit(ctx context.Context, b bundle.Bundle, caps bundle.Caps, redactor *bundle.Redactor) (Case, error) {
+	if err := bundle.Redact(ctx, &b, redactor); err != nil {
+		return Case{}, fmt.Errorf("case %s: masking the bundle: %w", c.ID, err)
+	}
+	notes := len(b.Truncated)
+	masked, err := json.Marshal(b)
+	if err != nil {
+		return Case{}, fmt.Errorf("case %s: encoding the bundle: %w", c.ID, err)
+	}
+	if err := bundle.Fit(&b, caps); err != nil {
+		return Case{}, fmt.Errorf("case %s: %w", c.ID, err)
+	}
+	if err := bundle.SetDigest(&b); err != nil {
+		return Case{}, err
+	}
 	encoded, err := json.Marshal(b)
 	if err != nil {
 		return Case{}, fmt.Errorf("case %s: encoding the bundle: %w", c.ID, err)
 	}
-	sum := sha256.Sum256(encoded)
-	c.Digest = hex.EncodeToString(sum[:])
-	b.Digest = c.Digest
+	c.Fitted = !bytes.Equal(masked, encoded)
+	c.FitNotes = slices.Clone(b.Truncated[notes:])
+	c.Digest = b.Digest
 	c.BundleJSON = append(encoded, '\n')
 	file := sha256.Sum256(c.BundleJSON)
 	c.FileSHA256 = hex.EncodeToString(file[:])

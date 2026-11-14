@@ -13,9 +13,10 @@ import (
 func runMetrics(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("replay metrics", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	compare := fs.String("compare", "", "another run directory to compare with: deltas are this run minus that one, so pass the baseline here")
+	compare := fs.String("compare", "", "the baseline run directory to compare with: deltas are this run minus the baseline")
 	noWrite := fs.Bool("no-write", false, "print only; do not write metrics.json (and compare.json) into the run directory")
-	// The run directory may come before or after the flags.
+	// The run directory may come before or after the flags, and is the only
+	// argument that is not one.
 	var dir string
 	for rest := args; ; {
 		if err := fs.Parse(rest); err != nil {
@@ -25,7 +26,7 @@ func runMetrics(args []string, stdout, stderr io.Writer) error {
 			break
 		}
 		if dir != "" {
-			return errors.New("replay metrics takes one run directory")
+			return fmt.Errorf("unexpected argument %q: replay metrics takes one run directory and flags (write a flag's value as --flag=value)", fs.Arg(0))
 		}
 		dir, rest = fs.Arg(0), fs.Args()[1:]
 		if len(rest) == 0 {

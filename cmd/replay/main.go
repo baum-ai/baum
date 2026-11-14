@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -97,7 +98,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		out                    = fs.String("out", envOr("BAUM_REPLAY_OUT", defaultOut()), "directory that receives runs (or BAUM_REPLAY_OUT); default is baum/replay-runs under the user cache directory")
 		name                   = fs.String("name", "", "run name; default is the start time. --resume needs it")
 		cases, sizes, agentEnv list
-		overrides              list
+		overrides, genOptions  list
 		split                  = fs.String("split", "", "calibration or held_out")
 		representative         = fs.Bool("representative", false, "only each pull request's representative case")
 		primary                = fs.Bool("primary", false, "only each revision's primary case")
@@ -122,6 +123,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		noTranscript           = fs.Bool("no-transcript", false, "do not keep the agent's transcript")
 		caseFile               = fs.String("case-file", "", "file with one case id per line (# starts a comment); like --case")
 		detector               = fs.String("detector", "", "keep cases a structural detector matches: schema, api, any or none")
+		generatorName          = fs.String("generator", "review", "what to generate: "+strings.Join(replay.GeneratorNames(), ", "))
+		detectorReport         = fs.Bool("detector-report", false, "write the case ids by kind of detector evidence into <out>/<name>/detectors (for labelling a sample)")
 		chain                  = fs.Bool("chain", false, "replay each pull request's revisions in order, each reading the previous one's generated document as its previous version")
 		images, threads, prev  triState
 	)
@@ -131,8 +134,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.Var(&cases, "case", "case id; repeatable")
 	fs.Var(&sizes, "size", "size bucket xs, s, m, l or xl; repeatable or comma separated")
 	fs.Var(&agentEnv, "agent-env", "KEY=VALUE set for the agent, as the app's agent_env does; repeatable")
+	fs.Var(&genOptions, "generator-option", "KEY=VALUE for the generator; repeatable (the review generator takes none)")
 	fs.Var(&overrides, "prompt-override", "<id>=<file> replaces a staged prompt; repeatable. ids: "+promptIDs())
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := noPositional(fs, args); err != nil {
 		return err
 	}
 	if *dataset == "" {
@@ -170,9 +177,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		sel.ShuffleSeed = &n
 	}
-	generator := &replay.ReviewGenerator{Staged: *staged, Reuse: *reuse}
+	genConfig := replay.GeneratorConfig{Staged: *staged, Reuse: *reuse}
 	settings := replay.Settings{Backend: config.Backend(*backend), Model: *model, Effort: *effort, TimeLimit: *timeLimit, NoTranscript: *noTranscript,
-		ClaudeConfigDir: *claudeDir, CodexHome: *codexHome, Generator: generator}
+		ClaudeConfigDir: *claudeDir, CodexHome: *codexHome}
 	for _, kv := range agentEnv {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok || name == "" {
@@ -192,13 +199,26 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if generator.PromptOverrides == nil {
-			generator.PromptOverrides = prompt.Overrides{}
+		if genConfig.PromptOverrides == nil {
+			genConfig.PromptOverrides = map[string]string{}
 		}
-		generator.PromptOverrides[prompt.ID(id)] = string(text)
+		genConfig.PromptOverrides[id] = string(text)
+	}
+	for _, kv := range genOptions {
+		key, value, ok := strings.Cut(kv, "=")
+		if !ok || key == "" {
+			return fmt.Errorf("--generator-option %q is not KEY=VALUE", kv)
+		}
+		if genConfig.Options == nil {
+			genConfig.Options = map[string]string{}
+		}
+		genConfig.Options[key] = value
+	}
+	if settings.Generator, err = replay.NewGenerator(*generatorName, genConfig); err != nil {
+		return err
 	}
 	summary, err := replay.Execute(ctx, replay.Plan{Dataset: d, OutDir: *out, Name: *name, Selection: sel, Settings: settings, Concurrency: *concurrency,
-		MaxCostUSD: *maxCost, MaxCases: *maxCases, Chain: *chain, Resume: *resume, ResumeAnyway: *resumeAnyway, DryRun: *dryRun, Out: stdout})
+		MaxCostUSD: *maxCost, MaxCases: *maxCases, Chain: *chain, DetectorReport: *detectorReport, Resume: *resume, ResumeAnyway: *resumeAnyway, DryRun: *dryRun, Out: stdout})
 	if err != nil {
 		return err
 	}
@@ -206,6 +226,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errFailed{summary.Totals.Failed, summary.Totals.Skipped}
 	}
 	return nil
+}
+
+// noPositional refuses an argument that is not a flag. The flag package stops
+// at the first one and drops every flag after it, so "--with-images false
+// --dry-run" would run for real with the filter on.
+func noPositional(fs *flag.FlagSet, args []string) error {
+	if fs.NArg() == 0 {
+		return nil
+	}
+	arg := fs.Arg(0)
+	hint := ""
+	if i := slices.Index(args, arg); i > 0 && strings.HasPrefix(args[i-1], "-") && !strings.Contains(args[i-1], "=") {
+		hint = fmt.Sprintf("; if %s is meant to have the value %s, write %s=%s", args[i-1], arg, args[i-1], arg)
+	}
+	return fmt.Errorf("unexpected argument %q: flags after it would be ignored%s (a boolean flag takes its value as --flag=false)", arg, hint)
 }
 
 func promptIDs() string {

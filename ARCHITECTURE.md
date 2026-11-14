@@ -3133,13 +3133,15 @@ and API changes, small functions over a bundle's diff), the bundles.
 previous version number the bundle carries and then by capture time. A
 generator that implements `Chainer` turns each revision's output into the next
 revision's previous version as the app does (`review.PreviousVersionOf`, then
-`review.FitPreviousHunkAnchors`), so identifier stability across versions is
+`review.FitPreviousHunkAnchors`, then the masking and evidence budget assembly
+applies), so identifier stability across versions is
 measured on the generator's own output; a failed revision ends its chain. `replay
 metrics <run>` measures a finished run without a model: the runner's metrics
 (status, time, calls, tokens, cost, repairs, size) for every generator, and the
 generator's own through a `Meter` registered under its name (for reviews:
-sections, risks by tier, evidence by status, hunk coverage, section ID retention
-between consecutive revisions and risk lifecycle checks), with a comparison of
+sections, risks by tier, evidence by status, hunk coverage and, between consecutive
+revisions, section ID survival, content continuity, reverse matching with splits
+and merges, and risk lifecycle checks), with a comparison of
 two runs by case. It is developer tooling, not a command of the `baum` binary;
 its [README](cmd/replay/README.md) describes the dataset layout, the flags and
 the files written.
