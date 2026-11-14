@@ -20,6 +20,8 @@ func TestCompileComposition(t *testing.T) {
 		valid bool
 	}{
 		{"layout only", `{"schema": "baum.composition/1", "layout": {"entries": [{"tile": "overview", "size": "half"}, {"tile": "sec_a", "size": "third", "group": "changes"}], "changes_shown": 3}}`, true},
+		{"hidden tiles", `{"schema": "baum.composition/1", "layout": {"entries": [{"tile": "overview", "size": "half"}], "hidden": ["evidence", "sec_a"]}}`, true},
+		{"a repeated hidden tile", `{"schema": "baum.composition/1", "layout": {"entries": [], "hidden": ["evidence", "evidence"]}}`, false},
 		{"authored", `{"schema": "baum.composition/1", "layout": {"entries": []}, "authored": [{"id": "prose_why", "title": "Why", "data": {"text": "Because.", "anchors": [{"type": "hunk", "id": "h_000000000001"}]}}]}`, true},
 		{"authored with an origin", `{"schema": "baum.composition/1", "layout": {"entries": []}, "authored": [{"id": "prose_why", "title": "Why", "data": {"text": "Because.", "anchors": [], "origin": {"change": "sec_a", "block": 0}}}]}`, false},
 		{"authored of another shape", `{"schema": "baum.composition/1", "layout": {"entries": []}, "authored": [{"id": "table_x", "title": "X", "data": {"text": "Not a table.", "anchors": []}}]}`, false},

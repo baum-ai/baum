@@ -65,9 +65,17 @@ type Generator struct {
 // tiles may have the changes group. ChangesShown, when set, is how many
 // members the changes group shows before folding; without it the converter's
 // default applies.
+//
+// Hidden lists the tiles a reader removed. Only the host writes it, after
+// normalising: NormalizeComposition drops a model's, and Compose honours a
+// stored one by moving those tiles, out of their groups, to a last collapsed
+// "Hidden" group, so they stay reachable and the document still presents
+// everything. The overview, and the risks tile while it ranks an active
+// critical or high risk, are never hidden.
 type CompositionLayout struct {
-	Entries      []Entry `json:"entries"`
-	ChangesShown *int    `json:"changes_shown,omitempty"`
+	Entries      []Entry  `json:"entries"`
+	ChangesShown *int     `json:"changes_shown,omitempty"`
+	Hidden       []string `json:"hidden,omitempty"`
 }
 
 // LibraryTile is a custom tile of a library type: its definition, with its
@@ -142,10 +150,10 @@ var (
 )
 
 // Empty reports whether a composition chooses nothing: no layout entries,
-// no changes_shown, no promotions, library or authored tiles. Applying an
+// no changes_shown or hidden tiles, no promotions, library or authored tiles. Applying an
 // empty composition, like none, gives the converted document unchanged.
 func (c *Composition) Empty() bool {
-	return c == nil || len(c.Layout.Entries) == 0 && c.Layout.ChangesShown == nil &&
+	return c == nil || len(c.Layout.Entries) == 0 && c.Layout.ChangesShown == nil && len(c.Layout.Hidden) == 0 &&
 		len(c.Promotions) == 0 && len(c.Library) == 0 && len(c.Authored) == 0
 }
 

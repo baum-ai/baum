@@ -48,7 +48,7 @@
     },
     "compositionLayout": {
       "type": "object",
-      "description": "Every tile except obsolete changes, which the host places last, in reading order. Only current change tiles may be in the changes group, whose members are contiguous. changes_shown is how many members the changes group shows before folding; without it the host's default applies. Pinned entries come first and a risks tile holding a critical or high risk is moved onto the landing page when the composition is applied.",
+      "description": "Every tile except obsolete changes, which the host places last, in reading order. Only current change tiles may be in the changes group, whose members are contiguous. changes_shown is how many members the changes group shows before folding; without it the host's default applies. Pinned entries come first, and a risks tile holding a critical or high risk and the overview are moved onto the landing page, when the composition is applied; a change the recommendation names is never folded in the changes group.",
       "properties": {
         "entries": {
           "type": "array",
@@ -64,7 +64,13 @@
             "required": ["tile", "size"]
           }
         },
-        "changes_shown": { "type": "integer", "minimum": 1 }
+        "changes_shown": { "type": "integer", "minimum": 1 },
+        "hidden": {
+          "description": "Tiles a reader removed, written only by the host. Applying the composition moves them, out of their groups, to a last collapsed group, so they stay reachable; the overview, and the risks tile while it holds a critical or high risk, are never hidden.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/tileId" }
+        }
       },
       "additionalProperties": false,
       "required": ["entries"]

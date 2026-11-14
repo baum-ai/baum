@@ -275,5 +275,23 @@ func RandomComposition(rng *rand.Rand, doc *tiles.Document, hostile bool) *tiles
 		c.Notes.Moves = append(c.Notes.Moves, tiles.Move{Tile: "overview", Why: strings.Repeat("Moved up. ", 40)})
 	}
 	c.Notes.Why["no_such_tile"] = "A reason for nothing."
+	// Only the host hides tiles; a model's list is dropped.
+	c.Layout.Hidden = append(c.Layout.Hidden, tiles.TypeOverview, "no_such_tile")
+	if len(ids) > 0 {
+		c.Layout.Hidden = append(c.Layout.Hidden, ids[rng.IntN(len(ids))])
+	}
+	return c
+}
+
+// HideSome returns a normalised composition with a host's hidden list of
+// about a third of its entries, drawn from rng, the overview and risks tiles
+// among the candidates.
+func HideSome(rng *rand.Rand, c tiles.Composition) tiles.Composition {
+	c.Layout.Hidden = nil
+	for _, entry := range c.Layout.Entries {
+		if rng.IntN(3) == 0 || entry.Tile == tiles.TypeOverview || entry.Tile == tiles.TypeRisks {
+			c.Layout.Hidden = append(c.Layout.Hidden, entry.Tile)
+		}
+	}
 	return c
 }

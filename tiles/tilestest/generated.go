@@ -22,8 +22,8 @@ import (
 //     document is in the generated one, of the same type and covering the
 //     same hunks, so no composition drops or empties one.
 //   - 6: the risks tile is on the landing page whenever it ranks an active
-//     critical or high risk (not otherwise required), and never in a group.
-//   - 7: the overview tile need not be on the landing page.
+//     critical or high risk (not otherwise required), and never in a group;
+//     the overview tile is always on the landing page; neither is hidden.
 //   - 8: a library or authored tile may be unavailable, with its problems.
 //   - 11: a nil or empty composition gives the converted document's bytes;
 //     any other gives origin "generated". At most tiles.MaxPromotions
@@ -33,7 +33,10 @@ import (
 //     tiles.MaxLibraryTiles library tiles, each under its definition's name.
 //     A promoted or authored tile's ID is its type, an underscore and a
 //     slug. Only current change tiles are in the changes group, only
-//     obsolete ones in the obsolete group, which comes last.
+//     obsolete ones in the obsolete group, and only tiles the composition's
+//     layout hides in the hidden group; the obsolete group, then the hidden
+//     one, come last. A change the recommendation names is never folded in
+//     the changes group.
 //   - 12: the encoded document passes the tile schema and the
 //     document-level rules (tiles.Validator.Validate).
 func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document) []string {
@@ -138,7 +141,14 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		_ = json.Unmarshal(change.Derived, &derived)
 		current[change.ID] = derived.State != "stale"
 	}
-	obsoleteStarted := false
+	hiddenByHost := map[string]bool{}
+	if c != nil {
+		for _, id := range c.Layout.Hidden {
+			hiddenByHost[id] = true
+		}
+	}
+	phase := map[string]int{"": 0, tiles.GroupChanges: 0, tiles.GroupObsolete: 1, tiles.GroupHidden: 2}
+	reached := 0
 	for _, entry := range doc.Layout.Entries {
 		tile := byID[entry.Tile]
 		if tile == nil {
@@ -154,13 +164,32 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 			if tile.Type != tiles.TypeChange || current[tile.ID] {
 				fail(11, "tile %s is in the obsolete group but is not an obsolete change", tile.ID)
 			}
+		case tiles.GroupHidden:
+			if !hiddenByHost[tile.ID] {
+				fail(11, "tile %s is hidden but the composition does not hide it", tile.ID)
+			}
+			if tile.ID == tiles.TypeOverview || tile.ID == tiles.TypeRisks && severeRanked(doc) {
+				fail(6, "tile %s is hidden but must be shown", tile.ID)
+			}
 		default:
 			fail(11, "tile %s is in group %s, which a composition cannot set", tile.ID, entry.Group)
 		}
-		if entry.Group == tiles.GroupObsolete {
-			obsoleteStarted = true
-		} else if obsoleteStarted {
-			fail(11, "tile %s comes after the obsolete changes", tile.ID)
+		if p, ok := phase[entry.Group]; ok {
+			if p < reached {
+				fail(11, "tile %s comes after the obsolete or hidden tiles", tile.ID)
+			}
+			reached = max(reached, p)
+		}
+	}
+	// A change the recommendation names is not folded away in the changes
+	// group.
+	if !c.Empty() {
+		hidden := tiles.Hidden(doc.Layout)
+		named := tiles.RecommendedChanges(doc)
+		for i, entry := range doc.Layout.Entries {
+			if entry.Group == tiles.GroupChanges && hidden[i] && slices.Contains(named, entry.Tile) {
+				fail(11, "change %s, which the recommendation names, is folded in the changes group", entry.Tile)
+			}
 		}
 	}
 
@@ -179,6 +208,30 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		}
 	}
 	return failures
+}
+
+// severeRanked reports whether the risks tile ranks an active critical or
+// high risk.
+func severeRanked(doc *tiles.Document) bool {
+	severe := map[string]bool{}
+	for _, risk := range doc.Risks {
+		if risk.State == "active" && (risk.Tier == "critical" || risk.Tier == "high") {
+			severe[risk.ID] = true
+		}
+	}
+	for _, tile := range doc.Tiles {
+		if tile.Type != tiles.TypeRisks {
+			continue
+		}
+		var data tiles.RisksData
+		_ = json.Unmarshal(tile.Data, &data)
+		for _, id := range data.Ranked {
+			if severe[id] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var composedID = regexp.MustCompile(`^(table|code|prose)_[a-z0-9_]+$`)

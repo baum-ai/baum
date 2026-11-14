@@ -267,9 +267,9 @@ func check(normalized []byte, doc *tiles.Document, generated bool) []string {
 	}
 	landing := map[string]int{tiles.TypeOverview: 7, tiles.TypeRisks: 6}
 	if generated {
-		// A generated layout may put the overview anywhere, and the risks
-		// tile anywhere while it ranks no critical or high risk.
-		landing = map[string]int{}
+		// A generated layout may put the risks tile anywhere while it ranks
+		// no critical or high risk.
+		landing = map[string]int{tiles.TypeOverview: 6}
 		if severe {
 			landing[tiles.TypeRisks] = 6
 		}
@@ -280,7 +280,7 @@ func check(normalized []byte, doc *tiles.Document, generated bool) []string {
 		}
 	}
 	for _, entry := range doc.Layout.Entries {
-		if entry.Tile == tiles.TypeRisks && entry.Group != "" {
+		if entry.Tile == tiles.TypeRisks && entry.Group != "" && !(generated && entry.Group == tiles.GroupHidden) {
 			fail(6, "the risks tile is in a group")
 		}
 	}

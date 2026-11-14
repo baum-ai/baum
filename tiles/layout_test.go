@@ -145,7 +145,7 @@ func TestArrangeMovesSevereRisksOntoTheLandingPage(t *testing.T) {
 }
 
 // When pinned entries alone fill the landing page, a risks tile that ranks a
-// high risk goes before them.
+// high risk and the overview go before them.
 func TestArrangeKeepsSevereRisksAheadOfPinsThatFillTheLandingPage(t *testing.T) {
 	doc := &tiles.Document{
 		Risks: []tiles.Risk{{ID: "rsk_x", Tier: "high", State: "active", Change: "sec_x"}},
@@ -157,10 +157,31 @@ func TestArrangeKeepsSevereRisksAheadOfPinsThatFillTheLandingPage(t *testing.T) 
 		}},
 	}
 	tiles.Arrange(doc)
-	if want := []string{"risks", "a", "b", "c", "overview"}; !slices.Equal(order(doc.Layout), want) {
+	doc.Tiles = append(doc.Tiles, tiles.Tile{ID: tiles.TypeOverview, Type: tiles.TypeOverview})
+	tiles.Arrange(doc)
+	if want := []string{"risks", "overview", "a", "b", "c"}; !slices.Equal(order(doc.Layout), want) {
 		t.Errorf("order = %v, want %v", order(doc.Layout), want)
 	}
-	if !tiles.Visible(doc.Layout)[0] {
-		t.Error("the risks tile is not on the landing page")
+	if visible := tiles.Visible(doc.Layout); !visible[0] || !visible[1] {
+		t.Error("the risks or overview tile is not on the landing page")
+	}
+}
+
+// The overview moves onto the landing page after pins and a severe risks
+// tile; one already on it stays.
+func TestArrangeMovesTheOverviewOntoTheLandingPage(t *testing.T) {
+	for _, tc := range []struct {
+		entries []tiles.Entry
+		want    []string
+	}{
+		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "b", Size: tiles.SizeFull}, {Tile: "c", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}}, []string{"overview", "a", "b", "c"}},
+		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "b", Size: tiles.SizeFull, Pin: true}, {Tile: "c", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}}, []string{"b", "overview", "a", "c"}},
+		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}, {Tile: "c", Size: tiles.SizeFull}}, []string{"a", "overview", "c"}},
+	} {
+		doc := &tiles.Document{Tiles: []tiles.Tile{{ID: tiles.TypeOverview, Type: tiles.TypeOverview}}, Layout: tiles.Layout{Entries: tc.entries}}
+		tiles.Arrange(doc)
+		if got := order(doc.Layout); !slices.Equal(got, tc.want) {
+			t.Errorf("order = %v, want %v", got, tc.want)
+		}
 	}
 }

@@ -107,6 +107,11 @@ func StabilizeIDs(previous, next *Composition) Composition {
 			out.Layout.Entries[i].Tile = next
 		}
 	}
+	for i, id := range out.Layout.Hidden {
+		if next, ok := renames[id]; ok {
+			out.Layout.Hidden[i] = next
+		}
+	}
 	if out.Notes != nil {
 		if out.Notes.Why != nil {
 			why := map[string]string{}
@@ -147,6 +152,7 @@ func definitionName(definition json.RawMessage) string {
 func cloneComposition(c *Composition) Composition {
 	out := *c
 	out.Layout.Entries = slices.Clone(c.Layout.Entries)
+	out.Layout.Hidden = slices.Clone(c.Layout.Hidden)
 	out.Library = slices.Clone(c.Library)
 	out.Promotions = slices.Clone(c.Promotions)
 	out.Authored = slices.Clone(c.Authored)

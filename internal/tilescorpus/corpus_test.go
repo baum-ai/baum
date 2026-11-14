@@ -273,6 +273,22 @@ func compose(stats *tally, v version, normalized []byte, doc *tiles.Document) {
 		if !ok {
 			continue
 		}
+		if i == 2 {
+			// A host's hidden list on top, as a reader's removals would be.
+			hidden := tilestest.HideSome(rng, n)
+			c.compositions++
+			if generated, err := tiles.Compose(doc, &hidden); err != nil {
+				stats.fail("hidden: compose")
+			} else {
+				failures := tilestest.CheckGenerated(normalized, &hidden, generated)
+				for _, failure := range failures {
+					stats.fail("hidden: " + invariantOf(failure))
+				}
+				if len(failures) == 0 {
+					c.generated++
+				}
+			}
+		}
 		c.promoted += len(n.Promotions)
 		c.authored += len(n.Authored)
 		c.library += len(n.Library)
@@ -396,7 +412,7 @@ func report(t *testing.T, stats *tally, stores int) {
 	t.Logf("FromReview per version: p50 %v, p99 %v, max %v, total %v", percentile(stats.convert, 50), percentile(stats.convert, 99), percentile(stats.convert, 100), total(stats.convert))
 	t.Logf("CheckTiles per version: p50 %v, p99 %v, max %v, total %v", percentile(stats.checks, 50), percentile(stats.checks, 99), percentile(stats.checks, 100), total(stats.checks))
 	c := stats.composed
-	t.Logf("compositions applied: %d (a template and %d random per version), generated documents passing every check: %d", c.compositions, randomCompositions, c.generated)
+	t.Logf("compositions applied: %d (a template, %d random and one with hidden tiles per version), generated documents passing every check: %d", c.compositions, randomCompositions, c.generated)
 	t.Logf("change kinds (versions): %s", counts(c.changeKinds))
 	t.Logf("templates (versions): %s", counts(c.templates))
 	shown := map[string]int{}

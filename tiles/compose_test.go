@@ -410,6 +410,14 @@ func TestComposeRandom(t *testing.T) {
 					t.Errorf("seed %d: composing twice gave different bytes", seed)
 				}
 				n, _, _ := checkComposed(t, normalized, doc, c)
+				hidden := tilestest.HideSome(rand.New(rand.NewPCG(uint64(seed), 7)), n)
+				if composed, err := tiles.Compose(doc, &hidden); err != nil {
+					t.Fatal(err)
+				} else {
+					for _, failure := range tilestest.CheckGenerated(normalized, &hidden, composed) {
+						t.Errorf("seed %d, hidden tiles: %s", seed, failure)
+					}
+				}
 				if first, second := mustJSON(t, n), mustJSON(t, mustNormalize(doc, c)); !bytes.Equal(first, second) {
 					t.Errorf("seed %d: normalising twice gave different bytes", seed)
 				}
@@ -620,5 +628,118 @@ func TestComposeNeedsConvertedDocument(t *testing.T) {
 	}
 	if _, report := tiles.NormalizeComposition(composed, &n); len(report.Fixes) != 1 || report.Fixes[0].Kind != tiles.FixUnusable {
 		t.Errorf("fixes = %v", report.Fixes)
+	}
+}
+
+// mild is the exhibits fixture without a high risk.
+var mild = fixture{name: "mild", mutate: func(doc map[string]any) {
+	exhibits.mutate(doc)
+	array(sectionOf(doc, "sec_retry_policy"), "risks")[0].(map[string]any)["tier"] = "medium"
+}}
+
+// A tile the host hides moves to a last, collapsed group; the overview, and
+// the risks tile while it ranks a severe risk, stay; and a model's hidden
+// list is dropped.
+func TestComposeHidden(t *testing.T) {
+	for _, tc := range []struct {
+		fixture     fixture
+		risksHidden bool
+	}{{mild, true}, {exhibits, false}} {
+		t.Run(tc.fixture.name, func(t *testing.T) {
+			normalized, doc := convert(t, tc.fixture)
+			n, _ := tiles.Template(doc, nil)
+			n.Layout.Hidden = []string{"sec_config_flag", tiles.TypeRisks, tiles.TypeOverview, tiles.TypeEvidence, tiles.TypeEverythingElse}
+			composed, err := tiles.Compose(doc, &n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, failure := range tilestest.CheckGenerated(normalized, &n, composed) {
+				t.Error(failure)
+			}
+			var hidden []string
+			for _, entry := range composed.Layout.Entries {
+				if entry.Group == tiles.GroupHidden {
+					hidden = append(hidden, entry.Tile)
+				}
+			}
+			want := []string{"sec_config_flag", tiles.TypeEvidence, tiles.TypeEverythingElse}
+			if tc.risksHidden {
+				want = []string{tiles.TypeRisks, "sec_config_flag", tiles.TypeEvidence, tiles.TypeEverythingElse}
+			}
+			if !slices.Equal(sorted(hidden), sorted(want)) {
+				t.Errorf("hidden = %v, want %v", hidden, want)
+			}
+			if last := composed.Layout.Groups[len(composed.Layout.Groups)-1]; last.ID != tiles.GroupHidden || last.CollapseAfter == nil || *last.CollapseAfter != 0 {
+				t.Errorf("the last group is %+v", last)
+			}
+			again, report := tiles.NormalizeComposition(doc, &n)
+			if len(again.Layout.Hidden) > 0 || report.Counts()[tiles.FixHidden] != len(n.Layout.Hidden) {
+				t.Errorf("normalising kept a hidden list: %v, fixes %v", again.Layout.Hidden, report.Counts())
+			}
+		})
+	}
+}
+
+func sorted(values []string) []string {
+	values = slices.Clone(values)
+	slices.Sort(values)
+	return values
+}
+
+// A change the recommendation names is never folded in the changes group:
+// the group shows enough to reach it or, when that would push it past the
+// landing page, the named changes lead the group.
+func TestComposeShowsRecommendedChanges(t *testing.T) {
+	_, plain := convert(t, withManyBlocks())
+	var members []string
+	for _, entry := range plain.Layout.Entries {
+		if entry.Group == tiles.GroupChanges {
+			members = append(members, entry.Tile)
+		}
+	}
+	named := members[len(members)-1]
+	many := withManyBlocks()
+	f := fixture{name: "recommended", mutate: func(doc map[string]any) {
+		many.mutate(doc)
+		object(doc, "summary")["recommendation"] = map[string]any{"decision": "look_first", "text": "Read the last part first.", "refs": []any{named}}
+	}}
+	normalized, doc := convert(t, f)
+	one := 1
+	for _, tc := range []struct {
+		name    string
+		lead    []tiles.Entry
+		raised  bool
+		leading bool
+	}{
+		{"raised", nil, true, false},
+		{"leading", []tiles.Entry{{Tile: tiles.TypeOverview, Size: tiles.SizeFull}, {Tile: tiles.TypeRisks, Size: tiles.SizeFull}, {Tile: tiles.TypeEvidence, Size: tiles.SizeFull}}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: tc.lead, ChangesShown: &one}}
+			for _, id := range members {
+				c.Layout.Entries = append(c.Layout.Entries, tiles.Entry{Tile: id, Size: tiles.SizeThird, Group: tiles.GroupChanges})
+			}
+			n, _ := tiles.NormalizeComposition(doc, c)
+			composed, err := tiles.Compose(doc, &n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, failure := range tilestest.CheckGenerated(normalized, &n, composed) {
+				t.Error(failure)
+			}
+			var group []string
+			for _, entry := range composed.Layout.Entries {
+				if entry.Group == tiles.GroupChanges {
+					group = append(group, entry.Tile)
+				}
+			}
+			shown := *composed.Layout.Groups[0].CollapseAfter
+			if tc.raised && (shown != len(members) || group[len(group)-1] != named) {
+				t.Errorf("the group shows %d with %v last, want all %d with %s last", shown, group[len(group)-1], len(members), named)
+			}
+			if tc.leading && (shown != 1 || group[0] != named) {
+				t.Errorf("the group shows %d led by %s, want 1 led by %s", shown, group[0], named)
+			}
+		})
 	}
 }

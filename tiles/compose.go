@@ -49,7 +49,8 @@ import (
 //     omits are appended in the converter's order with its sizes (a change
 //     tile at the end of the changes group, composition tiles last); the
 //     changes group is made contiguous at its first member; changes_shown is
-//     at least 1.
+//     at least 1; a hidden list is dropped, since only the host hides tiles
+//     (Compose keeps a stored one's entries that name a tile).
 //  7. Notes: a reason naming no tile is dropped, reasons are cut to MaxWhy
 //     characters, moves to MaxMoves.
 //
@@ -77,9 +78,11 @@ func NormalizeComposition(doc *Document, c *Composition) (Composition, Report) {
 // Compose applies a composition to the tile document FromReview converted
 // from a review, and returns the generated tile document: origin
 // "generated", the composition's tiles added, promoted blocks moved out of
-// their changes, the layout applied and arranged (Arrange: pinned tiles
-// first, and the risks tile onto the landing page when it holds an active
-// critical or high risk). The composition is normalised first, so any
+// their changes, hidden tiles moved to a last collapsed group, the layout
+// applied and arranged (Arrange: pinned tiles first, the risks tile onto the
+// landing page when it holds an active critical or high risk, and the
+// overview onto it), and no change the recommendation names folded in the
+// changes group. The composition is normalised first, so any
 // composition gives a valid document; a library or authored tile that fails
 // its checks is shown unavailable with its problems, as a stored custom tile
 // is, rather than dropped. A nil or empty composition gives the converted
@@ -141,6 +144,8 @@ const (
 	FixRenamed           FixKind = "renamed"
 	FixTitle             FixKind = "title"
 	FixNote              FixKind = "note"
+	// FixHidden is a hidden tile a model wrote, or one naming no tile.
+	FixHidden FixKind = "hidden"
 	// FixUnusable is reported when the document cannot take a composition.
 	FixUnusable FixKind = "unusable"
 )
@@ -230,6 +235,8 @@ func (f Fix) Message() string {
 		text = fmt.Sprintf("%s has the ID of another tile; it is renamed", tile)
 	case FixTitle:
 		text = fmt.Sprintf("the title of %s is blank, too long or on several lines; it is tidied", tile)
+	case FixHidden:
+		text = fmt.Sprintf("only the host hides tiles, and only tiles the review has; %s stays shown", tile)
 	case FixNote:
 		text = "a note names a tile the review does not have or is too long; it is dropped or shortened"
 	case FixUnusable:
@@ -252,13 +259,12 @@ func plainID(id string) string {
 }
 
 // AllowedSizes returns the sizes a tile may have in a layout: half or full
-// for the overview and risks tiles and for table, code, prose and diagram
-// tiles; the sizes its definition declares for a custom tile (every size
+// for the overview and risks tiles and for table, code and diagram tiles; the sizes its definition declares for a custom tile (every size
 // when the definition is invalid); every size for the others.
 func AllowedSizes(tile Tile) []Size {
 	all := []Size{SizeFull, SizeHalf, SizeThird}
 	switch tile.Type {
-	case TypeOverview, TypeRisks, TypeTable, TypeCode, TypeProse, TypeDiagram:
+	case TypeOverview, TypeRisks, TypeTable, TypeCode, TypeDiagram:
 		return []Size{SizeFull, SizeHalf}
 	case TypeCustom:
 		if sizes := definitionSizes(tile.Definition); len(sizes) > 0 {
@@ -937,6 +943,13 @@ func (cm *composer) layout(in CompositionLayout) CompositionLayout {
 	}
 
 	out := CompositionLayout{Entries: nonNil(entries)}
+	for _, id := range in.Hidden {
+		if cm.mode == modeWrite || tiles[id] == nil || slices.Contains(out.Hidden, id) {
+			cm.fix(FixHidden, id, "")
+			continue
+		}
+		out.Hidden = append(out.Hidden, id)
+	}
 	if in.ChangesShown != nil {
 		shown := *in.ChangesShown
 		if shown < 1 {
@@ -1058,12 +1071,24 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 			doc.Tiles = append(doc.Tiles, cand.tile)
 		}
 	}
-	entries := slices.Clone(n.Layout.Entries)
+	hidden := map[string]bool{}
+	for _, id := range n.Layout.Hidden {
+		hidden[id] = id != TypeOverview && !(id == TypeRisks && mustShowRisks(doc))
+	}
+	var entries, last []Entry
+	for _, entry := range n.Layout.Entries {
+		if hidden[entry.Tile] {
+			last = append(last, Entry{Tile: entry.Tile, Size: entry.Size, Group: GroupHidden})
+			continue
+		}
+		entries = append(entries, entry)
+	}
 	for _, entry := range cm.doc.Layout.Entries {
 		if cm.obsolete[entry.Tile] {
 			entries = append(entries, entry)
 		}
 	}
+	entries = append(entries, last...)
 	groups := groupsOf(entries)
 	if n.Layout.ChangesShown != nil {
 		for i := range groups {
@@ -1072,7 +1097,90 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 			}
 		}
 	}
+	if len(last) > 0 {
+		groups = append(groups, Group{ID: GroupHidden, Title: "Hidden tiles", CollapseAfter: new(0)})
+	}
 	doc.Layout = Layout{Entries: entries, Groups: groups}
 	Arrange(doc)
+	if showRecommended(doc) {
+		Arrange(doc)
+	}
 	return doc, nil
+}
+
+// RecommendedChanges returns the changes a document's recommendation names
+// in its refs, in the order it names them.
+func RecommendedChanges(doc *Document) []string {
+	var recommendation struct {
+		Refs []string `json:"refs"`
+	}
+	if len(doc.Recommendation) == 0 || json.Unmarshal(doc.Recommendation, &recommendation) != nil {
+		return nil
+	}
+	changes := map[string]bool{}
+	for _, change := range doc.Changes {
+		changes[change.ID] = true
+	}
+	var named []string
+	for _, ref := range recommendation.Refs {
+		if changes[ref] && !slices.Contains(named, ref) {
+			named = append(named, ref)
+		}
+	}
+	return named
+}
+
+// showRecommended keeps every change the recommendation names out of the
+// folded part of the changes group: it raises the number the group shows to
+// reach the last of them, or, when that would put one past the landing page,
+// moves them to the front of the group and shows at least as many. It
+// reports whether it changed the layout.
+func showRecommended(doc *Document) bool {
+	named := RecommendedChanges(doc)
+	layout := &doc.Layout
+	at := slices.IndexFunc(layout.Groups, func(g Group) bool { return g.ID == GroupChanges })
+	if len(named) == 0 || at < 0 || layout.Groups[at].CollapseAfter == nil {
+		return false
+	}
+	var members []int
+	last := -1
+	for i, entry := range layout.Entries {
+		if entry.Group != GroupChanges {
+			continue
+		}
+		if slices.Contains(named, entry.Tile) {
+			last = len(members)
+		}
+		members = append(members, i)
+	}
+	shown := *layout.Groups[at].CollapseAfter
+	if last < shown {
+		return false
+	}
+	raised := *layout
+	raised.Groups = slices.Clone(layout.Groups)
+	raised.Groups[at].CollapseAfter = new(last + 1)
+	raised.Landing = Landing(raised)
+	if members[last] < raised.Landing {
+		*layout = raised
+		return true
+	}
+	group := make([]Entry, len(members))
+	for k, i := range members {
+		group[k] = layout.Entries[i]
+	}
+	group = frontFirst(group, func(entry Entry) bool { return slices.Contains(named, entry.Tile) })
+	for k, i := range members {
+		layout.Entries[i] = group[k]
+	}
+	count := 0
+	for _, entry := range group {
+		if slices.Contains(named, entry.Tile) {
+			count++
+		}
+	}
+	layout.Groups = slices.Clone(layout.Groups)
+	layout.Groups[at].CollapseAfter = new(max(shown, count))
+	layout.Landing = Landing(*layout)
+	return true
 }

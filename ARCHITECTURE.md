@@ -666,11 +666,12 @@ showing one part of the review. It has three parts.
   "Show N more tiles" reveals the rest that are not hidden (`tiles.More`).
   `tiles.Arrange` orders a layout and sets `landing`: it first gives a custom
   tile's entry of a size its definition does not declare the first size it
-  declares; then pinned entries move to
-  the front, and so does the risks tile when it ranks an active critical or
-  high risk and would otherwise miss the landing page, both stably; should
-  the pinned entries alone fill the landing page, the risks tile goes before
-  them. A narrow window stacks the same order into fewer columns, so the
+  declares; then pinned entries move to the front. Two tiles must then be on
+  the landing page, in this order: the risks tile when it ranks an active
+  critical or high risk, and the overview. Each that would miss it moves to
+  the front with the pinned entries and the one before it, stably; should
+  the pinned entries alone fill the landing page, it goes before them. A
+  converted document keeps its order. A narrow window stacks the same order into fewer columns, so the
   landing page does not depend on the viewport.
 
 Who writes what: the host writes the substrate's header, facts, statistics,
@@ -943,7 +944,13 @@ review's:
   `changes` group (the only group a composition sets) and a pin, and
   `changes_shown`, how many members the changes group shows before folding
   (without it, the converter's rule). Obsolete changes are not listed: the
-  host always places them last, in their collapsed group.
+  host always places them last, in their collapsed group. `hidden` lists the
+  tiles a reader removed; only the host writes it (normalisation drops a
+  model's), and applying the composition moves those tiles, out of their
+  groups, to a last collapsed "Hidden tiles" group after the obsolete
+  changes, so the document still presents everything once and a reader can
+  bring them back. The overview, and the risks tile while it ranks a
+  critical or high risk, are never hidden.
 - `promotions`: a table or code block of a current change moved to a tile of
   its own, `{id, change, block, digest, title}`. `block` is the block's
   position among the change's blocks in the review, as an origin gives it;
@@ -989,7 +996,7 @@ changes nothing.
 | Authored tiles | The ID is `table_`, `code_` or `prose_` and a slug; at most 3. Dropped when the data is not a JSON object of at most 64 KiB, carries an `origin`, does not have its type's shape, cites no hunk or file, or has a citation that does not resolve. |
 | IDs | A promoted or authored tile whose ID a converted tile, a library tile or an earlier composition tile has gets the first free numeric suffix (`_2`, `_3`, …). |
 | Titles | One line, at most 80 characters, the type's catalogue title when blank. |
-| Entries | An entry naming no tile, a second entry for a tile and an entry for an obsolete change are dropped. A size the tile does not allow becomes its default: overview, risks, table, code, prose and diagram tiles are half or full, a custom tile takes its definition's sizes, the others any size. Only a current change tile that is not pinned may be in the changes group; any other group is removed. |
+| Entries | An entry naming no tile, a second entry for a tile and an entry for an obsolete change are dropped. A size the tile does not allow becomes its default: overview, risks, table, code and diagram tiles are half or full, a custom tile takes its definition's sizes, the others any size. Only a current change tile that is not pinned may be in the changes group; any other group is removed. |
 | Omitted tiles | Appended in the converter's order and sizes, a change at the end of the changes group, then the composition's tiles at their default size. |
 | Changes group | Made contiguous at its first member; `changes_shown` is at least 1. |
 | Notes | A reason or move naming no tile is dropped; reasons are cut to 160 characters, moves to 20. |
@@ -1009,8 +1016,13 @@ composition:
   table or code block, never a change's summary or hunks;
 - the recommendation and the risk score are the review's, and every risk,
   evidence item, decision and block is presented exactly once;
-- the risks tile is on the landing page whenever it ranks an active critical
-  or high risk, never in a group, and pins cannot push it off;
+- the overview is on the landing page, and so is the risks tile whenever it
+  ranks an active critical or high risk; pins cannot push either off, and
+  neither is ever in a group or hidden;
+- a change the recommendation names in its refs is never folded in the
+  changes group: the host raises the number the group shows to reach the
+  last of them or, when that would put one past the landing page, moves them
+  to the front of the group and shows at least as many;
 - at most 3 promoted tiles (one per change), 3 authored and 8 library tiles;
 - the document passes the tile schema and document rules, `ToReview` gives
   back the review, and the result is deterministic.
@@ -1057,9 +1069,9 @@ exactly when they were, and every risk they name resolves; every active
 critical or high risk is ranked and the risks and overview tiles are on the
 landing page; every tile is placed once and passes the tile checks; and the
 round trip holds. `CheckGenerated` asserts them for a composed document,
-the guarantees above among them: the overview may be anywhere, the risks
-tile must be on the landing page only when it ranks a critical or high
-risk, and a library or authored tile may be unavailable with its problems.
+the guarantees above among them: the risks tile must be on the landing page
+only when it ranks a critical or high risk, a hidden tile is in the last
+group, and a library or authored tile may be unavailable with its problems.
 `CheckStability` checks that a change two consecutive versions share keeps
 its tile's ID and type, that a tile ID both share names the same subject (a
 change or single tile of the same type, a library tile of the same type, a
@@ -1070,8 +1082,8 @@ tests. The goldens in `tiles/testdata` cover each shape the conversion
 handles, and in `tiles/testdata/compositions` each template and
 normalisation rule. `internal/tilescorpus` runs every check over a
 directory of real review stores when `BAUM_TILES_CORPUS` names one, composes
-each version with its template and five seeded random compositions, and
-logs only counts.
+each version with its template, five seeded random compositions and one
+with hidden tiles, and logs only counts.
 
 **Serving.** The desktop daemon converts a review each time it answers for
 one; nothing about the tile document is stored. All three routes answer

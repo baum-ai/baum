@@ -28,32 +28,46 @@ func (s Size) Units() int {
 
 // Arrange orders a document's layout for its landing page and sets Landing.
 // A custom tile's entry of a size its definition does not declare gets the
-// first size it declares. Pinned entries move to the front; so does the
-// risks tile when it ranks an active critical or high risk and would
-// otherwise not be on the landing page. Both moves are stable, and should
-// the pinned entries alone fill the landing page, the risks tile goes first.
-// A converted document pins nothing and places the risks tile second, where
-// it is always on the landing page, so its order is unchanged.
+// first size it declares. Pinned entries move to the front. Then two tiles
+// must be on the landing page, in this order: the risks tile when it ranks
+// an active critical or high risk, and the overview tile. Each that is not
+// moves to the front with the pinned entries and those before it in that
+// order; should the pinned entries alone fill the landing page, it goes
+// before them. Every move is stable. A converted document pins nothing and
+// places the overview first and the risks tile second, where they are always
+// on the landing page, so its order is unchanged.
 func Arrange(doc *Document) {
 	layout := doc.Layout
 	layout.Entries = declaredSizes(doc, layout.Entries)
-	front := func(entry Entry) bool { return entry.Pin }
-	layout.Entries = frontFirst(layout.Entries, front)
+	layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin })
 	layout.Landing = Landing(layout)
+	var required []string
 	if mustShowRisks(doc) {
-		for i, entry := range layout.Entries {
-			if entry.Tile == TypeRisks && i >= layout.Landing {
-				layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin || entry.Tile == TypeRisks })
-				layout.Landing = Landing(layout)
-				if slices.IndexFunc(layout.Entries, func(entry Entry) bool { return entry.Tile == TypeRisks }) >= layout.Landing {
-					layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Tile == TypeRisks })
-					layout.Landing = Landing(layout)
-				}
-				break
-			}
+		required = append(required, TypeRisks)
+	}
+	if slices.ContainsFunc(doc.Tiles, func(tile Tile) bool { return tile.ID == TypeOverview }) {
+		required = append(required, TypeOverview)
+	}
+	for k, id := range required {
+		lead := required[:k+1]
+		if onLanding(layout, id) {
+			continue
+		}
+		layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin || slices.Contains(lead, entry.Tile) })
+		layout.Landing = Landing(layout)
+		if !onLanding(layout, id) {
+			layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return slices.Contains(lead, entry.Tile) })
+			layout.Landing = Landing(layout)
 		}
 	}
 	doc.Layout = layout
+}
+
+// onLanding reports whether the layout places the tile on its landing page,
+// when it places it.
+func onLanding(layout Layout, id string) bool {
+	i := slices.IndexFunc(layout.Entries, func(entry Entry) bool { return entry.Tile == id })
+	return i < 0 || Visible(layout)[i]
 }
 
 // declaredSizes returns the entries with each custom tile's size one its
