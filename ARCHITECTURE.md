@@ -2111,7 +2111,10 @@ its review checks come under a heading marked as the person's, after a note
 that the pull request cannot add one. Its ready fill becomes a library tile
 that embeds its definition, which the composer places beside the built-in
 types' (`agent.ComposeRequest.Saved`, by digest; the page labels it
-"Custom · <title>" and shows it through the first-show preflight). Each type
+"Custom · <title>" and shows it through the first-show preflight). The host
+writes the `related` items only into a type whose schema declares that
+property (`Entry.DeclaresRelated`, as the built-in types do); the kit's guide
+asks other types to leave the name unused, and their schemas would refuse it. Each type
 the outline selects costs one fill, in parallel with the others.
 
 **Recording use.** When a version is stored, `jobs.Local` reads the saved

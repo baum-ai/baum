@@ -673,6 +673,21 @@ func Check(e Entry) []string {
 	return problems
 }
 
+// DeclaresRelated reports whether the type's data schema has the top-level
+// related property the host writes (WithRelated): the built-in types do. A
+// type that leaves the name unused, as the kit's guide asks of other types,
+// gets no related items, which its schema would refuse.
+func (e Entry) DeclaresRelated() bool {
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if json.Unmarshal(e.Definition.DataSchema, &schema) != nil {
+		return false
+	}
+	_, ok := schema.Properties[Related]
+	return ok
+}
+
 // MaxRelated bounds the related items the host writes.
 const MaxRelated = 12
 

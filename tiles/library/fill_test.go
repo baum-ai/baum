@@ -250,3 +250,17 @@ func TestCheckFillInChecksTheBundle(t *testing.T) {
 		t.Error("CheckFill took a file outside the diff")
 	}
 }
+
+// The host writes related items only into a type whose schema declares
+// them: the built-in types do, the kit's starter (and a saved type made
+// from it) leaves the name unused.
+func TestDeclaresRelated(t *testing.T) {
+	for _, e := range library.All() {
+		if !e.DeclaresRelated() {
+			t.Errorf("%s does not declare related", e.Definition.Name)
+		}
+	}
+	if citingEntry(t).DeclaresRelated() {
+		t.Error("the starter declares related")
+	}
+}

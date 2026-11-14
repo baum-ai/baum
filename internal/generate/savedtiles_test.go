@@ -10,6 +10,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -129,5 +130,49 @@ func TestNoSavedTypesWithoutALibrary(t *testing.T) {
 	if c := storedComposition(t, result.Composition); len(c.Library) != 0 {
 		raw, _ := json.Marshal(c.Library)
 		t.Errorf("library tiles: %s", raw)
+	}
+}
+
+// A saved type whose schema leaves `related` unused, as the kit's starter
+// does, is placed with its data as the fill wrote it, even where the
+// review's risks share its hunks: the host writes related items only into
+// a type that declares them.
+func TestASavedTypeWithoutRelatedIsPlaced(t *testing.T) {
+	f := newFixture(t)
+	base := addedReplies(t, nil)
+	f.backend.RunFunc = func(ctx context.Context, request agent.Request, n int) (agent.Result, error) {
+		if request.Stage != "fill-saved-findings" {
+			return base(ctx, request, n)
+		}
+		h := firstHunk(t, request.Directory)
+		data := `{"summary":"One finding.","items":[{"title":"Reads a setting","severity":"low","text":null,"cites":[{"type":"hunk","id":"` + h.ID + `"}]}]}`
+		return agent.Result{Document: []byte(`{"applies":true,"data":` + data + `}`), Model: "stub-model", Calls: 1, Tokens: 100}, nil
+	}
+	f.backend.CompleteFunc = keepTemplate(t, "", nil)
+	o := tilesOptions(t, f)
+	o.Backend = concurrentStub{f.backend}
+	o.Budgets.MaxCalls = 0
+	starter, err := library.Load(kit.Starter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := starter.Definition
+	def.Name = "saved_findings"
+	if starter.Encoded, err = library.Seal(&def); err != nil {
+		t.Fatal(err)
+	}
+	starter.Definition = def
+	o.Tiles.Saved = func(context.Context, []string, []string) ([]library.Entry, []library.Entry) {
+		return []library.Entry{starter}, nil
+	}
+	_, _, result := publishTiles(t, f, o)
+	c := storedComposition(t, result.Composition)
+	if !slices.Contains(libraryNames(c), "saved_findings") {
+		t.Fatalf("library tiles: %v, fixes %v", libraryNames(c), result.Compose.Fixes)
+	}
+	for _, lib := range c.Library {
+		if strings.Contains(string(lib.Definition), `"saved_findings"`) && strings.Contains(string(lib.Data), `"related"`) {
+			t.Error("related items were written into a type that does not declare them")
+		}
 	}
 }

@@ -377,7 +377,10 @@ func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry)
 		state := "failed"
 		var data json.RawMessage
 		if f.State == agent.FillReady {
-			state, data = "ready", library.WithRelated(f.Data, doc)
+			state, data = "ready", f.Data
+			if e.DeclaresRelated() {
+				data = library.WithRelated(f.Data, doc)
+			}
 			ready = append(ready, tiles.Tile{ID: tiles.LibraryTileID(f.Type), Type: tiles.TypeCustom, Data: data})
 		}
 		if f.State == agent.FillNotApplies {
