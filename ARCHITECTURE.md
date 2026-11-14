@@ -1158,7 +1158,11 @@ handles, and in `tiles/testdata/compositions` each template and
 normalisation rule. `internal/tilescorpus` runs every check over a
 directory of real review stores when `BAUM_TILES_CORPUS` names one, composes
 each version with its template, five seeded random compositions and one
-with hidden tiles, and logs only counts. With `BAUM_TILES_CORPUS_DIGESTS=1`
+with hidden tiles, replays three seeded layout overlays on its converted
+layout and its template, and the overlays drawn on a pull request's previous
+version on its next, checking every generated document, and logs only
+counts: ops applied and dropped by reason, the ops whose tile vanished
+between versions, how often a carried move still holds, and timings. With `BAUM_TILES_CORPUS_DIGESTS=1`
 and `-run TestServedDigests` (`just oss-tiles-corpus <dir> -run
 TestServedDigests`) it logs instead one digest of the served answer per
 version, by position, so a change to serving can be shown not to change the

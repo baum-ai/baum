@@ -2,7 +2,9 @@
 // review stores into tile documents and checks the conversion's invariants on
 // each. It also composes each version with the template of its change kind
 // and with seeded random compositions, as a model or an attacker might write
-// them, and checks the generated documents' invariants. It runs only when
+// them, replays seeded layout overlays (a person's edits) on each version and
+// those drawn on a pull request's previous version on its next, and checks
+// the generated documents' invariants. It runs only when
 // BAUM_TILES_CORPUS names a directory, and logs only counts: the stores hold
 // private pull request content.
 package tilescorpus
@@ -56,6 +58,7 @@ type tally struct {
 	normalize, convert, checks []time.Duration
 	pairs                      int
 	composed                   composedTally
+	overlays                   overlayTally
 }
 
 // composedTally counts what composing the versions found.
@@ -99,6 +102,7 @@ func TestCorpus(t *testing.T) {
 	validator := tiles.NewValidator()
 	stats := &tally{failures: map[string]int{}, landingTiles: map[int]int{}, types: map[string]int{}}
 	stats.composed = composedTally{changeKinds: map[string]int{}, templates: map[string]int{}, templateLanding: map[int]int{}, fixes: map[bool][]int{}, compose: map[bool][]time.Duration{}}
+	stats.overlays = newOverlayTally()
 	for i, store := range stores {
 		versions := readStore(t, i, store)
 		var previous *tiles.Document
@@ -117,11 +121,13 @@ func TestCorpus(t *testing.T) {
 			}
 			if doc != nil {
 				compose(stats, v, normalized, doc)
+				overlays(stats, v, normalized, doc, previousPR != v.pullRequest)
 			}
 			previous, previousPR = doc, v.pullRequest
 		}
 	}
 	report(t, stats, len(stores))
+	reportOverlays(t, stats.overlays)
 	if len(stats.failures) > 0 || stats.converted != stats.versions || stats.composed.generated != stats.composed.compositions {
 		t.Fatalf("%d of %d versions converted, %d of %d compositions generated; failures by stage: %s", stats.converted, stats.versions, stats.composed.generated, stats.composed.compositions, counts(stats.failures))
 	}
