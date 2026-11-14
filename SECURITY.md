@@ -1852,7 +1852,15 @@ folder picker, reading and changing the `baum` command and the user-wide agent
 hooks (as Settings does), the window's zoom, and reading, checking for,
 installing and dismissing app updates (only an update the app has already
 downloaded and verified installs). They can call no other command and no
-plugin. The bundled connecting screen may only read the connection state and
+plugin. Only the page itself can call them: on macOS and Linux the app's
+command bridge is injected into the page's main frame only, so a frame
+embedded in it, even one served from the daemon's origin, cannot reach a
+command; on Linux this is checked with a sandboxed frame trying every way the
+bridge offers. On Windows the bridge is injected into every frame, so there
+the shell declares to the page (`window.__BAUM_DESKTOP__.tileFrames`, set
+before the page's scripts and not replaceable) that it must not embed
+frames of untrusted content from the daemon's origin; on macOS and Linux it
+declares that it may. The bundled connecting screen may only read the connection state and
 ask to reconnect. The bundled setup screen may also read what is installed and
 install or remove the `baum` command and the user-wide agent hooks; it does
 so only when you click the button for that change, and a change that would

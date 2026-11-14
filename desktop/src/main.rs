@@ -12,6 +12,7 @@
 mod autostart;
 mod client;
 mod daemon;
+mod declaration;
 mod development;
 mod events;
 mod install;
@@ -386,6 +387,8 @@ fn main() {
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
                 .visible(!hidden)
+                // What this shell can host, for the page to read (see `declaration`).
+                .initialization_script(declaration::script(declaration::TILE_FRAMES))
                 .initialization_script(zoom::SCRIPT)
                 .on_page_load(|webview, payload| {
                     if payload.event() == tauri::webview::PageLoadEvent::Started {

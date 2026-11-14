@@ -776,6 +776,23 @@ doing anything (`src/zoom.rs`).
   no longer ask for a window, through the `open` action of
   `github_connection`, which opens that fixed address whatever the page
   passes.
+- Before the page's own scripts run, the main window defines
+  `window.__BAUM_DESKTOP__`, a frozen object that cannot be replaced
+  (`src/declaration.rs`): `tileFrames` says whether the page may embed
+  sandboxed frames of untrusted content served from the daemon's origin. It
+  is `true` on Linux and macOS, where the shell refuses every navigation of a
+  frame away from the app and Tauri injects its scripts, including the
+  command bridge, into the main frame only. On Linux
+  `just desktop::navigation-check` shows that a sandboxed frame at the
+  daemon's origin sees neither the declaration nor the bridge, and that none
+  of its attempts to call a command (`__TAURI_INTERNALS__`, `window.ipc`,
+  WebKit's `ipc` message handler with a guessed or no invoke key, `fetch` to
+  `ipc://localhost` and `http://ipc.localhost`) runs one. It is `false` on
+  Windows, where Tauri injects its scripts into every frame and WebView2 asks
+  the shell only about the page's own navigations, until the same check has
+  been made on a Windows machine; the constant's comment says what to check.
+  WKWebView injects the declaration into the main frame only, as WebKitGTK
+  does; that is known from the APIs Tauri uses on macOS, not yet run there.
 - Tauri treats the daemon's pages as remote. One capability names them,
   `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's Browse
@@ -817,12 +834,14 @@ notification service (`notify-rust`) only from Rust.
 ### Checking navigation
 
 `just desktop::navigation-check` checks the Linux webview: it builds a small
-Tauri window with `src/navigation.rs` (`tests/navigation`), loads a mock
-daemon's page with and without the daemon's Content-Security-Policy, and
-clicks with a real pointer under a virtual display in Docker. It fails if a
-sandboxed frame's navigation is not refused, if a frame reaches the
-new-window handler, if any request reaches another server, or if the page's
-own links stop working. It takes a few minutes and is not part of CI.
+Tauri window with `src/navigation.rs`, `src/declaration.rs` and the
+`daemon-pages` capability (`tests/navigation`), loads a mock daemon's page
+with and without the daemon's Content-Security-Policy, and clicks with a real
+pointer under a virtual display in Docker. It fails if a sandboxed frame's
+navigation is not refused, if a frame reaches the new-window handler or runs
+an app command, if a frame sees `__BAUM_DESKTOP__`, if any request reaches
+another server, or if the page's own links, commands or declaration stop
+working. It takes a few minutes and is not part of CI.
 
 macOS and Windows need a person. Run a debug build of the app (`just
 desktop::dev` on macOS; on Windows, `cargo tauri dev` in `oss/desktop` with
