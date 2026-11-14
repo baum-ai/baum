@@ -80,9 +80,11 @@ func tileLibrary(w http.ResponseWriter, _ *http.Request) {
 
 // tilesHandler serves GET /api/tiles: the review document and the tile
 // document converted from it and composed with the version's stored
-// composition, if any, with the selectors, errors and no-store ETag of
+// composition, if any, and the person's own layout of the pull request
+// (LocalAPI.Layouts), with the selectors, errors and no-store ETag of
 // GET /api/document. Answers are kept under the version's store revision,
-// which changes with every write to its row, composition included. Its
+// which changes with every write to its row, composition included, and the
+// layout's key (tileview.LayoutKey), which changes with every edit. Its
 // document is the normalised review (review.NormalizeStored), which differs
 // from the stored one on the plain route only where a stored-document rule
 // applies.
@@ -96,18 +98,25 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 		if !ok {
 			return
 		}
-		answer, found := answers.Get(read.revisionKey())
+		layout, layoutKey := a.layoutOf(r.Context(), read.clone.Repository, read.key.Number)
+		withLayout := func(key string) string {
+			if key == "" || layoutKey == "" {
+				return key
+			}
+			return key + "\x00layout\x00" + layoutKey
+		}
+		answer, found := answers.Get(withLayout(read.revisionKey()))
 		if !found {
 			version, ok := read.version(r.Context(), w)
 			if !ok {
 				return
 			}
 			var err error
-			if answer, err = tileview.Encode(tileview.Build(version.Document, version.Composition, tiles.Options{})); err != nil {
+			if answer, err = tileview.Encode(tileview.BuildWith(version.Document, version.Composition, layout, tiles.Options{})); err != nil {
 				apiError(w, err)
 				return
 			}
-			answers.Put(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision), answer)
+			answers.Put(withLayout(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision)), answer)
 		}
 		etagjson.Serve(w, r, answer.Body)
 	}

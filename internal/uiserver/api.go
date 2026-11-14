@@ -22,6 +22,7 @@ import (
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -139,6 +140,11 @@ type LocalAPI struct {
 	// Version is this baum's version, named in the "Report a problem" link
 	// that /api/diagnostics returns.
 	Version string
+	// Layouts keeps each person's own tile layout of a pull request, which
+	// the tile route applies and GET and POST /api/tiles/layout read and
+	// change. Without it no layout applies and the layout routes report the
+	// capability unavailable.
+	Layouts *tilelayout.Service
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -554,6 +560,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
 	mux.HandleFunc("GET /api/tile-library", tileLibrary)
+	a.layoutRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)

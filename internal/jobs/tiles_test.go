@@ -135,7 +135,7 @@ func TestTileReviewThroughAJob(t *testing.T) {
 	}
 	// The queue serves each draft with its layout.
 	var d draftTiles
-	body, err := d.get("job", 1, final.Draft, final.DraftComposition)
+	body, err := d.get("job", 1, final.Draft, final.DraftComposition, tileview.Layout{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,7 +28,7 @@ type tilesFixture struct {
 	key      store.Key
 }
 
-func newTilesFixture(t *testing.T) *tilesFixture {
+func newTilesFixture(t *testing.T, options ...func(*LocalAPI)) *tilesFixture {
 	t.Helper()
 	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
@@ -51,7 +51,11 @@ func newTilesFixture(t *testing.T) *tilesFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := LocalAPI{Registry: registry, Config: config.Default()}.Handler()
+	api := LocalAPI{Registry: registry, Config: config.Default()}
+	for _, option := range options {
+		option(&api)
+	}
+	handler := api.Handler()
 	t.Cleanup(handler.Close)
 	return &tilesFixture{handler: handler, clone: clone, versions: versions, key: store.Key{Repository: "acme/widgets", Number: 42}}
 }

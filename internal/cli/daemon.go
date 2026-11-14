@@ -70,6 +70,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
+	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -513,6 +514,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
+		// Each person's own tile layout of a pull request, applied to every
+		// version and draft the tile routes serve; a write tells the app's
+		// open page to read its tiles again.
+		layouts := &tilelayout.Service{Path: database, Changed: func(pr string, revision int64) {
+			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
+		}}
+		queue.SetLayouts(layouts.Layout)
 		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
@@ -810,7 +818,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version()}
+			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}

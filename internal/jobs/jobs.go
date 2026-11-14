@@ -25,6 +25,7 @@ import (
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/tileview"
 )
 
 type Item struct {
@@ -336,7 +337,10 @@ type Queue struct {
 	cancels map[string]context.CancelFunc
 	wake    chan struct{}
 	// chat lists the stored conversations; nil lists none.
-	chat    ChatService
+	chat ChatService
+	// layouts returns a pull request's own tile layout, which a draft's
+	// tile view applies; nil applies none.
+	layouts func(repository string, number int) tileview.Layout
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup

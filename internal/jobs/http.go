@@ -224,7 +224,8 @@ func (q *Queue) Handler() http.Handler {
 			// written, so it is a pending context tile. A review whose tiles
 			// are arranged is laid out by the template until the
 			// composition lands, then by the composition.
-			body, err := drafts.get(id, revision, draft, composition)
+			job, _ := q.Find(id)
+			body, err := drafts.get(id, revision, draft, composition, q.layoutOf(job))
 			if err != nil {
 				http.Error(w, http.StatusText(500), 500)
 				return
@@ -284,23 +285,26 @@ type draftTiles struct {
 type draftTileView struct {
 	revision    int
 	composition string
+	layout      string
 	body        []byte
 	// frames are registered again whenever the kept view is served.
 	frames tileview.Frames
 }
 
 // get returns the encoded tile view of the draft, composed with composition
-// when given. The kept view is that of the same draft count and composition.
-func (d *draftTiles) get(id string, revision int, draft, composition []byte) ([]byte, error) {
-	key := tileview.Key(composition)
+// when given and the pull request's own layout, so a regeneration in
+// progress does not move the page back to the generated layout. The kept
+// view is that of the same draft count, composition and layout.
+func (d *draftTiles) get(id string, revision int, draft, composition []byte, layout tileview.Layout) ([]byte, error) {
+	key, layoutKey := tileview.Key(composition), tileview.LayoutKey(layout)
 	d.mu.Lock()
 	kept, ok := d.kept[id]
 	d.mu.Unlock()
-	if ok && kept.revision == revision && kept.composition == key {
+	if ok && kept.revision == revision && kept.composition == key && kept.layout == layoutKey {
 		kept.frames.Register()
 		return kept.body, nil
 	}
-	built := tileview.Build(draft, composition, tiles.Options{Draft: true})
+	built := tileview.BuildWith(draft, composition, layout, tiles.Options{Draft: true})
 	full, err := json.Marshal(struct {
 		Draft int `json:"draft"`
 		tileview.Response
@@ -313,7 +317,7 @@ func (d *draftTiles) get(id string, revision int, draft, composition []byte) ([]
 	if d.kept == nil {
 		d.kept = map[string]draftTileView{}
 	}
-	d.kept[id] = draftTileView{revision, key, full, built.Frames}
+	d.kept[id] = draftTileView{revision, key, layoutKey, full, built.Frames}
 	d.mu.Unlock()
 	return full, nil
 }

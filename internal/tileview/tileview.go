@@ -129,6 +129,42 @@ func Key(composition []byte) string {
 // and serves every custom tile's definition without its HTML, composed or
 // not.
 func Build(document, composition []byte, opts tiles.Options) Response {
+	return BuildWith(document, composition, Layout{}, opts)
+}
+
+// Layout is a person's own layout of the pull request a version belongs to:
+// their overlay (tiles.Overlay, nil for none) and the filled library tiles
+// the host holds for the tiles they added, for this version.
+type Layout struct {
+	Overlay *tiles.Overlay
+	Added   []tiles.LibraryTile
+}
+
+// LayoutKey names a layout for a cache key: the digest of its overlay's
+// active batches, empty for a layout with no edits, so an answer built with
+// one layout is never served for another.
+func LayoutKey(layout Layout) string {
+	if !layout.Overlay.Edited() {
+		return ""
+	}
+	encoded, err := json.Marshal(struct {
+		Batches []tiles.Batch       `json:"batches"`
+		Added   []tiles.LibraryTile `json:"added,omitempty"`
+	}{layout.Overlay.Active(), layout.Added})
+	if err != nil {
+		return "unencodable"
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+// BuildWith is Build with the person's layout applied: the composition the
+// tile document is composed with is tiles.ApplyOverlay of the stored one (or
+// of the converted layout, when there is none or it cannot be used) with
+// their overlay. A layout with no edits gives exactly Build's answer. The
+// ops a version drops (their tile is gone) are counted, never shown
+// (workstats tileview.overlay_ops_dropped).
+func BuildWith(document, composition []byte, layout Layout, opts tiles.Options) Response {
 	Builds.Add(1)
 	normalized, err := review.NormalizeStored(document)
 	if err != nil {
@@ -144,7 +180,7 @@ func Build(document, composition []byte, opts tiles.Options) Response {
 	if f := fixture.Load(); f != nil && *f != nil {
 		(*f)(doc)
 	}
-	doc = compose(doc, composition)
+	doc = compose(doc, composition, layout)
 	if err := validator.CheckTiles(doc); err != nil {
 		return Response{Document: raw(normalized), Problem: "The tiles could not be checked."}
 	}
@@ -256,36 +292,76 @@ func mustMarshal(v any) json.RawMessage {
 // applyComposition is tiles.Compose; tests replace it to force a failure.
 var applyComposition = tiles.Compose
 
-// compose applies the stored composition to the converted document, or
-// returns it as it is when there is none or none can be used: one over
-// tiles.MaxStoredComposition bytes, one that does not parse, one Compose
-// refuses and one that makes it panic are ignored and counted.
-func compose(doc *tiles.Document, composition []byte) (out *tiles.Document) {
-	if len(composition) == 0 || string(composition) == "null" {
-		return doc
+// compose applies the stored composition, with the person's layout, to the
+// converted document, or returns it as it is when there is nothing to apply
+// or nothing can be: a composition over tiles.MaxStoredComposition bytes,
+// one that does not parse, one Compose refuses and one that makes it panic
+// are ignored and counted, and the person's layout then applies to the
+// converted layout.
+func compose(doc *tiles.Document, composition []byte, layout Layout) (out *tiles.Document) {
+	parsed := parseComposition(composition)
+	if layout.Overlay.Edited() {
+		if edited := applyLayout(doc, parsed, layout); edited != nil {
+			return edited
+		}
 	}
-	ignore := func() *tiles.Document {
-		workstats.Inc("tileview.compositions_ignored")
+	if parsed == nil || parsed.Empty() {
 		return doc
 	}
 	defer func() {
 		if recover() != nil {
-			out = ignore()
+			workstats.Inc("tileview.compositions_ignored")
+			out = doc
 		}
 	}()
+	composed, err := applyComposition(doc, parsed)
+	if err != nil {
+		workstats.Inc("tileview.compositions_ignored")
+		return doc
+	}
+	return composed
+}
+
+// parseComposition reads a stored composition, nil for none; one that
+// cannot be used is counted as ignored.
+func parseComposition(composition []byte) *tiles.Composition {
+	if len(composition) == 0 || string(composition) == "null" {
+		return nil
+	}
 	if len(composition) > tiles.MaxStoredComposition {
-		return ignore()
+		workstats.Inc("tileview.compositions_ignored")
+		return nil
 	}
 	parsed, err := tiles.ParseComposition(composition)
 	if err != nil {
-		return ignore()
+		workstats.Inc("tileview.compositions_ignored")
+		return nil
 	}
-	if parsed.Empty() {
-		return doc
+	return parsed
+}
+
+// applyLayout composes the document with the person's layout replayed on the
+// composition (or the converted layout), or returns nil when none of their
+// edits applies to this version or composing fails, so the version is served
+// as it would be without them.
+func applyLayout(doc *tiles.Document, parsed *tiles.Composition, layout Layout) (out *tiles.Document) {
+	defer func() {
+		if recover() != nil {
+			workstats.Inc("tileview.overlays_ignored")
+			out = nil
+		}
+	}()
+	c, report := tiles.ApplyOverlay(doc, parsed, layout.Overlay, layout.Added)
+	if n := report.DroppedTotal(); n > 0 {
+		workstats.Add("tileview.overlay_ops_dropped", int64(n))
 	}
-	composed, err := applyComposition(doc, parsed)
+	if report.Applied == 0 {
+		return nil
+	}
+	composed, err := applyComposition(doc, &c)
 	if err != nil {
-		return ignore()
+		workstats.Inc("tileview.overlays_ignored")
+		return nil
 	}
 	return composed
 }

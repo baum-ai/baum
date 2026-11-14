@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
 )
 
 // KindChat is the Item.Kind of one question an earlier version asked the
@@ -37,6 +38,26 @@ func (q *Queue) SetChat(service ChatService) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.chat = service
+}
+
+// SetLayouts installs what reads a pull request's own tile layout (the
+// person's edits, internal/tilelayout), which the draft route's tile view
+// applies, so a review being generated keeps the layout the person chose.
+func (q *Queue) SetLayouts(layouts func(repository string, number int) tileview.Layout) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.layouts = layouts
+}
+
+// layoutOf is a job's pull request's own tile layout; none for a group's.
+func (q *Queue) layoutOf(job Job) tileview.Layout {
+	q.mu.Lock()
+	layouts := q.layouts
+	q.mu.Unlock()
+	if layouts == nil || job.PR < 1 || job.Group != "" {
+		return tileview.Layout{}
+	}
+	return layouts(job.Repository, job.PR)
 }
 
 func (q *Queue) chatService() ChatService {

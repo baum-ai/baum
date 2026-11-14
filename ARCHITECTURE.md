@@ -1223,6 +1223,43 @@ tile-level checks run (`Validator.CheckTiles`), so a tile that fails one is
 `unavailable` in a response that is still served; the full schema is checked
 in tests. A review the converter cannot split gives `tiles: null` and a short
 `problem` that never quotes the document, and the page shows the full review.
+**A person's layout, served.** Each person's layout edits (a layout overlay;
+see "A person's layout" under compositions) are kept by `internal/tilelayout`
+in the private application database, one row per pull request in
+`tile_overlays(pr, revision, updated, value)`, created with `CREATE TABLE IF
+NOT EXISTS` on a write (an older app ignores it, and a read of a database
+without it finds no edits). `pr` is `owner/repository#number`, lowercased,
+optionally after an Enterprise host. The 200 most recently edited pull
+requests are kept. Nothing goes into the review store, whose version rows are
+shared and written once. `tilelayout.Service` writes in one immediate
+transaction each: `Edit` checks each op against the tiles the person is
+shown (`tiles.CheckOp` on the latest version with their layout applied),
+appends those that pass as one batch with the host's summary lines and
+refuses the rest with the host's reasons, writing nothing when all are
+refused; `Undo` removes the newest batch, or answers that the layout changed
+when the page names a batch that is no longer the newest; `Reset` appends a
+reset batch, which an undo takes back, and refuses when the layout is
+already the generated one. Each committed write bumps the row's revision and
+publishes the `layout` event; a write the database refuses says "The layout
+could not be saved; try again" and publishes nothing.
+`tileview.BuildWith(document, composition, layout, options)` is `Build` with
+the layout replayed (`tiles.ApplyOverlay`) on the stored composition, or on
+the converted layout when there is none or it cannot be used. A layout with
+no edits gives exactly `Build`'s answer, so a review nobody edited is served
+as before; ops a version drops are counted in the daemon's work statistics
+(`tileview.overlay_ops_dropped`), never shown. Review groups have no layout
+of their own yet.
+
+- `GET /api/tiles/layout?clone=&pr=` answers `{revision, edited, can_undo,
+  last: {id, by, reset?, summary} | null, batches}`.
+- `POST /api/tiles/layout` takes `{clone, pr, action: "edit" | "undo" |
+  "reset", ops?, batch?}` and answers the same summary with `applied`,
+  `refused` (`{index, reason}`) or `undone`, or 400 with the host's reason
+  when nothing was written, 409 when `batch` is no longer the newest, and 404
+  for a pull request with no saved review. Both are inside the server's Host,
+  cookie or bearer, Origin and JSON checks, and report the capability
+  unavailable when the daemon has no layout service.
+
 One validator, kept by `internal/tileview`, serves all three routes; the
 daemon compiles its schemas in the background at start-up (`tileview.Warm`,
 about 0.4 s, logging a warning if it fails), so the first review opened does
@@ -1238,7 +1275,10 @@ size.
   304), kept by store revision as the viewers are. The version's composition
   is read with its document. A version's revision changes with every write to
   its row, the composition included, so a kept answer is never served for
-  another composition.
+  another composition. The person's own layout of the pull request applies to
+  every version, earlier ones included (`tileview.BuildWith`, below), and an
+  answer is kept under the layout's key too (`tileview.LayoutKey`, the digest
+  of its active batches), so an edit is never answered from an older layout.
 - `GET /api/jobs/{id}/draft?tiles=1` answers the running review's draft in
   that shape, plus the draft's `draft` count, converted with `Options.Draft`
   so a context not yet written is a pending context tile. Only the exact value
@@ -1249,7 +1289,9 @@ size.
   then the composition, and any other draft has none and is served with the
   converted layout), so the app's
   polling converts each draft once, and is dropped when the job has no draft
-  any more.
+  any more. The pull request's own layout applies to a draft too
+  (`jobs.Queue.SetLayouts`), kept under its key, so a regeneration in
+  progress does not move the page back to the generated layout.
 - `GET /api/groups/{id}/tiles[?version=N]` answers a review group's version,
   with the selectors and errors of `GET /api/groups/{id}/document`; its
   answers are kept by group, version and the document's digest. A group has
@@ -4400,6 +4442,10 @@ stored review's score, with `risk_status` `lower_bound` when incomplete
 coverage may hide a higher one; `reason` is the job's failure category and
 nothing free-form. A notice never holds review text, paths, transcripts or
 error messages.
+A `layout` event `{"pr","revision"}` follows each write to a person's own
+tile layout of a pull request (`pr` is its key, `owner/repository#number`
+lowercased; see "Serving" under the tile document): the review page showing
+that pull request reads its tiles again. It holds no title or summary.
 A client that wants no history sends a `Last-Event-ID` beyond the latest
 event: it gets a `reset` and then only new events.
 
