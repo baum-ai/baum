@@ -3,10 +3,15 @@ package compose
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/baum-ai/baum/internal/goldentest"
 	"github.com/baum-ai/baum/review"
@@ -178,29 +183,68 @@ func TestInventoryKeepsUntrustedTextAsData(t *testing.T) {
 }
 
 func TestReplySchemaAndParse(t *testing.T) {
-	var schemaValue map[string]any
-	if err := json.Unmarshal(ReplySchema(), &schemaValue); err != nil {
+	var schemaValue jsonschema.Schema
+	if err := json.Unmarshal([]byte(regexp.MustCompile(`,?\s*"maxLength": \d+`).ReplaceAllString(string(ReplySchema()), "")), &schemaValue); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := schemaValue.Resolve(nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	valid := `{"entries":[{"tile":"overview","size":"half","group":null,"why":null},{"tile":"sec_api","size":"third","group":"changes","why":"named"}],
 		"changes_shown":null,"promote":[],"moves":[],"custom_suggestion":null}`
-	if _, problems := ParseReply([]byte(valid)); problems != nil {
-		t.Fatalf("valid reply: %v", problems)
+	long := strings.Replace(valid, `"named"`, `"`+strings.Repeat("x", 400)+`"`, 1)
+	for name, raw := range map[string]string{
+		"valid":      valid,
+		"long why":   long,
+		"shown":      strings.Replace(valid, `"changes_shown":null`, `"changes_shown":8`, 1),
+		"promote":    strings.Replace(valid, `"promote":[]`, `"promote":[{"block":"blk_1","id":"table_x","title":"T"}]`, 1),
+		"suggestion": strings.Replace(valid, `"custom_suggestion":null`, `"custom_suggestion":{"title":"a","shows":"b","why":"c"}`, 1),
+	} {
+		if _, problems := ParseReply([]byte(raw)); problems != nil {
+			t.Errorf("%s: %v", name, problems)
+		}
+		var value any
+		_ = json.Unmarshal([]byte(raw), &value)
+		if err := resolved.Validate(value); err != nil {
+			t.Errorf("%s: the schema refuses what ParseReply accepts: %v", name, err)
+		}
 	}
+	const secret = "SECRET_VALUE_9"
 	for name, raw := range map[string]string{
 		"not json":       `{"entries":`,
 		"array":          `[]`,
-		"missing":        `{"entries":[]}`,
-		"bad size":       strings.Replace(valid, `"third"`, `"huge"`, 1),
-		"bad group":      strings.Replace(valid, `"changes"`, `"other"`, 1),
-		"extra property": strings.Replace(valid, `"moves":[]`, `"moves":[],"generator":{}`, 1),
+		"missing":        `{"entries":[{"tile":"overview","size":"half","group":null,"why":null}]}`,
+		"empty entries":  strings.Replace(valid, valid[strings.Index(valid, "["):strings.Index(valid, "]")+1], "[]", 1),
+		"bad size":       strings.Replace(valid, `"third"`, `"`+secret+`"`, 1),
+		"bad group":      strings.Replace(valid, `"changes"`, `"`+secret+`"`, 1),
+		"bad tile":       strings.Replace(valid, `"sec_api"`, `"`+secret+`"`, 1),
+		"extra property": strings.Replace(valid, `"moves":[]`, `"moves":[],"`+secret+`":{}`, 1),
 		"shown":          strings.Replace(valid, `"changes_shown":null`, `"changes_shown":0`, 1),
-		"bad handle":     strings.Replace(valid, `"promote":[]`, `"promote":[{"block":"sec_api","id":"table_x","title":"T"}]`, 1),
+		"shown fraction": strings.Replace(valid, `"changes_shown":null`, `"changes_shown":2.5`, 1),
+		"bad handle":     strings.Replace(valid, `"promote":[]`, `"promote":[{"block":"`+secret+`","id":"table_x","title":"T"}]`, 1),
+		"empty title":    strings.Replace(valid, `"promote":[]`, `"promote":[{"block":"blk_1","id":"table_x","title":""}]`, 1),
+		"many problems":  `{"entries":[1,2,3,4,5,6,7],"changes_shown":"x","promote":"x","moves":"x","custom_suggestion":1}`,
 	} {
-		if _, problems := ParseReply([]byte(raw)); len(problems) == 0 || len(problems) > maxProblems {
+		problems := problemsOf(raw)
+		if len(problems) == 0 || len(problems) > maxProblems {
 			t.Errorf("%s: problems %v", name, problems)
 		}
+		for _, problem := range problems {
+			if strings.Contains(problem, secret) || !strings.HasPrefix(problem, "/") {
+				t.Errorf("%s: problem %q quotes the reply or names no place", name, problem)
+			}
+		}
+		var value any
+		if json.Unmarshal([]byte(raw), &value) == nil && resolved.Validate(value) == nil {
+			t.Errorf("%s: the schema accepts what ParseReply refuses", name)
+		}
 	}
+}
+
+func problemsOf(raw string) []string {
+	_, problems := ParseReply([]byte(raw))
+	return problems
 }
 
 func TestCompositionFromReply(t *testing.T) {
@@ -235,5 +279,90 @@ func TestCompositionFromReply(t *testing.T) {
 	n, report := tiles.NormalizeComposition(doc, &c)
 	if report.Counts()[tiles.FixPromotionMissing] != 1 || len(n.Promotions) != 1 {
 		t.Errorf("normalised %+v, fixes %v", n.Promotions, report.Counts())
+	}
+}
+
+// An inventory over the hard bound after every cut keeps the first changes
+// in review order and counts the rest; it never exceeds the bound.
+func TestInventoryHardCap(t *testing.T) {
+	_, doc := example(t)
+	inv, err := BuildInventory(doc, nil, nil, Preferences{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var change TileFacts
+	for _, tile := range inv.Tiles {
+		if tile.Type == tiles.TypeChange {
+			change = tile
+			break
+		}
+	}
+	level := 2
+	change.Level, change.Summary = &level, strings.Repeat("s", maxSummary)
+	for i := range 2000 {
+		c := change
+		c.ID = fmt.Sprintf("sec_many_%04d", i)
+		c.Risks = slices.Repeat([]RiskFact{{ID: "rsk_x", Tier: "low"}}, 20)
+		inv.Tiles = append(inv.Tiles, c)
+		inv.Template.Entries = append(inv.Template.Entries, EntryFact{Tile: c.ID, Size: tiles.SizeThird, Group: tiles.GroupChanges})
+	}
+	inv.Previous = &PreviousFacts{Entries: slices.Repeat([]EntryFact{{Tile: "overview", Size: tiles.SizeHalf}}, 2000)}
+	if err := inv.fit(MaxInventoryBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := inv.capHard(MaxInventoryHardBytes); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := inv.Encode()
+	if len(encoded) > MaxInventoryHardBytes || inv.Omitted == nil || inv.Omitted.Count == 0 || inv.Previous != nil {
+		t.Fatalf("%d bytes, omitted %+v", len(encoded), inv.Omitted)
+	}
+	kept := 0
+	for _, tile := range inv.Tiles {
+		if tile.Type == tiles.TypeChange {
+			kept++
+			if len(tile.Risks) > hardRisks {
+				t.Errorf("%s keeps %d risks", tile.ID, len(tile.Risks))
+			}
+		}
+	}
+	if kept+inv.Omitted.Count != 2000+5 || inv.Tiles[2].ID != "sec_api" {
+		t.Errorf("kept %d, omitted %d, first change %s", kept, inv.Omitted.Count, inv.Tiles[2].ID)
+	}
+	for _, entry := range inv.Template.Entries {
+		if !slices.ContainsFunc(inv.Tiles, func(t TileFacts) bool { return t.ID == entry.Tile }) {
+			t.Fatalf("the template lists %s, which the inventory left out", entry.Tile)
+		}
+	}
+}
+
+func TestClipRemovesInvisibleCharacters(t *testing.T) {
+	if got := clip("a\u0085b\u200bc\u2060d\ufeffe\u009bf\u202eg", 100); got != "a bcde f\u202eg" {
+		t.Errorf("%q", got)
+	}
+}
+
+// A previous promotion names the handle of the block it promoted when this
+// version still has it.
+func TestPreviousPromotionHasItsHandle(t *testing.T) {
+	_, doc := example(t)
+	first, _ := BuildInventory(doc, nil, nil, Preferences{})
+	var handle string
+	for _, h := range slices.Sorted(maps.Keys(first.Blocks)) {
+		if first.Blocks[h].Kind == tiles.TypeTable {
+			handle = h
+			break
+		}
+	}
+	block := first.Blocks[handle]
+	previous := &tiles.Composition{Schema: tiles.CompositionName,
+		Promotions: []tiles.Promotion{{ID: "table_routes", Change: block.Change, Block: block.Block, Title: "Routes"}, {ID: "code_gone", Change: block.Change, Block: 99, Title: "Gone"}},
+		Layout:     tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: "table_routes", Size: tiles.SizeHalf}}}}
+	inv, err := BuildInventory(doc, nil, previous, Preferences{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := inv.Previous.Promoted; len(p) != 2 || p[0].Block != handle || p[1].Block != "" {
+		t.Errorf("promoted %+v", p)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,6 +28,19 @@ import (
 // scores and headlines) is kept whatever its size, since a composer cannot
 // place a tile it is not told of.
 const MaxInventoryBytes = 40 << 10
+
+// MaxInventoryHardBytes is the most an encoded inventory may hold. Past it,
+// after every cut, the inventory keeps only the first changes in review order
+// (the others are counted in Omitted), at most three risks per change, the
+// first library tiles and no previous layout; it never exceeds this bound.
+const MaxInventoryHardBytes = 64 << 10
+
+// The bounds the hard cap keeps.
+const (
+	hardRisks   = 3
+	hardRanked  = 12
+	hardLibrary = tiles.MaxLibraryTiles
+)
 
 // The per-field bounds, in characters.
 const (
@@ -85,9 +99,19 @@ type Inventory struct {
 	Preferences *Preferences `json:"preferences"`
 	// Cut names the details left out to stay under MaxInventoryBytes.
 	Cut []string `json:"cut,omitempty"`
+	// Omitted counts the changes left out, by assessed level, when even the
+	// cut inventory is over MaxInventoryHardBytes; the host appends them to
+	// the end of the changes group.
+	Omitted *OmittedFacts `json:"omitted_changes,omitempty"`
 
 	// Blocks maps each block handle a TileFacts lists to the block it names.
 	Blocks map[string]tiles.PromotableBlock `json:"-"`
+}
+
+// OmittedFacts counts the changes an inventory leaves out.
+type OmittedFacts struct {
+	Count   int            `json:"count"`
+	ByLevel map[string]int `json:"by_level"`
 }
 
 // PullRequest holds the pull request's facts and the review's verdict.
@@ -110,12 +134,49 @@ type Recommendation struct {
 }
 
 // TemplateFacts is the layout of the template for the change kind
-// (tiles.Template), and the tiles it shows on the landing page.
+// (tiles.Template), the tiles it shows on the landing page, and the landing
+// page's rows.
 type TemplateFacts struct {
 	Name         string      `json:"name"`
 	Entries      []EntryFact `json:"entries"`
 	ChangesShown *int        `json:"changes_shown"`
 	Landing      []string    `json:"landing"`
+	Rows         []RowFact   `json:"rows"`
+}
+
+// RowFact is one row of a landing page: its tiles and the grid units they
+// leave empty.
+type RowFact struct {
+	Tiles []string `json:"tiles"`
+	Empty int      `json:"empty_units,omitempty"`
+}
+
+// LandingRows returns the rows of a layout's landing page, as tiles.Landing
+// packs them: the entries in order, folded group members left out, a tile
+// that does not fit what is left of a row starting the next one. Nothing
+// moves up to fill a row, so the units a row leaves stay empty.
+func LandingRows(layout tiles.Layout) []RowFact {
+	hidden := tiles.Hidden(layout)
+	var rows []RowFact
+	used := tiles.GridUnits
+	for i, entry := range layout.Entries {
+		if i >= layout.Landing {
+			break
+		}
+		if hidden[i] {
+			continue
+		}
+		units := entry.Size.Units()
+		if used+units > tiles.GridUnits {
+			rows = append(rows, RowFact{})
+			used = 0
+		}
+		used += units
+		row := &rows[len(rows)-1]
+		row.Tiles = append(row.Tiles, entry.Tile)
+		row.Empty = tiles.GridUnits - used
+	}
+	return rows
 }
 
 // EntryFact is one layout entry.
@@ -215,10 +276,12 @@ type PreviousFacts struct {
 	Why          map[string]string `json:"why,omitempty"`
 }
 
-// PromotedFact is a previous version's promoted tile.
+// PromotedFact is a previous version's promoted tile, with the handle of the
+// block it promoted when this version still has that block.
 type PromotedFact struct {
 	ID     string `json:"id"`
 	Change string `json:"change"`
+	Block  string `json:"block,omitempty"`
 	Title  string `json:"title"`
 }
 
@@ -251,6 +314,7 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 			inv.Template.Landing = append(inv.Template.Landing, entry.Tile)
 		}
 	}
+	inv.Template.Rows = LandingRows(composed.Layout)
 
 	byID := map[string]*tiles.Tile{}
 	for i := range doc.Tiles {
@@ -272,7 +336,7 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 		if tile == nil {
 			continue
 		}
-		facts := TileFacts{ID: tile.ID, Type: tile.Type, Sizes: tiles.AllowedSizes(*tile), Headline: clip(tile.Headline, maxHeadline)}
+		facts := TileFacts{ID: tile.ID, Type: tile.Type, Sizes: tiles.SizesIn(doc, *tile), Headline: clip(tile.Headline, maxHeadline)}
 		if tile.State != tiles.StateReady {
 			facts.State = tile.State
 		}
@@ -312,7 +376,7 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 			UseWhen: clip(fill.UseWhen, maxSummary), Glance: clip(fill.Glance, maxSummary), Sizes: slices.Clone(fill.Sizes), Hunks: len(fill.Hunks),
 			Why: clip(fill.Why, maxAttention), State: fill.State})
 	}
-	inv.Previous = previousFacts(previous, byID)
+	inv.Previous = previousFacts(previous, byID, inv.Blocks)
 	if text := clip(strings.TrimSpace(prefs.Text), maxPreference); text != "" || len(prefs.Pins) > 0 {
 		inv.Preferences = &Preferences{Text: text}
 		for _, pin := range prefs.Pins {
@@ -322,6 +386,9 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 		}
 	}
 	if err := inv.fit(MaxInventoryBytes); err != nil {
+		return nil, err
+	}
+	if err := inv.capHard(MaxInventoryHardBytes); err != nil {
 		return nil, err
 	}
 	return inv, nil
@@ -420,14 +487,79 @@ func (inv *Inventory) fit(limit int) error {
 	return nil
 }
 
+// capHard keeps the encoded inventory at most limit bytes by dropping what
+// the cuts never drop: risks beyond the first few, library tiles beyond the
+// limit, the previous layout, and finally the changes at the end of review
+// order, counted in Omitted. It also drops the tiles' paths and every text
+// but their titles and headlines.
+func (inv *Inventory) capHard(limit int) error {
+	size := func() (int, error) {
+		encoded, err := inv.Encode()
+		return len(encoded), err
+	}
+	n, err := size()
+	if err != nil || n <= limit {
+		return err
+	}
+	for i := range inv.Tiles {
+		t := &inv.Tiles[i]
+		t.Risks = t.Risks[:min(len(t.Risks), hardRisks)]
+		t.Ranked = t.Ranked[:min(len(t.Ranked), hardRanked)]
+		t.Factors, t.Missing, t.Blocks, t.Evidence = nil, nil, nil, nil
+	}
+	inv.Library = inv.Library[:min(len(inv.Library), hardLibrary)]
+	inv.Previous = nil
+	for n, err = size(); err == nil && n > limit; n, err = size() {
+		var changes []int
+		for i, t := range inv.Tiles {
+			if t.Type == tiles.TypeChange {
+				changes = append(changes, i)
+			}
+		}
+		if len(changes) == 0 {
+			return nil
+		}
+		// Drop the last half of the changes, at least one.
+		drop := map[string]bool{}
+		for _, i := range changes[len(changes)-max(len(changes)/2, 1):] {
+			t := inv.Tiles[i]
+			drop[t.ID] = true
+			if inv.Omitted == nil {
+				inv.Omitted = &OmittedFacts{ByLevel: map[string]int{}}
+			}
+			inv.Omitted.Count++
+			level := "unassessed"
+			if t.Level != nil {
+				level = strconv.Itoa(*t.Level)
+			}
+			inv.Omitted.ByLevel[level]++
+		}
+		inv.Tiles = slices.DeleteFunc(inv.Tiles, func(t TileFacts) bool { return drop[t.ID] })
+		inv.Template.Entries = slices.DeleteFunc(inv.Template.Entries, func(e EntryFact) bool { return drop[e.Tile] })
+		inv.Template.Landing = slices.DeleteFunc(inv.Template.Landing, func(id string) bool { return drop[id] })
+		for i := range inv.Template.Rows {
+			inv.Template.Rows[i].Tiles = slices.DeleteFunc(inv.Template.Rows[i].Tiles, func(id string) bool { return drop[id] })
+		}
+		for handle, block := range inv.Blocks {
+			if drop[block.Change] {
+				delete(inv.Blocks, handle)
+			}
+		}
+	}
+	return err
+}
+
 func severe(tier string) bool { return tier == "critical" || tier == "high" }
 
-// clip removes control characters, folds whitespace and bounds text to limit
-// characters.
+// clip removes C0 and C1 control characters and zero-width characters,
+// folds whitespace and bounds text to limit characters.
 func clip(text string, limit int) string {
 	text = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		switch {
+		case r < 0x20 || r >= 0x7f && r <= 0x9f:
 			return ' '
+		case r == 0x200b || r == 0x200c || r == 0x200d || r == 0x2060 || r == 0xfeff:
+			return -1
 		}
 		return r
 	}, text)), " ")
@@ -705,7 +837,7 @@ func filesOf(hunks []string, paths map[string]string) []string {
 	return slices.Compact(files)
 }
 
-func previousFacts(previous *tiles.Composition, byID map[string]*tiles.Tile) *PreviousFacts {
+func previousFacts(previous *tiles.Composition, byID map[string]*tiles.Tile, blocks map[string]tiles.PromotableBlock) *PreviousFacts {
 	if previous == nil || len(previous.Layout.Entries) == 0 {
 		return nil
 	}
@@ -713,7 +845,14 @@ func previousFacts(previous *tiles.Composition, byID map[string]*tiles.Tile) *Pr
 	promoted := map[string]bool{}
 	for _, p := range previous.Promotions {
 		promoted[p.ID] = true
-		facts.Promoted = append(facts.Promoted, PromotedFact{ID: p.ID, Change: p.Change, Title: clip(p.Title, tiles.MaxComposedTitle)})
+		fact := PromotedFact{ID: p.ID, Change: p.Change, Title: clip(p.Title, tiles.MaxComposedTitle)}
+		kind, _, _ := strings.Cut(p.ID, "_")
+		for _, handle := range slices.Sorted(maps.Keys(blocks)) {
+			if b := blocks[handle]; b.Change == p.Change && b.Block == p.Block && b.Kind == kind {
+				fact.Block = handle
+			}
+		}
+		facts.Promoted = append(facts.Promoted, fact)
 	}
 	for _, entry := range previous.Layout.Entries {
 		if byID[entry.Tile] != nil || promoted[entry.Tile] {

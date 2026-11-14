@@ -3,11 +3,10 @@ package compose
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
-	"sync"
-
-	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/baum-ai/baum/tiles"
 )
@@ -54,6 +53,7 @@ var replySchema = fmt.Sprintf(`{
   "properties": {
     "entries": {
       "type": "array",
+      "minItems": 1,
       "maxItems": %[1]d,
       "items": {
         "type": "object",
@@ -116,50 +116,140 @@ var replySchema = fmt.Sprintf(`{
 // ReplySchema returns the reply's JSON Schema.
 func ReplySchema() []byte { return []byte(replySchema) }
 
-// hostSchema is the schema a reply is checked against: ReplySchema without
-// its string length bounds, which normalisation enforces by cutting the text
-// (a reason, a title), so an over-long reason costs no repair call.
-var hostSchema = regexp.MustCompile(`,?\s*"maxLength": \d+`).ReplaceAllString(replySchema, "")
-
-var resolvedReply = sync.OnceValues(func() (*jsonschema.Resolved, error) {
-	var s jsonschema.Schema
-	if err := json.Unmarshal([]byte(hostSchema), &s); err != nil {
-		return nil, err
-	}
-	return s.Resolve(nil)
-})
-
 // maxProblems bounds the problems ParseReply reports.
 const maxProblems = 5
 
-// ParseReply decodes a reply and checks it against ReplySchema, but for
-// the strings' lengths, which normalisation bounds. It returns
-// the problems, plain sentences fit for a repair prompt, when the reply is
-// not a JSON object of the schema.
+var (
+	tilePattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}$`)
+	handlePattern    = regexp.MustCompile(`^blk_[0-9]{1,4}$`)
+	promotionPattern = regexp.MustCompile(`^(table|code)_[a-z0-9_]{1,60}$`)
+)
+
+// replyChecker collects a reply's problems in the host's words: a JSON
+// pointer and the rule it breaks, never the value it holds.
+type replyChecker struct{ problems []string }
+
+func (c *replyChecker) fail(at, rule string) {
+	if at == "" {
+		at = "/"
+	}
+	if len(c.problems) < maxProblems {
+		c.problems = append(c.problems, at+": "+rule)
+	}
+}
+
+// object checks that v is an object with exactly the keys, and returns it.
+func (c *replyChecker) object(at string, v any, keys ...string) (map[string]any, bool) {
+	o, ok := v.(map[string]any)
+	if !ok {
+		c.fail(at, "must be an object")
+		return nil, false
+	}
+	for _, key := range keys {
+		if _, ok := o[key]; !ok {
+			c.fail(at, fmt.Sprintf("must have the property %q", key))
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(o)) {
+		if !slices.Contains(keys, key) {
+			c.fail(at, "has a property the schema does not allow")
+			break
+		}
+	}
+	return o, true
+}
+
+func (c *replyChecker) array(at string, v any, lo, hi int) []any {
+	a, ok := v.([]any)
+	switch {
+	case !ok:
+		c.fail(at, "must be an array")
+	case len(a) < lo:
+		c.fail(at, fmt.Sprintf("must have at least %d items", lo))
+	case len(a) > hi:
+		c.fail(at, fmt.Sprintf("must have at most %d items", hi))
+	}
+	return a
+}
+
+// text checks a string, optionally null, against a pattern or a set of
+// values. Its length is not checked: normalisation bounds it.
+func (c *replyChecker) text(at string, v any, nullable bool, pattern *regexp.Regexp, values ...string) {
+	if v == nil && nullable {
+		return
+	}
+	s, ok := v.(string)
+	switch {
+	case !ok && nullable:
+		c.fail(at, "must be a string or null")
+	case !ok:
+		c.fail(at, "must be a string")
+	case pattern != nil && !pattern.MatchString(s):
+		c.fail(at, "does not match "+pattern.String())
+	case len(values) > 0 && !slices.Contains(values, s):
+		c.fail(at, "must be one of "+strings.Join(values, ", "))
+	}
+}
+
+// ParseReply decodes a reply and checks it against ReplySchema, but for the
+// strings' lengths, which normalisation bounds. It returns up to five
+// problems, each a JSON pointer and the rule broken in the host's words (it
+// never quotes the reply), when the reply is not a JSON object of the schema.
 func ParseReply(raw []byte) (Reply, []string) {
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return Reply{}, []string{"the reply is not valid JSON"}
+		return Reply{}, []string{"/: the reply is not valid JSON"}
 	}
-	if _, ok := value.(map[string]any); !ok {
-		return Reply{}, []string{"the reply is not a JSON object"}
+	c := &replyChecker{}
+	root, ok := c.object("", value, "entries", "changes_shown", "promote", "moves", "custom_suggestion")
+	if !ok {
+		return Reply{}, c.problems
 	}
-	resolved, err := resolvedReply()
-	if err != nil {
-		return Reply{}, []string{"the reply schema does not compile: " + err.Error()}
+	for i, item := range c.array("/entries", root["entries"], 1, MaxReplyEntries) {
+		at := fmt.Sprintf("/entries/%d", i)
+		if e, ok := c.object(at, item, "tile", "size", "group", "why"); ok {
+			c.text(at+"/tile", e["tile"], false, tilePattern)
+			c.text(at+"/size", e["size"], false, nil, string(tiles.SizeFull), string(tiles.SizeHalf), string(tiles.SizeThird))
+			c.text(at+"/group", e["group"], true, nil, tiles.GroupChanges)
+			c.text(at+"/why", e["why"], true, nil)
+		}
 	}
-	if err := resolved.Validate(value); err != nil {
-		var problems []string
-		for _, line := range strings.Split(err.Error(), "\n") {
-			if line = strings.TrimSpace(line); line != "" && len(problems) < maxProblems {
-				problems = append(problems, clip(line, 300))
+	if shown, present := root["changes_shown"]; present && shown != nil {
+		n, ok := shown.(float64)
+		if !ok || n != float64(int(n)) || n < MinChangesShown || n > MaxChangesShown {
+			c.fail("/changes_shown", fmt.Sprintf("must be null or an integer from %d to %d", MinChangesShown, MaxChangesShown))
+		}
+	}
+	for i, item := range c.array("/promote", root["promote"], 0, tiles.MaxPromotions) {
+		at := fmt.Sprintf("/promote/%d", i)
+		if p, ok := c.object(at, item, "block", "id", "title"); ok {
+			c.text(at+"/block", p["block"], false, handlePattern)
+			c.text(at+"/id", p["id"], false, promotionPattern)
+			if title, _ := p["title"].(string); title == "" {
+				c.fail(at+"/title", "must be a non-empty string")
 			}
 		}
-		return Reply{}, problems
+	}
+	for i, item := range c.array("/moves", root["moves"], 0, tiles.MaxMoves) {
+		at := fmt.Sprintf("/moves/%d", i)
+		if m, ok := c.object(at, item, "tile", "why"); ok {
+			c.text(at+"/tile", m["tile"], false, nil)
+			c.text(at+"/why", m["why"], false, nil)
+		}
+	}
+	if s := root["custom_suggestion"]; s != nil {
+		if o, ok := c.object("/custom_suggestion", s, "title", "shows", "why"); ok {
+			for _, key := range []string{"title", "shows", "why"} {
+				c.text("/custom_suggestion/"+key, o[key], false, nil)
+			}
+		}
+	}
+	if len(c.problems) > 0 {
+		return Reply{}, c.problems
 	}
 	var reply Reply
 	if err := json.Unmarshal(raw, &reply); err != nil {
-		return Reply{}, []string{"the reply does not decode: " + clip(err.Error(), 300)}
+		return Reply{}, []string{"/: the reply does not decode as a reply"}
 	}
 	return reply, nil
 }

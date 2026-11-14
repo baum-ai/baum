@@ -78,6 +78,28 @@
       "sec_ackfix",
       "sec_docs",
       "evidence"
+    ],
+    "rows": [
+      {
+        "tiles": [
+          "overview",
+          "risks"
+        ]
+      },
+      {
+        "tiles": [
+          "sec_api",
+          "sec_retry",
+          "sec_deadletter"
+        ]
+      },
+      {
+        "tiles": [
+          "sec_ackfix",
+          "sec_docs",
+          "evidence"
+        ]
+      }
     ]
   },
   "tiles": [
