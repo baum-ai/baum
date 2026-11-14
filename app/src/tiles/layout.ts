@@ -5,6 +5,7 @@ import {
   type TileDocument,
   type TileGroup,
   type TileLayoutEntry,
+  type TileSize,
 } from "./tile-document";
 
 /** One cell or row of the landing grid, in reading order. */
@@ -74,6 +75,53 @@ export function landingOf(document: TileDocument, expansions: Expansions): Landi
     at = end;
   }
   return { items, rest };
+}
+
+/** How a card grows to the end of its row: `wide`, its span in units on the
+ *  six-unit grid; `two`, that it spans both columns of the two-column one. */
+export type RowFill = { wide?: number; two?: boolean };
+
+export const UNITS: Record<TileSize, number> = { full: 6, half: 3, third: 2 };
+
+/** The cards that grow so a row the page breaks early has no hole. A group's
+ *  heading, a group's show more or fewer cell and the landing area's own
+ *  "Show more" row each span the whole grid, so a row ends at them full or
+ *  not. The Go layout fills the rows it knows (`tiles.RowFills`), which has
+ *  no headings, so a short row before one would leave a hole: its last card
+ *  grows to the row's end instead, on the wide grid and on the two-column
+ *  one. A row that ends because the next card does not fit is the layout's
+ *  to fill, and a last row with nothing after it stays as it is. */
+export function breakFills(landing: Landing, more: boolean): Map<string, RowFill> {
+  const fills = new Map<string, RowFill>();
+  let wide = 0;
+  let two = 0;
+  let lastWide: { id: string; units: number } | null = null;
+  let lastTwo: string | null = null;
+  const close = () => {
+    if (lastWide && wide < 6)
+      fills.set(lastWide.id, { ...fills.get(lastWide.id), wide: lastWide.units + 6 - wide });
+    if (lastTwo && two === 1) fills.set(lastTwo, { ...fills.get(lastTwo), two: true });
+    wide = 0;
+    two = 0;
+    lastWide = null;
+    lastTwo = null;
+  };
+  for (const item of landing.items) {
+    if (item.kind !== "tile") {
+      close();
+      continue;
+    }
+    const units = UNITS[item.entry.size] ?? 6;
+    if (wide + units > 6) wide = 0;
+    wide += units;
+    lastWide = { id: item.tile.id, units };
+    const columns = item.entry.size === "full" ? 2 : 1;
+    if (two + columns > 2) two = 0;
+    two += columns;
+    lastTwo = item.tile.id;
+  }
+  if (more) close();
+  return fills;
 }
 
 /** Whether a tile is on the landing page as it is shown now. */

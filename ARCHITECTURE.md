@@ -2425,7 +2425,13 @@ pinned tile is never grown. In a composer's layout each growth is a fix of
 its own kind, `row_fill`, which is the host's layout rule rather than a repair
 of the reply (replay reports it as `compose_row_fill`, outside
 `compose_fixes`); in a template it is part of the template. A converted
-document, which no composition lays out, is unchanged.
+document, which no composition lays out, is unchanged. The rows `RowFills` counts know nothing of the page's
+full-width breaks (a group's heading, a group's show more or fewer cell and the
+landing area's "Show more" row), where a row ends whether full or not; the
+tiles page grows the last card before such a break to the row's end itself,
+on the wide grid and on the two-column one (`breakFills` in
+`app/src/tiles/layout.ts`), so a short row there leaves no hole. The card's
+declared size (`data-tile-size`) is unchanged.
 `tilestest.CheckGenerated` asserts it (invariant 13).
 
 ## `decisions`

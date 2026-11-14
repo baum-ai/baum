@@ -8,6 +8,7 @@ import baseReview from "../../../tiles/testdata/base.review.json" with { type: "
 import { TileBoundary } from "./card";
 import { TileDetail } from "./detail";
 import { TileLanding } from "./landing";
+import { breakFills } from "./layout";
 import { TileHostContext } from "./host";
 import { tileFace } from "./registry";
 import { golden } from "./goldens-test-helper";
@@ -205,6 +206,70 @@ describe("the landing page's markers", () => {
       expect(page.querySelector(`[data-risk="${risk.id}"]`)?.textContent).toContain(
         risk.text.slice(0, 20),
       );
+  });
+});
+
+describe("rows the page breaks early", () => {
+  it("grow their last card to the row's end before a group's heading", () => {
+    const doc = structuredClone(golden("example"));
+    const changes = doc.layout.entries.filter((entry) => entry.group === "changes");
+    expect(changes.length).toBeGreaterThan(2);
+    // A change led at half before the group: alone on its row.
+    const [lead, ...rest] = changes;
+    doc.layout.entries = [
+      ...doc.layout.entries.filter((entry) => entry.tile === "overview" || entry.tile === "risks"),
+      { tile: lead!.tile, size: "half" },
+      ...rest,
+    ];
+    doc.layout.landing = doc.layout.entries.length;
+    const page = render(
+      <TileLanding
+        ctx={contextFor(doc, example as unknown as ReviewDocument)}
+        generation={null}
+        memory={{ current: null }}
+      />,
+    );
+    const card = page.querySelector(`[data-tile="${lead!.tile}"]`)!;
+    expect(card.className).toContain("@min-[52rem]/tiles:col-span-6");
+    expect(card.className).toContain("@min-[36rem]/tiles:col-span-2");
+    expect(card.getAttribute("data-tile-size")).toBe("half");
+    // A row the next card ends is the layout's: the overview keeps its span.
+    expect(page.querySelector('[data-tile="overview"]')!.className).not.toContain("col-span-6");
+  });
+
+  it("are found from the landing page's breaks alone", () => {
+    const tile = (id: string, size: "full" | "half" | "third") => ({
+      kind: "tile" as const,
+      tile: { id } as Tile,
+      entry: { tile: id, size },
+    });
+    const group = { id: "changes", title: "Changes" };
+    const heading = { kind: "heading" as const, group, count: 3 };
+    const fills = breakFills(
+      {
+        items: [
+          tile("a", "half"),
+          tile("b", "half"),
+          tile("c", "third"),
+          heading,
+          tile("d", "half"),
+          tile("e", "third"),
+          { kind: "more", group, hidden: [] },
+          tile("f", "full"),
+          tile("g", "third"),
+        ],
+        rest: [],
+      },
+      false,
+    );
+    // c: alone before the heading, four units short, and alone on the
+    // narrow grid's row. e: one unit short of d's row before the group's
+    // cell, which the narrow grid fills. f fills its rows; g is the last.
+    expect(Object.fromEntries(fills)).toEqual({ c: { wide: 6, two: true }, e: { wide: 3 } });
+    expect(breakFills({ items: [tile("g", "third")], rest: [] }, true).get("g")).toEqual({
+      wide: 6,
+      two: true,
+    });
   });
 });
 

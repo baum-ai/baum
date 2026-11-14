@@ -5,6 +5,7 @@ import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import { MenuButton, type MenuItem, type useContextMenu } from "../context-menu";
 import { GridIcon } from "./icons";
 import { Quiet, Writing } from "./parts";
+import { UNITS, type RowFill } from "./layout";
 import { tileFace } from "./registry";
 import { mustShowRisks, type Tile, type TileSize } from "./tile-document";
 import type { TileContext } from "./types";
@@ -16,6 +17,23 @@ export const SPAN: Record<TileSize, string> = {
   third: "@min-[52rem]/tiles:col-span-2",
 };
 
+const WIDE: Record<number, string> = {
+  2: "@min-[52rem]/tiles:col-span-2",
+  3: "@min-[52rem]/tiles:col-span-3",
+  4: "@min-[52rem]/tiles:col-span-4",
+  5: "@min-[52rem]/tiles:col-span-5",
+  6: "@min-[52rem]/tiles:col-span-6",
+};
+
+/** A card's span: its size's, or grown to the end of its row (breakFills). */
+export function spanOf(size: TileSize, fill?: RowFill): string {
+  if (!fill) return SPAN[size];
+  return cn(
+    (fill.two || size === "full") && "@min-[36rem]/tiles:col-span-2",
+    WIDE[fill.wide ?? UNITS[size]],
+  );
+}
+
 /** A tile on the landing page: its kind, its title and its glance face, the
  *  whole card one link into its detail, with a menu of what else to do. */
 export function GlanceCard({
@@ -25,9 +43,12 @@ export function GlanceCard({
   menu,
   menuItems,
   comments,
+  fill,
 }: {
   tile: Tile;
   size: TileSize;
+  /** Set when the card grows to the end of a row the page breaks early. */
+  fill?: RowFill;
   ctx: TileContext;
   menu: ReturnType<typeof useContextMenu>;
   menuItems: () => MenuItem[];
@@ -55,7 +76,7 @@ export function GlanceCard({
         "data-[review-block-active]:border-focus data-[review-block-active]:shadow-card",
         urgent ? "border-status-critical/40" : "border-default",
         face.kind === "unavailable" && "border-dashed",
-        SPAN[size],
+        spanOf(size, fill),
       )}
     >
       <header className="flex min-h-7 items-center gap-2">
