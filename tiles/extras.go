@@ -8,21 +8,23 @@ import (
 // PlaceExtras gives the library and authored tiles of a composition that its
 // layout leaves out a place, before it is normalised (which would append
 // them last): a library tile whose data has a destructive or breaking item
-// (Leads) right after the overview and risks tiles that lead the layout;
-// any other library tile just before the changes group; an authored tile
-// just after the changes group. A library tile takes its LibrarySize, an
-// authored tile its AuthoredSize. With no changes group, both go after the leading tiles. A
-// composer that places a tile itself keeps its place.
+// (Leads) right after the overview and risks tiles that lead the layout; any
+// other library tile just after the later of the risks and evidence tiles,
+// so it never stands above them; an authored tile after the later of those
+// and the changes group, after the changes it supports. With neither risks
+// nor evidence placed, a library tile goes after the changes group; with no
+// changes group either, both go after the leading tiles. A library tile
+// takes its LibrarySize, an authored tile its AuthoredSize. A composer that
+// places a tile itself keeps its place (the guard rails may still move it).
 func PlaceExtras(c *Composition, doc *Document) {
 	placed := map[string]bool{}
 	for _, entry := range c.Layout.Entries {
 		placed[entry.Tile] = true
 	}
-	var lead, before, after []Entry
+	var lead, library, authored []Entry
 	for _, lib := range c.Library {
 		var def struct {
-			Name  string `json:"name"`
-			Sizes []Size `json:"sizes"`
+			Name string `json:"name"`
 		}
 		if json.Unmarshal(lib.Definition, &def) != nil || def.Name == "" {
 			continue
@@ -36,7 +38,7 @@ func PlaceExtras(c *Composition, doc *Document) {
 		if !lib.Pending && Leads(lib.Data) {
 			lead = append(lead, entry)
 		} else {
-			before = append(before, entry)
+			library = append(library, entry)
 		}
 	}
 	for _, a := range c.Authored {
@@ -44,9 +46,9 @@ func PlaceExtras(c *Composition, doc *Document) {
 			continue
 		}
 		placed[a.ID] = true
-		after = append(after, Entry{Tile: a.ID, Size: AuthoredSize(a)})
+		authored = append(authored, Entry{Tile: a.ID, Size: AuthoredSize(a)})
 	}
-	if len(lead)+len(before)+len(after) == 0 {
+	if len(lead)+len(library)+len(authored) == 0 {
 		return
 	}
 	entries := c.Layout.Entries
@@ -70,22 +72,28 @@ func PlaceExtras(c *Composition, doc *Document) {
 			leadEnd = i + 1
 		}
 	}
-	out := slices.Clone(entries[:leadEnd])
-	out = append(out, lead...)
-	rest := entries[leadEnd:]
-	if firstGroup < 0 {
-		out = append(out, before...)
-		out = append(out, after...)
-		out = append(out, rest...)
-		c.Layout.Entries = out
-		return
+	index := func(id string) int { return slices.IndexFunc(entries, func(e Entry) bool { return e.Tile == id }) }
+	// Each run goes after the entry at its index (-1: before the first).
+	core := max(index(TypeRisks), index(TypeEvidence))
+	libraryAt := core
+	if libraryAt < 0 {
+		libraryAt = lastGroup
 	}
-	first, last := firstGroup-leadEnd, lastGroup-leadEnd
-	out = append(out, rest[:first]...)
-	out = append(out, before...)
-	out = append(out, rest[first:last+1]...)
-	out = append(out, after...)
-	out = append(out, rest[last+1:]...)
+	authoredAt := max(core, lastGroup)
+	for _, at := range []*int{&libraryAt, &authoredAt} {
+		if *at < 0 {
+			*at = leadEnd - 1
+		}
+	}
+	after := map[int][]Entry{}
+	after[leadEnd-1] = append(after[leadEnd-1], lead...)
+	after[libraryAt] = append(after[libraryAt], library...)
+	after[authoredAt] = append(after[authoredAt], authored...)
+	out := slices.Clone(after[-1])
+	for i, entry := range entries {
+		out = append(out, entry)
+		out = append(out, after[i]...)
+	}
 	c.Layout.Entries = out
 }
 
@@ -149,9 +157,10 @@ func AuthoredSize(a AuthoredTile) Size {
 	return allowed[0]
 }
 
-// LibrarySize is a library tile's default size: half when its data lists
-// few items (at most three in its longest top-level list, what a half
-// glance shows in full), else full, where its definition allows the size.
+// LibrarySize is a library tile's default size, by what its glance lists
+// (LibraryItems): half for three items or fewer, which a half glance shows in
+// full, else full; when its definition does not allow that size, the first
+// size it allows. One or two items never take the full row.
 func LibrarySize(lib LibraryTile) Size {
 	var def struct {
 		Sizes []Size `json:"sizes"`
@@ -161,22 +170,115 @@ func LibrarySize(lib LibraryTile) Size {
 	if len(allowed) == 0 {
 		allowed = []Size{SizeHalf}
 	}
-	longest := 0
-	var top map[string]json.RawMessage
-	if json.Unmarshal(lib.Data, &top) == nil {
-		for name, raw := range top {
-			var items []json.RawMessage
-			if name != "related" && json.Unmarshal(raw, &items) == nil {
-				longest = max(longest, len(items))
-			}
-		}
-	}
 	want := SizeHalf
-	if longest > 3 {
+	if LibraryItems(lib) > 3 {
 		want = SizeFull
 	}
 	if slices.Contains(allowed, want) {
 		return want
 	}
+	if want == SizeHalf && slices.Contains(allowed, SizeThird) {
+		return SizeThird
+	}
 	return allowed[0]
+}
+
+// LibraryGlanceLists names, for a built-in library type, the top-level
+// arrays of its data whose items its glance lists as rows, in the order it
+// looks for them: the glance lists the first that has items. Nil for any
+// other type.
+func LibraryGlanceLists(name string) []string {
+	switch name {
+	case "schema_change":
+		// Tables, else the migrations.
+		return []string{"tables", "migrations"}
+	case "api_change":
+		return []string{"endpoints"}
+	}
+	return nil
+}
+
+// LibraryItems counts the rows a library tile's glance lists: the items of
+// the first of its type's glance lists (LibraryGlanceLists) that has any,
+// and for a type without them the longest top-level array of its data but
+// the host's related items.
+func LibraryItems(lib LibraryTile) int {
+	var def struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(lib.Definition, &def)
+	var top map[string]json.RawMessage
+	if json.Unmarshal(lib.Data, &top) != nil {
+		return 0
+	}
+	count := func(name string) int {
+		var items []json.RawMessage
+		if json.Unmarshal(top[name], &items) != nil {
+			return 0
+		}
+		return len(items)
+	}
+	if lists := LibraryGlanceLists(def.Name); lists != nil {
+		for _, name := range lists {
+			if n := count(name); n > 0 {
+				return n
+			}
+		}
+		return 0
+	}
+	longest := 0
+	for name := range top {
+		if name != "related" {
+			longest = max(longest, count(name))
+		}
+	}
+	return longest
+}
+
+// SupportedChange returns the current change a library or authored tile's
+// data supports: the one whose hunks the data cites most (a citation of type
+// hunk, at any depth), the first in review order on a tie, or "" when it
+// cites none of a current change's hunks.
+func SupportedChange(doc *Document, data json.RawMessage) string {
+	var value any
+	if json.Unmarshal(data, &value) != nil {
+		return ""
+	}
+	cited := map[string]bool{}
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case []any:
+			for _, item := range v {
+				walk(item)
+			}
+		case map[string]any:
+			if v["type"] == "hunk" {
+				if id, ok := v["id"].(string); ok {
+					cited[id] = true
+					return
+				}
+			}
+			for _, item := range v {
+				walk(item)
+			}
+		}
+	}
+	walk(value)
+	best, most := "", 0
+	for _, change := range doc.Changes {
+		if !currentChange(change) {
+			continue
+		}
+		n := 0
+		for _, hunk := range change.Hunks {
+			if cited[hunk] {
+				n++
+			}
+		}
+		if n > most {
+			best, most = change.ID, n
+		}
+	}
+	return best
 }

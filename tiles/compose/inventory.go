@@ -267,6 +267,12 @@ type LibraryFact struct {
 	// Leads says it lists a destructive or breaking item.
 	Items map[string]int `json:"items,omitempty"`
 	Leads bool           `json:"destructive_or_breaking,omitempty"`
+	// Rows is how many rows its glance lists (tiles.LibraryItems), Size the
+	// size that fits them (tiles.LibrarySize) and Supports the change whose
+	// hunks it cites most (tiles.SupportedChange), for a ready tile.
+	Rows     int        `json:"glance_rows,omitempty"`
+	Size     tiles.Size `json:"size,omitempty"`
+	Supports string     `json:"supports,omitempty"`
 }
 
 // PreviousFacts is the previous version's composition as a composer sees it:
@@ -375,9 +381,14 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 		inv.Tiles = append(inv.Tiles, facts)
 	}
 	for _, fill := range fills {
-		inv.Library = append(inv.Library, LibraryFact{ID: tiles.LibraryTileID(fill.Type), Type: fill.Type, Title: clip(fill.Title, maxTitle),
+		fact := LibraryFact{ID: tiles.LibraryTileID(fill.Type), Type: fill.Type, Title: clip(fill.Title, maxTitle),
 			UseWhen: clip(fill.UseWhen, maxSummary), Glance: clip(fill.Glance, maxSummary), Sizes: slices.Clone(fill.Sizes), Hunks: len(fill.Hunks),
-			Why: clip(fill.Why, maxAttention), State: fill.State, Items: fill.Items, Leads: fill.Leads})
+			Why: clip(fill.Why, maxAttention), State: fill.State, Items: fill.Items, Leads: fill.Leads}
+		if fill.Tile != nil {
+			fact.Rows, fact.Size = tiles.LibraryItems(*fill.Tile), tiles.LibrarySize(*fill.Tile)
+			fact.Supports = tiles.SupportedChange(doc, fill.Tile.Data)
+		}
+		inv.Library = append(inv.Library, fact)
 	}
 	inv.Authored = authoredFacts(doc, authored)
 	inv.Previous = previousFacts(previous, byID, inv.Blocks)

@@ -16,10 +16,6 @@
           "size": "half"
         },
         {
-          "tile": "retry_budget",
-          "size": "half"
-        },
-        {
           "tile": "table_delays",
           "size": "half"
         },
@@ -32,11 +28,15 @@
           "size": "half"
         },
         {
-          "tile": "prose_why_jitter",
+          "tile": "evidence",
           "size": "half"
         },
         {
-          "tile": "evidence",
+          "tile": "retry_budget",
+          "size": "half"
+        },
+        {
+          "tile": "prose_why_jitter",
           "size": "half"
         },
         {
@@ -147,10 +147,6 @@
         "size": "half"
       },
       {
-        "tile": "retry_budget",
-        "size": "half"
-      },
-      {
         "tile": "table_delays",
         "size": "half"
       },
@@ -163,11 +159,15 @@
         "size": "half"
       },
       {
-        "tile": "prose_why_jitter",
+        "tile": "evidence",
         "size": "half"
       },
       {
-        "tile": "evidence",
+        "tile": "retry_budget",
+        "size": "half"
+      },
+      {
+        "tile": "prose_why_jitter",
         "size": "half"
       },
       {

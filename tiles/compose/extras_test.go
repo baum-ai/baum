@@ -105,8 +105,10 @@ func TestDuplicatesTile(t *testing.T) {
 }
 
 // A composer that leaves the extras out gets them placed: a library tile
-// that leads right after the overview and risks, another before the changes
-// group, an authored tile after it.
+// that leads right after the overview and risks, another right after the
+// evidence (here beside the lead change, before the group), an authored
+// tile after the group. With the evidence after the group, the other library
+// tile follows it there.
 func TestPlaceExtras(t *testing.T) {
 	_, doc := example(t)
 	_, hunk := riskHunk(t, doc)
@@ -130,6 +132,17 @@ func TestPlaceExtras(t *testing.T) {
 	}
 	if order["schema_change"] != order["risks"]+1 || order["api_change"] != first-1 || order["table_matrix"] != last+1 {
 		t.Errorf("placed: %v (group %d-%d)", c.Layout.Entries, first, last)
+	}
+	if order["api_change"] != order[tiles.TypeEvidence]+1 {
+		t.Errorf("the library tile is not right after the evidence: %v", c.Layout.Entries)
+	}
+	late := template
+	late.Layout.Entries = slices.DeleteFunc(slices.Clone(template.Layout.Entries), func(e tiles.Entry) bool { return e.Tile == tiles.TypeEvidence })
+	late.Layout.Entries = append(late.Layout.Entries, tiles.Entry{Tile: tiles.TypeEvidence, Size: tiles.SizeThird})
+	late.Library = []tiles.LibraryTile{{Definition: api.Encoded, Data: json.RawMessage(`{}`), Pending: true}}
+	tiles.PlaceExtras(&late, doc)
+	if n := len(late.Layout.Entries); late.Layout.Entries[n-1].Tile != "api_change" || late.Layout.Entries[n-2].Tile != tiles.TypeEvidence {
+		t.Errorf("with the evidence last: %v", late.Layout.Entries)
 	}
 	again := c
 	again.Layout.Entries = slices.Clone(c.Layout.Entries)
@@ -196,8 +209,8 @@ func TestGuardRailsWithExtras(t *testing.T) {
 		}
 		return out
 	}
-	if got := ids(template); got[2] != "schema_change" || slices.Index(got, "table_matrix") < slices.Index(got, "sec_api") {
-		t.Errorf("template: the leading library tile third, the authored tile after the changes: %v", got)
+	if got := ids(template); got[2] != "schema_change" || slices.Index(got, "table_matrix") < slices.Index(got, tiles.TypeEvidence) {
+		t.Errorf("template: the leading library tile third, the authored tile after the evidence: %v", got)
 	}
 
 	// A destructive schema tile moved off the first screen comes back.
@@ -205,14 +218,23 @@ func TestGuardRailsWithExtras(t *testing.T) {
 		t.Errorf("the destructive tile left the first screen: %v", report.Messages())
 	}
 	// An authored tile moved onto the first screen, ahead of the changes,
-	// gives way to the template.
-	if _, report := compose(false, move("table_matrix", 2)); report.Counts()[tiles.FixFirstScreen] != 1 {
-		t.Errorf("an authored tile took a change's place: %v", report.Messages())
+	// moves back down: it never pushes a core tile off the first screen.
+	if n, report := compose(false, move("table_matrix", 2)); report.Counts()[tiles.FixExtraPlace] != 1 || report.Counts()[tiles.FixFirstScreen] != 0 ||
+		slices.IndexFunc(n.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == "table_matrix" }) <= slices.IndexFunc(n.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == tiles.TypeEvidence }) {
+		t.Errorf("an authored tile took a core tile's place: %v; %v", report.Messages(), n.Layout.Entries)
 	}
-	// The destructive schema tile moved first stays: it is a must-see tile
-	// in place of a change.
-	if n, report := compose(true, move("schema_change", 0)); report.Counts()[tiles.FixFirstScreen] != 0 || n.Layout.Entries[0].Tile != "schema_change" {
-		t.Errorf("a must-see library tile was reverted: %v", report.Messages())
+	// The destructive schema tile moved first stays: it is a must-see tile,
+	// and the first screen still shows the lead change and the evidence.
+	// The template's second row is the schema tile, the lead change and the
+	// evidence at a third each; this layout puts that row first.
+	first := func(entries []tiles.Entry) []tiles.Entry {
+		return slices.Concat(entries[2:5], entries[:2], entries[5:])
+	}
+	if row := template.Layout.Entries[2:5]; row[0].Tile != "schema_change" || row[2].Tile != tiles.TypeEvidence || row[1].Size != tiles.SizeThird {
+		t.Fatalf("the template's second row: %v", row)
+	}
+	if n, report := compose(true, first); report.Counts()[tiles.FixFirstScreen] != 0 || n.Layout.Entries[0].Tile != "schema_change" {
+		t.Errorf("a must-see library tile was reverted: %v; %v", report.Messages(), n.Layout.Entries)
 	}
 }
 
@@ -241,14 +263,55 @@ func TestAuthoredSize(t *testing.T) {
 	}
 }
 
-// A library tile that lists few items takes half the row, one with more
-// the full row.
+// A library tile takes the size of what its glance lists: half for three
+// rows or fewer (the schema tile lists its tables, else its migrations; its
+// readers do not count), full for more, and a third where its definition
+// allows no half.
 func TestLibrarySize(t *testing.T) {
 	schema, _ := library.Get("schema_change")
-	few := tiles.LibraryTile{Definition: schema.Encoded, Data: json.RawMessage(`{"tables":[{},{}],"migrations":[{}]}`)}
-	many := tiles.LibraryTile{Definition: schema.Encoded, Data: json.RawMessage(`{"tables":[{},{},{},{}]}`)}
-	if tiles.LibrarySize(few) != tiles.SizeHalf || tiles.LibrarySize(many) != tiles.SizeFull {
-		t.Errorf("sizes: %s, %s", tiles.LibrarySize(few), tiles.LibrarySize(many))
+	api, _ := library.Get("api_change")
+	cases := []struct {
+		name string
+		lib  tiles.LibraryTile
+		rows int
+		want tiles.Size
+	}{
+		{"two tables, many readers", tiles.LibraryTile{Definition: schema.Encoded, Data: json.RawMessage(`{"tables":[{},{}],"migrations":[{}],"readers":[{},{},{},{},{},{},{},{}]}`)}, 2, tiles.SizeHalf},
+		{"four tables", tiles.LibraryTile{Definition: schema.Encoded, Data: json.RawMessage(`{"tables":[{},{},{},{}]}`)}, 4, tiles.SizeFull},
+		{"migrations only", tiles.LibraryTile{Definition: schema.Encoded, Data: json.RawMessage(`{"tables":[],"migrations":[{},{},{},{},{}]}`)}, 5, tiles.SizeFull},
+		{"one endpoint, five consumers", tiles.LibraryTile{Definition: api.Encoded, Data: json.RawMessage(`{"endpoints":[{}],"consumers":[{},{},{},{},{}]}`)}, 1, tiles.SizeHalf},
+	}
+	for _, c := range cases {
+		if rows, size := tiles.LibraryItems(c.lib), tiles.LibrarySize(c.lib); rows != c.rows || size != c.want {
+			t.Errorf("%s: %d rows at %s, want %d at %s", c.name, rows, size, c.rows, c.want)
+		}
+	}
+	def := tilestest.LibraryDefinition("no_half")
+	def.Sizes = []tiles.Size{tiles.SizeFull, tiles.SizeThird}
+	narrow := tiles.LibraryTile{Definition: tilestest.SealDefinition(def), Data: json.RawMessage(`{"summary":"x","cites":[{"type":"hunk","id":"h_1"}]}`)}
+	if size := tiles.LibrarySize(narrow); size != tiles.SizeThird {
+		t.Errorf("one item where no half is allowed: %s", size)
+	}
+}
+
+// The inventory gives each ready library tile and authored tile the size
+// that fits it and the change it supports, the one whose hunks it cites.
+func TestInventorySizesAndSupports(t *testing.T) {
+	_, doc := example(t)
+	risk, hunk := riskHunk(t, doc)
+	entry, _ := library.Get("schema_change")
+	fill := FillOf(entry, []string{hunk}, "alters a table", "ready", schemaData(hunk, false))
+	authored := Authored{Tile: tiles.AuthoredTile{ID: "table_versions", Title: "Client versions", Data: json.RawMessage(fmt.Sprintf(
+		`{"columns":["Client","Works"],"rows":[["desktop","yes"]],"source":[{"type":"hunk","id":%q}]}`, hunk))}}
+	inv, err := BuildInventory(doc, []Fill{fill}, nil, Preferences{}, authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := inv.Library[0]; got.Rows != 1 || got.Size != tiles.SizeHalf || got.Supports != risk.Change {
+		t.Errorf("library fact %+v, want it to support %s", got, risk.Change)
+	}
+	if got := inv.Authored[0]; got.Size != tiles.SizeHalf || got.Supports != risk.Change {
+		t.Errorf("authored fact %+v", got)
 	}
 }
 

@@ -24,12 +24,8 @@
           "size": "half"
         },
         {
-          "tile": "prose_why_jitter",
-          "size": "half"
-        },
-        {
           "tile": "everything_else",
-          "size": "half"
+          "size": "third"
         },
         {
           "tile": "evidence",
@@ -45,11 +41,11 @@
         },
         {
           "tile": "context",
-          "size": "half"
+          "size": "third"
         },
         {
           "tile": "decisions",
-          "size": "half"
+          "size": "third"
         },
         {
           "tile": "retry_budget",
@@ -58,6 +54,10 @@
         {
           "tile": "table_delays",
           "size": "half"
+        },
+        {
+          "tile": "prose_why_jitter",
+          "size": "full"
         }
       ]
     },
@@ -155,12 +155,8 @@
         "size": "half"
       },
       {
-        "tile": "prose_why_jitter",
-        "size": "half"
-      },
-      {
         "tile": "everything_else",
-        "size": "half"
+        "size": "third"
       },
       {
         "tile": "evidence",
@@ -176,11 +172,11 @@
       },
       {
         "tile": "context",
-        "size": "half"
+        "size": "third"
       },
       {
         "tile": "decisions",
-        "size": "half"
+        "size": "third"
       },
       {
         "tile": "retry_budget",
@@ -189,11 +185,14 @@
       {
         "tile": "table_delays",
         "size": "half"
+      },
+      {
+        "tile": "prose_why_jitter",
+        "size": "full"
       }
     ],
     "groups": [],
-    "landing": 9,
-    "extra_rows": 1
+    "landing": 7
   },
   "tiles": [
     {

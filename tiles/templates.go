@@ -48,10 +48,17 @@ type slot struct {
 }
 
 const (
-	// slotComposed places the composition's library tiles (those with a
-	// destructive or breaking item first) and promoted tiles, at half width
-	// where their type allows; its authored tiles follow the changes group.
+	// slotComposed places the composition's promoted tiles, at half width
+	// where their type allows, before the changes.
 	slotComposed = "*composed"
+	// slotLibrary places the composition's library tiles that do not lead,
+	// each at its LibrarySize, after the risks and evidence tiles: a library
+	// tile never stands above them.
+	slotLibrary = "*library"
+	// slotAuthored places the composition's authored tiles, each at its
+	// AuthoredSize, after the changes they support and the risks and
+	// evidence tiles.
+	slotAuthored = "*authored"
 	// slotChanges places the changes group, in review order, a third each.
 	slotChanges = "*changes"
 	// slotRest places every tile not yet placed, in the converter's order
@@ -68,16 +75,17 @@ const (
 var templates = map[string][]slot{
 	TemplateFeature: {
 		{TypeOverview, SizeHalf}, {TypeRisks, SizeHalf}, {slotComposed, SizeHalf}, {slotChanges, SizeThird},
-		{TypeEvidence, SizeThird}, {TypeMedia, SizeThird}, {TypeIntent, SizeThird}, {TypeContext, SizeThird},
-		{TypeDecisions, SizeThird}, {TypeEverythingElse, SizeThird}, {slotRest, ""},
+		{TypeEvidence, SizeThird}, {slotLibrary, ""}, {slotAuthored, ""}, {TypeMedia, SizeThird}, {TypeIntent, SizeThird},
+		{TypeContext, SizeThird}, {TypeDecisions, SizeThird}, {TypeEverythingElse, SizeThird}, {slotRest, ""},
 	},
 	TemplateRefactor: {
 		{TypeOverview, SizeHalf}, {TypeRisks, SizeHalf}, {slotComposed, SizeHalf}, {slotChanges, SizeThird},
-		{TypeEvidence, SizeThird}, {TypeContext, SizeThird}, {TypeEverythingElse, SizeThird}, {slotRest, ""},
+		{TypeEvidence, SizeThird}, {slotLibrary, ""}, {slotAuthored, ""}, {TypeContext, SizeThird},
+		{TypeEverythingElse, SizeThird}, {slotRest, ""},
 	},
 	TemplateDependency: {
 		{TypeOverview, SizeHalf}, {TypeEverythingElse, SizeHalf}, {TypeRisks, SizeHalf}, {TypeEvidence, SizeThird},
-		{slotComposed, SizeHalf}, {slotChanges, SizeThird}, {slotRest, ""},
+		{slotLibrary, ""}, {slotComposed, SizeHalf}, {slotChanges, SizeThird}, {slotAuthored, ""}, {slotRest, ""},
 	},
 	TemplateDocs: {
 		{TypeOverview, SizeFull}, {slotChanges, SizeThird}, {TypeEverythingElse, SizeThird}, {slotRest, ""},
@@ -95,9 +103,13 @@ var templates = map[string][]slot{
 // (quietSlots); otherwise the docs template sets the risks tile beside the
 // overview at half, so the risks are on the landing page. When the evidence
 // has EvidenceGapsShown gaps or more, the lead change and the evidence tile
-// share the second row at half (gapSlots). A row the slots
-// leave short is filled as RowFills says, as part of the template, not as a
-// fix.
+// share the second row at half (gapSlots). A library tile with a
+// destructive or breaking item stands right after the first row; other
+// library tiles after the risks and evidence tiles, authored tiles after
+// those and the changes, each at the size its content takes, so neither
+// pushes a core tile off the first screen (guardExtras, which templates hold
+// too). A row the slots leave short is filled as RowFills says, as part of
+// the template, not as a fix.
 func Template(doc *Document, content *Composition) (Composition, Report) {
 	if content == nil {
 		content = &Composition{}
@@ -243,22 +255,24 @@ func quietSlots(slots []slot) []slot {
 
 func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 	// The composition's tiles: library tiles with a destructive or breaking
-	// item (Leads) after the first row; other library tiles and promoted
-	// tiles before the changes; authored tiles after them.
-	var leading, composed, after []*Tile
+	// item (Leads) after the first row, other library tiles after the risks
+	// and evidence, promoted tiles before the changes, authored tiles after
+	// the changes and the evidence.
+	var leading, library, promoted, authored []*Tile
 	for i := range cm.library {
 		if !cm.library[i].library.Pending && Leads(cm.library[i].library.Data) {
 			leading = append(leading, &cm.library[i].tile)
 		} else {
-			composed = append(composed, &cm.library[i].tile)
+			library = append(library, &cm.library[i].tile)
 		}
 	}
 	for i := range cm.promoted {
-		composed = append(composed, &cm.promoted[i].tile)
+		promoted = append(promoted, &cm.promoted[i].tile)
 	}
 	for i := range cm.authored {
-		after = append(after, &cm.authored[i].tile)
+		authored = append(authored, &cm.authored[i].tile)
 	}
+	slots = cm.leadingThirds(slots, leading)
 	var entries []Entry
 	placed := map[string]bool{}
 	add := func(id string, size Size, group string) {
@@ -290,11 +304,23 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 			}
 		case slotLeading:
 			for _, tile := range leading {
-				addComposed(tile, cm.librarySize(tile.ID, s.size))
+				size := cm.extraSize(tile.ID, s.size)
+				if s.size == SizeThird {
+					size = SizeThird
+				}
+				addComposed(tile, size)
 			}
 		case slotComposed:
-			for _, tile := range composed {
-				addComposed(tile, cm.librarySize(tile.ID, s.size))
+			for _, tile := range promoted {
+				addComposed(tile, s.size)
+			}
+		case slotLibrary:
+			for _, tile := range library {
+				addComposed(tile, cm.extraSize(tile.ID, SizeHalf))
+			}
+		case slotAuthored:
+			for _, tile := range authored {
+				addComposed(tile, cm.extraSize(tile.ID, SizeHalf))
 			}
 		case slotChanges:
 			var members []Entry
@@ -314,15 +340,12 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 					add(entry.Tile, s.size, GroupChanges)
 				}
 			}
-			for _, tile := range after {
-				addComposed(tile, cm.authoredSize(tile.ID))
-			}
 		case slotRest:
 			for _, entry := range cm.doc.Layout.Entries {
 				add(entry.Tile, entry.Size, entry.Group)
 			}
-			for _, tile := range slices.Concat(leading, composed, after) {
-				addComposed(tile, SizeHalf)
+			for _, tile := range slices.Concat(leading, library, promoted, authored) {
+				addComposed(tile, cm.extraSize(tile.ID, SizeHalf))
 			}
 		default:
 			add(s.tile, s.size, "")
@@ -331,22 +354,35 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 	return CompositionLayout{Entries: entries}
 }
 
-// authoredSize is an authored tile's default size (AuthoredSize).
-func (cm *composer) authoredSize(id string) Size {
-	for _, cand := range cm.authored {
-		if cand.tile.ID == id {
-			return AuthoredSize(cand.authored)
-		}
+// leadingThirds shares the second row three ways when a single library tile
+// that leads lists three items or fewer and the evidence with gaps stands
+// beside the lead change right after it (gapSlots): the library tile, the
+// lead change and the evidence take a third each, so neither the tile nor
+// the gaps leave the first screen and the tile is not a half mostly blank.
+func (cm *composer) leadingThirds(slots []slot, leading []*Tile) []slot {
+	at := slices.IndexFunc(slots, func(s slot) bool { return s.tile == slotLeading })
+	if len(leading) != 1 || at < 0 || at+2 >= len(slots) || slots[at+1] != (slot{slotLead, SizeHalf}) || slots[at+2] != (slot{TypeEvidence, SizeHalf}) {
+		return slots
 	}
-	return SizeHalf
+	if cm.extraSize(leading[0].ID, SizeHalf) == SizeFull || !slices.Contains(AllowedSizes(*leading[0]), SizeThird) {
+		return slots
+	}
+	out := slices.Clone(slots)
+	out[at].size, out[at+1].size, out[at+2].size = SizeThird, SizeThird, SizeThird
+	return out
 }
 
-// librarySize is a library tile's default size (LibrarySize), or size for
-// another composition tile.
-func (cm *composer) librarySize(id string, size Size) Size {
+// extraSize is a library tile's default size (LibrarySize), an authored
+// tile's (AuthoredSize), or size for another composition tile.
+func (cm *composer) extraSize(id string, size Size) Size {
 	for _, cand := range cm.library {
 		if cand.tile.ID == id {
 			return LibrarySize(cand.library)
+		}
+	}
+	for _, cand := range cm.authored {
+		if cand.tile.ID == id {
+			return AuthoredSize(cand.authored)
 		}
 	}
 	return size

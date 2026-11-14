@@ -14,42 +14,51 @@
     "the layout does not place tile \"library_table_flag_defaults\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2_2\"; it is added in the default order",
-    "tile \"risks\" ended a row with empty units; it grows to fill the row",
-    "tile \"table_flag_defaults_2_2\" ended a row with empty units; it grows to fill the row"
+    "the layout shows fewer changes on the first screen or the landing page than the template, with nothing that must be seen instead; the template's layout is kept"
   ],
   "composition": {
     "schema": "baum.composition/1",
     "layout": {
       "entries": [
         {
-          "tile": "table_flag_defaults",
-          "size": "half"
-        },
-        {
           "tile": "overview",
           "size": "half"
         },
         {
           "tile": "risks",
-          "size": "full"
+          "size": "half"
+        },
+        {
+          "tile": "table_flag_defaults",
+          "size": "half"
         },
         {
           "tile": "sec_retry_policy",
-          "size": "half",
-          "group": "changes"
+          "size": "half"
         },
         {
           "tile": "sec_config_flag",
-          "size": "half",
-          "group": "changes"
+          "size": "half"
         },
         {
           "tile": "evidence",
-          "size": "third"
+          "size": "half"
+        },
+        {
+          "tile": "library_table_flag_defaults",
+          "size": "half"
+        },
+        {
+          "tile": "table_flag_defaults_2",
+          "size": "half"
+        },
+        {
+          "tile": "table_flag_defaults_2_2",
+          "size": "half"
         },
         {
           "tile": "media",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "intent",
@@ -65,18 +74,6 @@
         },
         {
           "tile": "everything_else",
-          "size": "third"
-        },
-        {
-          "tile": "library_table_flag_defaults",
-          "size": "half"
-        },
-        {
-          "tile": "table_flag_defaults_2",
-          "size": "half"
-        },
-        {
-          "tile": "table_flag_defaults_2_2",
           "size": "full"
         }
       ]
@@ -198,34 +195,44 @@
   "layout": {
     "entries": [
       {
-        "tile": "table_flag_defaults",
-        "size": "half"
-      },
-      {
         "tile": "overview",
         "size": "half"
       },
       {
         "tile": "risks",
-        "size": "full"
+        "size": "half"
+      },
+      {
+        "tile": "table_flag_defaults",
+        "size": "half"
       },
       {
         "tile": "sec_retry_policy",
-        "size": "half",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "sec_config_flag",
-        "size": "half",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "evidence",
-        "size": "third"
+        "size": "half"
+      },
+      {
+        "tile": "library_table_flag_defaults",
+        "size": "half"
+      },
+      {
+        "tile": "table_flag_defaults_2",
+        "size": "half"
+      },
+      {
+        "tile": "table_flag_defaults_2_2",
+        "size": "half"
       },
       {
         "tile": "media",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "intent",
@@ -241,29 +248,12 @@
       },
       {
         "tile": "everything_else",
-        "size": "third"
-      },
-      {
-        "tile": "library_table_flag_defaults",
-        "size": "half"
-      },
-      {
-        "tile": "table_flag_defaults_2",
-        "size": "half"
-      },
-      {
-        "tile": "table_flag_defaults_2_2",
         "size": "full"
       }
     ],
-    "groups": [
-      {
-        "id": "changes",
-        "title": "Changes"
-      }
-    ],
-    "landing": 8,
-    "extra_rows": 1
+    "groups": [],
+    "landing": 10,
+    "extra_rows": 2
   },
   "tiles": [
     {

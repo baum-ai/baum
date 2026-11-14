@@ -218,11 +218,11 @@ func TestGuardShowsEvidenceInTheRowsAuthoredTilesAdd(t *testing.T) {
 	normalized, doc := convert(t, withGaps("example"))
 	c := &tiles.Composition{
 		Authored: []tiles.AuthoredTile{
-			tilestest.AuthoredTile("prose_lead", "h_000000000001"),
+			wideTable("table_lead", "h_000000000001"),
 			tilestest.AuthoredTile("prose_aside", "h_000000000002"),
 		},
 		Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
-			{Tile: "prose_lead", Size: tiles.SizeFull},
+			{Tile: "table_lead", Size: tiles.SizeFull},
 			{Tile: "sec_retry_policy", Size: tiles.SizeThird},
 			{Tile: "prose_aside", Size: tiles.SizeHalf},
 			{Tile: "sec_config_flag", Size: tiles.SizeFull, Pin: true},
@@ -238,7 +238,7 @@ func TestGuardShowsEvidenceInTheRowsAuthoredTilesAdd(t *testing.T) {
 		t.Fatalf("fixes %v", report.Messages())
 	}
 	visible := tiles.Visible(composed.Layout)
-	for _, id := range []string{tiles.TypeEvidence, "prose_lead", "prose_aside", tiles.TypeOverview} {
+	for _, id := range []string{tiles.TypeEvidence, "table_lead", "prose_aside", tiles.TypeOverview} {
 		if i, _ := entryOf(composed, id); i < 0 || !visible[i] {
 			t.Errorf("tile %s is not on the landing page: %v", id, n.Layout.Entries)
 		}

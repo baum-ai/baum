@@ -9,6 +9,24 @@ import (
 // every composition that is not a template, after its layout is normalised
 // and before its rows are filled, each counted as a fix of its own kind:
 //
+//  0. A library tile that does not lead (Leads) and an authored tile do not
+//     push a core tile off the first screen (FixExtraPlace): the overview,
+//     the risks and evidence tiles, a current change with an active
+//     critical, high or medium risk, a change the recommendation names, a
+//     library tile that leads and a pinned tile. When the first screen
+//     shows fewer of them than it would with those tiles moved to the end,
+//     the first of them on the first screen moves: beside the change it
+//     supports (SupportedChange) at half when that change stands outside
+//     the group and the two still leave the core tiles in view, else just
+//     after the later of the risks and evidence tiles, else to the first
+//     place further down that shows the core tiles. It takes its default
+//     size (LibrarySize, AuthoredSize) when the composer gave it a larger
+//     one. A pinned tile stays; a layout in which a person hid tiles is
+//     theirs. Templates hold this rule too, as part of the template.
+//     Then such a tile that the layout gives the full row while it lists
+//     three items or fewer (its LibrarySize or AuthoredSize is smaller)
+//     takes that size when it then shares its row with the tile after it
+//     (FixExtraSize); alone on its row it would only grow back.
 //  1. Evidence with EvidenceGapsShown or more missing or failed items of
 //     current changes is on the landing page (FixEvidenceGaps): when the
 //     layout puts the evidence tile past it, the tile moves up to the
@@ -46,6 +64,8 @@ const (
 
 // The guard rails' fixes.
 const (
+	FixExtraPlace   FixKind = "extra_place"
+	FixExtraSize    FixKind = "extra_size"
 	FixEvidenceGaps FixKind = "evidence_gaps"
 	FixLoneFeatured FixKind = "lone_featured"
 	FixFirstScreen  FixKind = "first_screen"
@@ -56,7 +76,12 @@ const (
 // leave it as it is, while Arrange still keeps what must be seen on the
 // landing page.
 func (cm *composer) guard(c *Composition) {
-	if cm.template || c.Layout.Edited {
+	if c.Layout.Edited {
+		return
+	}
+	cm.guardExtras(c)
+	cm.guardExtraSizes(c)
+	if cm.template {
 		return
 	}
 	cm.guardEvidence(c)
@@ -159,30 +184,288 @@ func (cm *composer) guardEvidence(c *Composition) {
 	// in front of those pushes them, and the rows they add, off. The
 	// evidence then takes the place of a tile the landing page shows that
 	// need not be seen, the last first, and that tile takes the evidence's.
+	// A tile that is not a current change (context, decisions, an extra)
+	// gives way before a change does.
 	must := mustSeeOf(doc)
 	visible := Visible(doc.Layout)
-	for i := len(doc.Layout.Entries) - 1; i >= 0; i-- {
-		other := doc.Layout.Entries[i]
-		if !visible[i] || other.Tile == TypeOverview || other.Tile == TypeEvidence || must.stands(other) {
-			continue
-		}
-		to := slices.IndexFunc(entries, func(e Entry) bool { return e.Tile == other.Tile })
-		if to < 0 {
-			continue
-		}
-		for _, size := range sizes {
-			moved := evidence
-			moved.Size = size
-			trial := *c
-			trial.Layout.Entries = slices.Clone(entries)
-			trial.Layout.Entries[to], trial.Layout.Entries[at] = moved, entries[to]
-			if doc := cm.trialDoc(&trial); doc != nil && shown(doc, TypeEvidence) && keeps(doc) {
-				c.Layout.Entries = trial.Layout.Entries
-				cm.fix(FixEvidenceGaps, TypeEvidence, "")
-				return
+	current := currentChanges(doc)
+	for _, changes := range []bool{false, true} {
+		for i := len(doc.Layout.Entries) - 1; i >= 0; i-- {
+			other := doc.Layout.Entries[i]
+			if !visible[i] || current[other.Tile] != changes || other.Tile == TypeOverview || other.Tile == TypeEvidence || must.stands(other) {
+				continue
+			}
+			to := slices.IndexFunc(entries, func(e Entry) bool { return e.Tile == other.Tile })
+			if to < 0 {
+				continue
+			}
+			for _, size := range sizes {
+				moved := evidence
+				moved.Size = size
+				trial := *c
+				trial.Layout.Entries = slices.Clone(entries)
+				trial.Layout.Entries[to], trial.Layout.Entries[at] = moved, entries[to]
+				if doc := cm.trialDoc(&trial); doc != nil && shown(doc, TypeEvidence) && keeps(doc) {
+					c.Layout.Entries = trial.Layout.Entries
+					cm.fix(FixEvidenceGaps, TypeEvidence, "")
+					return
+				}
 			}
 		}
 	}
+}
+
+// currentChanges names a document's current changes.
+func currentChanges(doc *Document) map[string]bool {
+	current := map[string]bool{}
+	for _, change := range doc.Changes {
+		if currentChange(change) {
+			current[change.ID] = true
+		}
+	}
+	return current
+}
+
+// coreTiles names the tiles a reviewer needs to decide, which a library or
+// authored tile that does not lead never pushes off the first screen: the
+// overview, the risks and evidence tiles, the current changes with an active
+// critical, high or medium risk, the changes the recommendation names, the
+// library tiles that lead and the pinned tiles.
+func coreTiles(doc *Document) map[string]bool {
+	core := map[string]bool{TypeOverview: true, TypeRisks: true, TypeEvidence: true}
+	current := currentChanges(doc)
+	for _, risk := range doc.Risks {
+		if current[risk.Change] && risk.State == "active" && (risk.Tier == "critical" || risk.Tier == "high" || risk.Tier == "medium") {
+			core[risk.Change] = true
+		}
+	}
+	// What must be seen (the hard rules and the guard rails' stand-ins:
+	// named changes, leading library tiles, pins) is core too.
+	must := mustSeeOf(doc)
+	for _, entry := range doc.Layout.Entries {
+		if must.kept(entry.Tile) || must.stands(entry) {
+			core[entry.Tile] = true
+		}
+	}
+	return core
+}
+
+// firstScreenTiles names the tiles a document's first screen shows.
+func firstScreenTiles(doc *Document) map[string]bool {
+	out := map[string]bool{}
+	for k, row := range Rows(doc.Layout) {
+		if k >= FirstScreenRows || row.Entries[0] >= doc.Layout.Landing {
+			break
+		}
+		for _, i := range row.Entries {
+			out[doc.Layout.Entries[i].Tile] = true
+		}
+	}
+	return out
+}
+
+// coreShown names the core tiles (coreTiles) a document's first screen
+// shows.
+func coreShown(doc *Document) map[string]bool {
+	core, out := coreTiles(doc), map[string]bool{}
+	for id := range firstScreenTiles(doc) {
+		if core[id] {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+func covers(got, want map[string]bool) bool {
+	for id := range want {
+		if !got[id] {
+			return false
+		}
+	}
+	return true
+}
+
+// guardExtras keeps the library tiles that do not lead and the authored
+// tiles from pushing a core tile off the first screen (rule 0 above).
+func (cm *composer) guardExtras(c *Composition) {
+	if len(c.Layout.Hidden) > 0 {
+		return
+	}
+	movable := map[string]Size{}
+	for _, cand := range cm.library {
+		if cand.library.Pending || !Leads(cand.library.Data) {
+			movable[cand.tile.ID] = LibrarySize(cand.library)
+		}
+	}
+	for _, cand := range cm.authored {
+		movable[cand.tile.ID] = AuthoredSize(cand.authored)
+	}
+	if len(movable) == 0 {
+		return
+	}
+	for range len(movable) {
+		doc := cm.trialDoc(c)
+		if doc == nil {
+			return
+		}
+		// What the first screen would show with these tiles at the end.
+		without := *c
+		without.Layout.Entries = nil
+		var moved []Entry
+		for _, entry := range c.Layout.Entries {
+			if _, ok := movable[entry.Tile]; ok && !entry.Pin {
+				moved = append(moved, entry)
+				continue
+			}
+			without.Layout.Entries = append(without.Layout.Entries, entry)
+		}
+		without.Layout.Entries = append(without.Layout.Entries, moved...)
+		base := cm.trialDoc(&without)
+		if base == nil {
+			return
+		}
+		target := coreShown(base)
+		if covers(coreShown(doc), target) {
+			return
+		}
+		first := firstScreenTiles(doc)
+		at := slices.IndexFunc(c.Layout.Entries, func(e Entry) bool {
+			_, ok := movable[e.Tile]
+			return ok && !e.Pin && first[e.Tile]
+		})
+		if at < 0 || !cm.moveExtra(c, at, movable[c.Layout.Entries[at].Tile], target) {
+			return
+		}
+	}
+}
+
+// guardExtraSizes gives the library tiles that do not lead and the authored
+// tiles that the layout sets at full, while their content takes less, the
+// size their content takes, all at once, and keeps it for each that then
+// shares its row: alone on its row, it would grow back to fill it.
+func (cm *composer) guardExtraSizes(c *Composition) {
+	if len(c.Layout.Hidden) > 0 {
+		return
+	}
+	want := map[string]Size{}
+	for _, cand := range cm.library {
+		if cand.library.Pending || !Leads(cand.library.Data) {
+			want[cand.tile.ID] = LibrarySize(cand.library)
+		}
+	}
+	for _, cand := range cm.authored {
+		want[cand.tile.ID] = AuthoredSize(cand.authored)
+	}
+	trial := *c
+	trial.Layout.Entries = slices.Clone(c.Layout.Entries)
+	shrunk := map[string]bool{}
+	for i, entry := range trial.Layout.Entries {
+		if size, ok := want[entry.Tile]; ok && !entry.Pin && entry.Size == SizeFull && size != SizeFull {
+			trial.Layout.Entries[i].Size = size
+			shrunk[entry.Tile] = true
+		}
+	}
+	if len(shrunk) == 0 {
+		return
+	}
+	doc := cm.trialDoc(&trial)
+	if doc == nil {
+		return
+	}
+	shares := map[string]bool{}
+	for _, row := range Rows(doc.Layout) {
+		for _, i := range row.Entries {
+			shares[doc.Layout.Entries[i].Tile] = len(row.Entries) > 1
+		}
+	}
+	for i, entry := range c.Layout.Entries {
+		if shrunk[entry.Tile] && shares[entry.Tile] {
+			c.Layout.Entries[i].Size = want[entry.Tile]
+			if !cm.template {
+				cm.fix(FixExtraSize, entry.Tile, "")
+			}
+		}
+	}
+}
+
+// moveExtra moves the extra tile at an index of the layout to the first
+// place, in guardExtras' order of preference, where it is off the first
+// screen or the first screen shows the target's core tiles, at its default
+// size when the layout gave it a larger one. It reports whether it moved.
+func (cm *composer) moveExtra(c *Composition, at int, size Size, target map[string]bool) bool {
+	entry := c.Layout.Entries[at]
+	if size.Units() < entry.Size.Units() {
+		entry.Size = size
+	}
+	rest := slices.Delete(slices.Clone(c.Layout.Entries), at, at+1)
+	accept := func(entries []Entry) bool {
+		trial := *c
+		trial.Layout.Entries = entries
+		doc := cm.trialDoc(&trial)
+		if doc == nil || !covers(coreShown(doc), target) && firstScreenTiles(doc)[entry.Tile] {
+			return false
+		}
+		c.Layout.Entries = entries
+		if !cm.template {
+			cm.fix(FixExtraPlace, entry.Tile, "")
+		}
+		return true
+	}
+	index := func(id string) int { return slices.IndexFunc(rest, func(e Entry) bool { return e.Tile == id }) }
+	// Beside the change it supports, the two at half.
+	if change := cm.supportedChange(entry.Tile); change != "" {
+		if k := index(change); k >= 0 && rest[k].Group == "" && !rest[k].Pin && cm.byID[change] != nil &&
+			slices.Contains(SizesIn(cm.doc, *cm.byID[change]), SizeHalf) && slices.Contains(cm.sizesOf(entry.Tile), SizeHalf) {
+			beside := slices.Clone(rest)
+			beside[k].Size = SizeHalf
+			half := entry
+			half.Size = SizeHalf
+			if accept(slices.Insert(beside, k+1, half)) {
+				return true
+			}
+		}
+	}
+	// After the later of the risks and evidence tiles.
+	if k := max(index(TypeRisks), index(TypeEvidence)); k >= 0 && accept(slices.Insert(slices.Clone(rest), k+1, entry)) {
+		return true
+	}
+	// Further down, never inside the changes group.
+	for to := at; to <= len(rest); to++ {
+		if to > 0 && to < len(rest) && rest[to].Group != "" && rest[to].Group == rest[to-1].Group {
+			continue
+		}
+		if accept(slices.Insert(slices.Clone(rest), to, entry)) {
+			return true
+		}
+	}
+	return false
+}
+
+// supportedChange is the change an extra tile supports (SupportedChange).
+func (cm *composer) supportedChange(id string) string {
+	for _, cand := range cm.library {
+		if cand.tile.ID == id {
+			return SupportedChange(cm.doc, cand.library.Data)
+		}
+	}
+	for _, cand := range cm.authored {
+		if cand.tile.ID == id {
+			return SupportedChange(cm.doc, cand.authored.Data)
+		}
+	}
+	return ""
+}
+
+// sizesOf returns the sizes a composition tile allows.
+func (cm *composer) sizesOf(id string) []Size {
+	for _, cands := range [][]candidate{cm.library, cm.authored} {
+		for i := range cands {
+			if cands[i].tile.ID == id {
+				return SizesIn(cm.doc, cands[i].tile)
+			}
+		}
+	}
+	return nil
 }
 
 func (cm *composer) guardLoneFeatured(c *Composition) {

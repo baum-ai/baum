@@ -1114,10 +1114,10 @@ tiles").
 
 | Template | Change kinds | Order |
 | --- | --- | --- |
-| `feature` | feature, bugfix and any other | overview (half), risks (half), the composition's tiles (half), the changes, evidence, media, intent, context, decisions, everything else |
-| `refactor` | refactor | overview (half), risks (half), the composition's tiles (half), the changes, evidence, context, everything else, then the rest |
-| `dependency` | dependency, upstream_sync, cherry_pick | overview (half), everything else (half), risks (half), evidence, the composition's tiles (half), the changes, then the rest |
-| `docs` | docs, ci, mechanical, translation, release, export | overview (full), the changes, everything else, then the rest |
+| `feature` | feature, bugfix and any other | overview (half), risks (half), promoted tiles (half), the changes, evidence, library tiles, authored tiles, media, intent, context, decisions, everything else |
+| `refactor` | refactor | overview (half), risks (half), promoted tiles (half), the changes, evidence, library tiles, authored tiles, context, everything else, then the rest |
+| `dependency` | dependency, upstream_sync, cherry_pick | overview (half), everything else (half), risks (half), evidence, library tiles, promoted tiles (half), the changes, authored tiles, then the rest |
+| `docs` | docs, ci, mechanical, translation, release, export | overview (full), the changes, everything else, then the rest, the composition's tiles last |
 
 Changes are a third each in the changes group, in review order; "the rest"
 is every other tile in the converter's order and sizes. When the risks tile
@@ -1125,7 +1125,14 @@ ranks no active risk above low, its glance says only what the strip's risk
 score says, so it leaves the first rows: it takes a third after the changes
 (after evidence in `dependency`, before the rest in `docs`), and in `feature`
 and `refactor` the first change in review order takes its half of the first
-row, outside the group.
+row, outside the group. Library tiles here are those without a destructive or
+breaking item; one with such an item leads in every template (see "Rows,
+filling and guard rails"). A library tile takes the size of what its glance
+lists (`tiles.LibrarySize`, `tiles.LibraryItems`: the rows of the first of its
+type's glance lists that has any, `tiles.LibraryGlanceLists`, such as a schema
+tile's tables, else its migrations): half for three rows or fewer, full for
+more, and a third when its definition allows no half; an authored tile takes
+`tiles.AuthoredSize`.
 
 **ID stability.** A tile keeps its ID from one version of a pull request to
 the next while its subject persists: single and change tiles by
@@ -2499,10 +2506,13 @@ the composer's user message, JSON on one line:
 - `library`: each selected type's fill (`compose.FillOf`): its title,
   use-when and glance lines, sizes, the hunks the outline chose and why, its
   state, how many items each of its arrays lists and whether one is
-  destructive or breaking (`tiles.Leads`); the template places the ready
-  ones;
+  destructive or breaking (`tiles.Leads`), and for a ready one the rows its
+  glance lists (`glance_rows`), the size that fits them (`size`) and the
+  change it supports (`supports`, `tiles.SupportedChange`: the current change
+  whose hunks it cites most); the template places the ready ones;
 - `authored`: the authored tiles the analysis kept, each with its type,
-  title, rows and columns or lines, and what it adds;
+  title, rows and columns or lines, what it adds, its `size` and the change
+  it `supports`;
 - `previous`: the previous composition's entries that name a tile this
   version has, its promoted tiles (each with the handle of the block it
   promoted while this version has it) and its reasons;
@@ -2570,7 +2580,10 @@ instructs), the rules the host enforces anyway, how to lead (risks and changes
 that need a decision at half, always the change that carries a breaking
 change, at most three featured changes, a quiet risks tile left at its third,
 rows filled as one full, two halves or three thirds, the rest in the group by
-score, sizes by importance, small pull requests left alone), reasons
+score, sizes by importance when a tile's sizes allow them, small pull
+requests left alone), where library and authored tiles go (one that leads on
+the first screen, the others after the risks and evidence at the size that
+fits what they list, or beside the change they support at half), reasons
 only for what moves, and two synthetic examples.
 
 **In the pipeline.** `generate.Options.Tiles` turns the stage on for a staged
@@ -2598,8 +2611,9 @@ a review group never compose). The order is analyse, then compose:
    which the composition holds whatever the composer replies (a tile it
    leaves out is placed by `tiles.PlaceExtras`, as the templates place
    them: a library tile with a destructive or breaking item right after the
-   leading overview and risks tiles, another just before the changes group,
-   an authored tile just after it), with the previous version's composition
+   leading overview and risks tiles, another just after the later of the
+   risks and evidence tiles, an authored tile after those and the changes
+   group), with the previous version's composition
    (`Publish` reads it from the latest version with `store.ParseComposition`)
    and the repository's preferences, through the backend's `agent.Completer`
    (`generate.CompleterOf`: nil for a backend that cannot complete, such as
@@ -2677,21 +2691,38 @@ no group (a heading only from three), keep active risks beside the overview for
 docs and CI, and put evidence with two or more gaps beside the lead change on
 the second row. A composition's library tile with a destructive or breaking
 item (`tiles.Leads`) stands right after the first row in every
-template (a dropped table in its `tables` counts as destructive), another
-library tile and promoted tiles stand before the changes (a library tile,
-leading or not, at half when it lists three items or fewer, else full), and
-authored tiles after them, a table of four columns or more at full; a row
-they leave short is filled like any. They add to the landing page rather
+template (a dropped table in its `tables` counts as destructive), at the
+size its glance needs; with evidence of two or more gaps beside the lead
+change on the second row and one such tile that lists three items or fewer,
+the tile, the lead change and the evidence share that row at a third each.
+Promoted tiles stand before the changes; another library tile after the
+risks and evidence tiles, and authored tiles after those and the changes
+(sizes as under "Templates"); a row they leave short is filled like any. They add to the landing page rather
 than displace: it grows by one row for each of its rows that holds such a
 tile, at most two (`tiles.ExtraRows`, served as the
 layout's `extra_rows`, which `landing` already counts), so the other tiles
 keep three rows (`CheckGenerated` invariant 15). A
-composer's layout then passes three guard rails
-(`tiles/guards.go`), each a fix of its own kind: evidence with two or more gaps
+composer's layout then passes four guard rails
+(`tiles/guards.go`), each a fix of its own kind. A library tile without a
+destructive or breaking item, or an authored tile, never pushes a core tile
+off the first screen (`extra_place`; the templates hold it too): the core
+tiles are the overview, the risks and evidence tiles, a current change with
+an active critical, high or medium risk, a change the recommendation names, a
+library tile that leads and a pinned tile. When the first screen shows fewer
+of them than it would with those tiles at the end, the first of them on the
+first screen moves, at its default size when the composer gave it a larger
+one: beside the change it supports (`tiles.SupportedChange`), the two at
+half, when that change stands outside the group and the core tiles stay in
+view; else just after the later of the risks and evidence tiles; else to the
+first place further down that shows them, never inside the changes group. A
+pinned tile stays, and a layout in which a person hid tiles is theirs. Then
+evidence with two or more gaps
 stays on the landing page, where it fits without pushing a tile that must be
 seen off the first screen, and in the place of a tile that need not be seen
 when the only room left is in the rows library and authored tiles add
-(`evidence_gaps`), a change featured alone at half takes its full row
+(`evidence_gaps`; the tile it displaces is the last shown, one that is not a
+current change, such as context or decisions, before a change), a change
+featured alone at half takes its full row
 (`lone_featured`), and a first screen (the first two rows) or a landing page
 that shows fewer current changes than the template's, with nothing that must
 be seen instead

@@ -285,6 +285,10 @@ func (f Fix) Message() string {
 		text = "the composition cannot be applied to this document"
 	case FixRowFill:
 		text = fmt.Sprintf("%s ended a row with empty units; it grows to fill the row", tile)
+	case FixExtraPlace:
+		text = fmt.Sprintf("%s pushes a tile a reviewer needs off the first screen; it moves further down", tile)
+	case FixExtraSize:
+		text = fmt.Sprintf("%s lists too little for the full row; it takes the size of its content beside the next tile", tile)
 	case FixEvidenceGaps:
 		text = fmt.Sprintf("the evidence tile has %d or more gaps and must be on the landing page; it moves up", EvidenceGapsShown)
 	case FixLoneFeatured:

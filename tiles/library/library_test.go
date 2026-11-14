@@ -277,3 +277,34 @@ func TestStarterPassesEveryCheck(t *testing.T) {
 		t.Error(problem)
 	}
 }
+
+// Every built-in type names the arrays its glance lists as rows
+// (tiles.LibraryGlanceLists), which size its tile by content: each is a
+// top-level array of its data, and the arrays that make the type apply are
+// among them or are the glance's fallback.
+func TestEveryTypeNamesItsGlanceLists(t *testing.T) {
+	for _, entry := range library.All() {
+		def := entry.Definition
+		lists := tiles.LibraryGlanceLists(def.Name)
+		if len(lists) == 0 {
+			t.Errorf("%s: tiles.LibraryGlanceLists names no array; add the arrays its glance lists", def.Name)
+			continue
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Type json.RawMessage `json:"type"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(def.DataSchema, &schema); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range lists {
+			if string(schema.Properties[name].Type) != `"array"` {
+				t.Errorf("%s: glance list %q is not a top-level array of its data", def.Name, name)
+			}
+		}
+		if !slices.Contains(lists, entry.AppliesWith[0]) {
+			t.Errorf("%s: its glance lists %v leave out %q, which makes it apply", def.Name, lists, entry.AppliesWith[0])
+		}
+	}
+}

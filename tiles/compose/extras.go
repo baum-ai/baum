@@ -28,6 +28,10 @@ type AuthoredFact struct {
 	Columns  []string     `json:"columns,omitempty"`
 	Lines    int          `json:"lines,omitempty"`
 	Hunks    int          `json:"hunks"`
+	// Size is the size that fits it (tiles.AuthoredSize) and Supports the
+	// change whose hunks it cites most (tiles.SupportedChange).
+	Size     tiles.Size `json:"size"`
+	Supports string     `json:"supports,omitempty"`
 }
 
 // FillOf describes a library type's fill for the inventory: its entry, the
@@ -112,6 +116,7 @@ func authoredFacts(doc *tiles.Document, authored []Authored) []AuthoredFact {
 			fact.Headline = clip(data.Text, maxHeadline)
 		}
 		fact.Hunks = len(data.Source) + len(data.Anchors)
+		fact.Size, fact.Supports = tiles.AuthoredSize(a.Tile), tiles.SupportedChange(doc, a.Tile.Data)
 		out = append(out, fact)
 	}
 	return out
