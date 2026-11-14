@@ -30,6 +30,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles/library"
 )
@@ -49,6 +50,10 @@ type Local struct {
 	// Log receives what a job's agent reports and keeps out of the job, such
 	// as a fix agent's provider error; nil logs nothing.
 	Log *slog.Logger
+	// Layouts holds people's own tile layouts: a review of a pull request
+	// fills the library types the person added to its review
+	// (generate.Tiles.Always). Nil adds none.
+	Layouts *tilelayout.Service
 }
 
 type identityVersions struct {
@@ -432,7 +437,9 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	// With tile reviews on, a new review of one pull request is arranged as
 	// tiles once it is written; a details retry keeps its version's layout.
 	if group == nil && p.Kind != KindDetails && prefs.Labs.TileReviewsOn() {
-		options.Tiles = &generate.Tiles{}
+		// The library types the person added to the pull request's review
+		// are filled, or their last data reused, in the new version.
+		options.Tiles = &generate.Tiles{Always: l.alwaysTiles(ctx, versions, key)}
 	}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e

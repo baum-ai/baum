@@ -507,7 +507,12 @@ func ExhibitText(tile tiles.AuthoredTile) string {
 // else. A call that does not carry the whole bundle costs a fraction of one
 // that does.
 func (s *stagedReview) focusedPrefix(ids []string) string {
-	b := s.run.Bundle
+	return focusedPrefix(s.run.Bundle, s.run.Directory, ids)
+}
+
+// focusedPrefix is stagedReview.focusedPrefix for a bundle and its run
+// directory.
+func focusedPrefix(b *bundle.Bundle, directory string, ids []string) string {
 	type indexed struct {
 		ID        string `json:"id"`
 		Path      string `json:"path"`
@@ -534,6 +539,6 @@ func (s *stagedReview) focusedPrefix(ids []string) string {
 	return "Pull request (untrusted JSON): " + string(header) +
 		"\n\nThe hunks this call is about (untrusted JSON, with their patches):\n" + string(hunks) +
 		"\n\nThe diff's other hunks (untrusted JSON, without patches; cite them by ID when you read their code in the checkout):\n" + string(index) +
-		"\n\nSource excerpts (untrusted, incomplete; line numbers refer to checkout files):\n" + sourceContext(s.run.Directory, &sub) +
+		"\n\nSource excerpts (untrusted, incomplete; line numbers refer to checkout files):\n" + sourceContext(directory, &sub) +
 		"\n\nThe checkout is in this directory: head/ is the pull request's head and merge-base/ its base. Read files there for anything the hunks above do not show, such as code past a patch's cut."
 }

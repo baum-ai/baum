@@ -42,6 +42,10 @@ type Tiles struct {
 	Previous *tiles.Composition
 	// Preferences are the repository's text and pins.
 	Preferences compose.Preferences
+	// Always are the library types the person added to the pull request's
+	// review, with the last data held for each (agent.StagedTiles.Always):
+	// each is filled, or its data reused, and appears in the composition.
+	Always []agent.AlwaysTile
 }
 
 // ComposeReport is what a run's compose stage did (Result.Compose).
@@ -241,11 +245,20 @@ func (t *Tiles) staged() *agent.StagedTiles {
 	if !ok {
 		prompts = prompt.TilesPrompts{}
 	}
-	out := &agent.StagedTiles{Prompts: prompts, Exhibits: !t.NoExhibits, Previous: t.Previous}
+	out := &agent.StagedTiles{Prompts: prompts, Exhibits: !t.NoExhibits, Previous: t.Previous, Always: t.Always}
 	if !t.NoLibrary {
 		out.Library = t.Library
 		if out.Library == nil {
 			out.Library = library.All()
+		}
+	}
+	// A type the person added is offered whatever the run offers.
+	for _, added := range t.Always {
+		if slices.ContainsFunc(out.Library, func(e library.Entry) bool { return e.Definition.Name == added.Name }) {
+			continue
+		}
+		if e, ok := library.Get(added.Name); ok {
+			out.Library = append(slices.Clone(out.Library), e)
 		}
 	}
 	if len(out.Library) == 0 && !out.Exhibits {

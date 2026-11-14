@@ -36,6 +36,24 @@ type StagedTiles struct {
 	// one: its library and authored tiles are reused, without a call, when
 	// the code they cite is unchanged.
 	Previous *tiles.Composition
+	// Always are the library types a person added to the pull request's
+	// review (their layout's add ops). Each is filled whatever the outline
+	// answers about it, so it appears in the new version's composition,
+	// unless its last data can be reused without a call (AlwaysTile). A
+	// type that is not offered in Library is ignored.
+	Always []AlwaysTile
+}
+
+// AlwaysTile is a library type a person added, and the last data held for
+// it: Last, written for a version whose diff had the hunks LastHunks. The
+// data is reused with no call when every hunk it cites is in this diff and
+// no hunk new to this diff touches a file it cites (hunk IDs are
+// content-derived, so the same hunks are the same code), and it still
+// passes the type's checks.
+type AlwaysTile struct {
+	Name      string
+	Last      json.RawMessage
+	LastHunks []string
 }
 
 // DefaultTilesGrace is how long fills and exhibits may run on once the
@@ -435,6 +453,10 @@ func (a *tileAnalysis) selectionOf(raw json.RawMessage) []Selection {
 			}
 			break
 		}
+		if a.always(s.Type) != nil && !s.Applies {
+			// The person added it: it is filled whatever the outline says.
+			s.Applies, s.Why = true, ""
+		}
 		out = append(out, s)
 	}
 	return out
@@ -459,6 +481,16 @@ func (a *tileAnalysis) selected() []Selection {
 		}
 	}
 	return out
+}
+
+// always returns the added type of that name, nil when it is not one.
+func (a *tileAnalysis) always(name string) *AlwaysTile {
+	for i := range a.config.Always {
+		if a.config.Always[i].Name == name {
+			return &a.config.Always[i]
+		}
+	}
+	return nil
 }
 
 func (a *tileAnalysis) entry(name string) library.Entry {
@@ -639,8 +671,17 @@ func (s *stagedReview) fillStage(ctx context.Context, sel Selection, budgets Bud
 	if sel.Why != "" {
 		why = "\nThe outline's reason (model-written data): " + sel.Why + "\n"
 	}
+	added := a.always(sel.Type) != nil
+	chosen := "\nHunks the outline chose for this tile: " + strings.Join(sel.Hunks, ", ") + "\n"
+	if added {
+		why = ""
+		chosen = "\n" + addedFillNote
+		if len(sel.Hunks) > 0 {
+			chosen += "Hunks the outline found for it: " + strings.Join(sel.Hunks, ", ") + "\n"
+		}
+	}
 	text := s.focusedPrefix(sel.Hunks) + "\n\n" + a.prompt.Fill + "\n## The tile type: " + e.Definition.Title + " (`" + e.Definition.Name + "`)\n\n" + e.Definition.Fill + "\n" +
-		s.outlineBlock() + "\nHunks the outline chose for this tile: " + strings.Join(sel.Hunks, ", ") + "\n" + why + "\n" + a.prompt.FillSubmit
+		s.outlineBlock() + chosen + why + "\n" + a.prompt.FillSubmit
 	budgets.MaxRepairAttempts = 1
 	task := s.task(fillLabel(sel.Type), schema, budgets)
 	var accepted json.RawMessage
@@ -651,33 +692,7 @@ func (s *stagedReview) fillStage(ctx context.Context, sel Selection, budgets Bud
 		}
 		return text + s.repair(pass, "answer"), nil
 	}
-	task.Accept = func(ctx context.Context, pass TaskPass, reply []byte, outcome *Outcome) (Verdict, error) {
-		masked, err := RedactTaskOutput(ctx, s.redactor, reply, outcome)
-		if err != nil {
-			return Verdict{}, errRedaction
-		}
-		var answer struct {
-			Applies *bool           `json:"applies"`
-			Data    json.RawMessage `json:"data"`
-		}
-		if json.Unmarshal(masked, &answer) != nil || answer.Applies == nil {
-			return Verdict{Document: masked, Findings: "/: the reply must be an object with applies (true or false) and data"}, nil
-		}
-		if !*answer.Applies {
-			applies = false
-			return Verdict{Document: masked}, nil
-		}
-		data := dropNullLines(answer.Data)
-		if len(data) == 0 || string(data) == "null" {
-			return Verdict{Document: masked, Findings: "/data: write the tile's data, or answer applies false with data null"}, nil
-		}
-		problems := library.CheckFill(tileValidator(), e, data, s.run.Bundle.Diff)
-		if len(problems) > 0 {
-			return Verdict{Document: masked, Findings: strings.Join(problems[:min(len(problems), 12)], "\n")}, nil
-		}
-		accepted = data
-		return Verdict{Document: masked}, nil
-	}
+	task.Accept = fillAccept(s.redactor, e, s.run.Bundle.Diff, added, &accepted, &applies)
 	stage, _, err := s.g.RunTask(ctx, task)
 	result.Outcome, result.Repaired = stage, stage.ValidationRepairs > 0
 	switch {
@@ -700,6 +715,153 @@ func (s *stagedReview) fillStage(ctx context.Context, sel Selection, budgets Bud
 	default:
 		result.State, result.Data = FillReady, accepted
 	}
+}
+
+// addedFillNote replaces the outline's choice in the fill of a type the
+// person added to the review.
+const addedFillNote = "The person reading this review added this tile to it, so it is shown whatever this pull request changes: answer applies true and write its data, with empty lists where nothing it shows changes. Choose the hunks yourself from the diff and the checkout.\n"
+
+// fillAccept checks a fill's reply: masked as a task's output, then the
+// type's checks against the diff (library.CheckFill, or CheckAddedFill for a
+// type the person added, which may show nothing). A reply that the type does
+// not apply is taken as it is, except for an added type, which is sent back
+// once to be filled. The accepted data and whether the type applies are
+// written to accepted and applies.
+func fillAccept(redactor *bundle.Redactor, e library.Entry, diff []bundle.Hunk, added bool, accepted *json.RawMessage, applies *bool) func(context.Context, TaskPass, []byte, *Outcome) (Verdict, error) {
+	return func(ctx context.Context, pass TaskPass, reply []byte, outcome *Outcome) (Verdict, error) {
+		masked, err := RedactTaskOutput(ctx, redactor, reply, outcome)
+		if err != nil {
+			return Verdict{}, errRedaction
+		}
+		var answer struct {
+			Applies *bool           `json:"applies"`
+			Data    json.RawMessage `json:"data"`
+		}
+		if json.Unmarshal(masked, &answer) != nil || answer.Applies == nil {
+			return Verdict{Document: masked, Findings: "/: the reply must be an object with applies (true or false) and data"}, nil
+		}
+		if !*answer.Applies {
+			if added && pass.Number == 1 {
+				return Verdict{Document: masked, Findings: "/applies: the person added this tile; answer applies true and write its data, with empty lists where nothing it shows changes"}, nil
+			}
+			*applies = false
+			return Verdict{Document: masked}, nil
+		}
+		data := dropNullLines(answer.Data)
+		if len(data) == 0 || string(data) == "null" {
+			return Verdict{Document: masked, Findings: "/data: write the tile's data, or answer applies false with data null"}, nil
+		}
+		check := library.CheckFill
+		if added {
+			check = library.CheckAddedFill
+		}
+		if problems := check(tileValidator(), e, data, diff); len(problems) > 0 {
+			return Verdict{Document: masked, Findings: strings.Join(problems[:min(len(problems), 12)], "\n")}, nil
+		}
+		*accepted = data
+		return Verdict{Document: masked}, nil
+	}
+}
+
+// FillTileRun is one fill of a library type outside a review's stages: a
+// type a person added to a review, filled for a version that generation did
+// not fill it for. Bundle is the version's bundle and Directory its run
+// directory, with the checkout.
+type FillTileRun struct {
+	Bundle    *bundle.Bundle
+	Directory string
+	Entry     library.Entry
+	Prompts   TileAnalysisPrompts
+	Budgets   Budgets
+	Redactor  *bundle.Redactor
+	Endpoint  *Endpoint
+}
+
+// maxFillFocus bounds the hunks a lone fill is given with their patches;
+// it reads the others in the checkout.
+const maxFillFocus = 40
+
+// FillTile fills a library type a person added to a review, in one task
+// with at most one repair: the pull request's code hunks with their patches
+// (the others by ID), the fill text, the type's instructions and the note
+// that the person added it. The reply is masked and checked as a review's
+// fill is (library.CheckAddedFill). The result's state is FillReady with
+// the data, or FillDropped with the reason, and its Outcome is what the
+// call spent.
+func (g *Generator) FillTile(ctx context.Context, run FillTileRun) FillResult {
+	started := time.Now()
+	e := run.Entry
+	result := FillResult{Type: e.Definition.Name, State: FillDropped}
+	defer func() {
+		if recover() != nil {
+			result.State, result.Reason, result.Data = FillDropped, FillDroppedPanic, nil
+		}
+		result.Elapsed = time.Since(started)
+	}()
+	if run.Prompts == nil || run.Bundle == nil {
+		result.Reason = FillDroppedFailed
+		return result
+	}
+	prompt, err := run.Prompts.TileAnalysisInstructions(ctx, g.Backend.Name())
+	if err != nil {
+		result.Reason = FillDroppedFailed
+		return result
+	}
+	schema, err := fillSchema(e)
+	if err != nil {
+		result.Reason = FillDroppedFailed
+		return result
+	}
+	redactor := run.Redactor
+	if redactor == nil {
+		if redactor, err = bundle.NewRedactor(); err != nil {
+			result.Reason = FillDroppedFailed
+			return result
+		}
+	}
+	var focus []string
+	for _, h := range run.Bundle.Diff {
+		if len(focus) < maxFillFocus && (h.Role == "" || h.Role == "code" || h.Role == "config" || h.Role == "migration") {
+			focus = append(focus, h.ID)
+		}
+	}
+	text := focusedPrefix(run.Bundle, run.Directory, focus) + "\n\n" + prompt.Fill + "\n## The tile type: " + e.Definition.Title + " (`" + e.Definition.Name + "`)\n\n" + e.Definition.Fill + "\n\n" + addedFillNote + "\n" + prompt.FillSubmit
+	_, repairEnding := RepairText(g.Backend.Name())
+	budgets := run.Budgets
+	budgets.MaxRepairAttempts = 1
+	task := Task{Label: fillLabel(e.Definition.Name), Directory: run.Directory, Schema: schema, Budgets: budgets, Endpoint: run.Endpoint, Framing: BackendFraming}
+	task.PassPrompt = func(pass TaskPass) (string, error) {
+		if pass.Number == 1 {
+			return text, nil
+		}
+		return text + "\n\nThis is validation repair of your previous reply, not a new task. Preserve valid content and correct only the reported problems.\nRejected answer:\n" + string(pass.Rejected) + "\nThe validator found:\n" + pass.Findings + fmt.Sprintf(repairEnding, pass.Number-1, pass.Repairs), nil
+	}
+	var accepted json.RawMessage
+	applies := true
+	task.Accept = fillAccept(redactor, e, run.Bundle.Diff, true, &accepted, &applies)
+	stage, _, err := g.RunTask(ctx, task)
+	result.Outcome, result.Repaired = stage, stage.ValidationRepairs > 0
+	switch {
+	case errors.Is(err, errRedaction):
+		result.Reason = FillDroppedRedaction
+	case err != nil && ctx.Err() != nil:
+		result.Reason = FillDroppedStopped
+	case err != nil:
+		result.Reason = FillDroppedFailed
+		if strings.HasPrefix(err.Error(), GenerationBudgetExceededReason("")) {
+			result.Reason = FillDroppedBudget
+		}
+	case !applies:
+		result.State = FillNotApplies
+	case stage.Reason != "" || accepted == nil:
+		result.Reason = FillDroppedInvalid
+		if stage.Reason == "" {
+			result.Reason = FillDroppedEmpty
+		}
+	default:
+		result.State, result.Data = FillReady, accepted
+	}
+	return result
 }
 
 // dropNullLines removes "lines": null from the citations of a fill's data: a
@@ -773,7 +935,8 @@ func (a *tileAnalysis) choose(ctx context.Context, redactor *bundle.Redactor, ra
 }
 
 // reused returns the fills and authored tiles the previous version's
-// composition can supply without a call. A fill is reused when the type is
+// composition, and the last data of the types the person added
+// (reusable), can supply without a call. A fill is reused when the type is
 // selected again, the previous tile has this version's definition digest,
 // every hunk its data cites is in this diff (hunk IDs are content-derived:
 // the same ID is the same code), the selected hunks are among them, and the
@@ -781,13 +944,22 @@ func (a *tileAnalysis) choose(ctx context.Context, redactor *bundle.Redactor, ra
 // authored tile is reused when every hunk it cites is in this diff with its
 // lines inside the hunk. Its ID is kept.
 func (a *tileAnalysis) reused(selection []Selection) ([]FillResult, []tiles.AuthoredTile) {
-	previous := a.config.Previous
-	if previous == nil {
-		return nil, nil
-	}
 	var fills []FillResult
 	for _, sel := range selection {
-		if !sel.Applies {
+		if added := a.always(sel.Type); sel.Applies && added != nil {
+			if data, ok := a.reusable(*added); ok {
+				fills = append(fills, FillResult{Type: sel.Type, Hunks: sel.Hunks, State: FillReady, Data: data, Reused: true})
+			}
+		}
+	}
+	previous := a.config.Previous
+	if previous == nil {
+		return fills, nil
+	}
+	for _, sel := range selection {
+		// An added type is reused only by its own rule (reusable): the
+		// host gives its last data, the previous version's included.
+		if !sel.Applies || a.always(sel.Type) != nil {
 			continue
 		}
 		e := a.entry(sel.Type)
@@ -832,6 +1004,46 @@ func (a *tileAnalysis) reused(selection []Selection) ([]FillResult, []tiles.Auth
 		}
 	}
 	return fills, authored
+}
+
+// reusable returns an added type's last data when it can stand for this
+// version (AlwaysTile): every hunk it cites is in this diff, it cites one at
+// least, no hunk new to this diff touches a file it cites, and it passes the
+// type's checks against this diff.
+func (a *tileAnalysis) reusable(added AlwaysTile) (json.RawMessage, bool) {
+	if len(added.Last) == 0 {
+		return nil, false
+	}
+	data := withoutRelated(added.Last)
+	files := map[string]bool{}
+	cites := 0
+	for _, c := range library.Citations(data) {
+		if c.Type != "hunk" {
+			continue
+		}
+		h, ok := a.diff[c.ID]
+		if !ok {
+			return nil, false
+		}
+		files[h.Path] = true
+		cites++
+	}
+	if cites == 0 {
+		return nil, false
+	}
+	before := map[string]bool{}
+	for _, id := range added.LastHunks {
+		before[id] = true
+	}
+	for id, h := range a.diff {
+		if !before[id] && files[h.Path] {
+			return nil, false
+		}
+	}
+	if len(library.CheckAddedFill(tileValidator(), a.entry(added.Name), data, a.diffList())) > 0 {
+		return nil, false
+	}
+	return data, true
 }
 
 func (a *tileAnalysis) diffList() []bundle.Hunk {
