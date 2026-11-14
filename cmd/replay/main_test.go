@@ -41,6 +41,11 @@ func TestFlagsAreChecked(t *testing.T) {
 		"case file":         {[]string{"--dataset", dir, "--case-file", filepath.Join(dir, "missing.txt")}, "missing.txt"},
 		"empty case file":   {[]string{"--dataset", dir, "--case-file", empty}, "names no case"},
 		"detector":          {[]string{"--dataset", dir, "--dry-run", "--detector", "tables"}, "no index"},
+		"compose twice":     {[]string{"--dataset", dir, "--compose-from-store", "--compose-only"}, "not both"},
+		"from-run alone":    {[]string{"--dataset", dir, "--from-run", dir}, "goes with --compose-only"},
+		"compose-only run":  {[]string{"--dataset", dir, "--compose-only"}, "--from-run"},
+		"compose chain":     {[]string{"--dataset", dir, "--compose-from-store", "--chain"}, "does not take --chain"},
+		"compose override":  {[]string{"--dataset", dir, "--compose-only", "--from-run", dir, "--prompt-override", "review-staged-outline=" + empty}, "not the composition prompt"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := run(context.Background(), tc.args, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), tc.want) {
