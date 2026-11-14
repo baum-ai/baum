@@ -197,14 +197,14 @@ func TestTilesOnStoresAndServesTheComposition(t *testing.T) {
 
 // Whatever goes wrong with the composer, the review is published: an invalid
 // reply or a provider error falls back to the template, stored as such; a
-// backend that cannot complete gets the template without a call; and a run
-// with too little time or budget left skips the call.
+// backend that cannot complete gets the template without a call; and the
+// run's call and token budgets bound the composer, which skips the call when
+// they leave nothing and never makes more calls than they allow.
 func TestTilesFallBackAndStillPublish(t *testing.T) {
 	cases := []struct {
 		name     string
 		complete func(context.Context, agent.CompleteRequest, int) (agent.Completion, error)
 		options  func(*generate.Options)
-		ctx      func() (context.Context, context.CancelFunc)
 		reason   string
 		calls    int
 	}{
@@ -217,13 +217,15 @@ func TestTilesFallBackAndStillPublish(t *testing.T) {
 				return agent.Completion{Model: "stub-composer", Usage: agent.Usage{Input: 10}}, errors.New("overloaded")
 			}},
 		{name: "cannot complete", reason: agent.FallbackNoCompleter},
-		{name: "deadline nearly spent", reason: agent.FallbackNoTime,
+		{name: "one call left, no repair", reason: agent.FallbackInvalid, calls: 1,
+			complete: func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
+				return agent.Completion{Document: []byte(`{"entries":"no"}`), Model: "stub-composer"}, nil
+			},
+			// The analysis makes three calls.
+			options: func(o *generate.Options) { o.Budgets.MaxCalls = 4 }},
+		{name: "no call left", reason: agent.FallbackBudget,
 			complete: keepTemplate(t, "", nil),
-			// The job's own deadline comes long before the wall clock's
-			// reserve is reached, leaving less than the composer needs.
-			ctx: func() (context.Context, context.CancelFunc) {
-				return context.WithTimeout(context.Background(), 20*time.Second)
-			}},
+			options:  func(o *generate.Options) { o.Budgets.MaxCalls = 3 }},
 		{name: "budget spent", reason: agent.FallbackBudget,
 			complete: keepTemplate(t, "", nil),
 			options:  func(o *generate.Options) { o.Budgets.MaxTokens = 10000 }},
@@ -238,23 +240,21 @@ func TestTilesFallBackAndStillPublish(t *testing.T) {
 			if c.options != nil {
 				c.options(&o)
 			}
-			ctx, cancel := context.Background(), context.CancelFunc(func() {})
-			if c.ctx != nil {
-				ctx, cancel = c.ctx()
-			}
-			defer cancel()
 			s, err := store.Open("", t.TempDir(), true)
 			if err != nil {
 				t.Fatal(err)
 			}
 			key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
-			result, err := generate.Publish(ctx, s, key, o, nil)
+			result, err := generate.Publish(context.Background(), s, key, o, nil)
 			if err != nil {
 				t.Fatalf("%v\n%s", err, f.progress.String())
 			}
 			latest, err := s.Latest(context.Background(), key)
 			if err != nil || latest.Metadata.Version != 1 {
 				t.Fatalf("not published: %v", err)
+			}
+			if max := o.Budgets.MaxCalls; max > 0 && latest.Metadata.Calls > max {
+				t.Errorf("%d calls recorded, more than the budget's %d", latest.Metadata.Calls, max)
 			}
 			stored := storedComposition(t, latest.Composition)
 			if stored.Generator == nil || !stored.Generator.Fallback || !slices.Equal(stored.Generator.Problems, []string{c.reason}) {
@@ -411,5 +411,195 @@ func TestTilesSecondVersionKeepsPromotedIDs(t *testing.T) {
 	served := tileview.Build(second.Document, second.Composition, tiles.Options{})
 	if served.Tiles == nil || !slices.ContainsFunc(served.Tiles.Tiles, func(tile tiles.Tile) bool { return tile.ID == "table_defaults" }) {
 		t.Errorf("the promoted tile is not served: %q", served.Problem)
+	}
+}
+
+// The analysis runs exactly as with tile reviews off, whatever the wall clock
+// and budgets: every call gets the same budgets and the same deadline, and a
+// slow outline that fits the wall clock without tiles fits it with them.
+func TestTilesLeaveTheAnalysisItsLimits(t *testing.T) {
+	type call struct {
+		stage               string
+		maxCalls, maxTokens int
+		left                time.Duration
+	}
+	run := func(t *testing.T, wall time.Duration, calls, tokens int, slow time.Duration, tiles bool) ([]call, generate.Result, error) {
+		f := newFixture(t)
+		var mu sync.Mutex
+		var seen []call
+		var first time.Time
+		replies := generatetest.StagedReplies(nil)
+		f.backend.RunFunc = func(ctx context.Context, r agent.Request, n int) (agent.Result, error) {
+			c := call{stage: generatetest.Stage(r), maxCalls: r.MaxCalls, maxTokens: r.MaxTokens}
+			// The outline's deadline is the wall clock from its start; every
+			// later call has the same one.
+			if d, ok := ctx.Deadline(); ok {
+				mu.Lock()
+				if first.IsZero() {
+					first = d
+					c.left = time.Until(d).Round(time.Second)
+				} else {
+					c.left = d.Sub(first)
+				}
+				mu.Unlock()
+			}
+			mu.Lock()
+			seen = append(seen, c)
+			mu.Unlock()
+			if c.stage == agent.StageOutline && slow > 0 {
+				time.Sleep(slow)
+			}
+			return replies(ctx, r, n)
+		}
+		f.backend.CompleteFunc = keepTemplate(t, "", nil)
+		o := tilesOptions(t, f)
+		o.Budgets.WallClock, o.Budgets.MaxCalls, o.Budgets.MaxTokens = wall, calls, tokens
+		if !tiles {
+			o.Tiles = nil
+		}
+		result, err := generate.Run(context.Background(), o)
+		return seen, result, err
+	}
+	for _, c := range []struct {
+		wall          time.Duration
+		calls, tokens int
+		slow          time.Duration
+	}{
+		{wall: time.Minute}, {wall: 0}, {wall: time.Minute, calls: 16}, {wall: time.Minute, calls: 5, tokens: 400},
+		// The outline takes most of a short wall clock.
+		{wall: 4 * time.Second, slow: 3300 * time.Millisecond},
+	} {
+		off, plain, errOff := run(t, c.wall, c.calls, c.tokens, c.slow, false)
+		on, arranged, errOn := run(t, c.wall, c.calls, c.tokens, c.slow, true)
+		if errOff != nil || errOn != nil {
+			t.Fatalf("%+v: off %v, on %v", c, errOff, errOn)
+		}
+		if !slices.Equal(off, on) {
+			t.Errorf("%+v: the analysis differs with tiles on:\n%+v\n%+v", c, off, on)
+		}
+		if !bytes.Equal(plain.Document, arranged.Document) || arranged.Composition == nil {
+			t.Errorf("%+v: review or composition", c)
+		}
+	}
+}
+
+// A caller whose deadline passes while the composer works does not lose the
+// finished review: the composer keeps its own bound and the version is
+// stored with its composition.
+func TestTilesCallerDeadlineDuringComposition(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = generatetest.StagedReplies(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	answer := keepTemplate(t, "sec_rest", nil)
+	f.backend.CompleteFunc = func(c context.Context, r agent.CompleteRequest, n int) (agent.Completion, error) {
+		<-ctx.Done()
+		if c.Err() != nil {
+			t.Error("the composer's context ended with the caller's deadline")
+		}
+		return answer(c, r, n)
+	}
+	s, err := store.Open("", t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
+	result, err := generate.Publish(ctx, s, key, tilesOptions(t, f), nil)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, f.progress.String())
+	}
+	latest, err := s.Latest(context.Background(), key)
+	if err != nil || len(latest.Composition) == 0 || result.Compose.Fallback {
+		t.Fatalf("not stored with its composition: %v %+v", err, result.Compose)
+	}
+}
+
+// The version keeps the analysis's model, which prices the run, however the
+// composer's model is named.
+func TestTilesKeepTheAnalysisModel(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = generatetest.StagedReplies(nil)
+	f.backend.CompleteFunc = keepTemplate(t, "", nil)
+	_, _, result := publishTiles(t, f, tilesOptions(t, f))
+	if result.Outcome.Model != "stub-model" || result.Metadata.Model != "stub-model" {
+		t.Errorf("model %q, metadata %q", result.Outcome.Model, result.Metadata.Model)
+	}
+}
+
+// A panic while arranging the tiles costs neither the review nor the daemon:
+// in the compose stage the version is published without a composition, and
+// in a draft's layout the draft is shown without one.
+func TestTilesContainPanics(t *testing.T) {
+	t.Run("compose", func(t *testing.T) {
+		defer generate.SetComposeRun(func(context.Context, agent.ComposeRequest) (agent.ComposeOutcome, error) { panic("bug") })()
+		f := newFixture(t)
+		f.backend.RunFunc = generatetest.StagedReplies(nil)
+		s, key, result := publishTiles(t, f, tilesOptions(t, f))
+		latest, err := s.Latest(context.Background(), key)
+		if err != nil || len(latest.Composition) != 0 || result.Compose.Problem == "" {
+			t.Fatalf("%v, composition %s, compose %+v", err, latest.Composition, result.Compose)
+		}
+		if !strings.Contains(f.progress.String(), "the review is published without a composition") {
+			t.Errorf("progress:\n%s", f.progress.String())
+		}
+	})
+	t.Run("draft", func(t *testing.T) {
+		defer generate.SetProvisionalLayout(func(*tiles.Document, []string, *tiles.Composition) (tiles.Composition, error) { panic("bug") })()
+		f := newFixture(t)
+		f.backend.RunFunc = generatetest.StagedReplies(nil)
+		f.backend.CompleteFunc = keepTemplate(t, "", nil)
+		o := tilesOptions(t, f)
+		var mu sync.Mutex
+		var drafts []generate.Draft
+		o.OnDraft = func(d generate.Draft) {
+			mu.Lock()
+			defer mu.Unlock()
+			drafts = append(drafts, d)
+		}
+		_, _, result := publishTiles(t, f, o)
+		if len(drafts) < 2 || drafts[0].Composition != nil || result.Composition == nil {
+			t.Fatalf("%d drafts, first layout %s", len(drafts), drafts[0].Composition)
+		}
+	})
+}
+
+// While a later version is written its drafts keep the previous version's
+// layout, then take the new composition.
+func TestTilesDraftsOfALaterVersionKeepThePreviousLayout(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = generatetest.StagedReplies(nil)
+	f.backend.CompleteFunc = keepTemplate(t, "sec_rest", nil)
+	s, key, _ := publishTiles(t, f, tilesOptions(t, f))
+	first, err := s.Latest(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := tilesOptions(t, f)
+	f.backend.CompleteFunc = keepTemplate(t, "", nil)
+	var mu sync.Mutex
+	var drafts []generate.Draft
+	o.OnDraft = func(d generate.Draft) {
+		mu.Lock()
+		defer mu.Unlock()
+		drafts = append(drafts, d)
+	}
+	result, err := generate.Publish(context.Background(), s, key, o, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tilesOf := func(raw []byte) []string {
+		var ids []string
+		for _, e := range storedComposition(t, raw).Layout.Entries {
+			ids = append(ids, e.Tile)
+		}
+		return ids
+	}
+	before := tilesOf(first.Composition)
+	if len(drafts) < 2 || !slices.Equal(tilesOf(drafts[0].Composition), before) {
+		t.Fatalf("the first draft of version 2 is not laid out as version 1:\n%v\n%v", tilesOf(drafts[0].Composition), before)
+	}
+	last := drafts[len(drafts)-1]
+	if !bytes.Equal(last.Composition, result.Composition) || slices.Equal(tilesOf(last.Composition), before) {
+		t.Error("version 2's last draft does not carry its own composition")
 	}
 }

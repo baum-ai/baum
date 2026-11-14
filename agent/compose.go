@@ -51,9 +51,12 @@ type ComposeRequest struct {
 	MaxOutputTokens int
 	// Now stamps the composition; nil is time.Now.
 	Now func() time.Time
+	// MaxCalls bounds the calls, the repair included: zero is two, and one
+	// makes no repair, an invalid reply then falling back at once.
+	MaxCalls int
 	// Skip, when set, is why the host leaves the composer out, such as a run
-	// with too little time left (FallbackNoTime): ComposeRun makes no call
-	// and returns the template with this reason.
+	// whose budgets are spent (FallbackBudget): ComposeRun makes no call and
+	// returns the template with this reason.
 	Skip string
 
 	// redact masks a reply; nil is RedactTaskOutput. Tests replace it.
@@ -85,9 +88,8 @@ const (
 	FallbackInvalid     = "the composer's reply did not match its schema after one repair"
 	FallbackRedaction   = "the composer's reply could not be checked for secrets"
 	FallbackUnusable    = "the composer's layout could not be applied"
-	// FallbackNoTime and FallbackBudget are a host's reasons to skip the
-	// call (ComposeRequest.Skip).
-	FallbackNoTime = "too little of the time limit was left to arrange the tiles"
+	// FallbackBudget is a host's reason to skip the call
+	// (ComposeRequest.Skip).
 	FallbackBudget = "the call or token budget left nothing to arrange the tiles"
 )
 
@@ -205,7 +207,7 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 		if reply, problems = compose.ParseReply(raw); problems == nil {
 			break
 		}
-		if attempt == 1 {
+		if attempt == 1 || r.MaxCalls == 1 {
 			out.Findings = strings.Join(problems, "\n")
 			return fallback(FallbackInvalid)
 		}

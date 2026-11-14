@@ -92,8 +92,15 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	if err != nil {
 		return result, err
 	}
-	if ctx.Err() != nil {
-		return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
+	// The composition may run past the caller's deadline by its own bound
+	// (composeTiles); a finished review is still stored then. Only a
+	// cancellation, or a deadline that passed without one, stops it.
+	putCtx := ctx
+	if err := ctx.Err(); err != nil {
+		if result.Compose == nil || !errors.Is(err, context.DeadlineExceeded) {
+			return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
+		}
+		putCtx = context.WithoutCancel(ctx)
 	}
 	list := o.PriceList
 	if list == nil {
@@ -111,12 +118,12 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	}
 	next := store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments,
 		Composition: result.Composition, CompositionGenerator: result.CompositionGenerator}
-	if err = versions.Put(ctx, key, latest, next); err != nil {
+	if err = versions.Put(putCtx, key, latest, next); err != nil {
 		return result, fmt.Errorf("store generated version: %w", err)
 	}
 	published = true
 	if o.Stored != nil {
-		if e := o.Stored(ctx, key, result.Metadata); e != nil && o.Progress != nil {
+		if e := o.Stored(putCtx, key, result.Metadata); e != nil && o.Progress != nil {
 			_, _ = fmt.Fprintf(o.Progress, "warning: keep the version's commits in the clone: %v\n", e)
 		}
 	}

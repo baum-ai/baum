@@ -56,9 +56,7 @@ func drafts(run context.Context, deliver func(Draft), prepare func([]byte) (Draf
 			if run.Err() != nil {
 				continue
 			}
-			if prepared, ok := prepare(draft); ok && run.Err() == nil {
-				deliver(prepared)
-			}
+			show(run, draft, prepare, deliver)
 		}
 	}()
 	var rejected bool
@@ -82,6 +80,15 @@ func drafts(run context.Context, deliver func(Draft), prepare func([]byte) (Draf
 	return progress, func() {
 		close(waiting)
 		<-done
+	}
+}
+
+// show prepares and delivers one draft. A draft is only shown: a panic
+// preparing or delivering it skips it rather than end the process.
+func show(run context.Context, draft []byte, prepare func([]byte) (Draft, bool), deliver func(Draft)) {
+	defer func() { _ = recover() }()
+	if prepared, ok := prepare(draft); ok && run.Err() == nil {
+		deliver(prepared)
 	}
 }
 

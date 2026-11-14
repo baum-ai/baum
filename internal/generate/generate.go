@@ -368,20 +368,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		runCtx, cancel = context.WithTimeout(ctx, o.Budgets.WallClock)
 	}
 	defer cancel()
-	// With Tiles, the analysis ends early enough to leave the composition
-	// its share of the wall clock and budgets (composeReserve), and the
-	// composition runs at the end, until the run's own deadline.
+	// With Tiles, the analysis runs exactly as without it, with the whole
+	// wall clock and budgets; the composition follows it (composeTiles).
 	composing := staged && o.Tiles != nil && o.Continue == nil
-	analysisCtx := runCtx
-	var composeDeadline time.Time
-	if composing {
-		composeDeadline, _ = runCtx.Deadline()
-		if reserve := composeReserve(o.Budgets.WallClock); reserve > 0 {
-			var cancelAnalysis context.CancelFunc
-			analysisCtx, cancelAnalysis = context.WithTimeout(runCtx, o.Budgets.WallClock-reserve)
-			defer cancelAnalysis()
-		}
-	}
 	backend := o.Backend
 	if o.PassTimeout > 0 {
 		backend = passBounded{Backend: backend, timeout: o.PassTimeout}
@@ -395,9 +384,6 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	if o.Group != nil {
 		run.ModelSchema = groupModelSchema
-	}
-	if composing {
-		run.Budgets = analysisBudgets(run.Budgets)
 	}
 	// What the loop returned is masked on every path, as the hosted worker
 	// does, before any of it is shown, written or put in an error.
@@ -430,7 +416,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 				d := Draft{Document: completed}
 				switch {
 				case composing:
-					d.Composition = provisional(completed, o.Tiles.Preferences.Pins)
+					d.Composition = provisional(completed, o.Tiles.Preferences.Pins, o.Tiles.Previous)
 				case o.Continue != nil && len(o.Continue.Composition) > 0:
 					d.Composition = o.Continue.Composition
 				}
@@ -438,7 +424,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 			})
 		}
 		var stages agent.StagedOutcome
-		stages, document, genErr = generator.StagedReview(analysisCtx, continued)
+		stages, document, genErr = generator.StagedReview(runCtx, continued)
 		if stopDrafts != nil {
 			stopDrafts()
 		}
@@ -461,7 +447,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}()
 
 	if genErr != nil {
-		category, cause := classify(ctx, analysisCtx, genErr)
+		category, cause := classify(ctx, runCtx, genErr)
 		return result, fail(category, cause)
 	}
 	if redactErr != nil {
@@ -507,10 +493,17 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	if composing {
 		// The review is final: only its layout is left to choose. What the
 		// stage spends counts as the run's.
-		composition, generator, report, composeErr := composeTiles(ctx, o, composeDeadline, completed, outcome, redactor)
+		composition, generator, report, composeErr := composeTiles(ctx, o, completed, outcome, redactor)
+		// The analysis's model prices the run and names the version.
+		model := outcome.Model
 		outcome.Add(report.Outcome)
+		if model != "" {
+			outcome.Model = model
+		}
 		result.Outcome, result.Compose = outcome, report
-		if composeErr != nil || ctx.Err() != nil {
+		// Only a cancellation stops the run here: the composition is bounded
+		// by its own limit, not the run's deadline, which may have passed.
+		if composeErr != nil || errors.Is(ctx.Err(), context.Canceled) {
 			return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
 		}
 		result.Composition, result.CompositionGenerator = composition, generator

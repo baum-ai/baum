@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"slices"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -47,8 +47,8 @@ type ComposeReport struct {
 	// masked; empty when no call was made.
 	Inventory string
 	Reply     []byte
-	// Provisional is the layout drafts showed while the review was written:
-	// the template's (agent.TemplateComposition) for the finished review.
+	// Provisional is the layout drafts showed while the review was written
+	// (provisional), for the finished review.
 	Provisional json.RawMessage
 	// Elapsed is the stage's wall time.
 	Elapsed time.Duration
@@ -56,56 +56,21 @@ type ComposeReport struct {
 	Problem string
 }
 
-// The compose stage's share of a run's limits. When the run has a wall clock,
-// the analysis (outline, details and context) ends ComposeReserve before it,
-// at most a quarter of it, and the composition has what is left; with less
-// than composeMinimum left it is skipped and the template applies. When call
-// or token budgets are set, the analysis leaves two calls and 60,000 tokens to
-// it, if they are large enough to spare them.
-const (
-	ComposeReserve       = 75 * time.Second
-	ComposeMinimum       = 60 * time.Second
-	composeReserveCalls  = 2
-	composeReserveTokens = 60000
-)
+// composeMinTokens is the least of a token budget left in which the composer
+// is called: an inventory and a layout take a few thousand tokens.
+const composeMinTokens = 15000
 
-// composeReserve is the time the analysis leaves the composition.
-func composeReserve(wallClock time.Duration) time.Duration {
-	if wallClock <= 0 {
+// composeCalls is how many calls the run's budgets leave the composer: two
+// (one repair) without a call budget, else what is left, at most two. Zero
+// skips it, as does a token budget with less than composeMinTokens left.
+func composeCalls(b agent.Budgets, spent agent.Outcome) int {
+	if b.MaxTokens > 0 && b.MaxTokens-spent.Tokens < composeMinTokens {
 		return 0
 	}
-	return min(ComposeReserve, wallClock/4)
-}
-
-// composeMinimum is the least time left in which the composer is called.
-func composeMinimum(wallClock time.Duration) time.Duration {
-	if wallClock <= 0 {
-		return ComposeMinimum
+	if b.MaxCalls > 0 {
+		return min(max(b.MaxCalls-spent.Calls, 0), 2)
 	}
-	return min(ComposeMinimum, composeReserve(wallClock)*4/5)
-}
-
-// analysisBudgets are the budgets the analysis of a run with Tiles has.
-func analysisBudgets(b agent.Budgets) agent.Budgets {
-	if b.MaxCalls > 2*composeReserveCalls {
-		b.MaxCalls -= composeReserveCalls
-	}
-	if b.MaxTokens > 2*composeReserveTokens {
-		b.MaxTokens -= composeReserveTokens
-	}
-	return b
-}
-
-// budgetLeft reports whether the run's budgets leave the composition room
-// after the analysis spent spent.
-func budgetLeft(b agent.Budgets, spent agent.Outcome) bool {
-	if b.MaxCalls > 0 && b.MaxCalls-spent.Calls < 1 {
-		return false
-	}
-	if b.MaxTokens > 0 && b.MaxTokens-spent.Tokens < composeReserveTokens/2 {
-		return false
-	}
-	return true
+	return 2
 }
 
 // converted is the tile document of a completed review, as the store
@@ -120,14 +85,22 @@ func converted(document []byte, draft bool) (*tiles.Document, error) {
 }
 
 // provisional is the layout of a draft, or of a review the composer has not
-// arranged: the change kind's template with the pins, encoded, or nil when
-// the document does not convert.
-func provisional(document []byte, pins []string) []byte {
+// arranged: the previous version's composition renormalised against it, when
+// there is one that applies, so a new version's page keeps the layout the
+// reader knows; else the change kind's template with the pins. It is nil
+// when the document does not convert, or when making it fails in any way, a
+// panic included: the draft is then shown in the converted layout.
+func provisional(document []byte, pins []string, previous *tiles.Composition) (out []byte) {
+	defer func() {
+		if recover() != nil {
+			out = nil
+		}
+	}()
 	doc, err := converted(document, true)
 	if err != nil {
 		return nil
 	}
-	c, _, err := agent.TemplateComposition(doc, pins)
+	c, err := provisionalLayout(doc, pins, previous)
 	if err != nil {
 		return nil
 	}
@@ -138,11 +111,31 @@ func provisional(document []byte, pins []string) []byte {
 	return encoded
 }
 
-// detached is ctx without its deadline: it ends when ctx is cancelled, but
-// the stage it bounds keeps its own time limit.
+// provisionalLayout is provisional's layout of a converted draft; tests
+// replace it.
+var provisionalLayout = func(doc *tiles.Document, pins []string, previous *tiles.Composition) (tiles.Composition, error) {
+	if previous != nil && !previous.Empty() {
+		kept := *previous
+		kept.Generator, kept.Layout.Hidden = nil, nil
+		kept.Layout.Entries = slices.Clone(previous.Layout.Entries)
+		if n, report := tiles.NormalizeComposition(doc, &kept); report.Counts()[tiles.FixUnusable] == 0 && !n.Empty() {
+			return n, nil
+		}
+	}
+	c, _, err := agent.TemplateComposition(doc, pins)
+	return c, err
+}
+
+// detached is ctx without its deadline: it is cancelled when ctx is
+// cancelled, but not when ctx's deadline passes, so the stage it bounds keeps
+// its own time limit.
 func detached(ctx context.Context) (context.Context, context.CancelFunc) {
 	inner, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
-	stop := context.AfterFunc(ctx, func() { cancel(context.Cause(ctx)) })
+	stop := context.AfterFunc(ctx, func() {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			cancel(context.Cause(ctx))
+		}
+	})
 	return inner, func() {
 		stop()
 		cancel(nil)
@@ -151,43 +144,45 @@ func detached(ctx context.Context) (context.Context, context.CancelFunc) {
 
 // composeTiles arranges the tiles of the completed review document: the
 // composition to store and its generator, or none, and what the stage did.
-// It is bounded by deadline (zero for none), at most
-// agent.DefaultComposeTimeout, and skipped, to the template, when less than
-// composeMinimum is left or the budgets are spent. Only a cancelled ctx is an
-// error (agent.ErrComposeInterrupted): the run is stopped and stores nothing.
-// Any other failure, a panic included, leaves the version without a
-// composition and says why in the report.
-func composeTiles(ctx context.Context, o Options, deadline time.Time, document []byte, spent agent.Outcome, redactor *bundle.Redactor) (composition []byte, generator *tiles.Generator, report *ComposeReport, err error) {
+// It runs after the analysis, which had the run's whole wall clock and
+// budgets, on a context that follows ctx's cancellation but not its
+// deadline, bounded by agent.DefaultComposeTimeout: the run may end up to
+// that much after its wall clock. It makes at most the calls the run's
+// budgets leave (composeCalls), and none, the template applying, when they
+// leave none. Only a cancelled ctx is an error (agent.ErrComposeInterrupted):
+// the run is stopped and stores nothing. Any other failure, a panic
+// included, leaves the version without a composition and says why in the
+// report.
+func composeTiles(ctx context.Context, o Options, document []byte, spent agent.Outcome, redactor *bundle.Redactor) (composition []byte, generator *tiles.Generator, report *ComposeReport, err error) {
 	started := time.Now()
 	report = &ComposeReport{}
-	defer func() { report.Elapsed = time.Since(started) }()
+	defer func() {
+		report.Elapsed = time.Since(started)
+		if r := recover(); r != nil {
+			composition, generator, err = nil, nil, nil
+			report.Problem = "arranging the tiles failed"
+		}
+	}()
 	t := o.Tiles
 	doc, convertErr := converted(document, false)
 	if convertErr != nil {
 		report.Problem = "the review does not convert to tiles"
 		return nil, nil, report, nil
 	}
-	report.Provisional = provisional(document, t.Preferences.Pins)
+	report.Provisional = provisional(document, t.Preferences.Pins, t.Previous)
 	prompts := t.Prompts
 	if prompts == nil {
 		prompts = prompt.TilesPrompts{}
 	}
 	request := agent.ComposeRequest{Completer: CompleterOf(o.Backend), Backend: o.Backend.Name(), Prompts: prompts, Document: doc,
-		Previous: t.Previous, Preferences: t.Preferences, Redactor: redactor, CallTimeout: o.PassTimeout, Timeout: agent.DefaultComposeTimeout}
-	if !deadline.IsZero() {
-		left := time.Until(deadline)
-		if left < composeMinimum(o.Budgets.WallClock) {
-			request.Skip = agent.FallbackNoTime
-		} else {
-			request.Timeout = min(request.Timeout, left)
-		}
-	}
-	if request.Skip == "" && !budgetLeft(o.Budgets, spent) {
+		Previous: t.Previous, Preferences: t.Preferences, Redactor: redactor, CallTimeout: o.PassTimeout,
+		Timeout: agent.DefaultComposeTimeout, MaxCalls: composeCalls(o.Budgets, spent)}
+	if request.MaxCalls == 0 {
 		request.Skip = agent.FallbackBudget
 	}
 	composeCtx, cancel := detached(ctx)
 	defer cancel()
-	out, err := safeCompose(composeCtx, request)
+	out, err := composeRun(composeCtx, request)
 	report.Outcome = out.Outcome
 	report.Fallback, report.FallbackReason, report.Repaired = out.Fallback, out.FallbackReason, out.Repaired
 	report.Inventory, report.Reply = out.Inventory, out.Reply
@@ -210,13 +205,5 @@ func composeTiles(ctx context.Context, o Options, deadline time.Time, document [
 	return composition, generator, report, nil
 }
 
-// safeCompose is agent.ComposeRun, with a panic an error: a bug in arranging
-// the tiles must not cost the review.
-func safeCompose(ctx context.Context, request agent.ComposeRequest) (out agent.ComposeOutcome, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("arranging the tiles panicked: %v", r)
-		}
-	}()
-	return agent.ComposeRun(ctx, request)
-}
+// composeRun is agent.ComposeRun; tests replace it.
+var composeRun = agent.ComposeRun
