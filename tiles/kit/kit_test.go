@@ -19,6 +19,7 @@ import (
 	"golang.org/x/net/html/atom"
 
 	"github.com/baum-ai/baum/internal/goldentest"
+	"github.com/baum-ai/baum/tiles"
 )
 
 const sampleTile = `<style>
@@ -670,5 +671,15 @@ func TestV1IsFrozen(t *testing.T) {
 			"adds, update testdata/v1.sha256 in the same commit (BAUM_KIT_REPIN=1 go test "+
 			"./tiles/kit -run TestV1IsFrozen) and say in the commit message what was added.\n"+
 			"got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The validator accepts a definition for kit majors 1 to tiles.KitLatest, and
+// the frame route can only compose the majors this package ships.
+func TestMajorsMatchWhatTheValidatorAccepts(t *testing.T) {
+	for n := 0; n <= tiles.KitLatest+1; n++ {
+		if Supported(n) != tiles.KitSupported(n) {
+			t.Errorf("kit major %d: shipped %v, accepted by the validator %v", n, Supported(n), tiles.KitSupported(n))
+		}
 	}
 }
