@@ -1517,6 +1517,48 @@ The answer is `no-store`, sets no cookie, ignores `Range` and carries
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
 `Cross-Origin-Resource-Policy: same-origin`.
 
+**What the page checks.** The app's host (see "Custom tile kit" in
+`ARCHITECTURE.md`) treats every message from a frame as untrusted:
+
+- The frame is `<iframe sandbox="allow-scripts">` with no other flag, no
+  `srcdoc`, `referrerpolicy="no-referrer"` and an empty `allow`; so it cannot
+  open windows or dialogs, submit forms, navigate the app's page or reach
+  storage, and its own policy lets it load nothing.
+- A message counts only from a frame's own window (`event.source`) and with
+  the opaque origin `"null"`, so no frame can speak for another tile or for
+  the page; a frame's kit likewise hears only the page, so a frame posting
+  to its neighbours as if it were the page is ignored.
+- Every field is read with strict type checks; strings over 1 KiB are
+  dropped and what a tile writes is shown only as text. More than 30
+  messages a second are dropped, and a frame that keeps sending more for
+  three seconds is unmounted.
+- A detail's height is held to 120 to 20,000px. A glance's box is fixed.
+- A frame can ask the page only to jump to an item its own data cites,
+  which the page resolved from the review it already shows (the frame names
+  it by key, never by address), to open the session panel's question about
+  the tile, or to act on a whitelisted key (Escape, `u`, `j`, `k`, the
+  arrows, `[`, `]`, `?`); and only from a detail the reader is in, with the
+  keyboard on the frame (and, for a jump or a question, a recent click or
+  key press). A glance asks nothing and takes no focus; focus a frame takes
+  by itself is taken back, and a frame that keeps taking it is unmounted.
+- A frame that does not start, does not draw in time, navigates itself or
+  floods is unmounted and its tile says it couldn't load. That failure is
+  about that frame only: nothing a frame sends marks its tile type, or any
+  other tile, as broken. Only the daemon's own render check or the
+  authenticated app may block a type.
+- Inside the desktop app on Windows the page mounts no tile frame and says
+  custom tiles aren't available there yet: whether a sandboxed frame in
+  WebView2 can reach the desktop shell's commands has not been checked.
+
+The browser suite (`app/custom-tile-tests/tile-frames.spec.ts`) runs hostile
+tiles on the real frame route in Chromium: every way out it tries (reading
+the page, cookies and storage, top and parent navigation, `window.open`,
+dialogs, form submission, nested frames, fetch, XHR, WebSocket,
+EventSource, beacons, images, fonts, stylesheets and CSS `url()` to the
+daemon and to another origin, workers, spoofed and oversized messages,
+floods, taking the focus, navigating itself) is refused, the page stays as
+it was and a listening server on another port receives nothing.
+
 **What a tile is given.** The frame protocol gives a tile its own data, the
 face and size it draws, the app's theme and language, and the items of the
 review its data cites. Nothing else: not the review, the repository, other
@@ -1535,7 +1577,14 @@ by the chat's agent.
   govern. baum ships no script that tries to block these inside the frame: a
   fresh realm gets around such a script. It minimises what a tile receives
   instead.
-- A tile that runs a busy loop freezes the app's window until it is closed.
+- A tile that runs a busy loop freezes the app's window until it is closed,
+  where the engine runs the frame on the page's thread (Chromium does in some
+  runs and not in others; WebKit is not yet verified). The host unmounts a frame that does
+  not draw in time, but cannot interrupt one that holds the thread.
+- A frame can navigate itself to a page of the daemon's own origin: the
+  request reaches the daemon without the cookie, the namespace or any data,
+  and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
+  host then unmounts the frame.
 - In the desktop app, a frame's navigation to an external address may be
   handed to the desktop shell's navigation handler, which opens external
   addresses in your browser, before the page's `frame-src` is applied. Until

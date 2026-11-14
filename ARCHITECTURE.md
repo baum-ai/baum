@@ -1259,11 +1259,16 @@ outside a test binary. `tileviewtest.AddCustomTiles` adds three synthetic
 types (`internal/tileview/tileviewtest/testdata/custom`): `widget_health`,
 written against the kit's documented API; `escape_probe`, which tries every
 way out of its frame and posts what each did to the page as `{probe:
-"escape_probe", results}`; and `widget_owners` (tile `newer_kit`), written for
-a kit major this version lacks and so unavailable. The browser fixture serves
-them in every version of acme/demo#7's review when it is started with
-`BAUM_APP_CUSTOM_TILES=1`, as the development browser suite starts it; the
-main suite and its screenshots do not see them.
+"escape_probe", mode, face, results}`; and `widget_owners` (tile `newer_kit`),
+written for a kit major this version lacks and so unavailable.
+`tileviewtest.AddBrowserTiles` adds those and a tile of the escape probe's
+type for each of its other modes (`escape_spoof`, `escape_flood`,
+`escape_leave_daemon`, `escape_leave_outside`, `escape_busy`: hostile
+messages, a flood, navigating itself to the daemon or another origin, a busy
+loop). The browser fixture serves them in every version of acme/demo#7's
+review when it is started with `BAUM_APP_CUSTOM_TILES=1`, as the custom tile
+suite (`app/custom-tile-tests`) and the development browser suite start it;
+the main suite and its screenshots do not see them.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,
@@ -1442,6 +1447,80 @@ are rules for whoever writes the page's side:
   tile can fake `ready`, swallow its errors or replace `console.error`. The
   render check is a quality gate, not a security control; the sandbox, the
   CSP and what the page gives a frame are the boundary.
+
+**The app's host** (`app/src/tiles/custom/`) is the page's side. A custom
+tile is one more type of the tile page's registry (`custom-tile.tsx`): its
+kicker is its definition's title, the card adds the tile's headline under its
+title, and both faces draw `TileFrame` (`tile-frame.tsx`), which mounts
+`<iframe sandbox="allow-scripts" src="/tile-frames/<hex>"
+referrerpolicy="no-referrer" allow="" title="<tile title>">`; never
+`allow-same-origin` and never `srcdoc`, which the desktop shell refuses.
+
+- **Mounting.** One frame per face on screen, created without an address:
+  its window is registered with the one `message` router (`router.ts`)
+  before `src` is set. A glance mounts once its card is within 600px of the
+  scrolling area's view and is unmounted past 2400px; at most 16 glances are
+  mounted at once, the rest waiting their turn (`environment.ts`). A detail
+  mounts at once. Inside the desktop app on Windows (`__TAURI_INTERNALS__`
+  and a Windows user agent) no frame mounts and the tile says custom tiles
+  aren't available there yet: a sandboxed frame there may reach the shell's
+  commands, which is not yet checked. Everywhere else frames mount.
+- **Messages.** The router drops a message whose `source` is not a
+  registered frame's window or whose `origin` is not `"null"`.
+  `protocol.ts` reads every message with strict guards (a plain object, the
+  protocol, a known kind, each field of its type, strings over 1 KiB
+  dropped, an error's message clipped to 500 characters and shown as text);
+  anything else is dropped. A frame may send 30 messages a second; the rest
+  of that second's are dropped unread, and a frame over the rate for three
+  seconds running, or past 300 in one second, is unmounted.
+- **Handshake.** On `hello` the page sends `init` with the face, size, the
+  app's theme (its `data-theme`, followed live and sent as `theme`), the
+  language, the data and the resolved citations (`refs.ts`, below). A detail
+  that cites code whose excerpt the document omits first reads it from the
+  page's patch source (waiting at most 1.5 seconds), as the viewer's cited
+  code does. Changed data or citations are sent as `update`.
+- **Sizes.** A glance's box is reserved before it loads (7 or 9 rem by size,
+  growing with its card's row) and the frame fills it; its resize requests
+  are ignored. A detail's height follows `ready` and `resize`, clamped to
+  120 to 20,000px; ten growths by one amount within a second freeze it. A
+  detail reserves its last height (240px the first time) so reopening it
+  does not move the page; the frame stays invisible until `ready`.
+- **Asking the page.** `jump`, `ask` and `key` count only from a detail
+  whose iframe is `document.activeElement` while the page has focus, and
+  `jump` and `ask` only while the browser reports a user activation. A jump
+  names a key the page resolved for that frame and marked navigable: a hunk
+  or file opens the Files pane at it (`ReviewFiles.open`), a risk or evidence
+  item its tile at it, a change its tile, a tile its detail; anything else
+  is ignored. A forwarded key is dispatched on the iframe element as a
+  `keydown`, so the page's own keys (Escape and `u` back, the arrows and
+  brackets stepping) act on it. `open` is ignored: only a glance would send
+  it, and a glance is inert. A glance takes no focus: it is under its card's
+  link with `tabindex=-1`. When the page's window loses focus to a frame
+  the reader did not give it to (a glance, or a detail without a Tab press
+  in the last second or the pointer over it), the page takes it back with
+  `iframe.blur()`; a frame that takes it a fourth time is unmounted.
+- **Failure.** A frame that sends no `hello` within 5 seconds is mounted
+  again once after the page read its tile routes again
+  (`TileHost.reread`), then shows "This tile couldn't load". So does a frame
+  that does not send `ready` within 5 seconds of `init`, reports a
+  `script_error` or `timeout` before it (other errors leave it drawing),
+  sends a second `hello` or loads again after `ready` (it navigated), floods
+  or keeps taking the focus. A detail says why and offers Retry. Each failure
+  belongs to that frame instance alone (by tile, digest and face, for the
+  page's life): nothing a frame sends marks its type or another tile as
+  broken, and only the daemon marks a digest hung. A tile the daemon left
+  unavailable keeps the unavailable face; one made with a newer kit says
+  "This tile was made with a newer version of baum".
+- **Citations** (`refs.ts`). The page walks the data as the daemon does
+  (members by name, items in order, the shapes of `$defs/citation`, at most
+  256) and resolves each against the document on screen: hunks (path,
+  range, counts, and for a detail the cited lines with three around them, or
+  the hunk, at most 200 lines, 64 hunks and 384 KiB in all), files, risks,
+  evidence, changes, tiles, checks and review threads; commits, sessions and
+  the kinds that carry what they name get a label only. What the document
+  lacks is `unavailable` (`not_in_review`, or `too_many` past the cap). A
+  glance gets no code. A comment on a custom tile is placed on the hunks
+  its data cites.
 
 ### Tiles
 
@@ -5106,9 +5185,10 @@ then has the width. Everything else is the viewer's and the page's own. The land
 grid mirrors `tiles.Hidden` and `tiles.More`: a group member past
 `collapse_after` waits behind its group's cell wherever it stands, and the
 entries from `landing` on behind "Show N more tiles". A registry maps each
-built-in type to its glance and detail faces, a check of its data and the
-anchors a comment on it is placed on; an unknown, custom, unavailable or
-failing tile renders unavailable inside its own error boundary. Comments use
+type to its glance and detail faces, a check of its data and the anchors a
+comment on it is placed on; a custom tile's faces are frames (see "The app's
+host" under "Custom tile kit"). An unknown, unavailable or failing tile
+renders unavailable inside its own error boundary. Comments use
 the `tile` target except on a Change tile (its section's target) and a risk
 (the risk's), so a full review and an older daemon read them as before.
 
