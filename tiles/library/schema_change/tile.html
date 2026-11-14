@@ -95,9 +95,9 @@
   /** The lead: the count in bold, the kinds of change after it. */
   function lede(data) {
     if (data.tables.length === 0) {
-      return baum.html`<span class="kit-lede kit-truncate kit-grow">Queries change; the schema does not</span>`;
+      return baum.html`<span class="kit-lede kit-clamp-2 kit-grow">Queries change; the schema does not</span>`;
     }
-    return baum.html`<span class="kit-truncate kit-grow">
+    return baum.html`<span class="kit-clamp-2 kit-grow">
       <span class="kit-lede">${plural(data.tables.length, "table")}</span>
       <span class="kit-muted">${counts(data.tables).map((part) => ` · ${part}`)}</span>
     </span>`;
@@ -148,19 +148,48 @@
     return badges;
   }
 
+
+  /** Takes rows off the end of a glance's list until it fits its box, as
+   *  the lead may wrap to two lines, and says how many are left out. */
+  function fit(list, more, left) {
+    const rows = [...list.children];
+    let cut = left;
+    const show = () => {
+      more.textContent = `${cut} more`;
+      more.hidden = cut === 0;
+    };
+    show();
+    for (let pass = 0; pass < 2; pass++) {
+      while (rows.length > 1 && list.scrollHeight > list.clientHeight + 1) {
+        rows.pop().remove();
+        cut++;
+      }
+      show();
+    }
+  }
+
+  /** The first card citing a hunk opens its code; later cards citing the
+   *  same hunk keep it closed, so the detail does not repeat a block. */
+  function opener() {
+    const shown = new Set();
+    return (citation, wanted) => {
+      if (!wanted || shown.has(citation.id)) return false;
+      shown.add(citation.id);
+      return true;
+    };
+  }
+
   function glance({ data, size }) {
     if (data.tables.length === 0 && data.migrations.length === 0 && data.data_changes.length === 0) {
       return baum.empty("No schema changes.");
     }
     const tables = sorted(data.tables);
-    // Rows a box holds: four in a half, three in a third, two rows of two
-    // across a full one.
-    const room = size === "third" ? 3 : 4;
-    const shown = room;
-    const rest = tables.length - Math.min(tables.length, shown);
+    // As many rows as could fit; fit takes off what the box cannot hold.
+    const room = size === "third" ? 4 : 6;
+    const list = tables.length > 0 ? tables : data.migrations;
     const rows =
       tables.length > 0
-        ? tables.slice(0, shown).map(glanceRow)
+        ? tables.slice(0, room).map(glanceRow)
         : data.migrations.slice(0, room).map(
             (m) => baum.html`<li>
               <span class="kit-tag change">${KIND[m.kind]}</span>
@@ -168,19 +197,22 @@
             </li>`,
           );
     const badges = warnings(data, true);
-    const foot = runFacts(data);
-    if (rest > 0) foot.push(`${rest} more`);
-    if (data.data_changes.length) foot.push(plural(data.data_changes.length, "data change"));
-    return baum.html`<div class="kit-glance">
-      <div class="kit-row" data-wrap="no">
+    const facts = runFacts(data);
+    if (data.data_changes.length) facts.push(plural(data.data_changes.length, "data change"));
+    const node = baum.html`<div class="kit-glance">
+      <div class="kit-row" data-wrap="no" data-align="start">
         ${lede(data)}
         ${size === "third" ? badges.slice(0, 1) : badges.slice(0, 2)}
       </div>
       <ul class=${["kit-list", "glance-rows", size === "full" ? "across" : null]} data-gap="1">
         ${rows}
       </ul>
-      ${foot.length ? baum.html`<p class="kit-foot">${foot.map((fact) => baum.html`<span>${fact}</span>`)}</p>` : null}
+      <p class="kit-foot">${facts.map((fact) => baum.html`<span>${fact}</span>`)}<span class="more" hidden></span></p>
     </div>`;
+    const ul = node.querySelector(".glance-rows");
+    const more = node.querySelector(".more");
+    requestAnimationFrame(() => fit(ul, more, list.length - rows.length));
+    return node;
   }
 
   function cites(list) {
@@ -249,12 +281,10 @@
       </div>
       ${columnTable(table)}
       ${indexList(table)}
+      ${cites(table.cites)}
       <details class="kit-details" open=${open}>
         <summary>Statement</summary>
-        <div class="kit-stack" data-gap="2">
-          ${baum.diff(table.cites[0], { maxLines: 14 })}
-          ${table.cites.length > 1 ? cites(table.cites.slice(1)) : null}
-        </div>
+        ${baum.diff(table.cites[0], { maxLines: 14 })}
       </details>
     </article>`;
   }
@@ -276,7 +306,7 @@
     return baum.html`<div class="kit-callout kit-stack" data-tone="critical" data-gap="2">
       <span class="kit-strong">Loses or rejects existing data</span>
       <ul class="kit-list" data-gap="1">
-        ${items.slice(0, 12).map((item) => baum.html`<li><span class="kit-grow kit-break">${item.text}</span>${baum.cite(item.cite)}</li>`)}
+        ${items.slice(0, 12).map((item) => baum.html`<li class="kit-stack" data-gap="1"><span class="kit-break">${item.text}</span><span>${baum.cite(item.cite)}</span></li>`)}
       </ul>
       ${items.length > 12 ? baum.html`<span class="kit-small kit-muted">${plural(items.length - 12, "more")} in the tables below</span>` : null}
     </div>`;
@@ -318,6 +348,7 @@
     const tables = sorted(data.tables);
     const facts = runFacts(data);
     const badges = warnings(data, false);
+    const open = opener();
     return baum.html`<div class="kit-stack" data-gap="6">
       <div class="kit-stack" data-gap="3">
         ${baum.md(data.summary)}
@@ -333,7 +364,7 @@
         ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
         : null}
       ${tables.length
-        ? section("Tables", baum.html`<div class="kit-stack">${tables.map((table, i) => tableCard(table, i < 3))}</div>`)
+        ? section("Tables", baum.html`<div class="kit-stack">${tables.map((table, i) => tableCard(table, open(table.cites[0], i < 3)))}</div>`)
         : null}
       ${migrationList(data)}
       ${data.data_changes.length

@@ -124,7 +124,7 @@
 
   /** The lead: the count in bold, the kinds of change after it. */
   function lede(endpoints) {
-    return baum.html`<span class="kit-truncate kit-grow">
+    return baum.html`<span class="kit-clamp-2 kit-grow">
       <span class="kit-lede">${noun(endpoints)}</span>
       <span class="kit-muted"> · ${changes(endpoints)}</span>
     </span>`;
@@ -156,27 +156,58 @@
     return facts;
   }
 
+
+  /** Takes rows off the end of a glance's list until it fits its box, as
+   *  the lead may wrap to two lines, and says how many are left out. */
+  function fit(list, more, left) {
+    const rows = [...list.children];
+    let cut = left;
+    const show = () => {
+      more.textContent = `${cut} more`;
+      more.hidden = cut === 0;
+    };
+    show();
+    for (let pass = 0; pass < 2; pass++) {
+      while (rows.length > 1 && list.scrollHeight > list.clientHeight + 1) {
+        rows.pop().remove();
+        cut++;
+      }
+      show();
+    }
+  }
+
+  /** The first card citing a hunk opens its code; later cards citing the
+   *  same hunk keep it closed, so the detail does not repeat a block. */
+  function opener() {
+    const shown = new Set();
+    return (citation, wanted) => {
+      if (!wanted || shown.has(citation.id)) return false;
+      shown.add(citation.id);
+      return true;
+    };
+  }
+
   function glance({ data, size }) {
     if (data.endpoints.length === 0) return baum.empty("No interface changes.");
     const endpoints = sorted(data.endpoints);
     const breaking = endpoints.filter((e) => e.breaking).length;
-    // Rows a box holds: four in a half, three in a third, two rows of two
-    // across a full one.
-    const room = size === "third" ? 3 : 4;
-    const shown = room;
-    const rest = endpoints.length - Math.min(endpoints.length, shown);
-    const foot = callers(data);
-    if (rest > 0) foot.unshift(`${rest} more`);
-    return baum.html`<div class="kit-glance">
-      <div class="kit-row" data-wrap="no">
+    // As many rows as could fit; fit takes off what the box cannot hold.
+    const room = size === "third" ? 4 : 6;
+    const rows = endpoints.slice(0, room).map(glanceRow);
+    const node = baum.html`<div class="kit-glance">
+      <div class="kit-row" data-wrap="no" data-align="start">
         ${lede(endpoints)}
         ${breaking ? baum.html`<span class="kit-badge" data-tone="critical">${breaking} breaking</span>` : null}
       </div>
       <ul class=${["kit-list", "glance-rows", size === "full" ? "across" : null]} data-gap="1">
-        ${endpoints.slice(0, shown).map(glanceRow)}
+        ${rows}
       </ul>
-      ${foot.length ? baum.html`<p class="kit-foot">${foot.map((fact) => baum.html`<span>${fact}</span>`)}</p>` : null}
+      <p class="kit-foot">${callers(data).map((fact) => baum.html`<span>${fact}</span>`)}<span class="more" hidden></span></p>
     </div>`;
+    const ul = node.querySelector(".glance-rows");
+    const more = node.querySelector(".more");
+    requestAnimationFrame(() => fit(ul, more, endpoints.length - rows.length));
+    return node;
   }
 
   function cites(list) {
@@ -239,12 +270,10 @@
       ${fieldTable("Request", e.request, added)}
       ${fieldTable("Response", e.response, added)}
       ${errorList(e.errors)}
+      ${cites(e.cites)}
       <details class="kit-details" open=${open}>
         <summary>Code</summary>
-        <div class="kit-stack" data-gap="2">
-          ${baum.diff(e.cites[0], { maxLines: 14 })}
-          ${e.cites.length > 1 ? cites(e.cites.slice(1)) : null}
-        </div>
+        ${baum.diff(e.cites[0], { maxLines: 14 })}
       </details>
     </article>`;
   }
@@ -279,6 +308,7 @@
     if (data.endpoints.length === 0) return baum.empty("No interface changes in this pull request.");
     const endpoints = sorted(data.endpoints);
     const breaking = endpoints.filter((e) => e.breaking);
+    const open = opener();
     return baum.html`<div class="kit-stack" data-gap="6">
       <div class="kit-stack" data-gap="3">
         ${baum.md(data.summary)}
@@ -290,7 +320,7 @@
       ${data.related && data.related.length
         ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
         : null}
-      ${section("Entry points", baum.html`<div class="kit-stack">${endpoints.map((e, i) => endpointCard(e, i < 3 || e.breaking))}</div>`)}
+      ${section("Entry points", baum.html`<div class="kit-stack">${endpoints.map((e, i) => endpointCard(e, open(e.cites[0], i < 3 || e.breaking)))}</div>`)}
       ${callerList(data)}
     </div>`;
   }

@@ -22,8 +22,8 @@ import (
 // same digest, so an edit must be deliberate: update the digest in the same
 // commit and say in its message what changed.
 var digests = map[string]string{
-	"schema_change": "sha256:81181d6714a4b1981ee3f61bfcf518810f022c7ae2d3d128716c3596ea0607d9",
-	"api_change":    "sha256:36c13ed8065fbeade57dfd5fb17b5da4c2aba0f64d2f320473d2689ca86adb16",
+	"schema_change": "sha256:1adc2e4348ccd7a6ec5d400b5f18a7f9654d18a5450af64b574b34770619e505",
+	"api_change":    "sha256:0ed8c133a81084fdc1810a08872afefe4dbb67613d52cacf1be95666979307f3",
 }
 
 func TestBuiltinTypesPassEveryCheck(t *testing.T) {

@@ -2,6 +2,7 @@ package library_test
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -67,7 +68,7 @@ func TestCheckFill(t *testing.T) {
 		}
 	}
 	diff := diffOf(s)
-	if problems := library.CheckFill(v, entry.Encoded, s.Data, diff); len(problems) > 0 {
+	if problems := library.CheckFill(v, entry, s.Data, diff); len(problems) > 0 {
 		t.Fatalf("the sample fails: %v", problems)
 	}
 	change := func(edit func(map[string]any)) json.RawMessage {
@@ -96,14 +97,14 @@ func TestCheckFill(t *testing.T) {
 		"schema": {change(func(d map[string]any) { d["engine"] = "oracle" }), "does not match its schema"},
 	}
 	for name, tc := range cases {
-		problems := library.CheckFill(v, entry.Encoded, tc.data, diff)
+		problems := library.CheckFill(v, entry, tc.data, diff)
 		if !strings.Contains(strings.Join(problems, "; "), tc.want) {
 			t.Errorf("%s: problems %v, want %q", name, problems, tc.want)
 		}
 	}
 	// A hunk with no new lines is cited without lines.
 	removed := []bundle.Hunk{{ID: "h_5a0c31e7b2d4", StartLine: 36}}
-	if problems := library.CheckFill(v, entry.Encoded, s.Data, removed); !strings.Contains(strings.Join(problems, "; "), "adds no lines") {
+	if problems := library.CheckFill(v, entry, s.Data, removed); !strings.Contains(strings.Join(problems, "; "), "adds no lines") {
 		t.Errorf("lines in a hunk without new lines: %v", problems)
 	}
 }
@@ -124,6 +125,41 @@ func TestHunkFromPatch(t *testing.T) {
 	for i := range want {
 		if h.Lines[i] != want[i] {
 			t.Errorf("line %d: %+v, want %+v", i, h.Lines[i], want[i])
+		}
+	}
+}
+
+// A fill that finds nothing the type is for answers that it does not apply
+// rather than writing a tile that says so: data with every AppliesWith array
+// empty is refused, such as a schema change tile for a pull request that
+// only edits queries.
+func TestCheckFillRefusesATileOfNothing(t *testing.T) {
+	v := tiles.NewValidator()
+	raw, err := os.ReadFile("testdata/schema_change-queries-only.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queries library.Sample
+	if err := json.Unmarshal(raw, &queries); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		typ  string
+		data json.RawMessage
+		diff []bundle.Hunk
+	}{
+		{"schema_change", queries.Data, diffOf(queries)},
+		{"schema_change", json.RawMessage(`{"engine":"unknown","summary":"No change.","migrations":[],"tables":[],"data_changes":[],"readers":[]}`), nil},
+		{"api_change", json.RawMessage(`{"summary":"No change.","endpoints":[],"consumers":[],"docs":null}`), nil},
+	}
+	for _, tc := range cases {
+		entry, _ := library.Get(tc.typ)
+		if v.CheckData(entry.Encoded, tc.data) != nil {
+			t.Fatalf("%s: the data itself is invalid", tc.typ)
+		}
+		problems := library.CheckFill(v, entry, tc.data, tc.diff)
+		if !strings.Contains(strings.Join(problems, "; "), "does not apply") {
+			t.Errorf("%s %s: problems %v, want that the tile does not apply", tc.typ, tc.data, problems)
 		}
 	}
 }

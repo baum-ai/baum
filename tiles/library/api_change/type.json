@@ -1,8 +1,9 @@
 {
   "name": "api_change",
   "title": "Interface changes",
-  "use_when": "When the pull request adds, removes or changes an interface other code calls: HTTP routes and payloads, RPC or agent tools, CLI commands, published schemas, library exports. Not internal code or UI.",
+  "use_when": "When the pull request adds, removes or changes an interface other code calls: HTTP routes and payloads, RPC or agent tools, CLI commands, published schemas or packages. Not app-internal code or UI.",
   "glance": "Entry points added, changed and removed, breaking ones first, with their method or kind and whether callers were updated.",
   "sizes": ["half", "full", "third"],
-  "kit": 1
+  "kit": 1,
+  "applies_with": ["endpoints"]
 }

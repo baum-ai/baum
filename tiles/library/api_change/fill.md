@@ -9,12 +9,12 @@ Read the diff by its content. An entry point is any of:
 - A CLI command or flag: a subcommand, a flag added, renamed or removed, a changed exit code or output format that scripts read.
 - A published document: a JSON Schema, OpenAPI file or protocol whose consumers are outside this change.
 - An event: a webhook payload, a queue message or an event other services consume.
-- A library export: an exported symbol of a package published for other repositories to import (an SDK or a module with its own releases). An exported function or type of an application's own packages is internal, even when exported.
+- A library export: an exported symbol of a package that is published or used outside this repository, and only when the diff or the repository shows it: a package manifest that publishes it (`package.json` without `"private": true` and with a registry, a gem or crate spec), a Go module others import by its public path, or a documented SDK. An application's own exported functions, types and components that only this repository uses are internal, even when exported, and even when they live in a package of their own inside the repository.
 
 Leave out:
 
 - internal code: functions, types and packages only this repository uses (Go `internal/` packages, the app's own modules), test servers and mocks;
-- the user interface: pages and their URLs, components, keyboard shortcuts, CSS classes, data attributes and layout;
+- the user interface: pages and their URLs, components and their props, keyboard shortcuts, styles, CSS classes, data attributes, breakpoints and layout. These are not interfaces even when another part of the repository relies on them;
 - behaviour behind an unchanged interface: a handler that returns different values in the same shape, with the same fields and status codes, is not an interface change.
 
 A configuration file or environment variable counts (surface `other`) only when people outside the code write it: a documented config file, a CLI's settings.
@@ -40,6 +40,8 @@ Every entry point cites at least one hunk: the registration or definition first,
 ## When something is unknown or absent
 
 Use `null` for what the diff does not show and empty arrays for parts with nothing in them; never guess a field or a status code. When a patch is cut off, list what is shown.
+
+When the pull request adds, removes or changes no entry point as defined above, answer that the tile does not apply and write no data.
 
 ## Example
 

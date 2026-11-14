@@ -1565,7 +1565,8 @@ creates, alters, drops or renames, with how the migration runs) and
 `api_change` (HTTP routes, RPC and agent tools, CLI commands, published
 schemas and library exports added, changed, deprecated or removed, with
 their fields and callers). Each is a directory: `type.json` (name, title,
-use-when line, a one-line description of the glance, sizes, kit),
+use-when line, a one-line description of the glance, sizes, kit, and the
+data arrays that show what the type is for),
 `fill.md` (the filling model's instructions), `review_checks.md` (what the
 review's details stage should check when the type applies), `schema.json`,
 `tile.html` (kit 1 only) and synthetic `samples/` in a fake repository, each
@@ -1589,8 +1590,10 @@ with the hunks and items its data cites.
   (`{type: "hunk", id, lines?}`), so a fill cannot cite a risk, evidence item
   or tile, which do not exist while it runs. `library.CheckFill` checks a
   fill's data against a pull request's diff: no `related`, the type's data
-  checks (`tiles.Validator.CheckData`), and every hunk in the diff with its
-  lines inside the hunk's new range. Its problems name places, not values,
+  checks (`tiles.Validator.CheckData`), data that shows nothing the type is
+  for (every array its `applies_with` names empty: the fill should answer
+  that the type does not apply rather than make a tile that says so), and
+  every hunk in the diff with its lines inside the hunk's new range. Its problems name places, not values,
   so they can go back to the model in a repair.
 - `library.Check(entry)` is every static check a type passes:
   `CheckDefinition` (the dialect included), the kit's lint with warnings as
@@ -1601,11 +1604,14 @@ with the hunks and items its data cites.
   definition's digest (a saved review embeds the definition, so an edit is
   deliberate), register the frame documents and compose a document with
   both tiles ready.
-- Glances lead with the count and the kinds of change, put destructive or
+- Glances lead with the count and the kinds of change (wrapping to two
+  lines rather than cutting them), take rows off the end until the box holds
+  them and say how many are left, put destructive or
   breaking items first with a critical badge, and keep how the change runs
   (engine, when a migration applies) or who calls it in the foot. Details
   open with a summary and a critical callout of what loses data or breaks,
-  then a card per table or entry point with its fields and the cited code.
+  then a card per table or entry point with its fields, its citation chips
+  and the cited code, opened only on the first card that cites a hunk.
 
 ### Tiles
 

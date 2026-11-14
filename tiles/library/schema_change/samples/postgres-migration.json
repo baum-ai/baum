@@ -6,7 +6,7 @@
     "migrations": [
       {
         "kind": "migration_file",
-        "label": "0042_invoices.up.sql",
+        "label": "20261113100300_add_invoices_and_rename_payment_events_to_ledger_entries.up.sql",
         "applies": "on_deploy",
         "reversible": false,
         "idempotent": null,
@@ -246,7 +246,7 @@
   },
   "hunks": {
     "h_0f3a9c2d7e61": {
-      "path": "db/migrations/0042_invoices.up.sql",
+      "path": "db/migrations/20261113100300_add_invoices_and_rename_payment_events_to_ledger_entries.up.sql",
       "change": "added",
       "range": [
         1,

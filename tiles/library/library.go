@@ -71,6 +71,11 @@ type Entry struct {
 	// the review rather than written into the tile. Empty when the type has
 	// none.
 	ReviewChecks string
+	// AppliesWith names the top-level arrays of the data that show what the
+	// type is for: data with all of them empty shows nothing worth a tile,
+	// so a fill that finds nothing answers that the type does not apply
+	// (CheckFill). Empty when the type has no such rule.
+	AppliesWith []string
 	// Samples are synthetic data with the hunks and items they cite.
 	Samples []Sample
 }
@@ -123,6 +128,8 @@ type meta struct {
 	Glance  string       `json:"glance"`
 	Sizes   []tiles.Size `json:"sizes"`
 	Kit     int          `json:"kit"`
+	// AppliesWith is optional.
+	AppliesWith []string `json:"applies_with,omitempty"`
 }
 
 var all = sync.OnceValue(func() []Entry {
@@ -208,7 +215,7 @@ func Load(dir fs.FS) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	entry := Entry{Definition: def, Encoded: encoded, Glance: strings.TrimSpace(m.Glance), ReviewChecks: strings.TrimSpace(checks)}
+	entry := Entry{Definition: def, Encoded: encoded, Glance: strings.TrimSpace(m.Glance), ReviewChecks: strings.TrimSpace(checks), AppliesWith: m.AppliesWith}
 	names, err := fs.Glob(dir, "samples/*.json")
 	if err != nil {
 		return Entry{}, err
@@ -285,19 +292,23 @@ func (e Entry) FillSchema() (json.RawMessage, error) {
 
 // CheckFill checks data a fill wrote for a type against the pull request's
 // diff and returns its problems: a property only the host writes, the
-// type's own checks (tiles.Validator.CheckData), and citations: a hunk must
-// be in the diff and its lines inside the hunk's new range, and nothing may
-// cite a risk, evidence item or tile, which do not exist while fills run.
-// Problems name the place in the data, never its values.
-func CheckFill(v *tiles.Validator, def json.RawMessage, data json.RawMessage, diff []bundle.Hunk) []string {
+// type's own checks (tiles.Validator.CheckData), data that shows nothing the
+// type is for (every array AppliesWith names empty), and citations: a hunk
+// must be in the diff and its lines inside the hunk's new range, and nothing
+// may cite a risk, evidence item or tile, which do not exist while fills
+// run. Problems name the place in the data, never its values.
+func CheckFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk) []string {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err == nil {
 		if _, ok := top[Related]; ok {
 			return []string{fmt.Sprintf("/%s is written by the host; leave it out", Related)}
 		}
 	}
-	if problems := v.CheckData(def, data); len(problems) > 0 {
+	if problems := v.CheckData(e.Encoded, data); len(problems) > 0 {
 		return problems
+	}
+	if len(e.AppliesWith) > 0 && !shows(top, e.AppliesWith) {
+		return []string{fmt.Sprintf("the data shows nothing this tile is for (%s are empty); answer that the tile does not apply instead", strings.Join(e.AppliesWith, ", "))}
 	}
 	hunks := make(map[string]bundle.Hunk, len(diff))
 	for _, h := range diff {
@@ -324,6 +335,17 @@ func CheckFill(v *tiles.Validator, def json.RawMessage, data json.RawMessage, di
 		}
 	}
 	return problems
+}
+
+// shows reports whether any of the named top-level arrays has an item.
+func shows(top map[string]json.RawMessage, names []string) bool {
+	for _, name := range names {
+		var items []json.RawMessage
+		if json.Unmarshal(top[name], &items) == nil && len(items) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Citation is a citation found in data: its place, type, ID and lines.
@@ -421,6 +443,17 @@ func Check(e Entry) []string {
 		add("type.json: glance is empty; say in one line what the glance shows")
 	case n > MaxGlance || strings.ContainsAny(e.Glance, "\r\n"):
 		add("type.json: glance must be one line of at most %d characters", MaxGlance)
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Type any `json:"type"`
+		} `json:"properties"`
+	}
+	_ = json.Unmarshal(def.DataSchema, &schema)
+	for _, name := range e.AppliesWith {
+		if p, ok := schema.Properties[name]; !ok || p.Type != "array" {
+			add("type.json: applies_with names %q, which is not a top-level array of the schema", name)
+		}
 	}
 	if utf8.RuneCountInString(e.ReviewChecks) > MaxReviewChecks {
 		add("review_checks.md is longer than %d characters", MaxReviewChecks)

@@ -15,7 +15,7 @@ Read the diff. An item is a <the kind of fact, said exactly: what counts and whe
 
 ## When something is absent
 
-Use empty `items` when the pull request has none, and null for a value the diff does not show. Never guess.
+When the pull request has none, answer that the tile does not apply and write no data. Use null for a value the diff does not show. Never guess.
 
 ## Example
 

@@ -42,6 +42,7 @@ my_type/
 | `glance` | One line, at most 200 characters: what the glance shows. |
 | `sizes` | The card sizes the glance is made for, preferred first: `full`, `half`, `third`. List only sizes you checked. |
 | `kit` | `1`. The kit version the component uses. |
+| `applies_with` | Optional: the top-level arrays of the data that show what the type is for, such as `["items"]`. Data with all of them empty is refused as a fill: the filling model answers that the type does not apply instead of writing a tile that says "nothing". |
 
 `fill.md` is at most 8000 characters, `review_checks.md` at most 1500. The
 host adds `digest` when it loads the type; never write it.

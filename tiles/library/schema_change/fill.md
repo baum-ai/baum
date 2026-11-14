@@ -29,7 +29,9 @@ Every migration, table and data change cites at least one hunk; a reader cites i
 
 ## When something is unknown or absent
 
-Use `null` for a value the diff does not show, never a guess. Use empty arrays for parts with nothing in them. When a patch is cut off before the statement ends, describe what is shown and say in `note` that the rest is not in the diff. When the pull request only edits queries, `tables` is empty and the summary says the schema itself does not change.
+Use `null` for a value the diff does not show, never a guess. Use empty arrays for parts with nothing in them. When a patch is cut off before the statement ends, describe what is shown and say in `note` that the rest is not in the diff.
+
+When the pull request creates, alters, drops or renames no table, column, index or constraint and changes no rows in a migration (it only edits queries, or its DDL is only in tests or moves unchanged), answer that the tile does not apply and write no data: a tile that says the schema does not change is noise.
 
 ## Example
 
