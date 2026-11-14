@@ -43,11 +43,11 @@ func StabilizeIDs(previous, next *Composition) Composition {
 		before[a.ID] = subject{"authored", ""}
 	}
 	for _, lib := range previous.Library {
-		before[definitionName(lib.Definition)] = subject{"library", ""}
+		before[LibraryTileID(definitionName(lib.Definition))] = subject{"library", ""}
 	}
 	used := map[string]bool{}
 	for _, lib := range out.Library {
-		used[definitionName(lib.Definition)] = true
+		used[LibraryTileID(definitionName(lib.Definition))] = true
 	}
 	for _, p := range out.Promotions {
 		used[p.ID] = true

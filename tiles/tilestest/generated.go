@@ -30,7 +30,8 @@ import (
 //     promoted tiles (table and code tiles with an origin), one per change;
 //     at most tiles.MaxAuthored authored tiles (other table, code and prose
 //     tiles), each citing a hunk or file unless unavailable; at most
-//     tiles.MaxLibraryTiles library tiles, each under its definition's name.
+//     tiles.MaxLibraryTiles library tiles, each under its definition's name
+//     (tiles.LibraryTileID).
 //     A promoted or authored tile's ID is its type, an underscore and a
 //     slug. Only current change tiles are in the changes group, only
 //     obsolete ones in the obsolete group, and only tiles the composition's
@@ -100,7 +101,7 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 			var def struct {
 				Name string `json:"name"`
 			}
-			if json.Unmarshal(tile.Definition, &def) != nil || def.Name != tile.ID {
+			if json.Unmarshal(tile.Definition, &def) != nil || tiles.LibraryTileID(def.Name) != tile.ID {
 				fail(11, "custom tile %s is not under its definition's name", tile.ID)
 			}
 		case !composed(tile) && promotedOrigin(tile) != nil:
@@ -234,7 +235,7 @@ func severeRanked(doc *tiles.Document) bool {
 	return false
 }
 
-var composedID = regexp.MustCompile(`^(table|code|prose)_[a-z0-9_]+$`)
+var composedID = regexp.MustCompile(`^(table|code|prose)_[a-z0-9_]{1,64}$`)
 
 // composed reports whether a tile is a library or authored tile: a custom
 // tile, or a table, code or prose tile without an origin.

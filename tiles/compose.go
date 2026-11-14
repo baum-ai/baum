@@ -21,26 +21,30 @@ import (
 // result is a fixed point: normalising it again changes nothing. An empty
 // composition stays empty. The rules, in order:
 //
-//  1. Library tiles: at most MaxLibraryTiles; a tile whose definition does
-//     not decode to a name, or whose name another tile of the document or an
-//     earlier library tile has, is dropped; so is one whose definition, data
-//     or citations fail the custom tile checks. A pending tile's data is
-//     empty.
+//  0. Bounds: only the first few hundred of each part are read (a
+//     generous multiple of what a composition holds), and the generator
+//     and the hidden list, which only the host writes, are dropped.
+//  1. Library tiles: a tile whose definition does not decode to a name, or
+//     whose ID (LibraryTileID) another tile of the document or an earlier
+//     library tile has, is dropped; so is one whose definition, data or
+//     citations fail the custom tile checks. The first MaxLibraryTiles that
+//     pass are kept. A pending tile's data is empty.
 //  2. Promotions: the ID is table_ or code_ and a slug, naming a table or
 //     code block of a current change tile of that kind, at its position
 //     among the change's blocks in the review; at most one per change and
-//     per block, and at most MaxPromotions. The host writes the block's
+//     per block, and the first MaxPromotions that pass their checks. The host writes the block's
 //     digest; a promotion whose digest no longer matches is dropped, and so
 //     is one whose block does not have its tile's shape.
-//  3. Authored tiles: the ID is table_, code_ or prose_ and a slug, at most
-//     MaxAuthored, the data a JSON object of at most MaxDataBytes without an
+//  3. Authored tiles: the ID is table_, code_ or prose_ and a slug, the first
+//     MaxAuthored that pass their checks, the data a JSON object of at most MaxDataBytes without an
 //     origin, with the type's shape, citing at least one hunk or file of the
 //     review, every citation resolving.
 //  4. IDs: a promoted or authored tile whose ID another tile has (a library
 //     tile first, then promotions, then authored tiles, in order) gets the
 //     first free numeric suffix (_2, _3, …).
-//  5. Titles: on one line, at most MaxComposedTitle characters, the type's
-//     catalogue title when blank.
+//  5. Text: control characters are removed from titles, notes and prose
+//     (a prose tile keeps tabs and newlines); titles are on one line, at most
+//     MaxComposedTitle characters, the type's catalogue title when blank.
 //  6. Layout: an entry naming no tile, a second entry for a tile and an entry
 //     for an obsolete change (the host places those last) are dropped; a
 //     size the tile's type does not allow (AllowedSizes) becomes its default
@@ -57,22 +61,26 @@ import (
 // Fixes name a tile only by an ID that is a plain identifier and never quote
 // what the composition holds.
 func NormalizeComposition(doc *Document, c *Composition) (Composition, Report) {
-	if c.Empty() {
-		if c == nil {
-			return Composition{Schema: CompositionName}, Report{}
-		}
-		out := *c
-		out.Schema = CompositionName
-		return out, Report{}
-	}
 	cm := newComposer(doc, modeWrite)
+	if c.Empty() {
+		out := Composition{Schema: CompositionName, Layout: CompositionLayout{Entries: []Entry{}}}
+		if c != nil {
+			cm.hostOnly(c)
+			out.Notes = cm.notes(c.Notes)
+		}
+		return out, cm.report
+	}
 	n, err := cm.normalize(c)
 	if err != nil {
 		// The document cannot take a composition (it is not a converted
 		// document); there is nothing to normalise against.
-		return Composition{Schema: CompositionName}, Report{Fixes: []Fix{{Kind: FixUnusable, Detail: err.Error()}}}
+		return Composition{Schema: CompositionName, Layout: CompositionLayout{Entries: []Entry{}}}, unusable(err)
 	}
 	return n, cm.report
+}
+
+func unusable(err error) Report {
+	return Report{Fixes: []Fix{{Kind: FixUnusable, Detail: err.Error()}}, Total: 1, counts: map[FixKind]int{FixUnusable: 1}}
 }
 
 // Compose applies a composition to the tile document FromReview converted
@@ -93,6 +101,12 @@ func NormalizeComposition(doc *Document, c *Composition) (Composition, Report) {
 // the current hunks; the substrate, recommendation and risk score are the
 // converted document's; every risk, evidence item, decision and block is
 // presented once; and ToReview of the result is the review.
+//
+// Compose trusts the parts only the host writes: it honours the hidden list
+// it is given (and the generator passes through). So only a composition
+// NormalizeComposition returned, with the host's own additions, may be
+// stored or composed for display; a preview of what a model wrote is
+// normalised first.
 func Compose(doc *Document, c *Composition) (*Document, error) {
 	if doc == nil {
 		return nil, errors.New("tiles: no document to compose")
@@ -146,6 +160,12 @@ const (
 	FixNote              FixKind = "note"
 	// FixHidden is a hidden tile a model wrote, or one naming no tile.
 	FixHidden FixKind = "hidden"
+	// FixHostOnly is a part only the host writes (the generator), dropped.
+	FixHostOnly FixKind = "host_only"
+	// FixInputLimit counts what was dropped unread past an input bound.
+	FixInputLimit FixKind = "input_limit"
+	// FixControl is text with control characters, which are removed.
+	FixControl FixKind = "control"
 	// FixUnusable is reported when the document cannot take a composition.
 	FixUnusable FixKind = "unusable"
 )
@@ -158,13 +178,24 @@ type Fix struct {
 	Detail string  `json:"detail,omitempty"`
 }
 
-// Report lists the fixes of a normalisation, in the order they were made.
+// Report lists the fixes of a normalisation, in the order they were made:
+// the first MaxReportedFixes of them, and how many there were in all.
 type Report struct {
 	Fixes []Fix `json:"fixes,omitempty"`
+	Total int   `json:"total,omitempty"`
+	// counts counts every fix by kind, those past MaxReportedFixes too.
+	counts map[FixKind]int
 }
 
-// Counts returns how many fixes of each kind the report holds, or nil.
+// MaxReportedFixes bounds the fixes a Report lists; Total and Counts count
+// them all.
+const MaxReportedFixes = 200
+
+// Counts returns how many fixes of each kind the normalisation made, or nil.
 func (r Report) Counts() map[FixKind]int {
+	if r.counts != nil {
+		return maps.Clone(r.counts)
+	}
 	if len(r.Fixes) == 0 {
 		return nil
 	}
@@ -237,6 +268,12 @@ func (f Fix) Message() string {
 		text = fmt.Sprintf("the title of %s is blank, too long or on several lines; it is tidied", tile)
 	case FixHidden:
 		text = fmt.Sprintf("only the host hides tiles, and only tiles the review has; %s stays shown", tile)
+	case FixHostOnly:
+		text = "only the host writes this part of a composition; it is dropped"
+	case FixInputLimit:
+		text = "the composition lists far more than a composition may hold; the rest is not read"
+	case FixControl:
+		text = fmt.Sprintf("the text of %s holds control characters; they are removed", tile)
 	case FixNote:
 		text = "a note names a tile the review does not have or is too long; it is dropped or shortened"
 	case FixUnusable:
@@ -445,7 +482,60 @@ func newComposer(doc *Document, mode composeMode) *composer {
 }
 
 func (cm *composer) fix(kind FixKind, id, detail string) {
-	cm.report.Fixes = append(cm.report.Fixes, Fix{Kind: kind, Tile: plainID(id), Detail: detail})
+	cm.fixes(kind, 1)
+	cm.list(Fix{Kind: kind, Tile: plainID(id), Detail: detail})
+}
+
+// list lists a fix while the report has room.
+func (cm *composer) list(fix Fix) {
+	if len(cm.report.Fixes) < MaxReportedFixes {
+		cm.report.Fixes = append(cm.report.Fixes, fix)
+	}
+}
+
+// fixes counts n fixes of a kind without listing them.
+func (cm *composer) fixes(kind FixKind, n int) {
+	if n <= 0 {
+		return
+	}
+	if cm.report.counts == nil {
+		cm.report.counts = map[FixKind]int{}
+	}
+	cm.report.counts[kind] += n
+	cm.report.Total += n
+}
+
+// The most of each part of a composition normalisation looks at, generous
+// multiples of what a composition may hold; the rest is dropped unread and
+// counted as FixInputLimit.
+const (
+	maxInputLibrary    = 64
+	maxInputPromotions = 64
+	maxInputAuthored   = 64
+	maxInputEntries    = 1024
+	maxInputHidden     = 256
+	maxInputMoves      = 256
+)
+
+// head returns the first limit items, counting the rest as dropped.
+func head[T any](cm *composer, items []T, limit int) []T {
+	if len(items) > limit {
+		cm.fixes(FixInputLimit, len(items)-limit)
+		cm.list(Fix{Kind: FixInputLimit, Detail: fmt.Sprintf("%d items", len(items)-limit)})
+		return items[:limit]
+	}
+	return items
+}
+
+// hostOnly counts what a model wrote in the parts only the host writes: the
+// generator and the hidden list. Neither is kept.
+func (cm *composer) hostOnly(c *Composition) {
+	if c.Generator != nil {
+		cm.fix(FixHostOnly, "", "the generator")
+	}
+	for _, id := range head(cm, c.Layout.Hidden, maxInputHidden) {
+		cm.fix(FixHidden, id, "")
+	}
 }
 
 func (cm *composer) normalize(c *Composition) (Composition, error) {
@@ -460,9 +550,9 @@ func (cm *composer) prepare(c *Composition) error {
 	if cm.doc.Origin.Kind != OriginConverted {
 		return errors.New("tiles: a composition applies only to a converted document")
 	}
-	cm.libraryTiles(c.Library)
-	cm.promotions(c.Promotions)
-	cm.authoredTiles(c.Authored)
+	cm.libraryTiles(head(cm, c.Library, maxInputLibrary))
+	cm.promotions(head(cm, c.Promotions, maxInputPromotions))
+	cm.authoredTiles(head(cm, c.Authored, maxInputAuthored))
 	cm.uniqueIDs()
 	return cm.check()
 }
@@ -471,7 +561,10 @@ func (cm *composer) prepare(c *Composition) error {
 // layout normalised.
 func (cm *composer) finish(c *Composition, layout CompositionLayout) Composition {
 	out := Composition{Schema: CompositionName}
-	if c.Generator != nil {
+	switch {
+	case cm.mode == modeWrite:
+		cm.hostOnly(c)
+	case c.Generator != nil:
 		generator := *c.Generator
 		out.Generator = &generator
 	}
@@ -494,13 +587,7 @@ func (cm *composer) taken(id string) bool { return cm.byID[id] != nil }
 
 func (cm *composer) libraryTiles(library []LibraryTile) {
 	names := map[string]bool{}
-	for i, lib := range library {
-		if i == MaxLibraryTiles {
-			for range library[i:] {
-				cm.fix(FixLibraryLimit, "", "")
-			}
-			return
-		}
+	for _, lib := range library {
 		def, problems := defaultValidator.CheckDefinition(lib.Definition)
 		name := def.Name
 		if !tileID.MatchString(name) || len(name) > 64 {
@@ -511,16 +598,17 @@ func (cm *composer) libraryTiles(library []LibraryTile) {
 			cm.fix(FixLibraryInvalid, name, problems[0])
 			continue
 		}
-		if cm.taken(name) || names[name] {
+		id := LibraryTileID(name)
+		if cm.taken(id) || names[id] {
 			cm.fix(FixLibraryDuplicate, name, "")
 			continue
 		}
-		names[name] = true
+		names[id] = true
 		lib.Definition = bytes.Clone(lib.Definition)
 		if lib.Pending || len(bytes.TrimSpace(lib.Data)) == 0 {
 			lib.Data = json.RawMessage(`{}`)
 		}
-		title := strings.TrimSpace(strings.Join(strings.Fields(def.Title), " "))
+		title := strings.TrimSpace(strings.Join(strings.Fields(stripControls(def.Title, false)), " "))
 		if title == "" {
 			title = name
 		}
@@ -529,9 +617,27 @@ func (cm *composer) libraryTiles(library []LibraryTile) {
 			state = StatePending
 		}
 		cm.library = append(cm.library, candidate{library: lib, tile: Tile{
-			ID: name, Type: TypeCustom, Title: truncate(title, maxTitle), Data: lib.Data, State: state, Definition: lib.Definition,
+			ID: id, Type: TypeCustom, Title: truncate(title, maxTitle), Data: lib.Data, State: state, Definition: lib.Definition,
 		}})
 	}
+}
+
+// reservedPrefixes start the IDs the host gives change tiles and promoted
+// and authored tiles. A library type whose name starts with one gets its
+// tile the ID "library_" and its name, so it never takes such an ID from
+// another subject, in this version or the next.
+var reservedPrefixes = []string{"sec_", "table_", "code_", "prose_", "diagram_"}
+
+// LibraryTileID returns the ID of a library type's tile: its name, or
+// "library_" and its name for a name that starts as a change tile's or a
+// promoted or authored tile's ID does.
+func LibraryTileID(name string) string {
+	for _, p := range reservedPrefixes {
+		if strings.HasPrefix(name, p) {
+			return "library_" + name
+		}
+	}
+	return name
 }
 
 func (cm *composer) promotions(promotions []Promotion) {
@@ -584,12 +690,6 @@ func (cm *composer) promotions(promotions []Promotion) {
 		p.Title = cm.title(p.ID, p.Title, kind)
 		kept = append(kept, candidate{promotion: p, index: index, tile: Tile{ID: p.ID, Type: kind, Title: p.Title, State: StateReady}})
 	}
-	if len(kept) > MaxPromotions {
-		for range kept[MaxPromotions:] {
-			cm.fix(FixPromotionLimit, "", "")
-		}
-		kept = kept[:MaxPromotions]
-	}
 	for i := range kept {
 		cm.promotedTile(&kept[i])
 	}
@@ -621,6 +721,10 @@ func (cm *composer) promotedTile(cand *candidate) {
 // composedHeadline is a promoted or authored tile's headline: a table's row
 // count, a code excerpt's caption or a prose tile's first sentence.
 func composedHeadline(kind string, fields map[string]json.RawMessage) string {
+	return stripControls(rawHeadline(kind, fields), false)
+}
+
+func rawHeadline(kind string, fields map[string]json.RawMessage) string {
 	switch kind {
 	case TypeTable:
 		var rows []json.RawMessage
@@ -664,10 +768,6 @@ func (cm *composer) authoredTiles(authored []AuthoredTile) {
 			cm.fix(FixAuthoredInvalid, "", "its ID is not table_, code_ or prose_ followed by a slug")
 			continue
 		}
-		if len(kept) == MaxAuthored {
-			cm.fix(FixAuthoredLimit, a.ID, "")
-			continue
-		}
 		var fields map[string]json.RawMessage
 		switch {
 		case encodedSize(a.Data, MaxDataBytes) > MaxDataBytes:
@@ -683,6 +783,16 @@ func (cm *composer) authoredTiles(authored []AuthoredTile) {
 		kind, _, _ := strings.Cut(a.ID, "_")
 		a.Title = cm.title(a.ID, a.Title, kind)
 		a.Data = bytes.Clone(a.Data)
+		if kind == TypeProse {
+			var text string
+			if json.Unmarshal(fields["text"], &text) == nil {
+				if clean := stripControls(text, true); clean != text {
+					cm.fix(FixControl, a.ID, "")
+					fields["text"], _ = json.Marshal(clean)
+					a.Data, _ = json.Marshal(fields)
+				}
+			}
+		}
 		kept = append(kept, candidate{authored: a, tile: Tile{
 			ID: a.ID, Type: kind, Title: a.Title, Headline: composedHeadline(kind, fields), Data: a.Data, State: StateReady,
 		}})
@@ -692,7 +802,7 @@ func (cm *composer) authoredTiles(authored []AuthoredTile) {
 
 // title tidies a promoted or authored tile's title.
 func (cm *composer) title(id, title, kind string) string {
-	tidy := strings.TrimSpace(strings.Join(strings.Fields(title), " "))
+	tidy := strings.TrimSpace(strings.Join(strings.Fields(stripControls(title, false)), " "))
 	if tidy == "" {
 		builtin, _ := Builtin(kind)
 		tidy = builtin.Title
@@ -702,6 +812,29 @@ func (cm *composer) title(id, title, kind string) string {
 		cm.fix(FixTitle, id, "")
 	}
 	return tidy
+}
+
+// stripControls removes C0 control characters and DEL from text; with
+// lines, tabs and newlines stay. Text on one line gets a space for each.
+func stripControls(text string, lines bool) string {
+	if !strings.ContainsFunc(text, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return text
+	}
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r == '\t' || r == '\n':
+			if lines {
+				b.WriteRune(r)
+			} else {
+				b.WriteByte(' ')
+			}
+		case r < 0x20 || r == 0x7f:
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // uniqueIDs renames a promoted or authored tile whose ID a converted tile, a
@@ -799,6 +932,21 @@ func (cm *composer) check() error {
 		cm.library = keep(cm.library, FixLibraryInvalid)
 		cm.promoted = keep(cm.promoted, FixPromotionMissing)
 		cm.authored = keep(cm.authored, FixAuthoredInvalid)
+		// The limits keep the first tiles that pass their checks; dropping
+		// the rest may leave a citation of one unresolved, so check again.
+		for _, limit := range []struct {
+			cands *[]candidate
+			max   int
+			kind  FixKind
+		}{{&cm.library, MaxLibraryTiles, FixLibraryLimit}, {&cm.promoted, MaxPromotions, FixPromotionLimit}, {&cm.authored, MaxAuthored, FixAuthoredLimit}} {
+			if len(*limit.cands) > limit.max {
+				for _, cand := range (*limit.cands)[limit.max:] {
+					cm.fix(limit.kind, cand.tile.ID, "")
+				}
+				*limit.cands = (*limit.cands)[:limit.max]
+				dropped = true
+			}
+		}
 		if !dropped {
 			return nil
 		}
@@ -890,7 +1038,7 @@ func (cm *composer) layout(in CompositionLayout) CompositionLayout {
 
 	var entries []Entry
 	placed := map[string]bool{}
-	for _, entry := range in.Entries {
+	for _, entry := range head(cm, in.Entries, maxInputEntries) {
 		tile := tiles[entry.Tile]
 		switch {
 		case cm.obsolete[entry.Tile]:
@@ -943,8 +1091,12 @@ func (cm *composer) layout(in CompositionLayout) CompositionLayout {
 	}
 
 	out := CompositionLayout{Entries: nonNil(entries)}
-	for _, id := range in.Hidden {
-		if cm.mode == modeWrite || tiles[id] == nil || slices.Contains(out.Hidden, id) {
+	hidden := in.Hidden
+	if cm.mode == modeWrite {
+		hidden = nil // dropped and counted by hostOnly
+	}
+	for _, id := range head(cm, hidden, maxInputHidden) {
+		if tiles[id] == nil || slices.Contains(out.Hidden, id) {
 			cm.fix(FixHidden, id, "")
 			continue
 		}
@@ -1014,26 +1166,36 @@ func (cm *composer) notes(in *Notes) *Notes {
 		}
 	}
 	bound := func(text string, limit int) string {
-		cut := truncate(text, limit)
-		if cut != text {
+		clean := stripControls(text, false)
+		if clean != text {
+			cm.fix(FixControl, "", "")
+		}
+		cut := truncate(clean, limit)
+		if cut != clean {
 			cm.fix(FixNote, "", "")
 		}
 		return cut
 	}
 	out := &Notes{}
-	ids := slices.Sorted(maps.Keys(in.Why))
-	for _, id := range ids {
-		why := in.Why[id]
-		if !known[id] {
-			cm.fix(FixNote, "", "")
+	// Only reasons for known tiles are read, in ID order, so a composition
+	// with any number of reasons costs what its tiles do.
+	found := 0
+	for _, id := range slices.Sorted(maps.Keys(known)) {
+		why, ok := in.Why[id]
+		if !ok {
 			continue
 		}
+		found++
 		if out.Why == nil {
 			out.Why = map[string]string{}
 		}
 		out.Why[id] = bound(why, MaxWhy)
 	}
-	for _, move := range in.Moves {
+	if unknown := len(in.Why) - found; unknown > 0 {
+		cm.fixes(FixNote, unknown)
+		cm.list(Fix{Kind: FixNote})
+	}
+	for _, move := range head(cm, in.Moves, maxInputMoves) {
 		if !known[move.Tile] || len(out.Moves) == MaxMoves {
 			cm.fix(FixNote, "", "")
 			continue

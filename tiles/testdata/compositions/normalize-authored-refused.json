@@ -3,7 +3,6 @@
     "authored tile \"prose_with_origin\" fails its checks and is left out: an authored tile has no origin; only a promoted block has one",
     "authored tile \"prose_array\" fails its checks and is left out: its data is not a JSON object",
     "an authored tile fails its checks and is left out: its ID is not table_, code_ or prose_ followed by a slug",
-    "the composition has more than 3 authored tiles; the rest are left out",
     "authored tile \"table_uncited\" fails its checks and is left out: its data does not have the table tile's shape",
     "authored tile \"code_unknown_hunk\" fails its checks and is left out: the citation at /source/0 names a hunk this review does not have; cite one from the review",
     "authored tile \"prose_shape\" fails its checks and is left out: its data does not have the prose tile's shape",
@@ -16,7 +15,8 @@
     "the layout does not place tile \"intent\"; it is added in the default order",
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
-    "the layout does not place tile \"everything_else\"; it is added in the default order"
+    "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "the layout does not place tile \"prose_file_only\"; it is added in the default order"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -63,9 +63,28 @@
         {
           "tile": "everything_else",
           "size": "third"
+        },
+        {
+          "tile": "prose_file_only",
+          "size": "half"
         }
       ]
-    }
+    },
+    "authored": [
+      {
+        "id": "prose_file_only",
+        "title": "Cites a file",
+        "data": {
+          "text": "The worker.",
+          "anchors": [
+            {
+              "type": "file",
+              "path": "worker/deliver.go"
+            }
+          ]
+        }
+      }
+    ]
   },
   "layout": {
     "entries": [
@@ -110,6 +129,10 @@
       {
         "tile": "everything_else",
         "size": "third"
+      },
+      {
+        "tile": "prose_file_only",
+        "size": "half"
       }
     ],
     "groups": [
@@ -194,6 +217,12 @@
         "h_000000000006",
         "h_000000000007"
       ]
+    },
+    {
+      "id": "prose_file_only",
+      "type": "prose",
+      "title": "Cites a file",
+      "state": "ready"
     }
   ]
 }

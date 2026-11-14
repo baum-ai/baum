@@ -2,7 +2,12 @@ package tiles
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
+	"regexp"
+	"slices"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/schema"
 )
@@ -52,7 +57,7 @@ type Generator struct {
 	// ComposedAt is when the composition was made, in RFC 3339.
 	ComposedAt string `json:"composed_at,omitempty"`
 	// Template is the change-kind template the composition started from or,
-	// with Fallback, is.
+	// with Fallback, is. Only the host writes a generator (SetGenerator).
 	Template string `json:"template,omitempty"`
 	Fallback bool   `json:"fallback,omitempty"`
 	// Fixes counts what normalisation repaired, by kind (Report.Counts).
@@ -156,6 +161,43 @@ func (c *Composition) Empty() bool {
 	return c == nil || len(c.Layout.Entries) == 0 && c.Layout.ChangesShown == nil && len(c.Layout.Hidden) == 0 &&
 		len(c.Promotions) == 0 && len(c.Library) == 0 && len(c.Authored) == 0
 }
+
+// SetGenerator records where a normalised composition came from. The
+// generator is the host's: NormalizeComposition drops one a model wrote, so
+// the host sets it afterwards, and SetGenerator refuses one the schema would
+// not accept.
+func (c *Composition) SetGenerator(g Generator) error {
+	for _, field := range []struct {
+		value string
+		limit int
+	}{{g.PromptVersion, 200}, {g.PromptDigest, 200}, {g.Model, 200}, {g.ComposedAt, 64}} {
+		if utf8.RuneCountInString(field.value) > field.limit {
+			return fmt.Errorf("tiles: a generator field is longer than %d characters", field.limit)
+		}
+	}
+	if g.Template != "" && !templateName.MatchString(g.Template) {
+		return errors.New("tiles: the generator's template is not a template name")
+	}
+	for _, n := range g.Fixes {
+		if n < 1 {
+			return errors.New("tiles: the generator counts a fix kind less than once")
+		}
+	}
+	if len(g.Problems) > 20 {
+		return errors.New("tiles: the generator has more than 20 problems")
+	}
+	for _, problem := range g.Problems {
+		if utf8.RuneCountInString(problem) > 400 {
+			return errors.New("tiles: a generator problem is longer than 400 characters")
+		}
+	}
+	g.Fixes = maps.Clone(g.Fixes)
+	g.Problems = slices.Clone(g.Problems)
+	c.Generator = &g
+	return nil
+}
+
+var templateName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 // ParseComposition decodes a stored composition. It fails on invalid JSON
 // or another schema; members it does not know are ignored, so a composition

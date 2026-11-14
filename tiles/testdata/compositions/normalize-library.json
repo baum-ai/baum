@@ -3,7 +3,6 @@
     "a library tile fails its checks and is left out: its definition has no valid name",
     "library tile \"unsealed\" fails its checks and is left out: the definition doesn't match its digest",
     "library tile \"retry_budget\" has the ID of another tile and is left out",
-    "library tile \"sec_config_flag\" has the ID of another tile and is left out",
     "library tile \"broken_data\" fails its checks and is left out: the data does not match its schema: at /cites: has 0 items; its minItems is 1",
     "library tile \"cites_nothing_known\" fails its checks and is left out: the citation at /cites/0 names a hunk this review does not have; cite one from the review",
     "the layout does not place tile \"overview\"; it is added in the default order",
@@ -17,6 +16,7 @@
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
     "the layout does not place tile \"retry_budget\"; it is added in the default order",
+    "the layout does not place tile \"library_sec_config_flag\"; it is added in the default order",
     "the layout does not place tile \"planned\"; it is added in the default order"
   ],
   "composition": {
@@ -70,6 +70,10 @@
           "size": "half"
         },
         {
+          "tile": "library_sec_config_flag",
+          "size": "half"
+        },
+        {
           "tile": "planned",
           "size": "half"
         }
@@ -118,6 +122,54 @@
           "cites": [
             {
               "id": "h_000000000001",
+              "type": "hunk"
+            }
+          ],
+          "summary": "A synthetic summary."
+        }
+      },
+      {
+        "definition": {
+          "name": "sec_config_flag",
+          "title": "Synthetic sec config flag",
+          "use_when": "When a test needs a library tile.",
+          "fill": "Summarise the change and cite the hunks it rests on.",
+          "data_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "summary",
+              "cites"
+            ],
+            "properties": {
+              "summary": {
+                "$ref": "#/$defs/markdown"
+              },
+              "cites": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "kit": 1,
+          "sizes": [
+            "half",
+            "full"
+          ],
+          "source": {
+            "format": "html",
+            "html": "\u003cscript\u003ebaum.tile({glance: (v) =\u003e baum.html`\u003cp\u003e${v.data.summary}\u003c/p\u003e`});\u003c/script\u003e"
+          },
+          "digest": "sha256:fe6795b09768423ed93633a6c199cc4cdc5adbc982c6f148a7c6516436eda0e5"
+        },
+        "data": {
+          "cites": [
+            {
+              "id": "h_000000000003",
               "type": "hunk"
             }
           ],
@@ -216,6 +268,10 @@
         "size": "half"
       },
       {
+        "tile": "library_sec_config_flag",
+        "size": "half"
+      },
+      {
         "tile": "planned",
         "size": "half"
       }
@@ -310,6 +366,15 @@
       "state": "ready",
       "covers": [
         "h_000000000001"
+      ]
+    },
+    {
+      "id": "library_sec_config_flag",
+      "type": "custom",
+      "title": "Synthetic sec config flag",
+      "state": "ready",
+      "covers": [
+        "h_000000000003"
       ]
     },
     {

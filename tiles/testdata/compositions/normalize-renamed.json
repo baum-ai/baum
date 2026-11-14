@@ -1,7 +1,6 @@
 {
   "fixes": [
     "tile \"table_flag_defaults\" has the ID of another tile; it is renamed",
-    "tile \"table_flag_defaults\" has the ID of another tile; it is renamed",
     "tile \"table_flag_defaults_2\" has the ID of another tile; it is renamed",
     "the layout does not place tile \"risks\"; it is added in the default order",
     "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
@@ -12,8 +11,8 @@
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "the layout does not place tile \"library_table_flag_defaults\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2\"; it is added in the default order",
-    "the layout does not place tile \"table_flag_defaults_3\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2_2\"; it is added in the default order"
   ],
   "composition": {
@@ -67,11 +66,11 @@
           "size": "third"
         },
         {
-          "tile": "table_flag_defaults_2",
+          "tile": "library_table_flag_defaults",
           "size": "half"
         },
         {
-          "tile": "table_flag_defaults_3",
+          "tile": "table_flag_defaults_2",
           "size": "half"
         },
         {
@@ -132,7 +131,7 @@
     ],
     "promotions": [
       {
-        "id": "table_flag_defaults_2",
+        "id": "table_flag_defaults",
         "change": "sec_config_flag",
         "block": 3,
         "digest": "sha256:cd5da8607f8b42b3bf1f14415a9c55cbee17355154a5f850478db5cb126a8093",
@@ -141,7 +140,7 @@
     ],
     "authored": [
       {
-        "id": "table_flag_defaults_3",
+        "id": "table_flag_defaults_2",
         "title": "Synthetic table",
         "data": {
           "columns": [
@@ -243,11 +242,11 @@
         "size": "third"
       },
       {
-        "tile": "table_flag_defaults_2",
+        "tile": "library_table_flag_defaults",
         "size": "half"
       },
       {
-        "tile": "table_flag_defaults_3",
+        "tile": "table_flag_defaults_2",
         "size": "half"
       },
       {
@@ -339,7 +338,7 @@
       ]
     },
     {
-      "id": "table_flag_defaults",
+      "id": "library_table_flag_defaults",
       "type": "custom",
       "title": "Synthetic table flag defaults",
       "state": "ready",
@@ -348,7 +347,7 @@
       ]
     },
     {
-      "id": "table_flag_defaults_2",
+      "id": "table_flag_defaults",
       "type": "table",
       "title": "Flag defaults",
       "state": "ready",
@@ -357,7 +356,7 @@
       ]
     },
     {
-      "id": "table_flag_defaults_3",
+      "id": "table_flag_defaults_2",
       "type": "table",
       "title": "Synthetic table",
       "state": "ready",

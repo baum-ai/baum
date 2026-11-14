@@ -111,9 +111,7 @@ func checkComposed(t *testing.T, normalized []byte, doc *tiles.Document, c *tile
 			t.Errorf("tile %s of a normalised composition is unavailable: %v", tile.ID, tile.Problems)
 		}
 	}
-	if !n.Empty() {
-		validateComposition(t, n)
-	}
+	validateComposition(t, n)
 	return n, report, composed
 }
 
@@ -199,8 +197,10 @@ func TestTemplates(t *testing.T) {
 			if n.Generator == nil || n.Generator.Template != tc.template {
 				t.Errorf("the generator names template %+v, want %s", n.Generator, tc.template)
 			}
+			// The template's generator is the host's; normalising drops it,
+			// and nothing else.
 			_, again, composed := checkComposed(t, normalized, doc, &n)
-			if len(again.Fixes) > 0 {
+			if counts := again.Counts(); len(counts) != 1 || counts[tiles.FixHostOnly] != 1 {
 				t.Errorf("the template's composition needs fixes: %v", again.Messages())
 			}
 			if tc.kind == tc.template {
@@ -392,6 +392,10 @@ func TestComposeRandom(t *testing.T) {
 		t.Run(f.name, func(t *testing.T) {
 			normalized, doc := convert(t, f)
 			before := mustJSON(t, doc)
+			// Each draw is the next version of the one before, its IDs
+			// stabilised against it, as a host does.
+			var previous *tiles.Composition
+			var previousDoc *tiles.Document
 			for seed := range runs {
 				hostile := seed%2 == 1
 				c := tilestest.RandomComposition(rand.New(rand.NewPCG(uint64(seed), 2022)), doc, hostile)
@@ -421,6 +425,18 @@ func TestComposeRandom(t *testing.T) {
 				if first, second := mustJSON(t, n), mustJSON(t, mustNormalize(doc, c)); !bytes.Equal(first, second) {
 					t.Errorf("seed %d: normalising twice gave different bytes", seed)
 				}
+				stable := tiles.StabilizeIDs(previous, c)
+				next := mustNormalize(doc, &stable)
+				nextDoc, err := tiles.Compose(doc, &next)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if previousDoc != nil {
+					for _, failure := range tilestest.CheckStability(previousDoc, nextDoc) {
+						t.Errorf("seed %d (hostile %v), after the seed before: %s", seed, hostile, failure)
+					}
+				}
+				previous, previousDoc = &next, nextDoc
 				if t.Failed() {
 					t.Fatalf("seed %d failed; composition: %s", seed, mustJSON(t, c))
 				}
@@ -741,5 +757,183 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 				t.Errorf("the group shows %d led by %s, want 1 led by %s", shown, group[0], named)
 			}
 		})
+	}
+}
+
+// A composition that chooses nothing still has its notes normalised and its
+// host-only parts dropped, and encodes as the schema requires.
+func TestNormalizeEmptyComposition(t *testing.T) {
+	normalized, doc := convert(t, exhibits)
+	for _, c := range []*tiles.Composition{nil, {}, {
+		Generator: &tiles.Generator{Template: "Not A Template"},
+		Notes: &tiles.Notes{
+			Why:   map[string]string{"overview": strings.Repeat("long ", 50), "no_such_tile": "Nothing."},
+			Moves: slices.Repeat([]tiles.Move{{Tile: "risks", Why: "Up."}}, 30),
+		},
+	}} {
+		n, report, _ := checkComposed(t, normalized, doc, c)
+		if !strings.Contains(string(mustJSON(t, n)), `"entries":[]`) {
+			t.Errorf("the entries do not encode as an empty list: %s", mustJSON(t, n))
+		}
+		if c != nil && c.Notes != nil {
+			if n.Generator != nil || n.Notes.Why["no_such_tile"] != "" || len([]rune(n.Notes.Why["overview"])) > tiles.MaxWhy || len(n.Notes.Moves) != tiles.MaxMoves {
+				t.Errorf("not normalised: %s", mustJSON(t, n))
+			}
+			if counts := report.Counts(); counts[tiles.FixHostOnly] != 1 || counts[tiles.FixNote] == 0 {
+				t.Errorf("fixes = %v", counts)
+			}
+		}
+	}
+}
+
+// The generator is the host's: a model's is dropped, and SetGenerator
+// accepts only one the schema does.
+func TestGeneratorIsHostWritten(t *testing.T) {
+	normalized, doc := convert(t, exhibits)
+	n, report, _ := checkComposed(t, normalized, doc, &tiles.Composition{
+		Generator: &tiles.Generator{Template: "x y", Fixes: map[tiles.FixKind]int{"size": 0}},
+		Layout:    tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: "overview", Size: tiles.SizeHalf}}},
+	})
+	if n.Generator != nil || report.Counts()[tiles.FixHostOnly] != 1 {
+		t.Errorf("the model's generator is kept: %+v, fixes %v", n.Generator, report.Counts())
+	}
+	for _, bad := range []tiles.Generator{
+		{Template: "Feature"}, {Model: strings.Repeat("m", 201)}, {Fixes: map[tiles.FixKind]int{tiles.FixSize: 0}},
+		{Problems: slices.Repeat([]string{"p"}, 21)}, {Problems: []string{strings.Repeat("p", 401)}},
+	} {
+		if err := n.SetGenerator(bad); err == nil {
+			t.Errorf("SetGenerator accepted %+v", bad)
+		}
+	}
+	if err := n.SetGenerator(tiles.Generator{PromptVersion: "review-tiles-public-v1", Model: "opus", ComposedAt: "2026-11-14T10:00:00Z", Template: tiles.TemplateFeature, Fixes: report.Counts()}); err != nil {
+		t.Fatal(err)
+	}
+	validateComposition(t, n)
+}
+
+// A library type named as a promoted, authored or change tile's ID is gets
+// another ID, so it never takes one from another subject.
+func TestLibraryTileReservedPrefixes(t *testing.T) {
+	_, doc := convert(t, exhibits)
+	if got := tiles.LibraryTileID("table_flag_defaults"); got != "library_table_flag_defaults" {
+		t.Errorf("LibraryTileID = %q", got)
+	}
+	if got := tiles.LibraryTileID("retry_budget"); got != "retry_budget" {
+		t.Errorf("LibraryTileID = %q", got)
+	}
+	previous, _ := tiles.NormalizeComposition(doc, &tiles.Composition{Promotions: []tiles.Promotion{{ID: "table_flag_defaults", Change: "sec_config_flag", Block: 3, Title: "Flags"}}})
+	next := tiles.StabilizeIDs(&previous, &tiles.Composition{Library: []tiles.LibraryTile{
+		tilestest.LibraryTile("table_flag_defaults", "h_000000000003"), tilestest.LibraryTile("sec_config_flag", "h_000000000003"),
+	}})
+	n, report := tiles.NormalizeComposition(doc, &next)
+	if len(n.Library) != 2 || report.Counts()[tiles.FixLibraryDuplicate] != 0 {
+		t.Fatalf("library tiles = %d, fixes %v", len(n.Library), report.Counts())
+	}
+	before, err := tiles.Compose(doc, &previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := tiles.Compose(doc, &n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"library_table_flag_defaults", "library_sec_config_flag"} {
+		if !slices.ContainsFunc(after.Tiles, func(tile tiles.Tile) bool { return tile.ID == id && tile.State == tiles.StateReady }) {
+			t.Errorf("no ready tile %s", id)
+		}
+	}
+	if failures := tilestest.CheckStability(before, after); len(failures) > 0 {
+		t.Errorf("stability: %v", failures)
+	}
+}
+
+// The limits keep the first tiles that pass their checks.
+func TestLimitsKeepValidTiles(t *testing.T) {
+	normalized, doc := convert(t, exhibits)
+	var authored []tiles.AuthoredTile
+	for i := range 3 {
+		authored = append(authored, tilestest.AuthoredTile(fmt.Sprintf("prose_uncited_%d", i)))
+	}
+	authored = append(authored, tilestest.AuthoredTile("prose_cited", "h_000000000001"))
+	var library []tiles.LibraryTile
+	for i := range 8 {
+		bad := tilestest.LibraryTile(fmt.Sprintf("bad_%d", i), "h_000000000001")
+		bad.Data = json.RawMessage(`{"summary": 1}`)
+		library = append(library, bad)
+	}
+	library = append(library, tilestest.LibraryTile("good", "h_000000000001"))
+	n, _, _ := checkComposed(t, normalized, doc, &tiles.Composition{Authored: authored, Library: library})
+	if len(n.Authored) != 1 || n.Authored[0].ID != "prose_cited" {
+		t.Errorf("authored = %+v", n.Authored)
+	}
+	if len(n.Library) != 1 || !strings.Contains(string(n.Library[0].Definition), `"good"`) {
+		t.Errorf("library = %d tiles", len(n.Library))
+	}
+}
+
+// Normalising reads only a bounded part of a huge composition, and its
+// report lists a bounded number of fixes while counting them all.
+func TestNormalizeBoundsInput(t *testing.T) {
+	_, doc := convert(t, exhibits)
+	const n = 20000
+	c := &tiles.Composition{Notes: &tiles.Notes{Why: map[string]string{}}}
+	for i := range n {
+		c.Promotions = append(c.Promotions, tiles.Promotion{ID: fmt.Sprintf("table_p%d", i), Change: "sec_config_flag", Block: 3, Title: "P"})
+		c.Layout.Entries = append(c.Layout.Entries, tiles.Entry{Tile: fmt.Sprintf("tile_%d", i), Size: tiles.SizeHalf})
+		c.Layout.Hidden = append(c.Layout.Hidden, "overview")
+		c.Notes.Why[fmt.Sprintf("tile_%d", i)] = "Why."
+		c.Notes.Moves = append(c.Notes.Moves, tiles.Move{Tile: "overview", Why: "Up."})
+		if i < 2000 {
+			c.Authored = append(c.Authored, tilestest.AuthoredTile(fmt.Sprintf("prose_a%d", i)))
+		}
+	}
+	start := time.Now()
+	normalizedComposition, report := tiles.NormalizeComposition(doc, c)
+	elapsed := time.Since(start)
+	bound := 50 * time.Millisecond
+	if tiles.RaceEnabled {
+		bound = 500 * time.Millisecond
+	}
+	if elapsed > bound {
+		t.Errorf("normalising took %v, more than %v", elapsed, bound)
+	}
+	if len(report.Fixes) > tiles.MaxReportedFixes || report.Total < 4*n || report.Counts()[tiles.FixInputLimit] == 0 {
+		t.Errorf("fixes listed %d, total %d, counts %v", len(report.Fixes), report.Total, report.Counts())
+	}
+	if len(normalizedComposition.Promotions) != 1 {
+		t.Errorf("promotions = %d", len(normalizedComposition.Promotions))
+	}
+}
+
+// Control characters leave titles, notes and prose; a prose tile keeps its
+// tabs and newlines.
+func TestNormalizeStripsControlCharacters(t *testing.T) {
+	normalized, doc := convert(t, exhibits)
+	prose := tilestest.AuthoredTile("prose_ctl", "h_000000000001")
+	prose.Title = "A\x00title\x1b"
+	prose.Data = json.RawMessage(`{"text": "Line one\u0000\n\tLine two\u0007", "anchors": [{"type": "hunk", "id": "h_000000000001"}]}`)
+	n, report, composed := checkComposed(t, normalized, doc, &tiles.Composition{
+		Authored: []tiles.AuthoredTile{prose},
+		Notes:    &tiles.Notes{Why: map[string]string{"overview": "Leads\x01."}},
+	})
+	if got := n.Authored[0].Title; got != "Atitle" {
+		t.Errorf("title = %q", got)
+	}
+	var data struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(n.Authored[0].Data, &data); err != nil || data.Text != "Line one\n\tLine two" {
+		t.Errorf("text = %q (%v)", data.Text, err)
+	}
+	if got := n.Notes.Why["overview"]; got != "Leads." {
+		t.Errorf("why = %q", got)
+	}
+	if report.Counts()[tiles.FixControl] < 2 {
+		t.Errorf("fixes = %v", report.Counts())
+	}
+	for _, tile := range composed.Tiles {
+		if strings.ContainsFunc(tile.Title+tile.Headline, func(r rune) bool { return r < 0x20 }) {
+			t.Errorf("tile %s keeps a control character", tile.ID)
+		}
 	}
 }
