@@ -1205,7 +1205,9 @@ the document.
   its digest against its content once and composes it once; adding a digest
   already held only marks it used. `MarkHung` refuses a digest until the
   daemon restarts. `tileview` keeps the one registry the routes share
-  (`tileview.FrameRegistry`).
+  (`tileview.FrameRegistry`). Only the daemon's render check or the
+  authenticated app may mark a digest hung, never a message from a frame:
+  otherwise a tile could switch other tiles off.
 - **Registration.** `tileview.Build`, which all three tile routes use,
   registers the type of every custom tile the validator left `ready`. A ready
   tile whose document cannot be composed (its HTML is within the format's
@@ -1223,11 +1225,14 @@ the document.
   digest, so nothing checks or converts a served document again; the digest
   is the one the validator verified on the stored one. The chat's agent reads
   the same answers, so its reads of the tile routes hold no tile source
-  either.
+  either. `GET /api/document` and the plain draft route serve review
+  documents, which hold no custom tiles today; once a stored composition or a
+  draft can carry them, those routes need the same projection.
 - **Route.** The route is checked before the namespace and the MCP route,
   after the Host check, and needs no cookie. It answers only `GET` and `HEAD`
   with `Sec-Fetch-Dest: iframe`, `Sec-Fetch-Mode: navigate` and
-  `Sec-Fetch-Site: same-origin`, for a path that is exactly the prefix and 64
+  `Sec-Fetch-Site: same-origin` (a request with none of them is counted and
+  logged at debug level, without its path), for a path that is exactly the prefix and 64
   lowercase hex digits as sent, and a registered digest not marked hung;
   everything else is the same plain 404. The answer is the composed document
   with `kit.CSP` in place of the app's policy, `Content-Type: text/html;
@@ -1419,6 +1424,11 @@ are rules for whoever writes the page's side:
   data: they go to the local UI and the render check's result, nowhere else.
 - Clamp `resize` (120 to 20,000px), rate-limit messages, and unmount a frame
   that floods.
+- A frame that never says `hello`, after the page has read its tile route
+  again (which registers its document again) and remounted it once, shows
+  "This tile couldn't load" rather than an empty box: an engine that sends
+  no `Sec-Fetch-*` headers gets a 404 for every frame, and that must be
+  visible.
 - Treat `hello`, `ready` and `error` as signals from honest authors only: a
   tile can fake `ready`, swallow its errors or replace `console.error`. The
   render check is a quality gate, not a security control; the sandbox, the

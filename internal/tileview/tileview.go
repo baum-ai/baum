@@ -190,6 +190,11 @@ func frameProblem(err error) string {
 // {"format", "bytes"}, and every other member is kept, digest included. The
 // page needs the title, kit, sizes and digest; the frame route serves the
 // HTML by digest. A definition that is not a JSON object is served as {}.
+//
+// A served definition is a projection, and the validator rejects it on
+// purpose: it no longer matches its digest. Anything that needs the source
+// (saving a type to a library, exporting it, the render check) reads it from
+// the stored definition, never from a served answer.
 func ServedDefinition(definition json.RawMessage) json.RawMessage {
 	var members map[string]json.RawMessage
 	if json.Unmarshal(definition, &members) != nil || members == nil {

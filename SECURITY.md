@@ -1472,15 +1472,22 @@ frame-ancestors 'self'; sandbox allow-scripts`.
 **What a tile's frame cannot reach.** The sandbox gives the frame an opaque
 origin, so it cannot read the app's page, its cookies or storage, or the
 desktop app's bridge, and it cannot open windows, submit forms or navigate
-the app. The policy allows no request at all: no `fetch`, images, fonts,
-styles or frames from anywhere, the daemon included; everything the kit
-needs is inlined into the document. A request the frame tries to send to the
-daemon anyway would carry no cookie, and the frame never learns the secret
-`/s/<namespace>/` path the app's API lives under. The only way out of the
-frame is `postMessage` to the page, and the frame protocol (see "Custom tile
-kit" in `ARCHITECTURE.md`) has no message that approves, merges, comments,
-changes a setting or reads anything; the page must treat every message from
-a frame as untrusted.
+the app's page. The frame's policy allows no request at all: no `fetch`,
+images, fonts, styles or frames from anywhere, the daemon included;
+everything the kit needs is inlined into the document. A request the frame
+tries to send to the daemon anyway would carry no cookie, and the frame
+never learns the secret `/s/<namespace>/` path the app's API lives under.
+
+A frame can still navigate itself (`location.href = …`, a meta refresh): its
+own policy does not govern that. The control for it is the page's
+`frame-src`, which today falls back to the page's `default-src 'self'`, so a
+frame can only be navigated to the daemon's own origin, where every route
+but `/tile-frames/` needs the cookie and that route refuses a navigation a
+frame starts (it is `cross-site`). The frame also talks to the page by
+`postMessage`; the frame protocol (see "Custom tile kit" in
+`ARCHITECTURE.md`) has no message that approves, merges, comments, changes a
+setting or reads anything, and the page must treat every message from a
+frame as untrusted.
 
 **How its document is served.** The frame document is
 `GET /tile-frames/<digest>`, where the digest is the 64 lowercase hex digits
@@ -1529,6 +1536,16 @@ by the chat's agent.
   fresh realm gets around such a script. It minimises what a tile receives
   instead.
 - A tile that runs a busy loop freezes the app's window until it is closed.
+- In the desktop app, a frame's navigation to an external address may be
+  handed to the desktop shell's navigation handler, which opens external
+  addresses in your browser, before the page's `frame-src` is applied. Until
+  the shell refuses frame navigations, a tile may be able to open a page of
+  its choosing in your browser, with what the tile was given in its address.
+- A local process that knows a tile type's digest can fetch that type's
+  source by sending the three `Sec-Fetch-*` headers itself; the checks are
+  not authentication. It never gets a tile's data, which is not in the
+  document, and a process running as you can read the app's credential
+  anyway.
 - The author today is your own agent, writing for you; a tile shared by or
   imported from someone else trusts its author with what it is given.
 
