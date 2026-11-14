@@ -217,6 +217,7 @@ document:
 | `provisional.json` | The template layout drafts showed while the review was written. |
 | `inventory.txt`, `reply.json` | What the composer read and answered. |
 | `analysis.json` | The tile analysis: the outline's selection, each fill's state, reason, repair, time, cost and place on the served page, the exhibits returned, dropped by reason, dropped as restating the review and kept with their places, how long the review waited for them, and the points a library or authored tile states that another tile states too (`compose.Duplicates`). |
+| `outcome.json` details | `outline_repairs` and `outline_rejections`: the outline stage's validation repairs and schema rejections, which the tile parts of its schema could add (compare a run with both options off). |
 | `fills/<type>.json`, `exhibits.json` | Each fill as it ended, its data included, and the exhibits call's result. |
 
 Validation is the review's (`ValidateStored`) plus the composition's, as
@@ -224,10 +225,11 @@ above. `replay metrics` adds the review metrics, the compose metrics from
 `compose.json`, `compose_cost_usd` (the stage's share of `cost_usd`),
 `compose_jump` (landing entries whose tile or size moved from the provisional
 layout to the composition) and `compose_no_composition`, and from
-`analysis.json`: `library_selected`, `library_ready`, `library_landing` and
-per type `library_<type>_selected`, `_ready`, `_not_applies`, `_dropped`,
-`_repaired` and `_landing`; `fills_cost_usd`, `fills_seconds_max`;
-`exhibits_returned`, `exhibits_kept`, `exhibits_landing`,
+`analysis.json`: `library_selected`, `library_ready`, `library_reused`,
+`library_landing` and per type `library_<type>_selected`, `_ready`,
+`_not_applies`, `_dropped`, `_repaired`, `_reused` and `_landing`;
+`fills_cost_usd`, `fills_seconds_max`; `exhibits_candidates` (proposed by the
+outline), `exhibits_called`, `exhibits_reused`, `exhibits_returned`, `exhibits_kept`, `exhibits_landing`,
 `exhibits_dropped_<reason>`, `exhibits_cost_usd`, `exhibits_seconds`;
 `extras_wait_seconds`; and `extras_duplicate_pairs` and
 `extras_has_duplicate`. In a chain each

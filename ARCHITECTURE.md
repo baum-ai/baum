@@ -1254,12 +1254,17 @@ the document.
   kit, digest}]}`, never their source. The daemon registers their frame
   documents at start-up (`tileview.Warm`), and the tile routes register a
   stored tile's definition as they serve it, so a version whose library tile
-  embeds an earlier definition keeps serving it under its own digest. The
-  page names a custom tile whose definition's digest the listing has as
-  baum's own: its kicker and rail entry are the type's title, not "Custom ·",
+  embeds an earlier definition keeps serving it under its own digest. The tile
+  routes mark a served custom tile's definition `builtin: true` when the
+  stored definition is a built-in type's, current or past
+  (`library.IsBuiltin`: its name is a built-in type's and the digest computed
+  from its content is that type's current one or one of
+  `library.PastDigests`), and drop a `builtin` member a stored definition
+  carries. The page names a marked tile as baum's own: its kicker, rail entry
+  and place under "Also gathered in" are the type's title, not "Custom ·",
   and its detail has no "Custom tile" mark, while it still draws in its
-  sandboxed frame. The listing decides, never the tile: a definition that
-  differs in any byte has another digest.
+  sandboxed frame. When a type's definition changes, its old digest is
+  appended to `library.PastDigests`, so saved tiles of it stay baum's own.
 
 Tests serve custom tiles through `tileview.SetFixture`, which runs a function
 on every converted tile document before its tiles are checked and panics
@@ -2223,60 +2228,93 @@ run before any call. The daemon's details retry is its only host (see
 "Persistent generation jobs").
 
 **Tile analysis.** A run given `StagedRun.Tiles` (`agent.StagedTiles`: the
-library types to offer, whether to ask for exhibits, and the texts of
-`prompt.TilesPrompts.TileAnalysisInstructions`) adds what a tile review needs
-beside the review, and nothing of it can fail or change the review. It runs
-only for a backend that may run calls at once and never when continuing a
+library types to offer, whether to ask for exhibits, the previous version's
+composition, and the texts of `prompt.TilesPrompts.TileAnalysisInstructions`)
+adds what a tile review needs beside the review. Nothing of it can fail the
+review: an analysis that cannot start (its texts, its schema) is left out, and
+a tile call that fails, panics, runs out of time or whose strings cannot be
+masked loses its tile while the run publishes. It never runs when continuing a
 version; without it the stages' prompts and schemas are byte for byte as
-above.
+above. With it the review's own content can differ by design: the details
+stage is told the selected types' checks.
 
 - **Selection.** The outline stage's prompt gets the selection text
-  (`review-tiles-select`) and the offered types (name, title, use-when line)
-  inserted before its Submitting heading, and its schema a required `library`
-  array, one `{type, applies, hunks, why}` per offered type in offer order.
-  The host takes the array out of each reply before `PrepareOutline`, so the
-  outline is prepared, repaired and stored exactly as without it, and reads
-  it leniently, never repairing the outline for it: a type answered with no
-  hunk of the diff, or not answered, does not apply; unknown hunks are
-  dropped; the reasons are masked as a task's output.
+  (`review-tiles-select`) with the offered types (name, title, use-when
+  line) and, with exhibits asked for, the candidates text
+  (`review-tiles-candidates`), inserted before its Submitting heading. Its
+  schema gets a required `library` array, one `{type, applies, hunks, why}`
+  per offered type in offer order, and a required `exhibits` array of at most
+  three candidates `{kind, gives, hunks}`. The host cuts both members out of
+  each reply before `PrepareOutline`, leaving the rest's bytes as they were,
+  so the outline is prepared, repaired and stored exactly as without them. It
+  reads them leniently and never repairs the outline for them: a type
+  answered with no hunk of the diff, or not answered, does not apply; unknown
+  hunks are dropped; a candidate of another kind, or with no statement or no
+  hunk of the diff, is dropped; the text is masked as a task's output.
 - **Review checks.** The details stage's prompt gets, after the outline, each
   selected type's `review_checks` under its title, so what a type knows goes
   wrong becomes the review's risks.
-- **Fills.** Each selected type gets a task (`fill-<type>`, its files named
-  so) beside the details and the context: the stage prefix, the fill text
-  (`review-tiles-fill`), the type's own `fill` instructions, the outline and
-  the selected hunks, with the read-only tools the details have. Its schema
-  is `{applies, data}`, `data` the type's `Entry.FillSchema()` or null, its
-  definitions at the root. The reply is masked as a task's output, Codex's
-  null `lines` are dropped, and `library.CheckFill` checks it; one repair
-  sends the host's problems back. A fill that answers the type does not apply
-  is not a tile; one that fails, or is still invalid after its repair, is
-  dropped with the host's reason.
-- **Exhibits.** With `Exhibits`, one task (`exhibits`) beside them may return
-  up to three authored tiles (`agent.ExhibitsSchema`: an ID, a title, what it
-  adds, and exactly one of a table, a code excerpt or a short prose note,
-  each with hunk or file citations). Nothing is repaired; each exhibit passes
-  the host's checks or is dropped with a reason: its shape is the one its ID
-  names, its sizes are bounded (6 columns, 20 rows, 200-character cells, 60
-  lines of code, 800 characters of prose), every hunk it cites is in the
-  diff (lines outside the hunk are dropped, citing the whole hunk) with at
-  least one hunk, a code excerpt's lines are the cited hunks' or the head
-  checkout's (one line in ten may differ, elisions aside), and it does not
-  restate an earlier exhibit (`review.NearDuplicate`). At most three are
-  kept.
-- **Time and budgets.** The fills and exhibits start with the details and
-  the context, on the run's context. Once those end, the extras get
-  `StagedTiles.Grace` (`DefaultTilesGrace`, 45 seconds) more, then are
-  stopped and dropped, so they hold a review up by at most that. With call
-  or token budgets, the details keep their share; the context keeps half of
-  its share and the extras split the other half evenly, and an extra left
-  with nothing makes no call.
+- **Reuse.** A selected type whose tile the previous version's composition
+  holds with this version's definition digest, whose data cites only hunks of
+  this diff (hunk IDs are content-derived: the same ID is the same code),
+  every hunk selected now among them, and which passes `library.CheckFill`
+  against this diff, is taken without a call (`FillResult.Reused`); its
+  `related` items are written again. A previous authored tile every hunk of
+  which is in this diff, its lines inside the hunk, is kept with its ID.
+- **Fills.** Each other selected type gets a task (`fill-<type>`, its files
+  named so) with a focused prefix in place of the stages' (the pull request's
+  title, the selected hunks with their patches, an index of the other hunks
+  without patches, source excerpts around the selected hunks, and the
+  checkout to read), the fill text (`review-tiles-fill`), the type's own
+  `fill` instructions, the outline and the selected hunks. Its schema is
+  `{applies, data}`, `data` the type's `Entry.FillSchema()` or null. The reply
+  is masked as a task's output, Codex's null `lines` are dropped, and
+  `library.CheckFill` checks it; one repair sends the host's problems back. A
+  fill that answers the type does not apply is not a tile; one that fails, or
+  is still invalid after its repair, is dropped with the host's reason.
+- **Exhibits.** The exhibits call (`exhibits`) runs only when the outline
+  proposed a candidate and the reused authored tiles leave room. It gets the
+  focused prefix of the candidates' hunks, the exhibits text, the outline,
+  the candidates and the kept tiles, and writes at most as many exhibits as
+  there are candidates (`agent.ExhibitsSchema`: an ID, a title, what it adds,
+  and exactly one of a table, a code excerpt or a short prose note, each with
+  hunk or file citations). Nothing is repaired; each exhibit passes the
+  host's checks or is dropped with a reason: its shape is the one its ID
+  names; its sizes are bounded (6 columns of 60-character headers, 20 rows,
+  200-character cells, 60 lines of code, 40-character language,
+  200-character caption, 800 characters of prose, 12 citations); every hunk
+  it cites is in the diff, with at least one hunk (lines outside the hunk are
+  dropped, citing the whole hunk); a file it cites is a regular file of the
+  head checkout not reached through a symbolic link (else the citation is
+  dropped); a code excerpt's lines are the cited hunks' or the head
+  checkout's (one line in ten may differ, elisions aside); and it does not
+  restate a kept tile (`review.NearDuplicate`).
+- **Time and budgets.** With a backend that may run calls at once, the
+  fills and exhibits start with the details and the context, on the run's
+  context. Once those end, the extras get `StagedTiles.Grace`
+  (`DefaultTilesGrace`, 45 seconds) more, never past the run's deadline less
+  ten seconds, and are then stopped and dropped, so a finished review is
+  always completed and published. A backend that runs one call at a time
+  runs the fills one by one after the context, under the same bound, and is
+  asked for no exhibits. With call or token budgets, the review's stages keep
+  exactly their shares; the extras share only what those shares leave of
+  what the outline left, and one left with no call, or fewer than 20,000
+  tokens, makes no call.
 - **Outcome.** `StagedOutcome.Tiles` holds the selection, each fill (state,
-  reason, masked data, whether it was repaired, its outcome and time), the
-  exhibits and how long the review waited for them; their calls are added
-  to the run's outcome once. `RedactStagedOutput` masks their outcomes'
-  strings as a stage's. Drafts carry the analysis so far
-  (`StagedProgress.Tiles`).
+  reason, masked data, whether it was repaired or reused, its outcome and
+  time), the exhibits (candidates, whether the call ran, reused and new
+  tiles) and how long the review waited for them; their calls are added to
+  the run's outcome once. `RedactStagedOutput` masks their outcomes' strings.
+  Drafts carry the analysis so far (`StagedProgress.Tiles`).
+
+The texts are built in and not replaceable yet:
+
+| Text | Used by |
+| --- | --- |
+| `review-tiles-select-public-v1.md` | the outline stage with tiles on: which library types apply |
+| `review-tiles-candidates-public-v1.md` | the outline stage with exhibits asked for: which exhibits it proposes |
+| `review-tiles-fill-public-v1.md` | each fill, before the type's own instructions |
+| `review-tiles-exhibits-public-v1.md` | the exhibits call |
 
 ### Tasks
 
@@ -5407,12 +5445,12 @@ renders unavailable inside its own error boundary. Comments use
 the `tile` target except on a Change tile (its section's target) and a risk
 (the risk's), so a full review and an older daemon read them as before.
 
-A tile route's answer, and a draft's, is used once the built-in tile library
-(`GET /api/tile-library`, read once a page) is known too, so a library tile is
-named as baum's own on its first draw. Table, code and prose tiles, promoted or
+Table, code and prose tiles, promoted or
 authored, have their own faces: a table's first rows, a code excerpt's first
 lines cut with an ellipsis, a note's first sentence, and in the detail the
-whole of it with its citations, which open the cited code. A change's detail
+whole of it with its citations, which open the cited code. A prose
+tile's text draws paragraphs, emphasis, code spans and lists only: links read
+as their text and raw HTML is not rendered. A change's detail
 lists, under "Also gathered in", beside the aggregate tiles holding its items,
 the tiles made of it: a block promoted out of it and the library and authored
 tiles whose citations include its hunks (`covers`).

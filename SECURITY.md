@@ -1474,15 +1474,21 @@ schema changes, interface changes) are custom tiles too: their HTML is
 baum's, but it draws data a model wrote from the pull request (a fill), so it
 runs in the same frame under the same policy and checks as any custom tile.
 The page names such a tile as baum's own, without the "Custom" mark, only when
-its definition's digest is one `GET /api/tile-library` lists for this
-version; the digest covers the whole definition, so neither a tile's title
-nor a stored definition that differs in any byte can claim it. A fill's data
+the daemon marks its served definition `builtin: true`, which it does when the
+digest computed from the stored definition's content is a built-in type's,
+current or past; the digest covers the whole definition, so neither a tile's
+title, a `builtin` member it carries nor a stored definition that differs in
+any byte can claim it. The composition holds only built-in types' tiles from a
+generation. A fill's data
 is model output like the review's: it is masked for secrets as a task's
 output, checked against the type's schema and the diff (every citation a hunk
 of the diff), and the host writes `related` itself. Authored tiles (exhibits)
-are table, code and prose data drawn by the page's own built-in faces as text,
-never HTML, with the same masking and citation checks; a code excerpt must be
-the cited code.
+are table, code and prose data drawn by the page's own built-in faces, with the
+same masking and citation checks; a code excerpt must be the cited code, and a
+file it cites must be a regular file of the checkout. Table cells, code and
+captions are drawn as text. A note's Markdown draws paragraphs, emphasis,
+code spans and lists only: a link reads as its text and raw HTML is not
+rendered.
 
 **What a tile's frame cannot reach.** The sandbox gives the frame an opaque
 origin, so it cannot read the app's page, its cookies or storage, or the
