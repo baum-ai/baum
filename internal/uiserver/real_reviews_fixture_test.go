@@ -650,10 +650,19 @@ func TestLocalAppRealReviews(t *testing.T) {
 	serveRealReviews(t, home, state, registry, videoDiscovery(realPullRequests(t, root, picks, heads, titles)))
 }
 
+// realWiring adds to the real-reviews daemon's API before it is served:
+// given the server and the API, it returns what to add to the app once the
+// API's handler is built (the chat tile eval's MCP server), or nil.
+type realWiring func(server *uiserver.Server, local *uiserver.LocalAPI) func(api http.Handler, app *daemon.App)
+
 // serveRealReviews runs the real daemon on the registry's clones until it is
-// stopped, with discovery answering from disc and no model or GitHub.
-func serveRealReviews(t *testing.T, home, state string, registry *repos.Registry, disc videoDiscovery) {
-	ctx := context.Background()
+// stopped (or ctx ends), with discovery answering from disc and no model or
+// GitHub; wire, when given, adds to its API.
+func serveRealReviews(t *testing.T, home, state string, registry *repos.Registry, disc videoDiscovery, wire ...realWiring) {
+	serveRealReviewsUntil(context.Background(), t, home, state, registry, disc, realFixturePort, wire...)
+}
+
+func serveRealReviewsUntil(ctx context.Context, t *testing.T, home, state string, registry *repos.Registry, disc videoDiscovery, port int, wire ...realWiring) {
 	cfg := config.Default()
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
@@ -666,7 +675,7 @@ func serveRealReviews(t *testing.T, home, state string, registry *repos.Registry
 	paths := daemon.Paths{State: state, Socket: filepath.Join(state, "daemon.sock")}
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err := daemon.Run(runCtx, daemon.Options{Paths: paths, Version: "fixture", Port: realFixturePort, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
+	err := daemon.Run(runCtx, daemon.Options{Paths: paths, Version: "fixture", Port: port, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		groups, err := reviewgroups.Open(filepath.Join(home, "app.sqlite"))
 		if err != nil {
 			return daemon.App{}, err
@@ -689,13 +698,24 @@ func serveRealReviews(t *testing.T, home, state string, registry *repos.Registry
 		if _, err := uiState.Replace("tour", "", 0, "real-reviews-fixture:1", json.RawMessage(`{"seen":true}`)); err != nil {
 			return daemon.App{}, err
 		}
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil),
+		local := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil),
 			Merge:  uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository, _ int, _ string) { poll(ctx, repo) }, changed),
 			Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: client}, poll, changed),
 			Index:  index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), UIState: uiState.Handler(),
 			Inboxes: (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "app.sqlite"))}).Handler(),
-			Groups:  (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler()}.Handler()
-		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume}, nil
+			Groups:  (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler()}
+		var after []func(http.Handler, *daemon.App)
+		for _, w := range wire {
+			if f := w(server, &local); f != nil {
+				after = append(after, f)
+			}
+		}
+		api := local.Handler()
+		app := daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume}
+		for _, f := range after {
+			f(api, &app)
+		}
+		return app, nil
 	}})
 	if err != nil {
 		t.Fatal(err)
