@@ -13,8 +13,10 @@ says; you only arrange. Reply with one JSON object that matches the schema.
   the reading time, so no tile has to lead in order to show them.
 - Tiles flow in your order across a grid 6 units wide: `full` is 6 units,
   `half` 3, `third` 2. A tile that does not fit in what is left of a row
-  starts the next row. The landing page is the first 3 rows; the rest is
-  behind "Show more".
+  starts the next row, and nothing moves up to fill the gap. So a row is
+  full only as one `full`, two `half`, or three `third`; a `half` beside a
+  `third` leaves a unit empty. The landing page is the first 3 rows; the rest
+  is behind "Show more".
 - Change tiles marked with the group `changes` are shown together, as one
   block, where its first member stands. `changes_shown` is how many members
   show before the rest fold behind "Show N more"; folded members take no
@@ -37,14 +39,23 @@ follow them where they do not break the rules below.
 - `pull_request`: the title, change kind, breaking change, the recommendation
   (`approve`, `look_first` or `request_changes`, and the changes it names),
   the risk score (1-5).
-- `template`: the default layout for this change kind, and the tiles it puts
-  on the landing page.
+- `template`: the default layout for this change kind, the tiles it puts on
+  the landing page, and its landing `rows` with the units each leaves empty.
 - `tiles`: every tile you place, in the template's order, with its allowed
   `sizes` and what its glance shows. A change has its assessed `level` (1-5)
   and `factors`, its review `score` (1-5; higher needs more attention), its
   worst `risk_tier`, its `version` against the previous review (new, changed,
-  unchanged), its missing evidence, and the table and code `blocks` it holds.
-- `previous`: the previous version's layout and reasons, or null.
+  unchanged), `named_by_recommendation` when the recommendation names it, its
+  missing evidence, and the table and code `blocks` it holds. A tile with a
+  `state` (`pending`, `failed`, `unavailable`) has no content to show yet:
+  never lead with it.
+- `previous`: the previous version's layout, its promoted tiles (each with the
+  `block` handle of the block it promoted, when that block still exists) and
+  its reasons, or null.
+- `cut`: details left out to keep the inventory small. When it lists
+  `missing_claims`, the `evidence` counts still carry what is missing or
+  failed. `omitted_changes`, when present, counts routine changes left out;
+  the host appends them to the end of the group.
 
 ## What the host does anyway
 
@@ -57,6 +68,8 @@ Do not spend effort on these; they hold whatever you reply.
   names is never folded.
 - Only change tiles can be in the `changes` group. Obsolete changes are not in
   the inventory; the host places them last.
+- Pinned tiles (`preferences.pins`) are put first by the host, whatever their
+  place in your reply.
 
 ## How to arrange
 
@@ -68,15 +81,24 @@ already puts what matters on the landing page, return it unchanged, with every
    order, at `half`:
    - the risks tile, when it has a critical or high risk or the recommendation
      is `look_first` or `request_changes`;
+   - when `breaking_change` is set, always the change that carries it (the
+     one whose title, summary or attention describes it);
    - the changes the recommendation names;
    - any other change with score 4-5, level 4-5, a high or critical risk, or
      missing evidence on a level 3+ change, especially one with
      `permissions`, `data_migration` or `public_api`.
 
    Featured changes leave the group (`group` null). Feature at most 3; the
-   rest stay in the group. A breaking change is in the overview; feature the
-   change that carries it.
-2. **Let the rest wait.** Other changes stay in the group, in the template's
+   rest stay in the group.
+
+   A risks tile with no risk above low (its `sizes` then include `third`) is
+   not a lead: the template already gives its half of the first row to the
+   lead change and places it after the changes at a `third`. Keep it there.
+2. **Fill the rows you lead with.** Halves come in pairs. When the leads
+   leave a single `half` in a row, give it a partner at `half` that deserves
+   it (another change from the list above, or evidence whose gaps matter);
+   when nothing does, prefer one empty unit to enlarging a routine tile.
+3. **Let the rest wait.** Other changes stay in the group, in the template's
    order, which is by score. Among changes of the same score, put those about
    the same area (shared paths, one feature) next to each other; never lift a
    change above one with a higher score. Evidence goes on the landing page
@@ -84,22 +106,23 @@ already puts what matters on the landing page, return it unchanged, with every
    after the group. Context, intent, decisions and media go after the group
    unless the inventory makes one matter (images of a UI change, many agent
    decisions nobody approved).
-3. **Size by importance, not by space.** `half` for a lead, `third` for
+4. **Size by importance, not by space.** `half` for a lead, `third` for
    routine tiles, `full` only for the single lead change of a pull request
    that is about that one change, or a glance that needs the width. Never
    enlarge a tile to fill a row.
-4. **Small or routine pull requests** (one or two changes, nothing above level
-   2, no missing evidence, or a dependency, docs or mechanical change): keep
-   the template, except that a pull request with a single current change
-   takes that change out of the group at `half`. Do not invent importance.
-5. **`changes_shown`**: null unless a long group ends in low-score changes
+5. **Small or routine pull requests** are either a dependency, docs or
+   mechanical change, or one with one or two changes, nothing above level 2
+   and no missing evidence. Keep their template, except that a single current
+   change leaves the group at `half`. Do not invent importance.
+6. **`changes_shown`**: null unless a long group ends in low-score changes
    worth folding, or a featured change left only a few in the group.
-6. **Promotions** move a table or code block out of its change into a tile of
+7. **Promotions** move a table or code block out of its change into a tile of
    its own. Promote only a block a reviewer must judge and that no landing
    tile already shows (a migration's columns, an API's routes), at most one
    per change. When in doubt, do not; most reviews have none. Place a promoted
-   tile in `entries` by its new `id`.
-7. **With a `previous` layout**, keep its order and sizes unless a tile's
+   tile in `entries` by its new `id`. To keep a previous promoted tile, promote
+   its `block` again under its old `id`.
+8. **With a `previous` layout**, keep its order and sizes unless a tile's
    importance changed: a new or changed change with a higher score, a new high
    risk, a change the recommendation now names. Add a `moves` item for each
    tile you move against it.
