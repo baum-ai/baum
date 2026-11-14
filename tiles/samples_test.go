@@ -143,6 +143,26 @@ func TestEdgeSamplesContent(t *testing.T) {
 	if strings.Contains(string(samples[1].Data), "h_000000000000") {
 		t.Error("the maximal sample has an unknown hunk though the pool has citations")
 	}
+
+	// A schema's own narrowing of a citation (hunks only) takes the pool's
+	// citations it accepts, rather than made-up lines in an unknown hunk.
+	narrowed := `{"type":"object","additionalProperties":false,"required":["cites"],"properties":{
+		"cites":{"type":"array","minItems":1,"maxItems":3,"items":{"$ref":"#/$defs/code"}}},
+		"$defs":{"code":{"type":"object","additionalProperties":false,"required":["type","id"],"properties":{
+			"type":{"const":"hunk"},"id":{"$ref":"#/$defs/hunkId"},
+			"lines":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"integer","minimum":1}}}}}}`
+	samples, _, err = tiles.EdgeSamples(json.RawMessage(narrowed), []json.RawMessage{
+		json.RawMessage(`{"type":"tile","id":"overview"}`),
+		json.RawMessage(`{"type":"hunk","id":"h_000000000003"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range samples {
+		if !strings.Contains(string(s.Data), `{"id":"h_000000000003","type":"hunk"}`) || strings.Contains(string(s.Data), "overview") || strings.Contains(string(s.Data), "lines") {
+			t.Errorf("the %s sample = %s, want the pool's hunk citation", s.Name, s.Data)
+		}
+	}
 }
 
 // The maximal sample of a large schema shrinks until it fits.

@@ -38,7 +38,10 @@ const (
 //     fewer items and shorter strings.
 //
 // Citations are filled from citations in turn (the review's own, so they
-// resolve), or with a hunk citation that resolves in no review. Generation
+// resolve), or with a hunk citation that resolves in no review. So is a
+// schema's own narrowing of a citation (an object whose type is a citation
+// type's const, such as hunks only), with the first of the citations it
+// accepts. Generation
 // is deterministic. A sample that does not pass its schema is dropped, with
 // a warning saying why. The whole call, generation and validation, has one
 // budget of sampleBudget steps; when it runs out, the samples not yet made
@@ -220,6 +223,13 @@ func (g *generator) value(n *schemaNode) (any, error) {
 	}
 	if n.ref != nil {
 		return g.value(n.ref)
+	}
+	// A schema's own narrowing of a citation, such as hunks only, takes the
+	// pool's citations it accepts, so they resolve.
+	if kind := n.properties["type"]; kind != nil && kind.hasConst && citationKinds[fmt.Sprint(kind.constant)] != "" {
+		if value, ok, err := g.citeFromPool(n); err != nil || ok {
+			return value, err
+		}
 	}
 	if n.hasConst {
 		return n.constant, nil
@@ -518,18 +528,27 @@ func classRune(ranges []rune) (rune, bool) {
 	return 0, false
 }
 
-// cite returns the next citation of the pool that passes the node, or a
-// hunk citation no review has.
-func (g *generator) cite(n *schemaNode) (any, error) {
+// citeFromPool returns the next citation of the pool that passes the node,
+// if one does.
+func (g *generator) citeFromPool(n *schemaNode) (any, bool, error) {
 	for range g.pool {
 		value := g.pool[g.next%len(g.pool)]
 		g.next++
 		switch err := g.work.validate(n, value); err {
 		case nil:
-			return value, nil
+			return value, true, nil
 		case errSampleBudget:
-			return nil, err
+			return nil, false, err
 		}
+	}
+	return nil, false, nil
+}
+
+// cite returns the next citation of the pool that passes the node, or a
+// hunk citation no review has.
+func (g *generator) cite(n *schemaNode) (any, error) {
+	if value, ok, err := g.citeFromPool(n); err != nil || ok {
+		return value, err
 	}
 	citation := map[string]any{"type": "hunk", "id": unknownHunk}
 	if g.maximal {
