@@ -10,8 +10,8 @@ import (
 // them last): a library tile whose data has a destructive or breaking item
 // (Leads) right after the overview and risks tiles that lead the layout;
 // any other library tile just before the changes group; an authored tile
-// just after the changes group. A library tile takes half the width where its
-// type allows it, an authored tile its AuthoredSize. With no changes group, both go after the leading tiles. A
+// just after the changes group. A library tile takes its LibrarySize, an
+// authored tile its AuthoredSize. With no changes group, both go after the leading tiles. A
 // composer that places a tile itself keeps its place.
 func PlaceExtras(c *Composition, doc *Document) {
 	placed := map[string]bool{}
@@ -32,11 +32,7 @@ func PlaceExtras(c *Composition, doc *Document) {
 			continue
 		}
 		placed[id] = true
-		size := SizeHalf
-		if len(def.Sizes) > 0 && !slices.Contains(def.Sizes, SizeHalf) {
-			size = def.Sizes[0]
-		}
-		entry := Entry{Tile: id, Size: size}
+		entry := Entry{Tile: id, Size: LibrarySize(lib)}
 		if !lib.Pending && Leads(lib.Data) {
 			lead = append(lead, entry)
 		} else {
@@ -138,6 +134,38 @@ func AuthoredSize(a AuthoredTile) Size {
 	}
 	if slices.Contains(allowed, SizeHalf) {
 		return SizeHalf
+	}
+	return allowed[0]
+}
+
+// LibrarySize is a library tile's default size: half when its data lists
+// few items (at most three in its longest top-level list, what a half
+// glance shows in full), else full, where its definition allows the size.
+func LibrarySize(lib LibraryTile) Size {
+	var def struct {
+		Sizes []Size `json:"sizes"`
+	}
+	_ = json.Unmarshal(lib.Definition, &def)
+	allowed := def.Sizes
+	if len(allowed) == 0 {
+		allowed = []Size{SizeHalf}
+	}
+	longest := 0
+	var top map[string]json.RawMessage
+	if json.Unmarshal(lib.Data, &top) == nil {
+		for name, raw := range top {
+			var items []json.RawMessage
+			if name != "related" && json.Unmarshal(raw, &items) == nil {
+				longest = max(longest, len(items))
+			}
+		}
+	}
+	want := SizeHalf
+	if longest > 3 {
+		want = SizeFull
+	}
+	if slices.Contains(allowed, want) {
+		return want
 	}
 	return allowed[0]
 }

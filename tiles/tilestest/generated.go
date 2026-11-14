@@ -43,6 +43,9 @@ import (
 //   - 13: no row of a composed document, as the page lays it out
 //     (tiles.Rows: a group a block of its own), ends with empty units that
 //     growing its tiles to allowed sizes would fill (tiles.RowFills).
+//   - 15: the landing page keeps tiles.LandingRows rows of tiles other than
+//     the composition's library, promoted and authored tiles, unless those
+//     take more than tiles.MaxExtraRows of its rows (tiles.ExtraRows).
 //   - 14: the guard rails hold (tiles/guards.go): the first screen
 //     (tiles.FirstScreenRows rows) and the landing page each show at least as
 //     many current changes as the template's for the same review, unless it shows a pinned tile, the
@@ -213,6 +216,36 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 	if !c.Empty() {
 		for id, size := range tiles.RowFills(doc) {
 			fail(13, "tile %s ends a row with empty units; at %s it would fill it", id, size)
+		}
+	}
+
+	// 15. Library, promoted and authored tiles add to the landing page: it
+	// keeps tiles.LandingRows rows of other tiles (as many as there are),
+	// unless they take more than tiles.MaxExtraRows rows.
+	if !c.Empty() {
+		extra := map[string]bool{}
+		for _, tile := range doc.Tiles {
+			if tiles.Extra(tile) {
+				extra[tile.ID] = true
+			}
+		}
+		own, taken, total := 0, 0, 0
+		for _, row := range tiles.Rows(doc.Layout) {
+			has := slices.ContainsFunc(row.Entries, func(i int) bool { return extra[doc.Layout.Entries[i].Tile] })
+			if !has {
+				total++
+			}
+			if row.Entries[0] >= doc.Layout.Landing {
+				continue
+			}
+			if has {
+				taken++
+			} else {
+				own++
+			}
+		}
+		if own < min(tiles.LandingRows, total) && taken <= tiles.MaxExtraRows {
+			fail(15, "the landing page keeps %d rows of tiles other than the composition's, not %d", own, min(tiles.LandingRows, total))
 		}
 	}
 

@@ -283,7 +283,8 @@
             "required": ["id", "title"]
           }
         },
-        "landing": { "type": "integer", "minimum": 0 }
+        "landing": { "type": "integer", "minimum": 0 },
+        "extra_rows": { "type": "integer", "minimum": 0, "maximum": 2, "description": "Host-derived: the rows the landing page grows by so that the composition's tiles add to it rather than displace the others." }
       },
       "additionalProperties": false,
       "required": ["entries", "groups", "landing"]

@@ -235,3 +235,50 @@ func TestAuthoredSize(t *testing.T) {
 		t.Errorf("sizes: %s, %s", tiles.AuthoredSize(wide), tiles.AuthoredSize(narrow))
 	}
 }
+
+// A library tile that lists few items takes half the row, one with more
+// the full row.
+func TestLibrarySize(t *testing.T) {
+	schema, _ := library.Get("schema_change")
+	few := tiles.LibraryTile{Definition: schema.Encoded, Data: json.RawMessage(`{"tables":[{},{}],"migrations":[{}]}`)}
+	many := tiles.LibraryTile{Definition: schema.Encoded, Data: json.RawMessage(`{"tables":[{},{},{},{}]}`)}
+	if tiles.LibrarySize(few) != tiles.SizeHalf || tiles.LibrarySize(many) != tiles.SizeFull {
+		t.Errorf("sizes: %s, %s", tiles.LibrarySize(few), tiles.LibrarySize(many))
+	}
+}
+
+// With extras the landing page keeps every tile it shows without them: it
+// grows by the rows they take.
+func TestExtrasAddToTheLandingPage(t *testing.T) {
+	_, doc := example(t)
+	_, hunk := riskHunk(t, doc)
+	schema, _ := library.Get("schema_change")
+	wide := tiles.AuthoredTile{ID: "table_matrix", Title: "Matrix", Data: json.RawMessage(fmt.Sprintf(
+		`{"columns":["a","b","c","d"],"rows":[["1","2","3","4"]],"source":[{"type":"hunk","id":%q}]}`, hunk))}
+	content := &tiles.Composition{Schema: tiles.CompositionName,
+		Library: []tiles.LibraryTile{{Definition: schema.Encoded, Data: schemaData(hunk, true)}}, Authored: []tiles.AuthoredTile{wide}}
+	plain, _ := tiles.Template(doc, nil)
+	with, _ := tiles.Template(doc, content)
+	shown := func(c tiles.Composition) map[string]bool {
+		composed, err := tiles.Compose(doc, &c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for i, v := range tiles.Visible(composed.Layout) {
+			if v {
+				out[composed.Layout.Entries[i].Tile] = true
+			}
+		}
+		return out
+	}
+	before, after := shown(plain), shown(with)
+	for id := range before {
+		if !after[id] {
+			t.Errorf("%s left the landing page for the extras", id)
+		}
+	}
+	if !after["schema_change"] {
+		t.Error("the destructive schema tile is not on the landing page")
+	}
+}

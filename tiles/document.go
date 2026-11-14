@@ -202,6 +202,9 @@ type Layout struct {
 	Groups  []Group `json:"groups"`
 	// Landing is the number of leading entries on the landing page (Landing).
 	Landing int `json:"landing"`
+	// ExtraRows, host-derived, is how many rows the landing page grows by
+	// for the composition's tiles (ExtraRows), at most MaxExtraRows.
+	ExtraRows int `json:"extra_rows,omitempty"`
 }
 
 // Entry places a tile.

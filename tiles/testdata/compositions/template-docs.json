@@ -192,7 +192,8 @@
       }
     ],
     "groups": [],
-    "landing": 6
+    "landing": 9,
+    "extra_rows": 1
   },
   "tiles": [
     {

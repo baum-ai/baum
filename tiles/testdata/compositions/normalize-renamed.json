@@ -262,7 +262,8 @@
         "title": "Changes"
       }
     ],
-    "landing": 5
+    "landing": 8,
+    "extra_rows": 1
   },
   "tiles": [
     {

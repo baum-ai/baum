@@ -603,8 +603,16 @@ func (cm *composer) finish(c *Composition, layout CompositionLayout) Composition
 		out.Authored = append(out.Authored, cand.authored)
 	}
 	out.Layout = cm.layout(layout)
-	cm.guard(&out)
-	cm.fillRows(&out)
+	// Filled rows can move how far the landing page reaches (its extra
+	// rows), which the guards read: guard and fill until neither changes.
+	for range 3 {
+		before := slices.Clone(out.Layout.Entries)
+		cm.guard(&out)
+		cm.fillRows(&out)
+		if slices.Equal(before, out.Layout.Entries) {
+			break
+		}
+	}
 	out.Notes = cm.notes(c.Notes)
 	return out
 }
@@ -614,18 +622,25 @@ func (cm *composer) finish(c *Composition, layout CompositionLayout) Composition
 // the sizes are final. Growing fills a row exactly, so no row breaks move and
 // the arrangement stays the same.
 func (cm *composer) fillRows(c *Composition) {
-	trial := *c
-	trial.Layout.Entries = slices.Clone(c.Layout.Entries)
-	doc, err := cm.build(&trial)
-	if err != nil {
-		return
-	}
-	fills := RowFills(doc)
-	for i, entry := range c.Layout.Entries {
-		if size, ok := fills[entry.Tile]; ok {
-			c.Layout.Entries[i].Size = size
-			if !cm.template {
-				cm.fix(FixRowFill, entry.Tile, "")
+	// Growing a tile can change how far the landing page reaches (its extra
+	// rows), and so how Arrange orders it: fill again until nothing grows.
+	for range 4 {
+		trial := *c
+		trial.Layout.Entries = slices.Clone(c.Layout.Entries)
+		doc, err := cm.build(&trial)
+		if err != nil {
+			return
+		}
+		fills := RowFills(doc)
+		if len(fills) == 0 {
+			return
+		}
+		for i, entry := range c.Layout.Entries {
+			if size, ok := fills[entry.Tile]; ok {
+				c.Layout.Entries[i].Size = size
+				if !cm.template {
+					cm.fix(FixRowFill, entry.Tile, "")
+				}
 			}
 		}
 	}

@@ -80,7 +80,13 @@ export type Tile = {
 
 export type TileLayoutEntry = { tile: string; size: TileSize; group?: string; pin?: boolean };
 export type TileGroup = { id: string; title: string; collapse_after?: number };
-export type TileLayout = { entries: TileLayoutEntry[]; groups: TileGroup[]; landing: number };
+export type TileLayout = {
+  entries: TileLayoutEntry[];
+  groups: TileGroup[];
+  landing: number;
+  /** Host-derived: the rows the landing page grew by for library and authored tiles. */
+  extra_rows?: number;
+};
 
 export type OverviewData = {
   text: string;

@@ -40,6 +40,7 @@ func Arrange(doc *Document) {
 	layout := doc.Layout
 	layout.Entries = declaredSizes(doc, layout.Entries)
 	layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin })
+	layout.ExtraRows = ExtraRows(doc, layout)
 	layout.Landing = Landing(layout)
 	var required []string
 	if mustShowRisks(doc) {
@@ -54,9 +55,11 @@ func Arrange(doc *Document) {
 			continue
 		}
 		layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin || slices.Contains(lead, entry.Tile) })
+		layout.ExtraRows = ExtraRows(doc, layout)
 		layout.Landing = Landing(layout)
 		if !onLanding(layout, id) {
 			layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return slices.Contains(lead, entry.Tile) })
+			layout.ExtraRows = ExtraRows(doc, layout)
 			layout.Landing = Landing(layout)
 		}
 	}
@@ -237,7 +240,7 @@ func Rows(layout Layout) []Row {
 func Landing(layout Layout) int {
 	landing := 0
 	for k, row := range Rows(layout) {
-		if k >= LandingRows {
+		if k >= LandingRows+layout.ExtraRows {
 			break
 		}
 		landing = row.Entries[len(row.Entries)-1] + 1
@@ -345,4 +348,51 @@ func RowFills(doc *Document) map[string]Size {
 		}
 	}
 	return fills
+}
+
+// MaxExtraRows bounds the rows the landing page grows by for a
+// composition's tiles.
+const MaxExtraRows = 2
+
+// Extra reports whether a tile is one a composition adds to the review's:
+// a library (custom) tile, or a promoted or authored table, code, prose or
+// diagram tile.
+func Extra(tile Tile) bool {
+	switch tile.Type {
+	case TypeCustom, TypeTable, TypeCode, TypeProse, TypeDiagram:
+		return true
+	}
+	return false
+}
+
+// ExtraRows returns how many rows the landing page of a layout grows by so
+// that the composition's tiles add to it rather than displace: one for each
+// row of the landing page that holds such a tile, as the page grows, at most
+// MaxExtraRows. The other tiles thus keep LandingRows rows of their own. A
+// layout without such tiles grows by none.
+func ExtraRows(doc *Document, layout Layout) int {
+	extra := map[string]bool{}
+	for _, tile := range doc.Tiles {
+		if Extra(tile) {
+			extra[tile.ID] = true
+		}
+	}
+	rows := Rows(layout)
+	n := 0
+	for {
+		taken := 0
+		for k, row := range rows {
+			if k >= LandingRows+n {
+				break
+			}
+			if slices.ContainsFunc(row.Entries, func(i int) bool { return extra[layout.Entries[i].Tile] }) {
+				taken++
+			}
+		}
+		taken = min(taken, MaxExtraRows)
+		if taken <= n {
+			return n
+		}
+		n = taken
+	}
 }

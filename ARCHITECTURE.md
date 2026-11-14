@@ -2550,7 +2550,8 @@ six units wide in order, an entry that does not fit starts the next row, and a
 group is a block under its own heading, so its first member and the entry
 after its last member each start a row (the page draws each group as a grid of
 its own across the row, ended by a rule). `tiles.Landing` takes the first three
-rows, and one more entry when a single one would be left behind "Show more";
+rows (more with library or authored tiles, below), and one more entry when a
+single one would be left behind "Show more";
 a group that shows some members never folds a single one (`tiles.Hidden`, which
 the page mirrors). Every row, the last too, is filled when growing its tiles
 to allowed sizes can (`tiles.RowFills`: the last tile to the size that fills
@@ -2562,10 +2563,14 @@ no group (a heading only from three), keep active risks beside the overview for
 docs and CI, and put evidence with two or more gaps beside the lead change on
 the second row. A composition's library tile with a destructive or breaking
 item (`tiles.Leads`) takes a half right after the first row in every
-template (a dropped table counts as destructive), another library tile and
-promoted tiles stand before the changes, and authored tiles after them, a
-table of four columns or more at full; a row they leave short is filled like
-any. A
+template (a dropped table counts as destructive), another library tile (at
+half when it lists three items or fewer, else full) and promoted tiles stand
+before the changes, and authored tiles after them, a table of four columns or
+more at full; a row they leave short is filled like any. They add to the
+landing page rather than displace: it grows by one row for each of its rows
+that holds such a tile, at most two (`tiles.ExtraRows`, served as the
+layout's `extra_rows`, which `landing` already counts), so the other tiles
+keep three rows (`CheckGenerated` invariant 15). A
 composer's layout then passes three guard rails
 (`tiles/guards.go`), each a fix of its own kind: evidence with two or more gaps
 stays on the landing page, where it fits without pushing a tile that must be

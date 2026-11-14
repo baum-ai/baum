@@ -290,11 +290,11 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 			}
 		case slotLeading:
 			for _, tile := range leading {
-				addComposed(tile, s.size)
+				addComposed(tile, cm.librarySize(tile.ID, s.size))
 			}
 		case slotComposed:
 			for _, tile := range composed {
-				addComposed(tile, s.size)
+				addComposed(tile, cm.librarySize(tile.ID, s.size))
 			}
 		case slotChanges:
 			var members []Entry
@@ -339,4 +339,15 @@ func (cm *composer) authoredSize(id string) Size {
 		}
 	}
 	return SizeHalf
+}
+
+// librarySize is a library tile's default size (LibrarySize), or size for
+// another composition tile.
+func (cm *composer) librarySize(id string, size Size) Size {
+	for _, cand := range cm.library {
+		if cand.tile.ID == id {
+			return LibrarySize(cand.library)
+		}
+	}
+	return size
 }
