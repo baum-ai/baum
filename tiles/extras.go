@@ -10,8 +10,8 @@ import (
 // them last): a library tile whose data has a destructive or breaking item
 // (Leads) right after the overview and risks tiles that lead the layout;
 // any other library tile just before the changes group; an authored tile
-// just after the changes group. Each takes half the width where its type
-// allows it. With no changes group, both go after the leading tiles. A
+// just after the changes group. A library tile takes half the width where its
+// type allows it, an authored tile its AuthoredSize. With no changes group, both go after the leading tiles. A
 // composer that places a tile itself keeps its place.
 func PlaceExtras(c *Composition, doc *Document) {
 	placed := map[string]bool{}
@@ -48,13 +48,7 @@ func PlaceExtras(c *Composition, doc *Document) {
 			continue
 		}
 		placed[a.ID] = true
-		size := SizeHalf
-		if kind := prefix(a.ID); kind != "" {
-			if allowed := AllowedSizes(Tile{ID: a.ID, Type: kind}); !slices.Contains(allowed, SizeHalf) {
-				size = allowed[0]
-			}
-		}
-		after = append(after, Entry{Tile: a.ID, Size: size})
+		after = append(after, Entry{Tile: a.ID, Size: AuthoredSize(a)})
 	}
 	if len(lead)+len(before)+len(after) == 0 {
 		return
@@ -100,8 +94,9 @@ func PlaceExtras(c *Composition, doc *Document) {
 }
 
 // Leads reports whether a library tile's data has an item a reviewer must
-// see first: a member "destructive" or "breaking" that is true, at any
-// depth.
+// see first, as the built-in types draw it: a member "destructive" or
+// "breaking" that is true, or an item whose "change" is "dropped" (a
+// dropped table), at any depth.
 func Leads(data json.RawMessage) bool {
 	var value any
 	if json.Unmarshal(data, &value) != nil {
@@ -114,7 +109,7 @@ func Leads(data json.RawMessage) bool {
 			return slices.ContainsFunc(v, walk)
 		case map[string]any:
 			for key, item := range v {
-				if (key == "destructive" || key == "breaking") && item == true {
+				if (key == "destructive" || key == "breaking") && item == true || key == "change" && item == "dropped" {
 					return true
 				}
 				if walk(item) {
@@ -125,4 +120,24 @@ func Leads(data json.RawMessage) bool {
 		return false
 	}
 	return walk(value)
+}
+
+// AuthoredSize is an authored tile's default size: full for a table of four
+// columns or more, whose glance needs the width, else half where its type
+// allows it.
+func AuthoredSize(a AuthoredTile) Size {
+	kind := prefix(a.ID)
+	allowed := AllowedSizes(Tile{ID: a.ID, Type: kind})
+	if kind == TypeTable {
+		var data struct {
+			Columns []string `json:"columns"`
+		}
+		if json.Unmarshal(a.Data, &data) == nil && len(data.Columns) >= 4 && slices.Contains(allowed, SizeFull) {
+			return SizeFull
+		}
+	}
+	if slices.Contains(allowed, SizeHalf) {
+		return SizeHalf
+	}
+	return allowed[0]
 }

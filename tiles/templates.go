@@ -315,7 +315,7 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 				}
 			}
 			for _, tile := range after {
-				addComposed(tile, SizeHalf)
+				addComposed(tile, cm.authoredSize(tile.ID))
 			}
 		case slotRest:
 			for _, entry := range cm.doc.Layout.Entries {
@@ -329,4 +329,14 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 		}
 	}
 	return CompositionLayout{Entries: entries}
+}
+
+// authoredSize is an authored tile's default size (AuthoredSize).
+func (cm *composer) authoredSize(id string) Size {
+	for _, cand := range cm.authored {
+		if cand.tile.ID == id {
+			return AuthoredSize(cand.authored)
+		}
+	}
+	return SizeHalf
 }

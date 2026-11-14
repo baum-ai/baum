@@ -215,3 +215,23 @@ func TestGuardRailsWithExtras(t *testing.T) {
 		t.Errorf("a must-see library tile was reverted: %v", report.Messages())
 	}
 }
+
+// A dropped table leads as a destructive column does: the schema tile draws
+// it as destructive.
+func TestLeadsOnADroppedTable(t *testing.T) {
+	if !tiles.Leads(json.RawMessage(`{"tables":[{"name":"old","change":"dropped","columns":[]}]}`)) {
+		t.Error("a dropped table does not lead")
+	}
+	if tiles.Leads(json.RawMessage(`{"tables":[{"name":"new","change":"created","columns":[{"destructive":false}]}]}`)) {
+		t.Error("a created table leads")
+	}
+}
+
+// A wide authored table takes the full row; a narrow one half of it.
+func TestAuthoredSize(t *testing.T) {
+	wide := tiles.AuthoredTile{ID: "table_wide", Data: json.RawMessage(`{"columns":["a","b","c","d"],"rows":[],"source":[]}`)}
+	narrow := tiles.AuthoredTile{ID: "table_narrow", Data: json.RawMessage(`{"columns":["a","b"],"rows":[],"source":[]}`)}
+	if tiles.AuthoredSize(wide) != tiles.SizeFull || tiles.AuthoredSize(narrow) != tiles.SizeHalf {
+		t.Errorf("sizes: %s, %s", tiles.AuthoredSize(wide), tiles.AuthoredSize(narrow))
+	}
+}

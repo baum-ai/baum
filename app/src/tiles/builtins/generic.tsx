@@ -63,11 +63,25 @@ function ProseDetail({ tile, ctx }: TileFaceProps) {
 
 type Row = { key: string; cells: string[] };
 
-function TableView({ data, rows }: { data: TableData; rows: string[][] }) {
+function TableView({
+  data,
+  rows,
+  clamp = false,
+}: {
+  data: TableData;
+  rows: string[][];
+  clamp?: boolean;
+}) {
   const columns: Column<Row>[] = data.columns.map((column, position) => ({
     key: `${position}-${column}`,
     header: column,
-    cell: (row) => row.cells[position] ?? "",
+    // A glance cuts a cell to two lines, so a narrow card stays a card.
+    cell: (row) =>
+      clamp ? (
+        <span className="line-clamp-2">{row.cells[position] ?? ""}</span>
+      ) : (
+        (row.cells[position] ?? "")
+      ),
   }));
   return (
     <Table
@@ -89,7 +103,7 @@ function TableGlance({ tile }: TileFaceProps) {
   return (
     <div className="space-y-1.5">
       <div className="pointer-events-none overflow-hidden">
-        <TableView data={data} rows={data.rows.slice(0, shown)} />
+        <TableView data={data} rows={data.rows.slice(0, shown)} clamp />
       </div>
       {data.rows.length > shown ? (
         <p className="text-xs text-tertiary">{data.rows.length - shown} more rows</p>
