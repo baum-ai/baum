@@ -1,0 +1,262 @@
+package replay
+
+import (
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/compose"
+	"github.com/baum-ai/baum/tiles/library"
+)
+
+// AnalysisRecordName is the schema of analysis.json, what a tiles case's
+// tile analysis did.
+const AnalysisRecordName = "baum.replay.tile-analysis/1"
+
+// AnalysisRecord is analysis.json: the outline's library selection, each
+// fill and the exhibits with their cost and time, where the served page
+// placed their tiles, and the duplicated points that involve them.
+type AnalysisRecord struct {
+	Schema        string            `json:"schema"`
+	PromptVersion string            `json:"prompt_version,omitempty"`
+	PromptDigest  string            `json:"prompt_digest,omitempty"`
+	Selection     []agent.Selection `json:"selection"`
+	Fills         []FillRecord      `json:"fills"`
+	Exhibits      *ExhibitsRecord   `json:"exhibits,omitempty"`
+	// WaitedSeconds is how long the review waited for the fills and
+	// exhibits once its own stages had ended.
+	WaitedSeconds float64 `json:"waited_seconds"`
+	// Duplicates are the pairs of points two tiles state, one of them a
+	// library or authored tile (compose.Duplicates on the served page).
+	Duplicates []compose.Pair `json:"duplicates,omitempty"`
+}
+
+// FillRecord is one fill: its state, reason, cost, time and placement.
+type FillRecord struct {
+	Type      string     `json:"type"`
+	Hunks     int        `json:"hunks"`
+	Why       string     `json:"why,omitempty"`
+	State     string     `json:"state"`
+	Reason    string     `json:"reason,omitempty"`
+	Repaired  bool       `json:"repaired,omitempty"`
+	Seconds   float64    `json:"seconds"`
+	CostUSD   *float64   `json:"cost_usd,omitempty"`
+	Calls     int        `json:"calls"`
+	Placement *Placement `json:"placement,omitempty"`
+}
+
+// ExhibitsRecord is the exhibits call: what it returned, kept and dropped.
+type ExhibitsRecord struct {
+	Returned int                    `json:"returned"`
+	Checked  int                    `json:"checked"`
+	Dropped  []agent.DroppedExhibit `json:"dropped,omitempty"`
+	// Duplicates are the exhibits dropped as restating the review; Kept those
+	// the composition holds, with their placement.
+	Duplicates []string             `json:"duplicates,omitempty"`
+	Kept       map[string]Placement `json:"kept,omitempty"`
+	Adds       map[string]string    `json:"adds,omitempty"`
+	Reason     string               `json:"reason,omitempty"`
+	Seconds    float64              `json:"seconds"`
+	CostUSD    *float64             `json:"cost_usd,omitempty"`
+	Calls      int                  `json:"calls"`
+}
+
+// Placement is where the served page put a tile: its position in the
+// layout, its size and whether it is on the landing page.
+type Placement struct {
+	Position int        `json:"position"`
+	Size     tiles.Size `json:"size"`
+	Landing  bool       `json:"landing"`
+}
+
+// placements returns where the served document places each tile.
+func placements(doc *tiles.Document) map[string]Placement {
+	out := map[string]Placement{}
+	if doc == nil {
+		return out
+	}
+	visible := tiles.Visible(doc.Layout)
+	for i, entry := range doc.Layout.Entries {
+		out[entry.Tile] = Placement{Position: i, Size: entry.Size, Landing: i < len(visible) && visible[i]}
+	}
+	return out
+}
+
+// analysisArtifacts writes analysis.json, fills/<type>.json and
+// exhibits.json for a case whose run had a tile analysis.
+func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport, served *tiles.Document, composition *tiles.Composition, list *pricing.List, backend string) error {
+	if report == nil || report.TilesOutcome == nil {
+		return nil
+	}
+	t := report.TilesOutcome
+	placed := placements(served)
+	record := AnalysisRecord{Schema: AnalysisRecordName, PromptVersion: t.PromptVersion, PromptDigest: t.PromptDigest,
+		Selection: t.Selection, Fills: []FillRecord{}, WaitedSeconds: t.Waited.Seconds()}
+	for _, f := range t.Fills {
+		r := FillRecord{Type: f.Type, Hunks: len(f.Hunks), Why: f.Why, State: f.State, Reason: f.Reason, Repaired: f.Repaired,
+			Seconds: f.Elapsed.Seconds(), CostUSD: list.BackendOutcomeCost(backend, f.Outcome.Model, f.Outcome), Calls: f.Outcome.Calls}
+		if p, ok := placed[tiles.LibraryTileID(f.Type)]; ok {
+			r.Placement = &p
+		}
+		record.Fills = append(record.Fills, r)
+		encoded, err := json.MarshalIndent(f, "", "  ")
+		if err != nil {
+			return err
+		}
+		artifacts["fills/"+f.Type+".json"] = encoded
+	}
+	only := map[string]bool{}
+	if composition != nil {
+		for _, lib := range composition.Library {
+			var def struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(lib.Definition, &def)
+			only[tiles.LibraryTileID(def.Name)] = true
+		}
+		for _, a := range composition.Authored {
+			only[a.ID] = true
+		}
+	}
+	if x := t.Exhibits; x != nil {
+		r := &ExhibitsRecord{Returned: x.Returned, Checked: len(x.Tiles), Dropped: x.Dropped, Duplicates: report.Duplicates, Adds: x.Adds,
+			Reason: x.Reason, Seconds: x.Elapsed.Seconds(), CostUSD: list.BackendOutcomeCost(backend, x.Outcome.Model, x.Outcome), Calls: x.Outcome.Calls}
+		if composition != nil {
+			for _, a := range composition.Authored {
+				if r.Kept == nil {
+					r.Kept = map[string]Placement{}
+				}
+				r.Kept[a.ID] = placed[a.ID]
+			}
+		}
+		record.Exhibits = r
+		encoded, err := json.MarshalIndent(x, "", "  ")
+		if err != nil {
+			return err
+		}
+		artifacts["exhibits.json"] = encoded
+	}
+	if served != nil && len(only) > 0 {
+		record.Duplicates = compose.Duplicates(compose.DocumentUnits(served), only)
+	}
+	encoded, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
+	}
+	artifacts["analysis.json"] = encoded
+	return nil
+}
+
+// The tile analysis metrics. The per-type ones are named with the type:
+// library_<type>_selected and so on.
+const (
+	MetricLibrarySelected   = "library_selected"
+	MetricLibraryReady      = "library_ready"
+	MetricLibraryLanding    = "library_landing"
+	MetricFillsCost         = "fills_cost_usd"
+	MetricFillsSeconds      = "fills_seconds_max"
+	MetricExhibitsReturned  = "exhibits_returned"
+	MetricExhibitsKept      = "exhibits_kept"
+	MetricExhibitsDuplicate = "exhibits_dropped_duplicate"
+	MetricExhibitsLanding   = "exhibits_landing"
+	MetricExhibitsCost      = "exhibits_cost_usd"
+	MetricExhibitsSeconds   = "exhibits_seconds"
+	MetricExtrasWait        = "extras_wait_seconds"
+	MetricDuplicatePairs    = "extras_duplicate_pairs"
+	MetricHasDuplicate      = "extras_has_duplicate"
+)
+
+// analysisMetrics adds the metrics of analysis.json, when the case has one.
+func analysisMetrics(read func(string) ([]byte, error), values map[string]float64) error {
+	raw, err := read("analysis.json")
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return nil
+	}
+	var r AnalysisRecord
+	if json.Unmarshal(raw, &r) != nil || r.Schema != AnalysisRecordName {
+		return errors.New("analysis.json is not a tile analysis record")
+	}
+	add := func(name string, v float64) { values[name] += v }
+	one := func(b bool) float64 {
+		if b {
+			return 1
+		}
+		return 0
+	}
+	for _, s := range r.Selection {
+		add("library_"+s.Type+"_selected", one(s.Applies))
+		add(MetricLibrarySelected, one(s.Applies))
+	}
+	fillsSeconds := 0.0
+	for _, f := range r.Fills {
+		prefix := "library_" + f.Type + "_"
+		add(prefix+"ready", one(f.State == agent.FillReady))
+		add(prefix+"not_applies", one(f.State == agent.FillNotApplies))
+		add(prefix+"dropped", one(f.State == agent.FillDropped))
+		add(prefix+"repaired", one(f.Repaired))
+		add(MetricLibraryReady, one(f.State == agent.FillReady))
+		landing := f.Placement != nil && f.Placement.Landing
+		add(prefix+"landing", one(landing))
+		add(MetricLibraryLanding, one(landing))
+		if f.CostUSD != nil {
+			add(MetricFillsCost, *f.CostUSD)
+		}
+		fillsSeconds = max(fillsSeconds, f.Seconds)
+	}
+	values[MetricFillsSeconds] = fillsSeconds
+	if x := r.Exhibits; x != nil {
+		add(MetricExhibitsReturned, float64(x.Returned))
+		add(MetricExhibitsKept, float64(len(x.Kept)))
+		add(MetricExhibitsDuplicate, float64(len(x.Duplicates)))
+		for _, d := range x.Dropped {
+			add("exhibits_dropped_"+d.Reason, 1)
+		}
+		for _, p := range x.Kept {
+			add(MetricExhibitsLanding, one(p.Landing))
+		}
+		if x.CostUSD != nil {
+			add(MetricExhibitsCost, *x.CostUSD)
+		}
+		values[MetricExhibitsSeconds] = x.Seconds
+	}
+	values[MetricExtrasWait] = r.WaitedSeconds
+	values[MetricDuplicatePairs] = float64(len(r.Duplicates))
+	values[MetricHasDuplicate] = one(len(r.Duplicates) > 0)
+	return nil
+}
+
+func analysisDefinitions() map[string]string {
+	d := map[string]string{
+		MetricLibrarySelected:   "library types the outline selected",
+		MetricLibraryReady:      "library fills whose data passed its checks",
+		MetricLibraryLanding:    "library tiles on the served page's landing page",
+		MetricFillsCost:         "what the fills cost at API prices (cost_usd includes it)",
+		MetricFillsSeconds:      "the longest fill's wall time",
+		MetricExhibitsReturned:  "exhibits the exhibits call returned",
+		MetricExhibitsKept:      "authored tiles the composition holds",
+		MetricExhibitsDuplicate: "exhibits dropped as restating the review or another exhibit",
+		MetricExhibitsLanding:   "authored tiles on the served page's landing page",
+		MetricExhibitsCost:      "what the exhibits call cost at API prices (cost_usd includes it)",
+		MetricExhibitsSeconds:   "the exhibits call's wall time",
+		MetricExtrasWait:        "how long the review waited for fills and exhibits after its own stages ended",
+		MetricDuplicatePairs:    "pairs of points two tiles state where one is a library or authored tile",
+		MetricHasDuplicate:      "1 when the page has any such pair",
+	}
+	for _, name := range library.Names {
+		for _, part := range []string{"selected", "ready", "not_applies", "dropped", "repaired", "landing"} {
+			d["library_"+name+"_"+part] = "the " + name + " type: " + part
+		}
+	}
+	for _, reason := range []string{agent.ExhibitShape, agent.ExhibitCitation, agent.ExhibitSize, agent.ExhibitCode, agent.ExhibitLimit} {
+		d["exhibits_dropped_"+reason] = "exhibits dropped by the host's checks: " + reason
+	}
+	return d
+}

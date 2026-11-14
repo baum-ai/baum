@@ -39,6 +39,9 @@ type TileGenerator struct {
 	Review *ReviewGenerator
 	// ComposePrompt, when set, replaces the composition prompt.
 	ComposePrompt string
+	// NoLibrary offers no library type and NoExhibits writes no authored
+	// tile (--generator-option library=off, exhibits=off).
+	NoLibrary, NoExhibits bool
 
 	mu sync.Mutex
 	// composed holds each generated review's composition by the review's
@@ -59,13 +62,24 @@ var _ interface {
 
 func init() {
 	RegisterGenerator("tiles", func(c GeneratorConfig) (Generator, error) {
-		if len(c.Options) > 0 {
-			return nil, fmt.Errorf("the tiles generator takes no --generator-option (got %v)", slices.Sorted(maps.Keys(c.Options)))
+		g := &TileGenerator{Review: &ReviewGenerator{Staged: true, Reuse: c.Reuse}}
+		for _, key := range slices.Sorted(maps.Keys(c.Options)) {
+			value := c.Options[key]
+			if value != "on" && value != "off" {
+				return nil, fmt.Errorf("--generator-option %s=%s: use on or off", key, value)
+			}
+			switch key {
+			case "library":
+				g.NoLibrary = value == "off"
+			case "exhibits":
+				g.NoExhibits = value == "off"
+			default:
+				return nil, fmt.Errorf("the tiles generator takes --generator-option library=on|off and exhibits=on|off (got %s)", key)
+			}
 		}
 		if !c.Staged {
 			return nil, errors.New("the tiles generator writes the review in stages; drop --no-staged")
 		}
-		g := &TileGenerator{Review: &ReviewGenerator{Staged: true, Reuse: c.Reuse}}
 		for id, text := range c.PromptOverrides {
 			if prompt.ID(id) == prompt.IDReviewTilesCompose {
 				if err := prompt.Validate(prompt.ID(id), text); err != nil {
@@ -121,7 +135,7 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 	g.mu.Lock()
 	previous := g.previous[c.ID]
 	g.mu.Unlock()
-	o.Tiles = &generate.Tiles{Prompts: g.prompts(), Previous: previous}
+	o.Tiles = &generate.Tiles{Prompts: g.prompts(), Previous: previous, NoLibrary: g.NoLibrary, NoExhibits: g.NoExhibits}
 	result, err := generate.Run(ctx, o)
 	out := Generated{Outcome: result.Outcome}
 	if err != nil {
@@ -165,6 +179,9 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 		record.Jump = jump(doc, report.Provisional, composition)
 		served := tileview.Build(result.Document, result.Composition, tiles.Options{})
 		if out.Artifacts["tiles.json"], err = json.MarshalIndent(served.Tiles, "", "  "); err != nil {
+			return out, err
+		}
+		if err := analysisArtifacts(out.Artifacts, report.Tiles, served.Tiles, composition, list, o.Backend.Name()); err != nil {
 			return out, err
 		}
 		out.Artifacts["composition.json"] = record.Composition
@@ -317,6 +334,9 @@ func (g *TileGenerator) ArtifactMetrics(read func(string) ([]byte, error)) (map[
 	if err != nil {
 		return nil, err
 	}
+	if err := analysisMetrics(read, values); err != nil {
+		return nil, err
+	}
 	values[MetricComposeProblem] = 0
 	if record.CostUSD != nil {
 		values[MetricComposeCost] = *record.CostUSD
@@ -334,5 +354,6 @@ func (g *TileGenerator) Definitions() map[string]string {
 	definitions[MetricComposeCost] = "what the compose stage cost at API prices (cost_usd includes it)"
 	definitions[MetricComposeJump] = "landing entries whose tile or size differs between the provisional layout drafts showed and the composition"
 	definitions[MetricComposeProblem] = "1 when the version would have no composition at all (the default layout)"
+	maps.Copy(definitions, analysisDefinitions())
 	return definitions
 }
