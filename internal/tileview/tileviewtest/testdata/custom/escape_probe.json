@@ -1,0 +1,23 @@
+{
+  "id": "escape_probe",
+  "title": "Escape probe",
+  "definition": {
+    "name": "escape_probe",
+    "title": "Escape probe",
+    "use_when": "Never: a test tile that tries every way out of its frame.",
+    "fill": "Name the outside origin to aim at, and whether to navigate away at the end.",
+    "data_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outside", "leave"],
+      "properties": {
+        "outside": { "type": "string", "maxLength": 200 },
+        "leave": { "type": "boolean" }
+      }
+    },
+    "kit": 1,
+    "sizes": ["third", "half", "full"],
+    "source": { "format": "html" }
+  },
+  "data": { "outside": "http://outside.invalid", "leave": false }
+}

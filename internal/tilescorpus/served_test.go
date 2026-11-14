@@ -30,7 +30,7 @@ func TestServedDigests(t *testing.T) {
 			if err != nil {
 				t.Fatalf("store %d version %d: %v", i, j, err)
 			}
-			sum := sha256.Sum256(append(append([]byte{}, body.Data...), body.ETag...))
+			sum := sha256.Sum256(append(append([]byte{}, body.Body.Data...), body.Body.ETag...))
 			fmt.Printf("DIGEST %04d-%04d %s\n", i, j, hex.EncodeToString(sum[:]))
 		}
 	}

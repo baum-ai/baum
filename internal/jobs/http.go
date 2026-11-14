@@ -283,6 +283,8 @@ type draftTileView struct {
 	revision    int
 	composition string
 	body        []byte
+	// frames are registered again whenever the kept view is served.
+	frames tileview.Frames
 }
 
 // get returns the encoded tile view of the draft, composed with composition
@@ -294,12 +296,14 @@ func (d *draftTiles) get(id string, revision int, draft, composition []byte) ([]
 	kept, ok := d.kept[id]
 	d.mu.Unlock()
 	if ok && kept.revision == revision && kept.composition == key {
+		kept.frames.Register()
 		return kept.body, nil
 	}
+	built := tileview.Build(draft, composition, tiles.Options{Draft: true})
 	full, err := json.Marshal(struct {
 		Draft int `json:"draft"`
 		tileview.Response
-	}{revision, tileview.Build(draft, composition, tiles.Options{Draft: true})})
+	}{revision, built})
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +312,7 @@ func (d *draftTiles) get(id string, revision int, draft, composition []byte) ([]
 	if d.kept == nil {
 		d.kept = map[string]draftTileView{}
 	}
-	d.kept[id] = draftTileView{revision, key, full}
+	d.kept[id] = draftTileView{revision, key, full, built.Frames}
 	d.mu.Unlock()
 	return full, nil
 }

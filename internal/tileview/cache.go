@@ -2,26 +2,28 @@ package tileview
 
 import (
 	"sync"
-
-	"github.com/baum-ai/baum/internal/etagjson"
 )
 
 const (
-	// maxAnswers and maxBytes bound a Cache by count and by size; the least
-	// recently used answer goes first. The newest answer is always kept,
-	// whatever its size.
+	// maxAnswers and maxBytes bound a Cache by count and by size (each
+	// answer's body and the HTML of its frames); the least recently used
+	// answer goes first. The newest answer is always kept, whatever its size.
 	maxAnswers = 16
 	maxBytes   = 64 << 20
 )
 
 type answer struct {
-	key  string
-	body etagjson.Body
+	key    string
+	answer Answer
 }
+
+func (a answer) size() int { return len(a.answer.Body.Data) + a.answer.Frames.Size() }
 
 // Cache keeps encoded tile answers under keys that name the bytes they were
 // built from, so a document asked for again is neither read nor converted
-// again. The zero value is an empty cache; it is safe for concurrent use.
+// again. An answer it returns has its frames registered again, so a frame
+// document the registry dropped comes back with the answer that names it.
+// The zero value is an empty cache; it is safe for concurrent use.
 type Cache struct {
 	mu      sync.Mutex
 	answers []answer // least recently used first
@@ -29,25 +31,31 @@ type Cache struct {
 }
 
 // Get returns the answer kept under key; an empty key is never kept.
-func (c *Cache) Get(key string) (etagjson.Body, bool) {
+func (c *Cache) Get(key string) (Answer, bool) {
 	if key == "" {
-		return etagjson.Body{}, false
+		return Answer{}, false
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	var found Answer
+	ok := false
 	for i, a := range c.answers {
 		if a.key == key {
 			copy(c.answers[i:], c.answers[i+1:])
 			c.answers[len(c.answers)-1] = a
-			return a.body, true
+			found, ok = a.answer, true
+			break
 		}
 	}
-	return etagjson.Body{}, false
+	c.mu.Unlock()
+	if ok {
+		found.Frames.Register()
+	}
+	return found, ok
 }
 
-// Put keeps body under key, dropping the least recently used answers beyond
-// the bounds.
-func (c *Cache) Put(key string, body etagjson.Body) {
+// Put keeps an answer under key, dropping the least recently used answers
+// beyond the bounds.
+func (c *Cache) Put(key string, a Answer) {
 	if key == "" {
 		return
 	}
@@ -55,15 +63,16 @@ func (c *Cache) Put(key string, body etagjson.Body) {
 	defer c.mu.Unlock()
 	for i, old := range c.answers {
 		if old.key == key {
-			c.bytes -= len(old.body.Data)
+			c.bytes -= old.size()
 			c.removeAt(i)
 			break
 		}
 	}
-	c.answers = append(c.answers, answer{key, body})
-	c.bytes += len(body.Data)
+	kept := answer{key, a}
+	c.answers = append(c.answers, kept)
+	c.bytes += kept.size()
 	for len(c.answers) > 1 && (len(c.answers) > maxAnswers || c.bytes > maxBytes) {
-		c.bytes -= len(c.answers[0].body.Data)
+		c.bytes -= c.answers[0].size()
 		c.removeAt(0)
 	}
 }

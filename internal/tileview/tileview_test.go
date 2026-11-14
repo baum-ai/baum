@@ -22,7 +22,7 @@ func decode(t *testing.T, r Response) map[string]any {
 		t.Fatal(err)
 	}
 	var out map[string]any
-	if err := json.Unmarshal(body.Data, &out); err != nil {
+	if err := json.Unmarshal(body.Body.Data, &out); err != nil {
 		t.Fatal(err)
 	}
 	return out
@@ -82,8 +82,8 @@ func TestBuildFailureLeavesTilesNullWithoutContent(t *testing.T) {
 			t.Errorf("%s: tiles %v, problem %q", document, r.Tiles != nil, r.Problem)
 		}
 		body, err := Encode(r)
-		if err != nil || !json.Valid(body.Data) || !strings.Contains(string(body.Data), `"tiles":null`) {
-			t.Errorf("%s: %s %v", document, body.Data, err)
+		if err != nil || !json.Valid(body.Body.Data) || !strings.Contains(string(body.Body.Data), `"tiles":null`) {
+			t.Errorf("%s: %s %v", document, body.Body.Data, err)
 		}
 	}
 }
@@ -172,7 +172,7 @@ func TestBuildWithoutACompositionIsUnchanged(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(got.Data) != string(want.Data) || got.ETag != want.ETag {
+		if string(got.Body.Data) != string(want.Body.Data) || got.Body.ETag != want.Body.ETag {
 			t.Errorf("%s: the answer changed", name)
 		}
 	}
@@ -212,7 +212,7 @@ func TestBuildComposesTheLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failures := tilestest.CheckGenerated(r.Document, parsed, r.Tiles); len(failures) > 0 {
+	if failures := tilestest.CheckGenerated(r.Document, parsed, r.checked); len(failures) > 0 {
 		t.Fatalf("generated document: %v", failures)
 	}
 	// The review document served beside the tiles is the same.
@@ -253,7 +253,7 @@ func TestBuildComposesRandomCompositions(t *testing.T) {
 		if r.Tiles == nil || r.Problem != "" {
 			t.Fatalf("seed %d: problem %q", seed, r.Problem)
 		}
-		if failures := tilestest.CheckGenerated(r.Document, &normal, r.Tiles); len(failures) > 0 {
+		if failures := tilestest.CheckGenerated(r.Document, &normal, r.checked); len(failures) > 0 {
 			t.Fatalf("seed %d: %v", seed, failures)
 		}
 	}
@@ -275,8 +275,8 @@ func TestBuildIgnoresAnOversizedComposition(t *testing.T) {
 	huge := []byte(`{"schema":"baum.composition/1","layout":{"entries":[]},"x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`)
 	before := ignoredCount()
 	got, err := Encode(Build(raw, huge, tiles.Options{}))
-	if err != nil || string(got.Data) != string(want.Data) || ignoredCount() != before+1 {
-		t.Errorf("answer changed %v, counted %d: %v", string(got.Data) != string(want.Data), ignoredCount()-before, err)
+	if err != nil || string(got.Body.Data) != string(want.Body.Data) || ignoredCount() != before+1 {
+		t.Errorf("answer changed %v, counted %d: %v", string(got.Body.Data) != string(want.Body.Data), ignoredCount()-before, err)
 	}
 }
 
@@ -291,8 +291,8 @@ func TestBuildSurvivesAComposeFailure(t *testing.T) {
 	before := ignoredCount()
 	r := Build(raw, composition, tiles.Options{})
 	got, err := Encode(r)
-	if err != nil || r.Problem != "" || string(got.Data) != string(want.Data) || ignoredCount() != before+1 {
-		t.Errorf("problem %q, changed %v, counted %d: %v", r.Problem, string(got.Data) != string(want.Data), ignoredCount()-before, err)
+	if err != nil || r.Problem != "" || string(got.Body.Data) != string(want.Body.Data) || ignoredCount() != before+1 {
+		t.Errorf("problem %q, changed %v, counted %d: %v", r.Problem, string(got.Body.Data) != string(want.Body.Data), ignoredCount()-before, err)
 	}
 }
 
@@ -344,7 +344,7 @@ func TestBuildComposesAfterTheDocumentDrifted(t *testing.T) {
 			t.Fatal(err)
 		}
 		applied, _ := tiles.NormalizeComposition(again, &normal)
-		if failures := tilestest.CheckGenerated(r.Document, &applied, r.Tiles); len(failures) > 0 {
+		if failures := tilestest.CheckGenerated(r.Document, &applied, r.checked); len(failures) > 0 {
 			t.Fatalf("seed %d: %v", seed, failures)
 		}
 		back, err := tiles.ToReview(r.Tiles)

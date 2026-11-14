@@ -87,19 +87,19 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 		if !ok {
 			return
 		}
-		body, found := answers.Get(read.revisionKey())
+		answer, found := answers.Get(read.revisionKey())
 		if !found {
 			version, ok := read.version(r.Context(), w)
 			if !ok {
 				return
 			}
 			var err error
-			if body, err = tileview.Encode(tileview.Build(version.Document, version.Composition, tiles.Options{})); err != nil {
+			if answer, err = tileview.Encode(tileview.Build(version.Document, version.Composition, tiles.Options{})); err != nil {
 				apiError(w, err)
 				return
 			}
-			answers.Put(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision), body)
+			answers.Put(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision), answer)
 		}
-		etagjson.Serve(w, r, body)
+		etagjson.Serve(w, r, answer.Body)
 	}
 }

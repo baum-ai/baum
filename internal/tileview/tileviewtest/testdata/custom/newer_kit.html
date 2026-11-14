@@ -1,0 +1,7 @@
+<!-- Written for a kit major this version does not ship, so the tile is unavailable and never registered. -->
+<script>
+  baum.tile({
+    glance: ({ data }) => baum.html`<p>${data.owners.length} owners</p>`,
+    detail: ({ data }) => baum.html`<ul class="kit-list">${data.owners.map((owner) => baum.html`<li>${owner}</li>`)}</ul>`,
+  });
+</script>

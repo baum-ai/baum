@@ -1,0 +1,46 @@
+<script>
+  const TONE = { added: "positive", changed: "caution", removed: "critical" };
+
+  baum.tile({
+    glance({ data }) {
+      if (data.stores.length === 0) return baum.empty("No widget store changed.");
+      return baum.html`<div class="kit-glance">
+        <div class="kit-row">
+          <span class="kit-count">${data.stores.length}</span>
+          <span class="kit-muted">${data.stores.length === 1 ? "store changed" : "stores changed"}</span>
+        </div>
+        <ul class="kit-list">
+          ${data.stores.slice(0, 3).map(
+            (store) => baum.html`<li>
+              <span class="kit-mono kit-truncate kit-grow">${store.name}</span>
+              <span class="kit-badge" data-tone=${TONE[store.status]}>${store.status}</span>
+            </li>`,
+          )}
+        </ul>
+      </div>`;
+    },
+
+    detail({ data }) {
+      return baum.html`<div class="kit-stack">
+        ${baum.md(data.summary)}
+        <section class="kit-section">
+          <h2 class="kit-heading">Stores</h2>
+          <ul class="kit-list">
+            ${data.stores.map(
+              (store) => baum.html`<li>
+                <div class="kit-stack kit-grow">
+                  <div class="kit-row">
+                    <span class="kit-mono kit-strong">${store.name}</span>
+                    <span class="kit-badge" data-tone=${TONE[store.status]}>${store.status}</span>
+                  </div>
+                  <div class="kit-row">${store.cites.map((citation) => baum.cite(citation))}</div>
+                  ${store.cites[0].type === "hunk" ? baum.diff(store.cites[0]) : null}
+                </div>
+              </li>`,
+            )}
+          </ul>
+        </section>
+      </div>`;
+    },
+  });
+</script>
