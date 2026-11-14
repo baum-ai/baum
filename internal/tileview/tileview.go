@@ -78,24 +78,39 @@ func Build(document, composition []byte, opts tiles.Options) Response {
 	return Response{Document: raw(normalized), Tiles: doc}
 }
 
+// applyComposition is tiles.Compose; tests replace it to force a failure.
+var applyComposition = tiles.Compose
+
 // compose applies the stored composition to the converted document, or
-// returns it as it is when there is none or none can be used.
-func compose(doc *tiles.Document, composition []byte) *tiles.Document {
+// returns it as it is when there is none or none can be used: one over
+// tiles.MaxStoredComposition bytes, one that does not parse, one Compose
+// refuses and one that makes it panic are ignored and counted.
+func compose(doc *tiles.Document, composition []byte) (out *tiles.Document) {
 	if len(composition) == 0 || string(composition) == "null" {
 		return doc
 	}
-	parsed, err := tiles.ParseComposition(composition)
-	if err != nil {
+	ignore := func() *tiles.Document {
 		workstats.Inc("tileview.compositions_ignored")
 		return doc
+	}
+	defer func() {
+		if recover() != nil {
+			out = ignore()
+		}
+	}()
+	if len(composition) > tiles.MaxStoredComposition {
+		return ignore()
+	}
+	parsed, err := tiles.ParseComposition(composition)
+	if err != nil {
+		return ignore()
 	}
 	if parsed.Empty() {
 		return doc
 	}
-	composed, err := tiles.Compose(doc, parsed)
+	composed, err := applyComposition(doc, parsed)
 	if err != nil {
-		workstats.Inc("tileview.compositions_ignored")
-		return doc
+		return ignore()
 	}
 	return composed
 }

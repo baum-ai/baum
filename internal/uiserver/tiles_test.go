@@ -408,9 +408,16 @@ func TestTilesServesTheStoredComposition(t *testing.T) {
 	if one.Code != 200 || one.Body.String() != again.Body.String() || decodeTiles(t, one).Tiles.Origin.Kind != tiles.OriginConverted {
 		t.Error("version 1 is not served with the converted layout")
 	}
-	// The kept answer of the composed version is not the plain one's.
-	if w := f.get("/api/tiles", "", ""); w.Header().Get("ETag") == f.get("/api/tiles", "&version=1", "").Header().Get("ETag") {
-		t.Error("two versions with different layouts share an ETag")
+	// The same document with and without a composition is answered with
+	// another body and ETag: two clones hold it as version 1, one with a
+	// composition.
+	other, composedOne := newTilesFixture(t), newTilesFixture(t)
+	other.put(t, titled(t, "Plain"))
+	composedOne.putComposed(t, titled(t, "Plain"))
+	same := composedOne.get("/api/tiles", "", "")
+	without := other.get("/api/tiles", "", "")
+	if same.Code != 200 || without.Code != 200 || same.Header().Get("ETag") == without.Header().Get("ETag") || same.Body.String() == without.Body.String() {
+		t.Error("a composition does not change the answer or its ETag")
 	}
 }
 

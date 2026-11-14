@@ -265,3 +265,94 @@ func TestKeyNamesTheComposition(t *testing.T) {
 		t.Error("keys do not name the composition's bytes")
 	}
 }
+
+func ignoredCount() int64 { return workstats.Take().Counters["tileview.compositions_ignored"] }
+
+// A composition over the size bound is ignored and counted, whatever it holds.
+func TestBuildIgnoresAnOversizedComposition(t *testing.T) {
+	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
+	want, _ := Encode(Build(raw, nil, tiles.Options{}))
+	huge := []byte(`{"schema":"baum.composition/1","layout":{"entries":[]},"x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`)
+	before := ignoredCount()
+	got, err := Encode(Build(raw, huge, tiles.Options{}))
+	if err != nil || string(got.Data) != string(want.Data) || ignoredCount() != before+1 {
+		t.Errorf("answer changed %v, counted %d: %v", string(got.Data) != string(want.Data), ignoredCount()-before, err)
+	}
+}
+
+// A failure while composing, even a panic, serves the converted layout and is
+// counted.
+func TestBuildSurvivesAComposeFailure(t *testing.T) {
+	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
+	composition, _ := tileviewtest.PinnedComposition(t, raw)
+	want, _ := Encode(Build(raw, nil, tiles.Options{}))
+	defer func(old func(*tiles.Document, *tiles.Composition) (*tiles.Document, error)) { applyComposition = old }(applyComposition)
+	applyComposition = func(*tiles.Document, *tiles.Composition) (*tiles.Document, error) { panic("PRIVATE_TEXT") }
+	before := ignoredCount()
+	r := Build(raw, composition, tiles.Options{})
+	got, err := Encode(r)
+	if err != nil || r.Problem != "" || string(got.Data) != string(want.Data) || ignoredCount() != before+1 {
+		t.Errorf("problem %q, changed %v, counted %d: %v", r.Problem, string(got.Data) != string(want.Data), ignoredCount()-before, err)
+	}
+}
+
+// A composition stored for a document that has since changed (a refresh or a
+// completion that removed a section, here) still gives a checked document.
+func TestBuildComposesAfterTheDocumentDrifted(t *testing.T) {
+	base := tileviewtest.Base(t)
+	original := tileviewtest.Encode(t, base)
+	normalized, err := review.NormalizeStored(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	converted, err := tiles.FromReview(normalized, tiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for seed := range uint64(6) {
+		c := tilestest.RandomComposition(rand.New(rand.NewPCG(seed, 9)), converted, false)
+		normal, _ := tiles.NormalizeComposition(converted, c)
+		stored, err := json.Marshal(normal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drifted := tileviewtest.Base(t)
+		// The last section goes; its hunks are unassigned, as a document
+		// refreshed against a moved head leaves them.
+		sections := drifted["sections"].([]any)
+		gone := sections[len(sections)-1].(map[string]any)
+		drifted["sections"] = sections[:len(sections)-1]
+		drifted["unassigned_hunks"] = append(drifted["unassigned_hunks"].([]any), gone["hunks"].([]any)...)
+		raw := tileviewtest.Encode(t, drifted)
+		r := Build(raw, stored, tiles.Options{})
+		if r.Tiles == nil || r.Problem != "" {
+			t.Fatalf("seed %d: tiles %v, problem %q", seed, r.Tiles != nil, r.Problem)
+		}
+		// Every change of the drifted document is placed, and the removed one
+		// is not.
+		for _, tile := range r.Tiles.Tiles {
+			if tile.ID == "sec_generated_client" {
+				t.Fatalf("seed %d: the removed section has a tile", seed)
+			}
+		}
+		now, err := review.NormalizeStored(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, err := tiles.FromReview(now, tiles.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied, _ := tiles.NormalizeComposition(again, &normal)
+		if failures := tilestest.CheckGenerated(r.Document, &applied, r.Tiles); len(failures) > 0 {
+			t.Fatalf("seed %d: %v", seed, failures)
+		}
+		back, err := tiles.ToReview(r.Tiles)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if equal, err := tilestest.RoundTripEqual(r.Document, back); err != nil || !equal {
+			t.Fatalf("seed %d: round trip %v %v", seed, equal, err)
+		}
+	}
+}
