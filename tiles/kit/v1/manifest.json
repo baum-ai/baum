@@ -26,7 +26,7 @@
       "name": "baum.html",
       "kind": "function",
       "signature": "baum.html`<markup ${value}>`: DocumentFragment",
-      "description": "An escaping tagged template. Interpolated values become text, nodes or the items of an array (null, undefined and booleans draw nothing); in an attribute they are set as its value. on* attributes, URLs with a scheme other than data: or blob:, and <script>, <iframe>, <object>, <embed>, <form>, <base>, <meta> and <link> throw. Data is never parsed as HTML."
+      "description": "An escaping tagged template. Interpolated values become text, nodes or the items of an array (null, undefined and booleans draw nothing); in an attribute they are set as its value. It throws, for static parts and values alike, on: on* attributes; an a, area or SVG use href that is not a #fragment; any other URL attribute (src, poster, an SVG image href and the like) that is not a data:image/... or blob: URL; a style value holding ; : { } ( ) quotes, a backslash, /* or url (set data-driven sizes as custom properties: style=\"--value:${n}\"); values inside style, script, title or textarea elements, comments, tag or attribute names, or a template; and the elements script, iframe, frame, object, embed, form, base, meta and link. Data is never parsed as HTML."
     },
     {
       "name": "baum.cite",
@@ -38,7 +38,7 @@
       "name": "baum.diff",
       "kind": "function",
       "signature": "baum.diff(citation, { maxLines?: number }): HTMLElement",
-      "description": "A <baum-diff> for a hunk citation. A glance draws the file, range and +added −removed on one line. A detail draws the excerpt the page sent: a header that jumps to the code, up to maxLines (default 40) numbered lines with a \"Show N more lines\" toggle. Without an excerpt it says \"Diff unavailable\" and why."
+      "description": "A <baum-diff> for a hunk citation. A glance draws the file, range and +added −removed on one line. A detail draws the excerpt the page sent: a header that jumps to the code, up to maxLines (default 40) numbered lines with a \"Show N more lines\" toggle; long lines wrap, as the review's excerpts do. Without an excerpt it says \"Diff unavailable\" and why."
     },
     {
       "name": "baum.md",
@@ -243,9 +243,9 @@
       "attributes": []
     },
     {
-      "name": "kit-none",
+      "name": "kit-natural",
       "kind": "class",
-      "description": "A row child that keeps its size.",
+      "description": "A row child that keeps its natural size (flex: none) while others grow or shrink.",
       "attributes": []
     },
     {
@@ -253,6 +253,39 @@
       "kind": "class",
       "description": "Cards in as many columns of at least 14rem as fit.",
       "attributes": []
+    },
+    {
+      "name": "kit-columns",
+      "kind": "class",
+      "description": "Children in equal columns; the count comes from data as a custom property.",
+      "attributes": [
+        {
+          "name": "style",
+          "description": "--columns: the number of columns, set from a number: style=\"--columns:${n}\" (2 by default)."
+        }
+      ]
+    },
+    {
+      "name": "kit-bar",
+      "kind": "class",
+      "description": "A thin bar filled in proportion to a value from data, as a meter beside a number.",
+      "attributes": [
+        {
+          "name": "style",
+          "description": "--value: a number from 0 to 1, set as style=\"--value:${share}\"."
+        },
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "The fill's status colour; the first chart colour without one."
+        }
+      ]
     },
     {
       "name": "kit-scroll",
@@ -371,7 +404,8 @@
     {
       "name": "kit-heading",
       "kind": "class",
-      "description": "A section heading in a detail, as the review's parts draw theirs: 16px, semibold, tracked, uppercase; a kit-section rules it off."
+      "description": "A section heading in a detail, as the review's parts draw theirs: 16px, semibold, tracked, uppercase; a kit-section rules it off.",
+      "attributes": null
     },
     {
       "name": "kit-kicker",
@@ -1038,6 +1072,18 @@
       "kind": "token",
       "group": "space",
       "description": "40px."
+    },
+    {
+      "name": "--value",
+      "kind": "token",
+      "group": "input",
+      "description": "Set by a tile on a kit-bar from data: a number from 0 to 1."
+    },
+    {
+      "name": "--columns",
+      "kind": "token",
+      "group": "input",
+      "description": "Set by a tile on a kit-columns from data: a number of columns."
     }
   ]
 }

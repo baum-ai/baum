@@ -22,7 +22,13 @@
         "errors": [],
         "breaking": false,
         "breaking_reason": null,
-        "cites": [{ "type": "hunk", "id": "h_2222bbbb3333", "lines": [21, 24] }]
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_2222bbbb3333",
+            "lines": [21, 24]
+          }
+        ]
       },
       {
         "surface": "http",
@@ -43,7 +49,13 @@
         "errors": [],
         "breaking": false,
         "breaking_reason": null,
-        "cites": [{ "type": "hunk", "id": "h_2222bbbb3333", "lines": [21, 24] }]
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_2222bbbb3333",
+            "lines": [21, 24]
+          }
+        ]
       },
       {
         "surface": "http",
@@ -72,8 +84,15 @@
         "breaking": true,
         "breaking_reason": "Removes `labels` from each widget and requires the **tags:read** scope.",
         "cites": [
-          { "type": "hunk", "id": "h_2222bbbb3333", "lines": [18, 19] },
-          { "type": "risk", "id": "rsk_scope" }
+          {
+            "type": "hunk",
+            "id": "h_2222bbbb3333",
+            "lines": [18, 19]
+          },
+          {
+            "type": "risk",
+            "id": "rsk_scope"
+          }
         ]
       },
       {
@@ -87,26 +106,45 @@
         "errors": [],
         "breaking": false,
         "breaking_reason": null,
-        "cites": [{ "type": "file", "path": "internal/tools/widgets.go" }]
+        "cites": [
+          {
+            "type": "file",
+            "path": "internal/tools/widgets.go"
+          }
+        ]
       }
     ],
     "consumers": [
       {
         "label": "web/src/api/widgets.ts",
         "updated": true,
-        "cites": [{ "type": "file", "path": "web/src/api/widgets.ts" }]
+        "cites": [
+          {
+            "type": "file",
+            "path": "web/src/api/widgets.ts"
+          }
+        ]
       },
       {
         "label": "cli/widgets list",
         "updated": false,
-        "cites": [{ "type": "check", "id": "ci", "test": "cli" }]
+        "cites": [
+          {
+            "type": "check",
+            "id": "ci",
+            "test": "cli"
+          }
+        ]
       }
     ],
-    "docs": { "updated": false, "cites": [] },
+    "docs": {
+      "updated": false,
+      "cites": []
+    },
     "concerns": []
   },
   "refs": {
-    "hunk:h_2222bbbb3333:21-24": {
+    "[\"hunk\",\"h_2222bbbb3333\",[21,24]]": {
       "status": "ok",
       "label": "routes.go:21–24",
       "navigable": true,
@@ -175,12 +213,12 @@
         ]
       }
     },
-    "hunk:h_2222bbbb3333:18-19": {
+    "[\"hunk\",\"h_2222bbbb3333\",[18,19]]": {
       "status": "unavailable",
       "label": "routes.go:18–19",
       "why": "comparing"
     },
-    "risk:rsk_scope": {
+    "[\"risk\",\"rsk_scope\"]": {
       "status": "ok",
       "label": "Older clients lose the widget list",
       "navigable": true,
@@ -190,7 +228,7 @@
       "text": "Tokens without the tags:read scope now get 403 from the widget list.",
       "change": "sec_routes"
     },
-    "file:internal/tools/widgets.go": {
+    "[\"file\",\"internal/tools/widgets.go\"]": {
       "status": "ok",
       "label": "widgets.go",
       "navigable": true,
@@ -200,7 +238,7 @@
       "deletions": 0,
       "hunks": 1
     },
-    "file:web/src/api/widgets.ts": {
+    "[\"file\",\"web/src/api/widgets.ts\"]": {
       "status": "ok",
       "label": "widgets.ts",
       "navigable": true,
@@ -210,7 +248,7 @@
       "deletions": 2,
       "hunks": 2
     },
-    "check:ci#cli": {
+    "[\"check\",\"ci\",\"cli\"]": {
       "status": "ok",
       "label": "ci / cli",
       "navigable": true,

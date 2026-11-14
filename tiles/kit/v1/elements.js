@@ -20,8 +20,21 @@ const state = {
 /** Marks an element the kit built, so the elements can tell a bare tag. */
 const BUILT = Symbol("baum.built");
 
+// The document's methods and accessors, taken from the prototypes now: a
+// named element (<img name="createElement">) shadows them on `document`.
+const doc = document;
+const DOC = Document.prototype;
+const docCall = (name, ...args) => DOC[name].apply(doc, args);
+const docGet = (name) => {
+  const descriptor = Object.getOwnPropertyDescriptor(DOC, name);
+  return descriptor ? descriptor.get.call(doc) : undefined;
+};
+const listen = (target, type, listener) =>
+  EventTarget.prototype.addEventListener.call(target, type, listener);
+const create = (tag) => docCall("createElement", tag);
+
 function el(tag, className, text) {
-  const node = document.createElement(tag);
+  const node = create(tag);
   if (className) node.className = className;
   if (text !== undefined && text !== null) node.textContent = String(text);
   return node;
@@ -31,6 +44,8 @@ const isRecord = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const str = (value) => (typeof value === "string" ? value : "");
 const int = (value) => (Number.isInteger(value) ? value : null);
+/** A lookup table that answers only for its own keys, never Object's. */
+const table = (entries) => Object.assign(Object.create(null), entries);
 
 // ---------------------------------------------------------------------------
 // baum.html: an escaping tagged template. The static parts are the author's
@@ -45,18 +60,39 @@ const REFUSED = new Set([
   "script", "iframe", "frame", "frameset", "object", "embed", "base", "meta", "link", "form",
   "portal",
 ]);
+/** Elements whose text is code or raw text, in any namespace: no values. */
+const RAW = new Set(["style", "script", "title", "textarea", "xmp", "noscript", "noembed", "noframes"]);
 /** Attributes no value may be interpolated into. */
 const FIXED = new Set(["srcset", "ping", "action", "formaction", "attributename"]);
+/** Attributes that load a resource: a data: image or a blob: URL only. */
+const RESOURCES = new Set([
+  "src", "poster", "background", "data", "cite", "longdesc", "lowsrc", "dynsrc", "manifest",
+  "codebase", "icon", "archive", "srcset", "ping", "action", "formaction",
+]);
+/** Elements whose href navigates or references: a #fragment only. */
+const LINKS = new Set(["a", "area", "use"]);
 const templates = new WeakMap();
 
-const isURLAttribute = (name) =>
-  /href$/.test(name) || ["src", "poster", "background", "action", "formaction", "data", "srcset", "ping", "cite"].includes(name);
+const FRAGMENT = /^#/;
+const IMAGE = /^data:image\/[a-z0-9.+-]+[;,]/i;
+const BLOB = /^blob:/i;
+/** What a style value may not hold: it may set a value, never add a rule. */
+const STYLE = /[;:{}()\\"'<>]|\/\*|url/i;
 
-/** The scheme of a URL as a browser reads it, after dropping the controls
- *  and spaces it ignores, or "" for a relative URL or a fragment. */
-function schemeOf(value) {
-  const match = /^([a-z][a-z0-9+.-]*):/i.exec(String(value).replace(/[\u0000- \u007f-\u009f]/g, ""));
-  return match ? match[1].toLowerCase() : "";
+function checkURL(tag, name, value) {
+  const lower = name.toLowerCase();
+  const link = lower.endsWith("href");
+  if (!link && !RESOURCES.has(lower)) return;
+  const ok = link && LINKS.has(tag)
+    ? FRAGMENT.test(value)
+    : FRAGMENT.test(value) && link || IMAGE.test(value) || BLOB.test(value);
+  if (!ok) {
+    throw new TypeError(
+      link && LINKS.has(tag)
+        ? `baum.html: <${tag} ${name}> may only be a #fragment.`
+        : `baum.html: ${name} may only be a data:image or blob: URL.`,
+    );
+  }
 }
 
 function checkAttribute(element, name, value) {
@@ -64,13 +100,8 @@ function checkAttribute(element, name, value) {
   if (lower.startsWith("on")) {
     throw new TypeError(`baum.html: no ${name}; use addEventListener.`);
   }
-  if (isURLAttribute(lower)) {
-    const scheme = schemeOf(value);
-    if (scheme && scheme !== "data" && scheme !== "blob") {
-      throw new TypeError(`baum.html: ${name} can't be a ${scheme}: URL.`);
-    }
-  }
   const tag = element.localName.toLowerCase();
+  checkURL(tag, name, value);
   if ((tag === "animate" || tag === "set") && lower === "attributename" && /^(on|.*href$)/i.test(value)) {
     throw new TypeError(`baum.html: <${tag}> may not change ${value}.`);
   }
@@ -122,33 +153,32 @@ function compile(strings) {
     // never holds the sequence that opens an HTML comment.
     source += (kinds[i - 1] === "node" ? `<${"!--"}${marker}-->` : marker) + strings[i];
   }
-  const template = document.createElement("template");
+  const template = create("template");
   // The author's own static markup, never data: values are only ever
   // placed into the parsed copy below.
   template.innerHTML = source;
   const parts = [];
   const found = new Set();
-  const walker = document.createTreeWalker(template.content, 0x85 /* element, text, comment */);
+  const walker = docCall("createTreeWalker", template.content, 0x85);
   let index = -1;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     index++;
-    if (node.nodeType === 8) {
-      const match = ONLY_HOLE.exec(node.data);
-      if (match) {
+    const parent = node.parentNode && node.parentNode.localName;
+    if (node.nodeType !== 1) {
+      const match = node.nodeType === 8 && ONLY_HOLE.exec(node.data);
+      if (match && !RAW.has(String(parent).toLowerCase())) {
         parts.push({ index, node: true, hole: Number(match[1]) });
         found.add(Number(match[1]));
-      }
-      continue;
-    }
-    if (node.nodeType === 3) {
-      if (HAS_HOLE.test(node.data)) {
-        const parent = node.parentNode && node.parentNode.nodeName.toLowerCase();
+      } else if (HAS_HOLE.test(node.data)) {
         throw new TypeError(`baum.html: no values in <${parent}>.`);
       }
       continue;
     }
     const tag = node.localName.toLowerCase();
     if (REFUSED.has(tag)) throw new TypeError(`baum.html: no <${tag}> in a tile.`);
+    if (tag === "template" && HAS_HOLE.test(node.innerHTML)) {
+      throw new TypeError("baum.html: no values in a <template>; make its copies with baum.html.");
+    }
     for (const attribute of Array.from(node.attributes)) {
       const { name, value } = attribute;
       if (HAS_HOLE.test(name)) throw new TypeError("baum.html: no values as attribute names.");
@@ -156,7 +186,7 @@ function compile(strings) {
         checkAttribute(node, name, value);
         continue;
       }
-      checkAttribute(node, name, "");
+      if (name.toLowerCase().startsWith("on")) checkAttribute(node, name, "");
       if (FIXED.has(name.toLowerCase())) throw new TypeError(`baum.html: ${name} takes no values.`);
       const statics = [];
       const holes = [];
@@ -188,7 +218,7 @@ function describe(value) {
 function insert(parent, before, value, depth) {
   if (value === null || value === undefined || typeof value === "boolean") return;
   if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
-    parent.insertBefore(document.createTextNode(String(value)), before);
+    parent.insertBefore(docCall("createTextNode", String(value)), before);
   } else if (value instanceof Node && value.nodeType !== 9) {
     parent.insertBefore(value, before);
   } else if (typeof value === "object" && typeof value[Symbol.iterator] === "function") {
@@ -199,12 +229,16 @@ function insert(parent, before, value, depth) {
   }
 }
 
-function attributeText(value) {
+function attributeText(value, style) {
   if (value === null || value === undefined || typeof value === "boolean") return "";
   if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
-    return String(value);
+    const text = String(value);
+    if (style && STYLE.test(text)) {
+      throw new TypeError("baum.html: a style value may only be a word or a number, as in style=\"--value:${n}\".");
+    }
+    return text;
   }
-  if (Array.isArray(value)) return value.map(attributeText).filter(Boolean).join(" ");
+  if (Array.isArray(value)) return value.map((item) => attributeText(item, style)).filter(Boolean).join(" ");
   throw new TypeError(`baum.html can't put ${describe(value)} in an attribute.`);
 }
 
@@ -217,11 +251,11 @@ function html(strings, ...values) {
     compiled = compile(strings);
     templates.set(strings, compiled);
   }
-  const fragment = document.importNode(compiled.template.content, true);
+  const fragment = docCall("importNode", compiled.template.content, true);
   if (compiled.parts.length === 0) return fragment;
   const nodes = [];
   const wanted = new Set(compiled.parts.map((part) => part.index));
-  const walker = document.createTreeWalker(fragment, 0x85);
+  const walker = docCall("createTreeWalker", fragment, 0x85);
   let index = -1;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     index++;
@@ -242,8 +276,9 @@ function html(strings, ...values) {
       else node.removeAttribute(name);
       continue;
     }
+    const style = name.toLowerCase() === "style";
     let text = statics[0];
-    for (let i = 0; i < holes.length; i++) text += attributeText(values[holes[i]]) + statics[i + 1];
+    for (let i = 0; i < holes.length; i++) text += attributeText(values[holes[i]], style) + statics[i + 1];
     checkAttribute(node, name, text);
     if (ns) node.setAttributeNS(ns, name, text);
     else node.setAttribute(name, text);
@@ -256,55 +291,50 @@ function html(strings, ...values) {
 // tile, id}; the page resolves each one the tile's data holds, under the key
 // keyOf gives it, and sends the payloads in `init`.
 
-/** The fields a key names, after the type; "?" marks an optional one. */
-const KEY_FIELDS = Object.assign(Object.create(null), {
-  hunk: ["id"],
+/** The fields a key holds after the type, in order; "?" marks an optional
+ *  one, which is null when absent. */
+const KEY_FIELDS = table({
+  hunk: ["id", "lines?"],
   file: ["path"],
   commit: ["sha"],
   pr: ["number"],
+  pr_body: ["section?"],
   pr_comment: ["id"],
   review_thread: ["id"],
+  prompt: ["session", "index"],
+  session_event: ["session", "event"],
+  check: ["id", "test?"],
   bot_report: ["id"],
+  issue: ["system", "key"],
+  spec: ["page", "assertion?"],
   external_url: ["url"],
+  attachment: ["id?", "url?"],
   risk: ["id"],
   evidence: ["id"],
   change: ["id"],
   tile: ["id"],
-  prompt: ["session", "index"],
-  session_event: ["session", "event"],
-  issue: ["system", "key"],
-  check: ["id", "test?"],
-  spec: ["page", "assertion?"],
 });
 
-/** A citation's key: its type, then its identifying fields joined by "#",
- *  such as `hunk:h_0123456789ab:12-20`, `prompt:<session>#3` or `risk:rsk_x`. */
+/** A citation's key: JSON.stringify([type, ...fields]), as ARCHITECTURE.md
+ *  ("Citation keys") defines it, or null for something that is not one. */
 function keyOf(c) {
   if (!isRecord(c) || typeof c.type !== "string") return null;
-  const text = (value) =>
-    typeof value === "string" ? value : Number.isFinite(value) ? String(value) : null;
-  if (c.type === "pr_body") return `pr_body:${text(c.section) ?? ""}`;
-  if (c.type === "attachment") {
-    const id = text(c.id ?? c.url);
-    return id === null ? null : `attachment:${id}`;
-  }
   const fields = KEY_FIELDS[c.type];
   if (!fields) return null;
-  let key = `${c.type}:`;
-  for (let i = 0; i < fields.length; i++) {
-    const optional = fields[i].endsWith("?");
-    const value = text(c[optional ? fields[i].slice(0, -1) : fields[i]]);
-    if (value === null) {
-      if (optional) break;
-      return null;
+  const key = [c.type];
+  for (const field of fields) {
+    const optional = field.endsWith("?");
+    let value = c[optional ? field.slice(0, -1) : field];
+    if (field === "lines?") {
+      value = Array.isArray(value) && value.length === 2 && value.every(Number.isInteger) ? [value[0], value[1]] : null;
+    } else if (typeof value !== "string" && !Number.isFinite(value)) {
+      if (!optional || (value !== undefined && value !== null)) return null;
+      value = null;
     }
-    key += (i > 0 ? "#" : "") + value;
+    key.push(value);
   }
-  const lines = c.type === "hunk" ? c.lines : null;
-  if (Array.isArray(lines) && lines.length === 2 && lines.every(Number.isInteger)) {
-    key += `:${lines[0]}-${lines[1]}`;
-  }
-  return key;
+  if (c.type === "attachment" && key[1] === null && key[2] === null) return null;
+  return JSON.stringify(key);
 }
 
 function resolve(citation) {
@@ -313,12 +343,12 @@ function resolve(citation) {
   return { key, payload: isRecord(payload) ? payload : null };
 }
 
-const REASONS = {
+const REASONS = table({
   not_in_review: "not in this review",
   comparing: "comparing versions",
   too_many: "too many citations",
   load_failed: "couldn't be loaded",
-};
+});
 const reason = (payload) => REASONS[str(payload && payload.why)] || "not available";
 
 const baseName = (path) => path.slice(path.lastIndexOf("/") + 1);
@@ -331,18 +361,18 @@ function rangeText(citation, payload) {
 }
 
 const TIERS = new Set(["critical", "high", "medium", "low"]);
-const EVIDENCE_TONES = {
+const EVIDENCE_TONES = table({
   verified: "positive",
   observed: "info",
   failed: "critical",
   missing: "caution",
-};
-const CHECK_TONES = {
+});
+const CHECK_TONES = table({
   success: "positive",
   failure: "critical",
   timed_out: "critical",
   action_required: "caution",
-};
+});
 
 /** The words a chip shows for a resolved citation, and its longer title. */
 function citeText(citation, payload) {
@@ -388,7 +418,7 @@ function kindOf(citation) {
 }
 
 function cite(citation, label) {
-  const node = document.createElement("baum-cite");
+  const node = create("baum-cite");
   node[BUILT] = true;
   const kind = kindOf(citation);
   node.dataset.kind = kind;
@@ -425,7 +455,7 @@ function cite(citation, label) {
 // lines the page sent (the detail face only). A glance draws the file and
 // range on one line.
 
-const MARKS = { add: "+", remove: "−", context: " " };
+const MARKS = table({ add: "+", remove: "−", context: " " });
 const SYNTAX = new Set([
   "keyword", "string", "string-expression", "comment", "constant", "function", "parameter",
   "punctuation", "link", "inserted", "deleted", "changed",
@@ -502,7 +532,7 @@ function diffHead(citation, payload, key) {
 function diff(citation, options) {
   const max = isRecord(options) && int(options.maxLines) !== null ? options.maxLines : 40;
   const maxLines = Math.max(1, Math.min(max, 1000));
-  const node = document.createElement("baum-diff");
+  const node = create("baum-diff");
   node[BUILT] = true;
   node.dataset.face = state.face === "detail" ? "detail" : "glance";
   const box = el("div", "baum-diff");

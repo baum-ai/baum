@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { frame, type Frame } from "./harness";
+import { citationKeys, frame, type Frame } from "./harness";
 
 const HUNK = { type: "hunk", id: "h_0123456789ab", lines: [12, 14] };
 
 /** Synthetic payloads, keyed as the page keys them. */
 const REFS = {
-  "hunk:h_0123456789ab:12-14": {
+  '["hunk","h_0123456789ab",[12,14]]': {
     status: "ok",
     label: "store.go:12–14",
     navigable: true,
@@ -39,26 +39,26 @@ const REFS = {
       ],
     },
   },
-  "hunk:h_aaaaaaaaaaaa": {
+  '["hunk","h_aaaaaaaaaaaa",null]': {
     status: "unavailable",
     label: "api.go",
     why: "comparing",
   },
-  "file:docs/api.md": {
+  '["file","docs/api.md"]': {
     status: "ok",
     label: "api.md",
     navigable: false,
     path: "docs/api.md",
     hunks: 2,
   },
-  "commit:0123456789abcdef": {
+  '["commit","0123456789abcdef"]': {
     status: "ok",
     label: "0123456",
     navigable: true,
     sha: "0123456789abcdef",
     subject: "Add widgets",
   },
-  "risk:rsk_widgets": {
+  '["risk","rsk_widgets"]': {
     status: "ok",
     label: "Widget rows can be lost",
     navigable: true,
@@ -68,7 +68,7 @@ const REFS = {
     text: "Dropping the column loses rows.",
     change: "sec_store",
   },
-  "evidence:ev_tests": {
+  '["evidence","ev_tests"]': {
     status: "ok",
     label: "Tests cover the migration",
     navigable: true,
@@ -76,7 +76,7 @@ const REFS = {
     evidence_status: "verified",
     claim: "The migration test opens an old store.",
   },
-  "check:ci#unit": {
+  '["check","ci","unit"]': {
     status: "ok",
     label: "ci / unit",
     navigable: true,
@@ -84,7 +84,7 @@ const REFS = {
     conclusion: "failure",
     required: true,
   },
-  "prompt:ses_1#3": { status: "ok", label: "Prompt 3", navigable: true },
+  '["prompt","ses_1",3]': { status: "ok", label: "Prompt 3", navigable: true },
 };
 
 let current: Frame | null = null;
@@ -123,7 +123,7 @@ describe("baum.cite", () => {
     expect(detail.sent.at(-1)).toEqual({
       protocol: "baum.tile/1",
       kind: "jump",
-      key: "hunk:h_0123456789ab:12-14",
+      key: '["hunk","h_0123456789ab",[12,14]]',
     });
   });
 
@@ -187,46 +187,13 @@ describe("baum.cite", () => {
     expect((ready.metrics as { unresolved: number }).unresolved).toBe(0);
   });
 
-  it("keys every kind of citation as the page does", async () => {
+  it("keys every citation as the shared fixture says", async () => {
     const f = await shown("detail", "() => null");
-    const keys: [unknown, string | null][] = [
-      [{ type: "hunk", id: "h_1" }, "hunk:h_1"],
-      [{ type: "hunk", id: "h_1", lines: [3, 9] }, "hunk:h_1:3-9"],
-      [{ type: "file", path: "a/b.go" }, "file:a/b.go"],
-      [{ type: "commit", sha: "abc1234" }, "commit:abc1234"],
-      [{ type: "pr", number: 12 }, "pr:12"],
-      [{ type: "pr_body" }, "pr_body:"],
-      [{ type: "pr_body", section: "Testing" }, "pr_body:Testing"],
-      [{ type: "pr_comment", id: 99 }, "pr_comment:99"],
-      [{ type: "review_thread", id: "PRRT_x" }, "review_thread:PRRT_x"],
-      [{ type: "prompt", session: "s", index: 2 }, "prompt:s#2"],
-      [{ type: "session_event", session: "s", event: "e" }, "session_event:s#e"],
-      [{ type: "check", id: "c" }, "check:c"],
-      [{ type: "check", id: "c", test: "t" }, "check:c#t"],
-      [{ type: "bot_report", id: "b" }, "bot_report:b"],
-      [{ type: "issue", system: "linear", key: "X-1" }, "issue:linear#X-1"],
-      [{ type: "spec", page: "SPEC-1" }, "spec:SPEC-1"],
-      [{ type: "spec", page: "SPEC-1", assertion: "SPEC-1-A2" }, "spec:SPEC-1#SPEC-1-A2"],
-      [
-        { type: "external_url", url: "https://example.invalid" },
-        "external_url:https://example.invalid",
-      ],
-      [{ type: "attachment", id: "att_1" }, "attachment:att_1"],
-      [{ type: "risk", id: "r" }, "risk:r"],
-      [{ type: "evidence", id: "e" }, "evidence:e"],
-      [{ type: "change", id: "c" }, "change:c"],
-      [{ type: "tile", id: "t" }, "tile:t"],
-      [{ type: "toString", id: "x" }, null],
-      [{ type: "risk" }, null],
-      [null, null],
-      ["risk:r", null],
-    ];
-    for (const [citation, key] of keys) {
+    for (const { citation, key } of citationKeys) {
       const refs = key ? { [key]: { status: "ok", label: key, navigable: true } } : {};
       f.send({ protocol: "baum.tile/1", kind: "update", data: {}, refs });
-      expect(
-        f.window.baum.refs.get(f.window.JSON.parse(JSON.stringify(citation)))?.label ?? null,
-      ).toBe(key);
+      const payload = f.window.baum.refs.get(f.window.JSON.parse(JSON.stringify(citation)));
+      expect(payload?.label ?? null, JSON.stringify(citation)).toBe(key);
     }
   });
 });
@@ -272,7 +239,7 @@ describe("baum.diff", () => {
     expect(lines[3]!.querySelector(".baum-code")!.textContent).toBe("return db");
     expect(rows.at(-1)!.textContent).toBe("⋯ 5 lines below");
     head.querySelector("button")!.click();
-    expect(f.sent.at(-1)).toMatchObject({ kind: "jump", key: "hunk:h_0123456789ab:12-14" });
+    expect(f.sent.at(-1)).toMatchObject({ kind: "jump", key: '["hunk","h_0123456789ab",[12,14]]' });
   });
 
   it("folds lines past maxLines behind a toggle", async () => {
@@ -313,7 +280,7 @@ describe("baum.diff", () => {
     current = f;
     f.init({
       refs: {
-        "hunk:h_1": {
+        '["hunk","h_1",null]': {
           status: "ok",
           label: "a.go",
           navigable: false,

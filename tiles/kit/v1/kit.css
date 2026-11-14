@@ -60,6 +60,12 @@ body {
 #baum-root {
   min-width: 0;
 }
+/* A detail keeps 4px clear on every side, for focus rings at its edges; the
+   page sets the frame 4px out on every side, so its text lines up with the
+   pane's. */
+:root[data-face="detail"] body {
+  padding: 4px;
+}
 h1,
 h2,
 h3,
@@ -169,13 +175,38 @@ summary {
   flex: 1 1 0;
   min-width: 0;
 }
-.kit-none {
+.kit-natural {
   flex: none;
 }
 .kit-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
   gap: var(--space-3);
+}
+/* Columns set by data: style="--columns:3". */
+.kit-columns {
+  --columns: 2;
+  display: grid;
+  grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+  gap: var(--space-3);
+}
+/* A bar filled to style="--value:0.4" (0 to 1), in a status tone. */
+.kit-bar {
+  --value: 0;
+  display: block;
+  height: 6px;
+  min-width: 2rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-wash);
+  overflow: hidden;
+}
+.kit-bar::before {
+  content: "";
+  display: block;
+  height: 100%;
+  width: calc(clamp(0, var(--value), 1) * 100%);
+  border-radius: inherit;
+  background: var(--kit-tone, var(--data-1));
 }
 .kit-scroll {
   position: relative;

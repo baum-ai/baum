@@ -4,6 +4,10 @@
     height: calc(100vh + 24px);
   }
 </style>
+<!-- Named elements that shadow document methods the kit uses. -->
+<img name="createElement" alt="" hidden>
+<img name="getElementById" alt="" hidden>
+<form name="body" hidden></form>
 <script>
   baum.tile({
     glance({ data }) {
@@ -18,6 +22,26 @@
     detail({ data }) {
       if (data.mode === "fail") return baum.fail("The data names no tables.");
       if (data.mode === "loop") return baum.html`<div class="tall"><p>grows with the frame</p></div>`;
+      if (data.mode === "clobber") {
+        return baum.html`<div class="kit-stack">${baum.md("**ok**")}${baum.cite({ type: "risk", id: "r" })}${baum.diff({ type: "hunk", id: "h" })}</div>`;
+      }
+      if (data.mode === "markdown") {
+        // The worst inputs known for baum.md, timed in this engine.
+        const inputs = [
+          "[".repeat(9995) + "](" + "(".repeat(9992),
+          "[[x](".repeat(3998),
+          "[x](".repeat(4997),
+          "[x](".repeat(4997) + ")",
+          "# a" + " ".repeat(19990) + "x",
+          "# a" + " \t".repeat(9995) + "x",
+        ];
+        const times = inputs.map((input) => {
+          const start = performance.now();
+          baum.md(input);
+          return Math.round((performance.now() - start) * 10) / 10;
+        });
+        return baum.fail(`times ${JSON.stringify(times)}`);
+      }
       return baum.html`<p>${data.mode}</p>`;
     },
   });

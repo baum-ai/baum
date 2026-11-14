@@ -42,7 +42,7 @@ function render(f: Frame, expression: string, values: Record<string, unknown> = 
   // Values arrive in the frame's own realm, as data from the page does.
   win.__values = (f.window.JSON.parse(JSON.stringify(values)) as unknown) ?? {};
   f.run(
-    `window.__out = document.createElement("div"); try { window.__out.append((() => { const v = window.__values; return ${expression}; })()); } catch (error) { window.__error = error; }`,
+    `window.__out = Document.prototype.createElement.call(document, "div"); try { window.__out.append((() => { const v = window.__values; return ${expression}; })()); } catch (error) { window.__error = error; }`,
   );
   const error = win.__error as Error | undefined;
   win.__error = undefined;
@@ -122,12 +122,120 @@ describe("baum.html", () => {
     expect(out.querySelector("details")!.hasAttribute("open")).toBe(false);
   });
 
-  it("allows data: and blob: URLs, fragments and relative paths", () => {
+  it("allows data: images and blob: URLs as resources and #fragments as links", () => {
     const f = kit();
-    for (const url of ["data:image/png;base64,AAAA", "blob:null/1", "#part", "a/b", ""]) {
-      const out = render(f, "baum.html`<img src=${v.url}><a href=${v.url}>x</a>`", { url });
+    for (const url of [
+      "data:image/png;base64,AAAA",
+      "data:image/svg+xml,%3Csvg%3E",
+      "blob:null/1",
+    ]) {
+      const out = render(
+        f,
+        "baum.html`<img src=${v.url}><svg><image href=${v.url}></image></svg>`",
+        { url },
+      );
       expect(out.querySelector("img")!.getAttribute("src")).toBe(url);
     }
+    const out = render(f, "baum.html`<a href=${v.url}>x</a><svg><use href=${v.url}></use></svg>`", {
+      url: "#part",
+    });
+    expect(out.querySelector("a")!.getAttribute("href")).toBe("#part");
+  });
+
+  it.each([
+    [
+      "a link to a data: document",
+      "baum.html`<a href=${v.url}>x</a>`",
+      "data:text/html,<script>parent.x()</script>",
+    ],
+    ["a link to a data: image", "baum.html`<a href=${v.url}>x</a>`", "data:image/png;base64,AAAA"],
+    ["a relative link", "baum.html`<a href=${v.url}>x</a>`", "../api/settings"],
+    ["a schemeless link", "baum.html`<a href=${v.url}>x</a>`", "//example.invalid"],
+    ["an empty link", "baum.html`<a href=${v.url}>x</a>`", ""],
+    ["an area link", "baum.html`<map><area href=${v.url}></map>`", "x"],
+    [
+      "an SVG link",
+      "baum.html`<svg><a href=${v.url}><text>x</text></a></svg>`",
+      "data:image/png;base64,AAAA",
+    ],
+    [
+      "an SVG use of a data URL",
+      "baum.html`<svg><use href=${v.url}></use></svg>`",
+      "data:image/svg+xml,x",
+    ],
+    ["a relative image", "baum.html`<img src=${v.url}>`", "a/b.png"],
+    ["an empty image", "baum.html`<img src=${v.url}>`", ""],
+    ["a fragment image", "baum.html`<img src=${v.url}>`", "#x"],
+    ["a data: document as an image", "baum.html`<img src=${v.url}>`", "data:text/html,x"],
+    ["a static relative link", 'baum.html`<a href="/s/x">x</a>`', ""],
+    ["a static relative image", 'baum.html`<img src="x.png">`', ""],
+    ["a value in a poster", "baum.html`<video poster=${v.url}></video>`", "x.png"],
+  ])("refuses %s", (_, expression, url) => {
+    const f = kit();
+    let thrown: unknown;
+    try {
+      render(f, expression, { url });
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as Error | undefined)?.name, expression).toBe("TypeError");
+  });
+
+  it("takes words and numbers in a style, as custom properties", () => {
+    const f = kit();
+    const out = render(
+      f,
+      'baum.html`<span class="kit-bar" style="--value:${v.n}; color: var(--x-${v.word})"></span>`',
+      {
+        n: 0.4,
+        word: "low",
+      },
+    );
+    expect(out.firstElementChild!.getAttribute("style")).toBe("--value:0.4; color: var(--x-low)");
+  });
+
+  it.each([
+    ["red;position:fixed;inset:0"],
+    ["red} body{display:none"],
+    ["url(https://example.invalid/x)"],
+    ["URL(x)"],
+    ["a/*"],
+    ['"x"'],
+    ["\\66 ixed"],
+    ["expression(alert(1))"],
+  ])("refuses the style value %j", (value) => {
+    const f = kit();
+    expect(() => render(f, 'baum.html`<p style="color:${v.x}">x</p>`', { x: value })).toThrow(
+      /style/,
+    );
+  });
+
+  it.each([
+    ["an SVG style", "baum.html`<svg><style>${v.x}</style></svg>`"],
+    ["an SVG title", "baum.html`<svg><title>${v.x}</title></svg>`"],
+    ["a MathML style", "baum.html`<math><style>${v.x}</style></math>`"],
+    ["a template", "baum.html`<template><p>${v.x}</p></template>`"],
+  ])("refuses a value inside %s", (_, expression) => {
+    const f = kit();
+    expect(() => render(f, expression, { x: "#t{display:none} body{background:red}" })).toThrow(
+      /baum\.html/,
+    );
+  });
+
+  it("says a value inside a template belongs in its own baum.html", () => {
+    const f = kit();
+    expect(() => render(f, "baum.html`<template><p>${v.x}</p></template>`", { x: "y" })).toThrow(
+      /template/,
+    );
+  });
+
+  it("keeps working when author markup shadows document methods", () => {
+    const f = kit();
+    f.run(
+      `const make = Document.prototype.createElement.bind(document); const body = document.body; for (const name of ["createElement", "createTextNode", "createTreeWalker", "importNode", "body", "getElementById"]) { const img = make("img"); img.name = name; body.append(img); }`,
+    );
+    const out = render(f, "baum.html`<p>${v.x}</p>${baum.md('**b**')}`", { x: "ok" });
+    expect(out.textContent).toBe("okb");
   });
 
   it.each([

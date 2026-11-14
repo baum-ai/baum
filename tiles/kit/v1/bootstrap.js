@@ -13,7 +13,8 @@ const PROTOCOL = "baum.tile/1";
  *  time, so errors are reported in the author's own line numbers. */
 const AUTHOR_LINE = /*@AUTHOR_LINE@*/ 0;
 const RENDER_TIMEOUT = 3000;
-const MAX_ERRORS = 50;
+/** Errors reported per code, so a chatty one cannot hide another. */
+const MAX_ERRORS = 10;
 const MAX_TEXT = 500;
 /** The most a message from the page may hold: data is at most 64 KiB and
  *  the excerpts 384 KiB, so these leave room without letting a bad message
@@ -35,7 +36,7 @@ let started = false;
 let helloSent = false;
 let renderSeq = 0;
 let readySent = false;
-let errorsSent = 0;
+const errorsSent = table({});
 
 function post(kind, fields) {
   if (!framed) return;
@@ -48,19 +49,29 @@ function post(kind, fields) {
 
 const clip = (text) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT - 1)}…` : text);
 
+/** Words for any thrown or logged value; never throws itself. */
 function describeError(value) {
-  if (value instanceof Error) return `${value.name}: ${value.message}`;
-  if (typeof value === "string") return value;
   try {
+    if (value instanceof Error) return `${value.name}: ${value.message}`;
+    if (typeof value === "string") return value;
     return JSON.stringify(value) ?? String(value);
   } catch {
-    return String(value);
+    try {
+      return String(value);
+    } catch {
+      return "(a value that can't be shown)";
+    }
   }
 }
 
 /** The first frame of a stack in the author's lines, author-relative. */
 function stackPosition(error) {
-  const stack = error && typeof error.stack === "string" ? error.stack : "";
+  let stack = "";
+  try {
+    stack = error && typeof error.stack === "string" ? error.stack : "";
+  } catch {
+    // A stack that throws has no position.
+  }
   for (const line of stack.split("\n")) {
     const match = /:(\d+):(\d+)\)?\s*$/.exec(line);
     if (match && Number(match[1]) > AUTHOR_LINE) {
@@ -76,9 +87,13 @@ function linePosition(line, column) {
     : null;
 }
 
+/** Reports an error; `message` and `where` may be functions, which are
+ *  only called while the code has reports left. */
 function report(code, message, where) {
-  if (errorsSent >= MAX_ERRORS) return;
-  errorsSent++;
+  if ((errorsSent[code] || 0) >= MAX_ERRORS) return;
+  errorsSent[code] = (errorsSent[code] || 0) + 1;
+  if (typeof message === "function") message = message();
+  if (typeof where === "function") where = where();
   const fields = { code, message: clip(String(message || code)) };
   if (where) {
     if (where.line !== undefined) fields.line = where.line;
@@ -88,18 +103,21 @@ function report(code, message, where) {
   post("error", fields);
 }
 
-window.addEventListener("error", (event) => {
+listen(window, "error", (event) => {
   // Resource errors reach window too, without an ErrorEvent's message.
   if (!(event instanceof ErrorEvent)) return;
-  const where = stackPosition(event.error) || linePosition(event.lineno, event.colno);
-  report("script_error", event.message || describeError(event.error), where);
+  report(
+    "script_error",
+    () => event.message || describeError(event.error),
+    () => stackPosition(event.error) || linePosition(event.lineno, event.colno),
+  );
 });
 
-window.addEventListener("unhandledrejection", (event) => {
-  report("unhandled_rejection", describeError(event.reason), stackPosition(event.reason));
+listen(window, "unhandledrejection", (event) => {
+  report("unhandled_rejection", () => describeError(event.reason), () => stackPosition(event.reason));
 });
 
-document.addEventListener("securitypolicyviolation", (event) => {
+listen(doc, "securitypolicyviolation", (event) => {
   let blocked = String(event.blockedURI || "");
   try {
     const url = new URL(blocked);
@@ -114,7 +132,7 @@ document.addEventListener("securitypolicyviolation", (event) => {
 });
 
 console.error = function error(...args) {
-  report("console_error", args.map(describeError).join(" "));
+  report("console_error", () => args.map(describeError).join(" "));
   return consoleError.apply(console, args);
 };
 
@@ -167,8 +185,8 @@ function readRefs(refs) {
 
 function applyTheme(theme) {
   state.theme = theme;
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme;
+  docGet("documentElement").dataset.theme = theme;
+  docGet("documentElement").style.colorScheme = theme;
 }
 
 function onInit(message) {
@@ -178,7 +196,7 @@ function onInit(message) {
   if (check !== undefined && !(isRecord(check) && typeof check.id === "string")) return;
   started = true;
   Object.assign(state, { face, size, lang, data, refs: readRefs(refs), check: check || null });
-  const root = document.documentElement;
+  const root = docGet("documentElement");
   root.lang = lang;
   root.dataset.face = face;
   root.dataset.size = size;
@@ -194,7 +212,7 @@ function onUpdate(message) {
   if (spec) render();
 }
 
-window.addEventListener("message", (event) => {
+listen(window, "message", (event) => {
   if (!framed || event.source !== host) return;
   const message = event.data;
   if (!isRecord(message) || message.protocol !== PROTOCOL || !plainJSON(message)) return;
@@ -222,15 +240,16 @@ function frames(count) {
 /** Two frames after the render, once the fonts it uses have loaded. */
 async function settle() {
   await frames(2);
-  if (document.fonts && document.fonts.status === "loading") {
-    await Promise.race([document.fonts.ready, new Promise((resolve) => setTimeout(resolve, 500))]);
+  const fonts = docGet("fonts");
+  if (fonts && fonts.status === "loading") {
+    await Promise.race([fonts.ready, new Promise((resolve) => setTimeout(resolve, 500))]);
     await frames(1);
   }
 }
 
 function visibleText(root) {
   let count = 0;
-  const walker = document.createTreeWalker(root, 4 /* text */);
+  const walker = docCall("createTreeWalker", root, 4);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const parent = node.parentNode && node.parentNode.nodeName;
     if (parent !== "SCRIPT" && parent !== "STYLE" && parent !== "TEMPLATE") {
@@ -241,11 +260,11 @@ function visibleText(root) {
 }
 
 function contentHeight() {
-  return Math.ceil(document.documentElement.getBoundingClientRect().height);
+  return Math.ceil(docGet("documentElement").getBoundingClientRect().height);
 }
 
 function measure(root) {
-  const doc = document.documentElement;
+  const html = docGet("documentElement");
   let media = 0;
   for (const node of root.querySelectorAll("img, svg, canvas, video")) {
     const box = node.getBoundingClientRect();
@@ -259,7 +278,7 @@ function measure(root) {
     empty_state: state.emptyUsed,
     failed: state.failed,
     unresolved: state.unresolved.size,
-    overflow_x: doc.scrollWidth > doc.clientWidth + 2,
+    overflow_x: html.scrollWidth > html.clientWidth + 2,
     overflow_y: state.face === "glance" && root.scrollHeight > root.clientHeight + 2,
   };
 }
@@ -269,9 +288,9 @@ async function render() {
   Object.assign(state, { emptyUsed: false, failed: false, unresolved: new Set() });
   const root = el("div");
   root.id = "baum-root";
-  const old = document.getElementById("baum-root");
+  const old = docCall("getElementById", "baum-root");
   if (old) old.replaceWith(root);
-  else document.body.prepend(root);
+  else docGet("body").prepend(root);
   const draw = spec[state.face];
   const view = Object.freeze({
     data: state.data,
@@ -351,14 +370,14 @@ function watchHeight() {
       reportHeight();
     });
   });
-  observer.observe(document.documentElement);
+  observer.observe(docGet("documentElement"));
 }
 
 // ---------------------------------------------------------------------------
 // Keys the page acts on, from a detail the reader is in: only when the tile
 // did not handle the key and it was not typed into a field.
 
-window.addEventListener("keydown", (event) => {
+listen(window, "keydown", (event) => {
   if (state.face !== "detail" || event.defaultPrevented || event.isComposing) return;
   if (event.ctrlKey || event.metaKey || event.altKey || !KEYS.has(event.key)) return;
   const target = event.target;
@@ -418,5 +437,5 @@ function hello() {
   helloSent = true;
   post("hello", { kit: KIT, registered: spec !== null });
 }
-if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", hello);
+if (docGet("readyState") === "loading") listen(doc, "DOMContentLoaded", hello);
 else queueMicrotask(hello);

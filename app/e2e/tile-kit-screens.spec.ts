@@ -60,8 +60,14 @@ const PAGE = `<!doctype html>
   .card h3 { margin: -6px 0 0; font-size: 16px; line-height: 1.375; font-weight: 600; }
   .box { flex: 1; min-height: 0; }
   .box iframe { display: block; width: 100%; height: 100%; border: 0; }
-  .pane { background: var(--surface-card); }
-  .pane iframe { display: block; width: 100%; height: 120px; border: 0; }
+  /* The detail pane: the frame sits in the pane's content column, as a
+     built-in detail's body does, set 4px out on every side so the frame's
+     own 4px inset for focus rings lines its text up with the heading. */
+  .pane { box-sizing: content-box; padding: 16px 24px 24px; background: var(--surface-card); }
+  .pane header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px;
+    font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-tertiary); }
+  .pane h2 { margin: 0 0 16px; font-family: var(--font-heading); font-size: 24px; line-height: 1.25; font-weight: 800; }
+  .pane iframe { display: block; width: calc(100% + 8px); height: 120px; margin: -4px; border: 0; }
 </style>
 </head>
 <body><div id="stage"></div>
@@ -95,7 +101,11 @@ window.mount = (options) => new Promise((resolve) => {
     holder = document.createElement("div");
     holder.className = "pane";
     holder.style.width = pane + "px";
-    holder.append(iframe);
+    const header = document.createElement("header");
+    header.textContent = "← Back · Custom";
+    const heading = document.createElement("h2");
+    heading.textContent = title;
+    holder.append(header, heading, iframe);
   }
   holder.id = "shot";
   const messages = [];
@@ -284,7 +294,7 @@ test("what goes wrong in a real frame is reported", async ({ page }) => {
     expect.objectContaining({
       code: "script_error",
       message: "RangeError: no rows to draw",
-      line: 10,
+      line: 14,
     }),
   ]);
   expect(errors(await run("network", "glance"))).toEqual([
@@ -298,4 +308,13 @@ test("what goes wrong in a real frame is reported", async ({ page }) => {
   expect(loop.messages.filter((message) => message.kind === "resize").length).toBeLessThanOrEqual(
     10,
   );
+  // Elements named after document methods do not break the kit.
+  const clobbered = await run("clobber", "detail");
+  expect(errors(clobbered)).toEqual([]);
+  expect(clobbered.messages.some((message) => message.kind === "ready")).toBe(true);
+  // baum.md's worst known inputs, timed in this engine.
+  const [timed] = errors(await run("markdown", "detail"));
+  const times = JSON.parse(String(timed?.message).replace("times ", "")) as number[];
+  writeFileSync(join(OUT, "markdown-worst-case.json"), `${JSON.stringify(times)}\n`);
+  for (const time of times) expect(time).toBeLessThan(50);
 });

@@ -103,22 +103,54 @@ describe("baum.md", () => {
     expect(node.querySelectorAll("em, strong, code, del, .baum-link")).toHaveLength(0);
   });
 
-  it("handles hostile input quickly", () => {
-    const inputs = [
-      "*".repeat(20000),
-      "*a ".repeat(7000),
-      "[".repeat(20000),
-      "`".repeat(20000),
-      "> ".repeat(5000),
-      "- ".repeat(5000),
-      "**a ".repeat(5000),
-      "~~".repeat(10000),
-    ];
-    for (const input of inputs) {
+  // Payloads that were quadratic: each must parse in well under a frame's
+  // budget even in jsdom, which builds DOM far slower than a browser.
+  const HOSTILE = [
+    "[".repeat(9995) + "](" + "(".repeat(9992),
+    "[[x](".repeat(3998),
+    "[x](".repeat(4997),
+    "[x](".repeat(4997) + ")",
+    "[x](a".repeat(3998) + ")",
+    "# a" + " ".repeat(19990) + "x",
+    "# a" + " \t".repeat(9995) + "x",
+    "*".repeat(20000),
+    "*a ".repeat(6666),
+    "`".repeat(20000),
+    "``x`".repeat(5000),
+    "> ".repeat(10000),
+    "- ".repeat(10000),
+    `- a${"\n".repeat(19990)}- b`,
+    "**a ".repeat(5000),
+    "~~".repeat(10000),
+    "- - ".repeat(5000) + "x",
+  ];
+
+  it.each(HOSTILE.map((input, index) => [index, input]))(
+    "parses hostile input %i quickly",
+    (_, input) => {
+      md(input as string);
+      const start = performance.now();
+      md(input as string);
+      expect(performance.now() - start).toBeLessThan(150);
+    },
+  );
+
+  it("parses random punctuation quickly", () => {
+    let seed = 7;
+    const random = () => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const alphabet = "[]()*_`~#>-+1. \t\n\\!x";
+    let worst = 0;
+    for (let round = 0; round < 40; round++) {
+      let input = "";
+      while (input.length < 20000) input += alphabet[Math.floor(random() * alphabet.length)];
       const start = performance.now();
       md(input);
-      expect(performance.now() - start).toBeLessThan(1000);
+      worst = Math.max(worst, performance.now() - start);
     }
+    expect(worst).toBeLessThan(250);
   });
 
   it("accepts anything, drawing it as text", () => {

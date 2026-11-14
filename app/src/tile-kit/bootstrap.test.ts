@@ -176,9 +176,9 @@ describe("messages from the page", () => {
     const f = open(TILE);
     f.init({
       refs: {
-        "risk:a": { status: "ok", label: "A" },
-        "risk:b": { status: "maybe", label: "B" },
-        "risk:c": "C",
+        '["risk","a"]': { status: "ok", label: "A" },
+        '["risk","b"]': { status: "maybe", label: "B" },
+        '["risk","c"]': "C",
       },
     });
     await f.next("ready");
@@ -292,13 +292,25 @@ describe("what goes wrong is reported", () => {
     expect(f.root().querySelector(".kit-empty")!.textContent).toBe("No schema changes.");
   });
 
-  it("clips long messages and stops after fifty", async () => {
-    const f = open(`for (let i = 0; i < 80; i++) console.error("x".repeat(900));`);
-    await f.next("error", 50);
+  it("clips long messages and keeps room for every code", async () => {
+    const f = open(
+      `for (let i = 0; i < 80; i++) console.error("x".repeat(900));\nundefinedFunction();`,
+    );
+    await f.next("error", 11);
     await tick(20);
     const errors = f.sent.filter((message) => message.kind === "error");
-    expect(errors).toHaveLength(50);
+    expect(errors.filter((message) => message.code === "console_error")).toHaveLength(10);
+    expect(errors.filter((message) => message.code === "script_error")).toHaveLength(1);
     expect(String(errors[0]!.message).length).toBe(500);
+  });
+
+  it("logs values that can't be described without throwing", async () => {
+    const f =
+      open(`const bad = { toJSON() { throw new Error("no"); }, toString() { throw new Error("no"); } };
+      console.error(bad);
+      window.__survived = true;`);
+    expect(await f.next("error")).toMatchObject({ code: "console_error" });
+    expect((f.window as unknown as { __survived?: boolean }).__survived).toBe(true);
   });
 });
 
@@ -440,9 +452,9 @@ describe("requests to the page", () => {
     const f = open(TILE);
     f.init({
       refs: {
-        "risk:a": { status: "ok", label: "A", navigable: true },
-        "risk:b": { status: "ok", label: "B", navigable: false },
-        "risk:c": { status: "unavailable", label: "C", why: "comparing" },
+        '["risk","a"]': { status: "ok", label: "A", navigable: true },
+        '["risk","b"]': { status: "ok", label: "B", navigable: false },
+        '["risk","c"]': { status: "unavailable", label: "C", why: "comparing" },
       },
     });
     await f.next("ready");
@@ -450,7 +462,7 @@ describe("requests to the page", () => {
       f.window.baum.jump(f.window.JSON.parse(JSON.stringify({ type: "risk", id }))) as boolean;
     expect([jump("a"), jump("b"), jump("c"), jump("d")]).toEqual([true, false, false, false]);
     expect(f.sent.filter((message) => message.kind === "jump")).toEqual([
-      { protocol: "baum.tile/1", kind: "jump", key: "risk:a" },
+      { protocol: "baum.tile/1", kind: "jump", key: '["risk","a"]' },
     ]);
   });
 

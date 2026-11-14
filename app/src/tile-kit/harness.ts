@@ -18,11 +18,22 @@ export type Manifest = {
 
 export const manifest = JSON.parse(read("v1/manifest.json")) as Manifest;
 
-/** The kit's scripts in one strict function, as Compose inlines them (less
- *  the compaction, which only drops comments and spaces). */
-export const kitScript = `(function () {\n"use strict";\n${manifest.runtime.scripts
-  .map((name) => read(`v1/${name}`))
-  .join("\n")}\n})();`;
+/** Citations and their keys, shared with the page and Go. */
+export const citationKeys = JSON.parse(read("../testdata/citation-keys.json")) as {
+  citation: unknown;
+  key: string | null;
+}[];
+
+/** The kit's scripts in one strict function, as Compose inlines them: the
+ *  sources, or with KIT_SCRIPT=inlined the compacted text Compose inlines
+ *  (testdata/v1.inlined.js, a Go golden), so the same tests show the
+ *  compaction keeps what the code does. */
+export const kitScript =
+  process.env.KIT_SCRIPT === "inlined"
+    ? read("testdata/v1.inlined.js")
+    : `(function () {\n"use strict";\n${manifest.runtime.scripts
+        .map((name) => read(`v1/${name}`))
+        .join("\n")}\n})();`;
 
 export type Sent = { protocol: string; kind: string; [field: string]: unknown };
 
@@ -76,11 +87,16 @@ export function frame(author = "", before?: (window: Window & typeof globalThis)
   if (!win.requestAnimationFrame) {
     win.requestAnimationFrame = (callback) => win.setTimeout(() => callback(Date.now()), 16);
   }
+  // Quiet: the kit reports what the frame logs, which the tests read.
+  win.console.error = () => {};
+  // Handled: jsdom then does not print the error as uncaught.
+  win.addEventListener("error", (event) => event.preventDefault());
   before?.(win);
   const run = (code: string) => {
-    const script = doc.createElement("script");
+    // From the prototypes: a test may shadow them on the document.
+    const script = win.Document.prototype.createElement.call(doc, "script");
     script.textContent = code;
-    doc.body.append(script);
+    Object.getOwnPropertyDescriptor(win.Document.prototype, "body")!.get!.call(doc).append(script);
   };
   run(kitScript);
   if (author) run(author);

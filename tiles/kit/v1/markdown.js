@@ -5,15 +5,42 @@
 
 const MD_LIMIT = 20000;
 const MD_DEPTH = 8;
+/** The longest link URL looked for, so a run of brackets stays linear. */
+const MD_URL = 1000;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
-const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const QUOTE = /^ {0,3}> ?/;
 const ITEM = /^( {0,3})([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
 const BLANK = /^[ \t]*$/;
+const SPACE = (c) => c === " " || c === "\t";
+
+/** A heading's level and words, parsed by hand: a regular expression for
+ *  its optional closing hashes backtracks over long runs of spaces. */
+function heading(line) {
+  const match = /^ {0,3}(#{1,6})(?:[ \t]|$)/.exec(line);
+  if (!match) return null;
+  const start = match[0].length;
+  let end = line.length;
+  while (end > start && SPACE(line[end - 1])) end--;
+  let close = end;
+  while (close > start && line[close - 1] === "#") close--;
+  if (close < end && (close === start || SPACE(line[close - 1]))) end = close;
+  return { level: match[1].length, text: line.slice(start, end).trim() };
+}
+
+function isRule(line) {
+  if (!/^ {0,3}[-*_]/.test(line)) return false;
+  const marks = line.replace(/[ \t]/g, "");
+  return marks.length >= 3 && [...marks].every((mark) => mark === marks[0]);
+}
 
 const startsBlock = (line) =>
-  FENCE.test(line) || HEADING.test(line) || RULE.test(line) || QUOTE.test(line) || ITEM.test(line);
+  FENCE.test(line) || heading(line) !== null || isRule(line) || QUOTE.test(line) || ITEM.test(line);
+
+/** The index of the next line that is not blank, from `from`, or -1. */
+function nextFilled(lines, from) {
+  for (let i = from; i < lines.length; i++) if (!BLANK.test(lines[i])) return i;
+  return -1;
+}
 
 /** Inline Markdown into `parent`: code spans, strong, emphasis,
  *  strikethrough, links (as text) and backslash escapes. */
@@ -34,6 +61,11 @@ function inline(parent, text, depth) {
     unclosed.add(delimiter);
     return -1;
   };
+  // The next "](" and "[" after the current position, each searched for
+  // again only once passed, so every scan of the text moves forward.
+  let closeAt = -2;
+  let openAt = -2;
+  let parenAt = -2;
   let i = 0;
   while (i < text.length) {
     const c = text[i];
@@ -46,9 +78,10 @@ function inline(parent, text, depth) {
       let run = 1;
       while (text[i + run] === "`") run++;
       const fence = "`".repeat(run);
-      let end = text.indexOf(fence, i + run);
+      let end = unclosed.has(fence) ? -1 : text.indexOf(fence, i + run);
       while (end >= 0 && text[end + run] === "`") end = text.indexOf(fence, end + run + 1);
       if (end < 0) {
+        unclosed.add(fence);
         buffer += fence;
         i += run;
         continue;
@@ -78,21 +111,29 @@ function inline(parent, text, depth) {
     if ((pair === "**" || pair === "__") && open(pair, "strong")) continue;
     if (pair === "~~" && open(pair, "del")) continue;
     if ((c === "*" || c === "_") && pair !== "**" && pair !== "__" && open(c, "em")) continue;
-    if (c === "[" && !unclosed.has("](")) {
-      const close = text.indexOf("](", i + 1);
-      if (close < 0) unclosed.add("](");
-      // The URL runs to the ")" that balances its own parentheses.
+    if (c === "[") {
+      if (closeAt === -2 || (closeAt >= 0 && closeAt <= i)) closeAt = text.indexOf("](", i + 1);
+      if (openAt === -2 || (openAt >= 0 && openAt <= i)) openAt = text.indexOf("[", i + 1);
+      // Only the last "[" before a "](" can open a link to it, so each "]("
+      // is looked past once. The URL runs to the ")" that balances its own
+      // parentheses (at most 32 deep), within MD_URL characters, and is only
+      // scanned when a ")" follows at all.
       let end = -1;
-      for (let j = close + 2, depth = 0; close >= 0 && j < text.length && !/\s/.test(text[j]); j++) {
+      const close = closeAt >= 0 && (openAt < 0 || openAt > closeAt) ? closeAt : -1;
+      if (close > i && (parenAt === -2 || (parenAt >= 0 && parenAt < close + 2))) {
+        parenAt = text.indexOf(")", close + 2);
+      }
+      const limit = parenAt < 0 ? -1 : Math.min(text.length, close + 2 + MD_URL);
+      for (let j = close + 2, depth = 0; close > i && j < limit && depth <= 32 && text.charCodeAt(j) > 32; j++) {
         if (text[j] === "(") depth++;
         else if (text[j] === ")" && depth-- === 0) {
           end = j;
           break;
         }
       }
-      const label = close < 0 ? "" : text.slice(i + 1, close);
+      const label = end < 0 ? "" : text.slice(i + 1, close);
       const url = end < 0 ? "" : text.slice(close + 2, end);
-      if (label && !label.includes("[") && url) {
+      if (label && url) {
         flush();
         const link = el("span", "baum-link");
         link.title = url;
@@ -136,10 +177,12 @@ function list(parent, lines, start, depth) {
     while (i < lines.length) {
       const line = lines[i];
       if (BLANK.test(line)) {
-        const next = lines.slice(i + 1).find((candidate) => !BLANK.test(candidate));
-        if (next === undefined || !(/^\s{2,}/.test(next) || sameKind(ITEM.exec(next)))) break;
-        body.push("");
-        i++;
+        const next = nextFilled(lines, i);
+        if (next < 0 || !(/^\s{2,}/.test(lines[next]) || sameKind(ITEM.exec(lines[next])))) break;
+        while (i < next) {
+          body.push("");
+          i++;
+        }
         continue;
       }
       if (sameKind(ITEM.exec(line))) break;
@@ -154,10 +197,9 @@ function list(parent, lines, start, depth) {
       item.replaceChildren(...item.firstChild.childNodes);
     }
     node.append(item);
-    while (i < lines.length && BLANK.test(lines[i])) {
-      const next = lines.slice(i + 1).find((candidate) => !BLANK.test(candidate));
-      if (next === undefined || !sameKind(ITEM.exec(next))) break;
-      i++;
+    if (i < lines.length && BLANK.test(lines[i])) {
+      const next = nextFilled(lines, i);
+      if (next >= 0 && sameKind(ITEM.exec(lines[next]))) i = next;
     }
   }
   parent.append(node);
@@ -187,13 +229,13 @@ function blocks(parent, lines, depth) {
       const pre = el("pre");
       pre.append(el("code", "", body.join("\n")));
       parent.append(pre);
-    } else if ((match = HEADING.exec(line))) {
-      const level = match[1].length;
+    } else if ((match = heading(line))) {
+      const { level } = match;
       const node = el(level <= 2 ? "p" : level === 3 ? "h3" : "h4", level <= 2 ? "kit-strong" : "");
-      inline(node, match[2], depth);
+      inline(node, match.text, depth);
       parent.append(node);
       i++;
-    } else if (RULE.test(line)) {
+    } else if (isRule(line)) {
       parent.append(el("hr"));
       i++;
     } else if (QUOTE.test(line)) {
@@ -223,7 +265,7 @@ function blocks(parent, lines, depth) {
 function flatten(source) {
   return source
     .split("\n")
-    .filter((line) => !FENCE.test(line) && !RULE.test(line))
+    .filter((line) => !FENCE.test(line) && !isRule(line))
     .map((line) =>
       line
         .replace(/^ {0,3}(?:> ?)+/, "")
@@ -236,7 +278,7 @@ function flatten(source) {
 }
 
 function md(text, options) {
-  const node = document.createElement("baum-md");
+  const node = create("baum-md");
   node[BUILT] = true;
   const source = (typeof text === "string" ? text : text == null ? "" : String(text))
     .slice(0, MD_LIMIT)
