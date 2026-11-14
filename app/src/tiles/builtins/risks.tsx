@@ -118,7 +118,7 @@ function RiskLine({
 }) {
   const change = changeById(ctx.doc, risk.change);
   return (
-    <li className="flex min-w-0 gap-2">
+    <li data-risk={risk.id} className="flex min-w-0 gap-2">
       <span
         aria-hidden
         className="mt-2 h-2 w-2 flex-none rounded-full"

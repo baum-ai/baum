@@ -45,6 +45,8 @@ export function GlanceCard({
     <article
       data-review-block=""
       data-tile={tile.id}
+      data-tile-type={tile.type}
+      data-tile-size={size}
       aria-labelledby={titleId}
       onContextMenu={(event) => menu.open(event, menuItems(), tile.title)}
       className={cn(

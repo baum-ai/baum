@@ -186,6 +186,28 @@ describe("the Risks tile", () => {
   });
 });
 
+describe("the landing page's markers", () => {
+  it("name each card's type and size and each must-read risk, for tools that measure the page", () => {
+    const { doc, review } = pairs.example();
+    const page = render(
+      <TileLanding ctx={contextFor(doc, review)} generation={null} memory={{ current: null }} />,
+    );
+    for (const card of page.querySelectorAll<HTMLElement>("article[data-tile]")) {
+      const entry = doc.layout.entries.find((each) => each.tile === card.dataset.tile)!;
+      expect(card.dataset.tileType).toBe(tileOf(doc, entry.tile).type);
+      expect(card.dataset.tileSize).toBe(entry.size);
+    }
+    const urgent = doc.risks.filter(
+      (each) => (each.tier === "critical" || each.tier === "high") && each.state !== "mitigated",
+    );
+    expect(urgent.length).toBeGreaterThan(0);
+    for (const risk of urgent)
+      expect(page.querySelector(`[data-risk="${risk.id}"]`)?.textContent).toContain(
+        risk.text.slice(0, 20),
+      );
+  });
+});
+
 describe("tiles that cannot be drawn", () => {
   it("are drawn unavailable, whatever their type", () => {
     const doc = structuredClone(golden("base"));

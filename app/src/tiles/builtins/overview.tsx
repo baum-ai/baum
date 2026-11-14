@@ -31,7 +31,7 @@ function OverviewGlance({ tile, ctx }: TileFaceProps) {
         {minutes ? <span>≈{pluralize("minute", minutes, true)} to read</span> : null}
       </p>
       {data.breaking_change ? (
-        <p className="flex items-start gap-1.5 text-base text-status-critical">
+        <p data-breaking="" className="flex items-start gap-1.5 text-base text-status-critical">
           <WarningIcon size={14} className="mt-0.5 flex-none" />
           <span className="line-clamp-5 min-w-0 [overflow-wrap:anywhere] @min-[36rem]/tiles:line-clamp-2">
             Breaking: {plainText(data.breaking_change, ctx.labels)}

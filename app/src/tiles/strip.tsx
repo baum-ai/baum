@@ -190,7 +190,10 @@ function EvidenceGaps({ ctx }: { ctx: TileContext }) {
   const failed = gaps.length - missing;
   return (
     <JumpLink className="flex-none text-base" onClick={() => ctx.open("evidence", gaps[0]!.id)}>
-      <span className={failed > 0 ? "text-status-critical" : "text-status-caution"}>
+      <span
+        data-evidence-gaps=""
+        className={failed > 0 ? "text-status-critical" : "text-status-caution"}
+      >
         {[missing > 0 ? `${missing} missing` : "", failed > 0 ? `${failed} failed` : ""]
           .filter(Boolean)
           .join(" · ")}{" "}

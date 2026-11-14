@@ -122,7 +122,11 @@ function MustShowBand({ ctx, landing }: { ctx: TileContext; landing: Landing }) 
     <StatusBlock tone="critical" label="Read before approving" boxed>
       <ul data-review-block="" className="space-y-1.5 outline-none">
         {risks.map((risk) => (
-          <li key={risk.id} className="flex min-w-0 items-start gap-2 text-base">
+          <li
+            key={risk.id}
+            data-risk={risk.id}
+            className="flex min-w-0 items-start gap-2 text-base"
+          >
             <span
               aria-hidden
               className="mt-2 h-2 w-2 flex-none rounded-full"
