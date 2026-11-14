@@ -1653,6 +1653,11 @@ api/settings`. A chosen fix agent applies in every repository. **Data
 extraction** has the same Agent and Model rows, its agent "Same as reviews
 (agent)" by default.
 
+Reviews ends with **Generate reviews as tiles (experimental)** (`TileReviewsRow`),
+off by default: read with `GET api/settings/labs` and saved with `PUT
+api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
+and says why. It applies to reviews that start after the change.
+
 While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
 or Codex, a closed **Advanced** disclosure at the end of the section
 (`AccountAdvanced`, open when a folder is chosen) holds **Claude Code

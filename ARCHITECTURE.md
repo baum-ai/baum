@@ -1191,7 +1191,9 @@ size.
   `1` selects tiles; without it, or with any other value (`true`, empty), the
   answer is the draft alone, as before. The converted answer is kept per job
   by the draft's count and the digest of its composition (`tileview.Key`; a
-  draft has none yet, so it is served with the converted layout), so the app's
+  draft of a review whose tiles are arranged carries the template's layout,
+  then the composition, and any other draft has none and is served with the
+  converted layout), so the app's
   polling converts each draft once, and is dropped when the job has no draft
   any more.
 - `GET /api/groups/{id}/tiles[?version=N]` answers a review group's version,
@@ -1773,10 +1775,13 @@ The arrangement of a review's tiles (see "Composing tiles") takes its system
 prompt through `ComposePrompts`; the module's `prompt.TilesPrompts` embeds
 `review-tiles-compose-public-v1.md` (`review-tiles-compose`, version
 `review-tiles-public-v1`). It has no Submitting heading: the call is a single
-completion whose backend says how to submit. Until a job composes tiles it is
-not in the catalogue, so Settings › Prompts does not list it and no custom
-text can be stored for it; `prompt.Validate` and `MissingSafetyRules` still
-check a text for it, as replay's `--prompt-override` does.
+completion whose backend says how to submit. It is in the catalogue (Group
+Reviews, "Tile review: composition"), so Settings › Prompts lists it and a
+custom text can be stored globally or for a repository; a job with tile reviews
+on resolves it as it resolves the stage prompts, a custom one adds `+custom` to
+the composition generator's `prompt_version` and counts toward the version's
+`prompt_source`. A details retry never composes, so its digest check covers
+the stage prompts only.
 
 A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
@@ -2074,8 +2079,8 @@ After a review is analysed, one structured call with no tools and no files
 chooses and arranges its tiles. It goes through `agent.Completer` (Claude
 Code with no tools but StructuredOutput, Codex with its shell off and the
 schema as a strict output schema), so it reads no bundle and costs a few
-thousand tokens. Nothing calls it yet but replay; the pipeline, publishing and
-storage wire it in later.
+thousand tokens. A staged run with `generate.Options.Tiles` calls it once its
+analysis has ended (see "In the pipeline" below); replay calls it too.
 
 **Inventory.** `compose.BuildInventory(doc, fills, previous, prefs)`
 (`tiles/compose`) turns the tile document `tiles.FromReview` converted into
@@ -2169,6 +2174,61 @@ change, at most three featured changes, a quiet risks tile left at its third,
 rows filled as one full, two halves or three thirds, the rest in the group by
 score, sizes by importance, small pull requests left alone), reasons
 only for what moves, and two synthetic examples.
+
+**In the pipeline.** `generate.Options.Tiles` turns the stage on for a staged
+run of one pull request that does not continue a version (a details retry and
+a review group never compose). The order is analyse, then compose:
+
+1. The outline, the details and the context run as without it, but end
+   `generate.ComposeReserve` (75 seconds, at most a quarter of the wall clock)
+   before the run's wall clock, which they share as before; when call or token
+   budgets are set they leave two calls and 60,000 tokens to the composition if
+   they are large enough to spare them. Running out of time in the analysis
+   fails the run exactly as running out of the wall clock does without tiles.
+2. The review is masked, completed and checked as it always is. It is final
+   before the composer is asked, and the composer cannot change it: a run with
+   tiles publishes the same review bytes a run without them would.
+3. `ComposeRun` arranges the converted document (`tiles.FromReview` of the
+   stored form, as `Put` converts it) with the previous version's composition
+   (`Publish` reads it from the latest version with `store.ParseComposition`)
+   and the repository's preferences, through the backend's `agent.Completer`
+   (`generate.CompleterOf`: nil for a backend that cannot complete, such as
+   cursor-agent, or a wrapper whose `CanComplete` says so, which gets the
+   template without a call). It is bounded by what is left of the run's
+   deadline, at most `DefaultComposeTimeout`, on a context that ignores the
+   run's deadline but not its cancellation. With less than
+   `generate.ComposeMinimum` (60 seconds, less for a short wall clock) left,
+   or the budgets spent, the call is skipped and the template applies
+   (`FallbackNoTime`, `FallbackBudget`). What it spends is added to the run's
+   outcome, so the version's calls, tokens, accounting and cost include it.
+4. `Publish` stores the composition with the version (`Version.Composition`,
+   its generator in `CompositionGenerator`), a fallback included.
+
+Compose never fails a run and never delays it past its deadline: a fallback
+is stored as such, a composition that cannot be made at all (the document does
+not convert, the template does not apply, a panic) leaves the version without
+one, which shows the converted layout, and the run says which on its progress
+lines (`Result.Compose` reports it). A run cancelled while the composer works
+is interrupted as at any other point before `Put`: nothing is stored.
+
+Drafts (`Options.OnDraft`, a `generate.Draft`) carry a layout for the tile
+view: while the review is written, the change kind's template with the pins
+(`agent.TemplateComposition`, the layout a fallback stores); once the
+composition is made, one last draft of the finished review carries it. A
+composer that keeps the template therefore moves nothing on the page, and one
+that does not moves it once. A details retry's drafts carry the version's
+stored composition. A refresh (`RefreshCurrent`) and a details retry
+(`CompleteCurrent`) keep the stored composition: the tiles they change already
+have their places, and `tiles.Compose` renormalises it against the document on
+every read, so nothing composes again.
+
+The daemon turns the stage on with the global preference `labs.tile_reviews`
+(`repos.LabsPreferences`, off by default; `GET`/`PUT /api/settings/labs`, the
+"Generate reviews as tiles (experimental)" switch in Settings › Reviews) for
+every new review of one pull request, manual or automatic. The job's backend
+forwards the completion and reports it like the other calls: its phase is
+`arranging` while the composer works, its call, tokens and usage count, and the
+transcript names the call "Composition".
 
 ## `decisions`
 
@@ -3548,7 +3608,11 @@ two runs by case. `--compose-from-store` and `--compose-only --from-run`
 run only the compose stage (`agent.ComposeRun`) over the dataset's saved
 reviews or an earlier run's documents, writing each case's composition, its
 tile document and the template's for comparison, with fallback, repair and
-normalisation counters. It is developer tooling, not a command of the `baum` binary;
+normalisation counters. `--generator tiles` runs the whole pipeline with the
+compose stage on: the review is the document, and the composition, the served
+tile document, the provisional draft layout and a compose record are beside
+it, measured with the compose metrics plus the stage's cost and the jump from
+the provisional layout. It is developer tooling, not a command of the `baum` binary;
 its [README](cmd/replay/README.md) describes the dataset layout, the flags and
 the files written.
 

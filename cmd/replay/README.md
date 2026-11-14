@@ -184,6 +184,37 @@ call composes nothing: every case falls back with the reason that it cannot
 complete. A stage the run's interruption stopped is an interrupted case, never
 a fallback.
 
+### The whole pipeline with tiles
+
+`--generator tiles` generates each case as the desktop does with tile reviews
+on: the staged review, then the compose stage at its end, within the time it
+leaves (`generate.Options.Tiles`).
+
+```sh
+oss/bin/replay --dataset <dir> --generator tiles --case-file <file outside git> --model sonnet
+```
+
+The case's `document.json` is the review, as with the `review` generator, so
+the review metrics, `--chain` and `--reuse` apply; staged prompt overrides and
+`review-tiles-compose` may both be given. `--no-staged` is refused. Beside the
+document:
+
+| File | Holds |
+| --- | --- |
+| `compose.json` | A compose record, as above, with the stage's `cost_usd` and `jump`; `problem` when the version would have no composition. |
+| `composition.json` | The composition the version would store. |
+| `tiles.json` | The tile document the tile route would serve (`tileview.Build`). |
+| `provisional.json` | The template layout drafts showed while the review was written. |
+| `inventory.txt`, `reply.json` | What the composer read and answered. |
+
+Validation is the review's (`ValidateStored`) plus the composition's, as
+above. `replay metrics` adds the review metrics, the compose metrics from
+`compose.json`, `compose_cost_usd` (the stage's share of `cost_usd`),
+`compose_jump` (landing entries whose tile or size moved from the provisional
+layout to the composition) and `compose_no_composition`. In a chain each
+revision is offered the composition the one before it got, when the same run
+generated it.
+
 ## Detectors
 
 A detector is a small pure function over a case's diff (`detect.go`), so a

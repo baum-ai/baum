@@ -53,7 +53,10 @@ its HTTP handler uses.
   file's and does not block saving other preferences. Its `panel` object
   (`agent`, `model`, `mode`, `position`) is the session panel's defaults;
   `ResolvePanel` fills what is unset from the fix agent, `auto` and `bottom`
-  (see "Session panel conversations" in `ARCHITECTURE.md`).
+  (see "Session panel conversations" in `ARCHITECTURE.md`). Its `labs`
+  object turns experimental features on, each off by default:
+  `tile_reviews` arranges every new review of one pull request as tiles
+  (`generate.Options.Tiles`; `LabsPreferences.TileReviewsOn`).
   `UpdatePreferences` edits them in one transaction that holds the write lock
   from its start; `UpdatePreferencesIf` is the same with an edit that may
   refuse, rolling back and writing nothing. A chat's proposal of a setting is
