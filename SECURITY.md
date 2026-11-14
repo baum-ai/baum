@@ -1826,21 +1826,32 @@ It accepts the file only when it is private to you and names a
 
 The window loads only its bundled screens and the attached daemon's
 loopback origin, and refuses every other navigation: other web hosts, other
-loopback servers and other schemes. A navigation never opens your browser or
-leaves the app. The webview asks the app about a navigation in any frame of
+loopback servers and other schemes, and any address with a user name or
+password in it. A navigation never opens your browser or leaves the app. On
+macOS and Linux the webview asks the app about a navigation in any frame of
 the page, an embedded document or injected content included, and tells it
-only the destination. The daemon's pages limit frames to their own origin,
-which on Linux stops a frame's navigation elsewhere before the app is asked,
-but a page without that policy (the development server's) or an engine that
-asks first would let any frame through; if a navigation could open the
-browser, such a frame could open it at an address carrying data it read, as
-often as it liked. Links to other web hosts open in your default browser only
-as requests for a new window (`target="_blank"` links and `window.open`), which
-the webview allows a page only while you interact with it and a sandboxed
-frame only when its sandbox allows pop-ups; no window ever opens. Setup opens
-GitHub's fixed device sign-in page itself, a few seconds after you start a
-sign-in. The daemon's
-pages get no Tauri capability, so they cannot call the app's commands or any
+only the destination; on Windows it asks only about the page's own
+navigations, and the page's policy alone governs its frames. The daemon's
+pages limit frames to their own origin, which on Linux stops a frame's
+navigation elsewhere before the app is asked, but a page without that policy
+(the development server's) or an engine that asks first would let any frame
+through; if a navigation could open the browser, such a frame could open it
+at an address carrying data it read, as often as it liked. Links to other web
+hosts open in your default browser only as requests for a new window
+(`target="_blank"` links and `window.open`); no window ever opens. A
+sandboxed frame can make such a request only when its sandbox allows pop-ups.
+On Linux the webview allows a page one only while you interact with it; on
+macOS and Windows a page's script can make one at any time, so the app opens
+the browser at most once a second and drops the rest. Setup opens GitHub's
+fixed device sign-in page itself, a few seconds after you start a sign-in.
+
+The daemon's pages can call a few of the app's commands, granted to pages of
+`http://127.0.0.1` on any port and listed in
+`desktop/capabilities/daemon-pages.json`: the
+folder picker, reading and changing the `baum` command and the user-wide agent
+hooks (as Settings does), the window's zoom, and reading, checking for,
+installing and dismissing app updates (only an update the app has already
+downloaded and verified installs). They can call no other command and no
 plugin. The bundled connecting screen may only read the connection state and
 ask to reconnect. The bundled setup screen may also read what is installed and
 install or remove the `baum` command and the user-wide agent hooks; it does
@@ -1865,6 +1876,10 @@ app does not detect an unresponsive page. The tray, its menu and the daemon
 keep working, and quitting the app from the tray and opening it again loads
 the page anew. Your data is not at risk, but nothing stops a page from being
 unusable until then.
+
+A navigation to an address the app's URL parser cannot read is allowed by the
+app's runtime without asking the app. Such a navigation can never open your
+browser, and the page's own policy still applies to it.
 
 On first run, and from "Command Line and Hooks…" in its menu, the app
 installs its bundled `baum` as your `baum` command, because agent hooks run

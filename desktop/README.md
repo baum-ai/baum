@@ -749,22 +749,33 @@ doing anything (`src/zoom.rs`).
   `/setup.html/`, percent-encoded names), is refused. The bundled pages'
   content security policy has `frame-ancestors 'none'`.
   Every other navigation is refused and nothing happens: other hosts, other
-  loopback servers and other schemes (`about:`, `data:`, `blob:`, `file:`,
-  `mailto:` and the rest). A navigation never opens the default browser,
-  because the webview asks the same handler (`navigation::decide`) for a
-  navigation in any frame of the page and passes only its URL, so an embedded
-  frame could otherwise open the browser at an address carrying data it read.
+  loopback servers, other schemes (`about:`, `data:`, `blob:`, `file:`,
+  `mailto:` and the rest) and any URL with a user name or password. A
+  navigation never opens the default browser. On macOS and Linux the webview
+  asks the same handler (`navigation::decide`) about a navigation in any frame
+  of the page and passes only its URL, so an embedded frame could otherwise
+  open the browser at an address carrying data it read. On Windows wry asks
+  only about the page's own navigations (`NavigationStarting`), and the
+  page's `frame-src` alone governs its frames. Debug builds log a refused
+  navigation's scheme and host.
 - Links to other sites open in the default browser as new-window requests
   (`target="_blank"` links and `window.open`, `navigation::decide_new_window`):
-  `http` and `https` URLs of hosts other than loopback ones go to the
-  browser, and no window ever opens. The webview lets a page ask for one only
-  while the person interacts with it, and a sandboxed frame only with
-  `allow-popups`. The app's pages therefore open every outside link with
-  `target="_blank" rel="noreferrer"` (Markdown links included) or
-  `window.open`; a plain same-window link to another site does nothing. Setup
+  `http` and `https` URLs of hosts other than loopback ones, without a user
+  name or password, go to the browser, and no window ever opens. A sandboxed
+  frame can ask only with `allow-popups`. WebKitGTK lets a page ask only while
+  the person interacts with it; WebView2 (whose pop-up blocker is off in an
+  embedded webview) and WKWebView (where wry leaves
+  `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
+  any time, so the app opens the browser at most once a second
+  (`navigation::OpenLimit`) and drops the rest. The app's pages open every
+  outside link with `target="_blank" rel="noreferrer"` (Markdown links
+  included) or `window.open`, and the app (`app/src/outside-links.ts`) turns a
+  person's click on a same-window link to another site into such a request,
+  so no link is dead. Setup
   opens GitHub's device page a few seconds after a sign-in starts, when it can
   no longer ask for a window, through the `open` action of
-  `github_connection`, which opens that fixed address.
+  `github_connection`, which opens that fixed address whatever the page
+  passes.
 - Tauri treats the daemon's pages as remote. One capability names them,
   `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's Browse
@@ -803,36 +814,49 @@ directories it writes only what the user installs through setup or Settings: the
 agent marketplace plugin installations. Notifications use the operating system's
 notification service (`notify-rust`) only from Rust.
 
-### Checking navigation by hand
+### Checking navigation
 
-The unit tests cover the decisions; whether each engine asks for them as
-expected needs the real webview. On macOS and Linux, run the app with
-`just desktop::dev` (a debug build on the Vite server's page, which has no
-Content-Security-Policy, so nothing but the shell stops a frame); on Windows,
-a debug build of the app. Open the
-Web Inspector on the main window (Cmd+Option+I on macOS, Ctrl+Shift+I
-elsewhere). In its console:
+`just desktop::navigation-check` checks the Linux webview: it builds a small
+Tauri window with `src/navigation.rs` (`tests/navigation`), loads a mock
+daemon's page with and without the daemon's Content-Security-Policy, and
+clicks with a real pointer under a virtual display in Docker. It fails if a
+sandboxed frame's navigation is not refused, if a frame reaches the
+new-window handler, if any request reaches another server, or if the page's
+own links stop working. It takes a few minutes and is not part of CI.
+
+macOS and Windows need a person. Run a debug build of the app (`just
+desktop::dev` on macOS; on Windows, `cargo tauri dev` in `oss/desktop` with
+the frontend served as `desktop::dev` does). Its page comes from the Vite
+server, which sends no Content-Security-Policy, so nothing but the shell
+stops a frame. Open the Web Inspector on the main window (Cmd+Option+I on
+macOS, Ctrl+Shift+I on Windows) and, in its console:
 
 1. `Object.assign(document.createElement("a"), { href: "https://example.com/?same-window" }).click()`:
-   nothing happens and no browser opens.
-2. `const f = document.createElement("iframe"); f.sandbox = "allow-scripts"; f.srcdoc = "<script>location.href = 'https://example.com/?frame'<\/script>"; document.body.append(f)`:
-   no browser opens. Repeat with `<meta http-equiv=refresh content='0;url=https://example.com/?refresh'>`
-   as the `srcdoc`.
-3. `f.srcdoc = "<a target=_blank href='https://example.com/?popup' style='font-size:48px'>popup</a>"`,
-   then click the link with the mouse: no browser opens. Repeat with
-   `target=_top`.
-4. Click links to other sites as a person does: "Open on GitHub" in a pull
+   nothing happens and no browser opens (the click is a script's).
+2. Load a frame from the page's own origin, which the shell allows, and drive
+   it:
+   `const f = document.createElement("iframe"); f.sandbox = "allow-scripts allow-same-origin"; f.src = "/connecting.html"; document.body.append(f)`.
+   Once it has loaded, `f.contentWindow.location.href = "https://example.com/?frame"`:
+   no browser opens. On Windows the frame may show the site, since the shell
+   is not asked about frames there; on macOS it stays.
+3. Reload the frame (`f.src = "/connecting.html"`), then
+   `f.contentDocument.head.insertAdjacentHTML("beforeend", "<meta http-equiv=refresh content='0;url=https://example.com/?refresh'>")`:
+   no browser opens.
+4. Reload it, then
+   `f.contentDocument.body.innerHTML = "<a target=_blank href='https://example.com/?popup' style='font-size:48px'>popup</a>"`
+   and click the link with the mouse: no browser opens (no `allow-popups`).
+   Repeat with `target=_top` (no `allow-top-navigation`).
+5. Click links to other sites as a person does: "Open on GitHub" in a pull
    request's menu, a link in a review's Markdown, the docs in the `?` menu, the
    release notes link of an update notice. Each opens the default browser,
    once.
-5. In setup's GitHub step (first run, with a fresh configuration directory),
+6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
+   browser opens once at most.
+7. In setup's GitHub step (first run, with a fresh configuration directory),
    sign in: the browser opens GitHub's device page about five seconds later.
-6. `f.srcdoc = "<script>for (;;) {}<\/script>"`: the window freezes (see
-   SECURITY.md); the tray menu still answers, and quitting from it and starting
-   the app again recovers.
-
-The app logs nothing for a refused navigation; the browser simply does not
-open.
+8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the window
+   freezes (see SECURITY.md); the tray menu still answers, and quitting from
+   it and starting the app again recovers.
 
 ## Updates
 
