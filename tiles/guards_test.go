@@ -103,9 +103,11 @@ func TestGuardKeepsTheTemplatesChangesOnTheFirstScreen(t *testing.T) {
 func TestGuardWidensALoneFeaturedChange(t *testing.T) {
 	normalized, doc := convert(t, fixtureNamed(t, "example"))
 	// The person pinned the context tile, so the layout is theirs; the
-	// change featured alone on the third row still takes the row.
+	// evidence (with gaps) is on the landing page, and the change featured
+	// alone on the row after it still takes the row.
 	c := exampleLayout([]tiles.Entry{
-		{Tile: tiles.TypeContext, Size: tiles.SizeFull, Pin: true}, {Tile: "sec_ackfix", Size: tiles.SizeHalf},
+		{Tile: tiles.TypeContext, Size: tiles.SizeFull, Pin: true}, {Tile: tiles.TypeEvidence, Size: tiles.SizeFull},
+		{Tile: "sec_ackfix", Size: tiles.SizeHalf},
 	}, "sec_api", "sec_retry", "sec_deadletter", "sec_docs")
 	n, report, composed := checkComposed(t, normalized, doc, c)
 	if report.Counts()[tiles.FixLoneFeatured] != 1 || report.Counts()[tiles.FixFirstScreen] != 0 {

@@ -81,12 +81,18 @@ func templateReply(t *testing.T, doc *tiles.Document, lead ...string) compose.Re
 	}
 	reply := compose.Reply{Entries: []compose.ReplyEntry{}, Promote: []compose.ReplyPromotion{}, Moves: []tiles.Move{}}
 	why := "named by the recommendation"
-	for _, id := range lead {
-		reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: id, Size: tiles.SizeThird, Why: &why})
-	}
+	led := false
 	for _, entry := range inv.Template.Entries {
 		if slices.Contains(lead, entry.Tile) {
 			continue
+		}
+		if entry.Group != "" && !led {
+			// The leads go first in the changes group, at the group's size.
+			led = true
+			for _, id := range lead {
+				group := entry.Group
+				reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: id, Size: entry.Size, Group: &group, Why: &why})
+			}
 		}
 		e := compose.ReplyEntry{Tile: entry.Tile, Size: entry.Size}
 		if entry.Group != "" {
@@ -149,7 +155,7 @@ func checkGenerated(t *testing.T, normalized []byte, doc *tiles.Document, c tile
 
 func TestComposeRunReplyShapes(t *testing.T) {
 	normalized, doc := converted(t)
-	valid := encode(t, templateReply(t, doc, "sec_retry", "sec_api", "sec_deadletter"))
+	valid := encode(t, templateReply(t, doc, "sec_ackfix", "sec_deadletter"))
 	emptyEntries := `{"entries": [], "changes_shown": null, "promote": [], "moves": [], "custom_suggestion": null}`
 	unknown := templateReply(t, doc)
 	unknown.Entries = append(unknown.Entries[:3:3], compose.ReplyEntry{Tile: "no_such_tile", Size: tiles.SizeHalf})
@@ -169,8 +175,8 @@ func TestComposeRunReplyShapes(t *testing.T) {
 		repaired bool
 		fixes    map[tiles.FixKind]int
 	}{
-		// Three changes lead at a third, a full row above the overview and
-		// risks: as many changes on the first screen as the template's.
+		// Two changes go first in the group: the same rows and changes on
+		// the first screen and the landing page as the template's.
 		{name: "valid", replies: []string{valid}, calls: 1, fixes: none},
 		{name: "invalid JSON then valid", replies: []string{`{"entries": [`, valid}, calls: 2, repaired: true, fixes: none},
 		{name: "schema-invalid then valid", replies: []string{`{"entries": []}`, valid}, calls: 2, repaired: true, fixes: none},
@@ -180,7 +186,10 @@ func TestComposeRunReplyShapes(t *testing.T) {
 		{name: "provider error", errs: []error{errors.New("boom")}, calls: 1, fallback: agent.FallbackProvider},
 		{name: "provider error on the repair", replies: []string{`{}`}, errs: []error{nil, errors.New("boom")}, calls: 2, repaired: true, fallback: agent.FallbackProvider},
 		{name: "unknown tiles", replies: []string{encode(t, unknown)}, calls: 1,
-			fixes: map[tiles.FixKind]int{tiles.FixUnknownTile: 1, tiles.FixAppended: len(templateReply(t, doc).Entries) - 3}},
+			// What the layout omits is appended after it, which pushes the
+			// evidence with gaps off the template's first screen: the host
+			// keeps the template's layout.
+			fixes: map[tiles.FixKind]int{tiles.FixUnknownTile: 1, tiles.FixAppended: len(templateReply(t, doc).Entries) - 3, tiles.FixEvidenceGaps: 1, tiles.FixFirstScreen: 1}},
 		{name: "hostile strings", replies: []string{encode(t, hostile)}, calls: 1,
 			fixes: map[tiles.FixKind]int{tiles.FixSize: 1, tiles.FixControl: 1, tiles.FixNote: 1}},
 	} {
@@ -228,19 +237,19 @@ func TestComposeRunReplyShapes(t *testing.T) {
 
 func TestComposeRunLeadsWithWhatTheReplyLeads(t *testing.T) {
 	normalized, doc := converted(t)
-	out := run(t, doc, &fakeCompleter{replies: []string{encode(t, templateReply(t, doc, "sec_retry", "sec_api", "sec_deadletter"))}})
+	out := run(t, doc, &fakeCompleter{replies: []string{encode(t, templateReply(t, doc, "sec_ackfix", "sec_deadletter"))}})
 	composed := checkGenerated(t, normalized, doc, out.Composition)
 	visible := tiles.Visible(composed.Layout)
-	var landing []string
+	var group []string
 	for i, entry := range composed.Layout.Entries {
-		if visible[i] {
-			landing = append(landing, entry.Tile)
+		if visible[i] && entry.Group == tiles.GroupChanges {
+			group = append(group, entry.Tile)
 		}
 	}
-	if len(landing) < 2 || !slices.Equal(landing[:2], []string{"sec_retry", "sec_api"}) {
-		t.Errorf("landing %v", landing)
+	if len(group) < 2 || !slices.Equal(group[:2], []string{"sec_ackfix", "sec_deadletter"}) {
+		t.Errorf("the group on the landing page %v", group)
 	}
-	if out.Composition.Notes == nil || out.Composition.Notes.Why["sec_retry"] == "" {
+	if out.Composition.Notes == nil || out.Composition.Notes.Why["sec_ackfix"] == "" {
 		t.Errorf("notes %+v", out.Composition.Notes)
 	}
 	if len(out.Composition.Generator.Fixes) != 0 {
@@ -444,7 +453,10 @@ func TestComposeRunKeepsAPreviousPromotion(t *testing.T) {
 	// its inventory and promotes it again by the old ID.
 	keep := &keepingCompleter{t: t, doc: doc}
 	out := run(t, doc, keep, func(r *agent.ComposeRequest) { r.Previous = &previous })
-	if len(out.Composition.Promotions) != 1 || out.Composition.Promotions[0].ID != "table_routes" || out.Composition.Layout.Entries[0].Tile != "table_routes" {
+	// Where it stands is the host's guard's to keep: leading, it would push
+	// the evidence with gaps off the template's first screen.
+	placed := slices.ContainsFunc(out.Composition.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == "table_routes" })
+	if len(out.Composition.Promotions) != 1 || out.Composition.Promotions[0].ID != "table_routes" || !placed {
 		t.Errorf("second round %+v", out.Composition.Promotions)
 	}
 	checkGenerated(t, normalized, doc, out.Composition)

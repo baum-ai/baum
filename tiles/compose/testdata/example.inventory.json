@@ -20,8 +20,11 @@
       },
       {
         "tile": "sec_api",
-        "size": "third",
-        "group": "changes"
+        "size": "half"
+      },
+      {
+        "tile": "evidence",
+        "size": "half"
       },
       {
         "tile": "sec_retry",
@@ -35,17 +38,13 @@
       },
       {
         "tile": "sec_ackfix",
-        "size": "half",
+        "size": "third",
         "group": "changes"
       },
       {
         "tile": "sec_docs",
-        "size": "half",
+        "size": "full",
         "group": "changes"
-      },
-      {
-        "tile": "evidence",
-        "size": "third"
       },
       {
         "tile": "media",
@@ -61,11 +60,11 @@
       },
       {
         "tile": "decisions",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "everything_else",
-        "size": "third"
+        "size": "half"
       }
     ],
     "changes_shown": null,
@@ -73,10 +72,10 @@
       "overview",
       "risks",
       "sec_api",
+      "evidence",
       "sec_retry",
       "sec_deadletter",
-      "sec_ackfix",
-      "sec_docs"
+      "sec_ackfix"
     ],
     "rows": [
       {
@@ -88,14 +87,14 @@
       {
         "tiles": [
           "sec_api",
-          "sec_retry",
-          "sec_deadletter"
+          "evidence"
         ]
       },
       {
         "tiles": [
-          "sec_ackfix",
-          "sec_docs"
+          "sec_retry",
+          "sec_deadletter",
+          "sec_ackfix"
         ]
       }
     ]
@@ -217,6 +216,20 @@
             "Success"
           ]
         }
+      ]
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "sizes": [
+        "full",
+        "half",
+        "third"
+      ],
+      "headline": "20 items, 1 missing",
+      "missing_evidence": [
+        "missing: Workers retrying one failing handler together stay spread out",
+        "failed: The linter accepts the new handlers"
       ]
     },
     {
@@ -406,20 +419,6 @@
           "id": "rsk_docs_unused",
           "tier": "low"
         }
-      ]
-    },
-    {
-      "id": "evidence",
-      "type": "evidence",
-      "sizes": [
-        "full",
-        "half",
-        "third"
-      ],
-      "headline": "20 items, 1 missing",
-      "missing_evidence": [
-        "missing: Workers retrying one failing handler together stay spread out",
-        "failed: The linter accepts the new handlers"
       ]
     },
     {

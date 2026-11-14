@@ -25,21 +25,19 @@
         },
         {
           "tile": "prose_why_jitter",
-          "size": "full"
+          "size": "half"
         },
         {
           "tile": "sec_retry_policy",
-          "size": "half",
-          "group": "changes"
+          "size": "half"
         },
         {
           "tile": "sec_config_flag",
-          "size": "half",
-          "group": "changes"
+          "size": "half"
         },
         {
           "tile": "evidence",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "media",
@@ -55,11 +53,11 @@
         },
         {
           "tile": "decisions",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "everything_else",
-          "size": "third"
+          "size": "half"
         }
       ]
     },
@@ -158,21 +156,19 @@
       },
       {
         "tile": "prose_why_jitter",
-        "size": "full"
+        "size": "half"
       },
       {
         "tile": "sec_retry_policy",
-        "size": "half",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "sec_config_flag",
-        "size": "half",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "evidence",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "media",
@@ -188,20 +184,15 @@
       },
       {
         "tile": "decisions",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "everything_else",
-        "size": "third"
+        "size": "half"
       }
     ],
-    "groups": [
-      {
-        "id": "changes",
-        "title": "Changes"
-      }
-    ],
-    "landing": 5
+    "groups": [],
+    "landing": 6
   },
   "tiles": [
     {

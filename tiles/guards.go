@@ -13,7 +13,8 @@ import (
 //     current changes is on the landing page (FixEvidenceGaps): when the
 //     layout puts the evidence tile past it, the tile moves up to the
 //     changes group's start, or as far up as it takes to be shown, at its
-//     size or, when that does not fit, at half or a third. Pinned
+//     size or, when that does not fit, at half or a third, and never where
+//     it would push a tile that must be seen (3) off the first screen. Pinned
 //     tiles and those always on the landing page come first, so when they
 //     fill it nothing moves; a person who hid the tile keeps it hidden.
 //  2. A change featured alone on its row at half, empty units beside it, is
@@ -23,9 +24,9 @@ import (
 //     the template's does, and so does the whole landing page, unless it
 //     shows instead something the template's does not: the risks tile while
 //     it ranks an active critical or high risk, a change the recommendation
-//     names, the evidence tile with gaps as in 1, or a tile a person pinned.
-//     And what of those the template's first screen shows stays on it,
-//     unless a tile a person pinned is on the first screen.
+//     names, or the evidence tile with gaps as in 1. And what of those the
+//     template's first screen shows stays on it. A tile a person pinned on
+//     the first screen makes the arrangement theirs: nothing is checked.
 //     Otherwise the composition takes the template's layout
 //     (FixFirstScreen); a layout in which a person hid tiles is theirs. A
 //     change that carries a breaking change is not known to the document
@@ -37,7 +38,7 @@ const (
 	FirstScreenRows = 2
 	// EvidenceGapsShown is the evidence gaps that keep the evidence tile on
 	// the landing page.
-	EvidenceGapsShown = 3
+	EvidenceGapsShown = 2
 )
 
 // The guard rails' fixes.
@@ -109,6 +110,17 @@ func (cm *composer) guardEvidence(c *Composition) {
 	if start < 0 {
 		start = len(rest)
 	}
+	// What must be seen on the first screen now stays there.
+	before := firstScreenOf(doc).others
+	keeps := func(moved *Document) bool {
+		after := firstScreenOf(moved).others
+		for id := range before {
+			if id != TypeEvidence && !after[id] {
+				return false
+			}
+		}
+		return true
+	}
 	// At its own size first, then smaller, so it fits beside what leads.
 	sizes := []Size{evidence.Size}
 	for _, size := range []Size{SizeHalf, SizeThird} {
@@ -122,7 +134,7 @@ func (cm *composer) guardEvidence(c *Composition) {
 		for to := start; to >= 0; to-- {
 			trial := *c
 			trial.Layout.Entries = slices.Insert(slices.Clone(rest), to, moved)
-			if doc := cm.trialDoc(&trial); doc != nil && shown(doc, TypeEvidence) {
+			if doc := cm.trialDoc(&trial); doc != nil && shown(doc, TypeEvidence) && keeps(doc) {
 				c.Layout.Entries = trial.Layout.Entries
 				cm.fix(FixEvidenceGaps, TypeEvidence, "")
 				return
@@ -214,10 +226,12 @@ func (cm *composer) guardFirstScreen(c *Composition) {
 	}
 	got, want := firstScreenOf(composed), firstScreenOf(templated)
 	// A pinned tile on the first screen makes the arrangement the person's.
-	pinned := slices.ContainsFunc(c.Layout.Entries, func(e Entry) bool { return e.Pin && got.others[e.Tile] })
+	if slices.ContainsFunc(c.Layout.Entries, func(e Entry) bool { return e.Pin && got.others[e.Tile] }) {
+		return
+	}
 	lost := false
 	for id := range want.others {
-		lost = lost || !got.others[id] && !pinned
+		lost = lost || !got.others[id]
 	}
 	if got.changes >= want.changes && got.landing >= want.landing && !lost {
 		return

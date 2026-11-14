@@ -2429,11 +2429,13 @@ to allowed sizes can (`tiles.RowFills`: the last tile to the size that fills
 it, else every tile to equal parts): in converted documents, in templates as
 part of the template, and in a composer's layout as a `row_fill` fix, the
 host's layout rule rather than a repair of the reply (replay reports it as
-`compose_row_fill`, outside `compose_fixes`). Templates give a single change no
-group, keep active risks beside the overview for docs and CI, and put evidence
-with three or more gaps beside the lead change on the second row. A composer's
-layout then passes three guard rails (`tiles/guards.go`), each a fix of its own
-kind: evidence with three or more gaps stays on the landing page
+`compose_row_fill`, outside `compose_fixes`). Templates give one or two changes
+no group (a heading only from three), keep active risks beside the overview for
+docs and CI, and put evidence with two or more gaps beside the lead change on
+the second row. A composer's layout then passes three guard rails
+(`tiles/guards.go`), each a fix of its own kind: evidence with two or more gaps
+stays on the landing page, where it fits without pushing a tile that must be
+seen off the first screen
 (`evidence_gaps`), a change featured alone at half takes its full row
 (`lone_featured`), and a first screen (the first two rows) or a landing page
 that shows fewer current changes than the template's, with nothing that must

@@ -395,7 +395,7 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 			}
 		}
 	}
-	if (got.changes < want.changes || got.landing < want.landing) && len(c.Layout.Hidden) == 0 {
+	if (got.changes < want.changes || got.landing < want.landing) && len(c.Layout.Hidden) == 0 && !pinned {
 		standsIn := false
 		for id := range got.others {
 			standsIn = standsIn || !want.others[id]

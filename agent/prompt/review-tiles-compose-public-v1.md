@@ -79,7 +79,7 @@ Do not spend effort on these; they hold whatever you reply.
   place in your reply.
 - Short rows are filled by growing their tiles. A change alone on a row at
   `half` takes the full row.
-- Evidence with 3 or more missing or failed items is kept on the landing
+- Evidence with 2 or more missing or failed items is kept on the landing
   page; the template already puts it beside the lead change on the second
   row.
 - When your first screen (the first 2 rows), or your landing page, shows fewer
@@ -87,13 +87,13 @@ Do not spend effort on these; they hold whatever you reply.
   instead of yours,
   unless yours shows there, and the template's does not, the risks tile with a
   critical or high risk, a change the recommendation names, or evidence with
-  3 or more gaps. Two changes at `half` in place of three at `third` is fewer.
+  2 or more gaps. Two changes at `half` in place of three at `third` is fewer.
 
 ## How to arrange
 
 Start from `template` and return it unchanged, with every `why` null, unless a
-change clearly helps the reader decide. The templates already lay out a single
-current change alone at `half` with no group, put evidence with 3 or more gaps
+change clearly helps the reader decide. The templates already lay out one or
+two current changes at `half` with no group, put evidence with 2 or more gaps
 beside the lead change on the second row, and keep the risks tile beside the
 overview for docs and CI pull requests whose risks are above low. So most
 reviews need nothing. A change clearly helps when, without it:
@@ -103,9 +103,7 @@ reviews need nothing. A change clearly helps when, without it:
   the first screen or folded;
 - the first screen would show a lower-level change while a change of level 4-5
   (or level 3 with `permissions`, `data_migration` or `public_api` and missing
-  evidence) waits further down;
-- the template's group holds only two changes, which read better as two
-  `half` tiles without a heading.
+  evidence) waits further down.
 
 Otherwise keep the template: the same order, sizes and groups.
 
@@ -187,10 +185,6 @@ with `sec_auth` first in the group.
   {"tile": "everything_else", "size": "third", "group": null, "why": null}],
  "changes_shown": null, "promote": [], "moves": [], "custom_suggestion": null}
 ```
-
-**A bugfix whose template groups two changes.** Reply: the template's entries
-with both changes out of the group at `half`, each `why` "two changes read
-better without a heading".
 
 **A dependency bump.** Two changes at level 1 (call sites updated for the new
 version) and a large everything else, no risks; the template leads with the

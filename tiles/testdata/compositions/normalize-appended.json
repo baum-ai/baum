@@ -24,13 +24,11 @@
         },
         {
           "tile": "sec_retry_policy",
-          "size": "half",
-          "group": "changes"
+          "size": "half"
         },
         {
           "tile": "sec_config_flag",
-          "size": "half",
-          "group": "changes"
+          "size": "half"
         },
         {
           "tile": "evidence",
@@ -71,13 +69,11 @@
       },
       {
         "tile": "sec_retry_policy",
-        "size": "half",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "sec_config_flag",
-        "size": "half",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "evidence",
@@ -104,12 +100,7 @@
         "size": "third"
       }
     ],
-    "groups": [
-      {
-        "id": "changes",
-        "title": "Changes"
-      }
-    ],
+    "groups": [],
     "landing": 7
   },
   "tiles": [
