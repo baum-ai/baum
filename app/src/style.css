@@ -7827,3 +7827,19 @@ dialog.review-dialog {
     box-shadow: 0 0 0 2px var(--border-focus);
   }
 }
+/* The import dialog scrolls as one; its detail preview keeps to a box of
+   its own, and Import stays in reach at the foot. */
+dialog.tile-import-dialog > * + * {
+  margin-top: 1rem;
+}
+.tile-import-detail {
+  max-height: 24rem;
+  overflow-y: auto;
+}
+dialog.tile-import-dialog .local-dialog-actions {
+  position: sticky;
+  bottom: -1.5rem;
+  margin-bottom: -1.5rem;
+  padding-bottom: 1.5rem;
+  background: var(--surface-popup);
+}

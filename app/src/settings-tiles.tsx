@@ -2,17 +2,22 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import { formatDateTime, formatRelative } from "@baum/viewer/components/format";
 import { ChevronLeftIcon } from "@baum/viewer/components/icons";
-import { Alert, Badge, Button, SegmentedControl } from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, CloseButton, SegmentedControl } from "@baum/viewer/components/ui";
 import { appURL, request, type Repository } from "./api";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection } from "./list";
+import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
+import { Notice } from "./shell";
 import { sessionPanel } from "./session-panel-state";
 import {
   digestHex,
+  MAX_FILE_BYTES,
   originLabel,
+  saveTileTypeFile,
   tileLibrary,
   type TileTypeDetail,
+  type TileTypeFileCheck,
   type TileTypePreview,
   type TileTypeSummary,
 } from "./tile-library";
@@ -26,7 +31,8 @@ import { useToast } from "./toast";
  *  names each type, where it came from, when to use it, where it is pinned
  *  and when a review last used it; a type opens in its pane, with previews
  *  of its samples drawn in their frames, rename, Edit in chat, pins,
- *  versions and Delete with Undo. The open type is the page context's
+ *  versions, Export and Delete with Undo; Import reads a file someone
+ *  shared, after a dialog that shows what it would add. The open type is the page context's
  *  focus, so the session panel's agent knows which one "this type" is. */
 
 function errorText(error: unknown) {
@@ -120,10 +126,78 @@ export function TileLibrarySection({
       },
     });
   };
+  /** Saves the type's file where the person chooses, or downloads it. */
+  const exportType = async (t: Pick<TileTypeSummary, "name" | "title">) => {
+    setError("");
+    try {
+      const saved = await saveTileTypeFile(t.name, await tileLibrary.exportFile(t.name));
+      if (saved) toast({ title: `Exported ${t.title}`, detail: saved });
+    } catch (e) {
+      setError(errorText(e));
+    }
+  };
+  const [importing, setImporting] = useState<{ file: string; check: TileTypeFileCheck } | null>(
+    null,
+  );
+  const picker = useRef<HTMLInputElement>(null);
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    setError("");
+    if (file.size > MAX_FILE_BYTES) {
+      setError(`The file is larger than ${MAX_FILE_BYTES >> 20} MiB.`);
+      return;
+    }
+    try {
+      const text = await file.text();
+      setImporting({ file: text, check: await tileLibrary.checkFile(text) });
+    } catch (e) {
+      setError(`${file.name} can't be imported. ${errorText(e)}`);
+    }
+  };
   const summary = type ? library.types?.find((t) => t.name === type) : undefined;
+  const importButton = (
+    <>
+      <input
+        ref={picker}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        aria-label="Tile type file"
+        data-tile-type-file=""
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          void pick(file);
+        }}
+      />
+      <Button variant="secondary" size="compact" onClick={() => picker.current?.click()}>
+        Import…
+      </Button>
+    </>
+  );
   return (
     <section aria-labelledby="settings-tiles-heading" className="settings-section">
-      {head()}
+      {head(importButton)}
+      {importing ? (
+        <ImportDialog
+          check={importing.check}
+          close={() => setImporting(null)}
+          save={async () => {
+            const imported = await tileLibrary.importFile(importing.file);
+            setImporting(null);
+            await library.load();
+            open(imported.name);
+            toast({
+              title: `Imported ${importing.check.title}`,
+              detail: imported.renamed_from
+                ? `Saved as ${imported.name}: ${imported.renamed_from} was taken.`
+                : imported.checked
+                  ? undefined
+                  : "Not checked yet: its render check runs when baum can.",
+            });
+          }}
+        />
+      ) : null}
       {error ? <Alert>{error}</Alert> : null}
       {library.error ? (
         <Alert>
@@ -141,6 +215,7 @@ export function TileLibrarySection({
           back={() => open(null)}
           changed={library.load}
           remove={remove}
+          exportType={exportType}
           editInChat={() => editInChat(type, open)}
         />
       ) : library.types === null ? (
@@ -153,11 +228,12 @@ export function TileLibrarySection({
           <p>
             Open a pull request's review, ask the session panel to make a tile for it, then ask it
             to save the tile to your library. Saved types are offered to later reviews where they
-            apply.
+            apply. Or import a type someone shared.
           </p>
+          {importButton}
         </div>
       ) : (
-        <TileTypeList types={library.types} open={open} remove={remove} />
+        <TileTypeList types={library.types} open={open} remove={remove} exportType={exportType} />
       )}
     </section>
   );
@@ -167,15 +243,18 @@ function TileTypeList({
   types,
   open,
   remove,
+  exportType,
 }: {
   types: TileTypeSummary[];
   open: (type: string | null) => void;
   remove: (t: TileTypeSummary) => void;
+  exportType: (t: TileTypeSummary) => void;
 }) {
   const menu = useContextMenu();
   const actions = (t: TileTypeSummary): MenuItem[] => [
     { label: "Open", hint: "↵", onSelect: () => open(t.name) },
     { label: "Edit in chat", onSelect: () => editInChat(t.name, open) },
+    { label: "Export…", onSelect: () => exportType(t) },
     { label: "Delete", danger: true, onSelect: () => remove(t) },
   ];
   return (
@@ -205,6 +284,7 @@ function TileTypeList({
                   {t.title}
                 </a>{" "}
                 <Badge size="compact">Custom</Badge>
+                {t.checked ? null : <NotChecked />}
               </h3>
               <p className="tile-type-use">{t.use_when}</p>
               <p className="tile-type-meta">
@@ -234,6 +314,7 @@ function TileTypePane({
   back,
   changed,
   remove,
+  exportType,
   editInChat: ask,
 }: {
   name: string;
@@ -241,6 +322,7 @@ function TileTypePane({
   back: () => void;
   changed: () => Promise<void>;
   remove: (t: Pick<TileTypeSummary, "name" | "title">) => void;
+  exportType: (t: Pick<TileTypeSummary, "name" | "title">) => void;
   editInChat: () => void;
 }) {
   const [detail, setDetail] = useState<TileTypeDetail | null>(null);
@@ -316,11 +398,16 @@ function TileTypePane({
           save={(title) => change("rename", () => tileLibrary.rename(detail.name, title))}
         />
         <p className="tile-type-meta">
-          <Badge size="compact">Custom</Badge> {originLabel(detail.origin)} · {usedLabel(detail)}
+          <Badge size="compact">Custom</Badge>
+          {detail.checked ? null : <NotChecked />} {originLabel(detail.origin)} ·{" "}
+          {usedLabel(detail)}
         </p>
         <div className="tile-type-pane-actions">
           <Button size="compact" onClick={ask}>
             Edit in chat
+          </Button>
+          <Button variant="secondary" size="compact" onClick={() => exportType(detail)}>
+            Export…
           </Button>
           <Button
             variant="danger-outline"
@@ -373,6 +460,147 @@ function TileTypePane({
         }
       />
     </div>
+  );
+}
+
+/** An imported version whose render check has not run yet. */
+function NotChecked() {
+  return (
+    <Badge
+      size="compact"
+      tone="caution"
+      title="Imported without its render check; it runs when baum can check tiles."
+    >
+      Not checked yet
+    </Badge>
+  );
+}
+
+/** What an imported file would add, before anything is saved: its name (and
+ *  that it was renamed, when its own was taken), title, use-when line, the
+ *  fill instructions the review agent would be given, its paths and its
+ *  first sample drawn as a glance and a detail. */
+function ImportDialog({
+  check,
+  close,
+  save,
+}: {
+  check: TileTypeFileCheck;
+  close: () => void;
+  save: () => Promise<void>;
+}) {
+  const dialog = useModal();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const size = check.sizes.includes("half") ? "half" : (check.sizes[0] ?? "full");
+  const frames = framesAllowedHere();
+  return (
+    <dialog
+      ref={dialog}
+      onCancel={close}
+      aria-labelledby="tile-import-title"
+      className="local-dialog-wide tile-import-dialog"
+    >
+      <div className="local-dialog-head">
+        <div>
+          <h2 id="tile-import-title">Import {check.title}</h2>
+          <p>Check what this tile type would add to your library before you import it.</p>
+        </div>
+        <CloseButton onClick={close} />
+      </div>
+      {check.renamed_from ? (
+        <Notice>
+          Your library already has a type named <code>{check.renamed_from}</code>, so this one is
+          saved as <code>{check.name}</code>.
+        </Notice>
+      ) : null}
+      <div className="local-panel settings-list">
+        <Row label="Title">{check.title}</Row>
+        <Row label="Use when">{check.use_when || "No use-when line"}</Row>
+        <Row label="Paths">
+          {check.paths.length === 0 ? (
+            "Every pull request"
+          ) : (
+            <span className="tile-type-paths">
+              {check.paths.map((path) => (
+                <code key={path}>{path}</code>
+              ))}
+            </span>
+          )}
+        </Row>
+        <div className="tile-type-fill">
+          <span className="settings-row-label">Fill instructions</span>
+          <p className="settings-row-detail">Given to the review agent when this type is filled.</p>
+          <pre data-import-fill="">{check.fill}</pre>
+        </div>
+      </div>
+      <section aria-labelledby="tile-import-preview" className="tile-type-block">
+        <h3 id="tile-import-preview" className="settings-subhead">
+          Preview · {check.sample}
+        </h3>
+        {frames ? (
+          <div className="tile-type-glances">
+            <figure className={cn("tile-type-glance", GLANCE_CARDS[size].card)}>
+              <div className="tile-type-card">
+                <span className="tile-type-kicker">Custom · {check.title}</span>
+                <div className={cn("relative", GLANCE_CARDS[size].box)}>
+                  <PreviewFrame
+                    digest={digestHex(check.digest)}
+                    kit={check.kit}
+                    title={`${check.title}, glance`}
+                    face="glance"
+                    size={size}
+                    data={check.data}
+                    refs={check.refs.glance ?? {}}
+                  />
+                </div>
+              </div>
+              <figcaption>{GLANCE_CARDS[size].label}</figcaption>
+            </figure>
+            <figure className="tile-type-detail w-full">
+              <div className="tile-type-card tile-import-detail">
+                <span className="tile-type-kicker">Custom · {check.title}</span>
+                <PreviewFrame
+                  digest={digestHex(check.digest)}
+                  kit={check.kit}
+                  title={`${check.title}, detail`}
+                  face="detail"
+                  size="full"
+                  data={check.data}
+                  refs={check.refs.detail ?? {}}
+                />
+              </div>
+              <figcaption>Detail</figcaption>
+            </figure>
+          </div>
+        ) : (
+          <p className="tile-type-unavailable">{NOT_IN_THIS_SHELL}</p>
+        )}
+      </section>
+      <p className="settings-row-detail">
+        It will be marked Imported and Not checked yet until baum runs its render check.
+      </p>
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-dialog-actions">
+        <Button variant="secondary" size="compact" onClick={close} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          size="compact"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            setError("");
+            save().catch((e: unknown) => {
+              setError(errorText(e));
+              setBusy(false);
+            });
+          }}
+        >
+          {busy ? "Importing…" : "Import"}
+        </Button>
+      </div>
+    </dialog>
   );
 }
 

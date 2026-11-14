@@ -64,7 +64,11 @@ CREATE TABLE IF NOT EXISTS tile_type_versions(
   name TEXT NOT NULL,
   digest TEXT NOT NULL,
   at TEXT NOT NULL,
-  PRIMARY KEY(name, digest))`
+  PRIMARY KEY(name, digest));
+CREATE TABLE IF NOT EXISTS tile_type_checks(
+  digest TEXT PRIMARY KEY,
+  verdict TEXT NOT NULL,
+  at TEXT NOT NULL)`
 
 // maxBytes is MaxBytes; a test lowers it.
 var maxBytes int64 = MaxBytes
@@ -108,6 +112,9 @@ type Type struct {
 	UsedIn map[string]string
 	// Deleted is when the type was deleted, empty while it is in the library.
 	Deleted string
+	// Unchecked says the current version was imported without a render
+	// check ("Not checked yet"); a type made in chat was checked to be saved.
+	Unchecked bool
 	// Versions are the type's versions, the newest first.
 	Versions []Version
 }
@@ -198,6 +205,14 @@ func load(ctx context.Context, q queryer, r row) (Type, error) {
 		UsedAt: r.usedAt.String, Deleted: r.deleted.String}
 	if r.usedIn.Valid {
 		_ = json.Unmarshal([]byte(r.usedIn.String), &t.UsedIn)
+	}
+	var verdict string
+	switch err := q.QueryRowContext(ctx, `SELECT verdict FROM tile_type_checks WHERE digest = ?`, r.digest).Scan(&verdict); {
+	case err == nil:
+		t.Unchecked = verdict == VerdictUnchecked
+	case errors.Is(err, sql.ErrNoRows), noTable(err):
+	default:
+		return Type{}, err
 	}
 	rows, err := q.QueryContext(ctx, `SELECT digest, at FROM tile_type_versions WHERE name = ? ORDER BY at DESC, digest`, r.name)
 	if err != nil {
@@ -603,6 +618,9 @@ func sweep(ctx context.Context, conn querierExec) error {
 	for _, digest := range candidates {
 		if !namedElsewhere(ctx, conn, digest) {
 			if _, err := conn.ExecContext(ctx, `DELETE FROM tile_definitions WHERE digest = ?`, digest); err != nil {
+				return err
+			}
+			if _, err := conn.ExecContext(ctx, `DELETE FROM tile_type_checks WHERE digest = ?`, digest); err != nil {
 				return err
 			}
 		}

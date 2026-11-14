@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "daemon-pages",
-  "description": "The attached daemon pages may open the folder picker, manage the bundled CLI and agent plugins and set the window's zoom from Settings, show, check for and install app updates from Settings, and use the zoom shortcuts. Other setup commands remain restricted to the bundled screen.",
+  "description": "The attached daemon pages may open the folder picker, manage the bundled CLI and agent plugins and set the window's zoom from Settings, show, check for and install app updates from Settings, save an exported tile type file where the person chooses, and use the zoom shortcuts. Other setup commands remain restricted to the bundled screen.",
   "windows": ["main"],
   "remote": { "urls": ["http://127.0.0.1:*/*"] },
   "local": false,
@@ -20,6 +20,7 @@
     "allow-check-for-updates",
     "allow-install-update",
     "allow-cancel-update",
-    "allow-dismiss-update-notice"
+    "allow-dismiss-update-notice",
+    "allow-save-tile-type"
   ]
 }

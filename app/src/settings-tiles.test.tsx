@@ -41,6 +41,7 @@ const summary = (over: Partial<TileTypeSummary> = {}): TileTypeSummary => ({
   samples: ["add_column", "drop_table"],
   versions: 2,
   pinned: ["acme/demo"],
+  checked: true,
   ...over,
 });
 const detail = (over: Partial<TileTypeDetail> = {}): TileTypeDetail => ({
@@ -87,7 +88,12 @@ async function draw(type: string | null, open = vi.fn()) {
         <TileLibrarySection
           type={type}
           open={open}
-          head={() => <h2 id="settings-tiles-heading">Tile library</h2>}
+          head={(status) => (
+            <header>
+              <h2 id="settings-tiles-heading">Tile library</h2>
+              {status}
+            </header>
+          )}
         />
       </ToastProvider>,
     );
@@ -119,6 +125,7 @@ it("lists each type with where it came from, when to use it, its pins and its us
           pinned: [],
           used_at: new Date(Date.now() - 2 * 86400000).toISOString(),
           used_in: 3,
+          checked: false,
         }),
       ],
     }),
@@ -133,6 +140,8 @@ it("lists each type with where it came from, when to use it, its pins and its us
   expect(rows[0]!.textContent).toContain("Not used in a review yet");
   expect(rows[1]!.textContent).toContain("Imported · Not pinned");
   expect(rows[1]!.textContent).toContain("in 3 repositories");
+  expect(rows[0]!.textContent).not.toContain("Not checked yet");
+  expect(rows[1]!.textContent).toContain("Not checked yet");
   // A row carries no button but its menu; its title opens the type.
   expect([...rows[0]!.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(
     ["Actions for Migration steps"],
@@ -290,4 +299,117 @@ it("says custom tiles are unavailable in a desktop shell without frames, and sti
   expect(calls.some((c) => c.path.includes("/preview"))).toBe(false);
   expect(button("Rename")).toBeDefined();
   expect(button("Edit in chat")).toBeDefined();
+});
+
+it("exports a type as a download in a browser", async () => {
+  const current = { detail: detail() };
+  const calls = serve({
+    ...paneRoutes(current),
+    "GET api/tile-types/migration_steps/export": () => ({ schema: "baum.tile-type/1" }),
+  });
+  const clicked: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    clicked.push(this.download);
+  });
+  Object.assign(URL, { createObjectURL: () => "blob:x", revokeObjectURL: () => {} });
+  await draw("migration_steps");
+  await act(async () => button("Export…")!.click());
+  expect(calls.some((c) => c.path === "api/tile-types/migration_steps/export")).toBe(true);
+  expect(clicked).toEqual(["migration_steps.baumtile.json"]);
+});
+
+it("shows what an imported file would add, says it was renamed, and imports it", async () => {
+  HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) {
+    this.open = true;
+  };
+  HTMLDialogElement.prototype.close ??= function (this: HTMLDialogElement) {
+    this.open = false;
+  };
+  const check = {
+    name: "migration_steps_2",
+    renamed_from: "migration_steps",
+    title: "Shared migrations",
+    use_when: "A schema changes.",
+    fill: "Fill every table, and nothing else.",
+    glance: "Tables",
+    review_checks: "",
+    paths: ["db/**"],
+    sizes: ["half"],
+    kit: 1,
+    digest: `sha256:${"c".repeat(64)}`,
+    samples: ["one"],
+    sample: "one",
+    data: {},
+    refs: { glance: {}, detail: {} },
+  };
+  const calls = serve({
+    "GET api/tile-types": () => ({ types: [summary()] }),
+    "POST api/tile-type-files/check": () => check,
+    "POST api/tile-type-files": () => ({
+      name: "migration_steps_2",
+      renamed_from: "migration_steps",
+      checked: false,
+    }),
+  });
+  const open = await draw(null);
+  const input = node.querySelector<HTMLInputElement>("input[data-tile-type-file]")!;
+  const file = new File(['{"schema":"baum.tile-type/1"}'], "shared.baumtile.json", {
+    type: "application/json",
+  });
+  await act(async () => {
+    Object.defineProperty(input, "files", { configurable: true, value: [file] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => {});
+  const dialog = node.querySelector("dialog.tile-import-dialog")!;
+  expect(dialog.textContent).toContain("Import Shared migrations");
+  expect(dialog.textContent).toContain("saved as migration_steps_2");
+  expect(dialog.textContent).toContain("Given to the review agent when this type is filled.");
+  expect(dialog.querySelector("[data-import-fill]")?.textContent).toBe(
+    "Fill every table, and nothing else.",
+  );
+  expect(dialog.textContent).toContain("db/**");
+  expect(dialog.querySelectorAll("iframe")).toHaveLength(2);
+  expect(calls).toContainEqual({
+    method: "POST",
+    path: "api/tile-type-files/check",
+    body: { file: '{"schema":"baum.tile-type/1"}' },
+  });
+  await act(async () => button("Import")!.click());
+  expect(calls.filter((c) => c.path === "api/tile-type-files")).toHaveLength(1);
+  expect(open).toHaveBeenCalledWith("migration_steps_2");
+  expect(node.querySelector("dialog.tile-import-dialog")).toBeNull();
+});
+
+it("says why a file can't be imported", async () => {
+  serve({ "GET api/tile-types": () => ({ types: [] }) });
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
+    String(input).includes("tile-type-files")
+      ? new Response(
+          JSON.stringify({ message: "The file is not a tile type file this baum reads" }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          },
+        )
+      : new Response(JSON.stringify({ types: [] }), {
+          headers: { "Content-Type": "application/json" },
+        }),
+  );
+  await draw(null);
+  const input = node.querySelector<HTMLInputElement>("input[data-tile-type-file]")!;
+  await act(async () => {
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [new File(["{}"], "bad.json")],
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => {});
+  expect(node.querySelector("[role=alert]")?.textContent ?? node.textContent).toContain(
+    "bad.json can't be imported. The file is not a tile type file this baum reads",
+  );
+  expect(node.querySelector("dialog")).toBeNull();
 });

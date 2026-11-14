@@ -13,6 +13,7 @@ import (
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -195,5 +196,82 @@ func TestTileLibraryRoutesWithoutALibrary(t *testing.T) {
 		if w.Code != want {
 			t.Errorf("%s: %d", path, w.Code)
 		}
+	}
+}
+
+// A type exported through the page imports into a fresh library: the check
+// shows what the dialog shows and registers the frame, the import saves it
+// marked imported and not checked yet, and a refused file says why.
+func TestTileTypeFileRoutes(t *testing.T) {
+	from := newLibraryAPI(t)
+	ctx := context.Background()
+	// A title of its own, so its digest is not another test's: the frame
+	// registry is the process's.
+	saved, err := from.store.Create(ctx, savedChange(t, "migrations", "Migrations from a file"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	from.handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/tile-types/migrations/export", nil))
+	if w.Code != 200 || w.Header().Get("Content-Disposition") != `attachment; filename="migrations.baumtile.json"` {
+		t.Fatalf("export: %d %v", w.Code, w.Header())
+	}
+	file := w.Body.String()
+	if !strings.Contains(file, `"schema": "baum.tile-type/1"`) || strings.Contains(file, `"digest"`) {
+		t.Errorf("the file: %.300s", file)
+	}
+	body, _ := json.Marshal(map[string]string{"file": file})
+
+	to := newLibraryAPI(t)
+	var check struct {
+		Name        string   `json:"name"`
+		RenamedFrom string   `json:"renamed_from"`
+		Title       string   `json:"title"`
+		UseWhen     string   `json:"use_when"`
+		Fill        string   `json:"fill"`
+		Digest      string   `json:"digest"`
+		Sample      string   `json:"sample"`
+		Paths       []string `json:"paths"`
+	}
+	if code := to.do("POST", "/api/tile-type-files/check", string(body), &check); code != 200 || check.Name != "migrations" || check.Title != "Migrations from a file" ||
+		check.Fill == "" || check.UseWhen == "" || check.Digest != saved.Entry.Definition.Digest || len(check.Paths) != 1 || check.Sample == "" {
+		t.Fatalf("check: %d %+v", code, check)
+	}
+	if _, ok := tileview.FrameRegistry().Get(check.Digest); !ok {
+		t.Error("the checked file's frame is not registered")
+	}
+	var list struct{ Types []tileTypeSummary }
+	if to.do("GET", "/api/tile-types", "", &list); len(list.Types) != 0 {
+		t.Fatal("a check saved the type")
+	}
+	var imported tilelibrary.Imported
+	if code := to.do("POST", "/api/tile-type-files", string(body), &imported); code != 200 || imported != (tilelibrary.Imported{Name: "migrations"}) {
+		t.Fatalf("import: %d %+v", code, imported)
+	}
+	if to.do("GET", "/api/tile-types", "", &list); len(list.Types) != 1 || list.Types[0].Origin != "import" || list.Types[0].Checked {
+		t.Errorf("after import: %+v", list.Types)
+	}
+	// Again: the name is taken, so the dialog and the import say so.
+	if code := to.do("POST", "/api/tile-type-files/check", string(body), &check); code != 200 || check.Name != "migrations_2" || check.RenamedFrom != "migrations" {
+		t.Errorf("a clash: %d %+v", code, check)
+	}
+	var renamed struct {
+		Name        string `json:"name"`
+		RenamedFrom string `json:"renamed_from"`
+	}
+	if code := to.do("POST", "/api/tile-type-files", string(body), &renamed); code != 200 || renamed.Name != "migrations_2" || renamed.RenamedFrom != "migrations" {
+		t.Errorf("a clash: %d %+v", code, renamed)
+	}
+	var refusal struct{ Message string }
+	bad, _ := json.Marshal(map[string]string{"file": `{"schema":"baum.tile-type/2"}`})
+	if code := to.do("POST", "/api/tile-type-files", string(bad), &refusal); code != 400 || !strings.Contains(refusal.Message, "baum.tile-type/1") {
+		t.Errorf("a refused file: %d %+v", code, refusal)
+	}
+	huge, _ := json.Marshal(map[string]string{"file": strings.Repeat(" ", tilelibrary.MaxFileBytes+1)})
+	if code := to.do("POST", "/api/tile-type-files/check", string(huge), &refusal); code != 400 || !strings.Contains(refusal.Message, "3 MiB") {
+		t.Errorf("an oversized file: %d %+v", code, refusal)
+	}
+	if code := to.do("GET", "/api/tile-types/nothing/export", "", nil); code != 404 {
+		t.Errorf("export of an unknown type: %d", code)
 	}
 }

@@ -1524,7 +1524,28 @@ data.
 - The preview route `GET /api/tile-types/{name}/preview` registers the type's
   digest in the frame registry like the tile routes, and has the session
   namespace's cookie or the launch token like every other `/api` route; a
-  request that carries a definition registers nothing.
+  request that carries a definition registers nothing, with one exception:
+  the import check below.
+- Importing a tile type file (`POST /api/tile-type-files/check`, then `POST
+  /api/tile-type-files`, from Settings › Tile library) treats the file as
+  untrusted. It is refused past 3 MiB, nested deeper than 64 levels or holding
+  more than 200,000 JSON values (checked before it is decoded), holding a NUL,
+  with a member a tile type file does not have or a schema other than
+  `baum.tile-type/1`; its definition must pass the definition checks (shape,
+  UTF-8, dialect, a supported kit) and the kit's lint without an error, its
+  samples must validate and cite only their own hunks and items, and its name
+  must pass the name rules (a name already in the library is renamed with a
+  numeric suffix). Its digest is computed and whether it is built in follows
+  from that digest; a digest or `builtin` in the file is never read. Its
+  origin is "Imported". The person sees the title, use-when line, the fill
+  instructions it would give the review agent, its paths and a preview of a
+  sample before anything is saved; to draw that preview, the check registers
+  the file's definition in the frame registry once it has passed every check.
+  This is the one registration of something a request carries: it is the
+  person's own file pick, sent by the authenticated app, which already holds
+  that HTML, and the frame is the same sandbox as every custom tile's. An
+  imported type is marked "Not checked yet" until a render check runs on it.
+  An exported file holds the type's synthetic samples and no review content.
 - A review keeps the definition it was made with: its library tiles embed
   the full definition, so editing or deleting a saved type changes no saved
   review.
@@ -1571,9 +1592,11 @@ which never says whether a digest exists:
   routes register the types of the custom tiles they serve, the tile type
   preview route the type it draws (see "Saved tile types"), and a
   render-check candidate is registered when the daemon hands it to the app's
-  check runner; nothing a request carries is ever registered, so the route
-  serves only HTML the app already received. At most 32 MiB of documents are
-  kept, the least recently
+  check runner; nothing else a request carries is ever registered (the one
+  exception, an imported file the person picked, is registered after the
+  import checks, see "Saved tile types"), so the route serves only HTML the
+  app already received or sent. At most 32 MiB of documents are kept, the
+  least recently
   used going first; reading the tile route again registers its types again.
 
 The answer is `no-store`, sets no cookie, ignores `Range` and carries

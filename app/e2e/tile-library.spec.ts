@@ -152,6 +152,60 @@ test("deletes a type and brings it back with Undo", async ({ page }) => {
   await expect(row(page, "interface_changes")).toContainText("Imported");
 });
 
+// One state directory stands for two computers: the type is exported,
+// deleted, then imported from its file. The deleted type holds its name
+// until it is purged, so the import is renamed, and the dialog says so.
+test("exports a type to a file and imports it back", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openLibrary(page);
+  await row(page, "interface_changes").getByRole("link").click();
+  const downloading = page.waitForEvent("download");
+  await pane(page).getByRole("button", { name: "Export…" }).click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe("interface_changes.baumtile.json");
+  const path = await download.path();
+  const file = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8")) as {
+    schema: string;
+    definition: Record<string, unknown>;
+  };
+  expect(file.schema).toBe("baum.tile-type/1");
+  expect(file.definition.digest).toBeUndefined();
+
+  await pane(page).getByRole("button", { name: "Delete" }).click();
+  await expect(row(page, "interface_changes")).toHaveCount(0);
+  try {
+    await section(page).locator("input[data-tile-type-file]").setInputFiles(path);
+    const dialog = page.getByRole("dialog", { name: "Import Interface changes" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("saved as interface_changes_2");
+    await expect(dialog).toContainText("Given to the review agent when this type is filled.");
+    await expect(dialog).toContainText("**/api/**");
+    const frames = dialog.locator("[data-preview-frame]");
+    await expect(frames.first()).toHaveAttribute("data-frame-state", "ready", { timeout: 20000 });
+    await dialog.getByRole("button", { name: "Import", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/type=interface_changes_2/);
+    await expect(pane(page)).toContainText("Imported");
+    await expect(pane(page)).toContainText("Not checked yet");
+    await pane(page).locator("[data-preview-frame]").first().scrollIntoViewIfNeeded();
+    await expect(pane(page).locator("[data-preview-frame]").first()).toHaveAttribute(
+      "data-frame-state",
+      "ready",
+      { timeout: 20000 },
+    );
+  } finally {
+    await page.evaluate(async () => {
+      const json = {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      };
+      await fetch("api/tile-types/interface_changes_2", json);
+      await fetch("api/tile-types/interface_changes/undelete", { ...json, method: "POST" });
+    });
+  }
+});
+
 // Pictures of the library page for review, taken on request
 // (TILE_LIBRARY_SCREENSHOTS=1): the list and a type's pane, light and dark,
 // wide and narrow, into test-results/tile-library.
@@ -179,5 +233,31 @@ test("screens", async ({ page }) => {
         animations: "disabled",
       });
     }
+    // The import dialog, over a file of a type already in the library.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await openLibrary(page);
+    const file = await page.evaluate(async () =>
+      (await fetch("api/tile-types/migration_steps/export", { cache: "no-store" })).text(),
+    );
+    await section(page)
+      .locator("input[data-tile-type-file]")
+      .setInputFiles({
+        name: "migration_steps.baumtile.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(file),
+      });
+    const dialog = page.getByRole("dialog", { name: "Import Migration steps" });
+    await expect(dialog.locator("[data-preview-frame]").first()).toHaveAttribute(
+      "data-frame-state",
+      "ready",
+      {
+        timeout: 20000,
+      },
+    );
+    await page.screenshot({
+      path: `test-results/tile-library/import-1440-${scheme}.png`,
+      animations: "disabled",
+    });
+    await dialog.getByRole("button", { name: "Cancel" }).click();
   }
 });

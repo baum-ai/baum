@@ -158,6 +158,10 @@ type LocalAPI struct {
 	// page's routes (tilelibrarypage.go) list and change. Without it only baum's
 	// own types preview and the library is empty.
 	TileTypes *tilelibrary.Store
+	// TileImportCheck runs the render check on an imported tile type's
+	// samples. Nil, as on this branch, marks every imported type "Not
+	// checked yet" until the render check marks it (Store.MarkChecked).
+	TileImportCheck tilelibrary.SampleCheck
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.

@@ -758,7 +758,11 @@ doing anything (`src/zoom.rs`).
   offered levels, and the updater's (`update_state`, `check_for_updates`,
   `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
   read the state, start a check, install only an update the app has already
-  downloaded and verified, and record that a notice was closed. They can call no other Tauri command or
+  downloaded and verified, and record that a notice was closed. It also
+  allows `save_tile_type`, which Settings › Tile library's Export calls: it
+  opens the native save dialog for `<name>.baumtile.json` and writes the
+  exported file only where the person chose, refusing a name that is not a
+  tile type's or a file over 3 MiB. They can call no other Tauri command or
   plugin.
   `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled

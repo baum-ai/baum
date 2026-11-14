@@ -1010,6 +1010,12 @@ func seedTileLibrary(t *testing.T, path string, registry *repos.Registry) *tilel
 			t.Fatal(err)
 		}
 	}
+	// The imported one has not had its render check yet.
+	if imported, err := lib.Get(context.Background(), "interface_changes"); err != nil {
+		t.Fatal(err)
+	} else if err := lib.MarkChecked(context.Background(), imported.Entry.Definition.Digest, tilelibrary.VerdictUnchecked); err != nil {
+		t.Fatal(err)
+	}
 	if err := registry.SetTileTypePins(context.Background(), "migration_steps", []string{"acme/demo"}); err != nil {
 		t.Fatal(err)
 	}

@@ -1903,7 +1903,7 @@ the person's saved tile types (`GET api/tile-types`) as list rows: the title
 from (Made in chat or Imported), where it is pinned, and when a review last
 used it and in how many repositories (`used_at`, `used_in`; nothing records
 use yet, so every row reads "Not used in a review yet" until generation offers
-saved types). A row's menu has Open, Edit in chat and Delete. An empty library
+saved types). A row's menu has Open, Edit in chat, Export… and Delete. An empty library
 says how to make a type: ask the session panel on a review for a tile, then to
 save it. The section list's line counts the saved types. A type's pane (`GET
 api/tile-types/{name}`, which never carries the HTML) shows its title with
@@ -1929,6 +1929,26 @@ section: "tiles", focus: {type}}`, its bar reads "Settings · Tile library ·
 with `propose_tile_type`. A desktop shell that mounts no tile frames (Windows)
 shows "Custom tiles aren't available in this version of the desktop app yet"
 in place of the previews; everything else works.
+
+**Export…** (the row's menu and the pane) reads `GET
+api/tile-types/{name}/export`, the type's current version as a
+`<name>.baumtile.json` file (`schema/tile-type-1.json`: the definition without
+its digest, glance, review checks, `applies_with`, paths, the synthetic samples
+and `exported {at, baum}`), and saves it through the desktop app's save dialog
+(the `save_tile_type` command, `desktop/src/tile_files.rs`, which writes only
+where the person chose, a file of at most 3 MiB under a tile type's name), or
+as a download in a browser. **Import…** (the section's heading, and the empty
+library) opens a file picker; the file's text goes to `POST
+api/tile-type-files/check {file}`, which runs every import check without
+saving, and a dialog shows the name it would get (saying so when its own is
+taken and it gets a numeric suffix), the title, use-when line, paths, the fill
+instructions ("Given to the review agent when this type is filled") and its
+first sample as a glance and a detail in their frames. **Import** sends `POST
+api/tile-type-files {file}`, opens the new type and says so in a toast. A
+refused file names the reason under the heading. An imported version shows a
+**Not checked yet** pill until a render check runs on it (`checked: false` in
+the list and the pane; with no render check runner in this build every import
+is not checked yet).
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper

@@ -2029,6 +2029,26 @@ computer by `internal/tilelibrary`, in the private application database
   without a `tiles` member keeps the stored pins. Pins outlive a deletion, so
   Undo brings a type back pinned; a purged type's name may stay pinned until
   the repository's pins change, and names no type.
+- **Export and import.** A type travels as one file, `<name>.baumtile.json`
+  (`schema/tile-type-1.json`, `baum.tile-type/1`, at most 3 MiB): the
+  definition without its digest, glance, review checks, `applies_with`, paths,
+  samples and `exported {at, baum}`, one to one with the library's directory
+  layout. `tilelibrary.Export` writes it; `tilelibrary.ReadFile` checks an
+  untrusted one: the size, then a token walk that refuses nesting deeper than
+  64 levels, more than 200,000 values or a NUL, a strict decode with no
+  unknown member, the schema id, the definition's checks, the kit's lint
+  (errors refuse), then `Prepare` (samples validate and cite only their own
+  hunks and items, the name rules). A digest or `builtin` in the file is
+  dropped and the digest computed. `Store.Inspect` plans the import (a name
+  the library holds, a deleted type's included, gets the first free suffix,
+  `name_2`, kept within 64 characters) and `Store.Import` saves it with origin
+  `import`. `POST /api/tile-type-files/check` answers what the dialog shows
+  and registers the checked definition's frame document; `POST
+  /api/tile-type-files` imports. `tile_type_checks (digest, verdict, at)`
+  records an import's render check: `unchecked` ("Not checked yet") unless a
+  `tilelibrary.SampleCheck` (`LocalAPI.TileImportCheck`) passed on its
+  samples; `Store.MarkChecked` is the render check's way to mark a version
+  later, and the sweep removes a verdict with its definition.
 
 ### Tiles
 
