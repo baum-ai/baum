@@ -265,7 +265,11 @@ describe("a custom tile's frame", () => {
     const { frame, post, start, host } = mount("detail");
     start();
     const keys: string[] = [];
-    const listen = (event: KeyboardEvent) => keys.push(event.key);
+    const seen: KeyboardEvent[] = [];
+    const listen = (event: KeyboardEvent) => {
+      keys.push(event.key);
+      seen.push(event);
+    };
     window.addEventListener("keydown", listen);
     post({ protocol: PROTOCOL, kind: "key", key: "Escape", shift: false });
     giveFocus(frame()!);
@@ -274,6 +278,19 @@ describe("a custom tile's frame", () => {
     post({ protocol: PROTOCOL, kind: "ask" });
     window.removeEventListener("keydown", listen);
     expect(keys.filter((key) => key !== "Tab")).toEqual(["Escape"]);
+    // The event carries the key's name and Shift, and nothing else the frame
+    // could choose: no other modifier, code, repeat or composition.
+    const forwarded = seen.find((event) => event.key === "Escape")!;
+    expect(forwarded.target).toBe(frame());
+    expect([
+      forwarded.ctrlKey,
+      forwarded.metaKey,
+      forwarded.altKey,
+      forwarded.shiftKey,
+      forwarded.repeat,
+      forwarded.isComposing,
+      forwarded.code,
+    ]).toEqual([false, false, false, false, false, false, ""]);
     expect(host.ask).toHaveBeenCalledTimes(1);
   });
 
@@ -384,6 +401,7 @@ describe("custom tiles on the page", () => {
       kind: "unavailable",
       why: unresolved.problems![0],
     });
+    expect(tileFace({ ...ready, state: "pending", data: {} }).kind).toBe("pending");
     const noDigest = { ...ready, definition: { ...(ready.definition as object), digest: "nope" } };
     expect(tileFace(noDigest).kind).toBe("unavailable");
   });

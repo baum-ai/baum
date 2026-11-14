@@ -43,10 +43,13 @@ export const customTile: TileType = {
   Glance: CustomGlance,
   Detail: CustomDetail,
   // The daemon checked the data against the definition's schema; the page
-  // checks only what it reads of the definition to mount the frame.
+  // checks only what it reads of the definition to mount the frame. A tile
+  // still being written has no data its component can be given yet: it is
+  // drawn as being written until it is ready.
   valid: (_data, tile) => {
     const definition = tile?.definition;
     return (
+      tile?.state !== "pending" &&
       isRecord(definition) &&
       frameDigest(definition) !== null &&
       definitionKit(definition) !== null &&
