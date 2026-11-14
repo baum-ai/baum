@@ -3,6 +3,7 @@ package tiles
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -163,36 +164,49 @@ func clone(v any) any {
 	return out
 }
 
-// The validator checks a citation candidate against the one option of
-// $defs/citation its type names; that agrees with checking it against the
-// whole oneOf.
-func TestCitationDispatchAgrees(t *testing.T) {
+// The citation shapes in testdata/citations.json, which the app's walk
+// shares, are citations or not as the file says; and the validator, which
+// checks a candidate against the one option of $defs/citation its type
+// names, agrees with checking it against the whole oneOf.
+func TestCitationShapes(t *testing.T) {
 	shared, err := reserved()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, raw := range []string{
-		`{"type":"hunk","id":"h_000000000001"}`, `{"type":"hunk","id":"h_000000000001","lines":[1,2]}`,
-		`{"type":"hunk","id":"h_000000000001","lines":[0,2]}`, `{"type":"hunk","id":"x"}`, `{"type":"hunk"}`,
-		`{"type":"file","path":"a.go"}`, `{"type":"file","path":"a.go","extra":1}`, `{"type":"commit","sha":"abc1234"}`,
-		`{"type":"commit","sha":"XYZ"}`, `{"type":"pr","number":3}`, `{"type":"pr_body"}`, `{"type":"pr_body","section":null}`,
-		`{"type":"pr_comment","id":5}`, `{"type":"review_thread","id":"t"}`, `{"type":"prompt","session":"s","index":1}`,
-		`{"type":"prompt","session":"s","index":0}`, `{"type":"session_event","session":"s","event":"e"}`,
-		`{"type":"check","id":"c"}`, `{"type":"bot_report","id":"b"}`, `{"type":"issue","system":"linear","key":"K-1"}`,
-		`{"type":"spec","page":"SPEC-1"}`, `{"type":"spec","page":"x"}`, `{"type":"external_url","url":"https://example.com"}`,
-		`{"type":"attachment"}`, `{"type":"attachment","id":"att_ab12"}`, `{"type":"risk","id":"rsk_a"}`, `{"type":"risk","id":"ev_a"}`,
-		`{"type":"evidence","id":"ev_a"}`, `{"type":"change","id":"sec_a"}`, `{"type":"change","id":"sec_A"}`,
-		`{"type":"tile","id":"overview"}`, `{"type":"tile","id":"Overview"}`, `{"type":"tile","id":"overview","x":1}`,
-	} {
-		value, err := decodeData([]byte(raw))
-		if err != nil {
-			t.Fatal(err)
+	raw, err := os.ReadFile("testdata/citations.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shapes struct {
+		Valid   []json.RawMessage `json:"valid"`
+		Invalid []json.RawMessage `json:"invalid"`
+	}
+	if err := json.Unmarshal(raw, &shapes); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]bool{}
+	for want, list := range map[bool][]json.RawMessage{true: shapes.Valid, false: shapes.Invalid} {
+		for _, citation := range list {
+			value, err := decodeData(citation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			whole := (&validation{}).validate(shared.nodes["citation"], value, nil) == nil
+			if whole != want {
+				t.Errorf("%s: a citation is %v, want %v", citation, whole, want)
+			}
+			found, err := findCitations(map[string]any{"x": value}, &validation{})
+			if err != nil || (len(found) == 1) != want {
+				t.Errorf("%s: the walk finds %d citations (%v), want a citation %v", citation, len(found), err, want)
+			}
+			if want {
+				kinds[value.(map[string]any)["type"].(string)] = true
+			}
 		}
-		whole := (&validation{}).validate(shared.nodes["citation"], value, nil) == nil
-		kind := value.(map[string]any)["type"].(string)
-		dispatched := (&validation{}).validate(shared.citations[kind], value, nil) == nil
-		if whole != dispatched {
-			t.Errorf("%s: the whole citation says %v, its option %v", raw, whole, dispatched)
+	}
+	for kind := range citationKinds {
+		if !kinds[kind] {
+			t.Errorf("testdata/citations.json has no valid %s citation", kind)
 		}
 	}
 }

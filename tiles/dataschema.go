@@ -2,9 +2,11 @@ package tiles
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"regexp"
+	"regexp/syntax"
 	"slices"
 	"sort"
 	"strings"
@@ -165,9 +167,10 @@ type compiledSchema struct {
 // properties, required and additionalProperties, which must be false on
 // every object; items, minItems and maxItems, which every array needs (at
 // most 500); enum (at most 64 strings, numbers, booleans or nulls) and
-// const (one of those); minLength and maxLength, which every string needs
-// (at most 20000) unless it has enum, const or pattern; pattern (at most 256
-// characters, Go RE2 syntax, compiling to at most 400 instructions);
+// const (one of those); minLength and maxLength, counted in code points,
+// which every string needs (at most 20000) unless it has enum or const;
+// pattern (at most 256 characters in the syntax Go's RE2 and JavaScript
+// share, see patternProblem, compiling to at most 400 instructions);
 // minimum, maximum, exclusiveMinimum and exclusiveMaximum; anyOf and oneOf
 // (at most 8 options) and allOf (at most 4), nested at most 2 deep; $ref to
 // #/$defs/<name> and $defs at the top level; and the annotations title,
@@ -187,7 +190,7 @@ func compileDataSchema(raw json.RawMessage) (*compiledSchema, []string) {
 	}
 	value, err := decodeCanonical(raw)
 	if err != nil {
-		return nil, []string{strings.TrimPrefix(err.Error(), "tiles: ")}
+		return nil, []string{"the schema is not valid: " + strings.TrimPrefix(err.Error(), "tiles: ")}
 	}
 	shared, err := reserved()
 	if err != nil {
@@ -203,17 +206,20 @@ func compileDataSchema(raw json.RawMessage) (*compiledSchema, []string) {
 	compiler := &schemaCompiler{defs: defs, shared: shared.nodes, compiled: map[string]*schemaNode{}, pending: map[string]bool{}}
 	node, err := compiler.node(root, "#")
 	if err != nil {
-		return nil, []string{err.Error()}
+		return nil, []string{"the schema does not compile"}
 	}
 	if _, err := resolveWithLibrary(root, shared.raw); err != nil {
-		return nil, []string{"the schema does not compile: " + conciseError(err)}
+		return nil, []string{"the schema does not compile with the JSON Schema library"}
 	}
 	return &compiledSchema{root: node}, nil
 }
 
 // resolveWithLibrary resolves the schema with the reserved definitions
-// merged in, with the JSON Schema library the rest of baum uses, so a schema
-// that passes the dialect is a schema any draft 2020-12 tool accepts.
+// merged in, with the JSON Schema library the rest of baum uses, as a last
+// check that the schema compiles. Patterns are in the syntax Go's RE2 and
+// JavaScript share (patternProblem), but the engines still differ in what
+// some classes match, so a tool on another engine may judge a few strings
+// differently.
 func resolveWithLibrary(root map[string]any, reservedDefs map[string]any) (*jsonschema.Resolved, error) {
 	merged := make(map[string]any, len(root))
 	for key, value := range root {
@@ -261,10 +267,14 @@ func (c *dialectChecker) add(at, format string, args ...any) {
 }
 
 func (c *dialectChecker) report() []string {
-	if len(c.problems) <= maxSchemaProblems {
-		return c.problems
+	problems := c.problems
+	if len(problems) > maxSchemaProblems {
+		problems = append(problems[:maxSchemaProblems:maxSchemaProblems], fmt.Sprintf("and %d more problems", len(problems)-maxSchemaProblems))
 	}
-	return append(c.problems[:maxSchemaProblems:maxSchemaProblems], fmt.Sprintf("and %d more problems", len(c.problems)-maxSchemaProblems))
+	for i, problem := range problems {
+		problems[i] = boundedProblem(problem)
+	}
+	return problems
 }
 
 func (c *dialectChecker) check(value any) {
@@ -286,7 +296,7 @@ func (c *dialectChecker) check(value any) {
 		}
 		names := sortedKeys(defs)
 		for _, name := range names {
-			at := "#/$defs/" + pointerToken(name)
+			at := "#/$defs/" + safeToken(name)
 			switch {
 			case slices.Contains(reservedDefinitions, name):
 				c.add(at, `%s is provided to every data schema and cannot be redefined; remove this definition and refer to it with {"$ref": "#/$defs/%s"}`, name, name)
@@ -333,7 +343,7 @@ func (c *dialectChecker) node(raw any, at string, top bool) *dialectNode {
 			if hint == "" {
 				hint = "the dialect allows only " + strings.Join(dataKeywords, ", ")
 			}
-			c.add(at+"/"+pointerToken(key), "%q is not allowed in a tile data schema; %s", key, hint)
+			c.add(at+"/"+safeToken(key), "%s is not allowed in a tile data schema; %s", quotedName("the keyword", key), hint)
 		}
 	}
 
@@ -352,7 +362,7 @@ func (c *dialectChecker) node(raw any, at string, top bool) *dialectNode {
 			case "$ref", "title", "description", "$comment", "examples", "default":
 			default:
 				if slices.Contains(dataKeywords, key) {
-					c.add(at+"/"+pointerToken(key), `a schema with $ref may carry only title, description, $comment, examples and default; move %q into the definition, or combine with allOf`, key)
+					c.add(at+"/"+key, `a schema with $ref may carry only title, description, $comment, examples and default; move %q into the definition, or combine with allOf`, key)
 				}
 			}
 		}
@@ -406,7 +416,7 @@ func (c *dialectChecker) node(raw any, at string, top bool) *dialectNode {
 		c.add(at+"/additionalProperties", `must be false; list every property under properties`)
 	}
 	for _, name := range sortedKeys(properties) {
-		n.children = append(n.children, c.node(properties[name], at+"/properties/"+pointerToken(name), false))
+		n.children = append(n.children, c.node(properties[name], at+"/properties/"+safeToken(name), false))
 	}
 	if raw, ok := object["required"]; ok {
 		list, ok := raw.([]any)
@@ -420,9 +430,9 @@ func (c *dialectChecker) node(raw any, at string, top bool) *dialectNode {
 			case !ok:
 				c.add(at+"/required", "must hold only property names (strings)")
 			case seen[name]:
-				c.add(at+"/required", "names %q twice", name)
+				c.add(at+"/required", "names %s twice", quotedName("the property", name))
 			case properties[name] == nil:
-				c.add(at+"/required", "names %q, which properties does not define; add it to properties or remove it from required", name)
+				c.add(at+"/required", "names %s, which properties does not define; add it to properties or remove it from required", quotedName("the property", name))
 			}
 			seen[name] = true
 		}
@@ -451,8 +461,8 @@ func (c *dialectChecker) node(raw any, at string, top bool) *dialectNode {
 	}
 
 	// Strings.
-	if types&typeString != 0 && !has("maxLength") && !has("enum") && !has("const") && !has("pattern") {
-		c.add(at, `a string needs "maxLength" (at most %d), unless it has enum, const or pattern; add the longest text the tile can show`, maxStringLength)
+	if types&typeString != 0 && !has("maxLength") && !has("enum") && !has("const") {
+		c.add(at, `a string needs "maxLength" (at most %d), unless it has enum or const; add the longest text the tile can show`, maxStringLength)
 	}
 	minLength := c.count(object, "minLength", at, maxStringLength)
 	maxLength := c.count(object, "maxLength", at, maxStringLength)
@@ -467,8 +477,15 @@ func (c *dialectChecker) node(raw any, at string, top bool) *dialectNode {
 		case utf8.RuneCountInString(pattern) > maxPatternLength:
 			c.add(at+"/pattern", "is longer than %d characters; simplify it", maxPatternLength)
 		default:
-			if _, _, err := compilePattern(pattern); err != nil {
-				c.add(at+"/pattern", "does not compile as a Go RE2 regular expression (no lookaround or backreferences; repetition counts make it larger): %v", err)
+			if problem := patternProblem(pattern); problem != "" {
+				c.add(at+"/pattern", "%s", problem)
+			} else if _, _, err := compilePattern(pattern); err != nil {
+				reason := err.Error()
+				var syntaxErr *syntax.Error
+				if errors.As(err, &syntaxErr) {
+					reason = string(syntaxErr.Code)
+				}
+				c.add(at+"/pattern", "does not compile (%s); use the syntax Go and JavaScript share: no lookaround or backreferences, and small repetition counts", reason)
 			}
 		}
 	}
@@ -618,7 +635,7 @@ func (c *dialectChecker) checkRefs() {
 			case def == nil:
 				if !reported[n.at] {
 					reported[n.at] = true
-					c.add(n.at+"/$ref", "names #/$defs/%s, which is not defined; define it under $defs at the top level", n.ref)
+					c.add(n.at+"/$ref", "names %s, which is not defined; define it under $defs at the top level", quotedName("the definition", n.ref))
 				}
 			case visiting[n.ref]:
 				if !reported[n.ref] {
@@ -657,4 +674,60 @@ func (c *dialectChecker) checkRefs() {
 	if m.combinators > maxCombinatorDepth {
 		c.add("#", `anyOf, oneOf and allOf nest %d deep counting through properties, items and $ref, more than %d; use a type array such as ["string", "null"] for a nullable value, or merge options`, m.combinators, maxCombinatorDepth)
 	}
+}
+
+// patternProblem returns why a pattern is outside the syntax Go's RE2 and
+// JavaScript's regular expressions share, or "". Go accepts these and
+// JavaScript does not, or reads them otherwise: flag groups such as (?i),
+// (?P<name>…), \A, \z, \Q…\E, \C, \p and \P (Unicode classes need a flag
+// in JavaScript), \x{…} and POSIX classes such as [[:alpha:]].
+func patternProblem(pattern string) string {
+	const fix = "; use the syntax Go and JavaScript share"
+	inClass := false
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		next := byte(0)
+		if i+1 < len(pattern) {
+			next = pattern[i+1]
+		}
+		switch {
+		case c == '\\':
+			switch next {
+			case 'A', 'z', 'Z', 'Q', 'E', 'C', 'p', 'P':
+				return fmt.Sprintf("uses \\%c, which JavaScript reads otherwise or not at all%s", next, fix)
+			case 'x':
+				if i+2 < len(pattern) && pattern[i+2] == '{' {
+					return `uses \x{…}; write \xHH or the character itself` + fix
+				}
+			}
+			i++
+		case inClass:
+			if c == '[' && next == ':' {
+				return "uses a POSIX class such as [:alpha:]; list the characters, as in [A-Za-z]" + fix
+			}
+			if c == ']' {
+				inClass = false
+			}
+		case c == '[':
+			inClass = true
+			if next == '^' {
+				i++
+			}
+			if i+1 < len(pattern) && pattern[i+1] == ']' {
+				i++
+			}
+		case c == '(' && next == '?':
+			rest := pattern[i+2:]
+			switch {
+			case strings.HasPrefix(rest, ":"), strings.HasPrefix(rest, "="), strings.HasPrefix(rest, "!"),
+				strings.HasPrefix(rest, "<="), strings.HasPrefix(rest, "<!"):
+			case strings.HasPrefix(rest, "<") && len(rest) > 1 && (rest[1] >= 'A' && rest[1] <= 'Z' || rest[1] >= 'a' && rest[1] <= 'z'):
+			case strings.HasPrefix(rest, "P<"):
+				return "names a group with (?P<name>…); write (?<name>…)" + fix
+			default:
+				return "sets flags with (?…); write the cases out, as in [Aa]" + fix
+			}
+		}
+	}
+	return ""
 }

@@ -390,7 +390,7 @@ func floatNumbers(value any) (any, error) {
 	case json.Number:
 		f, err := strconv.ParseFloat(string(v), 64)
 		if err != nil {
-			return nil, errors.New("a number does not fit a double")
+			return nil, errBadNumber
 		}
 		return f, nil
 	case []any:
@@ -466,7 +466,7 @@ func (p *dataPath) String() string {
 	var tokens []string
 	for at := p; at != nil; at = at.parent {
 		if at.name != "" {
-			tokens = append(tokens, pointerToken(at.name))
+			tokens = append(tokens, safeToken(at.name))
 		} else {
 			tokens = append(tokens, strconv.Itoa(at.index))
 		}
@@ -490,6 +490,8 @@ type dataError struct {
 	at     *dataPath
 	format string
 	args   []any
+	// inOption is set on a failure that already says which option it is in.
+	inOption bool
 }
 
 func (e *dataError) message() string {
@@ -498,6 +500,14 @@ func (e *dataError) message() string {
 
 func (e *dataError) Error() string {
 	return "at " + e.at.String() + ": " + e.message()
+}
+
+// maxProblemLength bounds one problem, in characters.
+const maxProblemLength = 400
+
+// boundedProblem bounds a problem's length.
+func boundedProblem(text string) string {
+	return truncate(text, maxProblemLength)
 }
 
 // lazyMessage formats a failure inside another only when that is reported.
@@ -509,14 +519,20 @@ func failure(at *dataPath, format string, args ...any) error {
 	return &dataError{at: at, format: format, args: args}
 }
 
-// validation validates one value against a compiled schema within a budget.
+// validation validates one value against a compiled schema within a budget:
+// limit steps, or validationBudget when limit is zero.
 type validation struct {
 	steps int
+	limit int
 }
 
 func (v *validation) spend(steps int) error {
 	v.steps += steps
-	if v.steps > validationBudget {
+	limit := v.limit
+	if limit == 0 {
+		limit = validationBudget
+	}
+	if v.steps > limit {
 		return errBudget
 	}
 	return nil
@@ -575,7 +591,7 @@ func (v *validation) validate(n *schemaNode, value any, at *dataPath) error {
 				return err
 			}
 			if !n.pattern.MatchString(s) {
-				return failure(at, "does not match its pattern %q", n.pattern.String())
+				return failure(at, "does not match its pattern")
 			}
 		}
 	}
@@ -660,7 +676,7 @@ func (v *validation) validate(n *schemaNode, value any, at *dataPath) error {
 		}
 		for _, name := range n.required {
 			if _, ok := v2[name]; !ok {
-				return failure(at, "lacks the required property %q", name)
+				return failure(at, "lacks %s", quotedName("the required property", name))
 			}
 		}
 		if n.closed {
@@ -692,7 +708,10 @@ func (v *validation) validate(n *schemaNode, value any, at *dataPath) error {
 func (v *validation) noBranch(keyword string, options int, closest error, at *dataPath) error {
 	inner, _ := closest.(*dataError)
 	if inner != nil && inner.at.depth() > at.depth() {
-		return failure(inner.at, "%s (in the closest option of the %s at %s)", lazyMessage{inner}, keyword, at)
+		if inner.inOption {
+			return inner
+		}
+		return &dataError{at: inner.at, format: "%s (in the closest option of the %s at %s)", args: []any{lazyMessage{inner}, keyword, at}, inOption: true}
 	}
 	if inner != nil {
 		return failure(at, "matches none of the %d options of its %s; the closest %s", options, keyword, lazyMessage{inner})
@@ -712,16 +731,40 @@ func deeper(a, b error) error {
 	return a
 }
 
-// propertyName names a property of the data in a message: a plain name is
-// quoted, anything else is not repeated.
+// Messages are shown to people and read by the agents that write tiles, and
+// definitions may come from other people, so a name from a definition or
+// from data appears in one only when it is a plain identifier of at most 64
+// characters.
+
+// propertyName names a property in a message.
 func propertyName(name string) string {
-	if len(name) <= 64 && plainName.MatchString(name) {
-		return fmt.Sprintf("the property %q", name)
-	}
-	return "a property"
+	return quotedName("the property", name)
 }
 
-var plainName = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+// quotedName names something in a message: "<what> "name"" for a plain
+// name, otherwise what it is without its name ("the property" becomes "a
+// property").
+func quotedName(what, name string) string {
+	if isPlainName(name) {
+		return fmt.Sprintf("%s %q", what, name)
+	}
+	return "a " + strings.TrimPrefix(what, "the ")
+}
+
+// safeToken is a JSON pointer token for a name in a message: the name when
+// it is plain, otherwise "…".
+func safeToken(name string) string {
+	if isPlainName(name) {
+		return name
+	}
+	return "…"
+}
+
+func isPlainName(name string) bool {
+	return len(name) <= 64 && plainName.MatchString(name)
+}
+
+var plainName = regexp.MustCompile(`^\$?[A-Za-z0-9_.-]+$`)
 
 func typeOf(value any) uint8 {
 	switch v := value.(type) {

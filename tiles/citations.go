@@ -19,6 +19,7 @@ type citation struct {
 	at      *dataPath
 	kind    string
 	id      string
+	path    string
 	session string
 	lines   []float64
 }
@@ -89,6 +90,7 @@ func newCitation(kind string, value map[string]any, at *dataPath) citation {
 	c := citation{at: at, kind: kind}
 	c.id, _ = value["id"].(string)
 	c.session, _ = value["session"].(string)
+	c.path, _ = value["path"].(string)
 	if lines, ok := value["lines"].([]any); ok {
 		for _, line := range lines {
 			if f, ok := line.(float64); ok {
@@ -101,14 +103,21 @@ func newCitation(kind string, value map[string]any, at *dataPath) citation {
 
 // customRefs is what a citation may resolve to in a document.
 type customRefs struct {
-	hunks, checks, threads, risks, evidence, changes, tiles map[string]bool
-	// sessions maps a session ID to whether it is restricted.
+	checks, threads, risks, evidence, changes, tiles map[string]bool
+	// hunks maps a hunk ID to its right side's lines, first and last; a
+	// hunk with an empty right side has none, and one the index gives no
+	// range for has [0, 0].
+	hunks map[string][]int
+	// files are the paths of the index's hunks, old paths included.
+	files map[string]bool
+	// sessions maps a session ID to whether it is restricted: an ID the
+	// index lists twice is restricted when either entry is.
 	sessions map[string]bool
 }
 
 func newCustomRefs(doc *Document) *customRefs {
 	refs := &customRefs{
-		hunks: map[string]bool{}, checks: map[string]bool{}, threads: map[string]bool{},
+		hunks: map[string][]int{}, files: map[string]bool{}, checks: map[string]bool{}, threads: map[string]bool{},
 		risks: map[string]bool{}, evidence: map[string]bool{}, changes: map[string]bool{},
 		tiles: map[string]bool{}, sessions: map[string]bool{},
 	}
@@ -117,7 +126,12 @@ func newCustomRefs(doc *Document) *customRefs {
 		Restricted bool   `json:"restricted"`
 	}
 	var index struct {
-		Hunks    []entry `json:"hunks"`
+		Hunks []struct {
+			ID       string `json:"id"`
+			Path     string `json:"path"`
+			OldPath  string `json:"old_path"`
+			NewRange []int  `json:"new_range"`
+		} `json:"hunks"`
 		Checks   []entry `json:"checks"`
 		Threads  []entry `json:"threads"`
 		Sessions []entry `json:"sessions"`
@@ -126,13 +140,27 @@ func newCustomRefs(doc *Document) *customRefs {
 	for _, list := range []struct {
 		entries []entry
 		set     map[string]bool
-	}{{index.Hunks, refs.hunks}, {index.Checks, refs.checks}, {index.Threads, refs.threads}} {
+	}{{index.Checks, refs.checks}, {index.Threads, refs.threads}} {
 		for _, e := range list.entries {
 			list.set[e.ID] = true
 		}
 	}
+	for _, hunk := range index.Hunks {
+		switch {
+		case len(hunk.NewRange) != 2:
+			refs.hunks[hunk.ID] = []int{0, 0}
+		case hunk.NewRange[1] > 0:
+			refs.hunks[hunk.ID] = []int{hunk.NewRange[0], hunk.NewRange[0] + hunk.NewRange[1] - 1}
+		default:
+			refs.hunks[hunk.ID] = nil
+		}
+		refs.files[hunk.Path] = true
+		if hunk.OldPath != "" {
+			refs.files[hunk.OldPath] = true
+		}
+	}
 	for _, session := range index.Sessions {
-		refs.sessions[session.ID] = session.Restricted
+		refs.sessions[session.ID] = refs.sessions[session.ID] || session.Restricted
 	}
 	for _, risk := range doc.Risks {
 		refs.risks[risk.ID] = true
@@ -149,15 +177,19 @@ func newCustomRefs(doc *Document) *customRefs {
 	return refs
 }
 
+// maxCitedLine bounds a cited line where the index gives no hunk range.
+const maxCitedLine = 10_000_000
+
 // maxCitationProblems bounds the unresolved citations a tile reports.
 const maxCitationProblems = 5
 
 // citationProblems checks that every citation resolves against the
 // document and returns the cited hunks, sorted and without repeats. The
-// review decides hunks, checks, review threads, sessions, risks, evidence,
-// changes and tiles; a file may be any file of the repository and the
-// document lists no commits, so the page resolves the other kinds as best
-// it can.
+// document decides hunks (and their lines), files (the paths of its hunks),
+// checks, review threads, sessions, risks, evidence, changes and tiles. It
+// lists no commits, and the other kinds carry what they name (a URL, a
+// number, a key), so the page resolves those from the document it has
+// loaded, as best it can.
 func citationProblems(citations []citation, refs *customRefs) ([]string, []string) {
 	var problems, hunks []string
 	unresolved := 0
@@ -178,13 +210,24 @@ func citationProblems(citations []citation, refs *customRefs) ([]string, []strin
 	for _, c := range citations {
 		switch c.kind {
 		case "hunk":
+			lines, ok := refs.hunks[c.id]
 			switch {
-			case !refs.hunks[c.id]:
+			case !ok:
 				missing(c)
 			case len(c.lines) == 2 && c.lines[0] > c.lines[1]:
 				report(c, "has lines that end before they start; write [first, last]")
+			case len(c.lines) == 2 && c.lines[1] > maxCitedLine:
+				report(c, "has lines past any file's; cite lines of the hunk")
+			case len(c.lines) == 2 && lines == nil:
+				report(c, "has lines, but the hunk adds no lines to cite; cite the hunk without lines")
+			case len(c.lines) == 2 && lines[1] > 0 && (c.lines[0] < float64(lines[0]) || c.lines[1] > float64(lines[1])):
+				report(c, "has lines outside the hunk, which has lines %d to %d", lines[0], lines[1])
 			default:
 				hunks = append(hunks, c.id)
+			}
+		case "file":
+			if !refs.files[c.path] {
+				report(c, "names a file this review does not change; cite a file from the review")
 			}
 		case "check":
 			if !refs.checks[c.id] {

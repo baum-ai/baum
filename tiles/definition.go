@@ -2,6 +2,7 @@ package tiles
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -92,25 +93,46 @@ func DefinitionDigest(definition json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return digestOf(value)
+}
+
+// digestOf returns the digest of a decoded definition, leaving it as it
+// was. Numbers may be json.Number or float64.
+func digestOf(value any) (string, error) {
 	object, ok := value.(map[string]any)
 	if !ok {
 		return "", errors.New("tiles: the definition is not an object")
 	}
-	delete(object, "digest")
+	without := make(map[string]any, len(object))
+	for name, member := range object {
+		if name != "digest" {
+			without[name] = member
+		}
+	}
 	var b bytes.Buffer
-	if err := canonical(&b, object); err != nil {
+	if err := canonical(&b, without); err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(b.Bytes())
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
+// The errors of decoding. They are fixed text: a problem built from one
+// never repeats what it decoded.
+var (
+	errNotJSON       = errors.New("tiles: not valid JSON")
+	errNotUTF8       = errors.New("tiles: not valid UTF-8")
+	errRepeated      = errors.New("tiles: a member name is repeated in one object")
+	errLoneSurrogate = errors.New("tiles: a string holds an escaped lone surrogate")
+	errBadNumber     = errors.New("tiles: a number does not fit a double")
+)
+
 // decodeCanonical decodes JSON with json.Number numbers after refusing what
 // encoding/json would otherwise accept silently: invalid UTF-8, escaped lone
 // surrogates and repeated member names.
 func decodeCanonical(raw []byte) (any, error) {
 	if !utf8.Valid(raw) {
-		return nil, errors.New("tiles: not valid UTF-8")
+		return nil, errNotUTF8
 	}
 	if err := checkEscapesAndMembers(raw); err != nil {
 		return nil, err
@@ -119,10 +141,10 @@ func decodeCanonical(raw []byte) (any, error) {
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("tiles: not valid JSON: %w", err)
+		return nil, errNotJSON
 	}
 	if decoder.More() {
-		return nil, errors.New("tiles: not valid JSON: data after the value")
+		return nil, errNotJSON
 	}
 	return value, nil
 }
@@ -152,13 +174,15 @@ func checkEscapesAndMembers(raw []byte) error {
 				stack[n-1].expect = true
 			}
 		case '"':
-			end, text, err := scanString(raw, i)
+			name := len(stack) > 0 && stack[len(stack)-1].object && stack[len(stack)-1].expect
+			end, text, err := scanString(raw, i, name)
 			if err != nil {
 				return err
 			}
-			if n := len(stack); n > 0 && stack[n-1].object && stack[n-1].expect {
+			if name {
+				n := len(stack)
 				if stack[n-1].names[text] {
-					return fmt.Errorf("tiles: member %q is repeated", truncate(text, 40))
+					return errRepeated
 				}
 				stack[n-1].names[text] = true
 				stack[n-1].expect = false
@@ -170,8 +194,9 @@ func checkEscapesAndMembers(raw []byte) error {
 }
 
 // scanString returns the index of the closing quote of the string starting
-// at raw[start] and its decoded text, refusing escaped lone surrogates.
-func scanString(raw []byte, start int) (int, string, error) {
+// at raw[start] and, when keep is set, its decoded text, refusing escaped
+// lone surrogates.
+func scanString(raw []byte, start int, keep bool) (int, string, error) {
 	var b strings.Builder
 	for i := start + 1; i < len(raw); i++ {
 		c := raw[i]
@@ -179,7 +204,9 @@ func scanString(raw []byte, start int) (int, string, error) {
 		case c == '"':
 			return i, b.String(), nil
 		case c != '\\':
-			b.WriteByte(c)
+			if keep {
+				b.WriteByte(c)
+			}
 			continue
 		}
 		if i+1 >= len(raw) {
@@ -187,28 +214,30 @@ func scanString(raw []byte, start int) (int, string, error) {
 		}
 		i++
 		if raw[i] != 'u' {
-			if r, ok := simpleEscapes[raw[i]]; ok {
+			if r, ok := simpleEscapes[raw[i]]; ok && keep {
 				b.WriteByte(r)
 			}
 			continue
 		}
 		r, ok := hex4(raw, i+1)
 		if !ok {
-			return 0, "", errors.New("tiles: not valid JSON: a bad \\u escape")
+			return 0, "", errNotJSON
 		}
 		i += 4
 		if utf16.IsSurrogate(r) {
 			if r >= 0xdc00 || i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
-				return 0, "", errors.New("tiles: a string holds an escaped lone surrogate")
+				return 0, "", errLoneSurrogate
 			}
 			low, ok := hex4(raw, i+3)
 			if !ok || low < 0xdc00 || low > 0xdfff {
-				return 0, "", errors.New("tiles: a string holds an escaped lone surrogate")
+				return 0, "", errLoneSurrogate
 			}
 			r = utf16.DecodeRune(r, low)
 			i += 6
 		}
-		b.WriteRune(r)
+		if keep {
+			b.WriteRune(r)
+		}
 	}
 	return len(raw), b.String(), nil
 }
@@ -233,9 +262,14 @@ func canonical(b *bytes.Buffer, value any) error {
 	case json.Number:
 		f, err := strconv.ParseFloat(string(v), 64)
 		if err != nil || math.IsInf(f, 0) {
-			return fmt.Errorf("tiles: the number %s does not fit a double", truncate(string(v), 40))
+			return errBadNumber
 		}
 		b.WriteString(ecmaNumber(f))
+	case float64:
+		if math.IsInf(v, 0) || math.IsNaN(v) {
+			return errBadNumber
+		}
+		b.WriteString(ecmaNumber(v))
 	case string:
 		canonicalString(b, v)
 	case []any:
@@ -268,7 +302,7 @@ func canonical(b *bytes.Buffer, value any) error {
 		}
 		b.WriteByte('}')
 	default:
-		return fmt.Errorf("tiles: cannot canonicalise a %T", value)
+		return errNotJSON
 	}
 	return nil
 }
@@ -306,10 +340,35 @@ func canonicalString(b *bytes.Buffer, s string) {
 }
 
 // compareUTF16 orders strings by their UTF-16 code units, as RFC 8785 sorts
-// member names.
+// member names, without allocating. Code point order and UTF-16 order differ
+// only between U+E000..U+FFFF and the supplementary planes, whose surrogates
+// sort below U+E000.
 func compareUTF16(a, b string) int {
-	ua, ub := utf16.Encode([]rune(a)), utf16.Encode([]rune(b))
-	return slices.Compare(ua, ub)
+	for a != "" && b != "" {
+		ra, na := utf8.DecodeRuneInString(a)
+		rb, nb := utf8.DecodeRuneInString(b)
+		a, b = a[na:], b[nb:]
+		if ra == rb {
+			continue
+		}
+		ha, la := utf16Units(ra)
+		hb, lb := utf16Units(rb)
+		if ha != hb {
+			return cmp.Compare(ha, hb)
+		}
+		return cmp.Compare(la, lb)
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+// utf16Units returns a rune's first UTF-16 code unit and its second, or
+// zero.
+func utf16Units(r rune) (rune, rune) {
+	if r < 0x10000 {
+		return r, 0
+	}
+	high, low := utf16.EncodeRune(r)
+	return high, low
 }
 
 // ecmaNumber writes a double as ECMAScript's Number.prototype.toString does,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -187,4 +188,229 @@ func truncatedProblems(problems []string) string {
 		return text[:160] + "…"
 	}
 	return text
+}
+
+// fastest returns the fastest of a few runs of f.
+func fastest(f func()) time.Duration {
+	best := time.Duration(math.MaxInt64)
+	for range 3 {
+		start := time.Now()
+		f()
+		best = min(best, time.Since(start))
+	}
+	return best
+}
+
+// A definition just under the size limit is refused for what it holds before
+// it is digested: a data schema of many tiny members, or a long fill.
+func TestDefinitionCheckCost(t *testing.T) {
+	head := `{"name":"x","title":"t","use_when":"u","fill":"f","kit":1,"sizes":["full"],"source":{"format":"html","html":""},`
+	wide := func(member string) []byte {
+		var b strings.Builder
+		b.WriteString(head + member)
+		for i := 0; b.Len() < MaxDefinitionBytes-200; i++ {
+			fmt.Fprintf(&b, `,"%x":0`, i)
+		}
+		b.WriteString(`},"digest":"sha256:` + strings.Repeat("0", 64) + `"}`)
+		return []byte(b.String())
+	}
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+		want string
+	}{
+		{"a data schema of many members", wide(`"data_schema":{"type":"object"`), "the data schema is larger than 32 KiB"},
+		{"an extra member of many members", wide(`"data_schema":{"type":"object"},"extra":{"a":0`), "the definition is larger than 128 KiB without its HTML and data schema"},
+	} {
+		if len(tc.raw) > MaxDefinitionBytes {
+			t.Fatalf("%s: %d bytes", tc.name, len(tc.raw))
+		}
+		var problems []string
+		took := fastest(func() { problems = NewValidator().checkDefinition(tc.raw).problems })
+		t.Logf("%s: %v", tc.name, took)
+		if len(problems) != 1 || !strings.Contains(problems[0], tc.want) {
+			t.Errorf("%s: problems %v", tc.name, problems)
+		}
+		if took > costBound() {
+			t.Errorf("%s: took %v, more than %v", tc.name, took, costBound())
+		}
+	}
+
+	// The largest definition that passes: a component of 262144 escaped
+	// characters.
+	def := map[string]any{"name": "x", "title": "t", "use_when": "u", "fill": strings.Repeat("f", 8000), "kit": 1, "sizes": []any{"full"},
+		"source":      map[string]any{"format": "html", "html": strings.Repeat("<\x01", 262144/2)},
+		"data_schema": map[string]any{"type": "object", "additionalProperties": false}}
+	encoded, _ := json.Marshal(def)
+	digest, err := DefinitionDigest(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def["digest"] = digest
+	encoded, _ = json.Marshal(def)
+	var problems []string
+	took := fastest(func() { problems = NewValidator().checkDefinition(encoded).problems })
+	t.Logf("the largest valid definition, %d bytes: %v", len(encoded), took)
+	if problems != nil {
+		t.Errorf("problems %v", problems)
+	}
+	if took > 2*costBound() {
+		t.Errorf("took %v, more than %v", took, 2*costBound())
+	}
+}
+
+// heavyDocument returns the base tile document with n custom tiles of the
+// costliest data, each a distinct definition so nothing is shared.
+func heavyDocument(t *testing.T, n int) *Document {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/base.tiles.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc Document
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var heavy hostileCase
+	for _, tc := range hostileCases() {
+		if tc.name == "objects in 64 options" {
+			heavy = tc
+		}
+	}
+	for i := range n {
+		def := TypeDefinition{Name: fmt.Sprintf("heavy_%d", i), Title: "Heavy", UseWhen: "Never.", Fill: "Nothing.",
+			DataSchema: json.RawMessage(heavy.schema), Kit: 1, Sizes: []Size{SizeThird}, Source: TypeSource{Format: "html", HTML: "<p></p>"}}
+		encoded, _ := json.Marshal(def)
+		def.Digest, _ = DefinitionDigest(encoded)
+		encoded, _ = json.Marshal(def)
+		id := fmt.Sprintf("heavy_%d", i)
+		doc.Tiles = append(doc.Tiles, Tile{ID: id, Type: TypeCustom, Title: "Heavy", Data: json.RawMessage(heavy.data), State: StateReady, Definition: encoded})
+		doc.Layout.Entries = append(doc.Layout.Entries, Entry{Tile: id, Size: SizeThird})
+	}
+	return &doc
+}
+
+// A document's custom tiles share one budget, and their verdicts are cached,
+// so a document of many of the costliest tiles takes bounded time to check,
+// and nothing to check again.
+func TestDocumentCheckCost(t *testing.T) {
+	doc := heavyDocument(t, maxCustomTiles+2)
+	v := NewValidator()
+	// Compile the schemas first: the built-in tiles' schemas once per
+	// validator, the definitions' in their own cache.
+	if _, err := v.data(); err != nil {
+		t.Fatal(err)
+	}
+	for i := range doc.Tiles {
+		if doc.Tiles[i].Type == TypeCustom {
+			v.definition(doc.Tiles[i].Definition)
+		}
+	}
+	start := time.Now()
+	if err := v.CheckTiles(doc); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Since(start)
+	states := map[string]int{}
+	for _, tile := range doc.Tiles {
+		if tile.Type == TypeCustom {
+			states[strings.Join(tile.Problems, "")]++
+		}
+	}
+	t.Logf("first check %v: %v", first, states)
+	if states[documentTooCostly] == 0 || states[fmt.Sprintf("the review has more than %d custom tiles; this one is past the limit", maxCustomTiles)] != 2 {
+		t.Errorf("states %v", states)
+	}
+	if first > 5*costBound() {
+		t.Errorf("the first check took %v, more than %v", first, 5*costBound())
+	}
+
+	// A document whose verdicts are cached costs nothing to check again.
+	doc = heavyDocument(t, 8)
+	if err := v.CheckTiles(doc); err != nil {
+		t.Fatal(err)
+	}
+	refs := newTileRefs(doc)
+	for i := range doc.Tiles {
+		if doc.Tiles[i].Type == TypeCustom {
+			v.tileProblems(nil, refs, &doc.Tiles[i])
+		}
+	}
+	if refs.spent != 0 {
+		t.Errorf("checking cached tiles again spent %d steps", refs.spent)
+	}
+	again := fastest(func() {
+		if err := v.CheckTiles(heavyDocument(t, 8)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Logf("checking 8 cached tiles again (with decoding the document): %v", again)
+}
+
+// Tiles past the document's byte limits are unavailable; those before are
+// checked.
+func TestDocumentByteLimits(t *testing.T) {
+	doc := heavyDocument(t, 0)
+	data := `{"s":"` + strings.Repeat("d", 60<<10) + `"}`
+	def := TypeDefinition{Name: "big", Title: "Big", UseWhen: "Never.", Fill: "Nothing.",
+		DataSchema: json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"s":{"type":"string","maxLength":20000}}}`),
+		Kit:        1, Sizes: []Size{SizeThird}, Source: TypeSource{Format: "html", HTML: "<p></p>"}}
+	encoded, _ := json.Marshal(def)
+	def.Digest, _ = DefinitionDigest(encoded)
+	encoded, _ = json.Marshal(def)
+	for i := range 20 {
+		id := fmt.Sprintf("big_%d", i)
+		doc.Tiles = append(doc.Tiles, Tile{ID: id, Type: TypeCustom, Title: "Big", Data: json.RawMessage(data), State: StateReady, Definition: encoded})
+	}
+	if err := NewValidator().CheckTiles(doc); err != nil {
+		t.Fatal(err)
+	}
+	past := 0
+	for _, tile := range doc.Tiles {
+		if tile.Type != TypeCustom {
+			continue
+		}
+		problems := strings.Join(tile.Problems, "")
+		switch {
+		case strings.Contains(problems, "data is larger than 1 MiB together"):
+			past++
+		case !strings.Contains(problems, "is 61440 characters long"):
+			t.Errorf("tile %s: %v", tile.ID, tile.Problems)
+		}
+	}
+	// 17 tiles of 61450 bytes fit 1 MiB.
+	if past != 3 {
+		t.Errorf("%d tiles past the data limit, want 3", past)
+	}
+}
+
+// EdgeSamples has one budget for the whole call.
+func TestEdgeSamplesCost(t *testing.T) {
+	var outer []string
+	for i := range 8 {
+		var inner []string
+		for j := range 8 {
+			inner = append(inner, fmt.Sprintf(`{"type":"string","maxLength":20000,"pattern":"(?:a*[\\x01]?){40}%d%d"}`, i, j))
+		}
+		outer = append(outer, `{"oneOf":[`+strings.Join(inner, ",")+`]}`)
+	}
+	schemas := map[string]string{
+		"unmatchable patterns in 64 options": `{"type":"object","additionalProperties":false,"properties":{"s":{"type":"array","maxItems":500,"items":{"anyOf":[` + strings.Join(outer, ",") + `]}}}}`,
+	}
+	for _, tc := range hostileCases() {
+		schemas[tc.name] = tc.schema
+	}
+	for name, schema := range schemas {
+		if problems := CheckDataSchema(json.RawMessage(schema)); problems != nil {
+			t.Fatalf("%s: the dialect refuses the schema: %v", name, problems)
+		}
+		var warnings []string
+		start := time.Now()
+		_, warnings, _ = EdgeSamples(json.RawMessage(schema), nil)
+		took := time.Since(start)
+		t.Logf("%s: %v, warnings %.120v", name, took, warnings)
+		if took > 10*costBound() {
+			t.Errorf("%s: took %v, more than %v", name, took, 10*costBound())
+		}
+	}
 }

@@ -14,7 +14,7 @@ var sampleSchemas = map[string]string{
 	"routes": string(routesDefinition().DataSchema),
 	"scalars": closed(`"title":{"type":"string","minLength":3,"maxLength":40},`+
 		`"note":{"type":["string","null"],"maxLength":5000},`+
-		`"slug":{"type":"string","pattern":"^[a-z][a-z0-9-]{2,30}$"},`+
+		`"slug":{"type":"string","maxLength":31,"pattern":"^[a-z][a-z0-9-]{2,30}$"},`+
 		`"hunk":{"$ref":"#/$defs/hunkId"},`+
 		`"count":{"type":"integer","minimum":2,"maximum":9},`+
 		`"open":{"type":"integer","exclusiveMinimum":0,"exclusiveMaximum":10},`+

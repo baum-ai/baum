@@ -835,8 +835,8 @@
                 "type": "hunk",
                 "id": "h_000000000003",
                 "lines": [
-                  4,
-                  9
+                  21,
+                  25
                 ]
               },
               {
@@ -849,7 +849,7 @@
               },
               {
                 "type": "file",
-                "path": "internal/retry/policy.go"
+                "path": "config/config.go"
               },
               {
                 "type": "commit",
@@ -996,8 +996,8 @@
                 "type": "hunk",
                 "id": "h_000000000003",
                 "lines": [
-                  4,
-                  9
+                  21,
+                  25
                 ]
               },
               {
@@ -1010,7 +1010,7 @@
               },
               {
                 "type": "file",
-                "path": "internal/retry/policy.go"
+                "path": "config/config.go"
               },
               {
                 "type": "commit",
@@ -1347,8 +1347,8 @@
                 "type": "hunk",
                 "id": "h_000000000003",
                 "lines": [
-                  4,
-                  9
+                  21,
+                  25
                 ]
               },
               {
@@ -1361,7 +1361,7 @@
               },
               {
                 "type": "file",
-                "path": "internal/retry/policy.go"
+                "path": "config/config.go"
               },
               {
                 "type": "commit",
@@ -1542,7 +1542,7 @@
       },
       {
         "tile": "routes_newer_kit",
-        "size": "half"
+        "size": "third"
       },
       {
         "tile": "routes_unresolved",
@@ -1554,7 +1554,7 @@
       },
       {
         "tile": "routes_edited",
-        "size": "half"
+        "size": "third"
       }
     ],
     "groups": [

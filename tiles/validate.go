@@ -40,6 +40,10 @@ type Validator struct {
 	// saved review embeds a definition in every tile of its type.
 	definitions *lru[[32]byte, *checkedDefinition]
 	schemas     *lru[string, *compiledSchema]
+	// verdicts caches what a custom tile's data checks to, by definition
+	// digest and the data's SHA-256, so the same document costs nothing
+	// to check again.
+	verdicts *lru[verdictKey, *dataVerdict]
 }
 
 // NewValidator returns a Validator. The schemas are compiled on first use.
@@ -59,6 +63,7 @@ func NewValidator() *Validator {
 		}),
 		definitions: newLRU[[32]byte, *checkedDefinition](definitionCacheSize),
 		schemas:     newLRU[string, *compiledSchema](schemaCacheSize),
+		verdicts:    newLRU[verdictKey, *dataVerdict](verdictCacheSize),
 	}
 }
 
@@ -309,6 +314,11 @@ type tileRefs struct {
 	// custom is what custom tiles' citations resolve to, built when the
 	// first custom tile needs it.
 	custom *customRefs
+	// refused holds why each custom tile past the document's limits is,
+	// built when the first custom tile is checked; spent is the validation
+	// steps its custom tiles took so far.
+	refused map[*Tile]string
+	spent   int
 }
 
 func (refs *tileRefs) customRefs() *customRefs {

@@ -40,8 +40,10 @@ const (
 // Citations are filled from citations in turn (the review's own, so they
 // resolve), or with a hunk citation that resolves in no review. Generation
 // is deterministic. A sample that does not pass its schema is dropped, with
-// a warning saying why. EdgeSamples fails only for a schema that is not in
-// the dialect (CheckDataSchema).
+// a warning saying why. The whole call, generation and validation, has one
+// budget of sampleBudget steps; when it runs out, the samples not yet made
+// are dropped, with a warning. EdgeSamples fails only for a schema that is
+// not in the dialect (CheckDataSchema).
 func EdgeSamples(dataSchema json.RawMessage, citations []json.RawMessage) ([]Sample, []string, error) {
 	compiled, problems := compileDataSchema(dataSchema)
 	if len(problems) > 0 {
@@ -53,10 +55,17 @@ func EdgeSamples(dataSchema json.RawMessage, citations []json.RawMessage) ([]Sam
 	}
 	var warnings []string
 	var pool []any
+	work := &sampleWork{}
 	for i, raw := range citations {
+		if work.spend(len(raw)/16+1) != nil {
+			return nil, append(warnings, outOfWork), nil
+		}
 		value, err := decodeData(raw)
 		if err == nil {
-			err = (&validation{}).validate(shared.nodes["citation"], value, nil)
+			err = work.validate(shared.nodes["citation"], value)
+		}
+		if err == errSampleBudget {
+			return nil, append(warnings, outOfWork), nil
 		}
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("citation %d is not a citation and was not used", i+1))
@@ -74,8 +83,11 @@ func EdgeSamples(dataSchema json.RawMessage, citations []json.RawMessage) ([]Sam
 		}
 		var last string
 		for _, limit := range limits {
-			g := &generator{maximal: maximal, limits: limit, shared: shared, pool: pool}
+			g := &generator{maximal: maximal, limits: limit, shared: shared, pool: pool, work: work}
 			value, err := g.value(compiled.root)
+			if err == errSampleBudget {
+				return samples, append(warnings, outOfWork), nil
+			}
 			if err != nil {
 				last = err.Error()
 				continue
@@ -85,7 +97,11 @@ func EdgeSamples(dataSchema json.RawMessage, citations []json.RawMessage) ([]Sam
 				last = err.Error()
 				continue
 			}
-			if _, problems := checkData(compiled, data); len(problems) > 0 {
+			problems, err := work.checkData(compiled, data)
+			if err != nil {
+				return samples, append(warnings, outOfWork), nil
+			}
+			if len(problems) > 0 {
 				last = problems[0]
 				continue
 			}
@@ -119,6 +135,67 @@ type generator struct {
 	pool    []any
 	next    int
 	size    int
+	work    *sampleWork
+}
+
+// sampleBudget bounds the steps of one EdgeSamples call: generating a value
+// is a step, a string costs its length over 16, and validation counts as it
+// does for a tile.
+const sampleBudget = 1 << 21
+
+const outOfWork = "generating samples took too much work; the samples not yet made were dropped"
+
+var errSampleBudget = errors.New("the sample budget ran out")
+
+// sampleWork is the work an EdgeSamples call has done.
+type sampleWork struct {
+	steps int
+}
+
+func (w *sampleWork) spend(steps int) error {
+	if w.steps += steps; w.steps > sampleBudget {
+		return errSampleBudget
+	}
+	return nil
+}
+
+// validation returns a validation with a tile's budget, or what is left of
+// the call's when that is less.
+func (w *sampleWork) validation() (*validation, error) {
+	remaining := sampleBudget - w.steps
+	if remaining <= 0 {
+		return nil, errSampleBudget
+	}
+	return &validation{limit: min(validationBudget, remaining)}, nil
+}
+
+// validate validates a value and returns nil, a failure, or errSampleBudget
+// when the call's budget ran out first.
+func (w *sampleWork) validate(n *schemaNode, value any) error {
+	v, err := w.validation()
+	if err != nil {
+		return err
+	}
+	err = v.validate(n, value, nil)
+	w.steps += v.steps
+	if err == errBudget && v.limit < validationBudget {
+		return errSampleBudget
+	}
+	return err
+}
+
+// checkData checks a sample as a tile's data is checked.
+func (w *sampleWork) checkData(compiled *compiledSchema, data []byte) ([]string, error) {
+	v, err := w.validation()
+	if err != nil {
+		return nil, err
+	}
+	_, problems := checkDataWith(v, compiled, data)
+	w.steps += v.steps
+	if v.steps > v.limit && v.limit < validationBudget {
+		return nil, errSampleBudget
+	}
+	return problems, nil
 }
 
 func (g *generator) grow(n int) error {
@@ -129,12 +206,15 @@ func (g *generator) grow(n int) error {
 }
 
 func (g *generator) value(n *schemaNode) (any, error) {
+	if err := g.work.spend(1); err != nil {
+		return nil, err
+	}
 	if err := g.grow(2); err != nil {
 		return nil, err
 	}
 	switch n {
 	case g.shared.nodes["citation"], g.shared.nodes["anchor"], g.shared.nodes["itemRef"]:
-		return g.cite(n), nil
+		return g.cite(n)
 	case g.shared.nodes["hunkId"]:
 		return g.hunkID(), nil
 	}
@@ -177,7 +257,11 @@ func (g *generator) option(n *schemaNode, options []*schemaNode) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if (&validation{}).validate(n, value, nil) != nil {
+		switch err := g.work.validate(n, value); err {
+		case nil:
+		case errSampleBudget:
+			return nil, err
+		default:
 			continue
 		}
 		if !g.maximal {
@@ -216,6 +300,9 @@ func (g *generator) typed(n *schemaNode, t uint8) (any, error) {
 		return g.number(n, false), nil
 	case typeString:
 		text := g.text(n)
+		if err := g.work.spend(len(text)/16 + 1); err != nil {
+			return nil, err
+		}
 		return text, g.grow(len(text))
 	case typeArray:
 		count := max(n.minItems, 0)
@@ -433,22 +520,28 @@ func classRune(ranges []rune) (rune, bool) {
 
 // cite returns the next citation of the pool that passes the node, or a
 // hunk citation no review has.
-func (g *generator) cite(n *schemaNode) any {
+func (g *generator) cite(n *schemaNode) (any, error) {
 	for range g.pool {
 		value := g.pool[g.next%len(g.pool)]
 		g.next++
-		if (&validation{}).validate(n, value, nil) == nil {
-			return value
+		switch err := g.work.validate(n, value); err {
+		case nil:
+			return value, nil
+		case errSampleBudget:
+			return nil, err
 		}
 	}
 	citation := map[string]any{"type": "hunk", "id": unknownHunk}
 	if g.maximal {
 		citation["lines"] = []any{1.0, 3.0}
 	}
-	if (&validation{}).validate(n, citation, nil) != nil {
-		return map[string]any{"type": "change", "id": "sec_sample"}
+	switch err := g.work.validate(n, citation); err {
+	case nil:
+		return citation, nil
+	case errSampleBudget:
+		return nil, err
 	}
-	return citation
+	return map[string]any{"type": "change", "id": "sec_sample"}, nil
 }
 
 // unknownHunk is a hunk ID no review has.
