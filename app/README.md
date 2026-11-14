@@ -2684,6 +2684,29 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   one showing an earlier version's data says "From version N; filling for
   this version" under its title until the fill lands, which the `layout`
   event brings.
+- **Tiles made in chat.** The panel can make a tile no library type gives
+  ("show every new environment variable with its default"): its agent
+  starts a pending card (`start_tile`), checks the type it wrote with this
+  pull request's data in the render check (`check_tile`, drawn by this
+  page's runner or the check window) and adds the check that passed
+  (`add_custom_tile`), as one layout change with its toast ("Added New
+  environment variables") and Undo. The tile route's `drafts`
+  (`[{tile, title, size?, to?, phase, round?, reason?}]`, the latest
+  version only, put on the document by `withDrafts`) are the pending cards,
+  which `src/tiles/pending-card.tsx` draws where each will stand (`to`:
+  after or before a tile, or at an edge; right after the overview by
+  default): "Custom · <title>", the live dot and a line saying how far it got
+  ("Being made in the session panel · Writing the component", "…
+  · Checking (round 2)", the host's reason after a check that could not
+  run, "Not finished" once the turn ended without the tile), with Remove
+  (`DELETE api/tiles/drafts/{tile}?clone=&pr=`). A card's change publishes
+  a `layout` event `{pr, revision: 0, drafts: true}`, on which the page
+  reads its tiles again. A custom tile's menu (one that is not baum's own)
+  has **Save to library…**, which opens the panel on the pull request about
+  that tile with "Save this tile to my library" typed; the agent proposes
+  the type (`propose_tile_type`). A desktop shell that mounts no frames
+  adds `frames: "off"` to the pull request page's focus, and the tile
+  making tools refuse there.
 
 The session panel's page context names the page in its `focus`: `view`
 `tiles`, and the `tile` open with its `item`. Ask about this tile, in a

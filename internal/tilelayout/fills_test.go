@@ -10,6 +10,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -194,5 +195,66 @@ func TestFillOriginAndDraftNotes(t *testing.T) {
 	layout := s.Layout("acme/widgets", 7)
 	if len(layout.Added) != 1 || len(layout.Notes) != 1 || layout.Notes[0].From != 2 {
 		t.Errorf("draft layout: %+v", layout)
+	}
+}
+
+// madeInChat is a type made in chat, the kit's starter under its own name,
+// with or without fill instructions, as a kept definition and its add.
+func madeInChat(t *testing.T, fill string) (tiles.Added, json.RawMessage) {
+	t.Helper()
+	e, err := library.Load(kit.Starter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := e.Definition
+	def.Name, def.Fill = "env_vars", fill
+	encoded, err := library.Seal(&def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tiles.Added{Kind: tiles.AddCustom, Name: "env_vars", Digest: def.Digest}, encoded
+}
+
+func starterData(hunk string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"summary":"One variable.","items":[{"title":"PORT","severity":"low","text":null,"cites":[{"type":"hunk","id":%q}]}]}`, hunk))
+}
+
+// A tile made in chat shows its own version's data. On a later version it
+// is filled again, like an added library type, when its definition has fill
+// instructions; without them nothing can fill it, so every later version
+// shows its newest data, marked as from its version, and never as filling.
+// Its definition gone, it shows nothing.
+func TestAddedForATileMadeInChat(t *testing.T) {
+	diff := []bundle.Hunk{{ID: "h_0123456789ab", Path: "config.go", StartLine: 1, LineCount: 10}}
+	for _, fill := range []string{"List each new environment variable with its default.", ""} {
+		add, encoded := madeInChat(t, fill)
+		kept := func(digest string) (json.RawMessage, bool) { return encoded, digest == add.Digest }
+		own := []tilelayout.Fill{{Tile: "env_vars", Version: 1, Digest: add.Digest, Data: starterData("h_0123456789ab"), Origin: tilelayout.OriginChat}}
+		layout, missing := tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 1, Latest: true, Diff: diff}, kept)
+		if len(layout.Added) != 1 || layout.Added[0].Pending || len(layout.Notes) != 0 || len(missing) != 0 {
+			t.Errorf("fill %q, its own version: %+v %v", fill, layout, missing)
+		}
+		layout, missing = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: diff}, kept)
+		if len(layout.Added) != 1 || len(layout.Notes) != 1 || layout.Notes[0].From != 1 {
+			t.Fatalf("fill %q, a later version: %+v %v", fill, layout, missing)
+		}
+		if fill != "" && (!layout.Notes[0].Filling || len(missing) != 1 || missing[0] != add) {
+			t.Errorf("a fillable tile is not filled again: %+v %v", layout.Notes, missing)
+		}
+		if fill == "" && (layout.Notes[0].Filling || len(missing) != 0) {
+			t.Errorf("a tile without fill instructions is filled: %+v %v", layout.Notes, missing)
+		}
+		moved := []bundle.Hunk{{ID: "h_ba9876543210", Path: "config.go", StartLine: 1, LineCount: 10}}
+		layout, _ = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: moved}, kept)
+		if fill == "" && (len(layout.Added) != 1 || layout.Added[0].Pending || layout.Notes[0].From != 1) {
+			t.Errorf("a tile without fill instructions whose citations moved: %+v", layout)
+		}
+		if fill != "" && (len(layout.Added) != 1 || !layout.Added[0].Pending) {
+			t.Errorf("a fillable tile whose citations moved: %+v", layout)
+		}
+		gone := func(string) (json.RawMessage, bool) { return nil, false }
+		if layout, missing = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: diff}, gone); len(layout.Added) != 0 || len(missing) != 0 {
+			t.Errorf("fill %q, its definition gone: %+v %v", fill, layout, missing)
+		}
 	}
 }

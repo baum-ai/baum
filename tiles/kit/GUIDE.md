@@ -345,6 +345,7 @@ with, the `line` and `column` in your HTML when they are known, and a fixed
 | `overflow_x` | Something from the data does not wrap: add kit-truncate or kit-break, or put the table in kit-scroll. |
 | `layout_loop` | The detail's height follows the frame's own height: remove vh, vw and percentage heights. |
 | `unresolved_citation` | Cite only what the review holds: a sample's cited hunks must be in its hunks, with lines inside the hunk's range. |
+| `uncited` | Cite the pull request: a tile made in chat cites at least one of its hunks, files, prompts or session events, so each claim leads to what the reader can open. |
 | `slow` | Drawing took over 500 ms: draw less up front, and put long lists in kit-details. |
 
 When each counts:
@@ -369,6 +370,7 @@ When each counts:
 | `overflow_x` | error |
 | `layout_loop` | error: the detail's height grew with its frame ten times |
 | `unresolved_citation` | error for the data and your samples; not counted for edge samples |
+| `uncited` | error, for the data of a tile made in chat |
 | `slow` | warning: drawing took over 500 ms |
 
 The kit catches a script's errors inside the frame and reports their
@@ -377,7 +379,55 @@ render check are quality gates for honest mistakes, not security controls:
 the frame's sandbox and content security policy are what keep a tile to its
 data.
 
-## 11. Definition of done
+## 11. Making a type in chat
+
+In the app's session panel, an agent can make a tile for the pull request
+page the person has open and put it on the page at once, as part of their
+own layout of that page. It works with four tools:
+
+1. `start_tile {title, size?, to?}` puts a pending card where the tile will
+   stand ("Being made in the session panel"). The card counts the check
+   rounds; if the agent stops before adding the tile it says "Not finished"
+   for a few minutes, with Remove.
+2. `tile_guide` gives this guide (`part: "guide"`), the starter's files
+   (`"starter"`) and the kit's names (`"manifest"`).
+3. `check_tile` runs the render check (section 10) on what you send:
+   - `type`: `type.json`'s fields (`name`, `title`, `use_when`, `glance`,
+     `sizes`, `kit`) and `fill`, the text of `fill.md`;
+   - `data_schema`: `schema.json`;
+   - `html`: `tile.html`, at most 256 KiB;
+   - `samples`: up to 3 of `samples/*.json`;
+   - `data`: the tile's data for this pull request, citing its hunks by the
+     IDs the diff tool gives.
+
+   With `data`, every citation must resolve to the review the page shows,
+   and the data must cite at least one hunk, file, prompt or session event
+   of it (`uncited` otherwise). The data is masked for secrets before
+   anything is kept. A problem with what you sent comes back as a `fail`
+   result with its hints, never as an error: fix it and check again.
+4. `add_custom_tile {check}` adds the tile whose check passed with `data`,
+   within the hour. The page shows it at once, "Custom · <title>", with
+   Undo.
+
+Two rules matter here:
+
+- **Samples are synthetic.** Write them for a made-up repository
+  (`acme/widgets`), with hunks and items of their own, never the pull
+  request's code: they are what the tile library keeps and shows if the
+  type is saved, and saving refuses a sample that copies the pull request's
+  diff.
+- **Work in your own scratch space.** Write the type's files in a temporary
+  directory of your own, never in the repository's tree: the checkout is
+  the person's.
+
+A tile made this way belongs to the pull request's page. On later versions
+it is filled again when `fill` has instructions; without them it keeps the
+data it was made with, marked as from that version. To reuse it on other
+pull requests, save it to the tile library: "Save to library…" on its menu
+asks the agent, who checks it with a synthetic sample and proposes the type
+(`propose_tile_type`); nothing is saved until the person saves it.
+
+## 12. Definition of done
 
 - [ ] `just local_app::tile-type-screens <dir>` passes, with no warnings.
 - [ ] `baum.tile` is called once and both faces are written.
@@ -396,7 +446,7 @@ data.
 - [ ] Samples: the common case, a large case and the empty case, in a fake
       repository.
 
-## 12. Worked examples
+## 13. Worked examples
 
 The library's types are complete examples of everything above:
 [`tiles/library/schema_change`](../library/schema_change) and

@@ -12,6 +12,7 @@ import type {
   RiskScore,
   Section,
 } from "@baum/viewer/review-document";
+import { parseDrafts, type DraftCard } from "./drafts";
 
 /** A `baum.tiles/1` document as the daemon serves it beside the review it was
  *  converted from (`oss/tiles`, whose goldens keep these types honest). The
@@ -41,6 +42,9 @@ export type TileDocument = {
   evidence: TileEvidence[];
   tiles: Tile[];
   layout: TileLayout;
+  /** Page-only, from the tile route's `drafts`: the tiles being made in the
+   *  session panel, shown as pending cards where each will stand. */
+  drafts?: DraftCard[];
 };
 
 export type TileChange = Pick<
@@ -104,6 +108,12 @@ export function withAddedNotes(doc: TileDocument, notes: unknown): TileDocument 
       byTile.has(tile.id) ? { ...tile, added: byTile.get(tile.id) } : tile,
     ),
   };
+}
+
+/** Puts the tile route's pending cards on the document. */
+export function withDrafts(doc: TileDocument, drafts: unknown): TileDocument {
+  const parsed = parseDrafts(drafts);
+  return parsed.length > 0 ? { ...doc, drafts: parsed } : doc;
 }
 
 /** The line a card shows under an added tile's title: where its data is

@@ -187,6 +187,8 @@ func (a *panelAgent) layout(ctx context.Context, r agent.Request) (answer string
 		// pending until then.
 		result, _, err := call("add_tile", map[string]any{"type": "api_change"})
 		return said(result, err), true
+	case strings.Contains(prompt, "environment variable"):
+		return a.makeTile(ctx, call), true
 	case strings.Contains(prompt, "remove this") || strings.Contains(prompt, "hide this"):
 		_, tile, err := focused()
 		if err != nil {
@@ -196,6 +198,75 @@ func (a *panelAgent) layout(ctx context.Context, r agent.Request) (answer string
 		return said(result, err), true
 	}
 	return "", false
+}
+
+// makeTile makes a tile in chat as the panel's agent would for "show every
+// new environment variable": a pending card, the starter type as the
+// guide gives it, a first check whose data cites a hunk the review does not
+// have, a second that cites the review's first hunk, and the add of the
+// check that passed. Each step takes panelStep, so the page shows the card
+// writing, then checking, then the tile.
+func (a *panelAgent) makeTile(ctx context.Context, call func(string, any) (map[string]any, string, error)) string {
+	pause := func() {
+		select {
+		case <-ctx.Done():
+		case <-time.After(panelStep):
+		}
+	}
+	if _, _, err := call("start_tile", map[string]any{"title": "New environment variables", "size": "half"}); err != nil {
+		return err.Error()
+	}
+	pause()
+	guide, _, err := call("tile_guide", map[string]any{"part": "starter"})
+	if err != nil {
+		return err.Error()
+	}
+	files, _ := guide["files"].(map[string]any)
+	text := func(name string) string { s, _ := files[name].(string); return s }
+	var typ map[string]any
+	if err := json.Unmarshal([]byte(text("type.json")), &typ); err != nil {
+		return "the starter has no type.json"
+	}
+	diff, _, err := call("diff", map[string]any{})
+	if err != nil {
+		return err.Error()
+	}
+	hunk := ""
+	if list, _ := diff["files"].([]any); len(list) > 0 {
+		if refs, _ := list[0].(map[string]any)["hunk_ids"].([]any); len(refs) > 0 {
+			hunk, _ = refs[0].(map[string]any)["id"].(string)
+		}
+	}
+	check := func(cited string) (map[string]any, error) {
+		data := map[string]any{"summary": "Adds **one** environment variable.", "items": []any{map[string]any{
+			"title": "RETRY_LIMIT, default 10", "severity": "low", "text": nil,
+			"cites": []any{map[string]any{"type": "hunk", "id": cited}}}}}
+		result, _, err := call("check_tile", map[string]any{
+			"type": map[string]any{"name": "env_vars", "title": "New environment variables", "use_when": typ["use_when"], "glance": typ["glance"],
+				"sizes": typ["sizes"], "kit": typ["kit"], "fill": text("fill.md")},
+			"data_schema": json.RawMessage(text("schema.json")), "html": text("tile.html"), "data": data})
+		return result, err
+	}
+	if _, err := check("h_000000000000"); err != nil {
+		return err.Error()
+	}
+	pause()
+	result, err := check(hunk)
+	if err != nil {
+		return err.Error()
+	}
+	if result["verdict"] != "pass" {
+		return fmt.Sprintf("The tile did not pass its check: %v", result)
+	}
+	pause()
+	added, _, err := call("add_custom_tile", map[string]any{"check": result["check"]})
+	if err != nil {
+		return err.Error()
+	}
+	if applied, _ := added["applied"].([]any); len(applied) > 0 {
+		return fmt.Sprint(applied[0]) + ". Undo on the page takes it back."
+	}
+	return "The tile is added."
 }
 
 // mcpCall calls a tool of baum's MCP server as an agent CLI does, and

@@ -80,6 +80,9 @@ type Options struct {
 	// propose_tile_type (tiletypetools.go). Nil has them report it
 	// unavailable.
 	TileTypes TileTypes
+	// ChatTiles makes tiles in chat for the pull request page the person
+	// has open (tiletools.go). Nil has those tools report it unavailable.
+	ChatTiles ChatTiles
 }
 
 // Server is the MCP server. Register tools and pages before serving.
@@ -96,6 +99,7 @@ type Server struct {
 	decisionSettings func(ctx context.Context) (json.RawMessage, error)
 	layouts          LayoutEditor
 	tileTypes        TileTypes
+	chatTiles        ChatTiles
 	mu               sync.RWMutex
 	tools            []Tool
 	pages            map[string]PageSpec
@@ -105,18 +109,24 @@ type Server struct {
 func New(opts Options) *Server {
 	registry := NewRegistry()
 	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
-		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, layouts: opts.Layouts, tileTypes: opts.TileTypes, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, layouts: opts.Layouts, tileTypes: opts.TileTypes, chatTiles: opts.ChatTiles, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
 	}, s.operation, s.reader, opts.API)
 	registry.onRevoke(s.envelope.forget)
+	// A conversation's pending tile is left unfinished when its turn ends,
+	// or its token goes.
+	if opts.ChatTiles != nil {
+		registry.onTurnEnd(opts.ChatTiles.TurnEnded)
+		registry.onRevoke(opts.ChatTiles.TurnEnded)
+	}
 	pull, group, reviews, common := s.pullTools(), s.groupTools(), s.reviewTools(), s.commonTools()
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
-	proposing, layouts, tileTypes := proposeTools(), s.layoutTools(), s.tileTypeTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, layouts, tileTypes) {
+	proposing, layouts, tileTypes, making := proposeTools(), s.layoutTools(), s.tileTypeTools(), s.tileMakingTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, layouts, tileTypes, making) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -160,8 +170,9 @@ func New(opts Options) *Server {
 	// It lists the layout tools too, which change the person's own layout
 	// of the review's tiles at once.
 	pullPage = append(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }), layoutPageTools...)
-	// The tile type tools too; the layout tools already list tile_type.
-	for _, name := range tileTypePageTools {
+	// The tile type tools too (the layout tools already list tile_type),
+	// and the tools that make a tile in chat.
+	for _, name := range slices.Concat(tileTypePageTools, tileMakingTools) {
 		if !slices.Contains(pullPage, name) {
 			pullPage = append(pullPage, name)
 		}

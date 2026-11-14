@@ -319,18 +319,21 @@ func (s *Service) Sweep(ctx context.Context) error {
 	})
 }
 
-// FillRequest asks for a fill of an added library type for one version of
-// a pull request, in a registered clone of its repository.
+// FillRequest asks for a fill of an added type for one version of a pull
+// request, in a registered clone of its repository: a library type by its
+// name, or a type made in chat by its name and the digest of its kept
+// definition (Digest).
 type FillRequest struct {
 	Clone      string
 	Repository string
 	Number     int
 	Version    int
 	Type       string
+	Digest     string
 }
 
-// AddedTypes are the library types the layout's active batches add, each
-// once, in the order first added.
+// AddedTypes are the types the layout's active batches add (library types
+// and types made in chat), each once, in the order first added.
 func (s State) AddedTypes() []tiles.Added {
 	var out []tiles.Added
 	for _, b := range s.Overlay.Active() {
@@ -372,12 +375,18 @@ type Version struct {
 //   - on an earlier version, the newest earlier fill is shown, marked as
 //     from its version, and with none the type is not shown.
 //
+// A type made in chat (a custom add) is read from its kept definition. It
+// is filled like a library type when its definition has fill instructions;
+// without them nothing can fill it, so every version after the one it was
+// made for shows its newest earlier data, marked as from that version, and
+// never as being filled.
+//
 // An unknown type, and a fill whose definition is gone, give nothing.
 // definition returns a kept definition by its digest.
-func AddedFor(added []tiles.Added, fills []Fill, v Version, definition func(digest string) (json.RawMessage, bool)) (layout tileview.Layout, missing []string) {
+func AddedFor(added []tiles.Added, fills []Fill, v Version, definition func(digest string) (json.RawMessage, bool)) (layout tileview.Layout, missing []tiles.Added) {
 	validator := fillValidator()
 	for _, a := range added {
-		entry, ok := library.Get(a.Name)
+		entry, fillable, ok := addedEntry(a, definition)
 		if !ok || v.Generated[a.Name] {
 			continue
 		}
@@ -392,8 +401,9 @@ func AddedFor(added []tiles.Added, fills []Fill, v Version, definition func(dige
 			}
 			return library.Entry{Encoded: stored}, true
 		}
-		var shown *tiles.LibraryTile
+		var shown, newest *tiles.LibraryTile
 		note := tileview.AddedNote{Tile: id}
+		newestFrom := 0
 		for _, f := range fills {
 			if f.Tile != id || f.Version > v.Number {
 				continue
@@ -406,6 +416,9 @@ func AddedFor(added []tiles.Added, fills []Fill, v Version, definition func(dige
 				shown = &tiles.LibraryTile{Definition: e.Encoded, Data: f.Data}
 				break
 			}
+			if newest == nil {
+				newest, newestFrom = &tiles.LibraryTile{Definition: e.Encoded, Data: f.Data}, f.Version
+			}
 			if v.Diff == nil || len(library.CheckAddedFill(validator, e, f.Data, v.Diff)) == 0 {
 				shown, note.From = &tiles.LibraryTile{Definition: e.Encoded, Data: f.Data}, f.Version
 				break
@@ -413,6 +426,18 @@ func AddedFor(added []tiles.Added, fills []Fill, v Version, definition func(dige
 		}
 		if shown != nil && note.From == 0 {
 			layout.Added = append(layout.Added, *shown)
+			continue
+		}
+		if !fillable {
+			// Nothing can fill it again: its newest data, whose citations
+			// the tile checks still hold to this version.
+			if shown == nil && newest != nil {
+				shown, note.From = newest, newestFrom
+			}
+			if shown != nil {
+				layout.Added = append(layout.Added, *shown)
+				layout.Notes = append(layout.Notes, note)
+			}
 			continue
 		}
 		if !v.Latest {
@@ -428,9 +453,37 @@ func AddedFor(added []tiles.Added, fills []Fill, v Version, definition func(dige
 		note.Filling = true
 		layout.Added = append(layout.Added, *shown)
 		layout.Notes = append(layout.Notes, note)
-		missing = append(missing, a.Name)
+		missing = append(missing, a)
 	}
 	return layout, missing
+}
+
+// addedEntry is the type an add names: a library type by its name, or a
+// type made in chat by its kept definition. fillable reports whether a fill
+// run can fill it: always for a library type, and for a type made in chat
+// when its definition has fill instructions.
+func addedEntry(a tiles.Added, definition func(digest string) (json.RawMessage, bool)) (entry library.Entry, fillable, ok bool) {
+	if a.Kind != tiles.AddCustom {
+		entry, ok = library.Get(a.Name)
+		return entry, true, ok
+	}
+	entry, ok = CustomEntry(a, definition)
+	return entry, ok && strings.TrimSpace(entry.Definition.Fill) != "", ok
+}
+
+// CustomEntry is a type made in chat as a library entry, from its kept
+// definition: what a fill run fills and the fill checks read. It is false
+// when the definition is gone or is not the add's type.
+func CustomEntry(a tiles.Added, definition func(digest string) (json.RawMessage, bool)) (library.Entry, bool) {
+	stored, ok := definition(a.Digest)
+	if !ok {
+		return library.Entry{}, false
+	}
+	var def tiles.TypeDefinition
+	if json.Unmarshal(stored, &def) != nil || def.Name != a.Name || def.Digest != a.Digest {
+		return library.Entry{}, false
+	}
+	return library.Entry{Definition: def, Encoded: stored}, true
 }
 
 // fillValidator checks held fills; it compiles its schemas once.

@@ -27,6 +27,7 @@ const (
 	CodeOverflowX          = "overflow_x"
 	CodeLayoutLoop         = "layout_loop"
 	CodeUnresolvedCitation = "unresolved_citation"
+	CodeUncited            = "uncited"
 	CodeSlow               = "slow"
 )
 
@@ -52,6 +53,7 @@ var Hints = map[string]string{
 	CodeOverflowX:          "Something from the data does not wrap: add kit-truncate or kit-break, or put the table in kit-scroll.",
 	CodeLayoutLoop:         "The detail's height follows the frame's own height: remove vh, vw and percentage heights.",
 	CodeUnresolvedCitation: "Cite only what the review holds: a sample's cited hunks must be in its hunks, with lines inside the hunk's range.",
+	CodeUncited:            "Cite the pull request: a tile made in chat cites at least one of its hunks, files, prompts or session events, so each claim leads to what the reader can open.",
 	CodeSlow:               "Drawing took over 500 ms: draw less up front, and put long lists in kit-details.",
 }
 

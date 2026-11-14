@@ -59,9 +59,15 @@ func overlays(stats *tally, v version, normalized []byte, doc *tiles.Document, f
 		current[tile.ID] = true
 	}
 	template, _ := tiles.Template(doc, nil)
+	// A tile made in chat, which the drawn overlays add now and then, is
+	// held for this version as the host would hold it.
+	var held []tiles.LibraryTile
+	if _, tile, ok := tilestest.ChatTile(doc); ok {
+		held = append(held, tile)
+	}
 	replay := func(overlay *tiles.Overlay, base *tiles.Composition, label string) (*tiles.Document, tiles.OverlayReport, bool) {
 		start := time.Now()
-		c, report := tiles.ApplyOverlay(doc, base, overlay, nil)
+		c, report := tiles.ApplyOverlay(doc, base, overlay, held)
 		composed, err := tiles.Compose(doc, &c)
 		o.durations = append(o.durations, time.Since(start))
 		o.replays++

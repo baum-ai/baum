@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/internal/etagjson"
+	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tileframes"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
@@ -39,6 +40,10 @@ type Response struct {
 	// shows, whether its data is from an earlier version and is being filled
 	// for this one (Layout.Notes).
 	Added []AddedNote `json:"added,omitempty"`
+	// Drafts are the pending cards of tiles being made in the session panel
+	// for the pull request, which the page shows where each will stand; the
+	// tile route sets them on the latest version.
+	Drafts []tiledrafts.Draft `json:"drafts,omitempty"`
 	// Frames are the definitions of the ready custom tiles, kept to register
 	// them again when the answer is served from a cache.
 	Frames Frames `json:"-"`

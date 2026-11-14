@@ -183,3 +183,54 @@ test("a library tile added from the panel is filled while the page waits", async
   await say(page, "undo that", "Added Interface changes");
   await expect(card(page, "api_change")).toHaveCount(0);
 });
+
+test("the session panel makes a tile: a pending card, its check rounds, then the tile, which undo removes", async ({
+  page,
+}) => {
+  test.setTimeout(150_000);
+  await fresh(page);
+
+  await page.keyboard.press("`");
+  const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
+  await composer.fill("Show every new environment variable with its default");
+  await composer.press("Enter");
+
+  // The pending card stands right after the overview while the tile is
+  // written, then counts its check rounds; the page's own render check
+  // runner draws the candidate.
+  const pending = page.locator("main article[data-tile-draft]");
+  await expect(pending).toBeVisible({ timeout: 15_000 });
+  await expect(pending).toContainText("Custom · New environment variables");
+  await expect(pending).toContainText("Being made in the session panel");
+  await expect(cards(page).nth(0)).toHaveAttribute("data-tile", "overview");
+  await expect(pending).toHaveAttribute("data-draft-phase", "checking", { timeout: 15_000 });
+  await expect(pending).toContainText("Checking (round 2)", { timeout: 15_000 });
+
+  // The check passed: the card becomes the tile, drawn in its frame, and
+  // the change is said with Undo.
+  await expect(card(page, "env_vars")).toBeVisible({ timeout: 60_000 });
+  await expect(pending).toHaveCount(0);
+  await expect(card(page, "env_vars")).toContainText("Custom · New environment variables");
+  await expect(card(page, "env_vars").locator("iframe")).toBeVisible();
+  await expect(toast(page)).toContainText("Added New environment variables");
+  await expect(panel(page).getByRole("region", { name: "Transcript" })).toContainText(
+    "Added New environment variables. Undo on the page takes it back.",
+    { timeout: 20_000 },
+  );
+
+  // Its menu offers to save it to the library, which opens the panel with
+  // the request typed.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("`");
+  await expect(panel(page)).toHaveCount(0);
+  await card(page, "env_vars").click({ button: "right", position: { x: 12, y: 12 } });
+  await page.getByRole("menuitem", { name: "Save to library…" }).click();
+  await expect(composer).toHaveValue("Save this tile to my library");
+  await composer.fill("");
+
+  // Undo takes it away.
+  await strip(page)
+    .getByRole("button", { name: /^Undo: Added New environment variables/ })
+    .click();
+  await expect(card(page, "env_vars")).toHaveCount(0);
+});

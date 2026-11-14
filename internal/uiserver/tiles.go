@@ -7,6 +7,8 @@ import (
 	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tiledrafts"
+	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/tiles"
@@ -84,7 +86,9 @@ func tileLibrary(w http.ResponseWriter, _ *http.Request) {
 // (LocalAPI.Layouts), with the selectors, errors and no-store ETag of
 // GET /api/document. Answers are kept under the version's store revision,
 // which changes with every write to its row, composition included, and the
-// layout's key (tileview.LayoutKey), which changes with every edit. Its
+// layout's key (tileview.LayoutKey), which changes with every edit, and the
+// pending cards of tiles being made in the session panel (drafts, on the
+// latest version only), which change as the tile is checked. Its
 // document is the normalised review (review.NormalizeStored), which differs
 // from the stored one on the plain route only where a stored-document rule
 // applies.
@@ -99,11 +103,24 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 			return
 		}
 		state, fills, layoutKey := a.layoutState(r.Context(), read.clone.Repository, read.key.Number)
+		// The latest version shows the pending cards of tiles being made in
+		// the session panel.
+		var drafts []tiledrafts.Draft
+		if read.n == 0 {
+			drafts = a.Drafts.List(tilelayout.Key(read.clone.Repository, read.key.Number))
+		}
+		draftsKey := tiledrafts.Key(drafts)
 		withLayout := func(key string) string {
-			if key == "" || layoutKey == "" {
+			if key == "" {
 				return key
 			}
-			return key + "\x00layout\x00" + layoutKey
+			if layoutKey != "" {
+				key += "\x00layout\x00" + layoutKey
+			}
+			if draftsKey != "" {
+				key += "\x00drafts\x00" + draftsKey
+			}
+			return key
 		}
 		answer, found := answers.Get(withLayout(read.revisionKey()))
 		if !found {
@@ -119,7 +136,11 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 			}
 			layout := a.layoutFor(r.Context(), read.clone, read.key.Number, version, latest, state, fills)
 			var err error
-			if answer, err = tileview.Encode(tileview.BuildWith(version.Document, version.Composition, layout, tiles.Options{})); err != nil {
+			response := tileview.BuildWith(version.Document, version.Composition, layout, tiles.Options{})
+			if response.Tiles != nil {
+				response.Drafts = drafts
+			}
+			if answer, err = tileview.Encode(response); err != nil {
 				apiError(w, err)
 				return
 			}

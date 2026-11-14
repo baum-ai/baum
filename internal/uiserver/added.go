@@ -79,8 +79,12 @@ func (a LocalAPI) layoutFor(ctx context.Context, c repos.Clone, number int, vers
 	held, missing := tilelayout.AddedFor(added, fills, v, func(digest string) (json.RawMessage, bool) { return a.Layouts.Definition(ctx, digest) })
 	layout.Added, layout.Notes = held.Added, held.Notes
 	if a.Fills != nil {
-		for _, name := range missing {
-			a.Fills.Fill(tilelayout.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: version.Metadata.Version, Type: name})
+		for _, add := range missing {
+			request := tilelayout.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: version.Metadata.Version, Type: add.Name}
+			if add.Kind == tiles.AddCustom {
+				request.Digest = add.Digest
+			}
+			a.Fills.Fill(request)
 		}
 	}
 	return layout

@@ -76,9 +76,11 @@ type Place struct {
 	After  string `json:"after,omitempty"`
 }
 
-// Added names the library tile type an add places: its kind ("library"),
-// its name, which is its tile's ID (LibraryTileID), and the digest of the
-// definition the person added.
+// Added names the tile type an add places: its kind, its name, which is its
+// tile's ID (LibraryTileID), and the digest of the definition the person
+// added. A "library" add is of a library type; a "custom" add is of a type
+// made for this pull request in the session panel, whose definition the host
+// keeps by its digest.
 type Added struct {
 	Kind   string `json:"kind"`
 	Name   string `json:"name"`
@@ -98,6 +100,13 @@ const (
 	OpUnpin        = "unpin"
 	OpChangesShown = "changes_shown"
 	OpAdd          = "add"
+)
+
+// The kinds of an add: a library type, or a type made in chat for the pull
+// request.
+const (
+	AddLibrary = "library"
+	AddCustom  = "custom"
 )
 
 // The edges of a move.
@@ -471,9 +480,12 @@ func CheckOpShape(op Op) error {
 			return fmt.Errorf("changes_shown needs a count from 1 to %d", MaxChangesShown)
 		}
 	case OpAdd:
-		if op.Add == nil || op.Add.Kind != "library" || !plain(op.Add.Name) || len(op.Add.Name) > 64 || len(op.Add.Digest) > 80 ||
+		if op.Add == nil || op.Add.Kind != AddLibrary && op.Add.Kind != AddCustom || !plain(op.Add.Name) || len(op.Add.Name) > 64 || len(op.Add.Digest) > 80 ||
 			utf8.RuneCountInString(op.Add.Title) > MaxComposedTitle || strings.ContainsAny(op.Add.Title, "\n\r") {
 			return errors.New("an add names a library tile type")
+		}
+		if op.Add.Kind == AddCustom && op.Add.Digest == "" {
+			return errors.New("a custom tile's add names its definition's digest")
 		}
 		if op.Tile != "" && op.Tile != LibraryTileID(op.Add.Name) {
 			return errors.New("an add's tile is its type's tile")
@@ -558,7 +570,10 @@ func checkPlace(p *Place) error {
 //   - add places a library tile the composition already has (generation
 //     filled it), or the one added holds for this version, appended to the
 //     library while it has fewer than MaxLibraryTiles; without either it is
-//     dropped as unavailable.
+//     dropped as unavailable. A custom add (a type made in chat) is placed
+//     the same way: added holds its definition and data, so it goes through
+//     the custom tile checks, the library limit and Arrange as a generated
+//     library tile does.
 //
 // When any operation applies, the layout is marked edited, which keeps the
 // guard rails from replacing it; Compose still normalises and arranges it,

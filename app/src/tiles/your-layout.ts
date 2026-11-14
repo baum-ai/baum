@@ -51,15 +51,22 @@ export function layoutKey(repository: string, number: number): string {
 const bus = new EventTarget();
 
 /** Passes a `layout` event of the app's event stream to the open page:
- *  `{pr, revision}`, the pull request's key and the layout's new revision. */
+ *  `{pr, revision}`, the pull request's key and the layout's new revision,
+ *  or `{pr, drafts: true}` when the pending cards of tiles being made in
+ *  the session panel changed. */
 export function publishLayoutEvent(data: string) {
-  let event: { pr?: unknown; revision?: unknown };
+  let event: { pr?: unknown; revision?: unknown; drafts?: unknown };
   try {
     event = JSON.parse(data) as typeof event;
   } catch {
     return;
   }
-  if (typeof event?.pr !== "string" || typeof event.revision !== "number") return;
+  if (typeof event?.pr !== "string") return;
+  if (event.drafts === true) {
+    bus.dispatchEvent(new CustomEvent("drafts", { detail: event.pr }));
+    return;
+  }
+  if (typeof event.revision !== "number") return;
   bus.dispatchEvent(new CustomEvent("layout", { detail: event }));
 }
 
@@ -69,13 +76,23 @@ export function publishLayoutResync() {
   bus.dispatchEvent(new CustomEvent("layout", { detail: null }));
 }
 
-function useLayoutEvents(handler: (event: { pr: string; revision: number } | null) => void) {
-  const latest = useRef(handler);
-  latest.current = handler;
+function useLayoutEvents(
+  handler: (event: { pr: string; revision: number } | null) => void,
+  drafts: (pr: string) => void,
+) {
+  const latest = useRef({ handler, drafts });
+  latest.current = { handler, drafts };
   useEffect(() => {
-    const listener = (event: Event) => latest.current((event as CustomEvent).detail ?? null);
+    const listener = (event: Event) =>
+      latest.current.handler((event as CustomEvent).detail ?? null);
+    const draftListener = (event: Event) =>
+      latest.current.drafts(String((event as CustomEvent).detail));
     bus.addEventListener("layout", listener);
-    return () => bus.removeEventListener("layout", listener);
+    bus.addEventListener("drafts", draftListener);
+    return () => {
+      bus.removeEventListener("layout", listener);
+      bus.removeEventListener("drafts", draftListener);
+    };
   }, []);
 }
 
@@ -217,11 +234,20 @@ export function useTileLayout({
     if (!enabled || !clone) return;
     void read(false);
   }, [enabled, clone, query, read]);
-  useLayoutEvents((event) => {
-    if (!enabled || !clone) return;
-    if (event && (event.pr !== key || event.revision <= (current.current?.revision ?? -1))) return;
-    void read(true);
-  });
+  useLayoutEvents(
+    (event) => {
+      if (!enabled || !clone) return;
+      if (event && (event.pr !== key || event.revision <= (current.current?.revision ?? -1)))
+        return;
+      void read(true);
+    },
+    // A pending card moved on: the page's tiles are read again, in turn
+    // with the layout's own reads.
+    (pr) => {
+      if (!enabled || !clone || pr !== key) return;
+      void enqueue(() => rereadNow.current().catch(() => undefined));
+    },
+  );
   const write = useCallback(
     (body: Record<string, unknown>) =>
       enqueue(async () => {

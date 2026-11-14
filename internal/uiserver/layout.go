@@ -161,10 +161,22 @@ func (a LocalAPI) cloneByID(w http.ResponseWriter, r *http.Request, id string) (
 // pass as one batch.
 func (a LocalAPI) editLayout(ctx context.Context, c repos.Clone, number int, by string, ops []tiles.Op) (tilelayout.Change, error) {
 	// An add names a library type by its name; the host writes the digest
-	// of the definition added, and an unknown type is refused.
+	// of the definition added, and an unknown type is refused. A type made
+	// in chat (custom) names its kept definition by its digest, which the
+	// host holds once its data is stored.
 	ops = slices.Clone(ops)
 	for i, op := range ops {
 		if op.Op != tiles.OpAdd || op.Add == nil {
+			continue
+		}
+		if op.Add.Kind == tiles.AddCustom {
+			entry, ok := tilelayout.CustomEntry(*op.Add, func(digest string) (json.RawMessage, bool) { return a.Layouts.Definition(ctx, digest) })
+			if !ok {
+				return tilelayout.Change{}, fmt.Errorf("No tile %s made for this pull request", op.Add.Name)
+			}
+			added := *op.Add
+			added.Title = summaryTitle(entry.Definition.Title)
+			ops[i].Add = &added
 			continue
 		}
 		entry, ok := library.Get(op.Add.Name)
@@ -242,4 +254,14 @@ func (a LocalAPI) shownTiles(ctx context.Context, c repos.Clone, number, n int) 
 		return shownLayout{}, errNoTiles
 	}
 	return shownLayout{Document: built.Tiles, Version: version.Metadata.Version, State: state}, nil
+}
+
+// summaryTitle is a type's title as an add's summary carries it: on one
+// line, at most tiles.MaxComposedTitle characters.
+func summaryTitle(title string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	if r := []rune(title); len(r) > tiles.MaxComposedTitle {
+		title = string(r[:tiles.MaxComposedTitle])
+	}
+	return title
 }

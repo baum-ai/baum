@@ -2038,9 +2038,9 @@ nor any GitHub write.
 
 One change takes no save: the layout of a review's tiles, your own, on the
 pull request page you have open. A chat may move, resize, remove, bring back
-and pin tiles, add a library tile type, undo, and reset the layout to the
-generated one (`edit_tiles`, `add_tile`, `undo_tiles`, `reset_tiles`), and it
-applies at once. The agent
+and pin tiles, add a library tile type or a tile it made for that page,
+undo, and reset the layout to the generated one (`edit_tiles`, `add_tile`,
+`add_custom_tile`, `undo_tiles`, `reset_tiles`), and it applies at once. The agent
 reads untrusted pull request text (the diff, the description, threads and
 transcripts), which can tell it to rearrange or hide tiles, and baum accepts
 that without asking, because the worst such text can do is rearrange your own
@@ -2086,6 +2086,40 @@ model call at your expense, as a review's fill is): each version's tile type
 is filled at most once while baum runs, however often it is added and
 undone, and a failed run is not retried for ten minutes. The run is checked
 and masked like any fill.
+
+A tile made in chat brings code as well as data: the agent, which reads
+untrusted pull request content, writes a tile type (HTML and JavaScript) for
+the pull request page you have open (`start_tile`, `check_tile`,
+`add_custom_tile`), and it is added at once, as one more change of your own
+layout. That is safe to do without asking for the same reasons, and these:
+
+- The frame is the boundary, unchanged. The tile runs in the custom tile
+  frame described above ("Custom tiles"): sandboxed, an opaque origin, the
+  frame route's policy with no network, only its own data and the items it
+  cites, and the strict message router. The render check and the lint are
+  quality gates for honest mistakes, not security controls; the check draws
+  the candidate in the check window where the desktop app has one, else in
+  the page, as the first-show preflight does.
+- It is labelled and grounded. It reads "Custom · <title>" wherever the page
+  names it, whatever the title says, and is marked baum's own only by a
+  built-in type's digest; its name may not be a built-in library type's. Its
+  data must cite at least one hunk, file, prompt or session event of the
+  review, and every citation must resolve to the version shown, so each
+  claim leads to code or a transcript you can open. It cannot take the
+  strip's place (recommendation and risk score), and the rules above about
+  what must stay seen hold for it as for any edit.
+- Its data is masked for secrets before it is checked or stored, as every
+  model output is, and kept, with its definition, in `app.sqlite` for that
+  pull request only.
+- It is yours and the page's only. Saving it as a type for later reviews is
+  a proposal (`propose_tile_type`) you save, with synthetic samples only; on
+  later versions it is filled again by your review agent when its type has
+  fill instructions (a model call at your expense, at most once per version
+  while baum runs), which take the pull request as data.
+- The pending card that shows while the tile is made lives in the daemon's
+  memory; its event carries only the pull request's key.
+- Where the desktop app does not mount tile frames (Windows, for now), the
+  tools refuse before anything is made.
 
 There is no confirmation and no rate cap on purpose: each would make "move
 this" slower for everyone to guard against an attack whose worst result is a

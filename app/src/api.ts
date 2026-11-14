@@ -3,6 +3,7 @@ import type { ReviewDocument } from "@baum/viewer/review-document";
 import {
   parseTileDocument,
   withAddedNotes,
+  withDrafts,
   withTiles,
   type TiledDocument,
 } from "./tiles/tile-document";
@@ -1224,10 +1225,14 @@ export type TilesAnswer = {
   tiles: unknown;
   problem?: string;
   added?: unknown;
+  drafts?: unknown;
 };
 export function tiledDocument(body: TilesAnswer): TiledDocument {
   const tiles = body.tiles === null ? null : parseTileDocument(body.tiles);
-  return withTiles(validDocument(body.document), tiles && withAddedNotes(tiles, body.added));
+  return withTiles(
+    validDocument(body.document),
+    tiles && withDrafts(withAddedNotes(tiles, body.added), body.drafts),
+  );
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(

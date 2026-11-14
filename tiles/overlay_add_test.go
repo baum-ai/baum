@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/tilestest"
 )
@@ -180,5 +181,114 @@ func TestApplyOverlayAddAfterTheOverviewKeepsTheLandingRules(t *testing.T) {
 				t.Errorf("%s: the overview left the landing page", f.name)
 			}
 		}
+	}
+}
+
+// customType is a type made in chat for a review: the kit's starter under
+// its own name, sealed, with data citing the review's first hunk.
+func customType(t *testing.T, doc *tiles.Document, name string) (tiles.Op, tiles.LibraryTile) {
+	t.Helper()
+	e, err := library.Load(kit.Starter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := e.Definition
+	def.Name, def.Title = name, "New environment variables"
+	encoded, err := library.Seal(&def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := library.DiffOf(doc)
+	if len(diff) == 0 {
+		t.Fatal("the review has no hunks")
+	}
+	data := fmt.Sprintf(`{"summary":"Adds one variable.","items":[{"title":"RETRY_LIMIT, default 10","severity":"low","text":null,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID)
+	op := tiles.Op{Op: tiles.OpAdd, Add: &tiles.Added{Kind: tiles.AddCustom, Name: name, Digest: def.Digest, Title: def.Title}}
+	return op, tiles.LibraryTile{Definition: encoded, Data: json.RawMessage(data)}
+}
+
+// A tile made in chat is a custom add: placed from what the host holds for
+// it like an added library tile, a ready custom tile that is not baum's
+// own, with every rule of a generated document kept; without what the host
+// holds it is dropped, and a custom add names its definition's digest.
+func TestApplyOverlayAddsATileMadeInChat(t *testing.T) {
+	for _, f := range []fixture{{name: "example", example: true}, {name: "base"}} {
+		normalized, doc := convert(t, f)
+		op, held := customType(t, doc, "env_vars")
+		op.To = &tiles.Place{After: tiles.TypeOverview}
+		op.Size = tiles.SizeFull
+		out, report := tiles.ApplyOverlay(doc, nil, overlayOf(t, []tiles.Op{op}), []tiles.LibraryTile{held})
+		if report.Applied != 1 || len(out.Library) != 1 {
+			t.Fatalf("%s: report %+v, library %d", f.name, report, len(out.Library))
+		}
+		composed, err := tiles.Compose(doc, &out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, failure := range tilestest.CheckGenerated(normalized, &out, composed) {
+			t.Errorf("%s: %s", f.name, failure)
+		}
+		var tile *tiles.Tile
+		for i := range composed.Tiles {
+			if composed.Tiles[i].ID == "env_vars" {
+				tile = &composed.Tiles[i]
+			}
+		}
+		if tile == nil || tile.Type != tiles.TypeCustom || tile.State != tiles.StateReady || library.IsBuiltin(tile.Definition) {
+			t.Fatalf("%s: the tile made in chat: %+v", f.name, tile)
+		}
+		at, size := -1, tiles.Size("")
+		for i, e := range composed.Layout.Entries {
+			if e.Tile == "env_vars" {
+				at, size = i, e.Size
+			}
+		}
+		if at < 0 || at > 2 || size != tiles.SizeFull {
+			t.Errorf("%s: the tile is at %d, %s", f.name, at, size)
+		}
+		if reason := tiles.CheckOp(composed, op); !strings.Contains(reason, "already on the review") {
+			t.Errorf("%s: adding it twice: %q", f.name, reason)
+		}
+		// Undone, the generated layout comes back.
+		undone, report := tiles.ApplyOverlay(doc, nil, overlayOf(t), []tiles.LibraryTile{held})
+		if report.Applied != 0 || len(undone.Library) != 0 {
+			t.Errorf("%s: without the add: %+v", f.name, report)
+		}
+	}
+	_, doc := convert(t, fixture{name: "example", example: true})
+	op, _ := customType(t, doc, "env_vars")
+	if _, report := tiles.ApplyOverlay(doc, nil, overlayOf(t, []tiles.Op{op}), nil); report.Dropped[tiles.DropUnavailable] != 1 {
+		t.Errorf("an add with nothing held: %+v", report)
+	}
+	op.Add.Digest = ""
+	if err := tiles.CheckOpShape(op); err == nil {
+		t.Error("a custom add without a digest passed")
+	}
+	op.Add.Kind = "weather"
+	op.Add.Digest = "sha256:00"
+	if err := tiles.CheckOpShape(op); err == nil {
+		t.Error("an add of an unknown kind passed")
+	}
+}
+
+// CheckCitedData holds a tile made in chat to its review: the data matches
+// its schema, every citation resolves, and it cites at least one hunk,
+// file, prompt or session event.
+func TestCheckCitedData(t *testing.T) {
+	_, doc := convert(t, fixture{name: "example", example: true})
+	_, held := customType(t, doc, "env_vars")
+	v := tiles.NewValidator()
+	if problems, grounded := v.CheckCitedData(doc, held.Definition, held.Data); len(problems) > 0 || !grounded {
+		t.Errorf("grounded data: %v %v", problems, grounded)
+	}
+	if problems, grounded := v.CheckCitedData(doc, held.Definition, json.RawMessage(`{"summary":"Nothing.","items":[]}`)); len(problems) > 0 || grounded {
+		t.Errorf("data citing nothing: %v %v", problems, grounded)
+	}
+	unknown := json.RawMessage(`{"summary":"x","items":[{"title":"t","severity":"low","text":null,"cites":[{"type":"hunk","id":"h_000000000000"}]}]}`)
+	if problems, grounded := v.CheckCitedData(doc, held.Definition, unknown); len(problems) != 1 || grounded || !strings.Contains(problems[0], "does not have") {
+		t.Errorf("an unknown hunk: %v %v", problems, grounded)
+	}
+	if problems, _ := v.CheckCitedData(doc, held.Definition, json.RawMessage(`{"summary":1}`)); len(problems) == 0 {
+		t.Error("data that does not match its schema passed")
 	}
 }

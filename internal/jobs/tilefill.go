@@ -94,7 +94,7 @@ func (t *TileFills) Fill(r tilelayout.FillRequest) {
 	if t == nil || t.Filler == nil || t.Layouts == nil {
 		return
 	}
-	key := tilelayout.Key(r.Repository, r.Number) + "@" + strconv.Itoa(r.Version) + "/" + r.Type
+	key := tilelayout.Key(r.Repository, r.Number) + "@" + strconv.Itoa(r.Version) + "/" + r.Type + "/" + r.Digest
 	t.mu.Lock()
 	if t.running == nil {
 		t.running, t.failed, t.done, t.slot = map[string]bool{}, map[string]time.Time{}, map[string]bool{}, make(chan struct{}, 1)
@@ -158,12 +158,19 @@ func (t *TileFills) run(r tilelayout.FillRequest) error {
 // reviewed; the next review fills the type.
 var ErrFillSuperseded = errors.New("the review changed since the tile was added; its next version fills it")
 
-// FillTile implements TileFiller: it fills a library type for the latest
+// FillTile implements TileFiller: it fills a library type (or a type made in
+// chat, by its kept definition) for the latest
 // saved version of a pull request with the review's agent and model, in
 // one call (generate.FillTile) over the pull request assembled at the
 // version's head, and checks the data against that version's hunks.
 func (l *Local) FillTile(ctx context.Context, r tilelayout.FillRequest) (json.RawMessage, json.RawMessage, *float64, error) {
 	entry, ok := library.Get(r.Type)
+	if r.Digest != "" && l.Layouts != nil {
+		// A type made in chat, by its kept definition.
+		entry, ok = tilelayout.CustomEntry(tiles.Added{Kind: tiles.AddCustom, Name: r.Type, Digest: r.Digest}, func(digest string) (json.RawMessage, bool) {
+			return l.Layouts.Definition(ctx, digest)
+		})
+	}
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("no library type %q", r.Type)
 	}
