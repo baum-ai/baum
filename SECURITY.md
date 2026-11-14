@@ -1485,10 +1485,10 @@ output, checked against the type's schema and the diff (every citation a hunk
 of the diff), and the host writes `related` itself. Authored tiles (exhibits)
 are table, code and prose data drawn by the page's own built-in faces, with the
 same masking and citation checks; a code excerpt must be the cited code, and a
-file it cites must be a file of the diff, a regular file in the checkout. Table cells, code and
-captions are drawn as text. A note's Markdown draws paragraphs, emphasis,
-code spans and lists only: a link reads as its text and raw HTML is not
-rendered.
+file it cites must be a file of the diff, a regular file in the checkout.
+Table cells, code and captions are drawn as text. A note's Markdown draws
+paragraphs, emphasis, code spans and lists only: a link reads as its text and
+raw HTML is not rendered.
 
 **What a tile's frame cannot reach.** The sandbox gives the frame an opaque
 origin, so it cannot read the app's page, its cookies or storage, or the
