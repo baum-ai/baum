@@ -73,13 +73,16 @@ type composedTally struct {
 	fixes map[bool][]int
 	// compose holds the time NormalizeComposition and Compose take, by
 	// whether the composition is a template.
-	compose    map[bool][]time.Duration
-	promoted   int
-	authored   int
-	library    int
-	pairs      int
-	previous   *tiles.Composition
-	generated0 *tiles.Document
+	compose  map[bool][]time.Duration
+	promoted int
+	authored int
+	library  int
+	pairs    int
+	// previous and before are, for the first two random compositions (one
+	// valid, one hostile), the previous version's normalised composition
+	// and generated document.
+	previous [2]*tiles.Composition
+	before   [2]*tiles.Document
 }
 
 func (t *tally) fail(stage string) { t.failures[stage]++ }
@@ -103,7 +106,7 @@ func TestCorpus(t *testing.T) {
 		for _, v := range versions {
 			stats.versions++
 			if previousPR != v.pullRequest {
-				stats.composed.previous, stats.composed.generated0 = nil, nil
+				stats.composed.previous, stats.composed.before = [2]*tiles.Composition{}, [2]*tiles.Document{}
 			}
 			doc, normalized := check(stats, validator, v)
 			if doc != nil && previous != nil && previousPR == v.pullRequest {
@@ -193,8 +196,9 @@ const randomCompositions = 5
 
 // compose applies the template of the version's change kind and seeded
 // random compositions to its converted document, and checks every generated
-// document. The first random composition of each version is stabilised
-// against the previous version's, and the two generated documents are
+// document. The first two random compositions of each version, one valid
+// and one hostile, are each stabilised against the previous version's, and
+// each pair of generated documents is
 // checked for stability.
 func compose(stats *tally, v version, normalized []byte, doc *tiles.Document) {
 	c := &stats.composed
@@ -256,8 +260,8 @@ func compose(stats *tally, v version, normalized []byte, doc *tiles.Document) {
 		if hostile {
 			label = "hostile"
 		}
-		if i == 0 {
-			stable := tiles.StabilizeIDs(c.previous, composition)
+		if i < 2 {
+			stable := tiles.StabilizeIDs(c.previous[i], composition)
 			composition = &stable
 		}
 		// The composition as written, applied as a stored one would be.
@@ -292,14 +296,14 @@ func compose(stats *tally, v version, normalized []byte, doc *tiles.Document) {
 		c.promoted += len(n.Promotions)
 		c.authored += len(n.Authored)
 		c.library += len(n.Library)
-		if i == 0 {
-			if c.generated0 != nil {
+		if i < 2 {
+			if c.before[i] != nil {
 				c.pairs++
-				for _, failure := range tilestest.CheckStability(c.generated0, generated) {
+				for _, failure := range tilestest.CheckStability(c.before[i], generated) {
 					stats.fail("composed: " + invariantOf(failure))
 				}
 			}
-			c.previous, c.generated0 = &n, generated
+			c.previous[i], c.before[i] = &n, generated
 		}
 	}
 }
