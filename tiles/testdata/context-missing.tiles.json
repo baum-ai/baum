@@ -809,11 +809,11 @@
       },
       {
         "tile": "decisions",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "everything_else",
-        "size": "third"
+        "size": "half"
       }
     ],
     "groups": [

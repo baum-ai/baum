@@ -691,11 +691,11 @@
       },
       {
         "tile": "context",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "decisions",
-        "size": "third"
+        "size": "half"
       }
     ],
     "groups": [

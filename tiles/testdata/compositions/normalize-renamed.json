@@ -14,7 +14,8 @@
     "the layout does not place tile \"library_table_flag_defaults\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2_2\"; it is added in the default order",
-    "tile \"risks\" ended a row with empty units; it grows to fill the row"
+    "tile \"risks\" ended a row with empty units; it grows to fill the row",
+    "tile \"table_flag_defaults_2_2\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -76,7 +77,7 @@
         },
         {
           "tile": "table_flag_defaults_2_2",
-          "size": "half"
+          "size": "full"
         }
       ]
     },
@@ -252,7 +253,7 @@
       },
       {
         "tile": "table_flag_defaults_2_2",
-        "size": "half"
+        "size": "full"
       }
     ],
     "groups": [

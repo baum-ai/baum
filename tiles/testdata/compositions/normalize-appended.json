@@ -9,7 +9,9 @@
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
     "tile \"evidence\" ended a row with empty units; it grows to fill the row",
-    "tile \"sec_config_flag\" ended a row with empty units; it grows to fill the row"
+    "tile \"sec_config_flag\" ended a row with empty units; it grows to fill the row",
+    "tile \"decisions\" ended a row with empty units; it grows to fill the row",
+    "tile \"everything_else\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -51,11 +53,11 @@
         },
         {
           "tile": "decisions",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "everything_else",
-          "size": "third"
+          "size": "half"
         }
       ]
     }
@@ -98,11 +100,11 @@
       },
       {
         "tile": "decisions",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "everything_else",
-        "size": "third"
+        "size": "half"
       }
     ],
     "groups": [

@@ -19,7 +19,8 @@
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
-    "the layout does not place tile \"table_flag_defaults\"; it is added in the default order"
+    "the layout does not place tile \"table_flag_defaults\"; it is added in the default order",
+    "tile \"table_flag_defaults\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -69,7 +70,7 @@
         },
         {
           "tile": "table_flag_defaults",
-          "size": "half"
+          "size": "full"
         }
       ]
     },
@@ -129,7 +130,7 @@
       },
       {
         "tile": "table_flag_defaults",
-        "size": "half"
+        "size": "full"
       }
     ],
     "groups": [

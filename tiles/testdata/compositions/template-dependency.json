@@ -59,7 +59,7 @@
         },
         {
           "tile": "decisions",
-          "size": "third"
+          "size": "full"
         }
       ]
     },
@@ -192,7 +192,7 @@
       },
       {
         "tile": "decisions",
-        "size": "third"
+        "size": "full"
       }
     ],
     "groups": [

@@ -217,8 +217,7 @@ func TestArrangeMovesTheOverviewOntoTheLandingPage(t *testing.T) {
 
 // RowFills grows a short row's last tile to the larger allowed size that
 // fills the row exactly, else every tile of the row to equal parts, when
-// another row follows; it never grows a pinned tile, shrinks one, or fills
-// the last row with nothing after it.
+// it never grows a pinned tile or shrinks one.
 func TestRowFills(t *testing.T) {
 	const h, third, full = tiles.SizeHalf, tiles.SizeThird, tiles.SizeFull
 	tilesOf := func(n int) []tiles.Tile {
@@ -234,13 +233,13 @@ func TestRowFills(t *testing.T) {
 		pin   int
 		want  map[string]tiles.Size
 	}{
-		{name: "half and third before a half", sizes: []tiles.Size{h, third, h}, pin: -1, want: map[string]tiles.Size{"b": h}},
+		{name: "half and third before a half", sizes: []tiles.Size{h, third, h}, pin: -1, want: map[string]tiles.Size{"b": h, "c": full}},
 		{name: "half before a full", sizes: []tiles.Size{h, full}, pin: -1, want: map[string]tiles.Size{"a": full}},
-		{name: "two thirds before a half", sizes: []tiles.Size{third, third, h}, pin: -1, want: map[string]tiles.Size{"a": h, "b": h}},
+		{name: "two thirds before a half", sizes: []tiles.Size{third, third, h}, pin: -1, want: map[string]tiles.Size{"a": h, "b": h, "c": full}},
 		{name: "a full row of thirds before a half and a full", sizes: []tiles.Size{third, third, third, h, full}, pin: -1, want: map[string]tiles.Size{"d": full}},
-		{name: "pinned", sizes: []tiles.Size{h, third, h}, pin: 1},
+		{name: "pinned", sizes: []tiles.Size{h, third, h}, pin: 1, want: map[string]tiles.Size{"c": full}},
 		{name: "full rows", sizes: []tiles.Size{h, h, third, third, third}, pin: -1},
-		{name: "last row with nothing after", sizes: []tiles.Size{h, h, h}, pin: -1},
+		{name: "last row with nothing after", sizes: []tiles.Size{h, h, h}, pin: -1, want: map[string]tiles.Size{"c": full}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := &tiles.Document{Tiles: tilesOf(len(tc.sizes)), Layout: tiles.Layout{Entries: entries(tc.sizes...)}}

@@ -16,7 +16,8 @@
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
-    "the layout does not place tile \"prose_file_only\"; it is added in the default order"
+    "the layout does not place tile \"prose_file_only\"; it is added in the default order",
+    "tile \"prose_file_only\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -66,7 +67,7 @@
         },
         {
           "tile": "prose_file_only",
-          "size": "half"
+          "size": "full"
         }
       ]
     },
@@ -132,7 +133,7 @@
       },
       {
         "tile": "prose_file_only",
-        "size": "half"
+        "size": "full"
       }
     ],
     "groups": [

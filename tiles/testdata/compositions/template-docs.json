@@ -59,7 +59,7 @@
         },
         {
           "tile": "prose_why_jitter",
-          "size": "half"
+          "size": "full"
         }
       ]
     },
@@ -192,7 +192,7 @@
       },
       {
         "tile": "prose_why_jitter",
-        "size": "half"
+        "size": "full"
       }
     ],
     "groups": [

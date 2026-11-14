@@ -498,7 +498,7 @@
       },
       {
         "tile": "everything_else",
-        "size": "third"
+        "size": "full"
       }
     ],
     "groups": [

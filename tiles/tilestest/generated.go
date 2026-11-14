@@ -41,9 +41,8 @@ import (
 //   - 12: the encoded document passes the tile schema and the
 //     document-level rules (tiles.Validator.Validate).
 //   - 13: no row of a composed document, as the page lays it out
-//     (tiles.Rows: a group a block of its own), ends with empty units while
-//     another follows and growing its tiles to allowed sizes would fill it
-//     (tiles.RowFills).
+//     (tiles.Rows: a group a block of its own), ends with empty units that
+//     growing its tiles to allowed sizes would fill (tiles.RowFills).
 //   - 14: the guard rails hold (tiles/guards.go): the first screen
 //     (tiles.FirstScreenRows rows) and the landing page each show at least as
 //     many current changes as the template's for the same review, unless it shows a pinned tile, the

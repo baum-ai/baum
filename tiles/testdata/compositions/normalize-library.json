@@ -17,7 +17,8 @@
     "the layout does not place tile \"everything_else\"; it is added in the default order",
     "the layout does not place tile \"retry_budget\"; it is added in the default order",
     "the layout does not place tile \"library_sec_config_flag\"; it is added in the default order",
-    "the layout does not place tile \"planned\"; it is added in the default order"
+    "the layout does not place tile \"planned\"; it is added in the default order",
+    "tile \"planned\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -75,7 +76,7 @@
         },
         {
           "tile": "planned",
-          "size": "half"
+          "size": "full"
         }
       ]
     },
@@ -273,7 +274,7 @@
       },
       {
         "tile": "planned",
-        "size": "half"
+        "size": "full"
       }
     ],
     "groups": [

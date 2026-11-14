@@ -278,9 +278,10 @@ func More(layout Layout) int {
 }
 
 // RowFills returns, by tile ID, the sizes that fill the rows (Rows) that
-// end with empty units while another row follows: the row's last tile grows
-// to the larger allowed size (SizesIn) that fills the row exactly, else every
-// tile of the row grows to the one size that fills it in equal parts. A
+// end with empty units, the page's last row too (a lone tile there reads as
+// left over): the row's last tile grows to the larger allowed size (SizesIn)
+// that fills the row exactly, else every tile of the row grows to the one
+// size that fills it in equal parts. A
 // pinned tile is never grown, nothing shrinks, and no tile changes rows. An
 // arranged document (Arrange) has its Landing set; nil means every row is
 // full or cannot be filled that way.
@@ -297,9 +298,8 @@ func RowFills(doc *Document) map[string]Size {
 		}
 		fills[id] = size
 	}
-	rows := Rows(layout)
-	for k, row := range rows {
-		if row.Used >= GridUnits || k == len(rows)-1 {
+	for _, row := range Rows(layout) {
+		if row.Used >= GridUnits {
 			continue
 		}
 		growable := true

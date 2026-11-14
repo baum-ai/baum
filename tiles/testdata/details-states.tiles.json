@@ -700,7 +700,7 @@
       },
       {
         "tile": "everything_else",
-        "size": "third"
+        "size": "full"
       },
       {
         "tile": "sec_dropped_pending",

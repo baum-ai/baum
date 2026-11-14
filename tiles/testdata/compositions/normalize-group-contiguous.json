@@ -9,7 +9,8 @@
     "tile \"sec_config_flag\" ended a row with empty units; it grows to fill the row",
     "tile \"sec_retry_policy\" ended a row with empty units; it grows to fill the row",
     "tile \"evidence\" ended a row with empty units; it grows to fill the row",
-    "tile \"media\" ended a row with empty units; it grows to fill the row"
+    "tile \"media\" ended a row with empty units; it grows to fill the row",
+    "tile \"everything_else\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -55,7 +56,7 @@
         },
         {
           "tile": "everything_else",
-          "size": "third"
+          "size": "full"
         }
       ]
     }
@@ -102,7 +103,7 @@
       },
       {
         "tile": "everything_else",
-        "size": "third"
+        "size": "full"
       }
     ],
     "groups": [

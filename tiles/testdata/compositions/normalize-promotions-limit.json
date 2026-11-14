@@ -21,7 +21,8 @@
     "the layout does not place tile \"everything_else\"; it is added in the default order",
     "the layout does not place tile \"table_part_0\"; it is added in the default order",
     "the layout does not place tile \"table_part_1\"; it is added in the default order",
-    "the layout does not place tile \"table_part_2\"; it is added in the default order"
+    "the layout does not place tile \"table_part_2\"; it is added in the default order",
+    "tile \"table_part_2\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -114,7 +115,7 @@
         },
         {
           "tile": "table_part_2",
-          "size": "half"
+          "size": "full"
         }
       ]
     },
@@ -231,7 +232,7 @@
       },
       {
         "tile": "table_part_2",
-        "size": "half"
+        "size": "full"
       }
     ],
     "groups": [
