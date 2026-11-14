@@ -92,7 +92,7 @@ func (s *Server) layoutPull(c CallContext, edits bool) (string, int, error) {
 	if c.Consumer.Kind == Action || !c.HasPage || c.Page.Page != PagePullRequest || c.Page.Repository == "" || c.Page.PullRequest < 1 {
 		return "", 0, errors.New("the layout tools change the tiles of the pull request page the person has open: open a pull request's page first")
 	}
-	if edits && c.HasTurn && !(c.Turn.Page == PagePullRequest && strings.EqualFold(c.Turn.Repository, c.Page.Repository) && c.Turn.PullRequest == c.Page.PullRequest) {
+	if edits && c.HasTurn && (c.Turn.Page != PagePullRequest || !strings.EqualFold(c.Turn.Repository, c.Page.Repository) || c.Turn.PullRequest != c.Page.PullRequest) {
 		return "", 0, errOtherTurnPage
 	}
 	return c.Page.Repository, c.Page.PullRequest, nil

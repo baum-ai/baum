@@ -1,9 +1,9 @@
 package tiles_test
 
 import (
-	"errors"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"reflect"

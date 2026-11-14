@@ -340,7 +340,6 @@ func TestEditAgainstAMovedLayout(t *testing.T) {
 func TestResetOfAFullOverlay(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newService(t)
-	state, _ := s.Read(ctx, pr)
 	// Edits with long tile ids are refused by CheckOp, so the full overlay
 	// is stored the way an earlier build wrote it.
 	full := tiles.Overlay{Schema: tiles.OverlayName, Batches: []tiles.Batch{
@@ -366,7 +365,7 @@ func TestResetOfAFullOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.Close()
-	state, err = s.Read(ctx, pr)
+	state, err := s.Read(ctx, pr)
 	if err != nil || !state.Edited() {
 		t.Fatalf("the full overlay: %+v, %v", state.Edited(), err)
 	}
