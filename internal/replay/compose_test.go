@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/replay"
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/schema"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/compose"
@@ -255,5 +256,50 @@ func TestComposeGeneratorRefusesWhatItCannotUse(t *testing.T) {
 		if _, err := replay.NewGenerator("compose", replay.GeneratorConfig{Options: c.options, PromptOverrides: c.overrides}); err == nil {
 			t.Errorf("%v %v accepted", c.options, c.overrides)
 		}
+	}
+}
+
+// Composing an earlier tiles run again places the library tiles its fills
+// wrote, read from the case's fills/<type>.json.
+func TestComposeOnlyPlacesTheRunsLibraryTiles(t *testing.T) {
+	d := newDataset(t, assembleSource(t))
+	d.addCase(t, "c1", nil)
+	ds, _ := replay.OpenDataset(d.dir)
+	run := earlierRun(t)
+	normalized, err := review.NormalizeStored(schema.Example)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := tiles.FromReview(normalized, tiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hunk string
+	for _, tile := range doc.Tiles {
+		if tile.Type == tiles.TypeChange && len(tile.Covers) > 0 {
+			hunk = tile.Covers[0]
+			break
+		}
+	}
+	data := `{"engine":"postgres","migrations":[],"tables":[{"name":"widgets","change":"created","renamed_from":null,"columns":[],"indexes":[],"cites":[{"type":"hunk","id":"` + hunk + `"}]}],"data_changes":[],"readers":[]}`
+	fill, _ := json.Marshal(agent.FillResult{Type: "schema_change", Hunks: []string{hunk}, State: agent.FillReady, Data: json.RawMessage(data)})
+	if err := os.MkdirAll(filepath.Join(run, "cases", "c1", "fills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(run, "cases", "c1", "fills", "schema_change.json"), fill, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	backend := &completing{Backend: &generatetest.Backend{Version: "1.0.0"}}
+	outDir := t.TempDir()
+	if _, _, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, Settings: composeSettings(t, backend, map[string]string{"source": replay.ComposeFromRun, "run": run})}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "run", "cases", "c1", "composition.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := tiles.ParseComposition(raw)
+	if err != nil || len(c.Library) != 1 {
+		t.Fatalf("%v: library tiles %+v", err, c)
 	}
 }

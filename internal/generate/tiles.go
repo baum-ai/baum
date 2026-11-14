@@ -264,6 +264,13 @@ type TilesReport struct {
 	Duplicates []string
 }
 
+// TileExtras is extras, for tools that compose an analysis again (replay's
+// compose generator over an earlier tiles run).
+func TileExtras(doc *tiles.Document, t *agent.TilesOutcome) ([]compose.Fill, []compose.Authored) {
+	fills, authored, _ := extras(doc, t, library.All())
+	return fills, authored
+}
+
 // extras turns the tile analysis into what the composer places: each
 // selected type's fill (ready ones with their library tile, its related
 // items written against the review) and the authored tiles that do not

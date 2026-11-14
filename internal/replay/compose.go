@@ -242,8 +242,9 @@ func (g *ComposeGenerator) Generate(ctx context.Context, base generate.Options, 
 	// says so rather than that a call failed.
 	completer := generate.CompleterOf(base.Backend)
 	started := time.Now()
+	fills, authored := g.analysis(c, doc)
 	result, err := agent.ComposeRun(ctx, agent.ComposeRequest{Completer: completer, Backend: base.Backend.Name(), Prompts: g.prompts(), Document: doc,
-		Redactor: g.redactor, CallTimeout: base.PassTimeout})
+		Fills: fills, Authored: authored, Redactor: g.redactor, CallTimeout: base.PassTimeout})
 	out := Generated{Outcome: result.Outcome}
 	if errors.Is(err, agent.ErrComposeInterrupted) || ctx.Err() != nil {
 		return out, &generate.Error{Category: generate.CategoryInterrupted, Err: errors.Join(err, ctx.Err())}
@@ -280,6 +281,35 @@ func (g *ComposeGenerator) Generate(ctx context.Context, base generate.Options, 
 	out.Details = map[string]any{"fallback": result.Fallback, "fallback_reason": result.FallbackReason, "fixes": record.Fixes,
 		"differs_from_template": record.DiffersFromTemplate, "match": which.Match}
 	return out, nil
+}
+
+// analysis reads the tile analysis an earlier tiles run kept beside a case
+// (fills/<type>.json, exhibits.json), so composing it again places the same
+// library and authored tiles; none for another source or run.
+func (g *ComposeGenerator) analysis(c Case, doc *tiles.Document) ([]compose.Fill, []compose.Authored) {
+	if g.Source != ComposeFromRun {
+		return nil, nil
+	}
+	dir := filepath.Join(g.Run, "cases", c.ID)
+	t := &agent.TilesOutcome{}
+	names, _ := filepath.Glob(filepath.Join(dir, "fills", "*.json"))
+	slices.Sort(names)
+	for _, name := range names {
+		var f agent.FillResult
+		if raw, err := os.ReadFile(name); err == nil && json.Unmarshal(raw, &f) == nil {
+			t.Fills = append(t.Fills, f)
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "exhibits.json")); err == nil {
+		var x agent.ExhibitsResult
+		if json.Unmarshal(raw, &x) == nil {
+			t.Exhibits = &x
+		}
+	}
+	if len(t.Fills) == 0 && t.Exhibits == nil {
+		return nil, nil
+	}
+	return generate.TileExtras(doc, t)
 }
 
 // recordOf measures a composition against the template of the same review.
