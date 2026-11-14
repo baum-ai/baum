@@ -1,6 +1,7 @@
 package tiles_test
 
 import (
+	"errors"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -497,5 +498,123 @@ func TestOverlayKeepsRecommendedChange(t *testing.T) {
 		if entry.Tile == named && entry.Group == tiles.GroupHidden {
 			t.Error("a composition hid the recommended change")
 		}
+	}
+}
+
+// An undo keeps the batch it took off for Redo, which a new edit or a reset
+// clears; the redo list counts in the overlay's byte bound.
+func TestOverlayRedo(t *testing.T) {
+	a := []tiles.Op{{Op: tiles.OpHide, Tile: "context"}}
+	b := []tiles.Op{{Op: tiles.OpPin, Tile: "risks"}}
+	o := overlayOf(t, a, b)
+	if o.CanRedo() {
+		t.Fatal("a fresh overlay can redo")
+	}
+	undone, last, ok := o.Undo()
+	if !ok || !undone.CanRedo() || undone.NextRedo().ID != last.ID || undone.Edited() == false {
+		t.Fatalf("after the undo: %v %+v", ok, undone)
+	}
+	twice, _, _ := undone.Undo()
+	if len(twice.Undone) != 2 || len(twice.Batches) != 0 {
+		t.Fatalf("two undos: %d redo, %d batches", len(twice.Undone), len(twice.Batches))
+	}
+	back, redone, ok := twice.Redo()
+	if !ok || redone.Ops[0].Op != tiles.OpHide || len(back.Batches) != 1 || len(back.Undone) != 1 {
+		t.Fatalf("a redo: %v %+v", ok, back)
+	}
+	again, _, _ := back.Redo()
+	if !reflect.DeepEqual(again.Batches, o.Batches) || again.CanRedo() {
+		t.Errorf("undo twice and redo twice is not the overlay: %+v", again)
+	}
+	if _, _, ok := again.Redo(); ok {
+		t.Error("redo with nothing to redo")
+	}
+	// A new batch, and a reset, clear it.
+	next, err := undone.With(tiles.Batch{ID: "edt_000000000099", At: "2026-11-14T10:00:00Z", By: "page", Ops: b, Summary: []string{}})
+	if err != nil || next.CanRedo() {
+		t.Errorf("a new edit keeps the redo list: %v %+v", err, next.Undone)
+	}
+	reset, err := undone.WithReset(tiles.Batch{ID: "edt_00000000009a", At: "2026-11-14T10:00:00Z", By: "page", Reset: true, Summary: []string{}})
+	if err != nil || reset.CanRedo() {
+		t.Errorf("a reset keeps the redo list: %v %+v", err, reset.Undone)
+	}
+	if err := tiles.CheckOverlay(&twice); err != nil {
+		t.Error(err)
+	}
+	// A stored overlay may not repeat an ID across batches and redo, nor
+	// redo the base.
+	dup := twice
+	dup.Batches = []tiles.Batch{twice.Undone[0]}
+	if tiles.CheckOverlay(&dup) == nil {
+		t.Error("a batch in both lists was accepted")
+	}
+	// Undone batches are forgotten, oldest first, when the overlay is full.
+	big := &tiles.Overlay{Schema: tiles.OverlayName}
+	for i := range 25 {
+		var ops []tiles.Op
+		for k := range tiles.MaxOverlayOps {
+			ops = append(ops, tiles.Op{Op: tiles.OpResize, Tile: fmt.Sprintf("tile_%d_%d_%s", i, k, strings.Repeat("x", 40)), Size: tiles.SizeFull})
+		}
+		next, err := big.With(tiles.Batch{ID: fmt.Sprintf("edt_%012x", i+1), At: "2026-11-14T10:00:00Z", By: "page", Ops: ops, Summary: []string{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		big = &next
+	}
+	for big.CanUndo() {
+		next, _, _ := big.Undo()
+		big = &next
+		if err := tiles.CheckOverlay(big); err != nil {
+			t.Fatalf("undoing past the bound: %v", err)
+		}
+	}
+}
+
+// A reset always succeeds: when the overlay is too large to take it, the
+// oldest batches, the base included, are dropped, and undoing the reset
+// brings back what remained.
+func TestOverlayResetFitsAlways(t *testing.T) {
+	// A base filling the bound, then one small edit: the byte budget is
+	// nearly gone.
+	base := tiles.Batch{ID: tiles.BaseBatch, At: "2026-11-14T10:00:00Z", By: "page", Summary: []string{}}
+	size := func(b tiles.Batch) int {
+		return len(mustJSON(t, tiles.Overlay{Schema: tiles.OverlayName, Batches: []tiles.Batch{b, {ID: "edt_000000000001", At: "2026-11-14T10:00:00Z", By: "page", Ops: []tiles.Op{{Op: tiles.OpHide, Tile: "context"}}, Summary: []string{"Removed Context"}}}}))
+	}
+	for size(base) <= tiles.MaxOverlayBytes-100 {
+		base.Ops = append(base.Ops, tiles.Op{Op: tiles.OpResize, Tile: fmt.Sprintf("p%05d", len(base.Ops)), Size: tiles.SizeFull})
+	}
+	// Pad to within a byte of the bound with one op of a longer tile ID.
+	for k := 0; size(base) < tiles.MaxOverlayBytes-1; k++ {
+		base.Ops = append(base.Ops[:len(base.Ops):len(base.Ops)], tiles.Op{Op: tiles.OpResize, Tile: "q" + strings.Repeat("a", k), Size: tiles.SizeFull})
+		if size(base) >= tiles.MaxOverlayBytes-1 {
+			break
+		}
+		base.Ops = base.Ops[:len(base.Ops)-1]
+	}
+	edit := tiles.Batch{ID: "edt_000000000001", At: "2026-11-14T10:00:00Z", By: "page", Ops: []tiles.Op{{Op: tiles.OpHide, Tile: "context"}}, Summary: []string{"Removed Context"}}
+	o := &tiles.Overlay{Schema: tiles.OverlayName, Batches: []tiles.Batch{base, edit}}
+	if err := tiles.CheckOverlay(o); err != nil {
+		t.Fatal(err)
+	}
+	reset := tiles.Batch{ID: "edt_000000000002", At: "2026-11-14T10:00:00Z", By: "page", Reset: true, Summary: []string{"Reset the layout to the generated one"}}
+	if _, err := o.With(reset); !errors.Is(err, tiles.ErrOverlayTooLarge) {
+		t.Fatalf("With on a full overlay: %v, want ErrOverlayTooLarge", err)
+	}
+	got, err := o.WithReset(reset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tiles.CheckOverlay(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Edited() || got.Batches[len(got.Batches)-1].ID != reset.ID || got.Batches[0].ID == tiles.BaseBatch {
+		t.Errorf("the reset overlay: %d batches, first %s", len(got.Batches), got.Batches[0].ID)
+	}
+	undone, last, ok := got.Undo()
+	if !ok || !last.Reset || !undone.Edited() {
+		t.Errorf("undoing the reset restores nothing: %v %+v", ok, undone.Batches)
+	}
+	if _, err := o.WithReset(tiles.Batch{ID: reset.ID, At: reset.At, By: "page", Summary: []string{}}); err == nil {
+		t.Error("WithReset took a batch that is not a reset")
 	}
 }

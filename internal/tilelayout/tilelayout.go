@@ -47,6 +47,8 @@ const MaxBatch = tiles.MaxOverlayOps
 var (
 	// ErrNothingToUndo is an undo with no batch to remove.
 	ErrNothingToUndo = errors.New("Nothing to undo")
+	// ErrNothingToRedo is a redo with no undone batch to put back.
+	ErrNothingToRedo = errors.New("Nothing to redo")
 	// ErrNotEdited is a reset of a layout that is already the generated one.
 	ErrNotEdited = errors.New("The layout is already the generated one")
 	// ErrStale is an undo of a batch that is no longer the newest.
@@ -83,6 +85,9 @@ func (s State) Edited() bool { return s.Overlay.Edited() }
 // CanUndo reports whether there is a batch to undo.
 func (s State) CanUndo() bool { return s.Overlay.CanUndo() }
 
+// CanRedo reports whether there is an undo to take back.
+func (s State) CanRedo() bool { return s.Overlay.CanRedo() }
+
 // Summary is what the page and the tools say of a layout.
 type Summary struct {
 	Revision int64 `json:"revision"`
@@ -91,6 +96,11 @@ type Summary struct {
 	// Last is the batch an undo removes, if any.
 	Last    *Last `json:"last"`
 	Batches int   `json:"batches"`
+	// CanRedo is true after an undo, until the next edit or reset; RedoBatch
+	// is the batch a redo puts back, which the page names so that a redo of
+	// a layout that changed meanwhile is refused.
+	CanRedo   bool   `json:"can_redo"`
+	RedoBatch string `json:"redo_batch,omitempty"`
 }
 
 // Last names the newest batch, and the tiles its ops name, which the page
@@ -105,7 +115,10 @@ type Last struct {
 
 // Summary sums the state up.
 func (s State) Summary() Summary {
-	out := Summary{Revision: s.Revision, Edited: s.Edited(), CanUndo: s.CanUndo()}
+	out := Summary{Revision: s.Revision, Edited: s.Edited(), CanUndo: s.CanUndo(), CanRedo: s.CanRedo()}
+	if next := s.Overlay.NextRedo(); next != nil {
+		out.RedoBatch = next.ID
+	}
 	if s.Overlay != nil {
 		out.Batches = len(s.Overlay.Batches)
 	}
@@ -141,6 +154,8 @@ type Change struct {
 	Applied []string
 	Refused []Refusal
 	Undone  []string
+	// Redone is the summary of the batch a redo put back.
+	Redone []string
 	// Saved is false when nothing was written (every op refused).
 	Saved bool
 }
@@ -204,36 +219,50 @@ func (s *Service) Layout(repository string, number int) tileview.Layout {
 	return tileview.Layout{Overlay: state.Overlay}
 }
 
+// errUnchanged is a write whose every op was refused: nothing is saved.
+var errUnchanged = errors.New("nothing to write")
+
 // Edit applies an edit made by ("chat" or "page") to the layout shown, doc:
 // the served tile document of the pull request's latest version with its
-// overlay applied. Each op is checked against it (tiles.CheckOp); those that
-// pass are appended as one batch, with the host's summary lines, and the
-// rest are refused with the host's reason. When every op is refused nothing
-// is written.
-func (s *Service) Edit(ctx context.Context, pr, by string, doc *tiles.Document, ops []tiles.Op) (Change, error) {
+// overlay applied, as it was at revision base (State.Revision). Each op is
+// checked against it (tiles.CheckOp) inside the write's transaction, so a
+// layout that moved since doc was built is answered with ErrStale, to read
+// again, rather than checked against tiles the person no longer has; those
+// that pass are appended as one batch, with the host's summary lines, and
+// the rest are refused with the host's reason. When every op is refused
+// nothing is written.
+func (s *Service) Edit(ctx context.Context, pr, by string, doc *tiles.Document, base int64, ops []tiles.Op) (Change, error) {
 	if len(ops) < 1 || len(ops) > MaxBatch {
 		return Change{}, ErrNoOps
 	}
 	if doc == nil {
 		return Change{}, errors.New("This pull request has no saved review yet")
 	}
-	var accepted []tiles.Op
 	var change Change
-	for i, op := range ops {
-		if reason := tiles.CheckOp(doc, op); reason != "" {
-			change.Refused = append(change.Refused, Refusal{Index: i, Reason: reason})
-			continue
+	state, err := s.write(ctx, pr, func(o *tiles.Overlay, revision int64) (tiles.Overlay, error) {
+		if revision != base {
+			return tiles.Overlay{}, ErrStale
 		}
-		accepted = append(accepted, op)
-		change.Applied = append(change.Applied, tiles.OpSummary(doc, op))
-	}
-	if len(accepted) == 0 {
-		state, err := s.Read(ctx, pr)
+		var accepted []tiles.Op
+		change = Change{}
+		for i, op := range ops {
+			if reason := tiles.CheckOp(doc, op); reason != "" {
+				change.Refused = append(change.Refused, Refusal{Index: i, Reason: reason})
+				continue
+			}
+			accepted = append(accepted, op)
+			change.Applied = append(change.Applied, tiles.OpSummary(doc, op))
+		}
+		if len(accepted) == 0 {
+			return tiles.Overlay{}, errUnchanged
+		}
+		batch := tiles.Batch{ID: newBatchID(), At: s.now().UTC().Format(time.RFC3339), By: by, Ops: accepted, Summary: change.Applied}
+		return o.With(batch)
+	})
+	if errors.Is(err, errUnchanged) {
 		change.State = state
-		return change, err
+		return change, nil
 	}
-	batch := tiles.Batch{ID: newBatchID(), At: s.now().UTC().Format(time.RFC3339), By: by, Ops: accepted, Summary: change.Applied}
-	state, err := s.write(ctx, pr, func(o *tiles.Overlay) (tiles.Overlay, error) { return o.With(batch) })
 	if err != nil {
 		return Change{}, err
 	}
@@ -241,11 +270,12 @@ func (s *Service) Edit(ctx context.Context, pr, by string, doc *tiles.Document, 
 	return change, nil
 }
 
-// Undo removes the newest batch, whoever made it. With expect, only when
-// that batch is the one named (the page's Undo names the batch it shows).
+// Undo removes the newest batch, whoever made it; Redo takes it back. With
+// expect, only when that batch is the one named (the page's Undo names the
+// batch it shows).
 func (s *Service) Undo(ctx context.Context, pr, expect string) (Change, error) {
 	var undone tiles.Batch
-	state, err := s.write(ctx, pr, func(o *tiles.Overlay) (tiles.Overlay, error) {
+	state, err := s.write(ctx, pr, func(o *tiles.Overlay, _ int64) (tiles.Overlay, error) {
 		if expect != "" && (o.Last() == nil || o.Last().ID != expect) {
 			return tiles.Overlay{}, ErrStale
 		}
@@ -259,22 +289,48 @@ func (s *Service) Undo(ctx context.Context, pr, expect string) (Change, error) {
 	if err != nil {
 		return Change{}, err
 	}
-	summary := undone.Summary
-	if undone.Reset {
-		summary = []string{"Reset the layout"}
+	return Change{State: state, Undone: summaryOf(undone), Saved: true}, nil
+}
+
+// Redo puts back the batch the last undo took off. With expect, only when
+// that batch is the one named (State.Summary's RedoBatch).
+func (s *Service) Redo(ctx context.Context, pr, expect string) (Change, error) {
+	var back tiles.Batch
+	state, err := s.write(ctx, pr, func(o *tiles.Overlay, _ int64) (tiles.Overlay, error) {
+		if expect != "" && (o.NextRedo() == nil || o.NextRedo().ID != expect) {
+			return tiles.Overlay{}, ErrStale
+		}
+		next, batch, ok := o.Redo()
+		if !ok {
+			return tiles.Overlay{}, ErrNothingToRedo
+		}
+		back = batch
+		return next, nil
+	})
+	if err != nil {
+		return Change{}, err
 	}
-	return Change{State: state, Undone: summary, Saved: true}, nil
+	return Change{State: state, Redone: summaryOf(back), Saved: true}, nil
+}
+
+func summaryOf(b tiles.Batch) []string {
+	if b.Reset {
+		return []string{"Reset the layout"}
+	}
+	return b.Summary
 }
 
 // Reset returns the layout to the generated one, as a batch of its own, so
-// it can be undone.
+// it can be undone. It always succeeds on an edited layout: when the
+// overlay is too large to take it, the oldest batches are dropped to make
+// room, and undoing the reset brings back what remained.
 func (s *Service) Reset(ctx context.Context, pr, by string) (Change, error) {
 	batch := tiles.Batch{ID: newBatchID(), At: s.now().UTC().Format(time.RFC3339), By: by, Reset: true, Summary: []string{"Reset the layout to the generated one"}}
-	state, err := s.write(ctx, pr, func(o *tiles.Overlay) (tiles.Overlay, error) {
+	state, err := s.write(ctx, pr, func(o *tiles.Overlay, _ int64) (tiles.Overlay, error) {
 		if !o.Edited() {
 			return tiles.Overlay{}, ErrNotEdited
 		}
-		return o.With(batch)
+		return o.WithReset(batch)
 	})
 	if err != nil {
 		return Change{}, err
@@ -285,7 +341,7 @@ func (s *Service) Reset(ctx context.Context, pr, by string) (Change, error) {
 // write changes a pull request's overlay in one write transaction, bumps its
 // revision, keeps the Keep most recently edited pull requests, and tells
 // Changed once it commits.
-func (s *Service) write(ctx context.Context, pr string, change func(*tiles.Overlay) (tiles.Overlay, error)) (State, error) {
+func (s *Service) write(ctx context.Context, pr string, change func(o *tiles.Overlay, revision int64) (tiles.Overlay, error)) (State, error) {
 	if !ValidKey(pr) {
 		return State{}, errors.New("invalid pull request key")
 	}
@@ -311,9 +367,12 @@ func (s *Service) write(ctx context.Context, pr string, change func(*tiles.Overl
 			// None yet, or one this build cannot read: start again.
 			current = nil
 		}
-		next, err := change(current)
+		next, err := change(current, revision)
 		if err != nil {
 			refused = true
+			if errors.Is(err, errUnchanged) {
+				state = State{PR: pr, Revision: revision, Overlay: current}
+			}
 			return err
 		}
 		encoded, err := encode(next)
@@ -334,6 +393,9 @@ ON CONFLICT(pr) DO UPDATE SET revision = excluded.revision, updated = excluded.u
 	})
 	if err != nil {
 		if refused {
+			if errors.Is(err, errUnchanged) {
+				return state, err
+			}
 			return State{}, err
 		}
 		return State{}, fmt.Errorf("%w: %v", ErrUnsaved, err)

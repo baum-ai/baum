@@ -69,7 +69,7 @@ func (f *fakeLayouts) Edit(ctx context.Context, repository string, number int, o
 	if err != nil {
 		return LayoutChange{}, err
 	}
-	c, err := f.service.Edit(ctx, tilelayout.Key(repository, number), "chat", shown.Document, ops)
+	c, err := f.service.Edit(ctx, tilelayout.Key(repository, number), "chat", shown.Document, shown.Revision, ops)
 	return change(c), err
 }
 

@@ -294,3 +294,38 @@ func TestLayoutEditorServesThePanelsTools(t *testing.T) {
 		t.Errorf("a pull request with no review: %s", text)
 	}
 }
+
+// An undo can be taken back from the page: the summary says a redo is
+// possible and names the batch it restores, a redo of another batch is a
+// conflict, and the tile route shows the layout again after it.
+func TestLayoutRedoRoute(t *testing.T) {
+	f := newLayoutFixture(t)
+	f.put(t, titled(t, "First title"))
+	edit := layoutOf(t, f.action("edit", `,"ops":[{"op":"hide","tile":"context"}]`))
+	if edit.CanRedo {
+		t.Fatalf("a redo before any undo: %+v", edit)
+	}
+	if w := f.action("redo", ""); w.Code != 400 || !strings.Contains(w.Body.String(), "Nothing to redo") {
+		t.Errorf("a redo with nothing undone: %d %s", w.Code, w.Body.String())
+	}
+	undone := layoutOf(t, f.action("undo", ""))
+	if undone.Edited || !undone.CanRedo || undone.RedoBatch != edit.Last.ID {
+		t.Fatalf("after the undo: %+v", undone)
+	}
+	if got := layoutOf(t, f.get("/api/tiles/layout", "", "")); !got.CanRedo || got.RedoBatch != edit.Last.ID {
+		t.Errorf("the summary after a reload: %+v", got)
+	}
+	if w := f.action("redo", `,"batch":"edt_000000000000"`); w.Code != 409 {
+		t.Errorf("a redo of another batch: %d %s", w.Code, w.Body.String())
+	}
+	redone := layoutOf(t, f.action("redo", fmt.Sprintf(`,"batch":%q`, undone.RedoBatch)))
+	if !redone.Edited || redone.CanRedo || !slices.Equal(redone.Redone, edit.Applied) || redone.Last == nil || redone.Last.ID != edit.Last.ID {
+		t.Fatalf("redo: %+v", redone)
+	}
+	if body := decodeTiles(t, f.get("/api/tiles", "", "")); body.Tiles.Layout.Entries[len(body.Tiles.Layout.Entries)-1].Tile != "context" {
+		t.Errorf("the redone edit is not served: %+v", body.Tiles.Layout.Entries)
+	}
+	if w := f.action("redo", ""); w.Code != 400 {
+		t.Errorf("a second redo: %d", w.Code)
+	}
+}

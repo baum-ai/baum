@@ -43,19 +43,22 @@ type layoutAnswer struct {
 	Applied []string             `json:"applied,omitempty"`
 	Refused []tilelayout.Refusal `json:"refused,omitempty"`
 	Undone  []string             `json:"undone,omitempty"`
+	Redone  []string             `json:"redone,omitempty"`
 }
 
 func answerOf(change tilelayout.Change) layoutAnswer {
-	return layoutAnswer{Summary: change.State.Summary(), Applied: change.Applied, Refused: change.Refused, Undone: change.Undone}
+	return layoutAnswer{Summary: change.State.Summary(), Applied: change.Applied, Refused: change.Refused, Undone: change.Undone, Redone: change.Redone}
 }
 
 // layoutRoutes mounts GET /api/tiles/layout?clone=&pr= (the layout's
-// summary) and POST /api/tiles/layout ({clone, pr, action: edit, undo or
-// reset, ops?, batch?}: a page edit, an undo of the newest batch, which must
-// be batch when it is named, or a reset). A write answers the new summary,
-// or 400 with the host's reason when nothing was written (every op refused,
-// nothing to undo, already the generated layout) and 409 when the batch an
-// undo names is no longer the newest.
+// summary) and POST /api/tiles/layout ({clone, pr, action: edit, undo, redo
+// or reset, ops?, batch?}: a page edit, an undo of the newest batch, which
+// must be batch when it is named, a redo of the batch the last undo took off
+// (batch names it, as the summary's redo_batch), or a reset). A write
+// answers the new summary, or 400 with the host's reason when nothing was
+// written (every op refused, nothing to undo or redo, already the generated
+// layout) and 409 when the batch an undo or redo names is no longer the
+// one it would act on.
 func (a LocalAPI) layoutRoutes(mux *http.ServeMux) {
 	unavailable := func(w http.ResponseWriter) bool {
 		if a.Layouts == nil {
@@ -112,10 +115,12 @@ func (a LocalAPI) layoutRoutes(mux *http.ServeMux) {
 			change, err = a.editLayout(r.Context(), c, request.PR, "page", request.Ops)
 		case "undo":
 			change, err = a.Layouts.Undo(r.Context(), tilelayout.Key(c.Repository, request.PR), request.Batch)
+		case "redo":
+			change, err = a.Layouts.Redo(r.Context(), tilelayout.Key(c.Repository, request.PR), request.Batch)
 		case "reset":
 			change, err = a.Layouts.Reset(r.Context(), tilelayout.Key(c.Repository, request.PR), "page")
 		default:
-			http.Error(w, "action is edit, undo or reset", http.StatusBadRequest)
+			http.Error(w, "action is edit, undo, redo or reset", http.StatusBadRequest)
 			return
 		}
 		switch {
@@ -167,11 +172,19 @@ func (a LocalAPI) cloneByID(w http.ResponseWriter, r *http.Request, id string) (
 // version is shown with, the person's layout applied, and saves those that
 // pass as one batch.
 func (a LocalAPI) editLayout(ctx context.Context, c repos.Clone, number int, by string, ops []tiles.Op) (tilelayout.Change, error) {
-	shown, err := a.shownTiles(ctx, c, number, 0)
-	if err != nil {
-		return tilelayout.Change{}, err
+	// The ops are checked inside the write against the layout the tiles were
+	// shown with; when it moved meanwhile (another write), read again.
+	for attempt := 0; ; attempt++ {
+		shown, err := a.shownTiles(ctx, c, number, 0)
+		if err != nil {
+			return tilelayout.Change{}, err
+		}
+		change, err := a.Layouts.Edit(ctx, tilelayout.Key(c.Repository, number), by, shown.Document, shown.State.Revision, ops)
+		if errors.Is(err, tilelayout.ErrStale) && attempt < 2 {
+			continue
+		}
+		return change, err
 	}
-	return a.Layouts.Edit(ctx, tilelayout.Key(c.Repository, number), by, shown.Document, ops)
 }
 
 // shownLayout is a version's tiles as a person is shown them.

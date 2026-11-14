@@ -28,6 +28,10 @@ type Overlay struct {
 	Schema string `json:"schema"`
 	// Batches are oldest first.
 	Batches []Batch `json:"batches"`
+	// Undone are the batches an undo took off, oldest undone first: Redo puts
+	// the last back. A new edit or a reset clears them. They count in the
+	// overlay's bounds.
+	Undone []Batch `json:"undone,omitempty"`
 }
 
 // OverlayName is the value of an overlay's "schema" field.
@@ -204,40 +208,105 @@ func (o *Overlay) Last() *Batch {
 
 // With returns the overlay with the batch appended, folding the oldest
 // batches into the base batch while it holds more than MaxOverlayBatches or
-// encodes to more than MaxOverlayBytes. The batch is checked first.
+// encodes to more than MaxOverlayBytes. The batch is checked first. A new
+// batch clears the redo list.
 func (o *Overlay) With(b Batch) (Overlay, error) {
+	if err := checkBatch(b); err != nil {
+		return Overlay{}, err
+	}
 	out := Overlay{Schema: OverlayName}
 	if o != nil {
 		out.Batches = slices.Clone(o.Batches)
 	}
+	return out.appended(b, false)
+}
+
+// WithReset is With for a reset batch, which always fits: when folding
+// cannot make room, the oldest batches, the base batch included, are
+// dropped until it does. Undoing the reset brings back what remained.
+func (o *Overlay) WithReset(b Batch) (Overlay, error) {
+	if !b.Reset {
+		return Overlay{}, errors.New("tiles: not a reset batch")
+	}
 	if err := checkBatch(b); err != nil {
 		return Overlay{}, err
 	}
-	out.Batches = append(out.Batches, b)
+	out := Overlay{Schema: OverlayName}
+	if o != nil {
+		out.Batches = slices.Clone(o.Batches)
+	}
+	return out.appended(b, true)
+}
+
+// appended adds b after the batches of o (which has no redo list) and
+// folds, or with force drops, the oldest batches until the bounds hold.
+func (o Overlay) appended(b Batch, force bool) (Overlay, error) {
+	o.Batches = append(o.Batches, b)
 	for {
-		encoded, err := json.Marshal(out)
+		encoded, err := json.Marshal(o)
 		if err != nil {
 			return Overlay{}, err
 		}
-		if len(out.Batches) <= MaxOverlayBatches && len(encoded) <= MaxOverlayBytes {
-			return out, nil
+		if len(o.Batches) <= MaxOverlayBatches && len(encoded) <= MaxOverlayBytes {
+			return o, nil
 		}
 		// The newest batch is never folded: it is the one just made.
-		if len(out.Batches) < 3 {
+		switch {
+		case force && len(encoded) > MaxOverlayBytes && len(o.Batches) >= 2:
+			o.Batches = o.Batches[1:]
+		case len(o.Batches) >= 3:
+			o.fold()
+		default:
 			return Overlay{}, ErrOverlayTooLarge
 		}
-		out.fold()
 	}
 }
 
-// Undo returns the overlay without its newest batch, and that batch; ok is
-// false when there is none to undo (CanUndo).
+// CanRedo reports whether an undo can be taken back.
+func (o *Overlay) CanRedo() bool { return o != nil && len(o.Undone) > 0 }
+
+// NextRedo returns the batch Redo would put back, or nil.
+func (o *Overlay) NextRedo() *Batch {
+	if !o.CanRedo() {
+		return nil
+	}
+	next := o.Undone[len(o.Undone)-1]
+	return &next
+}
+
+// Undo returns the overlay without its newest batch, and that batch, which
+// Redo can put back; ok is false when there is none to undo (CanUndo). The
+// redo list is bounded as the overlay is: the oldest undone batches are
+// forgotten when it would not fit.
 func (o *Overlay) Undo() (Overlay, Batch, bool) {
 	if !o.CanUndo() {
 		return Overlay{}, Batch{}, false
 	}
-	out := Overlay{Schema: OverlayName, Batches: slices.Clone(o.Batches[:len(o.Batches)-1])}
-	return out, o.Batches[len(o.Batches)-1], true
+	undone := o.Batches[len(o.Batches)-1]
+	out := Overlay{Schema: OverlayName, Batches: slices.Clone(o.Batches[:len(o.Batches)-1]), Undone: append(slices.Clone(o.Undone), undone)}
+	for len(out.Undone) > 1 {
+		encoded, err := json.Marshal(out)
+		if err == nil && len(out.Undone) <= MaxOverlayBatches && len(encoded) <= MaxOverlayBytes {
+			break
+		}
+		out.Undone = out.Undone[1:]
+	}
+	return out, undone, true
+}
+
+// Redo returns the overlay with the batch the last undo took off put back,
+// and that batch; ok is false when there is none (CanRedo).
+func (o *Overlay) Redo() (Overlay, Batch, bool) {
+	if !o.CanRedo() {
+		return Overlay{}, Batch{}, false
+	}
+	back := o.Undone[len(o.Undone)-1]
+	out := Overlay{Schema: OverlayName, Batches: slices.Clone(o.Batches), Undone: slices.Clone(o.Undone[:len(o.Undone)-1])}
+	out.Batches = append(out.Batches, back)
+	if len(out.Batches) > MaxOverlayBatches {
+		out.fold()
+	}
+	return out, back, true
 }
 
 // fold merges the two oldest batches (the base batch, if any, and the batch
@@ -314,6 +383,21 @@ func CheckOverlay(o *Overlay) error {
 	for i, b := range o.Batches {
 		if b.ID == BaseBatch && i != 0 {
 			return errors.New("tiles: only the first batch of a layout overlay may be its base")
+		}
+		if ids[b.ID] {
+			return errors.New("tiles: two batches of the layout overlay share an ID")
+		}
+		ids[b.ID] = true
+		if err := checkBatch(b); err != nil {
+			return err
+		}
+	}
+	if len(o.Undone) > MaxOverlayBatches {
+		return fmt.Errorf("tiles: the layout overlay has more than %d batches to redo", MaxOverlayBatches)
+	}
+	for _, b := range o.Undone {
+		if b.ID == BaseBatch {
+			return errors.New("tiles: the base batch cannot be redone")
 		}
 		if ids[b.ID] {
 			return errors.New("tiles: two batches of the layout overlay share an ID")
