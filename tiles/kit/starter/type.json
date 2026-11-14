@@ -1,0 +1,8 @@
+{
+  "name": "starter_findings",
+  "title": "Findings",
+  "use_when": "When the pull request has facts of one kind worth listing with their code, such as changed settings. Not for findings the review's risks already hold.",
+  "glance": "How many items there are, the most severe first, each with its title.",
+  "sizes": ["half", "third", "full"],
+  "kit": 1
+}

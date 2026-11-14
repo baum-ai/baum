@@ -683,3 +683,31 @@ func TestMajorsMatchWhatTheValidatorAccepts(t *testing.T) {
 		}
 	}
 }
+
+// The guide names every name of the contract, so an author (or a model) who
+// reads only the guide knows all of it; a name added to the manifest must be
+// documented there too. The starter is written against the manifest alone.
+func TestGuideNamesTheWholeContract(t *testing.T) {
+	manifest, err := LoadManifest(guideKit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide := Guide()
+	for _, group := range [][]Entry{manifest.API, manifest.View, manifest.Elements, manifest.Classes, manifest.Tokens} {
+		for _, entry := range group {
+			if !strings.Contains(guide, "`"+entry.Name) && !strings.Contains(guide, entry.Name+"`") && !strings.Contains(guide, " "+entry.Name+" ") {
+				t.Errorf("GUIDE.md does not name %s", entry.Name)
+			}
+		}
+	}
+	starter, err := fs.ReadFile(Starter(), "tile.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings := Lint(guideKit, string(starter)); len(findings) > 0 {
+		t.Errorf("the starter has lint findings: %+v", findings)
+	}
+}
+
+// guideKit is the kit major the guide and the starter describe.
+const guideKit = 1

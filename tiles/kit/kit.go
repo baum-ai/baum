@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"regexp"
 	"strconv"
@@ -29,7 +30,7 @@ import (
 	"unicode/utf8"
 )
 
-//go:embed tokens.css fonts.css v1
+//go:embed tokens.css fonts.css v1 GUIDE.md starter
 var files embed.FS
 
 // CSP is the Content-Security-Policy a frame document is served with. It
@@ -72,6 +73,27 @@ var (
 	// ErrTooLarge is HTML or a composed document over its limit.
 	ErrTooLarge = errors.New("kit: too large")
 )
+
+// Guide returns GUIDE.md: how to write a tile type against the kit, for a
+// person or a model, with the definition of done.
+func Guide() string {
+	data, err := files.ReadFile("GUIDE.md")
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+// Starter returns the starter tile type, a directory in the tile library's
+// layout (type.json, fill.md, schema.json, tile.html, samples/) that passes
+// every check; a new type starts as a copy of it.
+func Starter() fs.FS {
+	dir, err := fs.Sub(files, "starter")
+	if err != nil {
+		panic(err)
+	}
+	return dir
+}
 
 // Manifest is a kit major's manifest.json: the contract a tile is written
 // against.
