@@ -15,6 +15,11 @@ type appearanceSettings struct {
 	PageModifier string `json:"page_modifier"`
 	Sidebar      string `json:"sidebar"`
 	ReviewPage   string `json:"review_page"`
+	// ArrangedTiles says a version whose tiles were arranged (it has a
+	// composition) opens on the tiles page: tile reviews are on, which turns
+	// it on, and the review page is not tiles already. ?view=full in an
+	// address still opens the full review. It is read only.
+	ArrangedTiles bool `json:"arranged_tiles"`
 }
 
 func appearanceOf(p repos.Preferences) appearanceSettings {
@@ -31,11 +36,12 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 		reviewPage = "full"
 	}
 	return appearanceSettings{
-		Theme:        theme,
-		KeyHints:     p.Appearance.KeyHints == nil || *p.Appearance.KeyHints,
-		PageModifier: p.Appearance.PageModifier,
-		Sidebar:      sidebar,
-		ReviewPage:   reviewPage,
+		Theme:         theme,
+		KeyHints:      p.Appearance.KeyHints == nil || *p.Appearance.KeyHints,
+		PageModifier:  p.Appearance.PageModifier,
+		Sidebar:       sidebar,
+		ReviewPage:    reviewPage,
+		ArrangedTiles: p.Labs.TileReviewsOn() && reviewPage != "tiles",
 	}
 }
 

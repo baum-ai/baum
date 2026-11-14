@@ -1656,7 +1656,12 @@ extraction** has the same Agent and Model rows, its agent "Same as reviews
 Reviews ends with **Generate reviews as tiles (experimental)** (`TileReviewsRow`),
 off by default: read with `GET api/settings/labs` and saved with `PUT
 api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
-and says why. It applies to reviews that start after the change.
+and says why. It applies to reviews that start after the change. While it is
+on, the appearance settings report `arranged_tiles`, and a pull request's
+review page (without `?view=`) reads the version's tiles and opens a version
+whose layout was chosen (origin `generated`) on the tiles page, any other on
+the full review (`useArrangedTiles`). A running review's `arranging` phase reads
+"Arranging the page…".
 
 While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
 or Codex, a closed **Advanced** disclosure at the end of the section

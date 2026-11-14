@@ -15,6 +15,17 @@ export function useReviewPage(): ReviewPageChoice {
   return reviewPageOf(search, preferences.review_page);
 }
 
+/** Whether a pull request's review page reads its tiles to open an arranged
+ *  version (one with a composition, origin "generated") on them: tile
+ *  reviews are on and the address asks for neither page. A version that was
+ *  not arranged still opens on the full review. */
+export function useArrangedTiles(): boolean {
+  const { search } = useUrlState();
+  const { preferences } = usePreferences();
+  const asked = search.get("view");
+  return preferences.arranged_tiles && asked !== "tiles" && asked !== "full";
+}
+
 /** The same address on the other review page. */
 export function withView(search: URLSearchParams, view: ReviewPageChoice): URLSearchParams {
   const next = new URLSearchParams(search);

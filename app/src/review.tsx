@@ -62,7 +62,7 @@ import {
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, FixRuns, type FixState, useDismissedFixes } from "./fix";
+import { FixNotice, FixRuns, type FixState, phases, useDismissedFixes } from "./fix";
 import { useArchive } from "./up-next";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
@@ -104,7 +104,7 @@ import {
 import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
 import { readSelection, withSelection } from "@baum/viewer/review-selection";
-import { fullReviewPlace, useReviewPage, withView } from "./tiles/view";
+import { fullReviewPlace, useArrangedTiles, useReviewPage, withView } from "./tiles/view";
 import { useTilePlaces } from "./tiles/use-tile-places";
 import { TileHostContext, type TileHost } from "./tiles/host";
 import { commentCounts } from "./tiles/comments";
@@ -293,7 +293,11 @@ export function LocalReview({
   const url = useUrlState();
   // The tiles page reads each version with its tile document; the full
   // review reads the review alone.
-  const tilesPage = useReviewPage() === "tiles";
+  const chosenTiles = useReviewPage() === "tiles";
+  // With tile reviews on and no page chosen, the page reads the tiles too and
+  // shows them for a version whose tiles were arranged.
+  const arranged = useArrangedTiles();
+  const tilesPage = chosenTiles || arranged;
   const readDocument = tilesPage ? tilesRequest : documentRequest;
   const places = useTilePlaces();
   const back = backTo(url.search);
@@ -564,7 +568,10 @@ export function LocalReview({
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
   // The tiles page draws its places once the document carries its tiles; a
   // review the daemon could not convert is shown as the full review.
-  const onTiles = tilesPage && Boolean(tileDocOf(shownDocument));
+  const onTiles =
+    tilesPage &&
+    Boolean(tileDocOf(shownDocument)) &&
+    (chosenTiles || tileDocOf(shownDocument)?.origin.kind === "generated");
   // Escape or u inside a tile goes back to the landing page.
   useBackToLanding(onTiles, url);
   // Rebuilt only when what the tiles read of it changes, and never on the
@@ -1152,7 +1159,7 @@ export function LocalReview({
                 )}
                 notices={
                   <>
-                    {tilesPage && tilesMissing(shownDocument) ? (
+                    {chosenTiles && tilesMissing(shownDocument) ? (
                       <Notice
                         action={
                           <a
@@ -1586,7 +1593,7 @@ export function ReviewJob({
           {job.state === "queued" ? "New version queued" : "Generating a new version"}
           {/* The title already says it generates; another phase is news. */}
           {job.state === "running" && job.phase && job.phase !== "generating" ? (
-            <span className="font-normal text-tertiary"> · {job.phase}</span>
+            <span className="font-normal text-tertiary"> · {phases[job.phase] ?? job.phase}</span>
           ) : null}
         </p>
         {started || saved ? (

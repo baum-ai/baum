@@ -1999,11 +1999,11 @@ export function SettingsPage({
 /** The most jobs the daemon runs at once (repos.MaxJobConcurrency). */
 const MAX_JOB_CONCURRENCY = 4;
 
-/** How many reviews, fixes and feature builds run at once; questions to a
- *  review's agent run beside them. The daemon applies a change at once. */
 /** The labs switch that arranges new reviews as tiles: one more model call
  *  after a review is written chooses which tiles lead. Off by default. */
 function TileReviewsRow() {
+  // Which page an arranged version opens on follows the switch.
+  const { refresh } = usePreferences();
   const [on, setOn] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -2026,6 +2026,7 @@ function TileReviewsRow() {
         "PUT",
       );
       setOn(answer.tile_reviews);
+      refresh();
     } catch (e) {
       setOn(before);
       setError(errorText(e));
@@ -2058,6 +2059,8 @@ function TileReviewsRow() {
   );
 }
 
+/** How many reviews, fixes and feature builds run at once; questions to a
+ *  review's agent run beside them. The daemon applies a change at once. */
 function JobConcurrencyRow() {
   const [value, setValue] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);

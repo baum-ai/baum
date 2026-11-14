@@ -57,6 +57,31 @@ func TestLabsSettings(t *testing.T) {
 	if prefs, err := registry.Preferences(context.Background()); err != nil || !prefs.Labs.TileReviewsOn() {
 		t.Fatalf("not saved: %v", err)
 	}
+	// With tile reviews on, an arranged version opens on its tiles; with the
+	// tiles page chosen every version does already.
+	appearance := func(method, body string) appearanceSettings {
+		t.Helper()
+		req, _ := http.NewRequest(method, server.URL+"/api/settings/appearance", strings.NewReader(body))
+		response, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = response.Body.Close() }()
+		var got appearanceSettings
+		if err := json.NewDecoder(response.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := appearance("GET", ""); !got.ArrangedTiles || got.ReviewPage != "full" {
+		t.Errorf("appearance %+v", got)
+	}
+	if got := appearance("PUT", `{"review_page":"full"}`); !got.ArrangedTiles {
+		t.Error("the full review page keeps arranged versions off their tiles")
+	}
+	if got := appearance("PUT", `{"review_page":"tiles"}`); got.ArrangedTiles {
+		t.Error("arranged tiles with the tiles page chosen")
+	}
 	if got := call("PUT", `{}`, 200); !got.TileReviews {
 		t.Error("an empty change turned it off")
 	}

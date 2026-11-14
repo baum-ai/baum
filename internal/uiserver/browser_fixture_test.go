@@ -413,6 +413,25 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		previous = next
 	}
 	seedAskConversation(t, versions, previous.Metadata.Version)
+	// acme/demo#12, no longer listed, keeps one saved review whose tiles were
+	// arranged: it has a composition, which opens it on the tiles page while
+	// tile reviews are on.
+	{
+		var doc map[string]any
+		if err := json.Unmarshal(previous.Document, &doc); err != nil {
+			t.Fatal(err)
+		}
+		review := doc["review"].(map[string]any)
+		review["pull_request"], review["version"], review["previous_version"] = 12, 1, nil
+		doc["summary"].(map[string]any)["text"] = "An arranged fixture review"
+		document, _ := json.Marshal(doc)
+		composition, _ := tileviewtest.PinnedComposition(t, document)
+		arranged := store.Version{Metadata: store.Metadata{Version: 1, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"},
+			Document: document, Attachments: previous.Attachments, Composition: composition}
+		if err := versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 12}, store.Version{}, arranged); err != nil {
+			t.Fatal(err)
+		}
+	}
 	write := true
 	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AssignedToMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 11, HeadSHA: repo.Head, Title: "A branch behind its base", State: "OPEN", URL: "https://github.com/acme/demo/pull/11", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
 	prs[0].Review, prs[0].Checks, prs[0].Merge, prs[0].Unresolved = "approved", "passing", "ready", new(0)

@@ -41,6 +41,7 @@ export const phases: Record<string, string> = {
   answering: "The agent is answering",
   "preparing a new session": "Starting a new agent session",
   "checking citations": "Checking the answer's citations",
+  arranging: "Arranging the page…",
 };
 
 /** Where a fix the person asked for stands before its job exists: on its way

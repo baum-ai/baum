@@ -397,3 +397,37 @@ test("a recommendation has a line of its own and the changes stay on the first s
   await line.getByRole("button", { name: /→/ }).first().click();
   await expect(page).toHaveURL(/tile=sec_api/);
 });
+
+test("with tile reviews on, an arranged version opens on its tiles", async ({ page }) => {
+  await open(page, "repository=acme%2Fdemo&pr=12");
+  const labs = (on: boolean) =>
+    page.evaluate(
+      (tile_reviews) =>
+        fetch("api/settings/labs", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tile_reviews }),
+        }).then((r) => r.status),
+      on,
+    );
+  const strip = page.getByRole("region", { name: "Review at a glance" });
+  // Off, it opens on the full review, as the setting says.
+  await expect(page.getByText("An arranged fixture review").first()).toBeVisible();
+  await expect(strip).toHaveCount(0);
+  expect(await labs(true)).toBe(200);
+  try {
+    await open(page, "repository=acme%2Fdemo&pr=12");
+    await expect(strip).toBeVisible();
+    await expect(page.locator("article[data-tile]").first()).toBeVisible();
+    // The address still picks the full review.
+    await open(page, "repository=acme%2Fdemo&pr=12&view=full");
+    await expect(page.getByText("An arranged fixture review").first()).toBeVisible();
+    await expect(strip).toHaveCount(0);
+    // A version that was not arranged opens on the full review.
+    await open(page, "repository=acme%2Fdemo&pr=7");
+    await expect(page.getByText("Local fixture review version 2").first()).toBeVisible();
+    await expect(strip).toHaveCount(0);
+  } finally {
+    expect(await labs(false)).toBe(200);
+  }
+});
