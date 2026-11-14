@@ -93,11 +93,20 @@ func (f *tileTypeFixture) pullAPI() http.Handler {
 
 func newTileTypeFixture(t *testing.T) *tileTypeFixture {
 	t.Helper()
-	f := &tileTypeFixture{store: &tilelibrary.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}, checks: fakeChecks{}}
+	checks := fakeChecks{}
+	f := newTileTypeFixtureWith(t, checks)
+	f.checks = checks
+	return f
+}
+
+// newTileTypeFixtureWith is the fixture over the render checker checks.
+func newTileTypeFixtureWith(t *testing.T, checks tilelibrary.Checks) *tileTypeFixture {
+	t.Helper()
+	f := &tileTypeFixture{store: &tilelibrary.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}}
 	proposers := &uiserver.Proposers{TileTypes: f.store}
 	f.patch = "@@ -1,2 +1,3 @@\n func unrelated() {\n+\tprintln(\"nothing in common with the samples\")\n }\n"
 	f.mcp = agentcontext.New(agentcontext.Options{API: f.pullAPI(), Version: "test", Proposers: proposers.Pages(),
-		TileTypes: uiserver.TileTypes{Store: f.store, Checks: f.checks}})
+		TileTypes: uiserver.TileTypes{Store: f.store, Checks: checks}})
 	token, id, revoke, err := f.mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
 	if err != nil {
 		t.Fatal(err)

@@ -1753,6 +1753,16 @@ errors), `fail`, `hang` and `unavailable`. The codes and their hints are in
 `tiles/kit/GUIDE.md` ("The render check"), which a test keeps equal to
 `tilechecks.Hints`.
 
+`Checker.Result(ctx, id)` is `tilelibrary.Checks`, which `propose_tile_type`
+rests on (the daemon sets `uiserver.TileTypes{Store, Checks}` to the
+checker): it keeps the newest 64 checks' results for an hour, in memory, each
+with its verdict, the definition it checked (with its HTML) and its digest,
+and each of the candidate's own samples (under the name the check gave it)
+with whether it passed (no error of its own or of the whole candidate) and
+whether it is synthetic (hunks or items of its own, every citation on both
+faces resolving to them). Preflights are not kept, nor a check whose
+definition was not valid; an expired or unknown ID is refused as unknown.
+
 - **Before drawing.** `Validator.CheckDefinition` (`definition_invalid`, or
   `data_schema_invalid` for the schema), `kit.Lint` (errors are `lint`
   errors and end the check; warnings are reported), each sample against the
@@ -1984,7 +1994,8 @@ computer by `internal/tilelibrary`, in the private application database
   panel's generic change view diffs them field by field and the person sees
   the texts that will instruct future fill models. A richer card with a
   preview drawn from the check's sample is later UI work. It rests on a render
-  check, which `tilelibrary.Checks` looks up by id (verdict, the checked
+  check, which `tilelibrary.Checks` (the render checker's `Result`, see
+  "Render check") looks up by id (verdict, the checked
   definition and its digest, and per sample whether it passed and is
   synthetic); it needs a pass on at least one synthetic sample (hunks and
   items of its own, every citation resolving to them), and saves only the

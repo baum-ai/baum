@@ -206,6 +206,8 @@ type Options struct {
 	Wait, Claim, Hang time.Duration
 	// Log receives what the check logs; nil is slog.Default.
 	Log *slog.Logger
+	// Now is the clock Result's results expire by; nil is time.Now.
+	Now func() time.Time
 }
 
 // Checker runs render checks. New makes one; it is safe for concurrent use.
@@ -227,6 +229,10 @@ type Checker struct {
 	// preflights are the queued or running preflights by pair, so a page
 	// asking twice waits on one.
 	preflights map[string]*job
+	// results are the recent checks' results for Result, by ID; order is
+	// their IDs, the oldest first.
+	results map[string]kept
+	order   []string
 }
 
 type job struct {
@@ -235,6 +241,9 @@ type job struct {
 	def     tiles.TypeDefinition
 	// kinds maps each sample's name to its kind.
 	kinds map[string]string
+	// own are the candidate's own samples, under the names the check gives
+	// them.
+	own []library.Sample
 	// found are the problems the daemon found before queueing.
 	errors, warnings []Problem
 	// record names the pair whose verdict is kept, when there is one.
@@ -311,6 +320,7 @@ func (c *Checker) Close() error {
 func (c *Checker) Submit(ctx context.Context, candidate Candidate) (Result, error) {
 	j, done := c.prepare(candidate)
 	if done {
+		c.keep(j, j.result)
 		return j.result, nil
 	}
 	if err := c.enqueue(j, maxQueued); err != nil {
@@ -407,6 +417,9 @@ func (c *Checker) prepare(candidate Candidate) (*job, bool) {
 			pool = append(pool, citation)
 		}
 		maps.Copy(items, s.Items)
+		own := s
+		own.Name = name
+		j.own = append(j.own, own)
 		j.Samples = append(j.Samples, JobSample{Name: name, Kind: KindSample, Data: s.Data, Refs: &Refs{Glance: glance, Detail: detail}})
 	}
 	if len(candidate.Data) > 0 {
@@ -862,6 +875,7 @@ func (c *Checker) finish(j *job, result Result) {
 	}
 	close(j.done)
 	c.mu.Unlock()
+	c.keep(j, result)
 	if j.claimed && result.Verdict != VerdictHang {
 		c.publish(j.ID, StateDone)
 	}
