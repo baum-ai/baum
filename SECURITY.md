@@ -1536,10 +1536,18 @@ The answer is `no-store`, sets no cookie, ignores `Range` and carries
 - A frame can ask the page only to jump to an item its own data cites,
   which the page resolved from the review it already shows (the frame names
   it by key, never by address), to open the session panel's question about
-  the tile, or to act on a whitelisted key (Escape, `u`, `j`, `k`, the
-  arrows, `[`, `]`, `?`); and only from a detail the reader is in, with the
-  keyboard on the frame (and, for a jump or a question, a recent click or
-  key press). A glance asks nothing and takes no focus; focus a frame takes
+  the tile, or to act on a whitelisted key; and only from a detail the
+  reader is in, with the keyboard on the frame (and, for a jump or a
+  question, a recent click or key press). The whitelist is the page's
+  reading keys only: Escape and `u` (back to the summary), `j` and `k`
+  (next and previous), ArrowLeft and ArrowRight (previous and next tile),
+  `[` and `]` (the sidebars) and `?` (the shortcuts sheet). The page
+  dispatches a `keydown` on the frame's element carrying the key's name and
+  whether Shift was held, nothing else (no other modifier, code or text). No
+  key that acts outward or changes anything is on it: not Enter or Space,
+  `m` (merge), `v` (send a review), `c` (comment), `a` (ask), `f` (fix),
+  `t`, `g`, or any key with Ctrl, Alt or Meta; the frame's kit forwards
+  none of those, and the page drops any other key a frame names. A glance asks nothing and takes no focus; focus a frame takes
   by itself is taken back, and a frame that keeps taking it is unmounted.
 - A frame that does not start, does not draw in time, navigates itself or
   floods is unmounted and its tile says it couldn't load. That failure is

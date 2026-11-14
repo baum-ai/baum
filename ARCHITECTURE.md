@@ -1513,7 +1513,8 @@ referrerpolicy="no-referrer" allow="" title="<tile title>">`; never
   page's life): nothing a frame sends marks its type or another tile as
   broken, and only the daemon marks a digest hung. A tile the daemon left
   unavailable keeps the unavailable face; one made with a newer kit says
-  "This tile was made with a newer version of baum".
+  "This tile was made with a newer version of baum". A tile still being
+  written (`pending`) is drawn as built-in ones are, without a frame.
 - **Citations** (`refs.ts`). The page walks the data as the daemon does
   (members by name, items in order, the shapes of `$defs/citation`, at most
   256) and resolves each against the document on screen: hunks (path,

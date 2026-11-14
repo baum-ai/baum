@@ -7,6 +7,8 @@ import {
   frameBox,
   frameReady,
   open,
+  PR7,
+  placeWidget,
   servePatch,
   SHOTS,
   watchErrors,
@@ -192,4 +194,84 @@ test("frames mount near the visible area and unmount far from it", async ({ page
   await expect(last.locator("iframe")).toHaveCount(0);
   // Never more than the cap at once.
   expect(await page.locator("[data-custom-tile] iframe").count()).toBeLessThanOrEqual(16);
+});
+
+for (const size of ["half", "third"] as const)
+  for (const width of [1440, 900] as const)
+    test(`the glance placed at ${size} on the landing area at ${width}`, async ({ page }) => {
+      await placeWidget(page, size);
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: "light" });
+      await open(page, PR7);
+      const card = page.locator('article[data-tile="widget_health"]');
+      await expect(card).toBeVisible();
+      await frameReady(page, "widget_health");
+      await expect(widget(page).locator("body")).toContainText("stores changed");
+      // The frame fills the card's room, the card the grid's cell; nothing
+      // inside the frame scrolls or runs past its box sideways.
+      const [cardBox, box] = await Promise.all([
+        card.boundingBox(),
+        frameBox(page, "widget_health").boundingBox(),
+      ]);
+      expect(box!.width).toBeLessThanOrEqual(cardBox!.width);
+      expect(box!.height).toBeGreaterThanOrEqual(112);
+      expect(
+        await widget(page)
+          .locator("html")
+          .evaluate((html) => html.scrollWidth <= html.clientWidth + 1),
+      ).toBe(true);
+      if (SHOTS) {
+        mkdirSync(SHOTS, { recursive: true });
+        await card.screenshot({ path: join(SHOTS, `card-${size}-${width}.png`) });
+        await page.screenshot({ path: join(SHOTS, `landing-${size}-${width}.png`) });
+      }
+    });
+
+test("an earlier version alone and compared draws its own custom tiles", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, detail("widget_health"));
+  await frameReady(page, "widget_health");
+  const versions = page.getByRole("button", { name: "Review version", exact: true });
+  await versions.click();
+  await page.getByRole("button", { name: "View v1", exact: true }).click();
+  await expect(versions).toContainText("v1");
+  await frameReady(page, "widget_health");
+  await expect(widget(page).locator("body")).toContainText("widget_tags");
+  // Compared, each column mounts a frame of its own, and both draw.
+  await versions.click();
+  await page.getByRole("checkbox", { name: "Compare v1" }).check();
+  await expect(page.locator('[data-custom-tile="widget_health"]')).toHaveCount(2);
+  await expect(
+    page.locator('[data-custom-tile="widget_health"][data-frame-state="ready"]'),
+  ).toHaveCount(2, {
+    timeout: 20000,
+  });
+});
+
+test("a custom tile still being written, then written", async ({ page }) => {
+  // As a draft serves it while its job runs: pending with no data, then
+  // ready once the tile is written.
+  let written = false;
+  await page.route(
+    (url) => url.pathname.endsWith("/api/tiles"),
+    async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      if (!written)
+        for (const tile of body.tiles.tiles)
+          if (tile.id === "widget_health") Object.assign(tile, { state: "pending", data: {} });
+      await route.fulfill({ response, json: body });
+    },
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, everyTile);
+  const card = page.locator('article[data-tile="widget_health"]');
+  await card.scrollIntoViewIfNeeded();
+  await expect(card).toContainText("Writing");
+  await expect(card.locator("iframe")).toHaveCount(0);
+  written = true;
+  await page.reload();
+  await card.scrollIntoViewIfNeeded();
+  await frameReady(page, "widget_health");
+  await expect(widget(page).locator("body")).toContainText("2 stores changed");
 });

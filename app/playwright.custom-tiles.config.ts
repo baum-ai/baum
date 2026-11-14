@@ -8,8 +8,8 @@ import application from "./playwright.config";
 // them, so its tile page and screenshots are unchanged.
 //
 // BAUM_E2E_WEBKIT=1 also runs the frame isolation suite in WebKit, which
-// approximates the macOS desktop app's engine; it needs Playwright's WebKit
-// and its system libraries, which the ui-test image does not carry.
+// approximates the macOS desktop app's engine (`just local_app::e2e-webkit`;
+// the ui-test image carries WebKit, per-PR CI does not install it).
 const fixture = application.webServer as Exclude<
   typeof application.webServer,
   unknown[] | undefined

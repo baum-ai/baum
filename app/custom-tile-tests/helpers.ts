@@ -91,3 +91,25 @@ export async function servePatch(page: Page) {
     (route) => route.fulfill({ json: { patch } }),
   );
 }
+
+/** Serves acme/demo#7's tiles with widget_health placed as a composition
+ *  might place it: on the landing area, second, at `size`. */
+export async function placeWidget(page: Page, size: "half" | "third") {
+  await page.route(
+    (url) => url.pathname.endsWith("/api/tiles"),
+    async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const layout = body.tiles?.layout;
+      if (layout) {
+        const at = layout.entries.findIndex(
+          (entry: { tile: string }) => entry.tile === "widget_health",
+        );
+        const [entry] = layout.entries.splice(at, 1);
+        layout.entries.splice(1, 0, { ...entry, size });
+        if (at >= layout.landing) layout.landing += 1;
+      }
+      await route.fulfill({ response, json: body });
+    },
+  );
+}

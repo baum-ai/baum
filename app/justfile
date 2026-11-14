@@ -12,6 +12,14 @@ e2e:
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
     {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:custom-tiles && pnpm test:development && pnpm test:desktop'
 
+# The custom tile frame isolation suite (custom-tile-tests/tile-frames.spec.ts)
+# in WebKit, which approximates the macOS desktop app's engine. Opt-in: not
+# part of e2e or per-PR CI.
+e2e-webkit:
+    {{ heavy }} pnpm build
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
+    {{ heavy }} sh -ec 'BAUM_E2E_WEBKIT=1 pnpm test:custom-tiles --project=webkit'
+
 # Pictures of the custom tile kit's demo tiles (e2e/tile-kit) in sandboxed
 # frames under the frame route's headers, glance and detail, light and dark,
 # written to test-results/tile-kit. The Go kit composes the frames first.

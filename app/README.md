@@ -2219,10 +2219,10 @@ the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`:
 the well-behaved tile's card and detail at 1440, 900 and 390px in light and
 dark (pictures into `test-results/custom-tiles` with `CUSTOM_TILE_SHOTS=1`),
 and the escape probes on the real frame route (`tile-frames.spec.ts`), with
-a server on port 4170 that must hear nothing. `BAUM_E2E_WEBKIT=1` adds a
-WebKit run of the probes where Playwright's WebKit is installed (the ui-test
-image has Chromium only). The main suite starts the fixture without custom
-tiles.
+a server on port 4170 that must hear nothing. `just local_app::e2e-webkit`
+runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
+macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
+The main suite starts the fixture without custom tiles.
 `just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
 (synthetic data) with the Go kit and takes pictures of them in sandboxed
 frames under the frame route's headers, glance at each card size and detail at
