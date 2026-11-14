@@ -123,7 +123,9 @@ func TestPutNormalisesWhatAModelWrote(t *testing.T) {
 	}
 	c := tilestest.RandomComposition(rand.New(rand.NewPCG(7, 1)), converted, true)
 	c.Layout.Entries = append(c.Layout.Entries, tiles.Entry{Tile: "no_such_tile", Size: tiles.SizeFull})
-	c.Generator = &tiles.Generator{PromptVersion: "tiles-1", Model: "example-model"}
+	c.Generator = &tiles.Generator{PromptVersion: "body"}
+	c.Layout.Hidden = []string{"media"}
+	v.CompositionGenerator = &tiles.Generator{PromptVersion: "tiles-1", Model: "example-model"}
 	if v.Composition, err = json.Marshal(c); err != nil {
 		t.Fatal(err)
 	}
@@ -150,9 +152,10 @@ func TestPutNormalisesWhatAModelWrote(t *testing.T) {
 	if report.Total == 0 {
 		t.Fatal("the hostile composition needed no repair")
 	}
-	// The hidden list is the host's, kept as given.
-	want.Layout.Hidden = c.Layout.Hidden
-	if err := want.SetGenerator(*c.Generator); err != nil {
+	if len(stored.Layout.Hidden) != 0 {
+		t.Error("a hidden list was stored")
+	}
+	if err := want.SetGenerator(*v.CompositionGenerator); err != nil {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(want)
@@ -213,7 +216,7 @@ func TestPutRefusesWhatIsNotAComposition(t *testing.T) {
 	raw, _ := tileviewtest.PinnedComposition(t, v.Document)
 	var c tiles.Composition
 	_ = json.Unmarshal(raw, &c)
-	c.Generator = &tiles.Generator{Template: "Not A Template"}
+	v.CompositionGenerator = &tiles.Generator{Template: "Not A Template"}
 	v.Composition, _ = json.Marshal(c)
 	if err := s.Put(ctx, compositionKey, Version{}, v); !errors.Is(err, ErrComposition) {
 		t.Errorf("generator: %v", err)
@@ -522,4 +525,16 @@ func mustLatest(t *testing.T, s *Store) Version {
 		t.Fatal(err)
 	}
 	return v
+}
+
+func TestParseCompositionIsNilForNoneAndUnusable(t *testing.T) {
+	raw, _ := tileviewtest.PinnedComposition(t, reviewVersion(t, 1).Document)
+	if ParseComposition(raw) == nil {
+		t.Error("a stored composition did not parse")
+	}
+	for _, bad := range []string{"", "null", "not json", `{"schema":"baum.composition/9"}`} {
+		if ParseComposition([]byte(bad)) != nil {
+			t.Errorf("%q parsed", bad)
+		}
+	}
 }

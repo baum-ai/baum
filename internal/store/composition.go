@@ -77,7 +77,7 @@ var ErrComposition = errors.New("invalid composition")
 // the schema accepts, is an error; one that chooses nothing, and one the
 // document cannot take (it does not convert to tiles), is not stored, so a
 // layout never costs a review its place in the history.
-func storableComposition(document, raw []byte) ([]byte, error) {
+func storableComposition(document, raw []byte, generator *tiles.Generator) ([]byte, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
@@ -85,7 +85,7 @@ func storableComposition(document, raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, ErrComposition
 	}
-	if given.Empty() && given.Generator == nil {
+	if given.Empty() && generator == nil {
 		return nil, nil
 	}
 	normalized, err := review.NormalizeStored(document)
@@ -103,12 +103,11 @@ func storableComposition(document, raw []byte) ([]byte, error) {
 		workstats.Inc("store.compositions_dropped")
 		return nil, nil
 	}
-	if given.Generator != nil {
-		if err := n.SetGenerator(*given.Generator); err != nil {
+	if generator != nil {
+		if err := n.SetGenerator(*generator); err != nil {
 			return nil, ErrComposition
 		}
 	}
-	n.Layout.Hidden = given.Layout.Hidden
 	if n.Empty() && n.Generator == nil {
 		return nil, nil
 	}
@@ -117,4 +116,18 @@ func storableComposition(document, raw []byte) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// ParseComposition parses a version's stored composition (Version.Composition)
+// for a reader, such as the compose stage reading the previous version's. It
+// returns nil for none (NULL or empty) and for one that cannot be read.
+func ParseComposition(raw []byte) *tiles.Composition {
+	if len(raw) == 0 {
+		return nil
+	}
+	c, err := tiles.ParseComposition(raw)
+	if err != nil {
+		return nil
+	}
+	return c
 }

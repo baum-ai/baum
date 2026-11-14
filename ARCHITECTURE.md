@@ -1111,9 +1111,13 @@ INSERT and nothing changes it afterwards: `RefreshCurrent` and
 `CompleteCurrent` rewrite only the document, and a composition is applied on
 read, so it follows a refreshed document. Only a normalised composition is
 stored: `Put` normalises the one it is given against the tile document
-converted from the document (`tiles.NormalizeComposition`), keeping the
-generator (refused if the schema would not accept it) and the hidden list as
-the host's own parts. One that is not `baum.composition/1` is refused
+converted from the document (`tiles.NormalizeComposition`) and stores exactly
+what it returns, so a hidden list or generator in the body it was given is
+dropped: hiding tiles is a personal edit that does not belong in the shared
+version row. The generator comes apart from the body, in
+`Version.CompositionGenerator`, and is set with `SetGenerator` (refused if the
+schema would not accept it). `store.ParseComposition` reads a stored one for a
+reader, nil for none or an unusable one. One that is not `baum.composition/1` is refused
 (`store.ErrComposition`); one that chooses nothing, and one the document
 cannot take (it does not convert to tiles), is not stored, so a layout never
 costs a review its place in the history, and the second is counted

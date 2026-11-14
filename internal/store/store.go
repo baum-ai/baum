@@ -39,6 +39,7 @@ import (
 	"github.com/baum-ai/baum/internal/sqlitepool"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/tiles"
 )
 
 var ErrNotFound = errors.New("no stored review version; generate a review in the baum desktop app first")
@@ -125,6 +126,11 @@ type Version struct {
 	// parses it with tiles.ParseComposition and ignores one it cannot use.
 	// RefreshCurrent and CompleteCurrent leave it as it is.
 	Composition json.RawMessage `json:"-"`
+	// CompositionGenerator is, on a version put, where the composition came
+	// from (validated by tiles.Composition.SetGenerator). It is the caller's
+	// to give and is never read from the composition's body. Not set on read:
+	// it is in the stored composition.
+	CompositionGenerator *tiles.Generator `json:"-"`
 	// Revision names Document's stored bytes (see Store.Revision), read with
 	// them: a nonzero revision equal to one read before means the same bytes.
 	// 0 when the store cannot vouch for one, and on versions not yet stored.
@@ -518,7 +524,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if err != nil {
 		return err
 	}
-	composition, err := storableComposition(document, v.Composition)
+	composition, err := storableComposition(document, v.Composition, v.CompositionGenerator)
 	if err != nil {
 		return err
 	}
