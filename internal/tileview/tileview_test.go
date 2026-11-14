@@ -2,12 +2,14 @@ package tileview
 
 import (
 	"encoding/json"
+	"math/rand/v2"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/tilestest"
@@ -27,7 +29,7 @@ func decode(t *testing.T, r Response) map[string]any {
 }
 
 func TestBuildConvertsAReview(t *testing.T) {
-	r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), tiles.Options{})
+	r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{})
 	if r.Tiles == nil || r.Problem != "" {
 		t.Fatalf("tiles %v, problem %q", r.Tiles != nil, r.Problem)
 	}
@@ -56,7 +58,7 @@ func TestBuildDraftHasAPendingContext(t *testing.T) {
 		draft bool
 		want  string
 	}{{false, ""}, {true, tiles.StatePending}} {
-		r := Build(raw, tiles.Options{Draft: tc.draft})
+		r := Build(raw, nil, tiles.Options{Draft: tc.draft})
 		var state string
 		for _, tile := range r.Tiles.Tiles {
 			if tile.ID == tiles.TypeContext {
@@ -75,7 +77,7 @@ func TestBuildFailureLeavesTilesNullWithoutContent(t *testing.T) {
 		`{"schema":"baum.review/1","unknown_member":"PRIVATE_TEXT"}`,
 		`not json PRIVATE_TEXT`,
 	} {
-		r := Build([]byte(document), tiles.Options{})
+		r := Build([]byte(document), nil, tiles.Options{})
 		if r.Tiles != nil || r.Problem == "" || strings.Contains(r.Problem, "PRIVATE_TEXT") {
 			t.Errorf("%s: tiles %v, problem %q", document, r.Tiles != nil, r.Problem)
 		}
@@ -87,7 +89,7 @@ func TestBuildFailureLeavesTilesNullWithoutContent(t *testing.T) {
 }
 
 func TestDraftOutlineConverts(t *testing.T) {
-	r := Build(tileviewtest.Encode(t, tileviewtest.DraftOutline(t)), tiles.Options{Draft: true})
+	r := Build(tileviewtest.Encode(t, tileviewtest.DraftOutline(t)), nil, tiles.Options{Draft: true})
 	if r.Tiles == nil || r.Problem != "" {
 		t.Fatalf("problem %q", r.Problem)
 	}
@@ -113,7 +115,7 @@ func TestWarm(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), tiles.Options{}); r.Tiles == nil {
+	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{}); r.Tiles == nil {
 		t.Fatal(r.Problem)
 	}
 }
@@ -147,5 +149,119 @@ func TestDraftOutlineMatchesTheGolden(t *testing.T) {
 	}
 	if !reflect.DeepEqual(want, got) {
 		t.Fatal("the draft helper no longer converts to the draft-outline golden")
+	}
+}
+
+// With no composition, an empty one or one that chooses nothing, the answer
+// is the converted document's, byte for byte.
+func TestBuildWithoutACompositionIsUnchanged(t *testing.T) {
+	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
+	want, err := Encode(Build(raw, nil, tiles.Options{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, composition := range map[string][]byte{
+		"empty":      {},
+		"null":       []byte("null"),
+		"chooses":    []byte(`{"schema":"baum.composition/1","layout":{"entries":[]}}`),
+		"unreadable": []byte(`{"schema":`),
+		"other":      []byte(`{"schema":"baum.composition/2","layout":{"entries":[]}}`),
+		"not json":   []byte(`PRIVATE_TEXT`),
+	} {
+		got, err := Encode(Build(raw, composition, tiles.Options{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got.Data) != string(want.Data) || got.ETag != want.ETag {
+			t.Errorf("%s: the answer changed", name)
+		}
+	}
+}
+
+// A composition that cannot be used is ignored and counted, without a problem
+// for the reader and without quoting it.
+func TestBuildIgnoresAnUnusableCompositionAndCountsIt(t *testing.T) {
+	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
+	before := workstats.Take()
+	r := Build(raw, []byte(`{"schema":"baum.composition/9","secret":"PRIVATE_TEXT"}`), tiles.Options{})
+	if r.Tiles == nil || r.Problem != "" {
+		t.Fatalf("tiles %v, problem %q", r.Tiles != nil, r.Problem)
+	}
+	if got := workstats.Take().Counters["tileview.compositions_ignored"] - before.Counters["tileview.compositions_ignored"]; got != 1 {
+		t.Errorf("%d ignored compositions counted, want 1", got)
+	}
+}
+
+// A composition changes the layout as composed, and the document it gives
+// passes every check of a generated one.
+func TestBuildComposesTheLayout(t *testing.T) {
+	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
+	plain := Build(raw, nil, tiles.Options{})
+	composition, pinned := tileviewtest.PinnedComposition(t, raw)
+	r := Build(raw, composition, tiles.Options{})
+	if r.Tiles == nil || r.Problem != "" {
+		t.Fatalf("problem %q", r.Problem)
+	}
+	if plain.Tiles.Layout.Entries[0].Tile == pinned || r.Tiles.Layout.Entries[0].Tile != pinned || !r.Tiles.Layout.Entries[0].Pin {
+		t.Fatalf("first tile %q, want %q pinned (plain: %q)", r.Tiles.Layout.Entries[0].Tile, pinned, plain.Tiles.Layout.Entries[0].Tile)
+	}
+	if r.Tiles.Origin.Kind != tiles.OriginGenerated {
+		t.Errorf("origin %q", r.Tiles.Origin.Kind)
+	}
+	parsed, err := tiles.ParseComposition(composition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failures := tilestest.CheckGenerated(r.Document, parsed, r.Tiles); len(failures) > 0 {
+		t.Fatalf("generated document: %v", failures)
+	}
+	// The review document served beside the tiles is the same.
+	if string(r.Document) != string(plain.Document) {
+		t.Error("the review document changed")
+	}
+	// It still round-trips to the review.
+	back, err := tiles.ToReview(r.Tiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if equal, err := tilestest.RoundTripEqual(r.Document, back); err != nil || !equal {
+		t.Fatalf("round trip: %v %v", equal, err)
+	}
+}
+
+// Seeded random compositions, hostile ones included, always give a checked
+// document.
+func TestBuildComposesRandomCompositions(t *testing.T) {
+	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
+	normalized, err := review.NormalizeStored(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	converted, err := tiles.FromReview(normalized, tiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for seed := range uint64(20) {
+		c := tilestest.RandomComposition(rand.New(rand.NewPCG(seed, 1)), converted, seed%2 == 1)
+		// What a store holds: the normalised composition.
+		normal, _ := tiles.NormalizeComposition(converted, c)
+		encoded, err := json.Marshal(normal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := Build(raw, encoded, tiles.Options{})
+		if r.Tiles == nil || r.Problem != "" {
+			t.Fatalf("seed %d: problem %q", seed, r.Problem)
+		}
+		if failures := tilestest.CheckGenerated(r.Document, &normal, r.Tiles); len(failures) > 0 {
+			t.Fatalf("seed %d: %v", seed, failures)
+		}
+	}
+}
+
+func TestKeyNamesTheComposition(t *testing.T) {
+	a, b := []byte(`{"a":1}`), []byte(`{"a":2}`)
+	if Key(nil) != "" || Key([]byte{}) != "" || Key(a) == "" || Key(a) == Key(b) || Key(a) != Key([]byte(`{"a":1}`)) {
+		t.Error("keys do not name the composition's bytes")
 	}
 }

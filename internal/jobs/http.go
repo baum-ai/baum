@@ -222,7 +222,7 @@ func (q *Queue) Handler() http.Handler {
 		if r.URL.Query().Get("tiles") == "1" {
 			// The draft's tile view: a missing context is still being
 			// written, so it is a pending context tile.
-			body, err := drafts.get(id, revision, draft)
+			body, err := drafts.get(id, revision, draft, nil)
 			if err != nil {
 				http.Error(w, http.StatusText(500), 500)
 				return
@@ -280,21 +280,26 @@ type draftTiles struct {
 }
 
 type draftTileView struct {
-	revision int
-	body     []byte
+	revision    int
+	composition string
+	body        []byte
 }
 
-func (d *draftTiles) get(id string, revision int, draft []byte) ([]byte, error) {
+// get returns the encoded tile view of the draft, composed with composition
+// when given (no draft has one yet). The kept view is that of the same draft
+// count and composition.
+func (d *draftTiles) get(id string, revision int, draft, composition []byte) ([]byte, error) {
+	key := tileview.Key(composition)
 	d.mu.Lock()
 	kept, ok := d.kept[id]
 	d.mu.Unlock()
-	if ok && kept.revision == revision {
+	if ok && kept.revision == revision && kept.composition == key {
 		return kept.body, nil
 	}
 	full, err := json.Marshal(struct {
 		Draft int `json:"draft"`
 		tileview.Response
-	}{revision, tileview.Build(draft, tiles.Options{Draft: true})})
+	}{revision, tileview.Build(draft, composition, tiles.Options{Draft: true})})
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +308,7 @@ func (d *draftTiles) get(id string, revision int, draft []byte) ([]byte, error) 
 	if d.kept == nil {
 		d.kept = map[string]draftTileView{}
 	}
-	d.kept[id] = draftTileView{revision, full}
+	d.kept[id] = draftTileView{revision, key, full}
 	d.mu.Unlock()
 	return full, nil
 }

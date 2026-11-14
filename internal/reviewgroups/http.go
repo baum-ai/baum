@@ -377,7 +377,7 @@ func (h *API) tiles(w http.ResponseWriter, r *http.Request) {
 	body, found := h.tileAnswers.Get(key)
 	if !found {
 		var err error
-		if body, err = tileview.Encode(tileview.Build(version.Document, tiles.Options{})); err != nil {
+		if body, err = tileview.Encode(tileview.Build(version.Document, nil, tiles.Options{})); err != nil {
 			fail(w, err)
 			return
 		}
