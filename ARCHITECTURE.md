@@ -961,8 +961,12 @@ review's:
   `tiles.Promotable` lists the blocks a document offers.
 - `library`: library tiles, each a custom tile type's definition, with its
   digest, and the data filled for this review (`pending`, with empty data,
-  while a draft's fill runs). Its ID and title are its definition's name and
-  title, so a review has at most one tile of a library type.
+  while a draft's fill runs). Its title is its definition's title and its ID
+  its definition's name (`tiles.LibraryTileID`), or `library_` and the name
+  for a name that starts as a change, promoted or authored tile's ID does
+  (`sec_`, `table_`, `code_`, `prose_`, `diagram_`), so a library tile never
+  takes such an ID from another subject; a review has at most one tile of a
+  library type.
 - `authored`: table, code and prose tiles the composer wrote, `{id, title,
   data}`, each citing at least one hunk or file of the review, every
   citation resolving as a custom tile's must. `ToReview` leaves them out, as
@@ -971,10 +975,12 @@ review's:
   moves against the previous version, and a custom tile the composer
   suggests, which is only logged; and `generator`: the prompt version and
   digest, the model, when, the template it started from, whether it is the
-  fallback, and the fixes normalisation made, by kind.
+  fallback, and the fixes normalisation made, by kind. Only the host writes
+  the generator, through `Composition.SetGenerator`, which refuses one the
+  schema would not accept.
 
 A single tile's ID is its type, a change tile's its section's, a library
-tile's its type's name, and a promoted or authored tile's its type, an
+tile's as above, and a promoted or authored tile's its type, an
 underscore and a slug (`table_retry_delays`). The model chooses the layout,
 the promotions and their titles, and writes the authored tiles, the library
 tiles' data and the notes. The host writes the block digests, the generator,
@@ -986,16 +992,20 @@ imposes.
 `tiles.NormalizeComposition` repairs a composition a model wrote against the
 converted document before it is stored, and reports each fix by kind
 (`tiles.Report`, `Report.Counts`). A fix names a tile only by an ID that is a
-plain identifier and never quotes the composition. Normalising its result
-changes nothing.
+plain identifier and never quotes the composition; a report lists the first
+200 fixes and counts them all. Normalising its result changes nothing. The
+parts only the host writes, the generator and the hidden list, are dropped
+from what a model wrote, and only the first few hundred of each list (a
+generous multiple of what a composition holds) are read, so a huge
+composition costs no more than a few milliseconds.
 
 | Part | Rule |
 | --- | --- |
-| Library tiles | At most 8. Dropped when the definition has no valid name, another tile or an earlier library tile has the name, or the definition, data or citations fail the custom tile checks. |
-| Promotions | The ID is `table_` or `code_` and a slug, naming a block of that kind in a current, ready change tile at that position. At most one per change and per block, and at most 3. Dropped when the stored digest no longer matches or the block does not have the tile's shape. |
-| Authored tiles | The ID is `table_`, `code_` or `prose_` and a slug; at most 3. Dropped when the data is not a JSON object of at most 64 KiB, carries an `origin`, does not have its type's shape, cites no hunk or file, or has a citation that does not resolve. |
+| Library tiles | Dropped when the definition has no valid name, another tile or an earlier library tile has the ID, or the definition, data or citations fail the custom tile checks. The first 8 that pass are kept. |
+| Promotions | The ID is `table_` or `code_` and a slug, naming a block of that kind in a current, ready change tile at that position. At most one per change and per block. Dropped when the stored digest no longer matches or the block does not have the tile's shape. The first 3 that pass are kept. |
+| Authored tiles | The ID is `table_`, `code_` or `prose_` and a slug; the first 3 that pass are kept. Dropped when the data is not a JSON object of at most 64 KiB, carries an `origin`, does not have its type's shape, cites no hunk or file, or has a citation that does not resolve. |
 | IDs | A promoted or authored tile whose ID a converted tile, a library tile or an earlier composition tile has gets the first free numeric suffix (`_2`, `_3`, …). |
-| Titles | One line, at most 80 characters, the type's catalogue title when blank. |
+| Text | Control characters (C0 and DEL) are removed from titles, notes and prose, a prose tile keeping tabs and newlines. Titles are one line, at most 80 characters, the type's catalogue title when blank. |
 | Entries | An entry naming no tile, a second entry for a tile and an entry for an obsolete change are dropped. A size the tile does not allow becomes its default: overview, risks, table, code and diagram tiles are half or full, a custom tile takes its definition's sizes, the others any size. Only a current change tile that is not pinned may be in the changes group; any other group is removed. |
 | Omitted tiles | Appended in the converter's order and sizes, a change at the end of the changes group, then the composition's tiles at their default size. |
 | Changes group | Made contiguous at its first member; `changes_shown` is at least 1. |
@@ -1006,7 +1016,11 @@ hostile one too, gives a valid document; adds its tiles, moves the promoted
 blocks, applies the layout, sets the origin to `generated` and runs
 `Arrange`. Unlike normalisation before storing, it keeps a library or
 authored tile that fails its checks (a custom tile made with a newer kit,
-say), unavailable with its problems, as a stored custom tile is shown. A nil
+say), unavailable with its problems, as a stored custom tile is shown. It
+honours the hidden list and passes the generator it is given, trusting them
+as the host's: only a composition that `NormalizeComposition` returned, with
+the host's own additions, may be stored or composed for display, and a
+preview of what a model wrote is normalised first. A nil
 or empty composition gives the converted document unchanged, byte for byte,
 so a review without one is served exactly as before. Whatever the
 composition:
@@ -1049,7 +1063,7 @@ is every other tile in the converter's order and sizes.
 
 **ID stability.** A tile keeps its ID from one version of a pull request to
 the next while its subject persists: single and change tiles by
-construction, and library tiles by their type's name.
+construction, and library tiles by their type's name (`tiles.LibraryTileID`).
 `tiles.StabilizeIDs(previous, next)`, run on a composition before it is
 normalised, gives a promotion the ID the previous composition gave a
 promotion of the same change and kind, when each version has exactly one
