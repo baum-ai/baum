@@ -25,6 +25,7 @@ import {
 import { citedHunks, MAX_EXCERPTS, resolveRefs, type CitationTarget } from "./refs";
 import { isBuiltinType } from "./library";
 import { listenToFrame } from "./router";
+import { HUNG_WORDS, usePreflight } from "./preflight";
 
 /** A custom tile's frame, as its card's glance or its detail draws it. */
 
@@ -126,6 +127,8 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
     () => resolveRefs(tile.data, patches.doc, face, ctx.labels),
     [tile.data, patches.doc, face, ctx.labels],
   );
+  // The glance's placed size: what the preflight draws it at.
+  const preflight = usePreflight(tile, ctx, sizeOf(ctx, tile, "glance"), digest);
 
   const go = (target: CitationTarget) => {
     switch (target.kind) {
@@ -181,6 +184,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   if (!digest) return quiet("This tile couldn't be read.");
   if (newer) return quiet(NEWER_KIT);
   if (!allowed) return quiet(NOT_IN_THIS_SHELL);
+  if (preflight === "hung") return quiet(HUNG_WORDS);
   if (failure)
     return face === "glance" ? (
       <div data-frame-failure={failure.why}>
@@ -215,7 +219,9 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
     <div
       ref={box}
       data-custom-tile={tile.id}
-      data-frame-state={ready ? "ready" : slot ? "loading" : "waiting"}
+      data-frame-state={
+        ready ? "ready" : preflight === "checking" ? "checking" : slot ? "loading" : "waiting"
+      }
       className={cn(
         "relative min-w-0",
         face === "glance"
@@ -226,7 +232,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
       )}
       style={face === "detail" ? { height } : undefined}
     >
-      {slot ? (
+      {slot && preflight === "show" ? (
         <FrameView
           key={attempt}
           src={`/tile-frames/${digest}`}

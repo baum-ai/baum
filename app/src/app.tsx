@@ -1,4 +1,6 @@
 import { SavedStateNotice } from "./ui-state";
+import { onTileCheckEvent } from "./tiles/custom/check-host";
+import { TileCheckPage } from "./tiles/custom/check-runner";
 import { PreferencesProvider, usePreferences } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
@@ -328,7 +330,10 @@ function Application() {
       <ToastProvider>
         <SampleGuard />
         <ViewerLinkProvider link={LocalLink}>
-          {auth === "ready" ? (
+          {auth === "ready" && url.search.get("page") === "tile-check" ? (
+            // The desktop shell's hidden check window: the runner alone.
+            <TileCheckPage />
+          ) : auth === "ready" ? (
             <Workspace url={url} />
           ) : (
             <main className="local-connecting">
@@ -702,6 +707,10 @@ function Workspace({ url }: { url: UrlState }) {
       }
     });
     source.addEventListener("automatic", () => markStale(automaticParts));
+    // The render check: open the check window, or draw in this page.
+    source.addEventListener("tile_check", (event) =>
+      onTileCheckEvent((event as MessageEvent).data),
+    );
     source.addEventListener("reset", () => markStale(allReloadParts));
     const refreshTimeline = () => gate.run("timeline", () => setTimelineTick((n) => n + 1));
     source.addEventListener("timeline", refreshTimeline);
