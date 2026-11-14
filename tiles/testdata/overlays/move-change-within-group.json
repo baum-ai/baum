@@ -1,0 +1,34 @@
+{
+  "report": {
+    "applied": 1
+  },
+  "edited": true,
+  "entries": [
+    "overview half",
+    "risks half",
+    "sec_docs half [changes]",
+    "sec_api half [changes]",
+    "sec_retry half [changes]",
+    "sec_deadletter half [changes]",
+    "sec_ackfix full [changes]",
+    "evidence third",
+    "media third",
+    "intent third",
+    "context third",
+    "decisions third",
+    "everything_else third",
+    "sec_fixed_delay third [obsolete]"
+  ],
+  "groups": [
+    {
+      "id": "changes",
+      "title": "Changes"
+    },
+    {
+      "id": "obsolete",
+      "title": "Obsolete changes",
+      "collapse_after": 0
+    }
+  ],
+  "landing": 6
+}

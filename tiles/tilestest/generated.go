@@ -58,6 +58,12 @@ import (
 //     is featured alone at half on a row another follows; and the evidence
 //     tile with that many gaps is on the landing page, unless a person hid
 //     it or the landing page holds only pinned tiles and those always on it.
+//
+// A layout a person edited (tiles.ApplyOverlay: layout.edited) is theirs:
+// 14 does not apply to it, and 13 allows a row holding a tile they resized
+// to end with empty units. Every other invariant holds whatever they edited,
+// and so does this one (11): each tile the layout hides is in the last
+// collapsed "Hidden tiles" group, unless it must be shown.
 func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document) []string {
 	failures := check(normalized, doc, true)
 	fail := func(invariant int, format string, args ...any) {
@@ -212,10 +218,32 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		}
 	}
 
-	// 13. Rows are filled where they can be.
+	// Hidden tiles stay reachable, in the last collapsed group.
+	if c != nil && len(c.Layout.Hidden) > 0 {
+		for _, id := range c.Layout.Hidden {
+			obsolete := slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == id && e.Group == tiles.GroupObsolete })
+			if byID[id] == nil || obsolete || id == tiles.TypeOverview || id == tiles.TypeRisks && severeRanked(doc) {
+				continue
+			}
+			if !slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == id && e.Group == tiles.GroupHidden }) {
+				fail(11, "tile %s is hidden but not in the hidden group", id)
+			}
+		}
+		at := slices.IndexFunc(doc.Layout.Groups, func(g tiles.Group) bool { return g.ID == tiles.GroupHidden })
+		hasHidden := slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Group == tiles.GroupHidden })
+		if hasHidden && (at != len(doc.Layout.Groups)-1 || doc.Layout.Groups[at].CollapseAfter == nil || *doc.Layout.Groups[at].CollapseAfter != 0) {
+			fail(11, "the hidden tiles are not in a last collapsed group")
+		}
+	}
+
+	// 13. Rows are filled where they can be: a person's resized rows are
+	// theirs.
 	if !c.Empty() {
+		kept := personsRows(doc, c)
 		for id, size := range tiles.RowFills(doc) {
-			fail(13, "tile %s ends a row with empty units; at %s it would fill it", id, size)
+			if !kept[id] {
+				fail(13, "tile %s ends a row with empty units; at %s it would fill it", id, size)
+			}
 		}
 	}
 
@@ -249,8 +277,8 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		}
 	}
 
-	// 14. The guard rails.
-	if !c.Empty() {
+	// 14. The guard rails, which leave a person's edited layout alone.
+	if !c.Empty() && !c.Layout.Edited {
 		for _, failure := range guardFailures(converted, c, doc) {
 			fail(14, "%s", failure)
 		}
@@ -271,6 +299,27 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		}
 	}
 	return failures
+}
+
+// personsRows returns the tiles of the rows of an edited layout that hold a
+// tile the person resized.
+func personsRows(doc *tiles.Document, c *tiles.Composition) map[string]bool {
+	kept := map[string]bool{}
+	if !c.Layout.Edited {
+		return kept
+	}
+	for _, row := range tiles.Rows(doc.Layout) {
+		held := false
+		for _, i := range row.Entries {
+			held = held || slices.Contains(c.Layout.Resized, doc.Layout.Entries[i].Tile)
+		}
+		for _, i := range row.Entries {
+			if held {
+				kept[doc.Layout.Entries[i].Tile] = true
+			}
+		}
+	}
+	return kept
 }
 
 // severeRanked reports whether the risks tile ranks an active critical or

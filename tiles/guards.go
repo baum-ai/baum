@@ -52,9 +52,11 @@ const (
 )
 
 // guard applies the guard rails to a normalised composition (not a
-// template's).
+// template's). A layout a person edited (ApplyOverlay) is theirs: the rails
+// leave it as it is, while Arrange still keeps what must be seen on the
+// landing page.
 func (cm *composer) guard(c *Composition) {
-	if cm.template {
+	if cm.template || c.Layout.Edited {
 		return
 	}
 	cm.guardEvidence(c)

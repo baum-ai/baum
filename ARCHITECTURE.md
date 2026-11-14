@@ -1044,6 +1044,57 @@ composition:
 Normalising and applying a composition takes about a millisecond for a
 typical review.
 
+**A person's layout (overlays).** A person can rearrange the tiles of a
+pull request's review for themselves, from the session panel or the page.
+Their edits are a layout overlay (`baum.layout-overlay/1`, `tiles.Overlay`):
+an ordered list of batches, oldest first, each `{id, at, by, reset?, ops,
+summary}`, where `id` is `edt_` and 12 hex digits, `by` is `chat` or `page`,
+and each op is keyed by tile ID: `move` (`to`: exactly one of `edge` first or
+last, `before` or `after` a tile), `resize` (`size`), `hide`, `show`, `pin`,
+`unpin`, `changes_shown` (`count`, 1 to 50) and `add` (a library type,
+`{kind: "library", name, digest}`). Anchors are relative, never indices,
+because the generated order changes from one version to the next. The
+summary is the host's own line per applied op (`tiles.OpSummary`: "Moved
+Risks to the top", "Removed Context"), with titles from the document, never
+an agent's words. A batch holds at most 20 ops and an overlay at most 100
+batches and 64 KiB encoded; a write past either folds the oldest batches into
+a base batch `edt_base` (`Overlay.With`), which keeps per tile the last move,
+resize, visibility, pin and add, and the last `changes_shown`, and cannot be
+undone. Undo removes the newest batch (`Overlay.Undo`); a reset is a batch of
+its own, which drops the batches before it from the replay, so undoing it
+brings them back. `tiles.CheckOverlay` checks a stored overlay's shape and
+bounds.
+
+`tiles.ApplyOverlay(doc, composition, overlay, added)` replays the batches
+after the last reset on a version and returns the composition to compose,
+with an `OverlayReport` of ops applied and dropped by reason (`gone`,
+`anchor_gone`, `obsolete`, `size`, `kept`, `no_group`, `unavailable`,
+`invalid`), which names no tile. The base is the stored composition
+normalised as `Compose` reads it or, for a review without one, the
+converter's own layout as a composition. A move to `first` or `last` takes a
+change out of the changes group; anchored to a member, a change joins the
+group, and any other tile goes to the group's nearer edge, so the group
+stays one block; a hidden tile that moves is shown again. A resize takes
+only a size the tile may have in this version (`tiles.SizesIn`). The
+overview, and the risks tile while it ranks an active critical or high risk,
+are never hidden. A pinned change leaves the group. An `add` places a library
+tile the composition already has, or one the host holds data for (none yet:
+adding a type that must be filled is not available), and is otherwise
+dropped. An op whose tile or anchor the version lacks is dropped silently, so
+edits made on one version carry to the next and those whose tile vanished
+fall away. When any op applies, the layout is marked `edited`, with the tiles
+the person resized in `resized`: both are host-only, never stored
+(normalising drops them, as it drops `hidden`). An edited layout is the
+person's, so the guard rails leave it as it is, and a row holding a tile they
+resized is not grown to fill; everything else of `Compose` holds whatever the
+overlay, as listed above, and `Arrange` still puts pins first and keeps the
+overview and a severe risks tile on the landing page. With no op to apply the
+composition comes back unchanged, so an empty overlay serves today's answer.
+`tiles.CheckOp(doc, op)` says in the host's words why an op would be refused
+on the page a person is shown ("The overview always stays on the landing
+page", "Context is already hidden"), refusing too what would change nothing,
+such as moving the overview or a severe risks tile off the landing page.
+
 **Templates.** `tiles.Template(doc, content)` lays a converted document out
 by the template of its change kind (`tiles.TemplateName`), places the
 content's library, promoted and authored tiles, and returns the normalised
@@ -1092,14 +1143,17 @@ landing page; every tile is placed once and passes the tile checks; and the
 round trip holds. `CheckGenerated` asserts them for a composed document,
 the guarantees above among them: the risks tile must be on the landing page
 only when it ranks a critical or high risk, a hidden tile is in the last
-group, and a library or authored tile may be unavailable with its problems.
+group, and a library or authored tile may be unavailable with its problems;
+for a layout a person edited, the guard rails' invariant does not apply and
+a row holding a tile they resized may end with empty units.
 `CheckStability` checks that a change two consecutive versions share keeps
 its tile's ID and type, that a tile ID both share names the same subject (a
 change or single tile of the same type, a library tile of the same type, a
 promoted block of the same change and kind, or an authored tile of the same
 type), and that a promoted block keeps its ID as `StabilizeIDs` gives it.
-`RandomComposition` draws compositions, hostile ones too, for property
-tests. The goldens in `tiles/testdata` cover each shape the conversion
+`RandomComposition` draws compositions, hostile ones too, and
+`RandomOverlay` layout overlays (`RandomOps`: every kind of op, some aimed at
+tiles a version lacks), for property tests. The goldens in `tiles/testdata` cover each shape the conversion
 handles, and in `tiles/testdata/compositions` each template and
 normalisation rule. `internal/tilescorpus` runs every check over a
 directory of real review stores when `BAUM_TILES_CORPUS` names one, composes

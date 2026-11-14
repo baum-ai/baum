@@ -77,10 +77,18 @@ type Generator struct {
 // "Hidden" group, so they stay reachable and the document still presents
 // everything. The overview, and the risks tile while it ranks an active
 // critical or high risk, are never hidden.
+//
+// Edited and Resized are host-only too, and never stored: ApplyOverlay sets
+// them when a person's layout edits apply (overlay.go). An edited layout is
+// the person's, so the guard rails leave it as it is, and a row holding a
+// tile the person resized is not grown to fill (RowFills). Normalising drops
+// both, as it drops the hidden list.
 type CompositionLayout struct {
 	Entries      []Entry  `json:"entries"`
 	ChangesShown *int     `json:"changes_shown,omitempty"`
 	Hidden       []string `json:"hidden,omitempty"`
+	Edited       bool     `json:"edited,omitempty"`
+	Resized      []string `json:"resized,omitempty"`
 }
 
 // LibraryTile is a custom tile of a library type: its definition, with its

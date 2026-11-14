@@ -22,8 +22,9 @@ import (
 // composition stays empty. The rules, in order:
 //
 //  0. Bounds: only the first few hundred of each part are read (a
-//     generous multiple of what a composition holds), and the generator
-//     and the hidden list, which only the host writes, are dropped.
+//     generous multiple of what a composition holds), and the generator,
+//     the hidden list and a person's edits (edited, resized), which only
+//     the host writes, are dropped.
 //  1. Library tiles: a tile whose definition does not decode to a name, or
 //     whose ID (LibraryTileID) another tile of the document or an earlier
 //     library tile has, is dropped; so is one whose definition, data or
@@ -553,10 +554,13 @@ func head[T any](cm *composer, items []T, limit int) []T {
 }
 
 // hostOnly counts what a model wrote in the parts only the host writes: the
-// generator and the hidden list. Neither is kept.
+// generator, the hidden list and a person's edits. None is kept.
 func (cm *composer) hostOnly(c *Composition) {
 	if c.Generator != nil {
 		cm.fix(FixHostOnly, "", "the generator")
+	}
+	if c.Layout.Edited || len(c.Layout.Resized) > 0 {
+		cm.fix(FixHostOnly, "", "a person's layout edits")
 	}
 	for _, id := range head(cm, c.Layout.Hidden, maxInputHidden) {
 		cm.fix(FixHidden, id, "")
@@ -632,6 +636,10 @@ func (cm *composer) fillRows(c *Composition) {
 			return
 		}
 		fills := RowFills(doc)
+		// A row holding a tile a person resized keeps the sizes they chose.
+		for _, id := range resizedRows(doc, c.Layout.Resized) {
+			delete(fills, id)
+		}
 		if len(fills) == 0 {
 			return
 		}
@@ -644,6 +652,25 @@ func (cm *composer) fillRows(c *Composition) {
 			}
 		}
 	}
+}
+
+// resizedRows returns the tiles of the rows (Rows) of a document that hold a
+// tile of resized: those rows are the person's, and are not grown to fill.
+func resizedRows(doc *Document, resized []string) []string {
+	if len(resized) == 0 {
+		return nil
+	}
+	var out []string
+	for _, row := range Rows(doc.Layout) {
+		held := slices.ContainsFunc(row.Entries, func(i int) bool { return slices.Contains(resized, doc.Layout.Entries[i].Tile) })
+		if !held {
+			continue
+		}
+		for _, i := range row.Entries {
+			out = append(out, doc.Layout.Entries[i].Tile)
+		}
+	}
+	return out
 }
 
 // taken reports whether a converted tile or an obsolete change has the ID.
@@ -1165,6 +1192,15 @@ func (cm *composer) layout(in CompositionLayout) CompositionLayout {
 			continue
 		}
 		out.Hidden = append(out.Hidden, id)
+	}
+	if cm.mode == modeRead && in.Edited {
+		// A person's edits (ApplyOverlay), never stored.
+		out.Edited = true
+		for _, id := range head(cm, in.Resized, maxInputHidden) {
+			if tiles[id] != nil && !slices.Contains(out.Resized, id) {
+				out.Resized = append(out.Resized, id)
+			}
+		}
 	}
 	if in.ChangesShown != nil {
 		shown := *in.ChangesShown

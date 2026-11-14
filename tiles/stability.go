@@ -153,6 +153,7 @@ func cloneComposition(c *Composition) Composition {
 	out := *c
 	out.Layout.Entries = slices.Clone(c.Layout.Entries)
 	out.Layout.Hidden = slices.Clone(c.Layout.Hidden)
+	out.Layout.Resized = slices.Clone(c.Layout.Resized)
 	out.Library = slices.Clone(c.Library)
 	out.Promotions = slices.Clone(c.Promotions)
 	out.Authored = slices.Clone(c.Authored)

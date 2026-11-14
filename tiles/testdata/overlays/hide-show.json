@@ -1,0 +1,39 @@
+{
+  "report": {
+    "applied": 3
+  },
+  "edited": true,
+  "entries": [
+    "overview half",
+    "risks half",
+    "sec_api third [changes]",
+    "sec_retry third [changes]",
+    "sec_deadletter third [changes]",
+    "sec_ackfix half [changes]",
+    "sec_docs half [changes]",
+    "evidence third",
+    "media third",
+    "intent third",
+    "decisions half",
+    "everything_else half",
+    "sec_fixed_delay third [obsolete]",
+    "context third [hidden]"
+  ],
+  "groups": [
+    {
+      "id": "changes",
+      "title": "Changes"
+    },
+    {
+      "id": "obsolete",
+      "title": "Obsolete changes",
+      "collapse_after": 0
+    },
+    {
+      "id": "hidden",
+      "title": "Hidden tiles",
+      "collapse_after": 0
+    }
+  ],
+  "landing": 7
+}
