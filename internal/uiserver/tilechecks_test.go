@@ -20,7 +20,7 @@ func TestTileCheckRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer checker.Close()
+	defer func() { _ = checker.Close() }()
 	s, err := New(Options{API: checker.Handler()})
 	if err != nil {
 		t.Fatal(err)

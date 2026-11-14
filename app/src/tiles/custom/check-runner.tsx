@@ -128,7 +128,10 @@ export function matrix(job: CheckJob): FrameSpec[] {
   return specs;
 }
 
-type Outcome = { problems: Omit<CheckProblem, "sample" | "face" | "size" | "theme">[]; run: CheckRun };
+type Outcome = {
+  problems: Omit<CheckProblem, "sample" | "face" | "size" | "theme">[];
+  run: CheckRun;
+};
 
 /** The codes the kit reports that the check passes on as they are. */
 const KIT_CODES = new Set([
@@ -146,16 +149,23 @@ export function measured(
   metrics: ReadyMetrics,
 ): Outcome["problems"] {
   const problems: Outcome["problems"] = [];
-  if (metrics.failed) problems.push({ code: "render_failed", message: "The tile drew its error state (baum.fail)." });
+  if (metrics.failed)
+    problems.push({ code: "render_failed", message: "The tile drew its error state (baum.fail)." });
   else if (metrics.text_chars === 0 && metrics.media === 0 && !metrics.empty_state)
-    problems.push({ code: "empty", message: `The ${spec.face} drew no text, image or drawing, and did not call baum.empty.` });
+    problems.push({
+      code: "empty",
+      message: `The ${spec.face} drew no text, image or drawing, and did not call baum.empty.`,
+    });
   if (spec.face === "glance" && metrics.overflow_y)
     problems.push({
       code: "overflow_glance",
       message: `The glance is ${metrics.height}px tall in a ${spec.width}×${spec.height}px box.`,
     });
   if (metrics.overflow_x)
-    problems.push({ code: "overflow_x", message: `The ${spec.face} is wider than its ${spec.width}px frame.` });
+    problems.push({
+      code: "overflow_x",
+      message: `The ${spec.face} is wider than its ${spec.width}px frame.`,
+    });
   if (metrics.unresolved > 0)
     problems.push({
       code: "unresolved_citation",
@@ -235,12 +245,18 @@ export function drawFrame(
         iframe.style.height = `${height}px`;
         // The page's layout first, so the frame measures in its new box.
         iframe.getBoundingClientRect();
-        const next = await new Promise<number | null>((answer) => {
-          measuring = answer;
-          send(measureMessage());
-          window.setTimeout(() => answer(null), 1000);
-        });
-        measuring = null;
+        // A frame in a process of its own learns its new size a moment
+        // later: an unchanged answer is asked again, a few times.
+        let next: number | null = height;
+        for (let ask = 0; ask < 4 && next === height && !done; ask++) {
+          if (ask > 0) await new Promise((wait) => window.setTimeout(wait, 50));
+          next = await new Promise<number | null>((answer) => {
+            measuring = answer;
+            send(measureMessage());
+            window.setTimeout(() => answer(null), 1000);
+          });
+          measuring = null;
+        }
         if (next === null || next === height) break;
         if (guard.next(next, 0) === null) {
           problems.push({
@@ -278,8 +294,14 @@ export function drawFrame(
           readyTimer = window.setTimeout(() => {
             problems.push(
               registered
-                ? { code: "timeout", message: "The tile was not drawn 3 seconds after it was given its data." }
-                : { code: "render_failed", message: "baum.tile() was never called, so nothing was drawn." },
+                ? {
+                    code: "timeout",
+                    message: "The tile was not drawn 3 seconds after it was given its data.",
+                  }
+                : {
+                    code: "render_failed",
+                    message: "baum.tile() was never called, so nothing was drawn.",
+                  },
             );
             finish();
           }, READY_TIMEOUT);
@@ -304,7 +326,10 @@ export function drawFrame(
           return;
         case "error": {
           if (!KIT_CODES.has(message.code)) return;
-          const problem: Outcome["problems"][number] = { code: message.code, message: message.message };
+          const problem: Outcome["problems"][number] = {
+            code: message.code,
+            message: message.message,
+          };
           if (message.line !== undefined) problem.line = message.line;
           if (message.column !== undefined) problem.column = message.column;
           problems.push(problem);
@@ -317,7 +342,10 @@ export function drawFrame(
     const unlisten = listenToFrame(target, {
       heard,
       flooded: () => {
-        problems.push({ code: "render_failed", message: "The tile sent the page too many messages." });
+        problems.push({
+          code: "render_failed",
+          message: "The tile sent the page too many messages.",
+        });
         finish();
       },
     });
@@ -366,8 +394,12 @@ export async function runJob(
   stage: HTMLElement,
   draw: typeof drawFrame = drawFrame,
 ): Promise<CheckReport> {
-  const refs = new Map<CheckSample, { glance: Record<string, unknown>; detail: Record<string, unknown> } | null>();
-  for (const sample of job.samples) refs.set(sample, sample.refs ?? (await dataRefs(job, sample.data)));
+  const refs = new Map<
+    CheckSample,
+    { glance: Record<string, unknown>; detail: Record<string, unknown> } | null
+  >();
+  for (const sample of job.samples)
+    refs.set(sample, sample.refs ?? (await dataRefs(job, sample.data)));
   const specs = matrix(job);
   const problems: CheckProblem[] = [];
   const runs: CheckRun[] = [];
@@ -382,7 +414,13 @@ export async function runJob(
         // Without the version's document, the data's citations could not be
         // resolved: that is not the tile's fault.
         if (problem.code === "unresolved_citation" && !resolved) continue;
-        problems.push({ ...problem, sample: spec.sample.name, face: spec.face, size: spec.size, theme: spec.theme });
+        problems.push({
+          ...problem,
+          sample: spec.sample.name,
+          face: spec.face,
+          size: spec.size,
+          theme: spec.theme,
+        });
       }
     }
   };
@@ -400,7 +438,10 @@ const isJob = (value: unknown): value is CheckJob =>
 
 /** Claims the next job, waiting up to `wait` seconds; null when none came. */
 export async function claim(wait: number, signal?: AbortSignal): Promise<CheckJob | null> {
-  const response = await fetch(appURL(`api/tile-checks/next?wait=${wait}`), { cache: "no-store", signal });
+  const response = await fetch(appURL(`api/tile-checks/next?wait=${wait}`), {
+    cache: "no-store",
+    signal,
+  });
   if (response.status !== 200) return null;
   const body: unknown = await response.json();
   return isJob(body) ? body : null;
@@ -429,7 +470,17 @@ export function makeStage(): HTMLElement {
  *  `forever`, until `signal` ends). */
 export async function drain(
   stage: HTMLElement,
-  { wait, forever = false, signal, onJob }: { wait: number; forever?: boolean; signal?: AbortSignal; onJob?: (job: CheckJob | null) => void },
+  {
+    wait,
+    forever = false,
+    signal,
+    onJob,
+  }: {
+    wait: number;
+    forever?: boolean;
+    signal?: AbortSignal;
+    onJob?: (job: CheckJob | null) => void;
+  },
 ): Promise<void> {
   while (!signal?.aborted) {
     let job: CheckJob | null = null;
@@ -489,13 +540,20 @@ export function TileCheckPage() {
     const element = stage.current;
     if (!element) return;
     const stop = new AbortController();
-    void drain(element, { wait: 25, forever: true, signal: stop.signal, onJob: (job) => setCurrent(job?.id ?? null) });
+    void drain(element, {
+      wait: 25,
+      forever: true,
+      signal: stop.signal,
+      onJob: (job) => setCurrent(job?.id ?? null),
+    });
     return () => stop.abort();
   }, []);
   return (
     <main className="p-6 text-base text-secondary">
       <h1 className="text-lg font-semibold text-primary">Checking tiles</h1>
-      <p data-tile-check-current={current ?? ""}>{current ? "Drawing a tile to check it." : "Waiting for a tile to check."}</p>
+      <p data-tile-check-current={current ?? ""}>
+        {current ? "Drawing a tile to check it." : "Waiting for a tile to check."}
+      </p>
       <div
         ref={stage}
         data-tile-check-stage=""

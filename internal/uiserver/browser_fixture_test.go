@@ -52,6 +52,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
@@ -741,13 +742,22 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		// The session panel's routes, once its service below is built on the
 		// MCP server, which reads through the API.
 		consoleRoutes := console.Unavailable()
+		// The render check, with a route only this fixture has to submit a
+		// candidate (tile-check.spec.ts): the agent tools that will submit
+		// them do not exist yet.
+		tileChecks, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Database: filepath.Join(home, "app.sqlite"),
+			Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+			Subscribed: server.Subscribed})
+		if err != nil {
+			return daemon.App{}, err
+		}
 		// Each person's own layout of a pull request's tiles, which the
 		// session panel's layout tools and the page change.
 		layouts := &tilelayout.Service{Path: filepath.Join(home, "app.sqlite"), Changed: func(pr string, revision int64) {
 			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
 		}}
 		runner.SetLayouts(layouts.Layout)
-		local := uiserver.LocalAPI{Layouts: layouts, Fills: fixtureFiller{versions: versions, layouts: layouts}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		local := uiserver.LocalAPI{TileChecks: tileChecks.Handler(), Layouts: layouts, Fills: fixtureFiller{versions: versions, layouts: layouts}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -790,9 +800,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		// The MCP route serves the panel's MCP server, which the scripted
 		// agent's layout requests reach over HTTP as an agent CLI's do.
-		return daemon.App{API: api, MCP: mcp, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() {
+		return daemon.App{API: fixtureSubmit(api, tileChecks), MCP: mcp, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() {
 			sample.Close()
 			api.Close()
+			_ = tileChecks.Close()
 			_ = conversations.CloseStore()
 			_ = events.Close()
 			_ = groups.Close()
@@ -836,6 +847,30 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// fixtureSubmit serves POST /api/tile-checks/submit beside api: it submits
+// the candidate it is sent (tilechecks.Candidate) and answers the check's
+// result. Only the browser fixture has it.
+func fixtureSubmit(api http.Handler, checks *tilechecks.Checker) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tile-checks/submit" {
+			api.ServeHTTP(w, r)
+			return
+		}
+		var candidate tilechecks.Candidate
+		if r.Method != http.MethodPost || json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&candidate) != nil {
+			http.Error(w, "a candidate is required", http.StatusBadRequest)
+			return
+		}
+		result, err := checks.Submit(r.Context(), candidate)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	})
 }
 
 // browserPlanUsage answers api/plan-usage with fixed readings: Claude's two

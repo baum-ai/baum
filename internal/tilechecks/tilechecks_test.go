@@ -458,7 +458,7 @@ func TestStoreKeepsTheNewest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.close()
+	defer func() { _ = s.close() }()
 	ctx := context.Background()
 	start := time.Now()
 	for i := range 5 {

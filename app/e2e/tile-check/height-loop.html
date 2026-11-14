@@ -1,0 +1,11 @@
+<style>
+  .loop { height: calc(100vh + 40px); }
+</style>
+<script>
+  // The detail is always 40px taller than its frame, so it grows each time
+  // the frame follows it (`layout_loop`).
+  baum.tile({
+    glance: ({ data }) => baum.html`<p class="kit-lede">${data.items.length} items</p>`,
+    detail: ({ data }) => baum.html`<div class="loop"><p>${data.items.length} items</p></div>`,
+  });
+</script>

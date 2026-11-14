@@ -23,7 +23,12 @@ export const HUNG_WORDS = "This tile stopped responding when it was checked.";
  *  its detail opened) does not ask again. */
 const answers = new Map<string, Promise<"show" | "hung">>();
 
-function ask(tile: Tile, ctx: TileContext, size: TileSize, digest: string): Promise<"show" | "hung"> {
+function ask(
+  tile: Tile,
+  ctx: TileContext,
+  size: TileSize,
+  digest: string,
+): Promise<"show" | "hung"> {
   const key = `${digest}\n${JSON.stringify(tile.data)}`;
   let answer = answers.get(key);
   if (!answer) {

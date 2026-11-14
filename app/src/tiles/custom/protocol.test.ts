@@ -52,7 +52,14 @@ describe("readMessage", () => {
       readMessage(
         m({
           kind: "ready",
-          metrics: { height: 200, media: 2, empty_state: true, failed: "yes", unresolved: 1, render_ms: 40 },
+          metrics: {
+            height: 200,
+            media: 2,
+            empty_state: true,
+            failed: "yes",
+            unresolved: 1,
+            render_ms: 40,
+          },
         }),
       ),
     ).toMatchObject({
