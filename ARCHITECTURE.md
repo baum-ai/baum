@@ -2482,10 +2482,10 @@ a review group never compose). The order is analyse, then compose:
    `ComposeRun` arranges the converted document (`tiles.FromReview` of the
    stored form, as `Put` converts it), with the library and authored tiles,
    which the composition holds whatever the composer replies (a tile it
-   leaves out is placed by `tiles.PlaceExtras`: a library tile with a
-   destructive or breaking item right after the leading overview and risks
-   tiles, another just before the changes group, an authored tile just after
-   it), with the previous version's composition
+   leaves out is placed by `tiles.PlaceExtras`, as the templates place
+   them: a library tile with a destructive or breaking item right after the
+   leading overview and risks tiles, another just before the changes group,
+   an authored tile just after it), with the previous version's composition
    (`Publish` reads it from the latest version with `store.ParseComposition`)
    and the repository's preferences, through the backend's `agent.Completer`
    (`generate.CompleterOf`: nil for a backend that cannot complete, such as
@@ -2560,7 +2560,11 @@ host's layout rule rather than a repair of the reply (replay reports it as
 `compose_row_fill`, outside `compose_fixes`). Templates give one or two changes
 no group (a heading only from three), keep active risks beside the overview for
 docs and CI, and put evidence with two or more gaps beside the lead change on
-the second row. A composer's layout then passes three guard rails
+the second row. A composition's library tile with a destructive or breaking
+item (`tiles.Leads`) takes a half right after the first row in every
+template, another library tile and promoted tiles stand before the changes,
+and authored tiles after them; a row they leave short is filled like any. A
+composer's layout then passes three guard rails
 (`tiles/guards.go`), each a fix of its own kind: evidence with two or more gaps
 stays on the landing page, where it fits without pushing a tile that must be
 seen off the first screen
@@ -2569,7 +2573,8 @@ seen off the first screen
 that shows fewer current changes than the template's, with nothing that must
 be seen instead
 (the risks tile with a critical or high risk, a change the recommendation
-names, evidence with gaps, a pinned tile) or tiles a person hid, takes the
+names, evidence with gaps, a library tile with a destructive or breaking item,
+a pinned tile) or tiles a person hid, takes the
 template's layout (`first_screen`). `tilestest.CheckGenerated` checks the rows
 (invariant 13) and the guard rails (14). On a narrow window's two-column grid
 the page lets a block's last card span both columns when it would be alone in

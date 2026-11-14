@@ -24,7 +24,8 @@ import (
 //     the template's does, and so does the whole landing page, unless it
 //     shows instead something the template's does not: the risks tile while
 //     it ranks an active critical or high risk, a change the recommendation
-//     names, or the evidence tile with gaps as in 1. And what of those the
+//     names, the evidence tile with gaps as in 1, or a library tile with a
+//     destructive or breaking item (Leads). And what of those the
 //     template's first screen shows stays on it. A tile a person pinned on
 //     the first screen makes the arrangement theirs: nothing is checked.
 //     Otherwise the composition takes the template's layout
@@ -167,6 +168,21 @@ func (cm *composer) guardLoneFeatured(c *Composition) {
 	}
 }
 
+// leadingLibrary names a document's custom tiles with a destructive or
+// breaking item (Leads): a library tile that loses data or breaks callers is
+// a tile that must be seen, as a severe risk is. Other library tiles and
+// authored tiles are not: a layout that takes a first-screen place from a
+// change for one is held to the template's.
+func leadingLibrary(doc *Document) map[string]bool {
+	out := map[string]bool{}
+	for _, tile := range doc.Tiles {
+		if tile.Type == TypeCustom && tile.State == StateReady && Leads(tile.Data) {
+			out[tile.ID] = true
+		}
+	}
+	return out
+}
+
 // firstScreen sums what a document's first screen shows: its current
 // changes, and the tiles that may stand in for changes.
 type firstScreen struct {
@@ -182,6 +198,7 @@ func firstScreenOf(doc *Document) firstScreen {
 		current[change.ID] = currentChange(change)
 	}
 	named := RecommendedChanges(doc)
+	leads := leadingLibrary(doc)
 	out := firstScreen{others: map[string]bool{}}
 	visible := Visible(doc.Layout)
 	for i, entry := range doc.Layout.Entries {
@@ -202,7 +219,8 @@ func firstScreenOf(doc *Document) firstScreen {
 			case entry.Pin,
 				entry.Tile == TypeRisks && mustShowRisks(doc),
 				slices.Contains(named, entry.Tile),
-				entry.Tile == TypeEvidence && evidenceGaps(doc) >= EvidenceGapsShown:
+				entry.Tile == TypeEvidence && evidenceGaps(doc) >= EvidenceGapsShown,
+				leads[entry.Tile]:
 				out.others[entry.Tile] = true
 			}
 		}

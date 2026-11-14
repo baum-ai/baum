@@ -9,6 +9,7 @@ import (
 
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
 // riskHunk returns a risk of the example and a hunk it is anchored on.
@@ -142,5 +143,75 @@ func TestPlaceExtras(t *testing.T) {
 	}
 	if len(n.Library) != 2 {
 		t.Errorf("library tiles kept: %d", len(n.Library))
+	}
+}
+
+// The guard rails and library tiles: a library tile with a destructive or
+// breaking item is a tile that must be seen, so a layout that takes it off
+// the first screen takes the template's, while one that shows it in place of
+// a change keeps its own; an authored or other library tile that takes a
+// change's first-screen place gives way to the template. Every result holds
+// CheckGenerated's invariants, the rows filled.
+func TestGuardRailsWithExtras(t *testing.T) {
+	normalized, doc := example(t)
+	_, hunk := riskHunk(t, doc)
+	schema, _ := library.Get("schema_change")
+	authored := tiles.AuthoredTile{ID: "table_matrix", Title: "Client matrix", Data: json.RawMessage(fmt.Sprintf(
+		`{"columns":["Client","Works"],"rows":[["desktop app","yes"],["command line","no"]],"source":[{"type":"hunk","id":%q}]}`, hunk))}
+	compose := func(lead bool, order func([]tiles.Entry) []tiles.Entry) (tiles.Composition, tiles.Report) {
+		content := &tiles.Composition{Schema: tiles.CompositionName,
+			Library:  []tiles.LibraryTile{{Definition: schema.Encoded, Data: schemaData(hunk, lead)}},
+			Authored: []tiles.AuthoredTile{authored}}
+		template, _ := tiles.Template(doc, content)
+		c := template
+		c.Generator = nil
+		c.Layout.Entries = order(slices.Clone(template.Layout.Entries))
+		n, report := tiles.NormalizeComposition(doc, &c)
+		composed, err := tiles.Compose(doc, &n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, failure := range tilestest.CheckGenerated(normalized, &n, composed) {
+			t.Error(failure)
+		}
+		return n, report
+	}
+	move := func(id string, to int) func([]tiles.Entry) []tiles.Entry {
+		return func(entries []tiles.Entry) []tiles.Entry {
+			at := slices.IndexFunc(entries, func(e tiles.Entry) bool { return e.Tile == id })
+			e := entries[at]
+			entries = slices.Delete(entries, at, at+1)
+			if to < 0 || to > len(entries) {
+				to = len(entries)
+			}
+			return slices.Insert(entries, to, e)
+		}
+	}
+	template, _ := tiles.Template(doc, &tiles.Composition{Schema: tiles.CompositionName,
+		Library: []tiles.LibraryTile{{Definition: schema.Encoded, Data: schemaData(hunk, true)}}, Authored: []tiles.AuthoredTile{authored}})
+	ids := func(c tiles.Composition) []string {
+		var out []string
+		for _, e := range c.Layout.Entries {
+			out = append(out, e.Tile)
+		}
+		return out
+	}
+	if got := ids(template); got[2] != "schema_change" || slices.Index(got, "table_matrix") < slices.Index(got, "sec_api") {
+		t.Errorf("template: the leading library tile third, the authored tile after the changes: %v", got)
+	}
+
+	// A destructive schema tile moved off the first screen comes back.
+	if _, report := compose(true, move("schema_change", -1)); report.Counts()[tiles.FixFirstScreen] != 1 {
+		t.Errorf("the destructive tile left the first screen: %v", report.Messages())
+	}
+	// An authored tile moved onto the first screen, ahead of the changes,
+	// gives way to the template.
+	if _, report := compose(false, move("table_matrix", 2)); report.Counts()[tiles.FixFirstScreen] != 1 {
+		t.Errorf("an authored tile took a change's place: %v", report.Messages())
+	}
+	// The destructive schema tile moved first stays: it is a must-see tile
+	// in place of a change.
+	if n, report := compose(true, move("schema_change", 0)); report.Counts()[tiles.FixFirstScreen] != 0 || n.Layout.Entries[0].Tile != "schema_change" {
+		t.Errorf("a must-see library tile was reverted: %v", report.Messages())
 	}
 }

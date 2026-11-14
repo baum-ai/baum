@@ -48,8 +48,9 @@ type slot struct {
 }
 
 const (
-	// slotComposed places the composition's tiles: library tiles, then
-	// promoted and authored tiles, at half width where their type allows.
+	// slotComposed places the composition's library tiles (those with a
+	// destructive or breaking item first) and promoted tiles, at half width
+	// where their type allows; its authored tiles follow the changes group.
 	slotComposed = "*composed"
 	// slotChanges places the changes group, in review order, a third each.
 	slotChanges = "*changes"
@@ -59,6 +60,9 @@ const (
 	// slotLead places the first change in review order outside the changes
 	// group: a quiet review's lead (quietSlots).
 	slotLead = "*lead"
+	// slotLeading places the library tiles with a destructive or breaking
+	// item (Leads), right after the first row, every template.
+	slotLeading = "*leading"
 )
 
 var templates = map[string][]slot{
@@ -129,7 +133,13 @@ func templateSlots(doc *Document) []slot {
 	if evidenceGaps(doc) >= EvidenceGapsShown {
 		slots = gapSlots(slots)
 	}
-	return slots
+	// A library tile that loses data or breaks callers leads: right after
+	// the first row.
+	at := 1
+	if len(slots) > 1 && slots[0].size == SizeHalf {
+		at = 2
+	}
+	return slices.Insert(slices.Clone(slots), min(at, len(slots)), slot{slotLeading, SizeHalf})
 }
 
 // gapSlots adapts a template to a review whose evidence has
@@ -232,11 +242,22 @@ func quietSlots(slots []slot) []slot {
 }
 
 func (cm *composer) templateLayout(slots []slot) CompositionLayout {
-	var composed []*Tile
-	for _, cands := range [][]candidate{cm.library, cm.promoted, cm.authored} {
-		for i := range cands {
-			composed = append(composed, &cands[i].tile)
+	// The composition's tiles: library tiles with a destructive or breaking
+	// item (Leads) after the first row; other library tiles and promoted
+	// tiles before the changes; authored tiles after them.
+	var leading, composed, after []*Tile
+	for i := range cm.library {
+		if !cm.library[i].library.Pending && Leads(cm.library[i].library.Data) {
+			leading = append(leading, &cm.library[i].tile)
+		} else {
+			composed = append(composed, &cm.library[i].tile)
 		}
+	}
+	for i := range cm.promoted {
+		composed = append(composed, &cm.promoted[i].tile)
+	}
+	for i := range cm.authored {
+		after = append(after, &cm.authored[i].tile)
 	}
 	var entries []Entry
 	placed := map[string]bool{}
@@ -267,6 +288,10 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 					break
 				}
 			}
+		case slotLeading:
+			for _, tile := range leading {
+				addComposed(tile, s.size)
+			}
 		case slotComposed:
 			for _, tile := range composed {
 				addComposed(tile, s.size)
@@ -284,16 +309,19 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 				for _, entry := range members {
 					add(entry.Tile, SizeHalf, "")
 				}
-				continue
+			} else {
+				for _, entry := range members {
+					add(entry.Tile, s.size, GroupChanges)
+				}
 			}
-			for _, entry := range members {
-				add(entry.Tile, s.size, GroupChanges)
+			for _, tile := range after {
+				addComposed(tile, SizeHalf)
 			}
 		case slotRest:
 			for _, entry := range cm.doc.Layout.Entries {
 				add(entry.Tile, entry.Size, entry.Group)
 			}
-			for _, tile := range composed {
+			for _, tile := range slices.Concat(leading, composed, after) {
 				addComposed(tile, SizeHalf)
 			}
 		default:

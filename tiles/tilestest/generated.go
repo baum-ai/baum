@@ -47,8 +47,9 @@ import (
 //     (tiles.FirstScreenRows rows) and the landing page each show at least as
 //     many current changes as the template's for the same review, unless it shows a pinned tile, the
 //     risks tile ranking a critical or high risk, a change the
-//     recommendation names or the evidence tile with
-//     tiles.EvidenceGapsShown gaps that the template's does not, or a person
+//     recommendation names, the evidence tile with
+//     tiles.EvidenceGapsShown gaps or a library tile with a destructive or
+//     breaking item (tiles.Leads) that the template's does not, or a person
 //     hid tiles; what must be seen on the template's first screen stays on
 //     it unless a pinned tile is on the first screen; no change
 //     is featured alone at half on a row another follows; and the evidence
@@ -342,6 +343,12 @@ func firstScreenFacts(doc *tiles.Document) screenFacts {
 	}
 	named := tiles.RecommendedChanges(doc)
 	gaps := evidenceGaps(doc, current)
+	leads := map[string]bool{}
+	for _, tile := range doc.Tiles {
+		if tile.Type == tiles.TypeCustom && tile.State == tiles.StateReady && tiles.Leads(tile.Data) {
+			leads[tile.ID] = true
+		}
+	}
 	out := screenFacts{others: map[string]bool{}}
 	visible := tiles.Visible(doc.Layout)
 	for i, entry := range doc.Layout.Entries {
@@ -359,7 +366,7 @@ func firstScreenFacts(doc *tiles.Document) screenFacts {
 				out.changes++
 			}
 			if entry.Pin || entry.Tile == tiles.TypeRisks && severeRanked(doc) || slices.Contains(named, entry.Tile) ||
-				entry.Tile == tiles.TypeEvidence && gaps >= tiles.EvidenceGapsShown {
+				entry.Tile == tiles.TypeEvidence && gaps >= tiles.EvidenceGapsShown || leads[entry.Tile] {
 				out.others[entry.Tile] = true
 			}
 		}

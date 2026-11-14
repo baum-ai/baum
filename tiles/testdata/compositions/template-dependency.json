@@ -32,15 +32,15 @@
           "size": "half"
         },
         {
-          "tile": "prose_why_jitter",
-          "size": "half"
-        },
-        {
           "tile": "sec_retry_policy",
           "size": "half"
         },
         {
           "tile": "sec_config_flag",
+          "size": "half"
+        },
+        {
+          "tile": "prose_why_jitter",
           "size": "half"
         },
         {
@@ -163,15 +163,15 @@
         "size": "half"
       },
       {
-        "tile": "prose_why_jitter",
-        "size": "half"
-      },
-      {
         "tile": "sec_retry_policy",
         "size": "half"
       },
       {
         "tile": "sec_config_flag",
+        "size": "half"
+      },
+      {
+        "tile": "prose_why_jitter",
         "size": "half"
       },
       {

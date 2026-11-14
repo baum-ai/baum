@@ -152,12 +152,14 @@ Otherwise keep the template: the same order, sizes and groups.
    tile you move against it.
 
 **Library and authored tiles** are placed by their `id`, like any tile, and
-the template already places them. A library tile with
-`destructive_or_breaking` leads at `half`, right after the overview and the
-risks tile; another library tile stays at `half` before the changes group,
-or beside the change it is about when that change leads. An authored tile
-goes on the landing page only when it shows what the lead change needs to be
-judged, beside it; otherwise after the group.
+the template already places them: a library tile with
+`destructive_or_breaking` right after the first row at `half`, a tile that
+must be seen, so keep it on the first screen; another library tile at `half`
+before the changes group; an authored tile after the group. Keep them there,
+unless an authored tile shows what a featured change needs to be judged: then
+it may stand beside that change, the two filling a row at `half`. Never put a
+library or authored tile where it pushes a change off the first screen; the
+host then keeps the template's layout.
 
 ## The reply
 
