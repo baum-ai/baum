@@ -160,7 +160,7 @@ func (s *keyScanner) key() (string, bool) {
 		case c == '\\':
 			plain = false
 			s.pos++
-		case !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_'):
+		case (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_':
 			plain = false
 		}
 	}

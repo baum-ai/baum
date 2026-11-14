@@ -471,7 +471,7 @@ func CheckStability(previous, next *tiles.Document) []string {
 		if other != kind {
 			fail("tile %s is a %s tile in one version and a %s tile in the next", id, kind, other)
 		}
-		if builtin, ok := tiles.Builtin(kind); kind != tiles.TypeChange && !(ok && builtin.Single) {
+		if builtin, ok := tiles.Builtin(kind); kind != tiles.TypeChange && (!ok || !builtin.Single) {
 			fail("tile %s is in both versions but is neither a change nor a single tile", id)
 		}
 	}
