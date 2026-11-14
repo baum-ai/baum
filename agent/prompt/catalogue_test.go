@@ -218,7 +218,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-tiles-compose", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -233,9 +233,6 @@ func TestCatalogue(t *testing.T) {
 	}
 	if e, _ := prompt.Lookup(prompt.IDReviewStagedOutline); e.Default+"## Submitting\n" != readFile(t, "review-outline-public-v1.md") {
 		t.Error("outline default")
-	}
-	if e, _ := prompt.Lookup(prompt.IDReviewTilesCompose); e.Default != readFile(t, "review-tiles-compose-public-v1.md") || e.DefaultVersion != prompt.TilesVersion {
-		t.Error("tiles compose default")
 	}
 	if e, _ := prompt.Lookup(prompt.IDFixChat); e.Default != readFile(t, "fix-chat.md") || e.DefaultVersion != prompt.FixVersion {
 		t.Error("fix-chat default")
@@ -258,7 +255,6 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
-		prompt.IDReviewTilesCompose:  {"review-tiles-compose.untrusted-inventory"},
 		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,
@@ -367,6 +363,24 @@ func TestNewExtractorWith(t *testing.T) {
 	}
 	if other := decisions.NewExtractorWith("Another."); other.PromptVersion() == custom.PromptVersion() {
 		t.Error("different texts, same version")
+	}
+}
+
+// The composition prompt is not listed until a job uses it, but a text for
+// it is validated and checked for its safety rule.
+func TestTilesComposeIsUnlisted(t *testing.T) {
+	if _, ok := prompt.Lookup(prompt.IDReviewTilesCompose); ok {
+		t.Error("the composition prompt is listed")
+	}
+	builtin := readFile(t, "review-tiles-compose-public-v1.md")
+	if err := prompt.Validate(prompt.IDReviewTilesCompose, builtin); err != nil {
+		t.Errorf("its own default is invalid: %v", err)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, builtin); len(got) != 0 {
+		t.Errorf("the default misses %v", got)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, "Arrange."); len(got) != 1 || got[0] != "review-tiles-compose.untrusted-inventory" {
+		t.Errorf("missing %v", got)
 	}
 }
 
