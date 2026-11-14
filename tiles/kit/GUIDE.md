@@ -94,7 +94,8 @@ gets no code excerpts. Its box, the frame's whole viewport:
 
 That is a lead line, three rows (third) or four (half) of about 26px, and a
 foot; a `full` box holds a lead line and two rows, so lay its rows out in two
-columns. Use
+columns: a `<div class="kit-columns">` of `kit-row`s (`kit-columns` on a
+`kit-list` does nothing, since the list's own layout wins). Use
 `kit-glance` (a full-height column), `kit-lede` for the lead, `kit-list` for
 rows, `kit-truncate` on anything from data that could be long, and `kit-foot`
 for small facts at the bottom. Show at most what fits; say "N more" in the
