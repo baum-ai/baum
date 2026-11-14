@@ -862,7 +862,12 @@ slowed to about once a second and no animation frames.
   spinning web process at full CPU, so on Linux `close_check_window` first
   ends the window's web process (`webkit_web_view_terminate_web_process`,
   through the `webkit2gtk` crate at the version wry uses) and then destroys
-  the window.
+  the window. Before that it asks the page to close
+  (`webkit_web_view_try_close`) and waits 200 ms: a page that still answers
+  unloads, and a check it was drawing is reported abandoned and ends as
+  unavailable rather than as a hang that blocks its tile type (the main
+  window loading another page closes the window mid-check). A page that
+  never yields ignores the request and its process is ended after the wait.
 - It is offered (`checkWindow`) on Linux only. On macOS WKWebView likely gives
   it a separate web content process, but has no public call to end one, so
   until that is checked the app runs its checks in the main window there. On

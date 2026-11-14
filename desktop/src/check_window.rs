@@ -33,6 +33,10 @@ static LOCK: Mutex<()> = Mutex::new(());
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// How long a close waits for the window to be gone.
 const GONE_TIMEOUT: Duration = Duration::from_secs(1);
+/// How long a close lets the window's page unload before its web process
+/// is ended (see `destroy`).
+#[cfg(target_os = "linux")]
+const UNLOAD_GRACE: Duration = Duration::from_millis(200);
 
 /// The check page for a main window showing `main`: the root of the person's
 /// own namespace on the daemon's origin (`/s/<namespace>/`, outside the sample
@@ -125,7 +129,23 @@ pub fn close<R: Runtime>(app: &AppHandle<R>) {
 /// Ends the window's web process, destroys the window and waits until it is
 /// gone, so an `open` right after builds a new one. Holding `LOCK`, and not
 /// on the main thread.
+///
+/// A page that still answers is closed first and given `UNLOAD_GRACE`, so a
+/// check it was drawing is reported abandoned (its `pagehide`) and ends as
+/// unavailable, rather than as a hang that blocks a tile type which did
+/// nothing wrong: the main window loading another page closes the window
+/// mid-check. Ending the process at once skips `pagehide`. A page that never
+/// yields ignores the close and is ended after the grace.
 fn destroy<R: Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>) {
+    #[cfg(target_os = "linux")]
+    {
+        // wry destroys the web view when its page agrees to close.
+        let _ = window.with_webview(|webview| {
+            use webkit2gtk::WebViewExt;
+            webview.inner().try_close();
+        });
+        std::thread::sleep(UNLOAD_GRACE);
+    }
     // Both calls run on the main thread, in this order.
     #[cfg(target_os = "linux")]
     if let Err(e) = window.with_webview(|webview| {
