@@ -1648,7 +1648,11 @@ tools disabled, the chosen reasoning effort (Codex's own when none) and the
 system prompt as its model
 instructions, in one turn, which a call to one of its remaining tools would
 extend by a request. Both CLIs run in an empty temporary directory with the prompt on
-stdin after `sessions.GenerationRunMarker`.
+stdin after `sessions.GenerationRunMarker`. A request may carry image files
+(`CompleteRequest.Images`, which replay's layout judge uses): claude then reads
+its prompt as one stream-json user message (`--input-format stream-json`)
+whose image blocks follow the text, and codex gets each with `--image=<path>`;
+the anthropic backend refuses them.
 
 A request carries the prompt, the model-facing schema, the checkout directory
 and the call and token budgets, and optionally an `Endpoint` (a complete
@@ -3806,7 +3810,17 @@ normalisation counters. `--generator tiles` runs the whole pipeline with the
 compose stage on: the review is the document, and the composition, the served
 tile document, the provisional draft layout and a compose record are beside
 it, measured with the compose metrics plus the stage's cost and the jump from
-the provisional layout. It is developer tooling, not a command of the `baum` binary;
+the provisional layout. `just replay-screens` serves a compose or tiles run
+through the real-reviews fixture, each case's review stored with the run's
+composition and with the template's as the latest version of a clone of its
+own, and photographs both tiles pages, measuring their first screens
+(`first-screen.json`: the cards in the window, wasted grid units, and whether
+the recommendation, the severe risks, the changes it names, a breaking change
+and missing evidence show unscrolled). Package `internal/replay/screens` builds
+contact sheets of a run's pictures, judges pairs of layouts with a model in
+both presentation orders (`agent.CompleteRequest.Images` carries the pictures),
+and makes a page and a key for an owner's own verdicts with the agreement
+between those and a judge's. It is developer tooling, not a command of the `baum` binary;
 its [README](cmd/replay/README.md) describes the dataset layout, the flags and
 the files written.
 

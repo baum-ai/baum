@@ -217,6 +217,116 @@ layout to the composition) and `compose_no_composition`. In a chain each
 revision is offered the composition the one before it got, when the same run
 generated it.
 
+## Pictures of a run
+
+A compose or tiles run's layouts can be seen, compared and judged. Pictures
+hold private content: they stay in the run directory, or a directory you
+name outside any repository, and are never committed or attached.
+
+```sh
+just replay-screens <dataset> <out>/<run>
+oss/bin/replay sheet <out>/<run> [--against <out>/<other-run>] [--judge <report>]
+oss/bin/replay judge <out>/<run> [--against <out>/<other-run>] --backend claude --model opus
+oss/bin/replay judge agree <report> <report>
+oss/bin/replay labels make <out>/<run> --out <dir> --n 15 --seed 1
+oss/bin/replay labels agree <dir> <report>...
+```
+
+**Taking them.** `just replay-screens` (in Docker) builds the desktop app and
+the real-reviews fixture and serves the run through it (`TestLocalAppRealReviews`
+with `BAUM_APP_REPLAY_RUN`): each case's review is stored, through the store's
+own `Put`, as the pull request's latest version in two clones of its own, one
+with the run's composition and one with the template's, after the versions
+before it from the dataset's saved store (`replay.ScreenInputs` finds them: the
+saved version a compose run over the stores composed, or the earlier versions
+of a generated review). The page is then the app's own tiles page on its own
+routes. A case it cannot show (no saved history for a generated version, for
+instance) is listed with why in `screens/cases.json` and `screens.json`. The
+spec (`app/e2e/replay-screens.spec.ts`) waits for a steady page as the
+real-review screenshots do and writes, per case, into `<run>/screens/<case>/`:
+
+| File | Holds |
+| --- | --- |
+| `<variant>-<width>-light.png` | The first screen of `composed` or `template` at 1440×900, 900×900 and 390×844 |
+| `<variant>-<width>-light-full.png` | The whole page, when it is longer than the window |
+| `first-screen.json` | What the first screen shows, measured from the page (below), at 1440 (`variants`) and on the phone (`phone`), and the problems the spec found |
+
+`first-screen.json` lists the tile cards in the window (`id`, `type`, `size`,
+wholly or partly visible), the landing page's cards and those below the first
+screen, the grid units (six a row) left empty on rows another row follows
+(`wastedUnits` on the first screen, `wastedUnitsLanding` on the landing page),
+the page's height, and the must-know signals, each visible when at least half
+of its element is inside the window and every region that clips it: the
+recommendation, each active critical or high risk of a current change, each
+change the recommendation cites (its tile's header), the breaking-change line
+and the missing-evidence count. `recall` is the share of the signals given that
+the first screen shows. It is mechanical first-screen recall; it reads the
+page's own markers (`data-tile-type`, `data-tile-size`, `data-risk`,
+`data-breaking`, `data-evidence-gaps`).
+
+The environment narrows the run: `BAUM_APP_REPLAY_ONLY` (text in the case id),
+`BAUM_APP_REPLAY_LIMIT`, `BAUM_APP_REPLAY_VARIANTS` (`composed,template`),
+`REPLAY_SCREENS_THEMES` (`light`, or `light,dark`), `REPLAY_SCREENS_FULL=0`
+(viewport pictures only) and `REPLAY_SCREENS_MINUTES` (per case, default 6).
+
+**Contact sheets.** `replay sheet` writes a static page into the run's
+`screens/` directory: `sheet.html` pairs the run's composition with its
+template, `sheet-vs-<other-run>.html` with another run's composition of the same
+cases. It sums both sides' first-screen recall by signal, the median whole
+tiles on the first screen, landing tiles, wasted units and page heights, then
+shows each case's two first screens at 1440 and on the phone, linking to the
+whole pages, with their facts, the page problems and, with `--judge`, the
+judge's verdict and reasons.
+
+**Judging.** `replay judge` compares each case's two layouts with a model, from
+the pictures (the first screens at 1440 and, unless `--phone=false`, on the
+phone) and a list of the review's facts drawn from its tile document (the
+changes, the recommendation, the open risks by tier, the evidence gaps, a
+breaking change). The rubric (`screens.Rubric`, version `layout-judge-v1`)
+asks what a reviewer must see first, whether the most decision-relevant item
+is the most prominent, the grouping, wasted space and whether anything
+important is buried, says length is not quality, and asks for a verdict (A, B
+or tie) with a short reason. Each pair is judged in both orders, A and B
+swapped; a pair's verdict is the winner both orders name, else a tie, which
+cancels a preference for a position. `--repeat` (default 0.1) asks a sample of
+calls again to measure the judge's noise. The report, `screens/<name>.json`
+(`replay.judge/1`), holds every call (order, answer, model, cost, time, error),
+each pair's verdict and the summary: wins, ties and losses, the sign test,
+the decisive win share with its 95% Wilson interval, by size, and how often
+the orders and the repeats agreed. A call that fails is recorded and its pair
+left out. The judge never sees run or model names, nor which layout is the
+template.
+
+The calls go through the backends review generation uses (`--backend claude`
+or `codex`, `--model`, `--effort`) with the developer's login, as `replay`
+does: `agent.CompleteRequest.Images` passes the pictures, which Claude Code
+reads as image blocks of one stream-json message and Codex through
+`--image`. `--max-cost-usd` refuses a run whose estimate (calls times
+`--cost-per-call`) is above it. `replay judge agree` compares two reports of
+the same pairing, such as two model families.
+
+**Owner labels.** `replay labels make` writes a labelling set into `--out`:
+`index.html`, a page that shows `--n` pairs (default 15) side by side as A and
+B, with the first screens embedded so the page opens on its own and the whole
+pages beside it in `full/`; `key.json`, which says which side each pair showed
+as A; and `labels.txt`, the file the owner fills in. Pairs whose two layouts
+are the same are left out; the rest are spread over sizes and change kinds,
+and the sides are put in a random order, both from `--seed`. The page keeps
+the choices in the browser, with keys (`a`, `b`, `t`, `j`, `k`), and downloads
+or copies them in the file's format, one line per pair:
+
+```text
+# comments and blank lines are ignored
+P01 A
+P02 tie the same to me
+P03 B
+```
+
+`replay labels make` never overwrites an existing `labels.txt`. `replay labels
+agree <dir> <report>...` reads the key and the labels and reports, per judge
+report, on how many labelled pairs the judge gives the owner's verdict, and on
+how many of those both call decisive.
+
 ## Detectors
 
 A detector is a small pure function over a case's diff (`detect.go`), so a

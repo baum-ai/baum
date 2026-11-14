@@ -2301,7 +2301,11 @@ first element matching `REAL_REVIEW_TILE`) and its first hunk excerpt opened.
 A new page adds a state by adding an entry with the steps that open it.
 `REAL_REVIEW_ONLY` limits the run to reviews whose `repo#number` contains the
 text, and `REAL_REVIEW_FULL=0` skips the full-page pictures. The pictures hold
-private content: keep them out of commits and shared services.
+private content: keep them out of commits and shared services. The waiting and
+capturing steps are in `e2e/review-screens.ts`, which
+`e2e/replay-screens.spec.ts` shares: with `BAUM_APP_REPLAY_RUN` the same
+fixture serves a replay run's layouts instead (`just replay-screens`; see
+"Pictures of a run" in `../cmd/replay/README.md`).
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
