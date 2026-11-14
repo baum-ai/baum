@@ -106,7 +106,8 @@ happen only when the user selects an install or add action. Displayed paths abbr
    - Device sign-in: the app attaches to the daemon while setup shows, and the
      step reaches the daemon's GitHub sign-in through the setup screen's
      `github_connection` command, which relays status, start, cancel and retry
-     over the tray's loopback client; disconnecting stays in Settings. Signing
+     over the tray's loopback client and opens GitHub's device page
+     (`open`); disconnecting stays in Settings. Signing
      in displays and copies the code, then waits five seconds before opening
      GitHub's device page in the default browser so the code and clipboard
      confirmation stay visible. During the delay, the browser control is disabled
@@ -747,8 +748,23 @@ doing anything (`src/zoom.rs`).
   including other spellings the asset server maps to a page (`/setup`,
   `/setup.html/`, percent-encoded names), is refused. The bundled pages'
   content security policy has `frame-ancestors 'none'`.
-  `http` and `https` links to other hosts open in the default browser. Other
-  loopback servers, other schemes and new-window requests are refused.
+  Every other navigation is refused and nothing happens: other hosts, other
+  loopback servers and other schemes (`about:`, `data:`, `blob:`, `file:`,
+  `mailto:` and the rest). A navigation never opens the default browser,
+  because the webview asks the same handler (`navigation::decide`) for a
+  navigation in any frame of the page and passes only its URL, so an embedded
+  frame could otherwise open the browser at an address carrying data it read.
+- Links to other sites open in the default browser as new-window requests
+  (`target="_blank"` links and `window.open`, `navigation::decide_new_window`):
+  `http` and `https` URLs of hosts other than loopback ones go to the
+  browser, and no window ever opens. The webview lets a page ask for one only
+  while the person interacts with it, and a sandboxed frame only with
+  `allow-popups`. The app's pages therefore open every outside link with
+  `target="_blank" rel="noreferrer"` (Markdown links included) or
+  `window.open`; a plain same-window link to another site does nothing. Setup
+  opens GitHub's device page a few seconds after a sign-in starts, when it can
+  no longer ask for a window, through the `open` action of
+  `github_connection`, which opens that fixed address.
 - Tauri treats the daemon's pages as remote. One capability names them,
   `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's Browse
@@ -786,6 +802,37 @@ directories it writes only what the user installs through setup or Settings: the
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
 agent marketplace plugin installations. Notifications use the operating system's
 notification service (`notify-rust`) only from Rust.
+
+### Checking navigation by hand
+
+The unit tests cover the decisions; whether each engine asks for them as
+expected needs the real webview. On macOS and Linux, run the app with
+`just desktop::dev` (a debug build on the Vite server's page, which has no
+Content-Security-Policy, so nothing but the shell stops a frame); on Windows,
+a debug build of the app. Open the
+Web Inspector on the main window (Cmd+Option+I on macOS, Ctrl+Shift+I
+elsewhere). In its console:
+
+1. `Object.assign(document.createElement("a"), { href: "https://example.com/?same-window" }).click()`:
+   nothing happens and no browser opens.
+2. `const f = document.createElement("iframe"); f.sandbox = "allow-scripts"; f.srcdoc = "<script>location.href = 'https://example.com/?frame'<\/script>"; document.body.append(f)`:
+   no browser opens. Repeat with `<meta http-equiv=refresh content='0;url=https://example.com/?refresh'>`
+   as the `srcdoc`.
+3. `f.srcdoc = "<a target=_blank href='https://example.com/?popup' style='font-size:48px'>popup</a>"`,
+   then click the link with the mouse: no browser opens. Repeat with
+   `target=_top`.
+4. Click links to other sites as a person does: "Open on GitHub" in a pull
+   request's menu, a link in a review's Markdown, the docs in the `?` menu, the
+   release notes link of an update notice. Each opens the default browser,
+   once.
+5. In setup's GitHub step (first run, with a fresh configuration directory),
+   sign in: the browser opens GitHub's device page about five seconds later.
+6. `f.srcdoc = "<script>for (;;) {}<\/script>"`: the window freezes (see
+   SECURITY.md); the tray menu still answers, and quitting from it and starting
+   the app again recovers.
+
+The app logs nothing for a refused navigation; the browser simply does not
+open.
 
 ## Updates
 

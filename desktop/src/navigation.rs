@@ -1,18 +1,38 @@
-//! Where the window may go. It shows only the bundled connecting screen and
-//! the daemon's loopback origin; web links open in the default browser and
-//! everything else is refused.
+//! Where the window may go. It shows only the bundled screens and the
+//! daemon's loopback origin and refuses every other navigation. Web links
+//! open in the default browser only through a request for a new window
+//! (`target="_blank"`, `window.open`), never through a navigation.
 
 use url::{Origin, Url};
 
+/// What a navigation gets: it loads, or nothing happens.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decision {
     Allow,
+    Deny,
+}
+
+/// What a request for a new window gets. No window ever opens.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NewWindow {
     OpenInBrowser,
     Deny,
 }
 
-/// Decides a navigation of the main window. `daemon` is the origin of the
+/// Decides a navigation in the main window. `daemon` is the origin of the
 /// daemon the window is attached to, if any.
+///
+/// The webview asks this for a navigation in any frame, not only the page
+/// itself, and says only where it goes. A frame inside the app's page (an
+/// embedded document, a sandboxed frame, injected content) can navigate
+/// itself. The page's `frame-src` stops that before this is asked on
+/// WebKitGTK, but not on a page without that policy (the Vite development
+/// server's), nor on an engine that asks first. So no answer here may act
+/// outside the window: a navigation to another site is refused, never handed
+/// to the browser, or any frame could open the browser at an address carrying
+/// data it read, as often as it liked. The app opens its links to other sites
+/// as new windows (`decide_new_window`), which a sandboxed frame without
+/// `allow-popups` cannot request.
 pub fn decide(url: &Url, daemon: Option<&Origin>, setup_open: bool) -> Decision {
     if is_bundled(url) {
         return if bundled_page_allowed(url.path(), setup_open) {
@@ -21,13 +41,19 @@ pub fn decide(url: &Url, daemon: Option<&Origin>, setup_open: bool) -> Decision 
             Decision::Deny
         };
     }
-    if daemon.is_some_and(|d| &url.origin() == d) {
+    // The daemon's pages, and frames of its own documents. A `blob:` URL has
+    // its creator's origin, so it is excluded by scheme: the app navigates to
+    // none, and a document built from a script's data has no reason to load.
+    let http = matches!(url.scheme(), "http" | "https");
+    if http && daemon.is_some_and(|d| &url.origin() == d) {
         return Decision::Allow;
     }
-    match url.scheme() {
-        "http" | "https" if url.host().is_some() && !is_loopback(url) => Decision::OpenInBrowser,
-        _ => Decision::Deny,
-    }
+    // Everything else: other sites, other local servers (a stale daemon
+    // address), `about:`, `data:`, `blob:`, `javascript:`, `file:` and other
+    // schemes. WebKitGTK asks about a new frame's `about:blank` and a
+    // `srcdoc` frame's `about:srcdoc` too: refusing them keeps the empty
+    // document a new frame starts with, and loads no `srcdoc`.
+    Decision::Deny
 }
 
 /// The bundled pages the window may show, by their exact path: the
@@ -44,11 +70,15 @@ fn bundled_page_allowed(path: &str, setup_open: bool) -> bool {
 }
 
 /// Requests for a new window (`target="_blank"`, `window.open`) never open
-/// one: web links go to the browser.
-pub fn decide_new_window(url: &Url) -> Decision {
-    match decide(url, None, false) {
-        Decision::OpenInBrowser => Decision::OpenInBrowser,
-        _ => Decision::Deny,
+/// one: links to other web sites go to the browser, and anything else is
+/// refused. This is how every link of the app to another site opens. A page
+/// can ask only while the person interacts with it (the webview blocks
+/// pop-ups otherwise), and a sandboxed frame only with `allow-popups`.
+pub fn decide_new_window(url: &Url) -> NewWindow {
+    match url.scheme() {
+        "http" | "https" if url.host().is_some() && !is_loopback(url) => NewWindow::OpenInBrowser,
+        // Loopback servers, the daemon's included, and other schemes.
+        _ => NewWindow::Deny,
     }
 }
 
@@ -138,18 +168,19 @@ mod tests {
         }
     }
 
+    /// A navigation never opens the browser, whichever frame it comes from:
+    /// links to other sites are refused in place.
     #[test]
-    fn sends_web_links_to_the_browser() {
+    fn refuses_navigations_to_other_sites() {
         let daemon = url("http://127.0.0.1:4100/").origin();
         for u in [
             "https://github.com/acme/widgets/pull/7",
             "http://example.com/",
+            "https://attacker.example/?d=secret",
+            "https://github.com/login/device",
         ] {
-            assert_eq!(
-                decide(&url(u), Some(&daemon), false),
-                Decision::OpenInBrowser,
-                "{u}"
-            );
+            assert_eq!(decide(&url(u), Some(&daemon), false), Decision::Deny, "{u}");
+            assert_eq!(decide(&url(u), None, true), Decision::Deny, "{u}");
         }
     }
 
@@ -157,6 +188,11 @@ mod tests {
     fn refuses_other_local_servers_and_schemes() {
         let daemon = url("http://127.0.0.1:4100/").origin();
         for u in [
+            "about:blank",
+            "about:srcdoc",
+            "blob:http://127.0.0.1:4100/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+            "blob:null/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+            "tel:+15555550100",
             "http://127.0.0.1:4200/",
             "https://127.0.0.1:4100/",
             "http://localhost:4100/",
@@ -212,16 +248,34 @@ mod tests {
         );
     }
 
+    /// The app's links to other sites ask for a new window, which opens the
+    /// browser; no window ever opens, and nothing else leaves the app.
     #[test]
     fn new_windows_never_open() {
-        assert_eq!(
-            decide_new_window(&url("https://github.com/")),
-            Decision::OpenInBrowser
-        );
-        assert_eq!(decide_new_window(&bundled_screen()), Decision::Deny);
-        assert_eq!(
-            decide_new_window(&url("http://127.0.0.1:4100/")),
-            Decision::Deny
-        );
+        for u in [
+            "https://github.com/",
+            "https://github.com/acme/widgets/pull/7#discussion_r1",
+            "http://example.com/",
+            "https://docs.usebaum.com/",
+        ] {
+            assert_eq!(decide_new_window(&url(u)), NewWindow::OpenInBrowser, "{u}");
+        }
+        assert_eq!(decide_new_window(&bundled_screen()), NewWindow::Deny);
+        for u in [
+            "http://127.0.0.1:4100/",
+            "http://localhost:4100/",
+            "http://[::1]:4100/",
+            "about:blank",
+            "about:srcdoc",
+            "data:text/html,hi",
+            "blob:http://127.0.0.1:4100/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "mailto:someone@example.com",
+            "tel:+15555550100",
+            "tauri://localhost/setup.html",
+        ] {
+            assert_eq!(decide_new_window(&url(u)), NewWindow::Deny, "{u}");
+        }
     }
 }

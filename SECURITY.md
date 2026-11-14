@@ -1825,8 +1825,21 @@ It accepts the file only when it is private to you and names a
 `127.0.0.1` launch URL for that daemon, and it never logs that URL.
 
 The window loads only its bundled screens and the attached daemon's
-loopback origin. Links to other web hosts open in your default browser; other
-loopback servers, other schemes and new windows are refused. The daemon's
+loopback origin, and refuses every other navigation: other web hosts, other
+loopback servers and other schemes. A navigation never opens your browser or
+leaves the app. The webview asks the app about a navigation in any frame of
+the page, an embedded document or injected content included, and tells it
+only the destination. The daemon's pages limit frames to their own origin,
+which on Linux stops a frame's navigation elsewhere before the app is asked,
+but a page without that policy (the development server's) or an engine that
+asks first would let any frame through; if a navigation could open the
+browser, such a frame could open it at an address carrying data it read, as
+often as it liked. Links to other web hosts open in your default browser only
+as requests for a new window (`target="_blank"` links and `window.open`), which
+the webview allows a page only while you interact with it and a sandboxed
+frame only when its sandbox allows pop-ups; no window ever opens. Setup opens
+GitHub's fixed device sign-in page itself, a few seconds after you start a
+sign-in. The daemon's
 pages get no Tauri capability, so they cannot call the app's commands or any
 plugin. The bundled connecting screen may only read the connection state and
 ask to reconnect. The bundled setup screen may also read what is installed and

@@ -36,7 +36,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
-use navigation::Decision;
+use navigation::{Decision, NewWindow};
 
 pub const MAIN: &str = "main";
 /// How often the attached daemon is checked, and how many failed checks in a
@@ -397,17 +397,11 @@ fn main() {
                     if setup && development::is_setup_page(url) {
                         return true;
                     }
-                    match navigation::decide(url, daemon.as_ref(), setup) {
-                        Decision::Allow => true,
-                        Decision::OpenInBrowser => {
-                            open_externally(&handle, url);
-                            false
-                        }
-                        Decision::Deny => false,
-                    }
+                    // Never opens anything: frames ask here too (see `decide`).
+                    navigation::decide(url, daemon.as_ref(), setup) == Decision::Allow
                 })
                 .on_new_window(move |url, _| {
-                    if navigation::decide_new_window(&url) == Decision::OpenInBrowser {
+                    if navigation::decide_new_window(&url) == NewWindow::OpenInBrowser {
                         open_externally(&opener, &url);
                     }
                     tauri::webview::NewWindowResponse::Deny
