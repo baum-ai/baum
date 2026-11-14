@@ -1859,6 +1859,13 @@ a LaunchAgent or a Run key value) that starts the app hidden, which starts
 your daemon. Turn it off in the tray or the window's Background menu, which
 removes the entry.
 
+A script that never yields, in the page or in a frame it embeds, freezes the
+whole window: the webview runs a page and its frames in one process, and the
+app does not detect an unresponsive page. The tray, its menu and the daemon
+keep working, and quitting the app from the tray and opening it again loads
+the page anew. Your data is not at risk, but nothing stops a page from being
+unusable until then.
+
 On first run, and from "Command Line and Hooks…" in its menu, the app
 installs its bundled `baum` as your `baum` command, because agent hooks run
 `baum` by name:
