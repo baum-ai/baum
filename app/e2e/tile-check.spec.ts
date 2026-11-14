@@ -142,7 +142,9 @@ for (const [file, verdict, errors, warnings] of [
     expect(result.verdict).toBe(verdict);
     for (const problem of [...result.errors, ...result.warnings]) expect(problem.hint).not.toBe("");
     if (file === "throwing") {
-      const thrown = result.errors.find((p) => p.code === "script_error")!;
+      const thrown = result.errors.find(
+        (p) => p.code === "script_error" && p.sample === "example",
+      )!;
       // The kit's own message and line, not "Script error.".
       expect(thrown.message).toContain("cannot draw 2 items");
       expect(thrown.line).toBeGreaterThan(0);
