@@ -2086,7 +2086,9 @@ person added):
 - **Eligible:** the other saved types that are not deleted and whose path
   globs are empty or match a path of the diff (`tilelibrary.MatchPath`:
   doublestar's `**` and `{a,b}`, each segment a `path.Match` pattern; a glob
-  with no `/` matches the file name in any directory).
+  with no `/` matches the file name in any directory). A saved glob has at
+  most 8 braces expanding to at most 64 patterns (`CheckGlob`, run by
+  `Prepare`), and expansion stops at that bound.
 - **Ranked:** used in this repository most recently first (`used_in`), then
   used anywhere most recently (`used_at`), then the newest type. The library
   does not record the repository a type was created in, so "made from this
@@ -2779,7 +2781,8 @@ stage is told the selected types' checks.
   without patches, source excerpts around the selected hunks, and the
   checkout to read), the fill text (`review-tiles-fill`), the type's own
   `fill` instructions (a saved type's after the note that they are the
-  person's), the outline and the selected hunks. Its schema is
+  person's), then under a heading of its own the outline and the selected
+  hunks. Its schema is
   `{applies, data}`, `data` the type's `Entry.FillSchema()` or null. The reply
   is masked as a task's output, Codex's null `lines` are dropped, and
   `library.CheckFillIn` checks it against the bundle; one repair sends the host's problems back. A

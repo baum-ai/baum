@@ -162,6 +162,9 @@ func Prepare(c Change) (Prepared, error) {
 		if p == "" || utf8.RuneCountInString(p) > MaxPathLength || !utf8.ValidString(p) || strings.ContainsFunc(p, func(r rune) bool { return unicode.IsControl(r) || Invisible(r) }) {
 			return Prepared{}, fmt.Errorf("A path is a glob of 1 to %d characters on one line, with no control or invisible characters", MaxPathLength)
 		}
+		if err := CheckGlob(p); err != nil {
+			return Prepared{}, err
+		}
 	}
 	if n := len(c.Samples); n < 1 || n > MaxSamples {
 		return Prepared{}, fmt.Errorf("A tile type has 1 to %d samples", MaxSamples)

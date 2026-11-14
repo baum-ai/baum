@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -233,5 +234,39 @@ func TestRecordUse(t *testing.T) {
 	}
 	if err := s.RecordUse(ctx, "o/deleted", used); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A glob of many brace groups is matched in bounded time: its expansion
+// stops at its bound, and a save refuses a glob past the bounds with a
+// reason, so no stored glob is silently cut short.
+func TestPathologicalGlobsAreBounded(t *testing.T) {
+	glob := strings.Repeat("{a,}", 50) + "x"
+	started := time.Now()
+	for range 100 {
+		tilelibrary.MatchPath(glob, "src/main.go")
+		tilelibrary.Applies([]string{glob}, []string{"a.go", "b.go", "aaax"})
+	}
+	if took := time.Since(started); took > 2*time.Second {
+		t.Errorf("matching took %s", took)
+	}
+	if !tilelibrary.MatchPath(strings.Repeat("{a,}", 50)+"x", strings.Repeat("a", 50)+"x") {
+		t.Error("a pattern within the bound does not match")
+	}
+	for glob, ok := range map[string]bool{
+		strings.Repeat("{a,}", 50) + "x": false,
+		strings.Repeat("{a,b}", 7) + "x": false, // 128 patterns
+		strings.Repeat("{a,b}", 6) + "x": true,  // 64 patterns
+		"**/*.{ts,tsx,js,jsx}":           true,
+		strings.Repeat("{a}", 9):         false,
+	} {
+		if err := tilelibrary.CheckGlob(glob); (err == nil) != ok {
+			t.Errorf("CheckGlob(%q): %v", glob, err)
+		}
+	}
+	c := change(t, "braces", "")
+	c.Paths = []string{strings.Repeat("{a,}", 49) + "x"}
+	if _, err := tilelibrary.Prepare(c); err == nil || !strings.Contains(err.Error(), "braces") {
+		t.Errorf("Prepare: %v", err)
 	}
 }

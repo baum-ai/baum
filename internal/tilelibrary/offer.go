@@ -3,6 +3,7 @@ package tilelibrary
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"path"
 	"slices"
 	"strings"
@@ -108,14 +109,15 @@ func (s *Store) Offer(ctx context.Context, o Offering) (always, offered []librar
 // Applies reports whether a type with these path globs is for a diff that
 // changes these paths: a type with no globs is for every pull request, and
 // one with globs for a diff that changes a path one of them matches
-// (MatchPath).
+// (MatchPath). Each glob is expanded once.
 func Applies(globs, paths []string) bool {
 	if len(globs) == 0 {
 		return true
 	}
 	for _, g := range globs {
+		patterns := compileGlob(g)
 		for _, p := range paths {
-			if MatchPath(g, p) {
+			if matchAny(patterns, p) {
 				return true
 			}
 		}
@@ -123,8 +125,28 @@ func Applies(globs, paths []string) bool {
 	return false
 }
 
-// maxBraceAlternatives bounds what a glob's braces expand to.
-const maxBraceAlternatives = 64
+// The bounds of a glob's braces: Prepare refuses a glob past them, so a
+// stored glob always expands whole.
+const (
+	// MaxGlobBraces is how many { a glob may have.
+	MaxGlobBraces = 8
+	// MaxGlobAlternatives is how many patterns its braces may expand to.
+	MaxGlobAlternatives = 64
+)
+
+// CheckGlob refuses a glob whose braces are past the bounds: more than
+// MaxGlobBraces braces, or more than MaxGlobAlternatives patterns. The
+// expansion stops as soon as it passes the bound, so the check is cheap
+// whatever the glob.
+func CheckGlob(glob string) error {
+	if strings.Count(glob, "{") > MaxGlobBraces {
+		return fmt.Errorf("A path glob has at most %d braces", MaxGlobBraces)
+	}
+	if len(expandBraces(glob, MaxGlobAlternatives+1)) > MaxGlobAlternatives {
+		return fmt.Errorf("A path glob's braces expand to at most %d patterns", MaxGlobAlternatives)
+	}
+	return nil
+}
 
 // MatchPath matches a repository path against a type's glob, as doublestar
 // does: segments are separated by "/", each a path.Match pattern, "**"
@@ -132,12 +154,27 @@ const maxBraceAlternatives = 64
 // A glob with no "/" also matches a file of that name in any directory, so
 // "*.sql" is every SQL file, as a person writing it means.
 func MatchPath(glob, name string) bool {
-	glob, name = strings.TrimPrefix(glob, "/"), strings.TrimPrefix(name, "/")
-	for _, g := range expandBraces(glob, maxBraceAlternatives) {
+	return matchAny(compileGlob(glob), name)
+}
+
+// compileGlob is a glob's patterns, split into segments: its braces
+// expanded (at most MaxGlobAlternatives), a leading "/" dropped, and "**/"
+// put before a pattern with no "/".
+func compileGlob(glob string) [][]string {
+	var out [][]string
+	for _, g := range expandBraces(strings.TrimPrefix(glob, "/"), MaxGlobAlternatives) {
 		if !strings.Contains(g, "/") {
 			g = "**/" + g
 		}
-		if matchSegments(strings.Split(g, "/"), strings.Split(name, "/")) {
+		out = append(out, strings.Split(g, "/"))
+	}
+	return out
+}
+
+func matchAny(patterns [][]string, name string) bool {
+	segments := strings.Split(strings.TrimPrefix(name, "/"), "/")
+	for _, p := range patterns {
+		if matchSegments(p, segments) {
 			return true
 		}
 	}
@@ -145,8 +182,14 @@ func MatchPath(glob, name string) bool {
 }
 
 // expandBraces expands the first {a,b,...} of a glob, recursively, into at
-// most limit alternatives. A brace that does not close is literal.
+// most limit alternatives: it stops before any recursion once it holds
+// limit, and hands each recursion only the room left, so its work is
+// bounded by limit whatever the glob. A brace that does not close is
+// literal.
 func expandBraces(glob string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
 	open := strings.IndexByte(glob, '{')
 	if open < 0 {
 		return []string{glob}
@@ -179,12 +222,10 @@ func expandBraces(glob string, limit int) []string {
 	parts = append(parts, glob[start:end])
 	var out []string
 	for _, part := range parts {
-		for _, rest := range expandBraces(glob[:open]+part+glob[end+1:], limit) {
-			if len(out) == limit {
-				return out
-			}
-			out = append(out, rest)
+		if len(out) >= limit {
+			break
 		}
+		out = append(out, expandBraces(glob[:open]+part+glob[end+1:], limit-len(out))...)
 	}
 	return out
 }

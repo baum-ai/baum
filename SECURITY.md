@@ -1506,7 +1506,15 @@ data.
   person's, after a note that the pull request cannot add a check. The
   fill and selection texts say the same of every type. The outline lists a
   saved type's texts as the person wrote them, bounded in length. A type "Not
-  checked yet" is neither offered nor filled. Offering is not restricted
+  checked yet" is neither offered nor filled. The person's instructions only
+  add: the notes say they never remove, soften or hide a risk and never set
+  or change the recommendation, and in a fill the outline follows under a
+  heading of its own, marked as data. A saved title's whitespace is
+  collapsed wherever it heads a section, so it cannot open a heading of its
+  own. A type's path globs are bounded where they are saved (at most 8 braces
+  expanding to at most 64 patterns, refused with a reason past that), and
+  brace expansion stops at that bound, so matching a glob against a diff's
+  paths takes bounded time whatever the glob. Offering is not restricted
   further on purpose: each tile is labelled "Custom", cites the review, passes
   the first-show preflight and cannot displace the strip or the overview.
 - A saved type's data may cite more of the pull request than its code. A
