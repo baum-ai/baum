@@ -1060,9 +1060,13 @@ an agent's words. A batch holds at most 20 ops and an overlay at most 100
 batches and 64 KiB encoded; a write past either folds the oldest batches into
 a base batch `edt_base` (`Overlay.With`), which keeps per tile the last move,
 resize, visibility, pin and add, and the last `changes_shown`, and cannot be
-undone. Undo removes the newest batch (`Overlay.Undo`); a reset is a batch of
-its own, which drops the batches before it from the replay, so undoing it
-brings them back. `tiles.CheckOverlay` checks a stored overlay's shape and
+undone. Undo removes the newest batch (`Overlay.Undo`) and keeps it in a
+`undone` list, newest last, which `Overlay.Redo` puts back; a new batch or a
+reset clears the list, and it counts in the 64 KiB and 100 batch bounds (the
+oldest undone batches are forgotten first). A reset is a batch of its own,
+which drops the batches before it from the replay, so undoing it brings them
+back; `Overlay.WithReset` always fits, dropping the oldest batches, the base
+included, when folding cannot make room. `tiles.CheckOverlay` checks a stored overlay's shape and
 bounds.
 
 `tiles.ApplyOverlay(doc, composition, overlay, added)` replays the batches
@@ -1076,8 +1080,10 @@ change out of the changes group; anchored to a member, a change joins the
 group, and any other tile goes to the group's nearer edge, so the group
 stays one block; a hidden tile that moves is shown again. A resize takes
 only a size the tile may have in this version (`tiles.SizesIn`). The
-overview, and the risks tile while it ranks an active critical or high risk,
-are never hidden. A pinned change leaves the group. An `add` places a library
+overview, the risks tile while it ranks an active critical or high risk, and
+the changes the recommendation names (`tiles.RecommendedChanges`) are never
+hidden, a move of a named change to the end is dropped, and a named change an
+edit leaves past the landing page is brought back to its front. A pinned change leaves the group. An `add` places a library
 tile the composition already has, or one the host holds data for (none yet:
 adding a type that must be filled is not available), and is otherwise
 dropped. An op whose tile or anchor the version lacks is dropped silently, so
@@ -1237,13 +1243,16 @@ optionally after an Enterprise host. The 200 most recently edited pull
 requests are kept. Nothing goes into the review store, whose version rows are
 shared and written once. `tilelayout.Service` writes in one immediate
 transaction each: `Edit` checks each op against the tiles the person is
-shown (`tiles.CheckOp` on the latest version with their layout applied),
-appends those that pass as one batch with the host's summary lines and
-refuses the rest with the host's reasons, writing nothing when all are
-refused; `Undo` removes the newest batch, or answers that the layout changed
-when the page names a batch that is no longer the newest; `Reset` appends a
-reset batch, which an undo takes back, and refuses when the layout is
-already the generated one. Each committed write bumps the row's revision and
+shown (`tiles.CheckOp` on the latest version with their layout applied, inside
+the transaction and against the revision those tiles were built at: a layout
+that moved meanwhile answers "changed", and the page's route reads again, up
+to three times), appends those that pass as one batch with the host's
+summary lines and refuses the rest with the host's reasons, writing nothing
+when all are refused; `Undo` removes the newest batch, or answers that the
+layout changed when the page names a batch that is no longer the newest;
+`Redo` puts back the batch the last undo took off, by the same rule; `Reset`
+appends a reset batch, which an undo takes back, and refuses when the layout
+is already the generated one. Each committed write bumps the row's revision and
 publishes the `layout` event; a write the database refuses says "The layout
 could not be saved; try again" and publishes nothing.
 `tileview.BuildWith(document, composition, layout, options)` is `Build` with
@@ -1255,12 +1264,14 @@ as before; ops a version drops are counted in the daemon's work statistics
 of their own yet.
 
 - `GET /api/tiles/layout?clone=&pr=` answers `{revision, edited, can_undo,
-  last: {id, by, reset?, summary, tiles?} | null, batches}`, `tiles` the
+  last: {id, by, reset?, summary, tiles?} | null, batches, can_redo,
+  redo_batch?}`, `tiles` the
   tiles the newest batch's ops name, which the page marks for a moment.
 - `POST /api/tiles/layout` takes `{clone, pr, action: "edit" | "undo" |
-  "reset", ops?, batch?}` and answers the same summary with `applied`,
-  `refused` (`{index, reason}`) or `undone`, or 400 with the host's reason
-  when nothing was written, 409 when `batch` is no longer the newest, and 404
+  "redo" | "reset", ops?, batch?}` and answers the same summary with
+  `applied`, `refused` (`{index, reason}`), `undone` or `redone`, or 400 with
+  the host's reason when nothing was written, 409 when `batch` is no longer
+  the newest (for a redo, no longer the one `redo_batch` names), and 404
   for a pull request with no saved review. Both are inside the server's Host,
   cookie or bearer, Origin and JSON checks, and report the capability
   unavailable when the daemon has no layout service.
@@ -7606,7 +7617,16 @@ request page they have open, at once, through `Options.Layouts`, an
 propose tools they are global, so an action neither lists nor calls them, and
 each refuses any page but a pull request's. `Tool.Edits` marks the four that
 write; `tools/list` reports them `readOnlyHint: false, destructiveHint:
-false`. The pull request page's `current_page` lists them.
+false`. The pull request page's `current_page` lists them. A conversation's
+page follows the person (the console sets it on every conversation), so the
+console also records, with each message it sends (`Registry.SetTurnPage`),
+the page that message was sent from, or the page open then when it names
+none; a tool that writes refuses ("This conversation was started about
+another page; ask from the pull request you want to change") unless the page
+open now is that same pull request, so "move this" from the open pull request
+always works and a long turn begun on one cannot edit another. Reading the
+layout has no such rule. There is no redo tool: Redo is the person's, on the
+page.
 
 | Tool | Arguments | Answers |
 | --- | --- | --- |

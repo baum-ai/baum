@@ -1966,19 +1966,26 @@ page, visibly, undoably and within fixed rules:
   touched.
 - What must be seen stays seen. The recommendation and risk score are in the
   fixed strip; the overview, and the risks tile while it lists a critical or
-  high risk, cannot be hidden or pushed off the landing page, whatever an
-  edit says; a change the recommendation names is never folded.
-- Every edit shows, and is undone in one step. The page shows what changed
+  high risk, and a change the recommendation names, cannot be hidden or
+  pushed off the landing page, whatever an edit says, and the recommended
+  change is never folded.
+- Every edit shows, and is undone in one step, and an undo can be taken back
+  (Redo) until the next edit or reset. The page shows what changed
   in baum's own words, never the agent's, with Undo; the strip says
   **Your layout** with Undo and Reset; a hidden tile stays in the last group,
   with Show.
 - Scope is one page. The tools are global, so an action never sees them; they
   refuse any page but the pull request's, and the edit is checked against
-  the tiles that page shows. Edits stay on this computer, in `app.sqlite`,
+  the tiles that page shows. A conversation's page follows the person around
+  the app, so an edit is also refused unless the page open now is the pull
+  request the current message was sent from: a long turn begun about one
+  pull request cannot change another's layout. Edits stay on this computer, in `app.sqlite`,
   for that pull request; the event that tells the page carries only the pull
   request's key and a revision.
 - Bounded: 20 ops a call, 100 undo steps (older ones are folded and kept),
-  64 KiB per pull request, the 200 most recently edited pull requests.
+  64 KiB per pull request (undone steps included), the 200 most recently
+  edited pull requests. A reset always fits, dropping the oldest steps when
+  it must.
 
 There is no confirmation and no rate cap on purpose: each would make "move
 this" slower for everyone to guard against an attack whose worst result is a

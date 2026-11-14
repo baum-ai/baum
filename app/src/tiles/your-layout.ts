@@ -5,7 +5,8 @@ import { useToast } from "../toast";
 /** The person's own layout of a pull request's tiles, as `GET
  *  api/tiles/layout` sums it up: its revision, whether it has edits, whether
  *  an undo would remove a batch, and that batch (its host-written summary
- *  lines and the tiles it named). */
+ *  lines and the tiles it named), and whether a redo could put an undone
+ *  batch back (`redo_batch` names it). */
 export type LayoutSummary = {
   revision: number;
   edited: boolean;
@@ -18,6 +19,8 @@ export type LayoutSummary = {
     tiles?: string[];
   } | null;
   batches: number;
+  can_redo?: boolean;
+  redo_batch?: string;
 };
 
 /** What the tiles page offers about the person's layout: the strip's "Your
@@ -26,9 +29,12 @@ export type LayoutSummary = {
 export type LayoutControls = {
   edited: boolean;
   canUndo: boolean;
+  /** Whether a redo would put back the change an undo took off. */
+  canRedo?: boolean;
   /** The summary of the change an undo takes back. */
   lastSummary: string[];
   undo: () => void;
+  redo?: () => void;
   reset: () => void;
   show: (tile: string) => void;
   /** The tiles the latest change named; `id` changes with each change. */
@@ -74,29 +80,32 @@ function useLayoutEvents(handler: (event: { pr: string; revision: number } | nul
 }
 
 /** Whether a key press is the platform's undo, Mod+Z, outside any text
- *  field. */
-export function isUndoKey(event: KeyboardEvent, mac: boolean): boolean {
+ *  field; with `redo`, its redo, Mod+Shift+Z (and Ctrl+Y off the Mac). */
+export function isUndoKey(event: KeyboardEvent, mac: boolean, redo = false): boolean {
   const target = event.target;
   if (
     target instanceof HTMLElement &&
     (target.isContentEditable || target.closest("input, textarea, select, [contenteditable]"))
   )
     return false;
-  return (
-    event.key.toLowerCase() === "z" &&
-    !event.shiftKey &&
-    !event.altKey &&
-    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
-  );
+  const mod = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  if (!mod || event.altKey) return false;
+  const key = event.key.toLowerCase();
+  if (!redo) return key === "z" && !event.shiftKey;
+  return (key === "z" && event.shiftKey) || (!mac && key === "y" && !event.shiftKey);
 }
 
 /** What the person is told when their layout changed from `before` to
- *  `after`: the change and its Undo, the undo, or nothing (a read that found
- *  no change). The words are the host's summary lines. */
+ *  `after`: the change and its Undo, an undo and its Redo, a redo and its
+ *  Undo, or nothing (a read that found no change). The words are the host's
+ *  summary lines. Which of them happened is read from the batches' ids, not
+ *  their count: a new edit can fold older batches away, which lowers the
+ *  count as an undo does. An undo leaves the batch it took off as the one a
+ *  redo restores (`redo_batch`). */
 export function announcement(
   before: LayoutSummary | null,
   after: LayoutSummary,
-): { title: string; detail?: string; undo: boolean; tiles: string[] } | null {
+): { title: string; detail?: string; undo: boolean; redo?: boolean; tiles: string[] } | null {
   if (!before || after.revision <= before.revision) return null;
   const lines = (summary: string[]) =>
     summary.length > 1
@@ -105,24 +114,30 @@ export function announcement(
           detail: summary.slice(1, 4).join(" · ") + (summary.length > 4 ? " · …" : ""),
         }
       : { title: summary[0] ?? "Changed the layout" };
-  const newBatch =
-    after.last && after.last.id !== before.last?.id && after.batches >= before.batches;
-  if (newBatch && after.last) {
-    if (after.last.reset)
-      return { title: "Reset the layout to the generated one", undo: true, tiles: [] };
-    return { ...lines(after.last.summary), undo: true, tiles: after.last.tiles ?? [] };
-  }
-  if (after.batches < before.batches && before.last) {
+  if (before.last && after.redo_batch === before.last.id && after.last?.id !== before.last.id) {
     const undone = before.last.reset
       ? "Brought your layout back"
       : `Undid: ${before.last.summary[0] ?? "the last change"}`;
     return {
       title: undone,
       undo: false,
+      redo: true,
       tiles: before.last.reset ? [] : (before.last.tiles ?? []),
     };
   }
-  return null;
+  if (!after.last || after.last.id === before.last?.id) return null;
+  if (before.redo_batch === after.last.id) {
+    if (after.last.reset)
+      return { title: "Reset the layout to the generated one", undo: true, tiles: [] };
+    return {
+      title: `Redid: ${after.last.summary[0] ?? "the change"}`,
+      undo: true,
+      tiles: after.last.tiles ?? [],
+    };
+  }
+  if (after.last.reset)
+    return { title: "Reset the layout to the generated one", undo: true, tiles: [] };
+  return { ...lines(after.last.summary), undo: true, tiles: after.last.tiles ?? [] };
 }
 
 const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -131,7 +146,7 @@ const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator
  *  shows it: read once, then again on each `layout` event for it, when the
  *  page's tiles are read again (`reread`) and the change is announced with
  *  Undo. Its Undo, Reset and Show write through `POST api/tiles/layout`;
- *  Mod+Z undoes outside text fields. */
+ *  Mod+Z undoes, and Mod+Shift+Z redoes, outside text fields. */
 export function useTileLayout({
   clone,
   repository,
@@ -164,6 +179,7 @@ export function useTileLayout({
   }, []);
 
   const undoRef = useRef<() => void>(() => undefined);
+  const redoRef = useRef<() => void>(() => undefined);
   /** Takes a new summary: the page's tiles are read again, then the change
    *  is announced and marked. */
   const settle = useCallback(
@@ -181,6 +197,7 @@ export function useTileLayout({
         ...(told.detail ? { detail: told.detail } : {}),
         context: "Your layout",
         ...(told.undo ? { action: { label: "Undo", run: () => undoRef.current() } } : {}),
+        ...(told.redo ? { action: { label: "Redo", run: () => redoRef.current() } } : {}),
       });
     },
     [toast],
@@ -234,6 +251,12 @@ export function useTileLayout({
     void write({ action: "undo", batch: last.id });
   }, [write]);
   undoRef.current = undo;
+  const redo = useCallback(() => {
+    const next = current.current?.redo_batch;
+    if (!current.current?.can_redo || !next) return;
+    void write({ action: "redo", batch: next });
+  }, [write]);
+  redoRef.current = redo;
   const reset = useCallback(() => void write({ action: "reset" }), [write]);
   const show = useCallback(
     (tile: string) => void write({ action: "edit", ops: [{ op: "show", tile }] }),
@@ -248,27 +271,34 @@ export function useTileLayout({
   useEffect(() => {
     if (!enabled) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || !isUndoKey(event, MAC) || !current.current?.can_undo) return;
-      event.preventDefault();
-      undo();
+      if (event.defaultPrevented) return;
+      if (isUndoKey(event, MAC, true) && current.current?.can_redo) {
+        event.preventDefault();
+        redo();
+      } else if (isUndoKey(event, MAC) && current.current?.can_undo) {
+        event.preventDefault();
+        undo();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [enabled, undo]);
+  }, [enabled, undo, redo]);
   return useMemo(
     () =>
       enabled && summary
         ? {
             edited: summary.edited,
             canUndo: summary.can_undo,
+            canRedo: summary.can_redo ?? false,
             lastSummary: summary.last?.reset ? ["Reset the layout"] : (summary.last?.summary ?? []),
             undo,
+            redo,
             reset,
             show,
             marked,
             revision: summary.revision,
           }
         : null,
-    [enabled, summary, undo, reset, show, marked],
+    [enabled, summary, undo, redo, reset, show, marked],
   );
 }

@@ -306,8 +306,8 @@ function Failures({ count, ctx }: { count: number; ctx: TileContext }) {
 }
 
 /** Says, quietly, that the tiles are laid out the person's way, while they
- *  are, with Undo (the change it takes back is its title) and Reset to the
- *  generated layout. */
+ *  are, with Undo (the change it takes back is its title), Redo after an
+ *  undo, and Reset to the generated layout. */
 function YourLayout({ ctx }: { ctx: TileContext }) {
   const layout = useTileHost().layout;
   if (!layout?.edited || ctx.historical || ctx.draft) return null;
@@ -333,6 +333,11 @@ function YourLayout({ ctx }: { ctx: TileContext }) {
       >
         Undo
       </Button>
+      {layout.canRedo && layout.redo ? (
+        <Button variant="ghost" size="tiny" onClick={layout.redo}>
+          Redo
+        </Button>
+      ) : null}
       <Button
         variant="ghost"
         size="tiny"

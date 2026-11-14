@@ -39,12 +39,15 @@ const summary = (
   revision: number,
   batches: number,
   last: LayoutSummary["last"],
+  redo?: string,
 ): LayoutSummary => ({
   revision,
   edited: batches > 0 && !last?.reset,
   can_undo: batches > 0,
   last,
   batches,
+  can_redo: redo !== undefined,
+  ...(redo !== undefined ? { redo_batch: redo } : {}),
 });
 const moved: LayoutSummary["last"] = {
   id: "edt_000000000001",
@@ -64,9 +67,10 @@ describe("what a change to the layout says", () => {
     });
     expect(announcement(one, one)).toBeNull();
     expect(announcement(null, one)).toBeNull();
-    expect(announcement(one, summary(2, 0, null))).toEqual({
+    expect(announcement(one, summary(2, 0, null, moved!.id))).toEqual({
       title: "Undid: Moved Risks to the top",
       undo: false,
+      redo: true,
       tiles: ["risks"],
     });
     const reset = summary(3, 2, { id: "edt_000000000002", by: "page", reset: true, summary: [] });
@@ -84,6 +88,45 @@ describe("what a change to the layout says", () => {
     expect(announcement(one, many)).toMatchObject({ title: "A", detail: "B · C · D · …" });
   });
 
+  it("tells a fold from an undo by the batches' ids, and a redo from a new edit", () => {
+    const before = summary(7, 100, {
+      id: "edt_000000000063",
+      by: "chat",
+      summary: ["Hid A"],
+      tiles: ["a"],
+    });
+    // A new edit that folded several older batches away: fewer batches than
+    // before, but the newest is a new one and nothing waits for a redo.
+    const folded = summary(8, 40, {
+      id: "edt_000000000064",
+      by: "page",
+      summary: ["Hid B"],
+      tiles: ["b"],
+    });
+    expect(announcement(before, folded)).toEqual({ title: "Hid B", undo: true, tiles: ["b"] });
+    // An undo leaves the undone batch as the one a redo restores.
+    const undone = summary(
+      8,
+      99,
+      { id: "edt_000000000062", by: "page", summary: ["Hid Z"] },
+      "edt_000000000063",
+    );
+    expect(announcement(before, undone)).toEqual({
+      title: "Undid: Hid A",
+      undo: false,
+      redo: true,
+      tiles: ["a"],
+    });
+    // The redo puts it back, with Undo.
+    expect(announcement(undone, summary(9, 100, before.last, undefined))).toEqual({
+      title: "Redid: Hid A",
+      undo: true,
+      tiles: ["a"],
+    });
+    // The same newest batch is no change, however the count moved.
+    expect(announcement(before, summary(9, 3, before.last))).toBeNull();
+  });
+
   it("takes Mod+Z outside text fields only", () => {
     const key = (init: KeyboardEventInit, target?: Element) => {
       const event = new KeyboardEvent("keydown", { key: "z", ...init });
@@ -94,6 +137,8 @@ describe("what a change to the layout says", () => {
     expect(isUndoKey(key({ ctrlKey: true }), false)).toBe(true);
     expect(isUndoKey(key({ ctrlKey: true }), true)).toBe(false);
     expect(isUndoKey(key({ metaKey: true, shiftKey: true }), true)).toBe(false);
+    expect(isUndoKey(key({ metaKey: true, shiftKey: true }), true, true)).toBe(true);
+    expect(isUndoKey(key({ metaKey: true }), true, true)).toBe(false);
     expect(isUndoKey(key({ metaKey: true }, document.createElement("textarea")), true)).toBe(false);
     expect(layoutKey("Acme/Demo", 7)).toBe("acme/demo#7");
   });
@@ -183,7 +228,7 @@ describe("the page's layout", () => {
     expect(document.body.textContent).toContain("Removed Context");
     expect(controls?.marked?.tiles.has("context")).toBe(true);
     // Mod+Z undoes the newest batch, naming it.
-    answers = [() => summary(3, 1, moved)];
+    answers = [() => summary(3, 1, moved, hidden.id)];
     act(() => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", { key: "z", ctrlKey: true, metaKey: true }),
@@ -202,6 +247,26 @@ describe("the page's layout", () => {
     });
     expect(document.body.textContent).toContain("Undid: Removed Context");
     expect(reread).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers Redo after an undo and redoes the batch it names", async () => {
+    answers = [() => summary(1, 1, moved)];
+    await mount();
+    answers = [() => summary(2, 0, null, moved!.id)];
+    act(() => controls!.undo());
+    await flush();
+    expect(document.body.textContent).toContain("Undid: Moved Risks to the top");
+    expect(document.body.textContent).toContain("Redo");
+    expect(controls).toMatchObject({ edited: false, canRedo: true });
+    answers = [() => summary(3, 1, moved)];
+    act(() => controls!.redo!());
+    await flush();
+    expect(requests.at(-1)).toEqual({
+      path: "api/tiles/layout",
+      body: { clone: "c1", pr: 7, action: "redo", batch: moved!.id },
+    });
+    expect(document.body.textContent).toContain("Redid: Moved Risks to the top");
+    expect(controls?.canRedo).toBe(false);
   });
 
   it("shows a hidden tile and resets, and says why when the daemon refuses", async () => {
