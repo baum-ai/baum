@@ -52,6 +52,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/internal/transcript"
@@ -432,6 +433,11 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		if err := versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 12}, store.Version{}, arranged); err != nil {
 			t.Fatal(err)
 		}
+		// acme/demo#14, no longer listed, keeps one saved review whose tiles
+		// the layout test lays out its own way; the marker file
+		// layout-next-version saves its next version, which has no docs
+		// change (layoutNextVersion).
+		seedLayoutReview(t, versions, previous)
 		writeTileRows(t, map[string]tileview.Response{
 			"7":  tileview.Build(previous.Document, nil, tiles.Options{}),
 			"12": tileview.Build(document, composition, tiles.Options{}),
@@ -735,7 +741,13 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		// The session panel's routes, once its service below is built on the
 		// MCP server, which reads through the API.
 		consoleRoutes := console.Unavailable()
-		api := uiserver.LocalAPI{Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		// Each person's own layout of a pull request's tiles, which the
+		// session panel's layout tools and the page change.
+		layouts := &tilelayout.Service{Path: filepath.Join(home, "app.sqlite"), Changed: func(pr string, revision int64) {
+			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
+		}}
+		runner.SetLayouts(layouts.Layout)
+		local := uiserver.LocalAPI{Layouts: layouts, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -749,13 +761,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
 			},
-			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) }}.Handler()
+			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) }}
+		api := local.Handler()
 		// The session panel runs the real conversations service with a
 		// scripted agent (panelAgent): no agent CLI runs, and every
 		// conversation gets an empty directory, as without a clone.
 		// A pull request page takes the comments the agent proposes for the
 		// pending review, saved as the page saves one.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{UIState: uiState}).Pages()})
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{UIState: uiState}).Pages(), Layouts: uiserver.LayoutEditor{API: local}})
 		panel := &panelAgent{events: events, home: home, mcp: mcp}
 		conversations, err := console.New(console.Options{Database: filepath.Join(home, "app.sqlite"), Root: filepath.Join(home, "console"),
 			Registry: mcp.Registry, Proposals: mcp.Proposals, MCPURL: func() string { return server.Origin() + "/api/mcp" },
@@ -775,7 +788,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		live.Panel = conversations.Owns
 		// The tour's sample project; tour.spec.ts walks it.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
-		return daemon.App{API: api, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() {
+		// The MCP route serves the panel's MCP server, which the scripted
+		// agent's layout requests reach over HTTP as an agent CLI's do.
+		return daemon.App{API: api, MCP: mcp, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() {
 			sample.Close()
 			api.Close()
 			_ = conversations.CloseStore()
@@ -798,6 +813,13 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()
 				for {
+					if _, err := os.Stat(filepath.Join(state, "layout-next-version")); err == nil {
+						_ = os.Remove(filepath.Join(state, "layout-next-version"))
+						if err := layoutNextVersion(versions); err != nil {
+							t.Log("the layout review's next version:", err)
+						}
+						changed()
+					}
 					for _, name := range []string{"acme/demo", "acme/other"} {
 						if err := scheduler.Trigger(ctx, name); err != nil && ctx.Err() == nil {
 							t.Log("automatic trigger:", err)
