@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static.usebaum.com/schemas/composition/1.json",
+  "title": "baum tile review composition",
+  "description": "How a generated review is presented as tiles, stored beside its baum.review/1 document: the layout a composer chose, the blocks it promoted to tiles of their own, the library tiles and the tiles it wrote. The served tile document is the review converted to tiles with this composition applied. It holds choices and the content a review cannot hold, never a copy of the review's. This is the composition as the host stores it, after normalising what a model wrote. A reference to #/$defs/<name> that this file does not define names a definition of the merged tile schema (tiles-1.json with review-1.json's definitions).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "layout"],
+  "properties": {
+    "schema": { "const": "baum.composition/1" },
+    "generator": { "$ref": "#/$defs/compositionGenerator" },
+    "layout": { "$ref": "#/$defs/compositionLayout" },
+    "library": {
+      "description": "Library tiles: a custom tile type's definition and the data filled for this review. A library tile's ID is its type's name, so a review has at most one of each type.",
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/compositionLibraryTile" }
+    },
+    "promotions": {
+      "description": "Table and code blocks of a change moved to tiles of their own. The block leaves the change's tile and goes back to it in the review view.",
+      "type": "array",
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/compositionPromotion" }
+    },
+    "authored": {
+      "description": "Table, code and prose tiles the composer wrote, each citing the code it shows.",
+      "type": "array",
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/compositionAuthoredTile" }
+    },
+    "notes": { "$ref": "#/$defs/compositionNotes" }
+  },
+  "$defs": {
+    "compositionGenerator": {
+      "type": "object",
+      "description": "Provenance: the prompt version and digest, the model, when the composition was made (RFC 3339), the change-kind template it started from or fell back to, whether it is that fallback, the fixes normalisation made by kind and the host's problems.",
+      "properties": {
+        "prompt_version": { "type": "string", "maxLength": 200 },
+        "prompt_digest": { "type": "string", "maxLength": 200 },
+        "model": { "type": "string", "maxLength": 200 },
+        "composed_at": { "type": "string", "maxLength": 64 },
+        "template": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "fallback": { "type": "boolean" },
+        "fixes": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "problems": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 400 } }
+      },
+      "additionalProperties": false
+    },
+    "compositionLayout": {
+      "type": "object",
+      "description": "Every tile except obsolete changes, which the host places last, in reading order. Only current change tiles may be in the changes group, whose members are contiguous. changes_shown is how many members the changes group shows before folding; without it the host's default applies. Pinned entries come first and a risks tile holding a critical or high risk is moved onto the landing page when the composition is applied.",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "tile": { "$ref": "#/$defs/tileId" },
+              "size": { "enum": ["full", "half", "third"] },
+              "group": { "const": "changes" },
+              "pin": { "const": true }
+            },
+            "additionalProperties": false,
+            "required": ["tile", "size"]
+          }
+        },
+        "changes_shown": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false,
+      "required": ["entries"]
+    },
+    "compositionLibraryTile": {
+      "type": "object",
+      "description": "A library tile: its type's definition, with its digest, and its data. A pending tile is still being filled and has empty data.",
+      "properties": {
+        "definition": { "$ref": "#/$defs/tileTypeDefinition" },
+        "data": { "type": "object" },
+        "pending": { "const": true }
+      },
+      "additionalProperties": false,
+      "required": ["definition", "data"]
+    },
+    "compositionPromotion": {
+      "type": "object",
+      "description": "A table or code block of a current change promoted to a tile of its own. id starts with the block's kind. block is the block's 0-based position among the change's blocks in baum.review/1, as an origin gives it. digest is written by the host: sha256 over the RFC 8785 canonical JSON of the block; a block that no longer matches it is not promoted.",
+      "properties": {
+        "id": { "type": "string", "pattern": "^(table|code)_[a-z0-9_]{1,64}$" },
+        "change": { "$ref": "#/$defs/sectionId" },
+        "block": { "type": "integer", "minimum": 0 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 }
+      },
+      "additionalProperties": false,
+      "required": ["id", "change", "block", "digest", "title"]
+    },
+    "compositionAuthoredTile": {
+      "type": "object",
+      "description": "A tile the composer wrote. id starts with its type (table, code or prose), and data has that type's shape without origin. It cites at least one hunk or file of the review, and every citation resolves.",
+      "properties": {
+        "id": { "type": "string", "pattern": "^(table|code|prose)_[a-z0-9_]{1,64}$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "data": { "type": "object", "not": { "required": ["origin"] } }
+      },
+      "additionalProperties": false,
+      "required": ["id", "title", "data"],
+      "allOf": [
+        {
+          "if": { "properties": { "id": { "pattern": "^table_" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/tileData_table" } } }
+        },
+        {
+          "if": { "properties": { "id": { "pattern": "^code_" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/tileData_code" } } }
+        },
+        {
+          "if": { "properties": { "id": { "pattern": "^prose_" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/tileData_prose" } } }
+        }
+      ]
+    },
+    "compositionNotes": {
+      "type": "object",
+      "description": "What the composer said about its choices, kept for evaluation and not shown: a reason per tile it placed, the moves against the previous version, and a custom tile it suggests, which is logged only.",
+      "properties": {
+        "why": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 160 } },
+        "moves": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "tile": { "$ref": "#/$defs/tileId" },
+              "why": { "type": "string", "maxLength": 160 }
+            },
+            "additionalProperties": false,
+            "required": ["tile", "why"]
+          }
+        },
+        "custom_suggestion": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string", "maxLength": 80 },
+            "shows": { "type": "string", "maxLength": 300 },
+            "why": { "type": "string", "maxLength": 300 }
+          },
+          "additionalProperties": false,
+          "required": ["title", "shows", "why"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -7,7 +7,9 @@
 // for stored documents that still carry them. Additive schema edits bump the revision recorded at
 // $defs/schemaRevision/const, which a generated document echoes in
 // generator.schema_revision. tiles-1.json is the baum.tiles/1 tile document
-// schema, which reuses review-1.json's definitions (CompileTiles).
+// schema, which reuses review-1.json's definitions (CompileTiles), and
+// composition-1.json the baum.composition/1 schema of how a generated review
+// is presented as tiles, which reuses the tile schema's (CompileComposition).
 package schema
 
 import (
