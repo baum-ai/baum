@@ -136,8 +136,9 @@ oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-run> --m
 ```
 
 - `--compose-from-store` composes the dataset's saved reviews
-  (`reviews/<machine>/<repository>.versions.sqlite`, copied and read
-  read-only). Cases are selected as usual; each composes the saved version
+  (`reviews/<machine>/<repository>.versions.sqlite`, with their write-ahead
+  logs, copied to a temporary directory that is removed when the run ends,
+  and read read-only). Cases are selected as usual; each composes the saved version
   generated from its bundle (its metadata's `bundle_digest`), else the latest
   version at the case's head, else the pull request's latest version. The
   record says which (`review.match`: `bundle`, `head` or `latest`). A pull
@@ -172,8 +173,16 @@ once, the round trip back to the review.
 `compose_fixes` and `compose_fix_<kind>`, `compose_differs_from_template`,
 `compose_landing_differs`, `compose_featured_changes`, `compose_promotions`,
 `compose_reasons`, `compose_landing_tiles`, `compose_inventory_bytes`,
-`compose_inventory_cut` and `compose_seconds`; their sums are the run's
-counters (fallbacks, repaired replies, cases that differ from the template).
+`compose_inventory_cut`, `compose_seconds`, `compose_wasted_rows` (landing
+rows left with empty units while a tile follows), `compose_quiet_risks_half`
+(a risks tile ranking nothing above low on half of the first row), both also
+for the template (`template_` prefix), and, on reviews with a breaking change
+only, `compose_breaking_featured` (a change is featured; a proxy for the one
+carrying it). Their sums are the run's counters (fallbacks, repaired replies,
+cases that differ from the template). A backend that cannot make a single
+call composes nothing: every case falls back with the reason that it cannot
+complete. A stage the run's interruption stopped is an interrupted case, never
+a fallback.
 
 ## Detectors
 

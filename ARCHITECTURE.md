@@ -1006,7 +1006,7 @@ composition costs no more than a few milliseconds.
 | Authored tiles | The ID is `table_`, `code_` or `prose_` and a slug; the first 3 that pass are kept. Dropped when the data is not a JSON object of at most 64 KiB, carries an `origin`, does not have its type's shape, cites no hunk or file, or has a citation that does not resolve. |
 | IDs | A promoted or authored tile whose ID a converted tile, a library tile or an earlier composition tile has gets the first free numeric suffix (`_2`, `_3`, …). |
 | Text | Control characters (C0 and DEL) are removed from titles, notes and prose, a prose tile keeping tabs and newlines. Titles are one line, at most 80 characters, the type's catalogue title when blank. |
-| Entries | An entry naming no tile, a second entry for a tile and an entry for an obsolete change are dropped. A size the tile does not allow becomes its default: overview, risks, table, code and diagram tiles are half or full, a custom tile takes its definition's sizes, the others any size. Only a current change tile that is not pinned may be in the changes group; any other group is removed. |
+| Entries | An entry naming no tile, a second entry for a tile and an entry for an obsolete change are dropped. A size the tile does not allow becomes its default: overview, risks, table, code and diagram tiles are half or full (the risks tile a third too while it ranks no active risk above low, `tiles.SizesIn`), a custom tile takes its definition's sizes, the others any size. Only a current change tile that is not pinned may be in the changes group; any other group is removed. |
 | Omitted tiles | Appended in the converter's order and sizes, a change at the end of the changes group, then the composition's tiles at their default size. |
 | Changes group | Made contiguous at its first member; `changes_shown` is at least 1. |
 | Notes | A reason or move naming no tile is dropped; reasons are cut to 160 characters, moves to 20. |
@@ -1061,7 +1061,12 @@ tiles").
 | `docs` | docs, ci, mechanical, translation, release, export | overview (full), the changes, everything else, then the rest |
 
 Changes are a third each in the changes group, in review order; "the rest"
-is every other tile in the converter's order and sizes.
+is every other tile in the converter's order and sizes. When the risks tile
+ranks no active risk above low, its glance says only what the strip's risk
+score says, so it leaves the first rows: it takes a third after the changes
+(after evidence in `dependency`, before the rest in `docs`), and in `feature`
+and `refactor` the first change in review order takes its half of the first
+row, outside the group.
 
 **ID stability.** A tile keeps its ID from one version of a pull request to
 the next while its subject persists: single and change tiles by
@@ -1737,9 +1742,7 @@ ones did, absent when every prompt was built in. The daemon's jobs and
 `baum decisions` use the prompts resolved for the repository (repository, then
 global, then built in); `baum internal generate` opens no registry and uses the
 built-in prompts. The replaceable review prompts are the four of a staged
-review, the tile composition's (`review-tiles-compose`, which Settings ›
-Prompts lists though no job composes tiles yet), and a review group's
-(`review-group`), which is the whole text before
+review and a review group's (`review-group`), which is the whole text before
 the Submitting heading, the review instructions included; the one-pass review
 prompt (`prompt.Prompts`) is not replaceable, as no job writes one pull
 request's review in one pass. A retry of a staged review's details refuses to run when the
@@ -1769,9 +1772,11 @@ combined review covers (see "Review groups").
 The arrangement of a review's tiles (see "Composing tiles") takes its system
 prompt through `ComposePrompts`; the module's `prompt.TilesPrompts` embeds
 `review-tiles-compose-public-v1.md` (`review-tiles-compose`, version
-`review-tiles-public-v1`), which a host can replace like the stage prompts. It
-has no Submitting heading: the call is a single completion whose backend says
-how to submit.
+`review-tiles-public-v1`). It has no Submitting heading: the call is a single
+completion whose backend says how to submit. Until a job composes tiles it is
+not in the catalogue, so Settings › Prompts does not list it and no custom
+text can be stored for it; `prompt.Validate` and `MissingSafetyRules` still
+check a text for it, as replay's `--prompt-override` does.
 
 A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
@@ -2079,8 +2084,10 @@ the composer's user message, JSON on one line:
 - `pull_request`: title, change kind, breaking change, the recommendation with
   the changes it names (`tiles.RecommendedChanges`), risk score, reading time,
   whether there is a previous version;
-- `template`: the change kind's template (`tiles.Template`), its entries and
-  the tiles it shows on the landing page;
+- `template`: the change kind's template (`tiles.Template`), its entries, the
+  tiles it shows on the landing page, and the landing page's rows with the
+  grid units each leaves empty (`compose.LandingRows`: a tile that does not fit
+  a row starts the next, and nothing moves up to fill the gap);
 - `tiles`: every tile the template places, in its order, with the sizes it
   allows and what its glance shows: a change's title, kind, state against the
   previous version, assessed level and factors, review score, worst risk tier,
@@ -2094,17 +2101,23 @@ the composer's user message, JSON on one line:
 - `library`: the library tiles the analysis selected (`compose.Fill`), none
   until library fills exist;
 - `previous`: the previous composition's entries that name a tile this
-  version has, its promoted tiles and its reasons;
+  version has, its promoted tiles (each with the handle of the block it
+  promoted while this version has it) and its reasons;
 - `preferences`: the repository's text (1,000 characters) and pins.
 
-Text is stripped of control characters and folded onto one line. The
+Text is stripped of C0 and C1 control characters and zero-width characters
+and folded onto one line. The
 inventory is deterministic and aims at 40 KiB: past that it cuts, in order,
 block details, paths, the previous reasons, the text of risks below high,
 missing claims, attention, summaries to 100 characters, the summaries of
 changes scored 2 or less, every summary, severe risk texts to 60 characters
 and titles, and names the cuts in `cut`. IDs, types, sizes, scores and
 headlines are never cut, since a composer cannot place a tile it is not told
-of. A typical review's inventory is 2–12 KB.
+of, until a hard bound of 64 KiB: past it the inventory drops risks beyond
+three per change, library tiles beyond the limit, the previous layout and the
+factors, blocks and evidence of every tile, then the last changes in review
+order, counted by level in `omitted_changes` (the host appends them to the
+group). A typical review's inventory is 2–12 KB.
 
 **Reply.** `compose.ReplySchema()` is strict-mode ready (every property
 required, objects closed, nulls explicit, so `codex.StrictSchema` leaves it as
@@ -2116,20 +2129,28 @@ the layout, their reasons `notes.why`, a handle becomes the change and block
 position of a promotion (an unknown handle a promotion of no change, which
 normalisation drops and counts).
 
-**Repair and fallback.** A reply that is not JSON of the reply schema (the
-host checks everything but string lengths, which normalisation bounds) gets
-one repair call: the inventory again, the problems and the rejected reply as
-data. Problems the host can fix (unknown tiles, sizes, groups, omissions) are
+**Repair and fallback.** A reply that is not JSON of the reply schema, with
+at least one entry, gets one repair call: the inventory again, the problems
+and the rejected reply as data. The host checks the reply itself
+(`compose.ParseReply`), everything but string lengths, which normalisation
+bounds, and words up to five problems as a JSON pointer and the rule broken,
+never the value, so the findings an outcome keeps are the host's. Problems the host can fix (unknown tiles, sizes, groups, omissions) are
 not repaired but normalised. Then `tiles.StabilizeIDs` against the previous
 composition, the repository's pins stamped (an entry pinned and out of its
 group, a pinned tile the layout omits added at the front),
 `tiles.NormalizeComposition`, and `SetGenerator` with the prompt's version and
 digest, the model, the time, the template's name and the fixes by kind. When
 anything fails (no completer, the prompt, the call, a reply still invalid
-after the repair, masking, a layout that cannot be applied), the composition
-is the template with the pins, the generator's `fallback` set and the reason,
-the host's own words, its only problem. `ComposeRun` errs only for a document
-that takes no composition.
+after the repair, masking, a layout that cannot be applied or that normalises
+to an empty composition), the composition is the template with the pins, the
+generator's `fallback` set and the reason, the host's own words, its only
+problem. Without a deadline on its context the stage is bounded by
+`ComposeRequest.Timeout` (`DefaultComposeTimeout`, 90 seconds; a call takes 3
+to 10), past which it falls back. When the caller's context ends, before or
+during the stage, `ComposeRun` makes no further call and returns
+`ErrComposeInterrupted` with no composition, so a host never stores a
+fallback for a run it stopped. It errs otherwise only for a document that
+takes no composition.
 
 **Redaction and metering.** Every reply is masked with `RedactTaskOutput`
 before it is read, so the reasons, titles and suggestion of a stored
@@ -2143,8 +2164,10 @@ harness made against the schema, and the repair.
 since the backend adds how to submit: the reader and the landing grid, what
 each glance shows, the inventory as model-written data (only `preferences`
 instructs), the rules the host enforces anyway, how to lead (risks and changes
-that need a decision at half, at most three featured changes, the rest in the
-group by score, sizes by importance, small pull requests left alone), reasons
+that need a decision at half, always the change that carries a breaking
+change, at most three featured changes, a quiet risks tile left at its third,
+rows filled as one full, two halves or three thirds, the rest in the group by
+score, sizes by importance, small pull requests left alone), reasons
 only for what moves, and two synthetic examples.
 
 ## `decisions`
