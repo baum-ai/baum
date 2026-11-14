@@ -551,6 +551,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	}
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
+	mux.HandleFunc("GET /api/tile-library", tileLibrary)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)

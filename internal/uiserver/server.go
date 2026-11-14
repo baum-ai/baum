@@ -187,6 +187,10 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, framePrefix) {
+			serveFrame(w, r)
+			return
+		}
 		if r.URL.Path == mcpPath {
 			s.serveMCP(w, r)
 			return
