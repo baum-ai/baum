@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/github"
@@ -39,11 +40,22 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$`)
 // does not have decode as their zero value.
 type Entry struct {
 	ID             string   `json:"id"`
+	Repository     string   `json:"repository"`
+	Number         int      `json:"number"`
+	Revision       string   `json:"revision"`
 	Split          string   `json:"split"`
 	Representative bool     `json:"representative"`
 	Primary        bool     `json:"primary"`
 	Size           string   `json:"size"`
 	SessionVendors []string `json:"session_vendors"`
+	// Attachments and Threads count the bundle's images and review threads.
+	Attachments int `json:"attachments"`
+	Threads     int `json:"threads"`
+	// PreviousVersion is the version number of the previous review the bundle
+	// carries, nil when it has none.
+	PreviousVersion *int `json:"previous_version"`
+	// CapturedAt is when the case was captured (RFC 3339).
+	CapturedAt string `json:"captured_at"`
 }
 
 // Dataset is an opened dataset directory.
@@ -53,6 +65,9 @@ type Dataset struct {
 	// dataset has none. IndexSHA256 identifies the index file.
 	Index       []Entry
 	IndexSHA256 string
+
+	mu       sync.Mutex
+	detected map[string]Detections
 }
 
 // OpenDataset checks that dir holds cases and the checkouts repository and
@@ -120,6 +135,9 @@ type Case struct {
 	HeadTree, MergeBaseTree string
 
 	dir, gitDir string
+	// carried is the previous version a chain handed to WithBundle, with the
+	// fields the bundle's encoding leaves out.
+	carried *bundle.PreviousVersion
 }
 
 // caseFile is cases/<id>/case.json.
@@ -207,7 +225,28 @@ func (c Case) FreshBundle() (bundle.Bundle, error) {
 		return bundle.Bundle{}, err
 	}
 	b.Digest = c.Digest
+	if c.carried != nil && b.Previous != nil {
+		b.Previous.HunkRanges, b.Previous.Attachments = c.carried.HunkRanges, c.carried.Attachments
+	}
 	return b, nil
+}
+
+// WithBundle returns the case with b as its bundle: generation reads b's
+// encoding, and the digest is the one the pipeline's assembly computes for it.
+// The checkout and images are the case's own.
+func (c Case) WithBundle(b bundle.Bundle) (Case, error) {
+	encoded, err := json.Marshal(b)
+	if err != nil {
+		return Case{}, fmt.Errorf("case %s: encoding the bundle: %w", c.ID, err)
+	}
+	sum := sha256.Sum256(encoded)
+	c.Digest = hex.EncodeToString(sum[:])
+	b.Digest = c.Digest
+	c.BundleJSON = append(encoded, '\n')
+	file := sha256.Sum256(c.BundleJSON)
+	c.FileSHA256 = hex.EncodeToString(file[:])
+	c.Bundle, c.carried = b, b.Previous
+	return c, nil
 }
 
 // gitEnv is the environment of every git process: the process's own without

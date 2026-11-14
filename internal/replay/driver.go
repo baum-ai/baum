@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,68 +30,6 @@ import (
 // repository of the working directory.
 var Commit string
 
-// Selection picks cases. Without IDs it filters the dataset's index; the
-// result is sorted by id, shuffled when ShuffleSeed is set, then cut to Limit.
-type Selection struct {
-	IDs            []string
-	Split          string
-	Representative bool
-	Primary        bool
-	// Sizes are the size buckets to keep (xs, s, m, l, xl); empty keeps all.
-	Sizes []string
-	// Sessions is "claude_code", "codex" or "none"; empty keeps all.
-	Sessions    string
-	Limit       int
-	ShuffleSeed *uint64
-}
-
-// Select returns the ids of the cases the selection names.
-func (d *Dataset) Select(sel Selection) ([]string, error) {
-	var ids []string
-	if len(sel.IDs) > 0 {
-		ids = slices.Clone(sel.IDs)
-		if sel.Split != "" || sel.Representative || sel.Primary || len(sel.Sizes) > 0 || sel.Sessions != "" {
-			return nil, errors.New("--case cannot be combined with index filters")
-		}
-	} else {
-		if len(d.Index) == 0 {
-			return nil, errors.New("the dataset has no index/cases.jsonl: name cases with --case")
-		}
-		switch sel.Split {
-		case "", "calibration", "held_out":
-		default:
-			return nil, fmt.Errorf("unknown split %q; use calibration or held_out", sel.Split)
-		}
-		switch sel.Sessions {
-		case "", "claude_code", "codex", "none":
-		default:
-			return nil, fmt.Errorf("unknown --with-sessions %q; use claude_code, codex or none", sel.Sessions)
-		}
-		for _, e := range d.Index {
-			switch {
-			case sel.Split != "" && e.Split != sel.Split,
-				sel.Representative && !e.Representative,
-				sel.Primary && !e.Primary,
-				len(sel.Sizes) > 0 && !slices.Contains(sel.Sizes, e.Size),
-				sel.Sessions == "none" && len(e.SessionVendors) > 0,
-				sel.Sessions != "" && sel.Sessions != "none" && !slices.Contains(e.SessionVendors, sel.Sessions):
-				continue
-			}
-			ids = append(ids, e.ID)
-		}
-	}
-	slices.Sort(ids)
-	ids = slices.Compact(ids)
-	if sel.ShuffleSeed != nil {
-		rng := rand.New(rand.NewPCG(*sel.ShuffleSeed, 0))
-		rng.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
-	}
-	if sel.Limit > 0 && len(ids) > sel.Limit {
-		ids = ids[:sel.Limit]
-	}
-	return ids, nil
-}
-
 // Plan is a replay to execute.
 type Plan struct {
 	Dataset   *Dataset
@@ -110,6 +47,10 @@ type Plan struct {
 	MaxCostUSD float64
 	// MaxCases refuses a run of more cases than this; zero is no guard.
 	MaxCases int
+	// Chain replays the revisions of each selected pull request in order, each
+	// reading the previous revision's generated document as its previous
+	// version (see Dataset.SelectChains); a revision that fails ends the chain.
+	Chain bool
 	// Resume skips cases whose outcome in the run directory succeeded.
 	Resume, DryRun bool
 	// ResumeAnyway continues a run whose saved settings differ from these.
@@ -152,11 +93,23 @@ type Manifest struct {
 	// digest, prompt override hashes for the review generator.
 	Generator         string         `json:"generator"`
 	GeneratorSettings map[string]any `json:"generator_settings"`
+	// Chain says the run replayed pull requests' revisions in order.
+	Chain bool `json:"chain,omitempty"`
+	// CaseFacts are the size, split and session agents of each case, for
+	// grouping a run's metrics without the dataset.
+	CaseFacts map[string]CaseFacts `json:"case_facts,omitempty"`
+}
+
+// CaseFacts are the index facts a run's metrics group cases by.
+type CaseFacts struct {
+	Size     string   `json:"size,omitempty"`
+	Split    string   `json:"split,omitempty"`
+	Sessions []string `json:"sessions,omitempty"`
 }
 
 // comparable is what a resume must find unchanged.
 func (m Manifest) comparable() map[string]any {
-	return map[string]any{"backend": m.Backend, "model": m.Model, "effort": m.Effort, "generator": m.Generator, "generator_settings": m.GeneratorSettings}
+	return map[string]any{"backend": m.Backend, "model": m.Model, "effort": m.Effort, "generator": m.Generator, "generator_settings": m.GeneratorSettings, "chain": m.Chain}
 }
 
 // differences names the settings of saved that differ from m's.
@@ -217,6 +170,14 @@ type Summary struct {
 // RunDir is where the plan writes.
 func (p Plan) RunDir() string { return filepath.Join(p.OutDir, p.Name) }
 
+// unit is what one slot runs: a case, or the chain of a pull request. The
+// first done cases already succeeded in the run being resumed.
+type unit struct {
+	chain *Chain
+	ids   []string
+	done  int
+}
+
 // Execute selects the cases, runs them and writes the manifest, each case's
 // files and the summary. Cases that fail do not make it return an error: the
 // caller reads the summary.
@@ -230,37 +191,83 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 	if strings.ContainsAny(p.Name, `/\`) || p.Name == "." || p.Name == ".." {
 		return Summary{}, errors.New("the run name must be a plain directory name")
 	}
-	ids, err := p.Dataset.Select(p.Selection)
-	if err != nil {
-		return Summary{}, err
+	var ids []string
+	var units []unit
+	if p.Chain {
+		if g := p.Settings.Generator; g != nil {
+			if _, ok := g.(Chainer); !ok {
+				return Summary{}, fmt.Errorf("--chain needs a generator that can carry a document into the next revision; %s cannot", g.Name())
+			}
+		}
+		chains, err := p.Dataset.SelectChains(p.Selection)
+		if err != nil {
+			return Summary{}, err
+		}
+		for i := range chains {
+			ids = append(ids, chains[i].IDs...)
+			units = append(units, unit{chain: &chains[i], ids: chains[i].IDs})
+		}
+	} else {
+		var err error
+		if ids, err = p.Dataset.Select(p.Selection); err != nil {
+			return Summary{}, err
+		}
+		for _, id := range ids {
+			units = append(units, unit{ids: []string{id}})
+		}
 	}
 	if len(ids) == 0 {
 		return Summary{}, errors.New("no case matches the selection")
 	}
 	dir := p.RunDir()
-	todo := ids
 	var rows []Row
 	if p.Resume {
-		todo = nil
-		for _, id := range ids {
-			if out, err := ReadOutcome(filepath.Join(dir, "cases", id)); err == nil && out.OK() {
+		// A case that succeeded is skipped. In a chain only the leading ones
+		// are: a revision after one that runs again reads a new previous version.
+		var todo []unit
+		for _, u := range units {
+			for u.done < len(u.ids) {
+				out, err := ReadOutcome(filepath.Join(dir, "cases", u.ids[u.done]))
+				if err != nil || !out.OK() {
+					break
+				}
 				rows = append(rows, rowOf(out, "resumed"))
-				continue
+				u.done++
+				if u.chain == nil {
+					break
+				}
 			}
-			todo = append(todo, id)
+			if u.done < len(u.ids) {
+				todo = append(todo, u)
+			}
 		}
+		units = todo
 	}
-	if p.MaxCases > 0 && len(todo) > p.MaxCases {
-		return Summary{}, fmt.Errorf("the selection is %d cases, above --max-cases %d; narrow it with --limit or raise the guard", len(todo), p.MaxCases)
+	remaining := 0
+	for _, u := range units {
+		remaining += len(u.ids) - u.done
+	}
+	if p.MaxCases > 0 && remaining > p.MaxCases {
+		return Summary{}, fmt.Errorf("the selection is %d cases, above --max-cases %d; narrow it with --limit or raise the guard", remaining, p.MaxCases)
 	}
 	if p.DryRun {
-		_, _ = fmt.Fprintf(p.Out, "dry run: %d case(s) would run, %d already done, nothing was called\n", len(todo), len(rows))
-		for _, id := range todo {
-			if _, err := p.Dataset.LoadCase(ctx, id); err != nil {
-				_, _ = fmt.Fprintf(p.Out, "%s\t(would fail to load: %v)\n", id, err)
-				continue
+		_, _ = fmt.Fprintf(p.Out, "dry run: %d case(s) would run, %d already done, nothing was called\n", remaining, len(rows))
+		for _, u := range units {
+			if u.chain != nil {
+				_, _ = fmt.Fprintf(p.Out, "chain %s: %d revision(s), in this order\n", u.chain.Name(), len(u.ids))
 			}
-			_, _ = fmt.Fprintln(p.Out, id)
+			for _, id := range u.ids[u.done:] {
+				if _, err := p.Dataset.LoadCase(ctx, id); err != nil {
+					_, _ = fmt.Fprintf(p.Out, "%s\t(would fail to load: %v)\n", id, err)
+					continue
+				}
+				_, _ = fmt.Fprintln(p.Out, id)
+			}
+		}
+		if len(p.Selection.IDs) == 0 {
+			if b, err := p.Dataset.Break(p.Selection); err == nil {
+				b.Print(p.Out)
+			}
 		}
 		return Summary{Run: p.Name}, nil
 	}
@@ -271,6 +278,9 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 	runner, err := newRunner(ctx, p.Settings)
 	if err != nil {
 		return Summary{}, err
+	}
+	if _, ok := runner.generator.(Chainer); p.Chain && !ok {
+		return Summary{}, fmt.Errorf("--chain needs a generator that can carry a document into the next revision; %s cannot", runner.generator.Name())
 	}
 	manifest := p.manifest(runner, ids)
 	manifestPath := filepath.Join(dir, "manifest.json")
@@ -313,9 +323,11 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 		}
 		_, _ = fmt.Fprintf(p.Out, "%-11s %s  %.0fs  %d call(s)  %s\n", row.Status, row.CaseID, row.WallSeconds, row.Calls, costText(row.CostUSD))
 	}
-	for _, id := range todo {
-		slots <- struct{}{}
+	// halted says whether no further case may start: the run was interrupted
+	// or it reached its cost guard.
+	halted := func() bool {
 		mu.Lock()
+		defer mu.Unlock()
 		switch {
 		case ctx.Err() != nil:
 			if stopped == "" || !strings.HasPrefix(stopped, "interrupted") {
@@ -324,12 +336,16 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 		case p.MaxCostUSD > 0 && spent >= p.MaxCostUSD && stopped == "":
 			stopped = fmt.Sprintf("cost guard: %.2f USD spent, --max-cost-usd %.2f", spent, p.MaxCostUSD)
 		}
-		halt := stopped != ""
-		mu.Unlock()
-		if halt {
+		return stopped != ""
+	}
+	for _, u := range units {
+		slots <- struct{}{}
+		if halted() {
 			<-slots
 			mu.Lock()
-			rows = append(rows, Row{CaseID: id, Status: "skipped", Reason: "stopped"})
+			for _, id := range u.ids[u.done:] {
+				rows = append(rows, Row{CaseID: id, Status: "skipped", Reason: "stopped"})
+			}
 			mu.Unlock()
 			continue
 		}
@@ -337,7 +353,12 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			add(p.runCase(ctx, runner, id))
+			if u.chain == nil {
+				row, _ := p.runCase(ctx, runner, u.ids[0], nil)
+				add(row)
+				return
+			}
+			p.runChain(ctx, runner, u, halted, add)
 		}()
 	}
 	wg.Wait()
@@ -353,23 +374,35 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 }
 
 // runCase loads and generates one case; a case that cannot be loaded or
-// written is a failed row, so one broken case does not end the run.
-func (p Plan) runCase(ctx context.Context, runner *Runner, id string) Row {
+// written is a failed row, so one broken case does not end the run. prepare,
+// when set, changes the loaded case before it runs (a chain gives it its
+// previous version). A case that succeeded also returns its document.
+func (p Plan) runCase(ctx context.Context, runner *Runner, id string, prepare func(Case) (Case, error)) (Row, []byte) {
 	caseDir := filepath.Join(p.RunDir(), "cases", id)
-	fail := func(reason string, err error) Row {
+	fail := func(reason string, err error) (Row, []byte) {
 		out := Outcome{CaseID: id, Status: "failed", Reason: reason, Error: err.Error(), StartedAt: time.Now().UTC()}
 		_ = os.MkdirAll(caseDir, 0o700)
 		_ = writeJSON(filepath.Join(caseDir, "outcome.json"), out)
-		return rowOf(out, "failed")
+		return rowOf(out, "failed"), nil
 	}
 	c, err := p.Dataset.LoadCase(ctx, id)
 	if err != nil {
 		return fail("case", err)
 	}
+	if prepare != nil {
+		if c, err = prepare(c); err != nil {
+			return fail("case", err)
+		}
+	}
 	if err := os.MkdirAll(caseDir, 0o700); err != nil {
 		return fail("internal", err)
 	}
 	// A rerun replaces the case's earlier files.
+	if earlier, err := ReadOutcome(caseDir); err == nil {
+		for _, name := range earlier.Artifacts {
+			_ = os.Remove(filepath.Join(caseDir, name))
+		}
+	}
 	for _, name := range caseFiles {
 		_ = os.Remove(filepath.Join(caseDir, name))
 	}
@@ -382,7 +415,10 @@ func (p Plan) runCase(ctx context.Context, runner *Runner, id string) Row {
 	if out.Status == "interrupted" {
 		_ = os.Remove(caseDir)
 	}
-	return rowOf(out, out.Status)
+	if out.OK() {
+		return rowOf(out, out.Status), out.Document
+	}
+	return rowOf(out, out.Status), nil
 }
 
 func rowOf(o Outcome, status string) Row {
@@ -468,7 +504,17 @@ func (p Plan) manifest(r *Runner, ids []string) Manifest {
 		ClaudeConfigDir: s.ClaudeConfigDir, CodexHome: s.CodexHome, AgentEnvNames: slices.Sorted(maps.Keys(s.AgentEnv)),
 		TimeLimitSeconds: s.TimeLimit.Seconds(), PassTimeoutSeconds: s.PassTimeout.Seconds(), MaxCalls: s.MaxCalls, MaxTokens: s.MaxTokens,
 		Caps: r.Caps, Concurrency: max(p.Concurrency, 1), MaxCostUSD: p.MaxCostUSD, PriceVersion: r.prices.Version(),
-		Generator: r.generator.Name(), GeneratorSettings: r.Described}
+		Generator: r.generator.Name(), GeneratorSettings: r.Described, Chain: p.Chain}
+	for _, id := range ids {
+		for _, e := range p.Dataset.Index {
+			if e.ID == id {
+				if m.CaseFacts == nil {
+					m.CaseFacts = map[string]CaseFacts{}
+				}
+				m.CaseFacts[id] = CaseFacts{Size: e.Size, Split: e.Split, Sessions: e.SessionVendors}
+			}
+		}
+	}
 	return m
 }
 

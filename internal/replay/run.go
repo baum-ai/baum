@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +43,15 @@ type Generator interface {
 	Validate(document []byte, c Case) []string
 }
 
+// Chainer is implemented by a generator whose document can be the previous
+// version of the next revision of a pull request, which a chain run needs.
+type Chainer interface {
+	// Next returns c with document, which the generator produced for an earlier
+	// revision of the pull request, as its previous version number version, the
+	// way the app carries a stored version into the next generation.
+	Next(c Case, document []byte, version int) (Case, error)
+}
+
 // Generated is what a generator produced for one case.
 type Generated struct {
 	Document []byte
@@ -53,6 +64,10 @@ type Generated struct {
 	// Details is format-specific and kept in outcome.json as it is.
 	Notes   []string
 	Details map[string]any
+	// Artifacts are extra named files, written beside the document in the
+	// case's directory and listed in the outcome. A name is a relative path
+	// below the case directory; it cannot be one of the runner's own files.
+	Artifacts map[string][]byte
 }
 
 // Settings choose how a case is generated. The zero value of each field is the
@@ -129,14 +144,18 @@ type Outcome struct {
 	Accounts *agent.Accounting `json:"accounting,omitempty"`
 	CallLog  []Call            `json:"call_log,omitempty"`
 	Findings string            `json:"findings,omitempty"`
-	Notes    []string          `json:"notes,omitempty"`
-	Details  map[string]any    `json:"details,omitempty"`
+	// Artifacts lists the extra files the generator wrote beside the document.
+	Artifacts []string       `json:"artifacts,omitempty"`
+	Notes     []string       `json:"notes,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
 	// DocumentValid says the document passes the generator's validation
 	// against the case; ValidationFindings are what it found otherwise.
 	DocumentValid      bool     `json:"document_valid"`
 	ValidationFindings []string `json:"validation_findings,omitempty"`
 
 	Document []byte `json:"-"`
+	// Extra holds the artifacts' content.
+	Extra map[string][]byte `json:"-"`
 }
 
 // OK reports a case that produced a valid document.
@@ -243,6 +262,14 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 	}
 	out.CostUSD = r.prices.BackendOutcomeCost(out.Backend, out.Model, spent)
 	out.CallLog = tracked.calls()
+	if badArtifacts := checkArtifacts(generated.Artifacts); badArtifacts != nil {
+		if err == nil {
+			err = badArtifacts
+		}
+	} else if len(generated.Artifacts) > 0 {
+		out.Extra = generated.Artifacts
+		out.Artifacts = slices.Sorted(maps.Keys(generated.Artifacts))
+	}
 	switch {
 	case err != nil:
 		out.Status, out.Reason, out.Error = "failed", string(generate.CategoryOf(err)), err.Error()
@@ -284,9 +311,29 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 // caseFiles are the files a case's run writes.
 var caseFiles = []string{"document.json", "transcript.jsonl", "progress.log", "diagnostics.json", "outcome.json"}
 
+// checkArtifacts refuses a name that leaves the case directory or replaces one
+// of the runner's files.
+func checkArtifacts(artifacts map[string][]byte) error {
+	for name := range artifacts {
+		if !filepath.IsLocal(name) || strings.ContainsAny(name, `\`) || slices.Contains(caseFiles, filepath.ToSlash(filepath.Clean(name))) {
+			return fmt.Errorf("the generator's artifact name %q is not a file name below the case directory, or it is one of the runner's own files", name)
+		}
+	}
+	return nil
+}
+
 func writeCase(dir string, out Outcome, transcript []byte) error {
 	if out.Document != nil {
 		if err := generate.WriteFileAtomic(filepath.Join(dir, "document.json"), out.Document); err != nil {
+			return err
+		}
+	}
+	for name, content := range out.Extra {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		if err := generate.WriteFileAtomic(path, content); err != nil {
 			return err
 		}
 	}

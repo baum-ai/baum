@@ -92,6 +92,38 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 	if len(ds.Index) > 0 && len(ds.Index) != len(ids) {
 		t.Logf("the index has %d entries for %d case directories", len(ds.Index), len(ids))
 	}
+	if len(ds.Index) > 0 {
+		reportStructure(t, ds)
+	}
+}
+
+// reportStructure logs counts only: how many pull requests have a chain of two,
+// three, four or more revisions, and how many cases each detector matches, by
+// split.
+func reportStructure(t *testing.T, ds *replay.Dataset) {
+	for _, split := range []string{"calibration", "held_out"} {
+		chains, err := ds.SelectChains(replay.Selection{Split: split})
+		if err != nil {
+			t.Errorf("%s chains: %v", split, err)
+			continue
+		}
+		length := map[int]int{}
+		for _, c := range chains {
+			length[min(len(c.IDs), 4)]++
+		}
+		t.Logf("%s: pull requests with chains of 2 revisions %d, 3 revisions %d, 4 or more %d", split, length[2], length[3], length[4])
+		for _, kind := range []string{"all cases", "primary cases", "representative cases"} {
+			var found []string
+			for _, detector := range []string{"schema", "api", "any", "none"} {
+				ids, err := ds.Select(replay.Selection{Split: split, Primary: kind == "primary cases", Representative: kind == "representative cases", Detector: detector})
+				if err != nil {
+					t.Errorf("%s %s: %v", split, detector, err)
+				}
+				found = append(found, fmt.Sprintf("%s %d", detector, len(ids)))
+			}
+			t.Logf("%s, %s: detector matches: %s", split, kind, strings.Join(found, ", "))
+		}
+	}
 }
 
 // checkArchives writes the case's archives and checks the checkout's shape:
