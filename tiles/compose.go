@@ -710,7 +710,7 @@ func (cm *composer) uniqueIDs() {
 		if cm.taken(id) || used[id] {
 			next := id
 			for n := 2; cm.taken(next) || used[next]; n++ {
-				next = id + "_" + strconv.Itoa(n)
+				next = suffixed(id, n)
 			}
 			cm.fix(FixRenamed, id, "")
 			cand.tile.ID = next
@@ -728,6 +728,19 @@ func (cm *composer) uniqueIDs() {
 	for i := range cm.authored {
 		rename(&cm.authored[i])
 	}
+}
+
+// maxSlug bounds the slug of a promoted or authored tile's ID.
+const maxSlug = 64
+
+// suffixed returns a promoted or authored tile's ID with a numeric suffix,
+// its slug shortened so the ID keeps its pattern.
+func suffixed(id string, n int) string {
+	suffix := "_" + strconv.Itoa(n)
+	if limit := len(prefix(id)) + 1 + maxSlug - len(suffix); len(id) > limit {
+		id = id[:limit]
+	}
+	return id + suffix
 }
 
 // check runs the tile checks on the composition's tiles against the

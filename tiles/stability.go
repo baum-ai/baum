@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -69,7 +68,7 @@ func StabilizeIDs(previous, next *Composition) Composition {
 	}
 	free := func(id string) string {
 		for n := 2; ; n++ {
-			candidate := id + "_" + strconv.Itoa(n)
+			candidate := suffixed(id, n)
 			if _, ok := before[candidate]; !ok && !used[candidate] {
 				return candidate
 			}

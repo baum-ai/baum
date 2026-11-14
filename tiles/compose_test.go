@@ -336,6 +336,12 @@ func TestNormalizeRules(t *testing.T) {
 			Authored:   []tiles.AuthoredTile{tilestest.AuthoredTile("table_flag_defaults", "h_000000000003"), tilestest.AuthoredTile("table_flag_defaults_2", "h_000000000003")},
 			Layout:     tiles.CompositionLayout{Entries: sizes("table_flag_defaults:half", "overview:half")},
 		}},
+		{"renamed-long", exhibits, tiles.Composition{
+			Authored: []tiles.AuthoredTile{
+				tilestest.AuthoredTile("prose_"+strings.Repeat("a", 64), "h_000000000001"),
+				tilestest.AuthoredTile("prose_"+strings.Repeat("a", 64), "h_000000000002"),
+			},
+		}},
 		{"titles", exhibits, tiles.Composition{
 			Promotions: []tiles.Promotion{{ID: "table_flag_defaults", Change: "sec_config_flag", Block: 3, Title: "  "}},
 			Authored:   []tiles.AuthoredTile{{ID: "prose_long", Title: strings.Repeat("A very long title\n", 10), Data: tilestest.AuthoredTile("prose_x", "h_000000000001").Data}},
