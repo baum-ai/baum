@@ -12,10 +12,10 @@ import (
 // The tile analysis texts are unreleased but pinned: a change to them is
 // deliberate and updates these digests.
 var tileAnalysisDigests = map[string]string{
-	agent.BackendClaude:      "5b1ced4a6fbcbeda887e941c9c56d4fbe26d57e3b0020f12b2eb9c5d22e6920a",
-	agent.BackendAnthropic:   "5b1ced4a6fbcbeda887e941c9c56d4fbe26d57e3b0020f12b2eb9c5d22e6920a",
-	agent.BackendCodex:       "4d1fa526e8fa592d15b0fcd4c7bbccdfb13b98e0c39a8bd962acd6a121e6228d",
-	agent.BackendCursorAgent: "fbe4d3a959ed55f0b3fd32cf8adef6f747fbc587752a3e1e4f95f470f75a9efc",
+	agent.BackendClaude:      "691e20af6ad787d0f90bd7c504e1aa35f5f65df4a4dbb04f5ef4c9d933f3eb76",
+	agent.BackendAnthropic:   "691e20af6ad787d0f90bd7c504e1aa35f5f65df4a4dbb04f5ef4c9d933f3eb76",
+	agent.BackendCodex:       "204a86c047bfbdb7c2129affc60c9ebb06aa8c7f3c313eb8430bc12747bea93b",
+	agent.BackendCursorAgent: "ba5c17b8b8e3ec34dd9059266b1a252d8eb8a24a3d78fc21ddf78b4c779c2dbc",
 }
 
 func TestTileAnalysisInstructions(t *testing.T) {

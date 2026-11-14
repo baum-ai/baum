@@ -14,6 +14,10 @@ glance.
   concerns are the review's risks, written by another stage.
 - Every string you write is shown to a reviewer as it is: plain, short and
   exact, with names in `code`.
+- The review's overview and change tiles already say what the pull request
+  does and why. Do not repeat their explanations: a summary states the
+  structure in one sentence (what is created, changed, removed or breaking),
+  and labels and notes name things rather than describe the change again.
 - If, having read the code, the type does not apply after all (nothing it is
   for changes, or only tests do), answer `{"applies": false, "data": null}`.
   Do not write a tile that says nothing changed.
