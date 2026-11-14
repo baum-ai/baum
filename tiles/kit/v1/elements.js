@@ -517,8 +517,12 @@ function diffHead(citation, payload, key) {
     name.addEventListener("click", () => post("jump", { key }));
   }
   const slash = path.lastIndexOf("/") + 1;
-  name.append(el("span", "", path.slice(0, slash)), el("span", "", path.slice(slash) + (range ? `:${range}` : "")));
-  if (!path) name.lastChild.textContent = str(payload && payload.label) || "Code";
+  // The file name and range are cut from the start when the head is narrow,
+  // so the counts stay and the end of the name shows.
+  const file = el("span");
+  file.append(el("span", "", path.slice(slash) + (range ? `:${range}` : "")));
+  name.append(el("span", "", path.slice(0, slash)), file);
+  if (!path) file.firstChild.textContent = str(payload && payload.label) || "Code";
   name.title = path + (range ? `:${range}` : "");
   head.append(name);
   if (payload && payload.status === "ok" && int(payload.additions) !== null && int(payload.deletions) !== null) {

@@ -443,8 +443,10 @@ name.type="button";
 name.addEventListener("click",()=>post("jump",{key}));
 }
 const slash = path.lastIndexOf("/") + 1;
-name.append(el("span","",path.slice(0,slash)),el("span","",path.slice(slash)+(range?`:${range}`:"")));
-if(!path)name.lastChild.textContent=str(payload&&payload.label)||"Code";
+const file=el("span");
+file.append(el("span","",path.slice(slash)+(range?`:${range}`:"")));
+name.append(el("span","",path.slice(0,slash)),file);
+if(!path)file.firstChild.textContent=str(payload&&payload.label)||"Code";
 name.title=path+(range?`:${range}`:"");
 head.append(name);
 if(payload&&payload.status==="ok"&&int(payload.additions)!==null&&int(payload.deletions)!==null){
