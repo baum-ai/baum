@@ -668,6 +668,14 @@ func TestAHangAnnouncesTheWaitingChecksAgain(t *testing.T) {
 	if r := <-first; r.Verdict != VerdictHang {
 		t.Fatalf("first = %+v", r)
 	}
+	f.checker.mu.Lock()
+	waitingID := f.checker.queue[0].ID
+	f.checker.mu.Unlock()
+	// The hang result is delivered before the waiting check is announced
+	// again, so wait for the announcement before claiming it.
+	for deadline := time.Now().Add(5 * time.Second); len(f.events.states(waitingID)) < 2 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
 	job := f.claim(t)
 	if got := f.events.states(job.ID); len(got) < 2 || !slices.Equal(got[:2], []string{StateQueued, StateQueued}) {
 		t.Fatalf("events of the waiting check = %v", got)
