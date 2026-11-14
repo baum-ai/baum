@@ -246,8 +246,19 @@ func TestLabelSetAndAgreement(t *testing.T) {
 	run := load(t, fakeRun(t, t.TempDir(), "run-a", "sonnet", 6))
 	p := screens.Pairs(run, nil)
 	dir := t.TempDir()
-	if _, err := screens.LabelSet(p, 6, 1, dir); err == nil {
-		t.Error("asked for more pairs than differ")
+	// Six asked, five differ: the set holds the five and says so.
+	if short, err := screens.LabelSet(p, 6, 1, t.TempDir()); err != nil || len(short.Pairs) != 5 || short.Short != 1 {
+		t.Errorf("asked for more pairs than differ: %v %+v", err, short)
+	}
+	// Another run of the same reviews adds nothing new; a run of other
+	// reviews (composed from another run) does.
+	root := t.TempDir()
+	again := load(t, fakeRun(t, root, "run-b", "opus", 6))
+	other := load(t, fakeRun(t, root, "run-c", "opus", 6))
+	other.Manifest.GeneratorSettings = map[string]any{"from_run": "generated"}
+	pooled, err := screens.LabelSet(p, 12, 1, t.TempDir(), screens.Pairs(again, nil), screens.Pairs(other, nil))
+	if err != nil || len(pooled.Pairs) != 10 || pooled.Pairs[0].XRun == "" {
+		t.Errorf("pooled: %v %+v", err, pooled)
 	}
 	key, err := screens.LabelSet(p, 4, 1, dir)
 	if err != nil {
@@ -304,7 +315,7 @@ func TestLabelSetAndAgreement(t *testing.T) {
 	if err != nil || len(read) != 4 || read["P01"].Note != "looks right" {
 		t.Fatalf("%v %+v", err, read)
 	}
-	report := screens.Report{Pairs: map[string]screens.PairVerdict{}}
+	report := screens.Report{XRun: key.XRun, YRun: key.YRun, Pairs: map[string]screens.PairVerdict{}}
 	for i, pair := range key.Pairs {
 		winner := screens.WinnerX
 		if i == 0 {

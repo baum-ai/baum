@@ -209,6 +209,8 @@ func runLabels(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	against := fs.String("against", "", "another run of the same cases: label the two compositions instead of composition against template")
 	out := fs.String("out", "", "the directory that receives index.html, key.json and labels.txt (outside any repository)")
+	var also list
+	fs.Var(&also, "also", "another run whose composition and template are pooled into the set; repeatable")
 	n := fs.Int("n", 15, "pairs")
 	seed := fs.Uint64("seed", 1, "seed choosing the pairs and their order")
 	dir, err := parseWithOne(fs, args[1:], "replay labels make <run-dir> --out <dir>")
@@ -222,9 +224,20 @@ func runLabels(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	key, err := screens.LabelSet(p, *n, *seed, *out)
+	var more []screens.Pairing
+	for _, dir := range also {
+		other, err := pairing(dir, "")
+		if err != nil {
+			return err
+		}
+		more = append(more, other)
+	}
+	key, err := screens.LabelSet(p, *n, *seed, *out, more...)
 	if err != nil {
 		return err
+	}
+	if key.Short > 0 {
+		_, _ = fmt.Fprintf(stdout, "only %d pairs differ; the set has %d fewer than asked\n", len(key.Pairs), key.Short)
 	}
 	_, _ = fmt.Fprintf(stdout, "wrote %d pairs: %s, %s and %s\n", len(key.Pairs), filepath.Join(*out, "index.html"), filepath.Join(*out, "key.json"), filepath.Join(*out, "labels.txt"))
 	return nil
@@ -254,7 +267,7 @@ func runLabelsAgree(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		if report.XRun != key.XRun || report.YRun != key.YRun || report.X != key.X || report.Y != key.Y {
+		if report.Y != key.Y {
 			return fmt.Errorf("%s judged %s against %s; the labels compare %s against %s", path, report.X, report.Y, key.X, key.Y)
 		}
 		a := screens.AgreeLabels(key, labels, report)

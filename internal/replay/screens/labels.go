@@ -2,6 +2,7 @@ package screens
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -39,6 +40,8 @@ type Key struct {
 	YRun   string    `json:"y_run"`
 	Seed   uint64    `json:"seed"`
 	Pairs  []KeyPair `json:"pairs"`
+	// Short is how many pairs fewer than asked the runs had to offer.
+	Short int `json:"short,omitempty"`
 }
 
 // KeyPair is one pair of a labelling set: its name, its case and the side
@@ -49,6 +52,10 @@ type KeyPair struct {
 	Size string `json:"size,omitempty"`
 	Kind string `json:"kind,omitempty"`
 	A    string `json:"a"`
+	// XRun and YRun name the runs of the pair's sides when the set draws on
+	// several pairings; empty means the key's own.
+	XRun string `json:"x_run,omitempty"`
+	YRun string `json:"y_run,omitempty"`
 }
 
 // Label is an owner's verdict on a pair: A, B or tie.
@@ -62,22 +69,36 @@ type Label struct {
 // beside it (copied into dir), key.json and an empty labels.txt. Cases whose
 // two layouts are the same are left out; the rest are spread over sizes and
 // change kinds and each pair's sides are put in a random order, both from
-// seed.
-func LabelSet(p Pairing, n int, seed uint64, dir string) (Key, error) {
+// seed. With more pairings (more runs of the same kind of pairing), the
+// candidates are pooled: a case is taken once per review it shows (the
+// saved one, or the run whose documents a compose run composed), from the
+// first pairing that has it differing. With fewer such pairs than n, the set
+// holds them all and Short says how many were missing.
+func LabelSet(p Pairing, n int, seed uint64, dir string, more ...Pairing) (Key, error) {
 	key := Key{Schema: KeySchemaName, X: p.X.Label(), Y: p.Y.Label(), XRun: p.X.Run.Name(), YRun: p.Y.Run.Name(), Seed: seed}
 	type candidate struct {
 		id, size, kind string
+		pairing        Pairing
 	}
 	var candidates []candidate
-	for _, id := range p.Cases() {
-		if p.X.Run == p.Y.Run && !differs(p.X.Run, id) {
-			continue
+	seen := map[string]bool{}
+	for _, pairing := range append([]Pairing{p}, more...) {
+		source, _ := pairing.X.Run.Manifest.GeneratorSettings["from_run"].(string)
+		for _, id := range pairing.Cases() {
+			if !pairing.Differ(id) || seen[source+"/"+id] {
+				continue
+			}
+			seen[source+"/"+id] = true
+			c, _ := pairing.X.Run.Case(id)
+			candidates = append(candidates, candidate{id: id, size: c.Size, kind: changeKind(pairing.X.Run.Dir, id), pairing: pairing})
 		}
-		c, _ := p.X.Run.Case(id)
-		candidates = append(candidates, candidate{id: id, size: c.Size, kind: changeKind(p.X.Run.Dir, id)})
 	}
 	if len(candidates) < n {
-		return key, fmt.Errorf("only %d cases have two different layouts; %d were asked for", len(candidates), n)
+		key.Short = n - len(candidates)
+		n = len(candidates)
+	}
+	if n == 0 {
+		return key, errors.New("no case has two different layouts")
 	}
 	random := rand.New(rand.NewPCG(seed, 0x6c6162656c))
 	random.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
@@ -119,12 +140,15 @@ func LabelSet(p Pairing, n int, seed uint64, dir string) (Key, error) {
 	writePageHead(&page, n)
 	for i, c := range chosen {
 		pair := KeyPair{Pair: fmt.Sprintf("P%02d", i+1), Case: c.id, Size: c.size, Kind: c.kind, A: WinnerX}
-		a, b := p.X, p.Y
+		if len(more) > 0 {
+			pair.XRun, pair.YRun = c.pairing.X.Run.Name(), c.pairing.Y.Run.Name()
+		}
+		a, b := c.pairing.X, c.pairing.Y
 		if random.IntN(2) == 1 {
-			pair.A, a, b = WinnerY, p.Y, p.X
+			pair.A, a, b = WinnerY, c.pairing.Y, c.pairing.X
 		}
 		key.Pairs = append(key.Pairs, pair)
-		facts, err := reviewFacts(p.X.Run.Dir, c.id)
+		facts, err := reviewFacts(c.pairing.X.Run.Dir, c.id)
 		if err != nil {
 			return key, err
 		}
@@ -418,6 +442,9 @@ func AgreeLabels(key Key, labels map[string]Label, report Report) LabelAgreement
 	for _, pair := range key.Pairs {
 		label, ok := labels[pair.Pair]
 		if !ok {
+			continue
+		}
+		if run := cmp.Or(pair.XRun, key.XRun); run != report.XRun || cmp.Or(pair.YRun, key.YRun) != report.YRun {
 			continue
 		}
 		verdict, ok := report.Pairs[pair.Case]
