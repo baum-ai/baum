@@ -42,13 +42,30 @@ type ComposeRequest struct {
 	// Redactor masks secrets in the replies before they are read; nil uses
 	// bundle.NewRedactor.
 	Redactor *bundle.Redactor
-	// CallTimeout bounds each call; zero leaves only ctx's deadline.
+	// CallTimeout bounds each call; zero leaves only the stage's deadline.
 	CallTimeout time.Duration
+	// Timeout bounds the whole stage when ctx has no deadline; zero is
+	// DefaultComposeTimeout.
+	Timeout time.Duration
 	// MaxOutputTokens caps each reply; zero is DefaultComposeOutputTokens.
 	MaxOutputTokens int
 	// Now stamps the composition; nil is time.Now.
 	Now func() time.Time
+
+	// redact masks a reply; nil is RedactTaskOutput. Tests replace it.
+	redact func(context.Context, *bundle.Redactor, []byte, *Outcome) ([]byte, error)
 }
+
+// DefaultComposeTimeout bounds the compose stage, its repair included, when
+// the caller's context has no deadline. A composition call takes 3 to 10
+// seconds; past this the template is as good as a late layout.
+const DefaultComposeTimeout = 90 * time.Second
+
+// ErrComposeInterrupted is returned when the caller's context ended before or
+// during the stage. The outcome then counts what was spent but holds no
+// composition, not even the fallback: a host must not store one for a run it
+// stopped.
+var ErrComposeInterrupted = errors.New("agent: the composition was interrupted")
 
 // DefaultComposeOutputTokens caps a composition reply: a layout of a large
 // review with a reason per lead is a few thousand tokens.
@@ -101,12 +118,30 @@ type ComposeOutcome struct {
 // the repair, redaction), the composition is the template of the change kind
 // (tiles.Template), with Fallback set and the reason in the generator's
 // problems. Every reply is masked for secrets before it is read, as a task's
-// output is (RedactTaskOutput). The error is only for a document that takes
-// no composition at all.
+// output is (RedactTaskOutput). A layout that normalises to an empty
+// composition falls back too.
+//
+// Without a deadline on ctx the stage is bounded by Timeout
+// (DefaultComposeTimeout); when that bound passes, the composition falls
+// back. When ctx itself ends, before or during the stage, ComposeRun makes no
+// further call and returns ErrComposeInterrupted with no composition. The
+// only other error is for a document that takes no composition at all.
 func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 	var out ComposeOutcome
 	if r.Document == nil || r.Document.Origin.Kind != tiles.OriginConverted {
 		return out, errors.New("agent: a composition applies only to a converted tile document")
+	}
+	parent := ctx
+	interrupted := func() (ComposeOutcome, error) {
+		return out, fmt.Errorf("%w: %w", ErrComposeInterrupted, parent.Err())
+	}
+	if parent.Err() != nil {
+		return interrupted()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cmp.Or(r.Timeout, DefaultComposeTimeout))
+		defer cancel()
 	}
 	now := r.Now
 	if now == nil {
@@ -145,6 +180,9 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 	var reply compose.Reply
 	for attempt := 0; ; attempt++ {
 		raw, err := r.call(ctx, &out.Outcome, request, redactor)
+		if parent.Err() != nil {
+			return interrupted()
+		}
 		if err != nil {
 			if errors.Is(err, errRedaction) {
 				return fallback(FallbackRedaction)
@@ -168,8 +206,11 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 	c := inventory.Composition(reply)
 	c = tiles.StabilizeIDs(r.Previous, &c)
 	pin(&c, r.Document, r.Preferences.Pins)
+	if c.Empty() {
+		return fallback(FallbackUnusable)
+	}
 	n, report := tiles.NormalizeComposition(r.Document, &c)
-	if report.Counts()[tiles.FixUnusable] > 0 {
+	if report.Counts()[tiles.FixUnusable] > 0 || n.Empty() {
 		return fallback(FallbackUnusable)
 	}
 	out.Composition, out.Report = n, report
@@ -216,7 +257,11 @@ func (r ComposeRequest) call(ctx context.Context, o *Outcome, request CompleteRe
 		return nil, err
 	}
 	// Masking the reply masks the outcome's model and accounting strings too.
-	masked, err := RedactTaskOutput(ctx, redactor, completion.Document, o)
+	redact := r.redact
+	if redact == nil {
+		redact = RedactTaskOutput
+	}
+	masked, err := redact(ctx, redactor, completion.Document, o)
 	if err != nil {
 		return nil, errRedaction
 	}
