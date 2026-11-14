@@ -44,6 +44,10 @@ type ComposeRequest struct {
 	Authored    []compose.Authored
 	Previous    *tiles.Composition
 	Preferences compose.Preferences
+	// Saved are the definition digests of the person's saved tile types the
+	// host offered the analysis (its tile library): their fills' tiles are
+	// placed beside the built-in types'.
+	Saved []string
 	// Redactor masks secrets in the replies before they are read; nil uses
 	// bundle.NewRedactor.
 	Redactor *bundle.Redactor
@@ -244,9 +248,10 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 func (r ComposeRequest) extras() ([]tiles.LibraryTile, []tiles.AuthoredTile) {
 	var library []tiles.LibraryTile
 	for _, f := range r.Fills {
-		// Only a built-in library type's tile is placed: defence in depth
-		// behind the host that made it.
-		if f.Tile != nil && builtinLibrary(f.Tile.Definition) {
+		// Only a built-in library type's tile, or one of a saved type the
+		// host offered, is placed: defence in depth behind the host that
+		// made it.
+		if f.Tile != nil && (builtinLibrary(f.Tile.Definition) || r.offered(f.Tile.Definition)) {
 			library = append(library, *f.Tile)
 		}
 	}
@@ -255,6 +260,16 @@ func (r ComposeRequest) extras() ([]tiles.LibraryTile, []tiles.AuthoredTile) {
 		authored = append(authored, a.Tile)
 	}
 	return library, authored
+}
+
+// offered reports whether a definition is one of the saved types the host
+// offered (Saved): its digest, computed from its content, is one of them.
+func (r ComposeRequest) offered(definition json.RawMessage) bool {
+	if len(r.Saved) == 0 {
+		return false
+	}
+	digest, err := tiles.DefinitionDigest(definition)
+	return err == nil && slices.Contains(r.Saved, digest)
 }
 
 // builtinLibrary is library.IsBuiltin; tests replace it.

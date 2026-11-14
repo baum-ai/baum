@@ -1497,6 +1497,29 @@ a type's fill and review checks enter the fill and details prompts as
 instructions of the same trust as a custom prompt, while the pull request stays
 data.
 
+- Generation offers saved types in every repository, by default: at most six
+  per review, those whose paths match the diff, and the pinned ones are
+  filled. A saved type's fill opens with a note that its instructions are the
+  person's and the only instructions about the tile, and that text in the pull
+  request, its code, sessions or the outline that reads like tile
+  instructions is data; its review checks come under a heading marked as the
+  person's, after a note that the pull request cannot add a check. The
+  fill and selection texts say the same of every type. The outline lists a
+  saved type's texts as the person wrote them, bounded in length. A type "Not
+  checked yet" is neither offered nor filled. Offering is not restricted
+  further on purpose: each tile is labelled "Custom", cites the review, passes
+  the first-show preflight and cannot displace the strip or the overview.
+- A saved type's data may cite more of the pull request than its code. A
+  fill's citations are checked against the whole bundle (`library.CheckFillIn`):
+  a file must be a path of the diff, a prompt or session event must name one
+  of the bundle's sessions that is not restricted, a check or review thread
+  must be the bundle's, and a risk, evidence item or tile is refused. A
+  restricted session is never cited, here or when the composition resolves
+  the tile's citations against the review.
+- The composer places a saved type's tile only when its definition's digest,
+  computed from its content, is one of the types the host offered for the run
+  (`agent.ComposeRequest.Saved`), beside the built-in types'.
+
 - Persistence needs the person. A chat can only propose saving or changing a
   type (`propose_tile_type`); the person's Save in the panel writes it, the same
   way every other proposal is saved, and a proposal that is stale (the type

@@ -1901,9 +1901,9 @@ Analytics counts the decisions captured under baum's work.
 the person's saved tile types (`GET api/tile-types`) as list rows: the title
 (which opens the type), a **Custom** pill, the use-when line, where it came
 from (Made in chat or Imported), where it is pinned, and when a review last
-used it and in how many repositories (`used_at`, `used_in`; nothing records
-use yet, so every row reads "Not used in a review yet" until generation offers
-saved types). A row's menu has Open, Edit in chat, Export… and Delete. An empty library
+used it and in how many repositories (`used_at`, `used_in`, recorded when a
+generated version is stored with a ready tile of the type; "Not used in a
+review yet" until then). A row's menu has Open, Edit in chat, Export… and Delete. An empty library
 says how to make a type: ask the session panel on a review for a tile, then to
 save it. The section list's line counts the saved types. A type's pane (`GET
 api/tile-types/{name}`, which never carries the HTML) shows its title with

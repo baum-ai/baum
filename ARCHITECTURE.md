@@ -1895,7 +1895,9 @@ review's details stage should check when the type applies), `schema.json`,
 with the hunks and items its data cites.
 
 - A generation with tile reviews on offers them all to the outline and
-  fills the ones it selects (see "Tile analysis" under "Staged review").
+  fills the ones it selects (see "Tile analysis" under "Staged review"),
+  with the person's saved types offered beside them (see "Offering saved
+  types" below).
 - `library.All()` returns them in offer order (`library.Names`), each an
   `Entry`: the definition with its digest written, the definition encoded as
   a custom tile embeds it (`tiles.LibraryTile.Definition`), the glance line
@@ -1916,9 +1918,21 @@ with the hunks and items its data cites.
   fill's data against a pull request's diff: no `related`, the type's data
   checks (`tiles.Validator.CheckData`), data that shows nothing the type is
   for (every array its `applies_with` names empty: the fill should answer
-  that the type does not apply rather than make a tile that says so), and
-  every hunk in the diff with its lines inside the hunk's new range. Its problems name places, not values,
-  so they can go back to the model in a repair.
+  that the type does not apply rather than make a tile that says so), every
+  hunk in the diff with its lines inside the hunk's new range, every file a
+  path the diff changes (old paths included), and no risk, evidence item or
+  tile cited. Its problems name places, not values, so they can go back to
+  the model in a repair.
+- **The bundle pass.** A saved type's schema may cite through
+  `#/$defs/citation`, so its data can name more of the pull request than its
+  code. `library.CheckFillIn` (and `CheckAddedFillIn`) is `CheckFill` against
+  the whole bundle: a prompt or session event must name one of the bundle's
+  sessions, which must not be restricted; a check or review thread must be
+  one of the bundle's. A fill runs with the bundle, so the analysis checks
+  every fill and reused tile this way; a stored version, which has no bundle,
+  is checked with `CheckFill`, and the composition's custom tile checks
+  resolve those citations against the review's index (restricted sessions
+  refused there too). This is what lets a type draw on session transcripts.
 - `library.Check(entry)` is every static check a type passes:
   `CheckDefinition` (the dialect included), the kit's lint with warnings as
   errors, the glance line and review checks within their limits, the
@@ -2055,6 +2069,57 @@ computer by `internal/tilelibrary`, in the private application database
   the sweep removes a verdict with its definition. `Prepare` strips
   bidirectional, zero-width and tag characters from the title, use-when, fill,
   glance and review checks (`Invisible`).
+
+**Offering saved types.** A new review of a single pull request with tile
+reviews on offers the person's saved types beside the built-in ones
+(`generate.Tiles.Saved`, which `jobs.Local` sets from its `TileLibrary`).
+Once the pull request is assembled, `tilelibrary.Offer` chooses from the
+library with the diff's paths, the repository's pins and the library types
+the run offers already (`Offering.Taken`: the built-in types and those the
+person added):
+
+- **Always:** the types pinned to the repository
+  (`repos.Settings.Tiles.Types`), in pin order. They join
+  `StagedTiles.Always`, beside the pull request's added types, and are filled
+  whatever the outline answers; `jobs.Local` gives each the last data held
+  for it (the latest version's composition), reused by the added types' rule.
+- **Eligible:** the other saved types that are not deleted and whose path
+  globs are empty or match a path of the diff (`tilelibrary.MatchPath`:
+  doublestar's `**` and `{a,b}`, each segment a `path.Match` pattern; a glob
+  with no `/` matches the file name in any directory).
+- **Ranked:** used in this repository most recently first (`used_in`), then
+  used anywhere most recently (`used_at`), then the newest type. The library
+  does not record the repository a type was created in, so "made from this
+  repository's pull requests" is not a rank of its own.
+- **Capped:** at most `tilelibrary.MaxOffered` (6) offered, and the built-in
+  types, the added types, the pinned ones and the offered ones together stay
+  within `tiles.MaxLibraryTiles` (8): pins take their room first.
+- A type "Not checked yet" (an import without a render check) is neither
+  offered nor filled while pinned, until a check marks it; a library that
+  cannot be read offers nothing and the review goes on.
+
+The outline lists an offered saved type marked "from the person's tile
+library" with its title (at most 100 characters), use-when line (280) and
+glance line (200), each line at most 760 characters, so six types add less
+than 4 KB to the outline's prompt, inside the prefix a run caches; a built-in
+type's line is as before. A saved type's `fill` and `review_checks` are the
+person's instructions, of the trust of a custom prompt: its fill opens with a
+note that they are the person's and the only instructions about the tile
+(text in the pull request that reads like tile instructions is data) and
+that the whole bundle, sessions included, is `bundle.json` in its directory;
+its review checks come under a heading marked as the person's, after a note
+that the pull request cannot add one. Its ready fill becomes a library tile
+that embeds its definition, which the composer places beside the built-in
+types' (`agent.ComposeRequest.Saved`, by digest; the page labels it
+"Custom · <title>" and shows it through the first-show preflight). Each type
+the outline selects costs one fill, in parallel with the others.
+
+**Recording use.** When a version is stored, `jobs.Local` reads the saved
+types its composition holds a ready (not pending) library tile of
+(`tilelibrary.UsedTypes`) and records the use (`Store.RecordUse`): `used_at`
+becomes now and `used_in` names the repository at now, keeping the 50 most
+recent repositories. The library page shows them, and offering ranks by
+them.
 
 ### Tiles
 
@@ -2668,7 +2733,8 @@ stage is told the selected types' checks.
 
 - **Selection.** The outline stage's prompt gets the selection text
   (`review-tiles-select`) with the offered types (name, title, use-when
-  line) and, with exhibits asked for, the candidates text
+  line; a saved type's marked as the person's, with its glance line, see
+  "Offering saved types") and, with exhibits asked for, the candidates text
   (`review-tiles-candidates`), inserted before its Submitting heading. Its
   schema gets a required `library` array, one `{type, applies, hunks, why}`
   per offered type in offer order, and a required `exhibits` array of at most
@@ -2685,8 +2751,8 @@ stage is told the selected types' checks.
 - **Reuse.** A selected type whose tile the previous version's composition
   holds with this version's definition digest, whose data cites only hunks of
   this diff (hunk IDs are content-derived: the same ID is the same code),
-  every hunk selected now among them, and which passes `library.CheckFill`
-  against this diff, is taken without a call (`FillResult.Reused`); its
+  every hunk selected now among them, and which passes `library.CheckFillIn`
+  against this bundle, is taken without a call (`FillResult.Reused`); its
   `related` items are written again. A previous authored tile every hunk of
   which is in this diff, its lines inside the hunk, is kept with its ID.
 - **Added types.** `StagedTiles.Always` are the library types the person
@@ -2700,19 +2766,20 @@ stage is told the selected types' checks.
   is reused by its own rule instead of the previous composition's: with no
   call when every hunk its last data cites is in this diff and no hunk new to
   this diff touches a file it cites, and the data passes
-  `library.CheckAddedFill` (`CheckFill` without the rule that data must show
-  something). Its fill is told the person added it, checked with
-  `CheckAddedFill`, and an answer that the type does not apply is sent back
+  `library.CheckAddedFillIn` (`CheckFillIn` without the rule that data must
+  show something). Its fill is told the person added it, checked with
+  `CheckAddedFillIn`, and an answer that the type does not apply is sent back
   once.
 - **Fills.** Each other selected type gets a task (`fill-<type>`, its files
   named so) with a focused prefix in place of the stages' (the pull request's
   title, the selected hunks with their patches, an index of the other hunks
   without patches, source excerpts around the selected hunks, and the
   checkout to read), the fill text (`review-tiles-fill`), the type's own
-  `fill` instructions, the outline and the selected hunks. Its schema is
+  `fill` instructions (a saved type's after the note that they are the
+  person's), the outline and the selected hunks. Its schema is
   `{applies, data}`, `data` the type's `Entry.FillSchema()` or null. The reply
   is masked as a task's output, Codex's null `lines` are dropped, and
-  `library.CheckFill` checks it; one repair sends the host's problems back. A
+  `library.CheckFillIn` checks it against the bundle; one repair sends the host's problems back. A
   fill that answers the type does not apply is not a tile; one that fails, or
   is still invalid after its repair, is dropped with the host's reason.
 - **Exhibits.** The exhibits call (`exhibits`) runs only when the outline

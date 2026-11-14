@@ -142,6 +142,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		composeFromStore       = fs.Bool("compose-from-store", false, "run only the compose stage over the dataset's saved reviews of the selected cases (the compose generator)")
 		composeOnly            = fs.Bool("compose-only", false, "run only the compose stage over the review documents of --from-run (the compose generator)")
 		fromRun                = fs.String("from-run", "", "with --compose-only, the earlier run directory whose cases/<id>/document.json are composed")
+		libraryDir             = fs.String("library-dir", "", "with --generator tiles, a directory of exported tile type files (*.baumtile.json) offered as the person's saved types")
 		images, threads, prev  triState
 	)
 	fs.Var(&images, "with-images", "keep cases whose bundle has images (--with-images=false: has none)")
@@ -193,7 +194,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		sel.ShuffleSeed = &n
 	}
-	genConfig := replay.GeneratorConfig{Staged: *staged, Reuse: *reuse}
+	genConfig := replay.GeneratorConfig{Staged: *staged, Reuse: *reuse, LibraryDir: *libraryDir}
 	settings := replay.Settings{Backend: config.Backend(*backend), Model: *model, Effort: *effort, TimeLimit: *timeLimit, NoTranscript: *noTranscript,
 		ClaudeConfigDir: *claudeDir, CodexHome: *codexHome}
 	for _, kv := range agentEnv {

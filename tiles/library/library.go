@@ -348,11 +348,13 @@ func (e Entry) FillSchema() (json.RawMessage, error) {
 // diff and returns its problems: a property only the host writes, the
 // type's own checks (tiles.Validator.CheckData), data that shows nothing the
 // type is for (every array AppliesWith names empty), and citations: a hunk
-// must be in the diff and its lines inside the hunk's new range, and nothing
-// may cite a risk, evidence item or tile, which do not exist while fills
-// run. Problems name the place in the data, never its values.
+// must be in the diff and its lines inside the hunk's new range, a file must
+// be a path the diff changes, and nothing may cite a risk, evidence item or
+// tile, which do not exist while fills run. Problems name the place in the
+// data, never its values. CheckFillIn adds the citations only a bundle
+// resolves.
 func CheckFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk) []string {
-	return checkFill(v, e, data, diff, true)
+	return checkFill(v, e, data, diff, nil, true)
 }
 
 // CheckAddedFill is CheckFill for a tile a person added to a review: the
@@ -360,10 +362,33 @@ func CheckFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.
 // the person asked for the tile and an empty one says that this version
 // changes nothing it shows.
 func CheckAddedFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk) []string {
-	return checkFill(v, e, data, diff, false)
+	return checkFill(v, e, data, diff, nil, false)
 }
 
-func checkFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk, applies bool) []string {
+// CheckFillIn is CheckFill against the pull request's whole bundle, with a
+// pass over the citations a saved type may make besides hunks and files: a
+// prompt or session event must be in one of the bundle's sessions, which
+// must not be restricted, and a check or review thread must be one of the
+// bundle's. A fill runs with the bundle, so its data is checked this way; a
+// stored version, which has no bundle, is checked with CheckFill, and the
+// composition resolves those citations against the review.
+func CheckFillIn(v *tiles.Validator, e Entry, data json.RawMessage, b *bundle.Bundle) []string {
+	return checkFill(v, e, data, diffIn(b), b, true)
+}
+
+// CheckAddedFillIn is CheckAddedFill against the whole bundle (CheckFillIn).
+func CheckAddedFillIn(v *tiles.Validator, e Entry, data json.RawMessage, b *bundle.Bundle) []string {
+	return checkFill(v, e, data, diffIn(b), b, false)
+}
+
+func diffIn(b *bundle.Bundle) []bundle.Hunk {
+	if b == nil {
+		return nil
+	}
+	return b.Diff
+}
+
+func checkFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk, b *bundle.Bundle, applies bool) []string {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err == nil {
 		if _, ok := top[Related]; ok {
@@ -377,9 +402,15 @@ func checkFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.
 		return []string{fmt.Sprintf("the data shows nothing this tile is for (%s are empty); answer that the tile does not apply instead", strings.Join(e.AppliesWith, ", "))}
 	}
 	hunks := make(map[string]bundle.Hunk, len(diff))
+	files := map[string]bool{}
 	for _, h := range diff {
 		hunks[h.ID] = h
+		files[h.Path] = true
+		if h.OldPath != "" {
+			files[h.OldPath] = true
+		}
 	}
+	sources := sourcesOf(b)
 	var problems []string
 	for _, c := range Citations(data) {
 		switch c.Type {
@@ -396,11 +427,65 @@ func checkFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.
 			case c.Lines[0] < h.StartLine || c.Lines[1] > h.StartLine+h.LineCount-1:
 				problems = append(problems, fmt.Sprintf("%s has lines outside the hunk, whose new lines are %d to %d", c.At, h.StartLine, h.StartLine+h.LineCount-1))
 			}
+		case "file":
+			if !files[c.Path] {
+				problems = append(problems, c.At+" names a file the diff does not change; cite a path of the diff")
+			}
 		case "risk", "evidence", "tile":
 			problems = append(problems, fmt.Sprintf("%s cites a %s, which a fill cannot: cite the code", c.At, c.Type))
 		}
+		if sources != nil {
+			problems = append(problems, sources.problems(c)...)
+		}
 	}
 	return problems
+}
+
+// sources is what the bundle pass of CheckFillIn resolves citations against.
+type sources struct {
+	// sessions maps a session ID to whether it is restricted; an ID listed
+	// twice is restricted when either entry is.
+	sessions        map[string]bool
+	checks, threads map[string]bool
+}
+
+func sourcesOf(b *bundle.Bundle) *sources {
+	if b == nil {
+		return nil
+	}
+	s := &sources{sessions: map[string]bool{}, checks: map[string]bool{}, threads: map[string]bool{}}
+	for _, session := range b.Sessions {
+		s.sessions[session.RootSessionID] = s.sessions[session.RootSessionID] || session.Restricted
+	}
+	for _, c := range b.Checks {
+		s.checks[c.ID] = true
+	}
+	for _, t := range b.Threads {
+		s.threads[t.ID] = true
+	}
+	return s
+}
+
+func (s *sources) problems(c Citation) []string {
+	switch c.Type {
+	case "prompt", "session_event":
+		restricted, ok := s.sessions[c.Session]
+		switch {
+		case !ok:
+			return []string{c.At + " names a session the pull request does not have; cite one of its sessions"}
+		case restricted:
+			return []string{c.At + " names a restricted session, which nothing may cite"}
+		}
+	case "check":
+		if !s.checks[c.ID] {
+			return []string{c.At + " names a check the pull request does not have"}
+		}
+	case "review_thread":
+		if !s.threads[c.ID] {
+			return []string{c.At + " names a review thread the pull request does not have"}
+		}
+	}
+	return nil
 }
 
 // DiffOf returns the hunks a converted tile document's review index lists,
@@ -415,6 +500,7 @@ func DiffOf(doc *tiles.Document) []bundle.Hunk {
 		Hunks []struct {
 			ID       string `json:"id"`
 			Path     string `json:"path"`
+			OldPath  string `json:"old_path"`
 			Change   string `json:"change"`
 			Role     string `json:"role"`
 			NewRange []int  `json:"new_range"`
@@ -425,7 +511,7 @@ func DiffOf(doc *tiles.Document) []bundle.Hunk {
 	}
 	out := make([]bundle.Hunk, 0, len(index.Hunks))
 	for _, h := range index.Hunks {
-		hunk := bundle.Hunk{ID: h.ID, Path: h.Path, Change: h.Change, Role: h.Role}
+		hunk := bundle.Hunk{ID: h.ID, Path: h.Path, OldPath: h.OldPath, Change: h.Change, Role: h.Role}
 		if len(h.NewRange) == 2 {
 			hunk.StartLine, hunk.LineCount = h.NewRange[0], h.NewRange[1]
 		}
@@ -453,6 +539,8 @@ type Citation struct {
 	ID   string
 	// Path is a file citation's path.
 	Path string
+	// Session is a prompt's or session event's session.
+	Session string
 	// Lines is a hunk citation's [first, last], or nil.
 	Lines []int
 }
@@ -487,6 +575,7 @@ func Citations(data json.RawMessage) []Citation {
 				c := Citation{At: at, Type: kind}
 				c.ID, _ = value["id"].(string)
 				c.Path, _ = value["path"].(string)
+				c.Session, _ = value["session"].(string)
 				if lines, ok := value["lines"].([]any); ok && len(lines) == 2 {
 					first, ok1 := lines[0].(float64)
 					last, ok2 := lines[1].(float64)

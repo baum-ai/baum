@@ -10,6 +10,7 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -161,5 +162,91 @@ func TestCheckFillRefusesATileOfNothing(t *testing.T) {
 		if !strings.Contains(strings.Join(problems, "; "), "does not apply") {
 			t.Errorf("%s %s: problems %v, want that the tile does not apply", tc.typ, tc.data, problems)
 		}
+	}
+}
+
+// citingEntry is the kit's starter with items that cite anything the
+// review holds (#/$defs/citation), as a saved type may.
+func citingEntry(t *testing.T) library.Entry {
+	t.Helper()
+	entry, err := library.Load(kit.Starter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := entry.Definition
+	def.Name = "cites_anything"
+	var schema map[string]any
+	if err := json.Unmarshal(def.DataSchema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	item := schema["properties"].(map[string]any)["items"].(map[string]any)["items"].(map[string]any)
+	item["properties"].(map[string]any)["cites"].(map[string]any)["items"] = map[string]any{"$ref": "#/$defs/citation"}
+	if def.DataSchema, err = json.Marshal(schema); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Encoded, err = library.Seal(&def); err != nil {
+		t.Fatal(err)
+	}
+	entry.Definition = def
+	return entry
+}
+
+// The bundle pass checks the citations a saved type may make besides hunks:
+// a file must be a path of the diff, a prompt or session event a session of
+// the bundle that is not restricted, and a check or review thread one of
+// the bundle's. Without the bundle (CheckFill), only files are checked.
+func TestCheckFillInChecksTheBundle(t *testing.T) {
+	v := tiles.NewValidator()
+	entry := citingEntry(t)
+	b := &bundle.Bundle{
+		Diff:     []bundle.Hunk{{ID: "h_3e8a1c0d5b72", Path: "internal/worker/retry.go", OldPath: "internal/retry.go", StartLine: 10, LineCount: 5}},
+		Sessions: []bundle.Session{{RootSessionID: "ses_open", Vendor: "claude"}, {RootSessionID: "ses_closed", Vendor: "claude", Restricted: true}},
+		Checks:   []bundle.Check{{ID: "chk_unit", Name: "unit"}},
+		Threads:  []bundle.Thread{{ID: "thr_1", Path: "internal/worker/retry.go"}},
+	}
+	data := func(cite string) json.RawMessage {
+		return json.RawMessage(`{"summary":"One item.","items":[{"title":"An item","severity":"low","text":null,"cites":[` + cite + `]}]}`)
+	}
+	fine := []string{
+		`{"type":"hunk","id":"h_3e8a1c0d5b72","lines":[10,12]}`,
+		`{"type":"file","path":"internal/worker/retry.go"}`,
+		`{"type":"file","path":"internal/retry.go"}`,
+		`{"type":"prompt","session":"ses_open","index":1}`,
+		`{"type":"session_event","session":"ses_open","event":"evt_1"}`,
+		`{"type":"check","id":"chk_unit"}`,
+		`{"type":"review_thread","id":"thr_1"}`,
+	}
+	for _, cite := range fine {
+		if problems := library.CheckFillIn(v, entry, data(cite), b); len(problems) > 0 {
+			t.Errorf("%s: %v", cite, problems)
+		}
+	}
+	refused := map[string]string{
+		`{"type":"file","path":"README.md"}`:                          "names a file the diff does not change",
+		`{"type":"prompt","session":"ses_closed","index":1}`:          "names a restricted session",
+		`{"type":"session_event","session":"ses_closed","event":"e"}`: "names a restricted session",
+		`{"type":"prompt","session":"ses_elsewhere","index":1}`:       "names a session the pull request does not have",
+		`{"type":"check","id":"chk_other"}`:                           "names a check the pull request does not have",
+		`{"type":"review_thread","id":"thr_2"}`:                       "names a review thread the pull request does not have",
+		`{"type":"risk","id":"rsk_retry_storm"}`:                      "which a fill cannot",
+		`{"type":"evidence","id":"ev_retry_test"}`:                    "which a fill cannot",
+		`{"type":"tile","id":"overview"}`:                             "which a fill cannot",
+	}
+	for cite, want := range refused {
+		problems := library.CheckFillIn(v, entry, data(cite), b)
+		if !strings.Contains(strings.Join(problems, "; "), "/items/0/cites/0 "+want) && !strings.Contains(strings.Join(problems, "; "), want) {
+			t.Errorf("%s: problems %v, want %q", cite, problems, want)
+		}
+		if added := library.CheckAddedFillIn(v, entry, data(cite), b); len(added) == 0 {
+			t.Errorf("%s: an added fill passes", cite)
+		}
+	}
+	// Without the bundle, a restricted session cannot be told apart; a file
+	// still can.
+	if problems := library.CheckFill(v, entry, data(`{"type":"prompt","session":"ses_closed","index":1}`), b.Diff); len(problems) > 0 {
+		t.Errorf("CheckFill without the bundle: %v", problems)
+	}
+	if problems := library.CheckFill(v, entry, data(`{"type":"file","path":"README.md"}`), b.Diff); len(problems) == 0 {
+		t.Error("CheckFill took a file outside the diff")
 	}
 }

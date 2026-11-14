@@ -668,3 +668,85 @@ func TestComposePlacesOnlyBuiltinLibraryTiles(t *testing.T) {
 		t.Errorf("library tiles: %d", len(lib))
 	}
 }
+
+// savedLibraryEntry is the schema change type saved under another name,
+// with each text at its longest, so it is not built in.
+func savedLibraryEntry(t *testing.T, name string) library.Entry {
+	t.Helper()
+	entry, _ := library.Get("schema_change")
+	def := entry.Definition
+	def.Name = name
+	def.Title = strings.Repeat("T", 400)
+	def.UseWhen = strings.Repeat("use when ", 300)
+	encoded, err := library.Seal(&def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry.Definition, entry.Encoded = def, encoded
+	entry.Glance = strings.Repeat("g", library.MaxGlance)
+	return entry
+}
+
+// The outline lists a saved type marked as the person's, with its glance,
+// each text bounded: six saved types add less than 4 KB to the outline's
+// prompt, whatever their texts. A built-in type's line is unchanged.
+func TestOfferedTypesAreBounded(t *testing.T) {
+	builtin, _ := library.Get("schema_change")
+	a := &tileAnalysis{config: StagedTiles{Library: []library.Entry{builtin}}, prompt: TileAnalysisPrompt{Select: tilesSelectText}}
+	base := a.outlinePrompt("OUTLINE\n## Submitting\n")
+	if !strings.Contains(base, "- `schema_change` (Schema changes): "+builtin.Definition.UseWhen+"\n") {
+		t.Errorf("the built-in type's line changed: %s", base)
+	}
+	for i := range 6 {
+		a.config.Library = append(a.config.Library, savedLibraryEntry(t, fmt.Sprintf("saved_%d", i)))
+	}
+	grown := a.outlinePrompt("OUTLINE\n## Submitting\n")
+	if added := len(grown) - len(base); added > 4600 || added <= 0 {
+		t.Errorf("six saved types add %d bytes to the outline", added)
+	}
+	if !strings.Contains(grown, "- `saved_0` ("+strings.Repeat("T", maxOfferTitle)+"; from the person's tile library): use when") || !strings.Contains(grown, "Its glance shows: ggg") {
+		t.Errorf("a saved type's line: %.400s", grown[len(base)-20:])
+	}
+	for _, line := range strings.Split(grown, "\n") {
+		if len([]rune(line)) > maxOfferLine {
+			t.Errorf("a line of %d characters", len([]rune(line)))
+		}
+	}
+}
+
+// A saved type's fill frames its instructions as the person's, and its
+// review checks are marked as theirs in the details stage.
+func TestSavedTypeInstructionsAreThePersons(t *testing.T) {
+	saved := savedLibraryEntry(t, "saved_schema")
+	saved.ReviewChecks = "Check the saved thing."
+	if text := typeInstructions(saved); !strings.Contains(text, savedTypeNote) || !strings.HasSuffix(text, saved.Definition.Fill+"\n") {
+		t.Errorf("saved instructions: %.300s", text)
+	}
+	builtin, _ := library.Get("schema_change")
+	if text := typeInstructions(builtin); strings.Contains(text, "tile library") {
+		t.Errorf("built-in instructions: %.300s", text)
+	}
+	a := &tileAnalysis{config: StagedTiles{Library: []library.Entry{builtin, saved}},
+		selection: []Selection{{Type: "schema_change", Applies: true}, {Type: "saved_schema", Applies: true}}}
+	checks := a.reviewChecks()
+	if !strings.Contains(checks, savedChecksNote) || !strings.Contains(checks, " (from the person's tile library)\n\nCheck the saved thing.") ||
+		strings.Contains(checks, "### Schema changes (from") {
+		t.Errorf("review checks: %s", checks)
+	}
+}
+
+// A saved type the host offered (ComposeRequest.Saved, by digest) is placed;
+// a definition that only claims its name is not.
+func TestComposePlacesOfferedSavedTiles(t *testing.T) {
+	saved := savedLibraryEntry(t, "saved_schema")
+	other := savedLibraryEntry(t, "saved_schema")
+	other.Definition.Title = "Changed"
+	encoded, _ := library.Seal(&other.Definition)
+	r := ComposeRequest{Saved: []string{saved.Definition.Digest}, Fills: []compose.Fill{
+		{Type: "saved_schema", Tile: &tiles.LibraryTile{Definition: saved.Encoded, Data: json.RawMessage(schemaFill())}},
+		{Type: "saved_schema", Tile: &tiles.LibraryTile{Definition: encoded, Data: json.RawMessage(schemaFill())}},
+	}}
+	if lib, _ := r.extras(); len(lib) != 1 || string(lib[0].Definition) != string(saved.Encoded) {
+		t.Errorf("library tiles: %d", len(lib))
+	}
+}

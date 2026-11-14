@@ -499,7 +499,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		if err := layouts.Sweep(ctx); err != nil {
 			log.Warn("the tile layouts were not swept", "error", err)
 		}
-		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Layouts: layouts}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Layouts: layouts, TileLibrary: tileLibrary}
 		// The tiles a person added that a version has no data for are
 		// filled beside the queue.
 		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Layouts: layouts, Log: log}

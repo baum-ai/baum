@@ -69,6 +69,9 @@ var _ interface {
 
 func init() {
 	RegisterGenerator("compose", func(c GeneratorConfig) (Generator, error) {
+		if c.LibraryDir != "" {
+			return nil, errors.New("--library-dir goes with --generator tiles")
+		}
 		g := &ComposeGenerator{Source: c.Options["source"], Dataset: c.Options["dataset"], Run: c.Options["run"]}
 		for key := range c.Options {
 			if !slices.Contains([]string{"source", "dataset", "run"}, key) {
