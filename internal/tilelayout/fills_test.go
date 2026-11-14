@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/bundle"
@@ -220,9 +221,9 @@ func starterData(hunk string) json.RawMessage {
 }
 
 // A tile made in chat shows its own version's data. On a later version it
-// is filled again, like an added library type, when its definition has fill
-// instructions; without them nothing can fill it, so every later version
-// shows its newest data, marked as from its version, and never as filling.
+// is never filled again, with or without fill instructions (those came from
+// the session agent, not the person), so every later version shows its newest
+// data, marked as from its version, and never as filling.
 // Its definition gone, it shows nothing.
 func TestAddedForATileMadeInChat(t *testing.T) {
 	diff := []bundle.Hunk{{ID: "h_0123456789ab", Path: "config.go", StartLine: 1, LineCount: 10}}
@@ -238,23 +239,44 @@ func TestAddedForATileMadeInChat(t *testing.T) {
 		if len(layout.Added) != 1 || len(layout.Notes) != 1 || layout.Notes[0].From != 1 {
 			t.Fatalf("fill %q, a later version: %+v %v", fill, layout, missing)
 		}
-		if fill != "" && (!layout.Notes[0].Filling || len(missing) != 1 || missing[0] != add) {
-			t.Errorf("a fillable tile is not filled again: %+v %v", layout.Notes, missing)
-		}
-		if fill == "" && (layout.Notes[0].Filling || len(missing) != 0) {
-			t.Errorf("a tile without fill instructions is filled: %+v %v", layout.Notes, missing)
+		if layout.Notes[0].Filling || len(missing) != 0 {
+			t.Errorf("a chat tile is filled: %+v %v", layout.Notes, missing)
 		}
 		moved := []bundle.Hunk{{ID: "h_ba9876543210", Path: "config.go", StartLine: 1, LineCount: 10}}
 		layout, _ = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: moved}, kept)
-		if fill == "" && (len(layout.Added) != 1 || layout.Added[0].Pending || layout.Notes[0].From != 1) {
+		if len(layout.Added) != 1 || layout.Added[0].Pending || layout.Notes[0].From != 1 {
 			t.Errorf("a tile without fill instructions whose citations moved: %+v", layout)
-		}
-		if fill != "" && (len(layout.Added) != 1 || !layout.Added[0].Pending) {
-			t.Errorf("a fillable tile whose citations moved: %+v", layout)
 		}
 		gone := func(string) (json.RawMessage, bool) { return nil, false }
 		if layout, missing = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: diff}, gone); len(layout.Added) != 0 || len(missing) != 0 {
 			t.Errorf("fill %q, its definition gone: %+v %v", fill, layout, missing)
 		}
+	}
+}
+
+// A fill a refused add wrote is taken back: deleted when the tile had none
+// on that version, and the earlier one put back when it had.
+func TestRestoreFill(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	add, encoded := madeInChat(t, "")
+	if err := s.PutFill(ctx, pr, "env_vars", 1, tilelayout.OriginChat, encoded, starterData("h_0123456789ab")); err != nil {
+		t.Fatal(err)
+	}
+	prior := s.HeldFill(ctx, pr, "env_vars", 1)
+	if prior == nil {
+		t.Fatal("no held fill")
+	}
+	if err := s.PutFill(ctx, pr, "env_vars", 1, tilelayout.OriginChat, encoded, starterData("h_ba9876543210")); err != nil {
+		t.Fatal(err)
+	}
+	s.RestoreFill(ctx, pr, "env_vars", 1, prior)
+	fills, err := s.Fills(ctx, pr)
+	if err != nil || len(fills) != 1 || fills[0].Digest != add.Digest || !strings.Contains(string(fills[0].Data), "h_0123456789ab") {
+		t.Fatalf("the earlier fill is not back: %+v %v", fills, err)
+	}
+	s.RestoreFill(ctx, pr, "env_vars", 1, nil)
+	if fills, err = s.Fills(ctx, pr); err != nil || len(fills) != 0 {
+		t.Fatalf("the fill is not deleted: %+v %v", fills, err)
 	}
 }

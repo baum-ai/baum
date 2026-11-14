@@ -376,10 +376,10 @@ type Version struct {
 //     from its version, and with none the type is not shown.
 //
 // A type made in chat (a custom add) is read from its kept definition. It
-// is filled like a library type when its definition has fill instructions;
-// without them nothing can fill it, so every version after the one it was
-// made for shows its newest earlier data, marked as from that version, and
-// never as being filled.
+// is never filled again (its fill instructions came from the session agent
+// and are not trusted until the person saves the tile to the library), so
+// every version after the one it was made for shows its newest earlier data,
+// marked as from that version, and never as being filled.
 //
 // An unknown type, and a fill whose definition is gone, give nothing.
 // definition returns a kept definition by its digest.
@@ -460,15 +460,18 @@ func AddedFor(added []tiles.Added, fills []Fill, v Version, definition func(dige
 
 // addedEntry is the type an add names: a library type by its name, or a
 // type made in chat by its kept definition. fillable reports whether a fill
-// run can fill it: always for a library type, and for a type made in chat
-// when its definition has fill instructions.
+// run can fill it: always for a library type, never for a type made in chat.
 func addedEntry(a tiles.Added, definition func(digest string) (json.RawMessage, bool)) (entry library.Entry, fillable, ok bool) {
 	if a.Kind != tiles.AddCustom {
 		entry, ok = library.Get(a.Name)
 		return entry, true, ok
 	}
+	// A one-off tile made in chat is never refilled: its fill instructions
+	// were written by the session agent, which reads untrusted pull request
+	// content, and the person has not seen or saved them. Save to library
+	// shows them before they become a library tile's.
 	entry, ok = CustomEntry(a, definition)
-	return entry, ok && strings.TrimSpace(entry.Definition.Fill) != "", ok
+	return entry, false, ok
 }
 
 // CustomEntry is a type made in chat as a library entry, from its kept
@@ -508,4 +511,46 @@ func Generated(composition []byte) map[string]bool {
 		}
 	}
 	return out
+}
+
+// HeldFill is the fill held for a tile on one version, with its definition,
+// or nil when there is none.
+func (s *Service) HeldFill(ctx context.Context, pr, tile string, version int) *HeldFill {
+	fills, err := s.Fills(ctx, pr)
+	if err != nil {
+		return nil
+	}
+	for _, f := range fills {
+		if f.Tile == tile && f.Version == version {
+			definition, ok := s.Definition(ctx, f.Digest)
+			if !ok {
+				return nil
+			}
+			return &HeldFill{Origin: f.Origin, Definition: definition, Data: f.Data}
+		}
+	}
+	return nil
+}
+
+// HeldFill is a fill as HeldFill returns it.
+type HeldFill struct {
+	Origin     string
+	Definition json.RawMessage
+	Data       json.RawMessage
+}
+
+// RestoreFill takes back a fill a refused add wrote: it puts prior back
+// (nil: the tile had no fill on that version, so it is deleted).
+func (s *Service) RestoreFill(ctx context.Context, pr, tile string, version int, prior *HeldFill) {
+	ctx = context.WithoutCancel(ctx)
+	if prior != nil {
+		_ = s.PutFill(ctx, pr, tile, version, prior.Origin, prior.Definition, prior.Data)
+		return
+	}
+	db, release, err := appdb.Acquire(s.Path, false)
+	if err != nil {
+		return
+	}
+	defer release()
+	_, _ = db.ExecContext(ctx, `DELETE FROM tile_fills WHERE pr = ? AND tile = ? AND version = ?`, pr, tile, version)
 }

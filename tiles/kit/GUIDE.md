@@ -421,8 +421,8 @@ Two rules matter here:
   the person's.
 
 A tile made this way belongs to the pull request's page. On later versions
-it is filled again when `fill` has instructions; without them it keeps the
-data it was made with, marked as from that version. To reuse it on other
+it is not filled again; it keeps the
+data it was made with, marked as from that version. Only a library type is filled for later versions, after the person saves it. To reuse it on other
 pull requests, save it to the tile library: "Save to library…" on its menu
 asks the agent, who checks it with a synthetic sample and proposes the type
 (`propose_tile_type`); nothing is saved until the person saves it.

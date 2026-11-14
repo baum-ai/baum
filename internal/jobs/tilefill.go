@@ -164,13 +164,13 @@ var ErrFillSuperseded = errors.New("the review changed since the tile was added;
 // one call (generate.FillTile) over the pull request assembled at the
 // version's head, and checks the data against that version's hunks.
 func (l *Local) FillTile(ctx context.Context, r tilelayout.FillRequest) (json.RawMessage, json.RawMessage, *float64, error) {
-	entry, ok := library.Get(r.Type)
-	if r.Digest != "" && l.Layouts != nil {
-		// A type made in chat, by its kept definition.
-		entry, ok = tilelayout.CustomEntry(tiles.Added{Kind: tiles.AddCustom, Name: r.Type, Digest: r.Digest}, func(digest string) (json.RawMessage, bool) {
-			return l.Layouts.Definition(ctx, digest)
-		})
+	if r.Digest != "" {
+		// A type made in chat is never filled again: its fill instructions
+		// were written by the session agent, which reads untrusted pull
+		// request content, and the person has not saved them.
+		return nil, nil, nil, fmt.Errorf("tile %q was made in chat and is not filled again", r.Type)
 	}
+	entry, ok := library.Get(r.Type)
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("no library type %q", r.Type)
 	}

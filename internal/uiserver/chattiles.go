@@ -171,6 +171,9 @@ func (t *ChatTiles) Check(ctx context.Context, owner, repository string, number 
 	}
 	result, err := t.Checks.Submit(ctx, candidate)
 	if err != nil {
+		if t.Drafts != nil {
+			_, _ = t.Drafts.Failed(owner, check.Draft, err.Error())
+		}
 		return nil, err
 	}
 	if len(extra) > 0 && (result.Verdict == tilechecks.VerdictPass || result.Verdict == tilechecks.VerdictFail) {
@@ -345,14 +348,20 @@ func (t *ChatTiles) Add(ctx context.Context, owner, repository string, number in
 	if reason := tiles.CheckOp(shown.Document, op); reason != "" {
 		return agentcontext.TileAdded{}, errors.New(reason)
 	}
+	// The layout reads the tile's definition from its fill, so the fill is
+	// written first and taken back (or the hidden tile's earlier one put back)
+	// when the layout refuses the add.
+	prior := t.API.Layouts.HeldFill(ctx, pr, id, made.version)
 	if err := t.API.Layouts.PutFill(ctx, pr, id, made.version, tilelayout.OriginChat, made.definition, made.data); err != nil {
 		return agentcontext.TileAdded{}, err
 	}
 	change, err := t.API.editLayout(ctx, c, number, "chat", []tiles.Op{op})
 	if err != nil {
+		t.API.Layouts.RestoreFill(ctx, pr, id, made.version, prior)
 		return agentcontext.TileAdded{}, err
 	}
 	if !change.Saved {
+		t.API.Layouts.RestoreFill(ctx, pr, id, made.version, prior)
 		reasons := make([]string, len(change.Refused))
 		for i, refusal := range change.Refused {
 			reasons[i] = refusal.Reason

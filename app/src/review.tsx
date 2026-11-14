@@ -646,7 +646,7 @@ export function LocalReview({
       removeDraft: (tile) => {
         void request(
           `api/tiles/drafts/${encodeURIComponent(tile)}?${new URLSearchParams({ clone, pr: String(pr.number) })}`,
-          undefined,
+          {},
           "DELETE",
         ).catch(() => undefined);
       },

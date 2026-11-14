@@ -3,8 +3,11 @@ package uiserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +28,7 @@ import (
 type fakeChecker struct {
 	mu        sync.Mutex
 	verdict   string
+	err       error
 	reason    string
 	sent      []tilechecks.Candidate
 	kept      map[string]tilelibrary.CheckResult
@@ -35,6 +39,9 @@ func (f *fakeChecker) Submit(_ context.Context, c tilechecks.Candidate) (tileche
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, c)
+	if f.err != nil {
+		return tilechecks.Result{}, f.err
+	}
 	f.idCounter++
 	def := c.Definition
 	encoded, err := library.Seal(&def)
@@ -277,7 +284,7 @@ func TestATileMadeInChat(t *testing.T) {
 	}
 
 	text, failed = f.call("add_custom_tile", map[string]any{"check": answer.Check})
-	if failed || !strings.Contains(text, `"tile":"env_vars"`) || !strings.Contains(text, `"state":"ready"`) || !strings.Contains(text, "Added New environment variables") {
+	if failed || !strings.Contains(text, `"tile":"env_vars"`) || !strings.Contains(text, `"state":"ready"`) || !strings.Contains(text, "Added Custom · New environment variables") {
 		t.Fatalf("add_custom_tile: %s", text)
 	}
 	body = f.served("")
@@ -292,7 +299,7 @@ func TestATileMadeInChat(t *testing.T) {
 		t.Errorf("the tile is at %d, %s", at, entry.Size)
 	}
 	summary := layoutOf(t, f.get("/api/tiles/layout", "", ""))
-	if summary.Last == nil || summary.Last.By != "chat" || summary.Last.Summary[0] != "Added New environment variables" {
+	if summary.Last == nil || summary.Last.By != "chat" || summary.Last.Summary[0] != "Added Custom · New environment variables" {
 		t.Errorf("the batch: %+v", summary.Last)
 	}
 	if text, failed = f.call("add_custom_tile", map[string]any{"check": answer.Check}); !failed || !strings.Contains(text, "already on the review") {
@@ -300,7 +307,7 @@ func TestATileMadeInChat(t *testing.T) {
 	}
 
 	// Undo takes it away.
-	if text, failed = f.call("undo_tiles", nil); failed || !strings.Contains(text, "Added New environment variables") {
+	if text, failed = f.call("undo_tiles", nil); failed || !strings.Contains(text, "Added Custom · New environment variables") {
 		t.Fatalf("undo: %s", text)
 	}
 	if tileByID(f.served("").Tiles, "env_vars") != nil {
@@ -410,6 +417,9 @@ func TestAddingATileMadeInChatIsRefused(t *testing.T) {
 	if text, failed := f.call("add_custom_tile", map[string]any{"check": answer.Check}); !failed || !strings.Contains(text, "already has 8 library tiles") {
 		t.Errorf("a ninth tile: %s", text)
 	}
+	if fills, err := f.api.Layouts.Fills(context.Background(), "acme/widgets#42"); err != nil || slices.ContainsFunc(fills, func(x tilelayout.Fill) bool { return x.Tile == "kind_9" }) {
+		t.Errorf("a refused add left a fill: %+v %v", fills, err)
+	}
 }
 
 // The tools work only for the pull request the turn was sent from, only on
@@ -469,10 +479,9 @@ func TestChatTilesRefusals(t *testing.T) {
 	}
 }
 
-// A tile made in chat on a later version: with fill instructions it is
-// filled again as an added library type is (by its kept definition), showing
-// its earlier data meanwhile; without them it shows its data marked as from
-// the version it was made for.
+// A tile made in chat on a later version is never filled again, with or
+// without fill instructions (the session agent wrote them from untrusted
+// content): it shows its data marked as from the version it was made for.
 func TestATileMadeInChatOnALaterVersion(t *testing.T) {
 	for _, fill := range []string{"List each new environment variable with its default.", ""} {
 		f := newChatTilesFixture(t)
@@ -487,11 +496,53 @@ func TestATileMadeInChatOnALaterVersion(t *testing.T) {
 			t.Fatalf("fill %q: %+v %+v", fill, tile, body.Added)
 		}
 		asked := f.filler.asked()
-		if fill != "" && (!body.Added[0].Filling || len(asked) != 1 || asked[0].Type != "env_vars" || asked[0].Digest == "" || asked[0].Version != 2) {
-			t.Errorf("a fillable tile: %+v %+v", body.Added, asked)
+		if body.Added[0].Filling || len(asked) != 0 {
+			t.Errorf("a chat tile with fill %q: %+v %+v", fill, body.Added, asked)
 		}
-		if fill == "" && (body.Added[0].Filling || len(asked) != 0) {
-			t.Errorf("a tile without fill instructions: %+v %+v", body.Added, asked)
-		}
+	}
+}
+
+// A check the host could not submit (a busy checker) fails the card with
+// the reason, rather than leaving it saying "checking".
+func TestASubmitThatFailsFailsTheCard(t *testing.T) {
+	f := newChatTilesFixture(t)
+	f.call("start_tile", map[string]any{"title": "Env"})
+	f.checker.err = errors.New("another check is running")
+	if text, failed := f.call("check_tile", checkArgs(t, "env_vars", "", envData(f.firstHunk(), "PORT"))); !failed || !strings.Contains(text, "another check is running") {
+		t.Fatalf("check_tile: %s", text)
+	}
+	if d := f.served("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseFailed || d[0].Reason != "another check is running" {
+		t.Errorf("the card after a failed submit: %+v", d)
+	}
+}
+
+// Remove on the pending card goes through the server's checks: the page's
+// DELETE carries a JSON body, and one without it is refused before the route.
+func TestRemovingAPendingCardThroughTheServer(t *testing.T) {
+	f := newChatTilesFixture(t)
+	if text, failed := f.call("start_tile", map[string]any{"title": "Env"}); failed {
+		t.Fatal(text)
+	}
+	s, err := New(Options{API: f.api.Handler()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Listen(0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.listener.Close() })
+	path := "/api/tiles/drafts/draft_1?clone=" + f.clone.ID + "&pr=42"
+	auth := "Bearer " + s.launch
+	if w := request(t, s, "DELETE", path, "", s.origin, "", auth, ""); w.Code != http.StatusForbidden {
+		t.Errorf("a DELETE without a JSON content type: %d", w.Code)
+	}
+	if d := f.served("").Drafts; len(d) != 1 {
+		t.Fatalf("a refused remove took the card: %+v", d)
+	}
+	if w := request(t, s, "DELETE", path, "", s.origin, "application/json", auth, "{}"); w.Code/100 != 2 {
+		t.Fatalf("the page's remove: %d %s", w.Code, w.Body.String())
+	}
+	if d := f.served("").Drafts; len(d) != 0 {
+		t.Errorf("the card after Remove: %+v", d)
 	}
 }

@@ -1063,6 +1063,10 @@ func OpSummary(doc *Document, op Op) string {
 		name := title(id)
 		if name == id && op.Add.Title != "" {
 			name = op.Add.Title
+			if op.Add.Kind == AddCustom {
+				// The name the page lists a tile made in chat by.
+				name = "Custom · " + name
+			}
 		}
 		line = fmt.Sprintf("Added %s", name)
 	}

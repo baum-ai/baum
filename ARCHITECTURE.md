@@ -1298,14 +1298,15 @@ keeps its built-in label: the served definition is marked by its digest
 agent wrote for this pull request (agentcontext's tile making tools;
 `uiserver.ChatTiles`). Its definition is kept by digest in
 `tile_definitions` and its data, for the version it was made for, in
-`tile_fills` (origin `chat`), both written (`Service.PutFill`) before the add
-names them; `tilelayout.CustomEntry` reads the definition back for
+`tile_fills` (origin `chat`), both written (`Service.PutFill`) before the add names them, the fill taken back (`Service.RestoreFill`) when the layout refuses the add; `tilelayout.CustomEntry` reads the definition back for
 `AddedFor`, the replay and fills, so it goes through the custom tile checks,
 the library limit and `Arrange` as a generated library tile does. On a later
-version it is filled again like a library type (`FillRequest.Digest` names
-its definition, which `jobs.Local.FillTile` fills) when its definition has
-fill instructions; without them nothing can fill it, so later versions show
-its newest data, marked as from that version, and never as filling. A
+version it is never filled again (`AddedFor` treats a custom add as not
+fillable and `jobs.Local.FillTile` refuses a request naming a digest): its fill
+instructions were written by the session agent, which reads untrusted pull
+request content, and the person has not seen them. Later versions show its
+newest data, marked as from that version, and never as filling, until the
+person saves it to the library, which shows the fill text first. A
 custom add's name is never a built-in library type's.
 
 The making runs in three steps, each bound to the pull request the turn was

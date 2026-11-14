@@ -2113,9 +2113,11 @@ layout. That is safe to do without asking for the same reasons, and these:
   pull request only.
 - It is yours and the page's only. Saving it as a type for later reviews is
   a proposal (`propose_tile_type`) you save, with synthetic samples only; on
-  later versions it is filled again by your review agent when its type has
-  fill instructions (a model call at your expense, at most once per version
-  while baum runs), which take the pull request as data.
+  later versions it is never filled again, because its fill instructions were
+  written by the session agent, which reads untrusted pull request content, and
+  you have not seen them: it shows its newest data marked as from the version
+  it was made for. Save to library shows the fill instructions before you save
+  them, and only then does a review agent fill the type on later versions.
 - The pending card that shows while the tile is made lives in the daemon's
   memory; its event carries only the pull request's key.
 - Where the desktop app does not mount tile frames (Windows, for now), the
