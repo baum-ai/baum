@@ -85,8 +85,8 @@ var templates = map[string][]slot{
 // named. content gives the composition's tiles (library, promoted and
 // authored), normalised as NormalizeComposition does and reported; its
 // layout is not used, and its generator and notes are kept. The changes
-// group shows the converter's default number of changes; a single change
-// stands alone at half, with no group. When the risks tile ranks no active
+// group shows the converter's default number of changes; one or two changes
+// stand at half with no group, a heading coming only from three. When the risks tile ranks no active
 // risk above low, it gives its place on the first row to the lead change
 // (quietSlots); otherwise the docs template sets the risks tile beside the
 // overview at half, so the risks are on the landing page. When the evidence
@@ -278,10 +278,12 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 					members = append(members, entry)
 				}
 			}
-			if len(members) == 1 {
-				// One change needs no group: it stands alone at half, beside
-				// the tile that follows.
-				add(members[0].Tile, SizeHalf, "")
+			if len(members) <= 2 {
+				// One or two changes need no heading: they stand at half, two
+				// on one row, one beside the tile that follows.
+				for _, entry := range members {
+					add(entry.Tile, SizeHalf, "")
+				}
 				continue
 			}
 			for _, entry := range members {

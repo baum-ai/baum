@@ -64,7 +64,9 @@ func keepTemplate(t *testing.T, lead string, promote func(compose.Inventory) []c
 			if entry.Tile == lead {
 				continue
 			}
-			if lead != "" && entry.Group != "" && !led {
+			// The fixtures' change tiles are sec_*; with one or two changes
+			// the template has no group.
+			if lead != "" && strings.HasPrefix(entry.Tile, "sec_") && !led {
 				// The lead takes the first change's place.
 				led = true
 				reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: lead, Size: entry.Size, Why: &why})

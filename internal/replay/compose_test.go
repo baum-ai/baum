@@ -52,6 +52,20 @@ func (c *completing) Complete(_ context.Context, r agent.CompleteRequest) (agent
 		}
 		reply.Entries = append(reply.Entries, e)
 	}
+	if !led {
+		// One or two changes and no group: the two change first and second
+		// (the fixtures' changes are sec_*), which shows as many.
+		var at []int
+		for i, e := range reply.Entries {
+			if strings.HasPrefix(e.Tile, "sec_") {
+				at = append(at, i)
+			}
+		}
+		if len(at) >= 2 {
+			reply.Entries[at[0]], reply.Entries[at[1]] = reply.Entries[at[1]], reply.Entries[at[0]]
+			reply.Entries[at[0]].Why = &why
+		}
+	}
 	raw, err := json.Marshal(reply)
 	return agent.Completion{Document: raw, Model: "claude-opus-5-5", Usage: agent.Usage{Input: 5000, Output: 500}}, err
 }
