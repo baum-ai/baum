@@ -1369,7 +1369,7 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 		Arrange(doc)
 	}
 	if n.Layout.Edited || slices.ContainsFunc(entries, func(e Entry) bool { return e.Pin }) {
-		keepRecommendedOnLanding(doc, must)
+		keepRecommendedOnLanding(doc, must, n.Layout.Resized)
 	}
 	return doc, nil
 }
@@ -1379,7 +1379,7 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 // changes group), back to its front, and arranges the layout again. Should
 // the pinned entries alone fill the landing page, it puts such a change
 // before them, as Arrange does for the overview and risks tiles.
-func keepRecommendedOnLanding(doc *Document, must mustBeSeen) {
+func keepRecommendedOnLanding(doc *Document, must mustBeSeen, resized []string) {
 	stray := strayNamed(doc.Layout, must)
 	if len(stray) == 0 {
 		return
@@ -1396,9 +1396,43 @@ func keepRecommendedOnLanding(doc *Document, must mustBeSeen) {
 	layout.Entries = frontFirst(layout.Entries, func(e Entry) bool {
 		return slices.Contains(stray, e.Tile) || e.Tile == TypeOverview || e.Tile == TypeRisks && mustShowRisks(doc)
 	})
+	// Named changes at their own sizes may still not all fit before the
+	// landing page ends: they take less room, a person's pinned sizes aside,
+	// and the rows are arranged again to fill.
 	layout.ExtraRows = ExtraRows(doc, layout)
 	layout.Landing = Landing(layout)
 	doc.Layout = layout
+	for _, size := range []Size{SizeHalf, SizeThird} {
+		if len(strayNamed(doc.Layout, must)) == 0 {
+			return
+		}
+		layout = doc.Layout
+		layout.Entries = slices.Clone(layout.Entries)
+		for i, e := range layout.Entries {
+			if !e.Pin && slices.Contains(must.named, e.Tile) && size.Units() < e.Size.Units() {
+				layout.Entries[i].Size = size
+			}
+		}
+		doc.Layout = layout
+		Arrange(doc)
+		// A shorter tile can leave a row with empty units: the other
+		// tiles of it grow to fill, as fillRows does.
+		fills := RowFills(doc)
+		for _, id := range resizedRows(doc, resized) {
+			delete(fills, id)
+		}
+		if len(fills) > 0 {
+			layout = doc.Layout
+			layout.Entries = slices.Clone(layout.Entries)
+			for i, e := range layout.Entries {
+				if size, ok := fills[e.Tile]; ok {
+					layout.Entries[i].Size = size
+				}
+			}
+			doc.Layout = layout
+			Arrange(doc)
+		}
+	}
 }
 
 // strayNamed returns the changes the recommendation names that sit outside

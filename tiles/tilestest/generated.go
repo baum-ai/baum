@@ -537,12 +537,19 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 		// No place is left when the landing page holds only pinned tiles and
 		// those always on it (the overview, the risks and the changes the
 		// recommendation names).
+		// A landing page that four or more pinned tiles share is the
+		// repository's: the evidence has no place there either.
+		pinned := 0
 		full := true
 		for i, entry := range doc.Layout.Entries {
+			if visible[i] && entry.Pin {
+				pinned++
+			}
 			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && entry.Tile != tiles.TypeRisks && !slices.Contains(tiles.RecommendedChanges(doc), entry.Tile) {
 				full = false
 			}
 		}
+		full = full || pinned >= 4
 		for i, entry := range doc.Layout.Entries {
 			if entry.Tile == tiles.TypeEvidence && !visible[i] && !full {
 				failures = append(failures, "the evidence tile has gaps and is not on the landing page")

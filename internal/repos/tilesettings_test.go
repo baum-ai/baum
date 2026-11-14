@@ -77,8 +77,30 @@ func TestTileSettingsAreSavedByTheRoutesWithTheHostsReason(t *testing.T) {
 	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil || s.Tiles.Text != "Lead with the schema." {
 		t.Errorf("a refused save changed the stored settings: %+v", s.Tiles)
 	}
-	// The whole object is replaced, so leaving tiles out clears them.
+	// Tiles merge per member: an omitted member keeps its stored value, a
+	// sent one, even empty, replaces it.
+	if w = do("PUT", route, `{"automatic":null,"tiles":{"types":["a","b"]}}`); w.Code != http.StatusOK {
+		t.Fatal(w.Code, w.Body)
+	}
+	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil || s.Tiles.Text != "Lead with the schema." || !slices.Equal(s.Tiles.Types, []string{"a", "b"}) || !slices.Equal(s.Tiles.Pins, []string{"schema_change"}) {
+		t.Errorf("an omitted member did not keep its value: %+v", s.Tiles)
+	}
+	if w = do("PUT", route, `{"automatic":null,"tiles":{"text":"","pins":[]}}`); w.Code != http.StatusOK {
+		t.Fatal(w.Code, w.Body)
+	}
+	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil || s.Tiles.Text != "" || len(s.Tiles.Pins) != 0 || !slices.Equal(s.Tiles.Types, []string{"a", "b"}) {
+		t.Errorf("empty members did not replace: %+v", s.Tiles)
+	}
 	if w = do("PUT", route, `{"automatic":null}`); w.Code != http.StatusOK {
+		t.Fatal(w.Code, w.Body)
+	}
+	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil {
+		t.Error("leaving tiles out cleared them")
+	}
+	if w = do("PUT", route, `{"automatic":null,"tiles":null}`); w.Code != http.StatusOK {
+		t.Fatal(w.Code, w.Body)
+	}
+	if w = do("PUT", route, `{"automatic":null,"tiles":{"types":["1","2","3","4","5","6","7","8","9"]}}`); w.Code != http.StatusBadRequest {
 		t.Fatal(w.Code, w.Body)
 	}
 	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles != nil {
