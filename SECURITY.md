@@ -1517,56 +1517,94 @@ The answer is `no-store`, sets no cookie, ignores `Range` and carries
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
 `Cross-Origin-Resource-Policy: same-origin`.
 
-**What the page checks.** The app's host (see "Custom tile kit" in
-`ARCHITECTURE.md`) treats every message from a frame as untrusted:
+**What the page checks.** The app's host (see "The app's host" under
+"Custom tile kit" in `ARCHITECTURE.md`) treats every message from a frame as
+untrusted:
 
 - The frame is `<iframe sandbox="allow-scripts">` with no other flag, no
   `srcdoc`, `referrerpolicy="no-referrer"` and an empty `allow`; so it cannot
   open windows or dialogs, submit forms, navigate the app's page or reach
   storage, and its own policy lets it load nothing.
+- **Where frames mount.** In a browser, always. In the desktop app only when
+  the shell declares, by a script it runs in the page before the page's own,
+  `window.__BAUM_DESKTOP__ = { tileFrames: true }`: a shell says so once it
+  refuses every navigation that is not to the daemon's own pages (only a
+  request for a new window opens your browser) and once its commands are
+  checked to be out of a sandboxed frame's reach. A shell without the
+  declaration (an older one, or the Windows shell until its own check is
+  done) mounts no frame, and its custom tiles say they aren't available in
+  this version of the desktop app yet. A frame cannot set the declaration:
+  it cannot write the page's globals.
 - A message counts only from a frame's own window (`event.source`) and with
   the opaque origin `"null"`, so no frame can speak for another tile or for
   the page; a frame's kit likewise hears only the page, so a frame posting
-  to its neighbours as if it were the page is ignored.
-- Every field is read with strict type checks; strings over 1 KiB are
-  dropped and what a tile writes is shown only as text. More than 30
-  messages a second are dropped, and a frame that keeps sending more for
-  three seconds is unmounted.
-- A detail's height is held to 120 to 20,000px. A glance's box is fixed.
+  to its neighbours as if it were the page is ignored. Messages are counted
+  before their data is read: past 30 in a second the rest of that second's
+  are dropped unread, and a frame over that rate in more than three of the
+  last ten seconds, or past 300 in one second, is unmounted.
+- Every field is read with strict type checks; a string longer than 1024
+  UTF-16 code units is dropped, an error's message is cut to 500, and what a
+  tile writes is shown only as text.
+- A detail's height, whether from `ready` or `resize`, is held to 120 to
+  20,000px, applied at most once an animation frame, and stops following a
+  height that keeps growing by one amount or keeps changing direction;
+  `ready` is taken once for each `init` or `update` the page sent, any other
+  is a resize under the same rules. A glance's box is fixed.
 - A frame can ask the page only to jump to an item its own data cites,
   which the page resolved from the review it already shows (the frame names
   it by key, never by address), to open the session panel's question about
-  the tile, or to act on a whitelisted key; and only from a detail the
-  reader is in, with the keyboard on the frame (and, for a jump or a
-  question, a recent click or key press). The whitelist is the page's
-  reading keys only: Escape and `u` (back to the summary), `j` and `k`
-  (next and previous), ArrowLeft and ArrowRight (previous and next tile),
-  `[` and `]` (the sidebars) and `?` (the shortcuts sheet). The page
-  dispatches a `keydown` on the frame's element carrying the key's name and
-  whether Shift was held, nothing else (no other modifier, code or text). No
-  key that acts outward or changes anything is on it: not Enter or Space,
-  `m` (merge), `v` (send a review), `c` (comment), `a` (ask), `f` (fix),
-  `t`, `g`, or any key with Ctrl, Alt or Meta; the frame's kit forwards
-  none of those, and the page drops any other key a frame names. A glance asks nothing and takes no focus; focus a frame takes
-  by itself is taken back, and a frame that keeps taking it is unmounted.
-- A frame that does not start, does not draw in time, navigates itself or
-  floods is unmounted and its tile says it couldn't load. That failure is
-  about that frame only: nothing a frame sends marks its tile type, or any
-  other tile, as broken. Only the daemon's own render check or the
-  authenticated app may block a type.
-- Inside the desktop app on Windows the page mounts no tile frame and says
-  custom tiles aren't available there yet: whether a sandboxed frame in
-  WebView2 can reach the desktop shell's commands has not been checked.
+  the tile, or to act on a whitelisted key; and only from a detail whose
+  keyboard the reader gave it (below). A jump or a question also needs the
+  browser to report a user activation at that moment (a browser that cannot
+  say is taken as no), and the page honours at most one a second.
+- **The keyboard.** A frame takes no keys unless the reader gives them: a
+  glance never (it lies under its card's link with `tabindex=-1`); a detail
+  when a Tab lands on its frame, or when the pointer is over it, the browser
+  reports a user activation and the page saw no key press of its own in
+  the half second before (the reader typing elsewhere with the pointer
+  resting on a tile is not a click). The page cannot see clicks inside a
+  frame, so this is how it tells one apart. Focus a frame takes otherwise is
+  given back to the page's element that had it, and a frame that takes it a
+  fourth time is unmounted.
+- **Forwarded keys.** The whitelist is the page's reading keys only: Escape
+  and `u` (back to the summary), `j` and `k` (next and previous),
+  ArrowLeft and ArrowRight (previous and next tile), `[` and `]` (the
+  sidebars) and `?` (the shortcuts sheet). The page dispatches a `keydown` on
+  the frame's element carrying the key's name and whether Shift was held,
+  nothing else (no other modifier, code or text), and only while the reader
+  has given the frame the keyboard. No key that acts outward or changes
+  anything is on it: not Enter or Space, `m` (merge), `v` (send a review),
+  `c` (comment), `a` (ask), `f` (fix), `t`, `g`, or any key with Ctrl, Alt
+  or Meta; the frame's kit forwards none of those, and the page drops any
+  other key a frame names.
+- A frame that does not start, does not draw in time, says hello twice,
+  floods or keeps taking the keyboard is unmounted and its tile says it
+  couldn't load, in the host's own words; what the tile reported is shown
+  apart, quoted, behind Details. A frame that navigates itself after it
+  drew is unmounted where the engine reports the navigation as a load (both
+  Chromium and WebKit do for the navigations the suite tries); one that
+  navigates before it drew never draws and is unmounted when its time runs
+  out. That failure is about that frame only: nothing a frame sends marks
+  its tile type, or any other tile, as broken. Only the daemon's own render
+  check or the authenticated app may block a type.
+- What the tile draws is set apart from the page: its kicker reads
+  "Custom ·" and the type's title, whatever the title (one that names a
+  built-in tile too), in the card, the detail and the rail, and its detail
+  sits inside a faint edge under a "Custom tile" caption that the page
+  draws.
 
 The browser suite (`app/custom-tile-tests/tile-frames.spec.ts`) runs hostile
-tiles on the real frame route in Chromium, and in WebKit where Playwright's
-WebKit is installed: every way out it tries (reading
-the page, cookies and storage, top and parent navigation, `window.open`,
-dialogs, form submission, nested frames, fetch, XHR, WebSocket,
-EventSource, beacons, images, fonts, stylesheets and CSS `url()` to the
-daemon and to another origin, workers, spoofed and oversized messages,
-floods, taking the focus, navigating itself) is refused, the page stays as
-it was and a listening server on another port receives nothing.
+tiles on the real frame route in Chromium, and in WebKit with
+`just local_app::e2e-webkit`: every way out it tries (reading the page,
+cookies, storage, caches and the shell's message handlers, top and parent
+navigation, `window.open`, dialogs, form submission, nested frames, fetch,
+XHR, WebSocket, EventSource, beacons, images, fonts, stylesheets and CSS
+`url()` to the daemon and to another origin, workers, spoofed and oversized
+messages, a second hello, floods, taking the keyboard while the reader
+types elsewhere, navigating itself before and after it drew) is refused,
+the page stays as it was and a listening server on another port receives
+nothing. The desktop shells' own webviews are checked by hand
+(`desktop/tests/tile-frames-manual.md`).
 
 **What a tile is given.** The frame protocol gives a tile its own data, the
 face and size it draws, the app's theme and language, and the items of the
@@ -1586,20 +1624,23 @@ by the chat's agent.
   govern. baum ships no script that tries to block these inside the frame: a
   fresh realm gets around such a script. It minimises what a tile receives
   instead.
-- A tile that runs a busy loop freezes the app's window until it is closed,
-  where the engine runs the frame on the page's thread: in the browser suite
-  a 1.5-second loop held the page for its length in WebKit, and in Chromium
-  in some runs and not others. The host unmounts a frame that does not draw
-  in time, but cannot interrupt one that holds the thread.
+- **A tile in an endless loop freezes the app's window until the app is
+  closed**, where the engine runs the frame on the page's thread, and
+  nothing in the page can stop it; the next time the review is opened it
+  freezes again. In the browser suite a 1.5-second loop held the page for
+  its length in WebKit every time, and in Chromium in some runs and not
+  others. The host unmounts a frame that does not draw in time, but cannot
+  interrupt one that holds the thread. (A guard that keeps such a tile from
+  mounting again after a freeze is planned, not built.)
 - A frame can navigate itself to a page of the daemon's own origin: the
   request reaches the daemon without the cookie, the namespace or any data,
   and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
   host then unmounts the frame.
-- In the desktop app, a frame's navigation to an external address may be
-  handed to the desktop shell's navigation handler, which opens external
-  addresses in your browser, before the page's `frame-src` is applied. Until
-  the shell refuses frame navigations, a tile may be able to open a page of
-  its choosing in your browser, with what the tile was given in its address.
+- In a desktop shell that hands navigations to external addresses to your
+  browser, a frame navigating itself could open a page of its choosing there,
+  with what the tile was given in its address, and the page would not see it
+  happen. That is why the page mounts frames in a desktop shell only when
+  the shell declares it refuses such navigations (above).
 - A local process that knows a tile type's digest can fetch that type's
   source by sending the three `Sec-Fetch-*` headers itself; the checks are
   not authentication. It never gets a tile's data, which is not in the

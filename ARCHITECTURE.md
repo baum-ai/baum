@@ -1263,9 +1263,10 @@ way out of its frame and posts what each did to the page as `{probe:
 written for a kit major this version lacks and so unavailable.
 `tileviewtest.AddBrowserTiles` adds those and a tile of the escape probe's
 type for each of its other modes (`escape_spoof`, `escape_flood`,
-`escape_leave_daemon`, `escape_leave_outside`, `escape_busy`: hostile
-messages, a flood, navigating itself to the daemon or another origin, a busy
-loop). The browser fixture serves them in every version of acme/demo#7's
+`escape_leave_daemon`, `escape_leave_outside`, `escape_leave_early`,
+`escape_hello_again`, `escape_focus`, `escape_busy`: hostile messages, a
+flood, navigating itself to the daemon or another origin after or before it
+drew, a second hello, taking the keyboard repeatedly, a busy loop). The browser fixture serves them in every version of acme/demo#7's
 review when it is started with `BAUM_APP_CUSTOM_TILES=1`, as the custom tile
 suite (`app/custom-tile-tests`) and the development browser suite start it;
 the main suite and its screenshots do not see them.
@@ -1450,71 +1451,90 @@ are rules for whoever writes the page's side:
 
 **The app's host** (`app/src/tiles/custom/`) is the page's side. A custom
 tile is one more type of the tile page's registry (`custom-tile.tsx`): its
-kicker is its definition's title, the card adds the tile's headline under its
-title, and both faces draw `TileFrame` (`tile-frame.tsx`), which mounts
-`<iframe sandbox="allow-scripts" src="/tile-frames/<hex>"
-referrerpolicy="no-referrer" allow="" title="<tile title>">`; never
-`allow-same-origin` and never `srcdoc`, which the desktop shell refuses.
+kicker reads "Custom ·" and its definition's title in the card, the detail
+and the rail (whatever the title, so a custom tile never passes for a
+built-in one), the card adds the tile's headline under its title, and both
+faces draw `TileFrame` (`tile-frame.tsx`), which mounts `<iframe
+sandbox="allow-scripts" src="/tile-frames/<hex>" referrerpolicy="no-referrer"
+allow="" title="<tile title>">`; never `allow-same-origin` and never
+`srcdoc`, which the desktop shell refuses. A detail's frame sits inside a
+faint edge the page draws, under a "Custom tile" caption. A tile still being
+written (`pending`) is drawn as built-in ones are, without a frame.
 
+- **Where.** `environment.ts` decides once: in a browser frames mount; in a
+  desktop shell (`__TAURI_INTERNALS__` on the page) only when the shell set
+  `window.__BAUM_DESKTOP__ = { tileFrames: true }` (an own property, exactly
+  `true`) by init script before the page's scripts, which it does once it
+  refuses frame navigations to anything but the daemon's pages and its
+  commands are out of a frame's reach. Otherwise every custom tile says
+  "Custom tiles aren't available in this version of the desktop app yet".
+  The manual check of the shells is `desktop/tests/tile-frames-manual.md`.
 - **Mounting.** One frame per face on screen, created without an address:
   its window is registered with the one `message` router (`router.ts`)
   before `src` is set. A glance mounts once its card is within 600px of the
   scrolling area's view and is unmounted past 2400px; at most 16 glances are
-  mounted at once, the rest waiting their turn (`environment.ts`). A detail
-  mounts at once. Inside the desktop app on Windows (`__TAURI_INTERNALS__`
-  and a Windows user agent) no frame mounts and the tile says custom tiles
-  aren't available there yet: a sandboxed frame there may reach the shell's
-  commands, which is not yet checked. Everywhere else frames mount.
+  mounted at once, the rest waiting their turn. A detail mounts at once.
 - **Messages.** The router drops a message whose `source` is not a
-  registered frame's window or whose `origin` is not `"null"`.
-  `protocol.ts` reads every message with strict guards (a plain object, the
-  protocol, a known kind, each field of its type, strings over 1 KiB
-  dropped, an error's message clipped to 500 characters and shown as text);
-  anything else is dropped. A frame may send 30 messages a second; the rest
-  of that second's are dropped unread, and a frame over the rate for three
-  seconds running, or past 300 in one second, is unmounted.
+  registered frame's window or whose `origin` is not `"null"`, then counts
+  it before anything reads its data: past 30 a second the rest of that
+  second's are dropped unread, and a frame over the rate in more than three
+  of the last ten seconds, or past 300 in one second, is unmounted.
+  `protocol.ts` reads what passes with strict guards (a plain object, the
+  protocol, a known kind, each field of its type, strings over 1024 UTF-16
+  code units dropped, an error's message cut to 500 and shown as text).
 - **Handshake.** On `hello` the page sends `init` with the face, size, the
   app's theme (its `data-theme`, followed live and sent as `theme`), the
   language, the data and the resolved citations (`refs.ts`, below). A detail
   that cites code whose excerpt the document omits first reads it from the
   page's patch source (waiting at most 1.5 seconds), as the viewer's cited
-  code does. Changed data or citations are sent as `update`.
+  code does. Changed data or citations are sent as `update`. `ready` is
+  taken once for each `init` or `update`; any other `ready` is a resize.
 - **Sizes.** A glance's box is reserved before it loads (7 or 9 rem by size,
-  growing with its card's row) and the frame fills it; its resize requests
-  are ignored. A detail's height follows `ready` and `resize`, clamped to
-  120 to 20,000px; ten growths by one amount within a second freeze it. A
-  detail reserves its last height (240px the first time) so reopening it
-  does not move the page; the frame stays invisible until `ready`.
-- **Asking the page.** `jump`, `ask` and `key` count only from a detail
-  whose iframe is `document.activeElement` while the page has focus, and
-  `jump` and `ask` only while the browser reports a user activation. A jump
-  names a key the page resolved for that frame and marked navigable: a hunk
-  or file opens the Files pane at it (`ReviewFiles.open`), a risk or evidence
-  item its tile at it, a change its tile, a tile its detail; anything else
-  is ignored. A forwarded key is dispatched on the iframe element as a
-  `keydown`, so the page's own keys (Escape and `u` back, the arrows and
-  brackets stepping) act on it. `open` is ignored: only a glance would send
-  it, and a glance is inert. A glance takes no focus: it is under its card's
-  link with `tabindex=-1`. When a frame holds the keyboard the reader did
-  not give it (a glance, or a detail without a Tab press in the last second
-  or the pointer over it), the page takes it back: it looks as its window
-  loses or regains focus and whenever the frame speaks, and calls
-  `iframe.blur()`, which Chromium honours; WebKit keeps the focus in the
-  frame, so the page's element that last had it, or else the body, is
-  focused. A frame that takes it a fourth time is unmounted.
+  growing with its card's row) and the frame fills it; its height requests
+  are ignored. A detail's height, from `ready` or `resize`, is clamped to 120
+  to 20,000px and passes `HeightGuard`, which freezes it after ten growths
+  by one amount within a second or six changes of direction within two
+  seconds; at most one height is applied an animation frame. A detail
+  reserves its last height (240px the first time) so reopening it does not
+  move the page; the frame stays invisible until `ready`.
+- **The keyboard.** A frame holds the keyboard only when the reader gave
+  it: a glance never (it is under its card's link with `tabindex=-1`); a
+  detail when a Tab lands on its element (its `focus` event within 300ms of
+  the page's Tab), or when the page's window loses focus to it with the
+  pointer over its element, a user activation reported and no key press of
+  the page's own in the last 500ms (typing elsewhere while the pointer rests
+  on it is not a click; the page cannot see clicks inside a frame). The page
+  looks as its window loses or regains focus and whenever the frame speaks;
+  a frame holding the keyboard otherwise loses it to the page's element that
+  last had it, else by `iframe.blur()` (Chromium), else to the body (WebKit
+  keeps focus in the frame through `blur()`). A fourth taking unmounts it.
+  The gift ends when the keyboard comes back to the page.
+- **Asking the page.** `jump`, `ask` and `key` count only from a detail the
+  reader gave the keyboard while the page has focus. `jump` and `ask` also
+  need a user activation at that moment (`navigator.userActivation.isActive`;
+  a browser without it is taken as no) and are honoured at most once a
+  second. A jump names a key the page resolved for that frame and marked
+  navigable: a hunk or file opens the Files pane at it
+  (`ReviewFiles.open`), a risk or evidence item its tile at it, a change its
+  tile, a tile its detail; anything else is ignored. A forwarded key (the
+  whitelist in `SECURITY.md`) is dispatched on the iframe element as a
+  `keydown` with only the key's name and Shift, so the page's own keys act
+  on it. `open` is ignored: only a glance would send it.
 - **Failure.** A frame that sends no `hello` within 5 seconds is mounted
-  again once after the page read its tile routes again
-  (`TileHost.reread`), then shows "This tile couldn't load". So does a frame
-  that does not send `ready` within 5 seconds of `init`, reports a
+  again once after the page read its tile routes again (`TileHost.reread`;
+  frames silent together share one reading), then shows "This tile couldn't
+  load". So does a frame that does not send `ready` within 5 seconds of
+  `init` (a frame that navigates before it drew ends here), reports a
   `script_error` or `timeout` before it (other errors leave it drawing),
-  sends a second `hello` or loads again after `ready` (it navigated), floods
-  or keeps taking the focus. A detail says why and offers Retry. Each failure
-  belongs to that frame instance alone (by tile, digest and face, for the
-  page's life): nothing a frame sends marks its type or another tile as
-  broken, and only the daemon marks a digest hung. A tile the daemon left
-  unavailable keeps the unavailable face; one made with a newer kit says
-  "This tile was made with a newer version of baum". A tile still being
-  written (`pending`) is drawn as built-in ones are, without a frame.
+  sends a second `hello` or loads again after `ready` (it navigated, where
+  the engine reports the load), floods or keeps taking the keyboard. A
+  detail gives the host's own reason, the tile's own words quoted apart
+  behind Details, and Retry. Each failure belongs to that frame instance
+  alone (by tile, digest and face, for the page's life): nothing a frame
+  sends marks its type or another tile as broken, and only the daemon marks
+  a digest hung. A tile the daemon left unavailable keeps the unavailable
+  face; one made with a newer kit says "This tile was made with a newer
+  version of baum".
 - **Citations** (`refs.ts`). The page walks the data as the daemon does
   (members by name, items in order, the shapes of `$defs/citation`, at most
   256) and resolves each against the document on screen: hunks (path,

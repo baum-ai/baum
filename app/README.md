@@ -2577,12 +2577,14 @@ full review's own.
   heading are the page's (the kicker is the tile type's title, with the
   tile's headline under its title), the body is the tile's. A glance's box
   is reserved before it loads and lies under the card's link; a detail is as
-  tall as the tile draws, and Tab reaches it. A citation the tile's reader
+  tall as the tile draws, inside a faint edge under a "Custom tile" caption,
+and Tab reaches it. The kicker reads "Custom ·" and the type's title. A citation the tile's reader
   clicks opens the cited code, item or tile on the page. Frames mount near
   the visible area, at most 16 glances at once, and follow the app's theme.
   A frame that doesn't start, draw or behave says "This tile couldn't load"
-  (a detail with Retry); a tile made with a newer kit says so; the desktop
-  app on Windows shows no custom tile yet. The protocol, its checks and the
+  (a detail with Retry); a tile made with a newer kit says so; a desktop
+  shell that has not declared `window.__BAUM_DESKTOP__ = { tileFrames: true }`
+  shows custom tiles as not available yet. The protocol, its checks and the
   states are in `ARCHITECTURE.md` ("The app's host"); what a frame cannot
   reach is in `SECURITY.md` ("Custom tiles").
 - **Links.** A full review's address still works: a section opens its tile
