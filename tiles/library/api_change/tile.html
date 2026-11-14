@@ -59,8 +59,12 @@
     min-width: 9rem;
     overflow-wrap: break-word;
   }
-  /* On a phone the columns share what there is and wrap. */
+  /* On a phone the columns share what there is and wrap, and the glance
+     lists its rows in one column so a name keeps its room. */
   @media (max-width: 480px) {
+    .glance-rows.across {
+      grid-template-columns: minmax(0, 1fr);
+    }
     .kit-table .code,
     .kit-table .note {
       min-width: 0;

@@ -160,8 +160,12 @@ var PastDigests = map[string][]string{
 	"schema_change": {
 		"sha256:1adc2e4348ccd7a6ec5d400b5f18a7f9654d18a5450af64b574b34770619e505",
 		"sha256:8fe2098a21c18859c66c31bb9fca0018ca1bce20bce364de40e27b04710cb8da",
+		"sha256:e67520c2cf53f819dc3a18d311d5a545159d83d73b2e0f8394f8b5b30e9e8ab1",
 	},
-	"api_change": {"sha256:0ed8c133a81084fdc1810a08872afefe4dbb67613d52cacf1be95666979307f3"},
+	"api_change": {
+		"sha256:0ed8c133a81084fdc1810a08872afefe4dbb67613d52cacf1be95666979307f3",
+		"sha256:15a6db0250bf83fde84fcf86e71c2dfdd2d11dbcd7bcbd3c84b1fe0c52e8b592",
+	},
 }
 
 // IsBuiltin reports whether a definition, as a custom tile embeds it, is a
