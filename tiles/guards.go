@@ -103,7 +103,14 @@ func (cm *composer) guardEvidence(c *Composition) {
 	entries := c.Layout.Entries
 	at := slices.IndexFunc(entries, func(e Entry) bool { return e.Tile == TypeEvidence })
 	if at < 0 {
-		return
+		// A layout that leaves the evidence out has it placed after
+		// everything it lists: move it from there.
+		i := slices.IndexFunc(doc.Layout.Entries, func(e Entry) bool { return e.Tile == TypeEvidence })
+		if i < 0 {
+			return
+		}
+		at = len(entries)
+		entries = append(slices.Clone(entries), Entry{Tile: TypeEvidence, Size: doc.Layout.Entries[i].Size})
 	}
 	evidence := entries[at]
 	rest := slices.Delete(slices.Clone(entries), at, at+1)
