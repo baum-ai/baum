@@ -3,8 +3,8 @@
     "the layout does not place tile \"risks\"; it is added in the default order",
     "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
     "the layout does not place tile \"sec_config_flag\"; it is added in the default order",
-    "the layout does not place tile \"media\"; it is added in the default order",
     "the layout does not place tile \"evidence\"; it is added in the default order",
+    "the layout does not place tile \"media\"; it is added in the default order",
     "the layout does not place tile \"intent\"; it is added in the default order",
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
@@ -34,11 +34,11 @@
           "group": "changes"
         },
         {
-          "tile": "media",
+          "tile": "evidence",
           "size": "third"
         },
         {
-          "tile": "evidence",
+          "tile": "media",
           "size": "third"
         },
         {
@@ -82,11 +82,11 @@
         "group": "changes"
       },
       {
-        "tile": "media",
+        "tile": "evidence",
         "size": "third"
       },
       {
-        "tile": "evidence",
+        "tile": "media",
         "size": "third"
       },
       {
@@ -149,15 +149,15 @@
       ]
     },
     {
-      "id": "media",
-      "type": "media",
-      "title": "Media",
-      "state": "ready"
-    },
-    {
       "id": "evidence",
       "type": "evidence",
       "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
       "state": "ready"
     },
     {

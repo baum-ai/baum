@@ -4,8 +4,8 @@
     "tile \"sec_retry_policy\" cannot be in that group (only a current change that is not pinned can be in the changes group); it is placed outside it",
     "tile \"everything_else\" cannot be in that group (only a current change that is not pinned can be in the changes group); it is placed outside it",
     "the layout does not place tile \"overview\"; it is added in the default order",
-    "the layout does not place tile \"media\"; it is added in the default order",
     "the layout does not place tile \"evidence\"; it is added in the default order",
+    "the layout does not place tile \"media\"; it is added in the default order",
     "the layout does not place tile \"intent\"; it is added in the default order",
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order"
@@ -36,11 +36,11 @@
           "size": "half"
         },
         {
-          "tile": "media",
+          "tile": "evidence",
           "size": "third"
         },
         {
-          "tile": "evidence",
+          "tile": "media",
           "size": "third"
         },
         {
@@ -82,11 +82,11 @@
         "size": "half"
       },
       {
-        "tile": "media",
+        "tile": "evidence",
         "size": "third"
       },
       {
-        "tile": "evidence",
+        "tile": "media",
         "size": "third"
       },
       {
@@ -139,15 +139,15 @@
       ]
     },
     {
-      "id": "media",
-      "type": "media",
-      "title": "Media",
-      "state": "ready"
-    },
-    {
       "id": "evidence",
       "type": "evidence",
       "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
       "state": "ready"
     },
     {

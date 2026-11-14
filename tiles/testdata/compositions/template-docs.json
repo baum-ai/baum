@@ -30,11 +30,11 @@
           "size": "half"
         },
         {
-          "tile": "media",
+          "tile": "evidence",
           "size": "third"
         },
         {
-          "tile": "evidence",
+          "tile": "media",
           "size": "third"
         },
         {
@@ -163,11 +163,11 @@
         "size": "half"
       },
       {
-        "tile": "media",
+        "tile": "evidence",
         "size": "third"
       },
       {
-        "tile": "evidence",
+        "tile": "media",
         "size": "third"
       },
       {
@@ -198,8 +198,7 @@
     "groups": [
       {
         "id": "changes",
-        "title": "Changes",
-        "collapse_after": 4
+        "title": "Changes"
       }
     ],
     "landing": 6
@@ -238,15 +237,15 @@
       ]
     },
     {
-      "id": "media",
-      "type": "media",
-      "title": "Media",
-      "state": "ready"
-    },
-    {
       "id": "evidence",
       "type": "evidence",
       "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
       "state": "ready"
     },
     {
