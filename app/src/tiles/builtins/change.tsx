@@ -87,7 +87,7 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
       {urgent.length > 0 ? (
         <p className="flex items-start gap-1.5 text-base text-status-critical">
           <RiskIcon size={14} className="mt-0.5 flex-none" />
-          <span className="line-clamp-2 min-w-0">
+          <span className="line-clamp-2 min-w-0 [overflow-wrap:anywhere]">
             {urgent.length > 1
               ? `${urgent.length} high or critical risks`
               : risksShownInFull(ctx.doc)
@@ -99,7 +99,7 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
       ) : data.attention?.text ? (
         <p className="flex items-start gap-1.5 text-base text-secondary">
           <WarningIcon size={14} className="mt-0.5 flex-none text-status-caution" />
-          <span className="line-clamp-1 min-w-0 @min-[36rem]/tiles:line-clamp-2">
+          <span className="line-clamp-1 min-w-0 [overflow-wrap:anywhere] @min-[36rem]/tiles:line-clamp-2">
             {plainSentence(data.attention.text, ctx.labels)}
           </span>
         </p>
@@ -110,7 +110,7 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
         <DetailsUnavailable change={change} ctx={ctx} />
       ) : summary ? (
         // Three lines at least, and as much more as the row leaves room for.
-        <Fill min="4.5rem">
+        <Fill min="4.5rem" phoneMin="6rem">
           <p className="text-base leading-normal text-primary">{summary}</p>
         </Fill>
       ) : (

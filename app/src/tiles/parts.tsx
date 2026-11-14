@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import { LiveDot } from "@baum/viewer/components/ui";
 import { CheckIcon } from "@baum/viewer/components/icons";
@@ -158,10 +158,14 @@ export function plainSentence(
 export function Fill({
   children,
   min = "0",
+  phoneMin = min,
   className,
 }: {
   children: ReactNode;
   min?: string;
+  /** The least it shows in one column, where a card is as tall as what it
+   *  says and there is no row to fill. */
+  phoneMin?: string;
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -178,23 +182,28 @@ export function Fill({
       frame = requestAnimationFrame(() => fit(element, inner, count));
     };
     fit(element, inner, count);
-    // The box as its row resizes it, and the content as it changes after
-    // mount (text arriving, an image): not its styles, which `fit` sets.
+    // Again as the box's row resizes it, as the content reflows (a web font
+    // arriving changes every line's measure), and as the content changes.
+    // `fit` settles: what it hides it hides again from the same measures.
     const resized = new ResizeObserver(measure);
     resized.observe(element);
+    resized.observe(inner);
     const changed = new MutationObserver(measure);
     changed.observe(inner, { childList: true, subtree: true, characterData: true });
+    document.fonts?.addEventListener("loadingdone", measure);
     return () => {
       cancelAnimationFrame(frame);
       resized.disconnect();
       changed.disconnect();
+      document.fonts?.removeEventListener("loadingdone", measure);
     };
   }, []);
   return (
     <div
       ref={ref}
-      style={{ minHeight: min }}
-      className="relative shrink-0 grow basis-0 overflow-hidden"
+      style={{ "--fill-min": min, "--fill-min-phone": phoneMin } as CSSProperties}
+      // A long identifier breaks rather than running under the card's edge.
+      className="relative min-h-(--fill-min-phone) shrink-0 grow basis-0 overflow-hidden [overflow-wrap:anywhere] @min-[36rem]/tiles:min-h-(--fill-min)"
     >
       <div ref={content} className={className}>
         {children}
@@ -214,6 +223,20 @@ function rowsOf(content: HTMLElement): HTMLElement[] {
 }
 
 const CLAMPED = "data-fill-clamped";
+
+/** Holds `row` to the whole lines that fit `room`, at least `least`; false
+ *  when not even those fit. */
+function clamp(row: HTMLElement, room: number, least: number): boolean {
+  const height = parseFloat(getComputedStyle(row).lineHeight) || 24;
+  const lines = Math.floor(room / height);
+  if (lines < least) return false;
+  row.setAttribute(CLAMPED, "");
+  row.style.setProperty("display", "-webkit-box");
+  row.style.setProperty("-webkit-box-orient", "vertical");
+  row.style.setProperty("-webkit-line-clamp", String(lines));
+  row.style.setProperty("overflow", "hidden");
+  return true;
+}
 
 /** Shows what fits `box` of `content` on whole lines and rows. */
 export function fit(box: HTMLElement, content: HTMLElement, count: HTMLElement) {
@@ -238,31 +261,43 @@ export function fit(box: HTMLElement, content: HTMLElement, count: HTMLElement) 
   const listed = row instanceof HTMLLIElement;
   if (!listed) {
     // Prose: the paragraph that does not fit ends on its last whole line.
-    const height = parseFloat(getComputedStyle(row).lineHeight) || 24;
-    const lines = Math.floor((limit - (row.getBoundingClientRect().top - top)) / height);
     for (const later of rows.slice(first + 1)) later.hidden = true;
-    if (lines < 1) {
-      row.hidden = true;
-      return;
-    }
-    row.setAttribute(CLAMPED, "");
-    row.style.setProperty("display", "-webkit-box");
-    row.style.setProperty("-webkit-box-orient", "vertical");
-    row.style.setProperty("-webkit-line-clamp", String(lines));
-    row.style.setProperty("overflow", "hidden");
+    if (!clamp(row, limit - (row.getBoundingClientRect().top - top), 1)) row.hidden = true;
     return;
   }
   // A list: whole rows, then how many were left out, on a line of its own.
+  // A row of plain text that does not fit whole keeps the lines that do,
+  // two at least, rather than leaving the room empty.
   let shown = first;
   const hide = () => {
     for (const [index, each] of rows.entries()) each.hidden = index >= shown;
     count.textContent = `+${rows.length - shown} more`;
-    count.hidden = false;
+    count.hidden = shown >= rows.length;
   };
   hide();
   while (shown > 0 && bottom(count) > limit + 0.5) {
     shown--;
     hide();
+  }
+  // Rows rather than nothing but the count: where the rows that fit leave no
+  // room for it, they stand without it (the card's figures say how many).
+  if (shown === 0 && first > 0) {
+    shown = first;
+    hide();
+    count.hidden = true;
+    return;
+  }
+  const partial = rows[shown];
+  if (partial && partial.children.length === 0) {
+    partial.hidden = false;
+    shown++;
+    hide();
+    const room =
+      limit - (partial.getBoundingClientRect().top - top) - (count.hidden ? 0 : count.offsetHeight);
+    if (!clamp(partial, room, 2)) {
+      shown--;
+      hide();
+    }
   }
   // No room even for the count: the card's own figures say how many.
   if (bottom(count) > limit + 0.5) count.hidden = true;

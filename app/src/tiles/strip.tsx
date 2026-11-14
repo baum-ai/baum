@@ -88,11 +88,11 @@ function Recommendation({ ctx }: { ctx: TileContext }) {
   return (
     // A line of its own over the risk score: two lines once wide, five on a
     // phone, where there is no one screen to keep it short for.
-    <div role="group" aria-label="Recommendation" className="flex min-w-0 items-start gap-2.5">
-      <Badge tone={RECOMMENDATION_TONE[recommendation.decision]} className="mt-0.5 flex-none">
-        {RECOMMENDATION_LABEL[recommendation.decision]}
-      </Badge>
+    <div role="group" aria-label="Recommendation" className="min-w-0">
       <p className="line-clamp-5 min-w-0 text-base text-primary @min-[36rem]/tiles:line-clamp-2">
+        <Badge tone={RECOMMENDATION_TONE[recommendation.decision]} className="mr-2 align-middle">
+          {RECOMMENDATION_LABEL[recommendation.decision]}
+        </Badge>
         {plainText(recommendation.text, ctx.labels)}
         {targets.slice(0, 3).map((target) => (
           <span key={target.ref}>
