@@ -430,6 +430,26 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 	return result, err
 }
 
+// Complete forwards a single structured call (agent.Completer), logging it
+// as a call of the "compose" stage.
+func (b *trackedBackend) Complete(ctx context.Context, r agent.CompleteRequest) (agent.Completion, error) {
+	completer, ok := b.CheckedBackend.(agent.Completer)
+	if !ok {
+		return agent.Completion{}, generate.ErrCannotComplete
+	}
+	id := b.n.Add(1)
+	started := time.Now()
+	completion, err := completer.Complete(ctx, r)
+	call := Call{Name: fmt.Sprintf("call-%d compose", id), Seconds: time.Since(started).Seconds()}
+	if err != nil {
+		call.Error = truncate(err.Error(), 300)
+	}
+	b.mu.Lock()
+	b.log = append(b.log, call)
+	b.mu.Unlock()
+	return completion, err
+}
+
 func (b *trackedBackend) calls() []Call {
 	b.mu.Lock()
 	defer b.mu.Unlock()
