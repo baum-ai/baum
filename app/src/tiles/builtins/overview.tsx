@@ -33,7 +33,7 @@ function OverviewGlance({ tile, ctx }: TileFaceProps) {
       {data.breaking_change ? (
         <p className="flex items-start gap-1.5 text-base text-status-critical">
           <WarningIcon size={14} className="mt-0.5 flex-none" />
-          <span className="line-clamp-2 min-w-0">
+          <span className="line-clamp-5 min-w-0 @min-[36rem]/tiles:line-clamp-2">
             Breaking: {plainText(data.breaking_change, ctx.labels)}
           </span>
         </p>
@@ -41,7 +41,7 @@ function OverviewGlance({ tile, ctx }: TileFaceProps) {
       {data.attention?.text ? (
         <p className="flex items-start gap-1.5 text-base text-secondary">
           <WarningIcon size={14} className="mt-0.5 flex-none text-status-caution" />
-          <span className="line-clamp-1 min-w-0 @min-[36rem]/tiles:line-clamp-2">
+          <span className="line-clamp-5 min-w-0 @min-[36rem]/tiles:line-clamp-2">
             {plainText(data.attention.text, ctx.labels)}
           </span>
         </p>

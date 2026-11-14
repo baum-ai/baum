@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import { LiveDot } from "@baum/viewer/components/ui";
 import { CheckIcon } from "@baum/viewer/components/icons";
@@ -150,9 +150,11 @@ export function plainSentence(
 
 /** The part of a glance that takes the room its row leaves: it asks for
  *  `min` (what the glance must show, so its card is that tall at least), then
- *  grows with the row its card stands in, showing more of what it holds, and
- *  fades at its foot when that is not all. Its content does not make the card
- *  taller: a row is as tall as its cards' other content asks. */
+ *  grows with the row its card stands in, showing more of what it holds. Its
+ *  content does not make the card taller: a row is as tall as its cards'
+ *  other content asks. What does not fit is cut on whole lines and rows only
+ *  (`fit`): prose ends on its last whole line with an ellipsis, a list on its
+ *  last whole row, followed by "+N more". */
 export function Fill({
   children,
   min = "0",
@@ -164,31 +166,104 @@ export function Fill({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
-  const [over, setOver] = useState(false);
+  const more = useRef<HTMLParagraphElement>(null);
   useLayoutEffect(() => {
     const element = ref.current;
-    if (!element) return;
-    const measure = () => setOver(element.scrollHeight > element.clientHeight + 1);
-    measure();
-    const observer = new ResizeObserver(measure);
-    // The content, not only the box: it grows after mount (an image, a
-    // patch, text arriving) without the box changing size.
-    observer.observe(element);
-    if (content.current) observer.observe(content.current);
-    return () => observer.disconnect();
+    const inner = content.current;
+    const count = more.current;
+    if (!element || !inner || !count) return;
+    let frame = 0;
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => fit(element, inner, count));
+    };
+    fit(element, inner, count);
+    // The box as its row resizes it, and the content as it changes after
+    // mount (text arriving, an image): not its styles, which `fit` sets.
+    const resized = new ResizeObserver(measure);
+    resized.observe(element);
+    const changed = new MutationObserver(measure);
+    changed.observe(inner, { childList: true, subtree: true, characterData: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      resized.disconnect();
+      changed.disconnect();
+    };
   }, []);
   return (
     <div
       ref={ref}
       style={{ minHeight: min }}
-      className={cn(
-        "relative shrink-0 grow basis-0 overflow-hidden",
-        over && "[mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]",
-      )}
+      className="relative shrink-0 grow basis-0 overflow-hidden"
     >
       <div ref={content} className={className}>
         {children}
       </div>
+      <p ref={more} hidden className="text-xs text-tertiary" />
     </div>
   );
+}
+
+/** The blocks `fit` cuts between: each item of a list, each other child. */
+function rowsOf(content: HTMLElement): HTMLElement[] {
+  return [...content.children].flatMap((child) =>
+    child instanceof HTMLUListElement || child instanceof HTMLOListElement
+      ? ([...child.children] as HTMLElement[])
+      : [child as HTMLElement],
+  );
+}
+
+const CLAMPED = "data-fill-clamped";
+
+/** Shows what fits `box` of `content` on whole lines and rows. */
+export function fit(box: HTMLElement, content: HTMLElement, count: HTMLElement) {
+  const rows = rowsOf(content);
+  for (const row of rows) {
+    row.hidden = false;
+    if (row.hasAttribute(CLAMPED)) {
+      row.removeAttribute(CLAMPED);
+      row.style.removeProperty("display");
+      row.style.removeProperty("-webkit-box-orient");
+      row.style.removeProperty("-webkit-line-clamp");
+      row.style.removeProperty("overflow");
+    }
+  }
+  count.hidden = true;
+  const limit = box.clientHeight;
+  const top = box.getBoundingClientRect().top;
+  const bottom = (element: Element) => element.getBoundingClientRect().bottom - top;
+  const first = rows.findIndex((row) => bottom(row) > limit + 0.5);
+  if (first < 0) return;
+  const row = rows[first]!;
+  const listed = row instanceof HTMLLIElement;
+  if (!listed) {
+    // Prose: the paragraph that does not fit ends on its last whole line.
+    const height = parseFloat(getComputedStyle(row).lineHeight) || 24;
+    const lines = Math.floor((limit - (row.getBoundingClientRect().top - top)) / height);
+    for (const later of rows.slice(first + 1)) later.hidden = true;
+    if (lines < 1) {
+      row.hidden = true;
+      return;
+    }
+    row.setAttribute(CLAMPED, "");
+    row.style.setProperty("display", "-webkit-box");
+    row.style.setProperty("-webkit-box-orient", "vertical");
+    row.style.setProperty("-webkit-line-clamp", String(lines));
+    row.style.setProperty("overflow", "hidden");
+    return;
+  }
+  // A list: whole rows, then how many were left out, on a line of its own.
+  let shown = first;
+  const hide = () => {
+    for (const [index, each] of rows.entries()) each.hidden = index >= shown;
+    count.textContent = `+${rows.length - shown} more`;
+    count.hidden = false;
+  };
+  hide();
+  while (shown > 0 && bottom(count) > limit + 0.5) {
+    shown--;
+    hide();
+  }
+  // No room even for the count: the card's own figures say how many.
+  if (bottom(count) > limit + 0.5) count.hidden = true;
 }

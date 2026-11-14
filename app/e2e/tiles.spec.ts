@@ -52,6 +52,22 @@ test("the landing page leads to each tile and back", async ({ page }) => {
   expect(third!.width).toBeLessThan(overview!.width * 0.75);
   expect(Math.abs(overview!.y - risks!.y)).toBeLessThan(2);
 
+  // What a card cannot fit is cut on whole lines and rows, never mid-line.
+  const cut = await page.evaluate(() =>
+    [...document.querySelectorAll("article[data-tile] .basis-0")].flatMap((box) => {
+      const bottom = box.getBoundingClientRect().bottom;
+      return [...box.querySelectorAll("p, li")]
+        .filter(
+          (each) =>
+            !each.closest("[hidden]") &&
+            each.getClientRects().length > 0 &&
+            each.getBoundingClientRect().bottom > bottom + 1,
+        )
+        .map((each) => each.textContent?.slice(0, 40));
+    }),
+  );
+  expect(cut).toEqual([]);
+
   // The tiles past the landing area, then the obsolete change, stay open
   // across a tile and Back.
   await page.getByRole("button", { name: /^Show \d+ more tiles/ }).click();
@@ -120,7 +136,10 @@ test("an earlier version and a comparison draw their own tiles", async ({ page }
   const versions = page.getByRole("button", { name: "Review version", exact: true });
   await versions.click();
   await page.getByRole("button", { name: "View v1", exact: true }).click();
-  await expect(page.getByRole("group", { name: "Version" })).toContainText("Review v1");
+  // The version bar says which version is read; the band and the pane add
+  // no label of their own.
+  await expect(versions).toContainText("v1");
+  await expect(page.getByRole("group", { name: "This version" })).toHaveCount(0);
   await expect(page.locator("article[data-tile]").first()).toBeVisible();
   // Compared, each version draws its own landing page.
   await versions.click();
@@ -342,4 +361,39 @@ test("the setting chooses the page, and old links land on their tiles", async ({
   await open(page, "repository=acme%2Fdemo&pr=7");
   await expect(page.getByRole("heading", { name: "Summary", level: 2 })).toBeVisible();
   await expect(page.locator("article[data-tile]")).toHaveCount(0);
+});
+
+test("a recommendation has a line of its own and the changes stay on the first screen", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const recommendation = {
+    decision: "look_first",
+    text: "Read the operator check before merging: it trusts a header any caller can set, and the dead-letter requeue path depends on it.",
+    refs: ["sec_api"],
+  };
+  await page.route("**/api/tiles?*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    body.document.summary.recommendation = recommendation;
+    body.tiles.recommendation = recommendation;
+    await route.fulfill({ response, json: body });
+  });
+  await open(page, PR7);
+  const band = page.getByRole("region", { name: "Review at a glance" });
+  const line = band.getByRole("group", { name: "Recommendation" });
+  await expect(line).toContainText("Look first");
+  await expect(line).toContainText("Read the operator check before merging");
+  // Its own line, over the risk score's.
+  const [said, risk] = await Promise.all([
+    line.boundingBox(),
+    band.getByRole("group", { name: "Risk score" }).boundingBox(),
+  ]);
+  expect(risk!.y).toBeGreaterThanOrEqual(said!.y + said!.height - 1);
+  // The first row of changes still starts on the first screen.
+  const change = await page.locator('article[data-tile="sec_api"]').boundingBox();
+  expect(change!.y).toBeLessThan(900);
+  // The link it gives opens the change.
+  await line.getByRole("button", { name: /→/ }).first().click();
+  await expect(page).toHaveURL(/tile=sec_api/);
 });

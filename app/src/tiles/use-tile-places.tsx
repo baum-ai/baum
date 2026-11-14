@@ -90,6 +90,8 @@ export function useTilePlaces(): ReviewPlaces {
       // they move between them.
       railFolded: onLanding,
       sidePaneFolded: onTilesPlace,
+      // The version bar says which version is read; the page keeps its room.
+      quietHistory: true,
     }),
     [],
   );

@@ -11,7 +11,7 @@ import {
 } from "@baum/viewer/review-document";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { cn } from "@baum/viewer/components/classnames";
-import { plainSentence, plainText } from "./parts";
+import { plainText } from "./parts";
 import { itemTarget } from "./place";
 import {
   changesInState,
@@ -85,32 +85,24 @@ function referenceTargets(doc: TileDocument, review: ReviewDocument, refs: strin
 function Recommendation({ ctx }: { ctx: TileContext }) {
   const recommendation = ctx.doc.recommendation!;
   const targets = referenceTargets(ctx.doc, ctx.review, recommendation.refs ?? []);
-  const text = plainText(recommendation.text, ctx.labels);
   return (
-    <div
-      role="group"
-      aria-label="Recommendation"
-      className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1"
-    >
-      <Badge tone={RECOMMENDATION_TONE[recommendation.decision]} className="self-center">
+    // A line of its own over the risk score: two lines once wide, five on a
+    // phone, where there is no one screen to keep it short for.
+    <div role="group" aria-label="Recommendation" className="flex min-w-0 items-start gap-2.5">
+      <Badge tone={RECOMMENDATION_TONE[recommendation.decision]} className="mt-0.5 flex-none">
         {RECOMMENDATION_LABEL[recommendation.decision]}
       </Badge>
-      <p className="min-w-0 flex-[1_1_20rem] truncate text-base text-primary" title={text}>
-        {plainSentence(recommendation.text, ctx.labels)}
-      </p>
-      {targets.length > 0 ? (
-        <span className="flex min-w-0 flex-wrap gap-x-3 text-base">
-          {targets.slice(0, 3).map((target) => (
-            <JumpLink
-              key={target.ref}
-              className="max-w-[16rem] truncate"
-              onClick={() => ctx.open(target.tile.id, target.item)}
-            >
+      <p className="line-clamp-5 min-w-0 text-base text-primary @min-[36rem]/tiles:line-clamp-2">
+        {plainText(recommendation.text, ctx.labels)}
+        {targets.slice(0, 3).map((target) => (
+          <span key={target.ref}>
+            {" "}
+            <JumpLink className="inline" onClick={() => ctx.open(target.tile.id, target.item)}>
               {target.label} →
             </JumpLink>
-          ))}
-        </span>
-      ) : null}
+          </span>
+        ))}
+      </p>
     </div>
   );
 }
@@ -208,7 +200,7 @@ function EvidenceGaps({ ctx }: { ctx: TileContext }) {
   );
 }
 
-/** Where this version stands, when that is news: an earlier version, a draft,
+/** Where this version stands, when that is news: a draft,
  *  changes being written or that failed (with Retry), a new version being
  *  generated, or an outdated review. A current review says nothing here. */
 function Generation({
@@ -223,13 +215,9 @@ function Generation({
   const current = ctx.doc.changes.filter((change) => change.derived.state !== "stale").length;
   const state = ctx.draft ? "draft" : (generation?.state ?? ctx.review.review.generation_state);
   const parts: ReactNode[] = [];
-  if (ctx.historical)
-    parts.push(
-      <span key="old" className="text-secondary">
-        Review v{ctx.review.review.version}, an earlier version
-      </span>,
-    );
-  else {
+  // An earlier version says so in the version bar above, and in its column
+  // while compared: the band adds nothing for it.
+  if (!ctx.historical) {
     if (ctx.draft)
       parts.push(
         <Badge key="draft" tone="info" className="gap-1.5">
@@ -274,7 +262,7 @@ function Generation({
   return (
     <div
       role="group"
-      aria-label={ctx.historical ? "Version" : "This version"}
+      aria-label="This version"
       className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 text-base"
     >
       {parts}
