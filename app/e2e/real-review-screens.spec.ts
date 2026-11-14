@@ -75,8 +75,11 @@ export const STATES: State[] = [
         if ((await tile.count()) === 0) return false;
         await tile.click();
         // The pointer would otherwise rest on whatever the page drew under
-        // it, such as a rail row, and the picture show that row hovered.
-        await page.mouse.move(0, 0);
+        // it, such as a rail row, and the picture show that row hovered. The
+        // page's title is a neutral place: the window's corner would open the
+        // folded app sidebar over a phone's page.
+        const title = await page.locator("main h1").first().boundingBox();
+        if (title) await page.mouse.move(title.x + 8, title.y + title.height / 2);
       } else {
         if (!firstSection) return false;
         await page.goto(address({ pane: "section", section: firstSection }));
