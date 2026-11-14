@@ -93,8 +93,11 @@ func openDataset(t *testing.T) *dataset {
 	if work == "" {
 		t.Fatal(datasetWorkEnv + " must name a private working directory that outlives the run")
 	}
-	d := &dataset{t: t, root: root, work: work, host: cmpEnv("BAUM_DATASET_HOST", "yona"),
-		repository: cmpEnv("BAUM_DATASET_REPOSITORY", "baum-ai/baum-monorepo"), sessions: map[string]datasetSession{}}
+	host, repository := os.Getenv("BAUM_DATASET_HOST"), os.Getenv("BAUM_DATASET_REPOSITORY")
+	if host == "" || repository == "" {
+		t.Fatal("BAUM_DATASET_HOST and BAUM_DATASET_REPOSITORY must name the dataset's machine and its owner/name repository")
+	}
+	d := &dataset{t: t, root: root, work: work, host: host, repository: repository, sessions: map[string]datasetSession{}}
 	d.out = filepath.Join(work, "out")
 	if err := os.MkdirAll(d.out, 0o700); err != nil {
 		t.Fatal(err)
@@ -184,13 +187,6 @@ func openDataset(t *testing.T) *dataset {
 		t.Fatal(err)
 	}
 	return d
-}
-
-func cmpEnv(name, fallback string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return fallback
 }
 
 // stored is the home whose session store holds the dataset's transcript at

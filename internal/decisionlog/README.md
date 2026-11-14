@@ -1019,8 +1019,9 @@ BAUM_REVIEW_DATASET=<dataset> BAUM_DATASET_WORK=<private directory> \
   scopes and assignments. It lists pull requests through GitHub and needs
   `GITHUB_TOKEN`.
 - `TestDatasetLive` runs semantic attribution and the feature text stage.
-- `BAUM_DATASET_HOST` (default `yona`) chooses the machine whose database and
-  session stores are read, `BAUM_DATASET_REPOSITORY` the repository, and
+- `BAUM_DATASET_HOST` names the machine whose database and session stores are
+  read and `BAUM_DATASET_REPOSITORY` the `owner/name` repository; both are
+  required.
   `BAUM_DATASET_BACKEND` and `BAUM_DATASET_MODEL` replace the backend and
   model of that machine's preferences.
 
