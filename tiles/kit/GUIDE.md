@@ -7,6 +7,12 @@ guide is everything you need to write one that passes every check. Start from
 the starter in [`starter/`](starter/) and change it; do not start from an
 empty file.
 
+**Before you write a tile**, look for one that already does the job. Check
+the saved tile library and the built-in types (their source can be read:
+[`tiles/library`](../library) holds the built-ins), and the kit's elements
+and classes in section 6. Reuse a type, or start from the closest one and
+change it, rather than write the same thing again.
+
 ## 1. The files
 
 A type is one directory:
@@ -294,7 +300,84 @@ from your schema, as glances at each size and on a phone and as details at
 Pictures land in `oss/app/test-results/tile-types/`, with a contact sheet
 of every glance per theme (`<name>-sheet-glance-light.png`). Look at them.
 
-## 10. Definition of done
+## 10. The render check
+
+When a tile is made in the app, baum checks it with the **render check**
+before it is shown: the same checks as `tile-type-screens`, run by the
+daemon and drawn by the app in sandboxed frames, in the engine the person's
+tiles draw in. It takes the definition, up to 3 samples of your own and,
+for a tile made for a pull request, the data it will show there.
+
+1. Without drawing: the definition and its schema (sections 1 and 4), the
+   lint of section 2 (errors stop the check; warnings are reported), your
+   samples against the schema and their citations against their own hunks,
+   and the data against the schema.
+2. Then it draws the data, each of your samples and two samples made from
+   your schema, `minimal` (only what is required, empty arrays, the
+   shortest strings) and `maximal` (every field, the longest arrays and
+   strings, long words, a 120-character unbroken token, right-to-left text
+   and CJK): glances at each declared size, details at 720 and 360px, and
+   the data in the dark theme too.
+
+The result is `pass`, `fail`, `hang` or `unavailable` (no window of the app
+could draw it; open the app). `pass` means no errors. Each problem names its
+`code`, a `message`, the `sample`, `face`, `size` and `theme` it was found
+with, the `line` and `column` in your HTML when they are known, and a fixed
+`hint`:
+
+| Code | Hint |
+|---|---|
+| `definition_invalid` | Fix the definition: the message names the field and the rule it breaks. |
+| `data_schema_invalid` | Keep the schema in the dialect of section 4: every object closed, every property required, every array and string bounded. |
+| `sample_invalid` | Make the sample's data match the schema, or change the schema; the message names the place. |
+| `data_invalid` | Make the data match the schema; the message names the place. |
+| `lint` | Follow the rules of section 2: no network, no external resources, no innerHTML, only the names the kit has. |
+| `no_hello` | The frame never started: the HTML did not parse, or a script looped before the kit loaded. Check the markup and the first script. |
+| `timeout` | Draw synchronously, or return a promise that settles within 3 seconds. |
+| `hang` | The component never finished drawing and was stopped: look for an endless loop, and change the code before checking again. |
+| `script_error` | Your script threw at the line given; a frequent cause is a value placed where baum.html refuses it. |
+| `unhandled_rejection` | A promise was rejected and nothing caught it: await it inside the render, or catch it. |
+| `console_error` | Remove the console.error call, or fix what it reports. |
+| `render_failed` | The tile did not draw this data: call baum.tile once, and draw what the schema allows instead of calling baum.fail. |
+| `csp_violation` | The tile has only its data: remove the request or external resource the frame's policy blocked. |
+| `empty` | The face drew nothing visible: draw the data, or call baum.empty(text) when there is nothing to show. |
+| `overflow_glance` | Show fewer rows for that size and say "N more" in the foot; put long text in kit-truncate. |
+| `overflow_x` | Something from the data does not wrap: add kit-truncate or kit-break, or put the table in kit-scroll. |
+| `layout_loop` | The detail's height follows the frame's own height: remove vh, vw and percentage heights. |
+| `unresolved_citation` | Cite only what the review holds: a sample's cited hunks must be in its hunks, with lines inside the hunk's range. |
+| `slow` | Drawing took over 500 ms: draw less up front, and put long lists in kit-details. |
+
+When each counts:
+
+| Code | Counts as |
+|---|---|
+| `definition_invalid` | error, before drawing |
+| `data_schema_invalid` | error, before drawing |
+| `sample_invalid` | error, before drawing; a warning when an edge sample could not be made |
+| `data_invalid` | error, before drawing |
+| `lint` | error before drawing, or a warning |
+| `no_hello` | error: no word from the frame within 5 seconds |
+| `timeout` | error: not drawn 3 seconds after it was given its data |
+| `hang` | error: the app stopped answering while it drew; the type is blocked until baum restarts |
+| `script_error` | error |
+| `unhandled_rejection` | error |
+| `console_error` | error |
+| `render_failed` | error: `baum.fail`, or `baum.tile` never called |
+| `csp_violation` | error |
+| `empty` | error: no visible text, image or drawing, and no `baum.empty` |
+| `overflow_glance` | error; a warning for the `maximal` sample |
+| `overflow_x` | error |
+| `layout_loop` | error: the detail's height grew with its frame ten times |
+| `unresolved_citation` | error for the data and your samples; not counted for edge samples |
+| `slow` | warning: drawing took over 500 ms |
+
+The kit catches a script's errors inside the frame and reports their
+message and line, so read the message, not just the code. Lint and the
+render check are quality gates for honest mistakes, not security controls:
+the frame's sandbox and content security policy are what keep a tile to its
+data.
+
+## 11. Definition of done
 
 - [ ] `just local_app::tile-type-screens <dir>` passes, with no warnings.
 - [ ] `baum.tile` is called once and both faces are written.
@@ -313,7 +396,7 @@ of every glance per theme (`<name>-sheet-glance-light.png`). Look at them.
 - [ ] Samples: the common case, a large case and the empty case, in a fake
       repository.
 
-## 11. Worked examples
+## 12. Worked examples
 
 The library's types are complete examples of everything above:
 [`tiles/library/schema_change`](../library/schema_change) and

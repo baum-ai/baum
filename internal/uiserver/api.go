@@ -77,6 +77,10 @@ type LocalAPI struct {
 	// Inbox serves /api/inbox: the queue the daemon builds, with which saved
 	// inboxes hold each pull request (internal/inboxqueue).
 	Inbox http.Handler
+	// TileChecks serves /api/tile-checks/: the render check's runner routes
+	// and the tiles page's first-show preflight (internal/tilechecks).
+	// Without it the routes report the capability unavailable.
+	TileChecks http.Handler
 	// UIState keeps inbox bookkeeping and review drafts across browser origins.
 	UIState http.Handler
 	// GitHubRepositories serves the account's repositories for picking
@@ -252,6 +256,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
 	mux.Handle("/api/console/", provider(a.Console, "console_unavailable"))
 	mux.Handle("/api/inbox", provider(a.Inbox, "inbox_unavailable"))
+	mux.Handle("/api/tile-checks/", provider(a.TileChecks, "tile_checks_unavailable"))
 	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))

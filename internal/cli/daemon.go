@@ -70,6 +70,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
+	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
@@ -791,7 +792,18 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				log.Warn("the tile checks could not be prepared", "error", err.Error())
 			}
 		}()
-		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		// The render check: the app's check runner draws candidate tile types
+		// and the tiles page's first-show preflights.
+		tileChecks, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Database: database, Log: log,
+			Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+			Subscribed: server.Subscribed})
+		if err != nil {
+			log.Warn("the render check could not keep its verdicts", "error", err.Error())
+			tileChecks, _ = tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Log: log,
+				Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+				Subscribed: server.Subscribed})
+		}
+		local := uiserver.LocalAPI{TileChecks: tileChecks.Handler(), Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
@@ -1023,6 +1035,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Close: func() {
 				sample.Close()
 				api.Close()
+				_ = tileChecks.Close()
 				groupsAPI.Close()
 				unsubscribe()
 				unsubscribeClones()

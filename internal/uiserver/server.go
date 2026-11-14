@@ -349,7 +349,7 @@ var errEventTooLarge = errors.New("event too large")
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" && kind != "layout" {
+	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" && kind != "layout" && kind != "tile_check" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)
@@ -377,6 +377,10 @@ func (s *Server) Publish(kind string, data any) error {
 	}
 	return nil
 }
+
+// Subscribed reports whether the app's event stream is connected: whether
+// any page of the app is open to hear an event.
+func (s *Server) Subscribed() bool { return s.hasSubscribers() }
 
 // hasSubscribers reports whether an event stream is connected.
 func (s *Server) hasSubscribers() bool {
