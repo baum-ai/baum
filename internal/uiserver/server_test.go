@@ -432,7 +432,7 @@ func TestFetchMetadataRefusesCrossSiteRequests(t *testing.T) {
 				if kind.method != "" && route.method == "GET" {
 					continue
 				}
-				refused := (site == "same-site" || site == "cross-site") && !(kind.topLevel && method == "GET")
+				refused := (site == "same-site" || site == "cross-site") && (!kind.topLevel || method != "GET")
 				t.Run(route.name+"/"+kind.name+"/"+site, func(t *testing.T) {
 					before := api + app + mcp
 					r := httptest.NewRequest(method, s.origin+route.path, strings.NewReader(route.body))
