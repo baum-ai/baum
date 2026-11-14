@@ -1368,7 +1368,7 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 	if showRecommended(doc) {
 		Arrange(doc)
 	}
-	if n.Layout.Edited {
+	if n.Layout.Edited || slices.ContainsFunc(entries, func(e Entry) bool { return e.Pin }) {
 		keepRecommendedOnLanding(doc, must)
 	}
 	return doc, nil

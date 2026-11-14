@@ -308,7 +308,17 @@ func (cm *composer) guardFirstScreen(c *Composition) {
 		// A person hid tiles: what the first screen shows is theirs.
 		return
 	}
-	template := cm.templateOf()
+	// A repository's pins (the generated layout's pinned entries; a person's
+	// edits never reach this guard) are honoured: the template is compared
+	// with the same pins applied, so the rest of the first screen is still
+	// guarded.
+	var pins []string
+	for _, e := range c.Layout.Entries {
+		if e.Pin {
+			pins = append(pins, e.Tile)
+		}
+	}
+	template := cm.templateOf(pins...)
 	if slices.Equal(template.Entries, c.Layout.Entries) {
 		return
 	}
@@ -318,10 +328,6 @@ func (cm *composer) guardFirstScreen(c *Composition) {
 		return
 	}
 	got, want := firstScreenOf(composed), firstScreenOf(templated)
-	// A pinned tile on the first screen makes the arrangement the person's.
-	if slices.ContainsFunc(c.Layout.Entries, func(e Entry) bool { return e.Pin && got.others[e.Tile] }) {
-		return
-	}
 	lost := false
 	for id := range want.others {
 		lost = lost || !got.others[id]

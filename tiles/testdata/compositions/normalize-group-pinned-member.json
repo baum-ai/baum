@@ -1,8 +1,6 @@
 {
   "fixes": [
     "tile \"sec_config_flag\" cannot be in that group (only a current change that is not pinned can be in the changes group); it is placed outside it",
-    "the layout does not place tile \"overview\"; it is added in the default order",
-    "the layout does not place tile \"risks\"; it is added in the default order",
     "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
     "the layout does not place tile \"evidence\"; it is added in the default order",
     "the layout does not place tile \"media\"; it is added in the default order",
@@ -10,30 +8,28 @@
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
     "the layout does not place tile \"everything_else\"; it is added in the default order",
-    "tile \"risks\" ended a row with empty units; it grows to fill the row",
-    "tile \"sec_retry_policy\" ended a row with empty units; it grows to fill the row"
+    "the layout shows fewer changes on the first screen or the landing page than the template, with nothing that must be seen instead; the template's layout is kept"
   ],
   "composition": {
     "schema": "baum.composition/1",
     "layout": {
       "entries": [
         {
-          "tile": "sec_config_flag",
-          "size": "half",
-          "pin": true
-        },
-        {
           "tile": "overview",
           "size": "half"
         },
         {
           "tile": "risks",
-          "size": "full"
+          "size": "half"
         },
         {
           "tile": "sec_retry_policy",
-          "size": "full",
-          "group": "changes"
+          "size": "half"
+        },
+        {
+          "tile": "sec_config_flag",
+          "size": "half",
+          "pin": true
         },
         {
           "tile": "evidence",
@@ -75,12 +71,11 @@
       },
       {
         "tile": "risks",
-        "size": "full"
+        "size": "half"
       },
       {
         "tile": "sec_retry_policy",
-        "size": "full",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "evidence",
@@ -107,13 +102,8 @@
         "size": "third"
       }
     ],
-    "groups": [
-      {
-        "id": "changes",
-        "title": "Changes"
-      }
-    ],
-    "landing": 4
+    "groups": [],
+    "landing": 7
   },
   "tiles": [
     {

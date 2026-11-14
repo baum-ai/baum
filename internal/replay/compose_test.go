@@ -303,3 +303,22 @@ func TestComposeOnlyPlacesTheRunsLibraryTiles(t *testing.T) {
 		t.Fatalf("%v: library tiles %+v", err, c)
 	}
 }
+
+// Pins are tidied as a repository saves them: a library type by name or
+// title is its tile's ID, repeats go, and one that cannot be pinned is
+// refused.
+func TestComposeGeneratorTidiesTilePins(t *testing.T) {
+	g, err := replay.NewGenerator("compose", replay.GeneratorConfig{Options: map[string]string{
+		"source": replay.ComposeFromRun, "run": "x", "tile_text": "Lead with data.", "tile_pins": "Schema changes,schema_change,risks",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := g.(*replay.ComposeGenerator).Preferences
+	if got.Text != "Lead with data." || len(got.Pins) != 2 || got.Pins[0] != tiles.LibraryTileID("schema_change") || got.Pins[1] != "risks" {
+		t.Errorf("preferences %+v", got)
+	}
+	if _, err := replay.NewGenerator("compose", replay.GeneratorConfig{Options: map[string]string{"source": replay.ComposeFromRun, "run": "x", "tile_pins": "change"}}); err == nil {
+		t.Error("a tile type with many tiles was accepted as a pin")
+	}
+}

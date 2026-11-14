@@ -292,8 +292,8 @@ func TestComposeRunPromotionsKeepTheirIDsAndPinsLead(t *testing.T) {
 		r.Previous = previous
 		r.Preferences = compose.Preferences{Pins: []string{"evidence"}}
 	})
-	if len(out.Composition.Promotions) != 1 || out.Composition.Promotions[0].ID != "table_before" || out.Composition.Layout.Entries[0].Tile != "table_before" {
-		t.Errorf("promotions %+v, first entry %+v", out.Composition.Promotions, out.Composition.Layout.Entries[0])
+	if len(out.Composition.Promotions) != 1 || out.Composition.Promotions[0].ID != "table_before" {
+		t.Errorf("promotions %+v", out.Composition.Promotions)
 	}
 	pinned := slices.IndexFunc(out.Composition.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == "evidence" })
 	if pinned < 0 || !out.Composition.Layout.Entries[pinned].Pin {

@@ -24,6 +24,7 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/compose"
+	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
@@ -84,7 +85,14 @@ func init() {
 				if err := compose.CheckPin(pin); err != nil {
 					return nil, err
 				}
-				g.Preferences.Pins = append(g.Preferences.Pins, pin)
+				// As a repository saves a pin: a library type, by name or
+				// title, is its tile's ID.
+				if e, ok := library.Find(pin); ok {
+					pin = tiles.LibraryTileID(e.Definition.Name)
+				}
+				if !slices.Contains(g.Preferences.Pins, pin) {
+					g.Preferences.Pins = append(g.Preferences.Pins, pin)
+				}
 			}
 		}
 		for id, text := range c.PromptOverrides {

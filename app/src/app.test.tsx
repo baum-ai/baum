@@ -950,6 +950,19 @@ function stubAutomatic(
         ]),
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
+    if (path === "/s/test-ns/api/tile-library")
+      return Promise.resolve(
+        Response.json({
+          single: [
+            { name: "risks", title: "Risks" },
+            { name: "evidence", title: "Evidence" },
+          ],
+          types: [
+            { name: "schema_change", title: "Schema changes" },
+            { name: "api_change", title: "Interface changes" },
+          ],
+        }),
+      );
     if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
     if (path === "/s/test-ns/api/settings/labs")
       return Promise.resolve(Response.json({ tile_reviews: false }));

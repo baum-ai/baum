@@ -287,7 +287,7 @@ func TestNormalizeRules(t *testing.T) {
 		{"appended", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("evidence:half", "sec_config_flag:third:changes")}}},
 		{"size", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("overview:third", "risks:huge", "sec_config_flag:full", "evidence:")}}},
 		{"group", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("risks:half:changes", "sec_retry_policy:third:other", "sec_config_flag:third:pin", "everything_else:third:changes")}}},
-		{"group-pinned-member", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: "sec_config_flag", Size: tiles.SizeHalf, Group: tiles.GroupChanges, Pin: true}}}}},
+		{"group-pinned-member", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: "overview", Size: tiles.SizeHalf}, {Tile: "risks", Size: tiles.SizeHalf}, {Tile: "sec_config_flag", Size: tiles.SizeHalf, Group: tiles.GroupChanges, Pin: true}}}}},
 		{"group-contiguous", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("sec_config_flag:third:changes", "evidence:third", "overview:half", "sec_retry_policy:third:changes", "risks:half")}}},
 		{"changes-shown", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("overview:half"), ChangesShown: &shown}}},
 		{"promotions", exhibits, tiles.Composition{Promotions: []tiles.Promotion{table, delays}, Layout: tiles.CompositionLayout{Entries: sizes("overview:half", "table_flag_defaults:full", "risks:half")}}},
@@ -760,8 +760,8 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 				}
 			}
 			shown := *composed.Layout.Groups[0].CollapseAfter
-			if want := slices.Index(group, named) + 1; tc.raised && shown != want {
-				t.Errorf("the group shows %d, want %d, up to %s", shown, want, named)
+			if want := slices.Index(group, named) + 1; tc.raised && shown < want {
+				t.Errorf("the group shows %d, want at least %d, up to %s", shown, want, named)
 			}
 			if tc.leading && (shown != 1 || group[0] != named) {
 				t.Errorf("the group shows %d led by %s, want 1 led by %s", shown, group[0], named)

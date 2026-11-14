@@ -163,10 +163,12 @@ func gapSlots(slots []slot) []slot {
 // templateOf returns the template's layout with this composer's own
 // composition tiles, as Template lays it out; the template's fixes are not
 // the composer's.
-func (cm *composer) templateOf() CompositionLayout {
+func (cm *composer) templateOf(pins ...string) CompositionLayout {
 	t := &composer{doc: cm.doc, mode: cm.mode, byID: cm.byID, obsolete: cm.obsolete, library: cm.library, promoted: cm.promoted,
 		authored: cm.authored, template: true}
-	return t.finish(&Composition{}, t.templateLayout(templateSlots(cm.doc))).Layout
+	layout := t.templateLayout(templateSlots(cm.doc))
+	layout.Entries = PinEntries(layout.Entries, cm.doc, pins)
+	return t.finish(&Composition{}, layout).Layout
 }
 
 // changeKindOf returns the change kind the overview tile holds.

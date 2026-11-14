@@ -412,6 +412,7 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const waiting = useRef<Record<string, unknown> | null>(null);
   const busy = useRef(false);
+  const pending = () => busy.current || waiting.current !== null;
   useEffect(() => () => clearTimeout(timer.current), []);
   const drain = async () => {
     busy.current = true;
@@ -454,7 +455,7 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
       {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
     </p>
   );
-  return { save, error, status, failures };
+  return { save, pending, error, status, failures };
 }
 
 /** The prompts baum uses, read once and kept in step with each save so the
@@ -2870,23 +2871,38 @@ const automaticMode = (clone: Clone): AutomaticMode =>
       ? "on"
       : "off";
 
-/** The tiles a repository can pin to the front of its reviews' tile pages: the
- *  single built-in types and the library's (the daemon refuses any other). */
-export const PINNABLE_TILES: { id: string; title: string }[] = [
-  { id: "overview", title: "Overview" },
-  { id: "risks", title: "Risks" },
-  { id: "evidence", title: "Evidence" },
-  { id: "intent", title: "Intent" },
-  { id: "decisions", title: "Decisions" },
-  { id: "context", title: "Context" },
-  { id: "media", title: "Media" },
-  { id: "everything_else", title: "Everything else" },
-  { id: "schema_change", title: "Schema changes" },
-  { id: "api_change", title: "API changes" },
-];
 const MAX_TILE_TEXT = 1000;
 const MAX_TILE_PINS = 8;
-const pinTitle = (id: string) => PINNABLE_TILES.find((tile) => tile.id === id)?.title ?? id;
+/** How long the Tile layout box waits after typing before it saves. */
+const TILE_TEXT_SAVE_MS = 800;
+
+/** The tiles a repository can pin to the front of its reviews' tile pages, as
+ *  the daemon lists them: the built-in types a review has one of, and the
+ *  library's. The daemon refuses any other. Empty until it answers. */
+function usePinnableTiles() {
+  const [tiles, setTiles] = useState<{ id: string; title: string }[]>([]);
+  useEffect(() => {
+    let live = true;
+    request<{
+      single?: { name: string; title: string }[];
+      types?: { name: string; title: string }[];
+    }>("api/tile-library")
+      .then((answer) => {
+        if (live)
+          setTiles(
+            [...(answer.single ?? []), ...(answer.types ?? [])].map((t) => ({
+              id: t.name,
+              title: t.title,
+            })),
+          );
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  return tiles;
+}
 
 /** A repository's Reviews section, saved as it changes, as Settings' are. */
 function RepositoryReviews({
@@ -2907,14 +2923,33 @@ function RepositoryReviews({
     tileText: clone.settings.tiles?.text ?? "",
     pins: clone.settings.tiles?.pins ?? [],
   });
+  const pinnable = usePinnableTiles();
+  const pinTitle = (id: string) => pinnable.find((tile) => tile.id === id)?.title ?? id;
   const [draft, setDraft] = useState(stored);
+  // What the controls hold now, for a save that runs later (the text box's).
+  const latest = useRef(draft);
+  const typed = useRef(false);
+  const typing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // A failed save puts the controls back to what is stored.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only after a failure
   useEffect(() => {
-    if (saver.failures) setDraft(stored());
+    if (saver.failures) {
+      latest.current = stored();
+      setDraft(latest.current);
+    }
   }, [saver.failures]);
+  // Settings changed elsewhere (the assistant's saved proposal, another
+  // window) show here, unless this page is saving or has text it has not saved.
+  const storedKey = JSON.stringify(clone.settings);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the stored settings change
+  useEffect(() => {
+    if (saver.pending() || typed.current) return;
+    latest.current = stored();
+    setDraft(latest.current);
+  }, [storedKey]);
   const change = (patch: Partial<ReturnType<typeof stored>>) => {
-    const next = { ...draft, ...patch };
+    const next = { ...latest.current, ...patch };
+    latest.current = next;
     setDraft(next);
     // The whole settings object is saved, so stored tile preferences go with
     // every change, and clearing them says so.
@@ -2926,6 +2961,16 @@ function RepositoryReviews({
       ...(tiles || clone.settings.tiles ? { tiles } : {}),
     });
   };
+  // Saves the text box: when it loses focus, a moment after typing stops, and
+  // when the page closes, so typed text is not lost.
+  const saveText = () => {
+    clearTimeout(typing.current);
+    if (!typed.current) return;
+    typed.current = false;
+    change({});
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup saves what was typed
+  useEffect(() => saveText, []);
   const notice = status ? automaticNotice(status) : null;
   return (
     <section aria-labelledby="repository-reviews-heading" className="settings-section">
@@ -2998,15 +3043,19 @@ function RepositoryReviews({
             rows={3}
             maxLength={MAX_TILE_TEXT}
             value={draft.tileText}
-            onChange={(event) => setDraft({ ...draft, tileText: event.target.value })}
-            onBlur={() => {
-              if (draft.tileText.trim() !== (clone.settings.tiles?.text ?? "")) change({});
+            onChange={(event) => {
+              latest.current = { ...latest.current, tileText: event.target.value };
+              setDraft(latest.current);
+              typed.current = true;
+              clearTimeout(typing.current);
+              typing.current = setTimeout(saveText, TILE_TEXT_SAVE_MS);
             }}
+            onBlur={saveText}
           />
         </SettingRow>
         <SettingRow
           label="Pinned tiles"
-          htmlFor="repository-tile-pin"
+          htmlFor={draft.pins.length < MAX_TILE_PINS ? "repository-tile-pin" : undefined}
           detail="These tiles lead the page whenever the review has them."
         >
           <div className="flex flex-col items-end gap-2">
@@ -3037,11 +3086,13 @@ function RepositoryReviews({
                 }}
               >
                 <option value="">Pin a tile…</option>
-                {PINNABLE_TILES.filter((tile) => !draft.pins.includes(tile.id)).map((tile) => (
-                  <option key={tile.id} value={tile.id}>
-                    {tile.title}
-                  </option>
-                ))}
+                {pinnable
+                  .filter((tile) => !draft.pins.includes(tile.id))
+                  .map((tile) => (
+                    <option key={tile.id} value={tile.id}>
+                      {tile.title}
+                    </option>
+                  ))}
               </select>
             ) : null}
           </div>

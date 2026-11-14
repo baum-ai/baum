@@ -2758,9 +2758,17 @@ when the only room left is in the rows library and authored tiles add
 that shows fewer current changes than the template's, with nothing that must
 be seen instead
 (the risks tile with a critical or high risk, a change the recommendation
-names, evidence with gaps, a library tile with a destructive or breaking item,
-a pinned tile) or tiles a person hid, takes the
-template's layout (`first_screen`). `tilestest.CheckGenerated` checks the rows
+names, evidence with gaps, a library tile with a destructive or breaking item)
+or tiles a person hid, takes the
+template's layout (`first_screen`). A repository's pins (`Settings.Tiles`,
+stamped by `tiles.PinEntries`) do not switch the guards off: the layout is
+compared with the template with the same pins applied, pins kept first, so the
+pins are honoured while the rest of the first screen is still guarded, and a
+weak composer layout with a pin falls back to that pinned template. Only a
+layout a person edited (`layout.edited`) is exempt. `Compose` also brings a
+change the recommendation names back onto the landing page when any entry is
+pinned, as it does for an edited layout, and `CheckGenerated` invariant 11
+checks it for pinned layouts too (14 compares against the pinned template). `tilestest.CheckGenerated` checks the rows
 (invariant 13) and the guard rails (14). On a narrow window's two-column grid
 the page lets a block's last card span both columns when it would be alone in
 its row, which changes no row of the canonical grid.

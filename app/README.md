@@ -2650,10 +2650,14 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   and Show.
 - **Tile preferences.** A repository's page (Repositories, the repository,
   Reviews) has a **Tile layout** box (`repository-tile-text`, up to 1000
-  characters, saved when it loses focus) and **Pinned tiles** (a list with
-  Unpin and a select to pin another, at most 8, saved at once) beside its
-  other controls, in `RepositoryReviews` (`src/settings.tsx`; the choices are
-  `PINNABLE_TILES`: the single built-in types and the library's). They save
+  characters, saved when it loses focus, 800 ms after typing stops, and when
+  the page closes) and **Pinned tiles** (a list with Unpin and a select to pin
+  another, at most 8, saved at once) beside its other controls, in
+  `RepositoryReviews` (`src/settings.tsx`). The choices come from
+  `GET api/tile-library` (`single`, the built-in types a review has one of,
+  and `types`, the library's), so the daemon alone says what can be pinned.
+  The section follows the stored settings when they change elsewhere (a saved
+  proposal), unless it is saving or holds text not yet saved. They save
   as the page's other controls do, as the `tiles` field of
   `PUT api/repositories/{owner}/{name}/settings`, which replaces the whole
   settings object, so every save of the section sends the stored `tiles` too
