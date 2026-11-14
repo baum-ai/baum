@@ -1,5 +1,5 @@
 import pluralize from "pluralize";
-import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { StatusBlock } from "@baum/viewer/components/editorial";
 import { ChevronDownIcon } from "@baum/viewer/components/icons";
@@ -9,6 +9,7 @@ import { scrollerOf } from "@baum/viewer/components/scroller";
 import { centerJump } from "@baum/viewer/components/jump-focus";
 import { useUrlState } from "@baum/viewer/navigation";
 import { humanize, TIER_COLOR } from "@baum/viewer/review-document";
+import { navigate } from "../api";
 import { type MenuItem, useContextMenu } from "../context-menu";
 import { GlanceCard } from "./card";
 import { useTileHost, type LandingMemory } from "./host";
@@ -16,6 +17,7 @@ import { landingOf, onLanding, type Landing } from "./layout";
 import { Clamp, plainText } from "./parts";
 import { readExpansions, withExpansions, type Expansions } from "./place";
 import { FixedStrip } from "./strip";
+import { noteLanding } from "./keys";
 import { changeById, mustShowRisks, tileById, type Tile } from "./tile-document";
 import type { TileContext } from "./types";
 
@@ -43,6 +45,10 @@ export function TileLanding({
     });
   const root = useRef<HTMLDivElement>(null);
   useReturn(root, memory, focus, ctx.historical);
+  // The entry Escape in a tile goes back to, rather than adding another.
+  useEffect(() => {
+    if (!ctx.historical) noteLanding(url.search);
+  }, [ctx.historical, url.search]);
   return (
     <div ref={root} className="@container/tiles flex min-w-0 flex-col gap-4">
       <h2 className="sr-only">Summary</h2>
@@ -71,17 +77,23 @@ function useReturn(
     let frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         if (saved) {
-          scrollerOf(element).scrollTo({ top: saved.scroll, behavior: "instant" });
+          memory.current = null;
           const card = element.querySelector<HTMLElement>(
-            `[data-tile="${CSS.escape(saved.tile)}"]`,
+            `[data-tile="${CSS.escape(saved.read)}"]`,
           );
-          if (card) {
+          // Where the reader left the page, if the card they read last is the
+          // one they opened; else that card, brought into view; else, for a
+          // tile the landing page does not show, the first card.
+          if (saved.left && saved.left.tile === saved.read)
+            scrollerOf(element).scrollTo({ top: saved.left.scroll, behavior: "instant" });
+          else card?.scrollIntoView({ block: "center", behavior: "instant" });
+          const target = card ?? element.querySelector<HTMLElement>("article[data-tile]");
+          if (target) {
             for (const block of document.querySelectorAll("[data-review-block-active]"))
               block.removeAttribute("data-review-block-active");
-            card.setAttribute("data-review-block-active", "");
-            card.querySelector<HTMLElement>("[data-block-open]")?.focus({ preventScroll: true });
+            target.setAttribute("data-review-block-active", "");
+            target.querySelector<HTMLElement>("[data-block-open]")?.focus({ preventScroll: true });
           }
-          memory.current = null;
           return;
         }
         if (!focus) return;
@@ -113,7 +125,7 @@ function MustShowBand({ ctx, landing }: { ctx: TileContext; landing: Landing }) 
           <li key={risk.id} className="flex min-w-0 items-start gap-2 text-base">
             <span
               aria-hidden
-              className="mt-[0.45rem] h-2 w-2 flex-none rounded-full"
+              className="mt-2 h-2 w-2 flex-none rounded-full"
               style={{ background: TIER_COLOR[risk.tier] }}
             />
             <div className="min-w-0 flex-1">
@@ -168,7 +180,7 @@ function TileGrid({
           {
             label: "Open in Full review",
             onSelect: () => {
-              window.location.assign(host.fullReview!(tile));
+              navigate(host.fullReview!(tile));
             },
           },
         ]
@@ -176,6 +188,9 @@ function TileGrid({
   ];
   return (
     <>
+      {/* The cards' level: Overview and Risks stand under it, a group's under
+          the group's own heading. */}
+      <h3 className="sr-only">Tiles</h3>
       <div className="grid grid-cols-1 gap-3 @min-[36rem]/tiles:grid-cols-2 @min-[52rem]/tiles:grid-cols-6">
         {landing.items.map((item) => {
           switch (item.kind) {
@@ -277,7 +292,13 @@ function ControlRow({
         />
         <span className="min-w-0 flex-1 truncate text-base">
           <span className="font-medium text-primary">{label}</span>
-          {names?.length ? <span className="text-secondary"> · {names.join(", ")}</span> : null}
+          {names?.length ? (
+            <span className="text-secondary">
+              {" "}
+              · {names.slice(0, 3).join(", ")}
+              {names.length > 3 ? ` and ${names.length - 3} more` : ""}
+            </span>
+          ) : null}
         </span>
       </button>
     </div>
@@ -291,5 +312,10 @@ export function rememberLanding(
   tile: string,
 ) {
   if (!pane) return;
-  memory.current = { scroll: scrollerOf(pane).scrollTop, tile };
+  memory.current = { left: { scroll: scrollerOf(pane).scrollTop, tile }, read: tile };
+}
+
+/** Remembers the tile being read, for the landing page to come back to. */
+export function rememberRead(memory: RefObject<LandingMemory>, tile: string) {
+  memory.current = { left: memory.current?.left ?? null, read: tile };
 }

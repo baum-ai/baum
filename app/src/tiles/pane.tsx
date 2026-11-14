@@ -5,7 +5,9 @@ import { reviewRefs, type ReviewDocument } from "@baum/viewer/review-document";
 import { Notice } from "../shell";
 import { TileDetail } from "./detail";
 import { useTileHost, type LandingMemory } from "./host";
-import { rememberLanding, TileLanding } from "./landing";
+import { rememberLanding, rememberRead, TileLanding } from "./landing";
+import { leaveTile } from "./keys";
+import { useUrlState } from "@baum/viewer/navigation";
 import { placeOf, tileSelection } from "./place";
 import { tileDocOf, tileOfChange, type TileDocument } from "./tile-document";
 import type { TileContext } from "./types";
@@ -25,6 +27,7 @@ export function TilePane({
   memory: RefObject<LandingMemory>;
 }) {
   const doc = tileDocOf(snapshot);
+  const url = useUrlState();
   const ctx = useTileContext(snapshot, doc, historical, context, memory);
   if (!doc || !ctx)
     return (
@@ -54,7 +57,8 @@ export function TilePane({
       tile={place.tile}
       item={place.item}
       ctx={ctx}
-      back={() => context.select({ kind: "summary" })}
+      back={() => leaveTile(url)}
+      onShown={historical ? undefined : () => rememberRead(memory, place.tile.id)}
     />
   );
 }

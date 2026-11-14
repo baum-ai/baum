@@ -6,14 +6,45 @@ import { commentTarget, pendingSubmission, type PendingComment } from "../pendin
 import { pageContextOf } from "../page-context";
 import { commentCounts } from "./comments";
 import { golden } from "./goldens-test-helper";
-import { backToLanding } from "./keys";
+import { backToLanding, noteLanding } from "./keys";
 import { withTiles } from "./tile-document";
+import { plainText } from "./parts";
 import { reviewPageOf } from "./view";
 
 const review = () =>
   withTiles(structuredClone(baseReview) as unknown as ReviewDocument, golden("base"));
 
+describe("text as a glance shows it", () => {
+  it("drops markdown's marks only where they are markup", () => {
+    expect(plainText("PR #123")).toBe("PR #123");
+    expect(plainText("Written in C#")).toBe("Written in C#");
+    expect(plainText("When a > b")).toBe("When a > b");
+    expect(plainText("## Title\n> quoted\n- **bold** and *it* and `code` and ~~gone~~")).toBe(
+      "Title quoted bold and it and code and gone",
+    );
+    expect(plainText("Cites rsk_retry_storm", new Map([["rsk_retry_storm", "the storm"]]))).toBe(
+      "Cites the storm",
+    );
+  });
+});
+
 describe("a comment on a tile", () => {
+  it("on a Change is what the full review makes of its section or risk", () => {
+    const doc = review();
+    expect(commentTarget(doc, { kind: "tile", id: "sec_retry_policy" })).toEqual(
+      commentTarget(doc, { kind: "section", id: "sec_retry_policy" }),
+    );
+    const risk = commentTarget(doc, {
+      kind: "tile",
+      id: "sec_retry_policy",
+      item: "rsk_retry_storm",
+    });
+    expect(risk).toEqual(
+      commentTarget(doc, { kind: "risk", section: "sec_retry_policy", id: "rsk_retry_storm" }),
+    );
+    expect(risk.target.kind).toBe("risk");
+  });
+
   it("on a Change is its section's, on the first line its summary cites", () => {
     const { target, place } = commentTarget(review(), { kind: "tile", id: "sec_retry_policy" });
     expect(target).toEqual({
@@ -153,6 +184,25 @@ describe("Escape and u in a tile", () => {
       const next = state.update.mock.calls[0]![0](new URLSearchParams(state.search));
       expect(next.toString()).toBe("pr=7&more=1");
     }
+  });
+
+  it("go back through history to the landing page shown before, else take the tile's place", () => {
+    const back = vi.spyOn(history, "back").mockImplementation(() => {});
+    history.replaceState({ depth: 4 }, "");
+    noteLanding(new URLSearchParams("pr=7&more=1"));
+    history.replaceState({ depth: 5 }, "");
+    const opened = url("pr=7&more=1&pane=tile&tile=risks");
+    expect(backToLanding(key("Escape"), opened)).toBe(true);
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(opened.update).not.toHaveBeenCalled();
+    // Two tiles on, or arrived by a link: the landing page takes the tile's
+    // entry, so Back does not open the tile again.
+    history.replaceState({ depth: 6 }, "");
+    const stepped = url("pr=7&more=1&pane=tile&tile=media");
+    expect(backToLanding(key("u"), stepped)).toBe(true);
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(stepped.update.mock.calls[0]![1]).toMatchObject({ replace: true });
+    back.mockRestore();
   });
 
   it("leave the landing page, the rail and the side pane alone", () => {

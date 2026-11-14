@@ -63,21 +63,11 @@ export function Count({
   );
 }
 
-/** A run of counts separated by a middle dot, wrapping as a whole. */
+/** A run of counts, each one unit that wraps whole. */
 export function Counts({ children, className }: { children: ReactNode[]; className?: string }) {
-  const shown = children.filter(Boolean);
   return (
-    <p className={cn("flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-base", className)}>
-      {shown.map((child, index) => (
-        <span key={index} className="inline-flex items-baseline gap-2">
-          {index > 0 ? (
-            <span aria-hidden className="text-tertiary">
-              ·
-            </span>
-          ) : null}
-          {child}
-        </span>
-      ))}
+    <p className={cn("flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-base", className)}>
+      {children.filter(Boolean)}
     </p>
   );
 }
@@ -122,13 +112,6 @@ export function Quiet({ children }: { children: ReactNode }) {
   return <p className="text-base text-tertiary">{children}</p>;
 }
 
-/** The label over a part of a glance. */
-export function GlanceLabel({ children }: { children: ReactNode }) {
-  return (
-    <p className="text-xs font-medium tracking-[0.06em] text-tertiary uppercase">{children}</p>
-  );
-}
-
 /** Text as a glance shows it: one paragraph of plain words, its markdown
  *  marks dropped and the IDs it names read as what they stand for. */
 export function plainText(
@@ -136,13 +119,23 @@ export function plainText(
   labels?: ReadonlyMap<string, string>,
 ): string {
   if (!text) return "";
-  return text
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/\b[a-z]{1,4}_[A-Za-z0-9_]+\b/g, (id) => labels?.get(id) ?? id)
-    .replace(/[`*~#>]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return (
+    text
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+      // Markdown's marks only where they are markup: a heading, quote or list
+      // marker at a line's start, and emphasis or code around words. "PR #123",
+      // "C#" and "a > b" keep their characters.
+      .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+      .replace(/^[ \t]{0,3}>[ \t]?/gm, "")
+      .replace(/^[ \t]*[-*+][ \t]+/gm, "")
+      .replace(/`([^`\n]+)`/g, "$1")
+      .replace(/(\*\*|__|~~)(?=\S)([^\n]*?\S)\1/g, "$2")
+      .replace(/(^|[\s(])\*(?=\S)([^*\n]*?\S)\*(?=[\s).,;:!?]|$)/gm, "$1$2")
+      .replace(/\b[a-z]{1,4}_[A-Za-z0-9_]+\b/g, (id) => labels?.get(id) ?? id)
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 }
 
 /** The first sentence of `plainText`. */
@@ -170,6 +163,7 @@ export function Fill({
   className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const [over, setOver] = useState(false);
   useLayoutEffect(() => {
     const element = ref.current;
@@ -177,8 +171,10 @@ export function Fill({
     const measure = () => setOver(element.scrollHeight > element.clientHeight + 1);
     measure();
     const observer = new ResizeObserver(measure);
+    // The content, not only the box: it grows after mount (an image, a
+    // patch, text arriving) without the box changing size.
     observer.observe(element);
-    for (const child of element.children) observer.observe(child);
+    if (content.current) observer.observe(content.current);
     return () => observer.disconnect();
   }, []);
   return (
@@ -188,10 +184,11 @@ export function Fill({
       className={cn(
         "relative shrink-0 grow basis-0 overflow-hidden",
         over && "[mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]",
-        className,
       )}
     >
-      {children}
+      <div ref={content} className={className}>
+        {children}
+      </div>
     </div>
   );
 }

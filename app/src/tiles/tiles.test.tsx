@@ -8,6 +8,7 @@ import baseReview from "../../../tiles/testdata/base.review.json" with { type: "
 import { TileBoundary } from "./card";
 import { TileDetail } from "./detail";
 import { TileLanding } from "./landing";
+import { TileHostContext } from "./host";
 import { tileFace } from "./registry";
 import { golden } from "./goldens-test-helper";
 import type { Tile, TileDocument } from "./tile-document";
@@ -334,5 +335,97 @@ describe("the landing page", () => {
     const page = render(<TileLanding ctx={ctx} generation={null} memory={{ current: null }} />);
     expect(page.querySelector('[data-tile="media"]')?.textContent).toContain("New");
     expect(page.querySelector('[data-tile="sec_config_flag"]')?.textContent).toContain("Changed");
+  });
+});
+
+describe("the band", () => {
+  it("always names missing or failed evidence and leads to the first", () => {
+    const { doc, review } = pairs.base();
+    const ctx = contextFor(doc, review);
+    const page = render(<TileLanding ctx={ctx} generation={null} memory={{ current: null }} />);
+    const band = page.querySelector('[aria-label="Review at a glance"]')!;
+    const link = [...band.querySelectorAll("button")].find((b) =>
+      b.textContent?.includes("evidence"),
+    )!;
+    expect(link.textContent).toBe("1 missing evidence");
+    act(() => link.click());
+    expect(ctx.open).toHaveBeenCalledWith("evidence", "ev_load_run");
+  });
+});
+
+describe("a Change card's warning", () => {
+  it("names a must-read risk the Risks card shows in full, and says it otherwise", () => {
+    const { doc, review } = pairs.base();
+    const shown = render(
+      <TileLanding ctx={contextFor(doc, review)} generation={null} memory={{ current: null }} />,
+    );
+    expect(shown.querySelector('[data-tile="sec_retry_policy"]')?.textContent).toContain(
+      "High risk · Availability",
+    );
+    act(() => root!.unmount());
+    const pending = structuredClone(doc);
+    tileOf(pending, "risks").state = "pending";
+    const said = render(
+      <TileLanding
+        ctx={contextFor(pending, review)}
+        generation={null}
+        memory={{ current: null }}
+      />,
+    );
+    expect(said.querySelector('[data-tile="sec_retry_policy"]')?.textContent).toContain(
+      "Every worker retries at the same moments",
+    );
+  });
+});
+
+describe("the Overview card", () => {
+  it("leaves the title to the page, naming it only for assistive technology", () => {
+    const { doc, review } = pairs.base();
+    const page = render(
+      <TileLanding ctx={contextFor(doc, review)} generation={null} memory={{ current: null }} />,
+    );
+    const card = page.querySelector('[data-tile="overview"]')!;
+    expect(card.querySelector("h4")?.className).toContain("sr-only");
+    expect(card.querySelector("[data-block-open]")?.getAttribute("aria-labelledby")).toBe(
+      card.querySelector("h4")?.id,
+    );
+  });
+});
+
+describe("a card's menu", () => {
+  it("opens, comments on, asks about and opens in the full review its tile", async () => {
+    const { doc, review } = pairs.base();
+    const ctx = contextFor(doc, review);
+    const host = {
+      draft: false,
+      commentCounts: new Map(),
+      comment: vi.fn(),
+      ask: vi.fn(),
+      fullReview: () => "/s/test/?view=full&pane=section&section=sec_retry_policy",
+    };
+    const page = render(
+      <TileHostContext.Provider value={host}>
+        <TileLanding ctx={ctx} generation={null} memory={{ current: null }} />
+      </TileHostContext.Provider>,
+    );
+    const choose = async (label: string) => {
+      const button = page.querySelector<HTMLButtonElement>(
+        '[data-tile="sec_retry_policy"] button[aria-haspopup="menu"]',
+      )!;
+      await act(async () => button.click());
+      const item = [...document.querySelectorAll<HTMLElement>('[role^="menuitem"]')].find((each) =>
+        each.textContent?.startsWith(label),
+      );
+      expect(item, label).toBeDefined();
+      await act(async () => item!.click());
+    };
+    await choose("Open");
+    expect(ctx.open).toHaveBeenCalledWith("sec_retry_policy");
+    await choose("Comment");
+    expect(host.comment).toHaveBeenCalledWith("sec_retry_policy");
+    await choose("Ask about this tile");
+    expect(host.ask).toHaveBeenCalledWith(expect.objectContaining({ id: "sec_retry_policy" }));
+    await choose("Open in Full review");
+    expect(location.search).toBe("?view=full&pane=section&section=sec_retry_policy");
   });
 });

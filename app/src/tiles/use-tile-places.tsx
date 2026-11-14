@@ -84,14 +84,19 @@ export function useTilePlaces(): ReviewPlaces {
         const tile = tileOfChange(doc, section);
         return tile ? tileSelection(tile.id) : null;
       },
-      // The landing grid takes the width: the rail and the side pane start
-      // folded there, and a tile's detail has them as the reader left them.
+      // The landing grid takes the width, so the rail starts folded there and
+      // opens in a tile's detail for stepping. The side pane starts folded on
+      // every place of the tiles page, so the reader's own unfold holds as
+      // they move between them.
       railFolded: onLanding,
-      sidePaneFolded: onLanding,
+      sidePaneFolded: onTilesPlace,
     }),
     [],
   );
 }
+
+const onTilesPlace = (selection: Selection) =>
+  ["summary", "changes", "risks", "section", "risk", "tile"].includes(selection.kind);
 
 const onLanding = (selection: Selection) =>
   selection.kind === "summary" || selection.kind === "changes" || selection.kind === "risks";

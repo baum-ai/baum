@@ -56,6 +56,9 @@ export type TileType = {
   /** The type's name, as the kicker over a tile and in the rail. */
   label: string;
   icon: (props: IconProps) => ReactElement;
+  /** A tile whose title the page already shows, as the Overview's is the pull
+   *  request's: its card names it only for assistive technology. */
+  untitled?: boolean;
   /** The face on the landing grid: whether the tile needs opening. */
   Glance: ComponentType<TileFaceProps>;
   /** Everything about the tile. */

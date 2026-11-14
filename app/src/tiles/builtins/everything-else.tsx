@@ -125,7 +125,10 @@ function FileFold({ file, ctx }: { file: HunkGroup; ctx: TileContext }) {
       >
         <ChevronRightIcon
           size={12}
-          className={cn("flex-none text-tertiary transition-transform", open && "rotate-90")}
+          className={cn(
+            "flex-none text-tertiary transition-transform motion-reduce:transition-none",
+            open && "rotate-90",
+          )}
         />
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-primary" title={file.path}>
           {file.path}

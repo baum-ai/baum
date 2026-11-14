@@ -17,11 +17,14 @@ export function TileDetail({
   item,
   ctx,
   back,
+  onShown,
 }: {
   tile: Tile;
   item?: string;
   ctx: TileContext;
   back: () => void;
+  /** Called as the tile is shown, for the landing page to come back to it. */
+  onShown?: () => void;
 }) {
   const face = tileFace(tile);
   const Icon = face.type?.icon ?? GridIcon;
@@ -32,8 +35,12 @@ export function TileDetail({
     (tile.type === "change" || (tile.type === "everything_else" && Boolean(tileChange(tile))));
   const root = useRef<HTMLDivElement>(null);
   useItemFocus(root, tile, item, ctx);
+  const shown = useRef(onShown);
+  shown.current = onShown;
+  useEffect(() => shown.current?.(), [tile.id]);
   return (
-    <div ref={root} className="flex min-w-0 flex-1 flex-col">
+    // Held to a reading measure on a wide window; prose inside keeps its own.
+    <div ref={root} className="mx-auto flex w-full max-w-5xl min-w-0 flex-1 flex-col">
       <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
         <button
           type="button"
@@ -144,6 +151,9 @@ function useItemFocus(
           own.open = true;
         cancel = centerJump(target, reduced);
         flashJump(target, reduced);
+        // The keys go to the item too, so Tab and the page's keys go on from it.
+        if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+        target.focus({ preventScroll: true });
         return;
       }
       if (ctx.historical) return;

@@ -3368,7 +3368,7 @@ function GeneralSection() {
         <SettingRow
           label="Review page"
           htmlFor="review-page"
-          detail="How a pull request's review opens. Tiles shows what matters on one screen, each part a tile to open."
+          detail="How a pull request's or a group's review opens. Tiles shows what matters on one screen, each part a tile to open."
         >
           <select
             id="review-page"

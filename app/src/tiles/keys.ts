@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { UrlState } from "@baum/viewer/navigation";
-import { readSelection, withSelection } from "@baum/viewer/review-selection";
+import { readSelection, withoutSelection, withSelection } from "@baum/viewer/review-selection";
 import { shouldIgnore } from "../shortcuts";
 
 /** The tiles page's places other than its landing page. */
@@ -18,10 +18,45 @@ export function backToLanding(event: KeyboardEvent, url: UrlState): boolean {
   )
     return false;
   event.preventDefault();
+  leaveTile(url);
+  return true;
+}
+
+/** The history entry of the landing page last shown: its review, and its
+ *  depth in the app's history. */
+let landingEntry: { review: string; depth: number } | null = null;
+
+const reviewOf = (search: URLSearchParams) => withoutSelection(search).toString();
+/** The current entry's depth in the app's history (`writeHistory`), which
+ *  an entry the app did not write, such as the one a window opened on, has
+ *  as 0. */
+const depthNow = () => {
+  const depth = (window.history.state as { depth?: unknown } | null)?.depth;
+  return typeof depth === "number" ? depth : 0;
+};
+
+/** Notes the landing page's history entry, as it is shown. */
+export function noteLanding(search: URLSearchParams) {
+  landingEntry = { review: reviewOf(search), depth: depthNow() };
+}
+
+/** Back from a tile to the landing page: back through history when the entry
+ *  before is that landing page, so Back does not open the tile again; else in
+ *  the tile's place. */
+export function leaveTile(url: UrlState) {
+  const depth = depthNow();
+  if (
+    landingEntry &&
+    depth === landingEntry.depth + 1 &&
+    landingEntry.review === reviewOf(url.search)
+  ) {
+    window.history.back();
+    return;
+  }
   url.update((current) => withSelection(current, { kind: "summary" }), {
+    replace: true,
     preventScrollReset: true,
   });
-  return true;
 }
 
 /** `backToLanding` while `enabled`, ahead of the page's own Escape and `u`,

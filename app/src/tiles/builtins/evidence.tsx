@@ -4,8 +4,7 @@ import { HunkEvidence, HunkPatchProvider } from "@baum/viewer/components/hunk-ev
 import { Markdown } from "@baum/viewer/components/markdown";
 import { Item, JumpLink, None, Part } from "@baum/viewer/components/review-parts";
 import { EvidenceBadge } from "@baum/viewer/components/review-section";
-import { checkStatus, evidenceTone, humanize } from "@baum/viewer/review-document";
-import { cn } from "@baum/viewer/components/classnames";
+import { checkStatus, humanize } from "@baum/viewer/review-document";
 import { Clamp, Count, Counts, Fill, plainSentence, Quiet } from "../parts";
 import { changeById, changesInState, isCurrent, type TileEvidence } from "../tile-document";
 import { type TileContext, type TileFaceProps, type TileType } from "../types";
@@ -58,13 +57,8 @@ function EvidenceGlance({ ctx }: TileFaceProps) {
         <ul className="space-y-1.5">
           {shown.map((item) => (
             <li key={item.id} className="flex min-w-0 items-baseline gap-2">
-              <span
-                className={cn(
-                  "w-16 flex-none text-xs font-medium",
-                  STATUS_TEXT[evidenceTone(item.status)],
-                )}
-              >
-                {humanize(item.status)}
+              <span className="flex-none">
+                <EvidenceBadge evidence={item} compact />
               </span>
               <Clamp lines={2} className="text-base text-secondary">
                 {plainSentence(
@@ -81,14 +75,6 @@ function EvidenceGlance({ ctx }: TileFaceProps) {
     </div>
   );
 }
-
-const STATUS_TEXT = {
-  neutral: "text-tertiary",
-  info: "text-status-info",
-  positive: "text-status-positive",
-  caution: "text-status-caution",
-  critical: "text-status-critical",
-} as const;
 
 function CheckLine({ checks }: { checks: ReturnType<typeof checkStatus> }) {
   if (checks.state === "none") return null;

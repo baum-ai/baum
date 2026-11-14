@@ -6,6 +6,7 @@ import { JumpLink, Lines } from "@baum/viewer/components/review-parts";
 import { HunkPatchProvider } from "@baum/viewer/components/hunk-evidence";
 import { ReviewSection } from "@baum/viewer/components/review-section";
 import {
+  humanize,
   RISK_SCORE_MEANING,
   reviewScoreTone,
   sectionBadgeState,
@@ -22,6 +23,7 @@ import {
   isCurrent,
   mustShowRisks,
   riskInChange,
+  risksShownInFull,
   type ChangeData,
   type Tile,
   type TileChange,
@@ -85,10 +87,13 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
       {urgent.length > 0 ? (
         <p className="flex items-start gap-1.5 text-base text-status-critical">
           <RiskIcon size={14} className="mt-0.5 flex-none" />
-          <span className="line-clamp-1 min-w-0 @min-[36rem]/tiles:line-clamp-2">
-            {urgent.length === 1
-              ? plainSentence(urgent[0]!.text, ctx.labels)
-              : `${urgent.length} high or critical risks`}
+          <span className="line-clamp-2 min-w-0">
+            {urgent.length > 1
+              ? `${urgent.length} high or critical risks`
+              : risksShownInFull(ctx.doc)
+                ? // The Risks card beside it says the sentence; this names it.
+                  `${humanize(urgent[0]!.tier)} risk · ${humanize(urgent[0]!.category)}`
+                : plainSentence(urgent[0]!.text, ctx.labels)}
           </span>
         </p>
       ) : data.attention?.text ? (
@@ -112,17 +117,20 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
         <Quiet>No summary.</Quiet>
       )}
       <div className="space-y-1 text-xs text-tertiary">
-        <p className="flex flex-wrap items-center gap-x-1.5">
-          <Lines additions={change.derived.additions} deletions={change.derived.deletions} />
-          <span aria-hidden>·</span>
-          <span>{pluralize("file", files, true)}</span>
-          {steps > 0 ? (
-            <>
-              <span aria-hidden>·</span>
-              <span>{pluralize("behaviour", steps, true)}</span>
-            </>
-          ) : null}
-        </p>
+        {/* An obsolete change has no code left to size. */}
+        {stale ? null : (
+          <p className="flex flex-wrap items-center gap-x-1.5">
+            <Lines additions={change.derived.additions} deletions={change.derived.deletions} />
+            <span aria-hidden>·</span>
+            <span>{pluralize("file", files, true)}</span>
+            {steps > 0 ? (
+              <>
+                <span aria-hidden>·</span>
+                <span>{pluralize("behaviour", steps, true)}</span>
+              </>
+            ) : null}
+          </p>
+        )}
         {stale ? null : (
           <Counts className="text-xs">
             {[
@@ -330,18 +338,6 @@ export const changeTile: TileType = {
   Glance: ChangeGlance,
   Detail: ChangeDetail,
   valid,
-  commentAnchors: (ctx, tile) => {
-    const { data, change } = subject(tile, ctx);
-    const cited = (data.summary?.anchors ?? []).filter((anchor) => anchor.type === "hunk");
-    if (cited.length > 0) return cited;
-    for (const block of data.blocks ?? [])
-      if (block.kind === "behavior" && "steps" in block)
-        for (const step of block.steps ?? []) {
-          const hunks = step.anchors.filter((anchor) => anchor.type === "hunk");
-          if (hunks.length > 0) return hunks;
-        }
-    return (change?.hunks ?? []).slice(0, 1).map((id) => ({ type: "hunk" as const, id }));
-  },
 };
 
 export { ChangeBadges, DetailsUnavailable };

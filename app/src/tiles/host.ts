@@ -31,4 +31,10 @@ export function useTileHost(): TileHost {
 /** Where the reader left the landing page for a tile's detail: its scroll
  *  and the card they opened, so coming back puts both where they were. Kept
  *  per page, outside React, as Back remounts the landing page. */
-export type LandingMemory = { scroll: number; tile: string } | null;
+export type LandingMemory = {
+  /** The landing page's scroll as the reader left it, and the tile opened
+   *  then; null when the reader arrived on a tile from elsewhere. */
+  left: { scroll: number; tile: string } | null;
+  /** The tile the reader read last, as they stepped between tiles. */
+  read: string;
+} | null;

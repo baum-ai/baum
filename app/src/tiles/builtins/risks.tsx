@@ -53,7 +53,7 @@ function RisksGlance({ tile, ctx }: TileFaceProps) {
         <AllClear>No open risks</AllClear>
         {reasons.length > 0 ? (
           <Fill>
-            <p className="text-xs font-medium tracking-[0.06em] text-tertiary uppercase">
+            <p className="text-xs font-medium tracking-wider text-tertiary uppercase">
               Why the score
             </p>
             <ul className="mt-1 space-y-1.5">
@@ -121,17 +121,21 @@ function RiskLine({
     <li className="flex min-w-0 gap-2">
       <span
         aria-hidden
-        className="mt-[0.45rem] h-2 w-2 flex-none rounded-full"
+        className="mt-2 h-2 w-2 flex-none rounded-full"
         style={{ background: TIER_COLOR[risk.tier] }}
       />
       <div className="min-w-0 flex-1">
         <span className="sr-only">{humanize(risk.tier)} risk: </span>
-        <Clamp
-          lines={urgent ? 4 : 2}
-          className={urgent ? "text-base text-primary" : "text-base text-secondary"}
-        >
-          {plainText(risk.text, ctx.labels)}
-        </Clamp>
+        {urgent ? (
+          // A must-read risk in full, never cut mid-sentence.
+          <p className="text-base text-primary [overflow-wrap:anywhere]">
+            {plainText(risk.text, ctx.labels)}
+          </p>
+        ) : (
+          <Clamp lines={2} className="text-base text-secondary">
+            {plainText(risk.text, ctx.labels)}
+          </Clamp>
+        )}
         {urgent && change ? (
           <p className="truncate text-xs text-tertiary">
             {humanize(risk.category)} · {change.title}

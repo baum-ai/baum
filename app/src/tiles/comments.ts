@@ -12,11 +12,10 @@ import {
 } from "./tile-document";
 import type { Anchor } from "@baum/viewer/review-document";
 
-/** What a comment on a tile, or on an item of it, is about, and the code it
- *  is placed on (`anchors`, placed by the caller; none puts it in the
- *  review's body). A Change tile is its section, so a comment on one keeps
- *  the section target the full review and older daemons know; a risk keeps
- *  the risk target. */
+/** What a comment on a tile other than a Change (which `commentTarget` takes
+ *  as its section), or on an item of it, is about, and the code it is placed
+ *  on (`anchors`, placed by the caller; none puts it in the review's body). A
+ *  risk keeps the risk target the full review and older daemons know. */
 export function tileCommentTarget(
   document: ReviewDocument,
   tileId: string,
@@ -31,8 +30,6 @@ export function tileCommentTarget(
     type?.commentAnchors && type.valid(tile.data)
       ? type.commentAnchors({ doc, review: document }, tile, item)
       : [];
-  if (tile.type === "change")
-    return { target: { kind: "section", id: tile.id, title: tile.title }, anchors };
   const risk = item ? doc.risks.find((each) => each.id === item) : undefined;
   if (tile.type === "risks" && risk)
     return {

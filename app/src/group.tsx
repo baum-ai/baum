@@ -21,6 +21,7 @@ import {
   groupJob,
   groupTilesRequest,
   isActiveJob,
+  navigate,
   request,
   sameRepository,
   type Clone,
@@ -44,7 +45,8 @@ import { TileHostContext, type TileHost } from "./tiles/host";
 import { useBackToLanding } from "./tiles/keys";
 import { tileDocOf, tilesMissing } from "./tiles/tile-document";
 import { useTilePlaces } from "./tiles/use-tile-places";
-import { useReviewPage, withView } from "./tiles/view";
+import { fullReviewPlace, useReviewPage, withView } from "./tiles/view";
+import { withSelection } from "@baum/viewer/review-selection";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Local request failed.";
@@ -459,7 +461,8 @@ export function GroupPage({
     draft: false,
     commentCounts: new Map(),
     renderSectionLabels: sectionLabels,
-    fullReview: () => appURL(`?${withView(url.search, "full")}`),
+    fullReview: (tile) =>
+      appURL(`?${withView(withSelection(url.search, fullReviewPlace(tile)), "full")}`),
   };
 
   return (
@@ -760,7 +763,21 @@ export function GroupPage({
               </div>
             ) : null}
             {tilesPage && tilesMissing(doc) ? (
-              <Notice>This review can't be shown as tiles, so this is its full review.</Notice>
+              <Notice
+                action={
+                  <a
+                    href={appURL(`?${withView(url.search, "full")}`)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      navigate(event.currentTarget.href);
+                    }}
+                  >
+                    Always use the full review here
+                  </a>
+                }
+              >
+                This review can't be shown as tiles, so this is its full review.
+              </Notice>
             ) : null}
             {failed && doc ? (
               <Alert>

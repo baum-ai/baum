@@ -96,21 +96,37 @@ export function GlanceCard({
           </span>
         </span>
       </header>
-      <h3 id={titleId} className="-mt-1.5 min-w-0">
-        <button
-          type="button"
-          data-block-open=""
-          onClick={() => ctx.open(tile.id)}
-          className={cn(
-            "line-clamp-2 w-full cursor-pointer rounded-sm text-left text-base leading-snug font-semibold text-primary",
-            // The whole card answers the click, its menu and retry above it.
-            "after:absolute after:inset-0 after:rounded-lg after:content-['']",
-            FOCUS_RING,
-          )}
-        >
-          {tile.title}
-        </button>
-      </h3>
+      {type?.untitled ? (
+        <>
+          {/* The page names it already; the card is one link all the same. */}
+          <h4 id={titleId} className="sr-only">
+            {tile.title}
+          </h4>
+          <button
+            type="button"
+            data-block-open=""
+            aria-labelledby={titleId}
+            onClick={() => ctx.open(tile.id)}
+            className={cn("absolute inset-0 cursor-pointer rounded-lg", FOCUS_RING)}
+          />
+        </>
+      ) : (
+        <h4 id={titleId} className="-mt-1.5 min-w-0">
+          <button
+            type="button"
+            data-block-open=""
+            onClick={() => ctx.open(tile.id)}
+            className={cn(
+              "line-clamp-2 w-full cursor-pointer rounded-sm text-left text-base leading-snug font-semibold text-primary",
+              // The whole card answers the click, its menu and retry above it.
+              "after:absolute after:inset-0 after:rounded-lg after:content-['']",
+              FOCUS_RING,
+            )}
+          >
+            {tile.title}
+          </button>
+        </h4>
+      )}
       <div className="flex min-h-0 grow flex-col">
         <TileBoundary fallback={<Quiet>This tile couldn't be shown.</Quiet>}>
           {face.kind === "ready" ? (

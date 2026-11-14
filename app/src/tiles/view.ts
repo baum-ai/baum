@@ -1,4 +1,5 @@
 import { useUrlState } from "@baum/viewer/navigation";
+import type { Selection } from "@baum/viewer/review-selection";
 import { usePreferences, type ReviewPageChoice } from "../preferences";
 
 /** The review page an address shows: `?view=tiles` or `?view=full` wins,
@@ -19,4 +20,17 @@ export function withView(search: URLSearchParams, view: ReviewPageChoice): URLSe
   const next = new URLSearchParams(search);
   next.set("view", view);
   return next;
+}
+
+/** Where the full review shows what a tile does. */
+export function fullReviewPlace(
+  tile: { id: string; type: string; data: unknown } | null,
+): Selection {
+  if (!tile) return { kind: "summary" };
+  if (tile.type === "change") return { kind: "section", id: tile.id };
+  const change = (tile.data as { change?: unknown } | null)?.change;
+  if (tile.type === "everything_else" && typeof change === "string")
+    return { kind: "section", id: change };
+  if (tile.type === "risks") return { kind: "changes" };
+  return { kind: "summary" };
 }

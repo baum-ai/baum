@@ -103,8 +103,8 @@ import {
 } from "./pending-review";
 import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
-import { readSelection, withSelection, type Selection } from "@baum/viewer/review-selection";
-import { useReviewPage, withView } from "./tiles/view";
+import { readSelection, withSelection } from "@baum/viewer/review-selection";
+import { fullReviewPlace, useReviewPage, withView } from "./tiles/view";
 import { useTilePlaces } from "./tiles/use-tile-places";
 import { TileHostContext, type TileHost } from "./tiles/host";
 import { commentCounts } from "./tiles/comments";
@@ -567,15 +567,24 @@ export function LocalReview({
   const onTiles = tilesPage && Boolean(tileDocOf(shownDocument));
   // Escape or u inside a tile goes back to the landing page.
   useBackToLanding(onTiles, url);
-  const tileHost: TileHost = {
-    draft: showingDraft,
-    commentCounts: commentCounts(viewedDocument ?? null, pending.value.comments),
-    comment:
-      canReview && !showingDraft
+  // Rebuilt only when what the tiles read of it changes, and never on the
+  // full review, which has no tiles.
+  const latestHost = useRef({ viewedDocument, canReview, showingDraft, search: url.search });
+  latestHost.current = { viewedDocument, canReview, showingDraft, search: url.search };
+  const counts = useMemo(
+    () => (onTiles ? commentCounts(viewedDocument ?? null, pending.value.comments) : NO_COUNTS),
+    [onTiles, viewedDocument, pending.value.comments],
+  );
+  const commenting = canReview && !showingDraft;
+  const tileHost = useMemo<TileHost>(
+    () => ({
+      draft: showingDraft,
+      commentCounts: counts,
+      comment: commenting
         ? (tile, item) => {
             setComposer({
               kind: "new",
-              ...commentTarget(viewedDocument ?? null, {
+              ...commentTarget(latestHost.current.viewedDocument ?? null, {
                 kind: "tile",
                 id: tile,
                 ...(item ? { item } : {}),
@@ -584,10 +593,16 @@ export function LocalReview({
             setRevealComments((n) => n + 1);
           }
         : undefined,
-    ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
-    fullReview: (tile) =>
-      appURL(`?${withView(withSelection(url.search, fullReviewPlace(tile)), "full")}`),
-  };
+      ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
+      fullReview: (tile) =>
+        appURL(
+          `?${withView(withSelection(latestHost.current.search, fullReviewPlace(tile)), "full")}`,
+        ),
+    }),
+    // `ask` reads the pull request, which keys the page; the rest is read
+    // through `latestHost` when called.
+    [showingDraft, counts, commenting],
+  );
   // Why the last retry did not write the details, said until it is dismissed.
   const [headChanged, setHeadChanged] = useState(false);
   const [retryError, setRetryError] = useState("");
@@ -1393,16 +1408,7 @@ function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
   return tiles ? withTiles(next, withPendingChanges(tiles, ids)) : next;
 }
 
-/** Where the full review shows what a tile does. */
-function fullReviewPlace(tile: { id: string; type: string; data: unknown } | null): Selection {
-  if (!tile) return { kind: "summary" };
-  if (tile.type === "change") return { kind: "section", id: tile.id };
-  const change = (tile.data as { change?: unknown } | null)?.change;
-  if (tile.type === "everything_else" && typeof change === "string")
-    return { kind: "section", id: change };
-  if (tile.type === "risks") return { kind: "changes" };
-  return { kind: "summary" };
-}
+const NO_COUNTS: ReadonlyMap<string, number> = new Map();
 
 class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   override state = { failed: false };

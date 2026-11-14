@@ -287,3 +287,26 @@ export function tileOfChange(document: TileDocument, change: string): Tile | und
       (tile.data as EverythingElseData).change === change,
   );
 }
+
+/** Whether the Risks tile shows every must-read risk in full on the landing
+ *  page as the layout places it: ready, before `landing` and in no group. */
+export function risksShownInFull(document: TileDocument): boolean {
+  const at = document.layout.entries.findIndex((entry) => entry.tile === "risks");
+  const entry = document.layout.entries[at];
+  return (
+    at >= 0 &&
+    at < document.layout.landing &&
+    !entry?.group &&
+    tileById(document, "risks")?.state === "ready"
+  );
+}
+
+/** The missing and failed evidence of current changes, failed first. */
+export function currentGaps(document: TileDocument): TileEvidence[] {
+  const gaps = document.evidence.filter(
+    (item) =>
+      (item.status === "missing" || item.status === "failed") &&
+      isCurrent(changeById(document, item.change)),
+  );
+  return gaps.toSorted((a, b) => Number(a.status !== "failed") - Number(b.status !== "failed"));
+}

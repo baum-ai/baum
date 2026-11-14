@@ -15,6 +15,7 @@ import { plainSentence, plainText } from "./parts";
 import { itemTarget } from "./place";
 import {
   changesInState,
+  currentGaps,
   tileById,
   tileOfChange,
   type Tile,
@@ -43,6 +44,7 @@ export function FixedStrip({
       {given(ctx) ? <Recommendation ctx={ctx} /> : null}
       <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
         <RiskScore ctx={ctx} />
+        <EvidenceGaps ctx={ctx} />
         <Generation ctx={ctx} generation={generation} />
       </div>
     </section>
@@ -165,7 +167,7 @@ function RiskScore({ ctx }: { ctx: TileContext }) {
         {view.score}
         <span className="font-normal text-tertiary">/5</span>
       </span>
-      <span className="min-w-0 shrink truncate text-secondary @min-[36rem]/tiles:flex-none">
+      <span className="line-clamp-2 min-w-0 text-secondary @min-[36rem]/tiles:flex-none">
         {view.lowerBound ? "at least; input was incomplete" : view.meaning}
       </span>
       {reason && target ? (
@@ -184,6 +186,25 @@ function RiskScore({ ctx }: { ctx: TileContext }) {
         </>
       ) : null}
     </div>
+  );
+}
+
+/** Missing or failed evidence of the current changes, always on the first
+ *  screen however far down the Evidence tile sits, leading to the first gap. */
+function EvidenceGaps({ ctx }: { ctx: TileContext }) {
+  const gaps = currentGaps(ctx.doc);
+  if (gaps.length === 0 || !tileById(ctx.doc, "evidence")) return null;
+  const missing = gaps.filter((item) => item.status === "missing").length;
+  const failed = gaps.length - missing;
+  return (
+    <JumpLink className="flex-none text-base" onClick={() => ctx.open("evidence", gaps[0]!.id)}>
+      <span className={failed > 0 ? "text-status-critical" : "text-status-caution"}>
+        {[missing > 0 ? `${missing} missing` : "", failed > 0 ? `${failed} failed` : ""]
+          .filter(Boolean)
+          .join(" · ")}{" "}
+        evidence
+      </span>
+    </JumpLink>
   );
 }
 
