@@ -1740,11 +1740,12 @@ type Prompt struct {
 A prompt the user replaced (globally or for a repository) adds `+custom` to
 the version, and the stored metadata's `prompt_source` says where the custom
 prompts used came from: `repository` when any did, `global` when only global
-ones did, absent when every prompt was built in. The daemon's jobs and
-`baum decisions` use the prompts resolved for the repository (repository, then
-global, then built in); `baum internal generate` opens no registry and uses the
-built-in prompts. The replaceable review prompts are the four of a staged
-review and a review group's (`review-group`), which is the whole text before
+ones did, absent when every prompt was built in. The daemon's jobs use the
+prompts resolved for the repository (repository, then global, then built in);
+replay opens no registry and uses the built-in prompts unless given
+`--prompt-override`. The replaceable review prompts are the four of a staged
+review, the composition prompt (`review-tiles-compose`, used with tile reviews
+on) and a review group's (`review-group`), which is the whole text before
 the Submitting heading, the review instructions included; the one-pass review
 prompt (`prompt.Prompts`) is not replaceable, as no job writes one pull
 request's review in one pass. A retry of a staged review's details refuses to run when the
@@ -2179,12 +2180,9 @@ only for what moves, and two synthetic examples.
 run of one pull request that does not continue a version (a details retry and
 a review group never compose). The order is analyse, then compose:
 
-1. The outline, the details and the context run as without it, but end
-   `generate.ComposeReserve` (75 seconds, at most a quarter of the wall clock)
-   before the run's wall clock, which they share as before; when call or token
-   budgets are set they leave two calls and 60,000 tokens to the composition if
-   they are large enough to spare them. Running out of time in the analysis
-   fails the run exactly as running out of the wall clock does without tiles.
+1. The outline, the details and the context run exactly as without it, with
+   the run's whole wall clock and budgets: the optional layout never costs the
+   review a call or a second of its analysis.
 2. The review is masked, completed and checked as it always is. It is final
    before the composer is asked, and the composer cannot change it: a run with
    tiles publishes the same review bytes a run without them would.
@@ -2194,17 +2192,22 @@ a review group never compose). The order is analyse, then compose:
    and the repository's preferences, through the backend's `agent.Completer`
    (`generate.CompleterOf`: nil for a backend that cannot complete, such as
    cursor-agent, or a wrapper whose `CanComplete` says so, which gets the
-   template without a call). It is bounded by what is left of the run's
-   deadline, at most `DefaultComposeTimeout`, on a context that ignores the
-   run's deadline but not its cancellation. With less than
-   `generate.ComposeMinimum` (60 seconds, less for a short wall clock) left,
-   or the budgets spent, the call is skipped and the template applies
-   (`FallbackNoTime`, `FallbackBudget`). What it spends is added to the run's
-   outcome, so the version's calls, tokens, accounting and cost include it.
+   template without a call). It runs on a context that follows the run's
+   cancellation but not its deadline (neither the wall clock nor a caller's
+   deadline), bounded by its own `DefaultComposeTimeout` (90 seconds): **with
+   tiles on, a run may end up to 90 seconds after its wall clock.** A caller
+   whose deadline passes during the stage still gets the version stored.
+   With call or token budgets set, it makes the calls they leave, at most two
+   (`ComposeRequest.MaxCalls`; with one left there is no repair), and skips
+   to the template (`FallbackBudget`) when they leave no call or fewer than
+   15,000 tokens, so a run never records more calls than its budget allows.
+   What it spends is added to the run's outcome, so the version's calls,
+   tokens, accounting and cost include it; the version's model stays the
+   analysis's, which prices the run.
 4. `Publish` stores the composition with the version (`Version.Composition`,
    its generator in `CompositionGenerator`), a fallback included.
 
-Compose never fails a run and never delays it past its deadline: a fallback
+Compose never fails a run and delays it at most by its own bound: a fallback
 is stored as such, a composition that cannot be made at all (the document does
 not convert, the template does not apply, a panic) leaves the version without
 one, which shows the converted layout, and the run says which on its progress
@@ -2212,12 +2215,16 @@ lines (`Result.Compose` reports it). A run cancelled while the composer works
 is interrupted as at any other point before `Put`: nothing is stored.
 
 Drafts (`Options.OnDraft`, a `generate.Draft`) carry a layout for the tile
-view: while the review is written, the change kind's template with the pins
-(`agent.TemplateComposition`, the layout a fallback stores); once the
-composition is made, one last draft of the finished review carries it. A
-composer that keeps the template therefore moves nothing on the page, and one
-that does not moves it once. A details retry's drafts carry the version's
-stored composition. A refresh (`RefreshCurrent`) and a details retry
+view: while the review is written, the previous version's composition
+renormalised against the draft when there is one, else the change kind's
+template with the pins (`agent.TemplateComposition`, the layout a fallback
+stores); once the composition is made, one last draft of the finished review
+carries it. A composer that keeps that layout therefore moves nothing on the
+page, and one that does not moves it once. Making a draft's layout cannot fail
+a run: any failure, a panic included, shows that draft without a layout, and a
+panic while preparing a draft skips it. A details retry's drafts carry the
+version's stored composition whether or not tile reviews are on, so the page
+keeps the layout the version has. A refresh (`RefreshCurrent`) and a details retry
 (`CompleteCurrent`) keep the stored composition: the tiles they change already
 have their places, and `tiles.Compose` renormalises it against the document on
 every read, so nothing composes again.
@@ -2225,10 +2232,27 @@ every read, so nothing composes again.
 The daemon turns the stage on with the global preference `labs.tile_reviews`
 (`repos.LabsPreferences`, off by default; `GET`/`PUT /api/settings/labs`, the
 "Generate reviews as tiles (experimental)" switch in Settings › Reviews) for
-every new review of one pull request, manual or automatic. The job's backend
+every new review of one pull request, manual or automatic. While it is on,
+`GET /api/settings/appearance` reports `arranged_tiles` (read only, unless the
+review page is already tiles), and a pull request's review page then reads the
+version through `/api/tiles` and opens it on the tiles page when its tile
+document is composed (origin `generated`), and on the full review otherwise;
+`?view=` in the address still decides. The job's backend
 forwards the completion and reports it like the other calls: its phase is
 `arranging` while the composer works, its call, tokens and usage count, and the
 transcript names the call "Composition".
+
+**Filling landing rows.** Every composition, the composer's and the
+templates', is normalised so that no landing row of the composed document ends
+with empty units when the tile after it does not fit and growing the row's
+last tile to its next larger allowed size would fill the row exactly
+(`tiles.RowFills`): that tile grows. Nothing shrinks, the order is kept and a
+pinned tile is never grown. In a composer's layout each growth is a fix of
+its own kind, `row_fill`, which is the host's layout rule rather than a repair
+of the reply (replay reports it as `compose_row_fill`, outside
+`compose_fixes`); in a template it is part of the template. A converted
+document, which no composition lays out, is unchanged.
+`tilestest.CheckGenerated` asserts it (invariant 13).
 
 ## `decisions`
 
@@ -6691,7 +6715,7 @@ summary scrubs them; a GitHub Enterprise token check is `other host`, and the
 token and backend checks give no source; never `home`, a check's path, detail
 or fix, the environment or the issue the Report a problem dialog drafts), and
 the Settings tools below: `settings_general` with `/api/settings/appearance`,
-`settings_reviews` and `settings_fixes` with `/api/settings`,
+`settings_reviews` with `/api/settings` and `/api/settings/labs`, `settings_fixes` with `/api/settings`,
 `settings_connections` with `/api/github-auth`, `settings_computer` with
 `/api/settings` and `/api/diagnostics`, and `prompts` and `prompt` with
 `/api/settings/prompts`. `/api/settings` is read whole in process and decoded
@@ -6949,7 +6973,7 @@ home folder:
 | Tool | Scope | Section | Reads |
 | --- | --- | --- | --- |
 | `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier, review page) and `Options.PlanChoices` (each plan's shown, default and explicit) |
-| `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences) |
+| `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences), and `tile_reviews` from `/api/settings/labs` |
 | `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
 | `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
 | `settings_computer` | global | This computer | `/api/settings` (job concurrency, time limits, the agent environment's names, sorted, and its source), the `settings` of `/api/agent-requests` (`codex_approvals`), and `/api/diagnostics`: the agent and harness checks (`claude`, `codex`, `cursor-agent`, `backend-auto`, `backend-configured`, `anthropic-api-key`; id, label, status, version, scrubbed as `diagnostics_summary` scrubs them, without the source) and how many problems the report has. Updates, zoom, the command line tool and agent sign-in are the desktop shell's |
@@ -7050,6 +7074,7 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
 | `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
 | `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |
+| `settings` (`reviews`) | `propose_labs` | `labs` | `PUT /api/settings/labs` (`tile_reviews`) |
 | `settings` (`fixes`) | `propose_fixes` | `fixes` | `PUT /api/automatic`: fix backend, model, effort |
 | `settings` (`computer`) | `propose_time_limits` | `time_limits` | `PUT /api/settings/time-limits`, a limit left out as the section shows it |
 | `settings` (`computer`) | `propose_job_concurrency` | `job_concurrency` | `PUT /api/settings/job-concurrency`, then the queue's concurrency |
