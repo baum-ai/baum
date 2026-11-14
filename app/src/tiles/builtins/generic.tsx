@@ -79,12 +79,19 @@ function TableDetail({ tile, ctx }: TileFaceProps) {
   );
 }
 
-/** The first lines of a text block, as code. */
+/** The first lines of a text block, as code, each cut with an ellipsis
+ *  where the card is too narrow for it. */
 function Excerpt({ content, lines }: { content: string; lines: number }) {
   const all = content.split("\n");
   return (
     <pre className="overflow-hidden rounded-md bg-code-fill p-2.5 font-mono text-xs leading-[1.5] text-primary">
-      <code>{all.slice(0, lines).join("\n")}</code>
+      <code className="block">
+        {all.slice(0, lines).map((line, position) => (
+          <span key={position} className="block overflow-hidden text-ellipsis whitespace-pre">
+            {line || " "}
+          </span>
+        ))}
+      </code>
     </pre>
   );
 }
@@ -116,14 +123,19 @@ function CodeGlance({ tile }: TileFaceProps) {
   );
 }
 
+/** Text compared without its closing full stop and outer space. */
+const bare = (text: string | undefined) => (text ?? "").trim().replace(/\.$/, "");
+
 function CodeDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as CodeData;
+  // The caption is the tile's headline, which the detail's heading shows.
+  const caption = data.caption && bare(data.caption) !== bare(tile.headline) ? data.caption : "";
   return (
     <div className="space-y-2">
       <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
         <code>{data.content}</code>
       </pre>
-      {data.caption ? <p className="text-base text-tertiary">{data.caption}</p> : null}
+      {caption ? <p className="text-base text-tertiary">{caption}</p> : null}
       <AnchorChips document={ctx.review} anchors={data.source} />
     </div>
   );

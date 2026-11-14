@@ -23,6 +23,7 @@ import {
   updateMessage,
 } from "./protocol";
 import { citedHunks, MAX_EXCERPTS, resolveRefs, type CitationTarget } from "./refs";
+import { isBuiltinType } from "./library";
 import { listenToFrame } from "./router";
 
 /** A custom tile's frame, as its card's glance or its detail draws it. */
@@ -262,7 +263,8 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
       ) : null}
     </div>
   );
-  if (face === "glance") return frameBox;
+  // A built-in library type is baum's own: its detail reads as the page's.
+  if (face === "glance" || isBuiltinType(tile)) return frameBox;
   // A detail's body is the tile's own: the host says so, and draws a faint
   // edge of its own around it, so nothing the tile draws reads as the page.
   return (

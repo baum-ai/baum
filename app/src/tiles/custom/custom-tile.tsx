@@ -2,6 +2,7 @@ import { GridIcon } from "../icons";
 import { Line } from "../parts";
 import type { Tile } from "../tile-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
+import { isBuiltinType } from "./library";
 import { citedHunks } from "./refs";
 import { definitionKit, frameDigest, NEWER_KIT, TileFrame } from "./tile-frame";
 import { KIT_SUPPORTED } from "./protocol";
@@ -12,11 +13,14 @@ import { KIT_SUPPORTED } from "./protocol";
  *  the body is the tile's own. */
 
 /** The tile's kind as its kicker names it: "Custom ·" and its definition's
- *  title, always, so a custom tile never reads as a built-in one, whatever
- *  its author called it. */
+ *  title, so a custom tile never reads as a built-in one, whatever its
+ *  author called it; a type of the built-in library, which the daemon lists
+ *  by digest, is baum's own and is named by its title alone. */
 export function kindOf(tile: Tile): string {
   const title = (tile.definition as { title?: unknown } | null)?.title;
-  return typeof title === "string" && title.trim() ? `Custom · ${title.trim()}` : "Custom";
+  const named = typeof title === "string" ? title.trim() : "";
+  if (isBuiltinType(tile)) return named || "Custom";
+  return named ? `Custom · ${named}` : "Custom";
 }
 
 function CustomGlance({ tile, ctx }: TileFaceProps) {

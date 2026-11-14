@@ -24,6 +24,7 @@ import {
   mustShowRisks,
   riskInChange,
   risksShownInFull,
+  tileOfChange,
   type ChangeData,
   type Tile,
   type TileChange,
@@ -328,8 +329,21 @@ function gatheredElsewhere(ctx: TileContext, change: string) {
     if (tile.type === "decisions") holds(tile.id, ofChange(data.items), "decision");
     if (tile.type === "media") holds(tile.id, ofChange(data.items), "media block");
   }
+  // The tiles made of the change: a block promoted out of it, and the
+  // library and authored tiles that cite its code, by their titles.
+  const own = new Set(tileOfChange(ctx.doc, change)?.covers ?? []);
+  for (const tile of ctx.doc.tiles) {
+    if (!GATHERING.has(tile.type) || places.some((place) => place.tile === tile.id)) continue;
+    const origin = isRecord(tile.data) && isRecord(tile.data.origin) ? tile.data.origin : null;
+    const cites = (tile.covers ?? []).some((hunk) => own.has(hunk));
+    if (origin?.change === change || cites) places.push({ tile: tile.id, label: tile.title });
+  }
   return places;
 }
+
+/** The tiles that may show part of a change: promoted blocks, authored
+ *  tiles and library tiles. */
+const GATHERING = new Set(["table", "code", "prose", "custom"]);
 
 export const changeTile: TileType = {
   type: "change",

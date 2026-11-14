@@ -1,6 +1,7 @@
 import { formatUSD } from "@baum/viewer/components/format";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import { parseTileDocument, withTiles, type TiledDocument } from "./tiles/tile-document";
+import { loadTileLibrary } from "./tiles/custom/library";
 export type Clone = {
   id: string;
   path: string;
@@ -1197,20 +1198,27 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
  *  it: the review the page's chrome reads, carrying the tiles (or null where
  *  the daemon could not convert it). */
 export function tilesRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
-  return request<TilesAnswer>(
-    `api/tiles?${selector(clone, pr, version)}`,
-    undefined,
-    "GET",
-    signal,
+  return withTileLibrary(
+    request<TilesAnswer>(`api/tiles?${selector(clone, pr, version)}`, undefined, "GET", signal),
   ).then(tiledDocument);
 }
 export function groupTilesRequest(id: string, version?: number, signal?: AbortSignal) {
-  return request<TilesAnswer>(
-    `api/groups/${encodeURIComponent(id)}/tiles${version ? `?version=${version}` : ""}`,
-    undefined,
-    "GET",
-    signal,
+  return withTileLibrary(
+    request<TilesAnswer>(
+      `api/groups/${encodeURIComponent(id)}/tiles${version ? `?version=${version}` : ""}`,
+      undefined,
+      "GET",
+      signal,
+    ),
   ).then(tiledDocument);
+}
+/** A tile answer once the built-in tile library is known too, so the page
+ *  names a library tile right on its first draw. */
+export function withTileLibrary<T>(answer: Promise<T>): Promise<T> {
+  return Promise.all([
+    answer,
+    loadTileLibrary(() => request<{ types?: { digest?: unknown }[] }>("api/tile-library")),
+  ]).then(([body]) => body);
 }
 /** The daemon's answer for a review's tiles: `tiles` is null, with a
  *  `problem`, when the review could not be converted. */

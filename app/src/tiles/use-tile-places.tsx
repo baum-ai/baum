@@ -17,6 +17,7 @@ import { GridIcon } from "./icons";
 import { itemTarget, placeOf, readingOrder, tileSelection, type TilePlace } from "./place";
 import { TilePane } from "./pane";
 import { tileType } from "./registry";
+import { isBuiltinType } from "./custom/library";
 import {
   changeById,
   mustShowRisks,
@@ -33,10 +34,11 @@ export const LANDING_LABEL = "Summary";
 const LANDING: Selection = { kind: "summary" };
 
 /** A tile's name in the rail: its title, but the Overview by its kind, as its
- *  title is the pull request's own, and a custom tile marked as one. */
+ *  title is the pull request's own, and a custom tile marked as one unless it
+ *  is of a built-in library type. */
 function railLabel(tile: Tile) {
   if (tile.type === "overview") return "Overview";
-  return tile.type === "custom" ? `Custom · ${tile.title}` : tile.title;
+  return tile.type === "custom" && !isBuiltinType(tile) ? `Custom · ${tile.title}` : tile.title;
 }
 
 function railKey(place: TilePlace) {
