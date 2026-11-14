@@ -68,3 +68,25 @@ func TestStoredLibraryTileKeepsItsDefinition(t *testing.T) {
 		t.Error("the earlier definition's frame is not registered")
 	}
 }
+
+// The browser fixture's library composition serves its four tiles ready.
+func TestLibraryCompositionFixture(t *testing.T) {
+	document := tileviewtest.Encode(t, tileviewtest.Base(t))
+	served := Build(document, tileviewtest.LibraryComposition(t, document), tiles.Options{})
+	ready := map[string]bool{}
+	for _, tile := range served.checked.Tiles {
+		if tile.State == tiles.StateReady {
+			ready[tile.ID] = true
+		} else if tile.Type == tiles.TypeCustom || tile.Type == tiles.TypeTable || tile.Type == tiles.TypeCode {
+			t.Errorf("%s: %s %v", tile.ID, tile.State, tile.Problems)
+		}
+	}
+	for _, id := range []string{"schema_change", "api_change", "table_retry_states", "code_sync_backoff"} {
+		if !ready[id] {
+			t.Errorf("%s is not served ready", id)
+		}
+	}
+	if served.Tiles.Layout.Entries[0].Tile != tiles.TypeOverview {
+		t.Errorf("layout: %v", served.Tiles.Layout.Entries)
+	}
+}
