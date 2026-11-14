@@ -23,6 +23,14 @@ export const HUNG_WORDS = "This tile stopped responding when it was checked.";
  *  its detail opened) does not ask again. */
 const answers = new Map<string, Promise<"show" | "hung">>();
 
+/** The page's preflights, one after another. Each request stays open until
+ *  its tile is drawn, and the check window shares this page's connections to
+ *  the daemon (WebKit opens at most 6 to one host): a page with several
+ *  custom tiles asking at once would hold them all, and the check window
+ *  could not claim the jobs it waits on. The daemon draws one at a time
+ *  anyway. */
+let line: Promise<unknown> = Promise.resolve();
+
 function ask(
   tile: Tile,
   ctx: TileContext,
@@ -33,24 +41,29 @@ function ask(
   let answer = answers.get(key);
   if (!answer) {
     const labels = ctx.labels;
-    answer = fetch(appURL("api/tile-checks/preflight"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        digest: `sha256:${digest}`,
-        data: tile.data,
-        size,
-        refs: {
-          glance: resolveRefs(tile.data, ctx.doc, "glance", labels).refs,
-          detail: resolveRefs(tile.data, ctx.doc, "detail", labels).refs,
-        },
-      }),
-    })
+    const body = JSON.stringify({
+      digest: `sha256:${digest}`,
+      data: tile.data,
+      size,
+      refs: {
+        glance: resolveRefs(tile.data, ctx.doc, "glance", labels).refs,
+        detail: resolveRefs(tile.data, ctx.doc, "detail", labels).refs,
+      },
+    });
+    answer = line
+      .then(() =>
+        fetch(appURL("api/tile-checks/preflight"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        }),
+      )
       .then((response) => (response.ok ? response.json() : null))
       .then((body: { verdict?: unknown } | null) => (body?.verdict === "hang" ? "hung" : "show"))
       // Whatever went wrong asking, the tile is shown: its frame's own
       // guards still apply.
       .catch(() => "show" as const);
+    line = answer;
     answers.set(key, answer);
   }
   return answer;
@@ -88,4 +101,5 @@ export function usePreflight(
 /** Forgets the answers, for tests. */
 export function forgetPreflights() {
   answers.clear();
+  line = Promise.resolve();
 }

@@ -662,6 +662,48 @@ describe("the first-show preflight", () => {
     expect(container.textContent).toContain(HUNG_WORDS);
   });
 
+  it("asks for one tile at a time", async () => {
+    // Each request stays open until its tile is drawn, and the check window
+    // shares the page's few connections to the daemon.
+    (window as Shell).__TAURI_INTERNALS__ = { invoke: vi.fn() };
+    (window as Shell).__BAUM_DESKTOP__ = { tileFrames: true, checkWindow: true };
+    const pending: (() => void)[] = [];
+    const fetched = vi.fn(
+      () =>
+        new Promise((resolve) =>
+          pending.push(() => resolve({ ok: true, json: async () => ({ verdict: "pass" }) })),
+        ),
+    );
+    vi.stubGlobal("fetch", fetched);
+    const first = freshTile();
+    const second = freshTile();
+    second.data = { ...(second.data as object), other: true };
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const host: TileHost = { draft: false, commentCounts: new Map() };
+    const settle = () =>
+      act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+    act(() =>
+      root!.render(
+        <TileHostContext.Provider value={host}>
+          <TileFrame tile={first} ctx={contextFor()} face="glance" />
+          <TileFrame tile={second} ctx={contextFor()} face="glance" />
+        </TileHostContext.Provider>,
+      ),
+    );
+    await settle();
+    expect(fetched).toHaveBeenCalledTimes(1);
+    pending[0]!();
+    await settle();
+    expect(fetched).toHaveBeenCalledTimes(2);
+    pending[1]!();
+    await settle();
+    expect(container.querySelectorAll("iframe")).toHaveLength(2);
+  });
+
   it("does not ask where there is no check window", () => {
     const fetched = vi.fn();
     vi.stubGlobal("fetch", fetched);

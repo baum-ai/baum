@@ -1847,7 +1847,11 @@ built-in type it posts a preflight of the tile's data and waits (the box
 reads `data-frame-state="checking"`). `pass` and render errors mount (the
 frame's own failure faces show those); `hang` shows "This tile stopped
 responding when it was checked." and the frame route refuses the type. Each
-pair is asked about once per page; a browser skips the preflight.
+pair is asked about once per page, one pair at a time: a preflight request
+stays open until its tile is drawn, and the check window shares the page's
+connections to the daemon (WebKit opens at most 6 to one host), so a page
+asking for all its tiles at once would leave the check window none to claim
+them with. A browser skips the preflight.
 
 Tests: `internal/tilechecks` (the queue, timeouts, hang and `MarkHung`, the
 checks before drawing, the classification, preflights and the store),
