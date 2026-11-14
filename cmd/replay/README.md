@@ -147,6 +147,13 @@ oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-run> --m
   run generated (`<run>/cases/<id>/document.json`), so the same analysis can be
   arranged by several prompts.
 
+`--tile-text <instruction>` and `--tile-pin <tile type>` (repeatable) give
+either mode a repository's standing tile preferences, as the app's repository
+page saves them: the composer follows the instruction and the pinned tiles
+lead the layout. A pin is a single tile type or a library type, as the app
+accepts. They are how to see what a preference does to reviews that already
+exist, for a few cents a case.
+
 Saved reviews have no composition, so neither mode passes a previous
 composition; `--chain` is refused. Each case's `document.json` is a compose
 record (`replay.compose/1`): the composition, the template's, whether it fell
