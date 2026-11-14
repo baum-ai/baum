@@ -52,7 +52,8 @@ import (
 //     tiles.EvidenceGapsShown gaps that the template's does not, or a person
 //     hid tiles; no change
 //     is featured alone at half on a row another follows; and the evidence
-//     tile with that many gaps is on the landing page.
+//     tile with that many gaps is on the landing page, unless a person hid
+//     it or the landing page holds only pinned tiles and those always on it.
 func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document) []string {
 	failures := check(normalized, doc, true)
 	fail := func(invariant int, format string, args ...any) {
@@ -407,10 +408,18 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 		_ = json.Unmarshal(change.Derived, &derived)
 		current[change.ID] = derived.State != "stale"
 	}
-	if evidenceGaps(doc, current) >= tiles.EvidenceGapsShown {
+	if evidenceGaps(doc, current) >= tiles.EvidenceGapsShown && !slices.Contains(c.Layout.Hidden, tiles.TypeEvidence) {
 		visible := tiles.Visible(doc.Layout)
+		// No place is left when the landing page holds only pinned tiles and
+		// those always on it.
+		full := true
 		for i, entry := range doc.Layout.Entries {
-			if entry.Tile == tiles.TypeEvidence && !visible[i] {
+			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && entry.Tile != tiles.TypeRisks {
+				full = false
+			}
+		}
+		for i, entry := range doc.Layout.Entries {
+			if entry.Tile == tiles.TypeEvidence && !visible[i] && !full {
 				failures = append(failures, "the evidence tile has gaps and is not on the landing page")
 			}
 		}

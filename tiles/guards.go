@@ -12,7 +12,10 @@ import (
 //  1. Evidence with EvidenceGapsShown or more missing or failed items of
 //     current changes is on the landing page (FixEvidenceGaps): when the
 //     layout puts the evidence tile past it, the tile moves up to the
-//     changes group's start, or as far up as it takes to be shown.
+//     changes group's start, or as far up as it takes to be shown, at its
+//     size or, when that does not fit, at half or a third. Pinned
+//     tiles and those always on the landing page come first, so when they
+//     fill it nothing moves; a person who hid the tile keeps it hidden.
 //  2. A change featured alone on its row at half, empty units beside it, is
 //     widened to the full row (FixLoneFeatured).
 //  3. The first screen, the first FirstScreenRows rows (what a 1440×900
@@ -103,13 +106,24 @@ func (cm *composer) guardEvidence(c *Composition) {
 	if start < 0 {
 		start = len(rest)
 	}
-	for to := start; to >= 0; to-- {
-		trial := *c
-		trial.Layout.Entries = slices.Insert(slices.Clone(rest), to, evidence)
-		if doc := cm.trialDoc(&trial); doc != nil && shown(doc, TypeEvidence) {
-			c.Layout.Entries = trial.Layout.Entries
-			cm.fix(FixEvidenceGaps, TypeEvidence, "")
-			return
+	// At its own size first, then smaller, so it fits beside what leads.
+	sizes := []Size{evidence.Size}
+	for _, size := range []Size{SizeHalf, SizeThird} {
+		if size.Units() < evidence.Size.Units() {
+			sizes = append(sizes, size)
+		}
+	}
+	for _, size := range sizes {
+		moved := evidence
+		moved.Size = size
+		for to := start; to >= 0; to-- {
+			trial := *c
+			trial.Layout.Entries = slices.Insert(slices.Clone(rest), to, moved)
+			if doc := cm.trialDoc(&trial); doc != nil && shown(doc, TypeEvidence) {
+				c.Layout.Entries = trial.Layout.Entries
+				cm.fix(FixEvidenceGaps, TypeEvidence, "")
+				return
+			}
 		}
 	}
 }
