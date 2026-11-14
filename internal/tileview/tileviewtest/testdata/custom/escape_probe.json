@@ -12,7 +12,7 @@
       "required": ["outside", "mode", "cite"],
       "properties": {
         "outside": { "type": "string", "maxLength": 200 },
-        "mode": { "enum": ["probe", "spoof", "flood", "leave_daemon", "leave_outside", "busy"] },
+        "mode": { "enum": ["probe", "spoof", "flood", "leave_daemon", "leave_outside", "leave_early", "hello_again", "focus", "busy"] },
         "cite": { "$ref": "#/$defs/citation" }
       }
     },

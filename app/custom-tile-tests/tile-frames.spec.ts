@@ -192,6 +192,12 @@ test("a probing frame reaches neither the page, the daemon nor the network", asy
     expect(results[name], name).toMatch(/^(failed|threw )/);
   expect(results["font outside"]).toMatch(/^failed/);
   expect(results["font daemon"]).toMatch(/^failed/);
+  // No message handler of the shell is reachable from the frame, the cache
+  // store refuses an opaque origin, and a peer connection is either absent or
+  // the documented residual (SECURITY.md): its STUN server here hears nothing.
+  expect(results["webkit handlers"]).toBe("");
+  expect(results.caches).toMatch(/^(failed|threw) /);
+  expect(results.RTCPeerConnection).toMatch(/^(absent|threw \w+|\[object RTCPeerConnection\])$/);
 
   // Give stragglers (beacons, a meta refresh) time to show.
   await page.waitForTimeout(1500);
@@ -241,6 +247,9 @@ test("spoofed messages are ignored and other tiles are not reached", async ({ pa
   const url = page.url();
   const spoofed = await report("spoof", "detail");
   expect(spoofed.results.sent).toContain("resize past the bounds");
+  expect(spoofed.results.sent).toContain("ready past the bounds");
+  // Its ask, without the reader's activation, opened nothing.
+  await expect(page.locator("section.session-panel")).toHaveCount(0);
   await page.waitForTimeout(1000);
   await expect(page).toHaveURL(url);
   await expect(frameBox(page, "escape_spoof")).toHaveAttribute("data-frame-state", "ready");
@@ -336,4 +345,45 @@ test("a frame in a busy loop holds the page only while it runs", async ({ page }
   await page.getByRole("button", { name: "Summary" }).first().click();
   await expect(page).not.toHaveURL(/tile=escape_busy/);
   expect(hits).toEqual([]);
+});
+
+test("a frame that navigates before it draws, or says hello again, is unmounted", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  for (const [tile, reason] of [
+    ["escape_leave_early", "It didn't finish drawing in time."],
+    ["escape_hello_again", "It tried to leave its frame."],
+  ] as const) {
+    await open(page, detail(tile));
+    const url = page.url();
+    await expect(page.getByRole("alert")).toContainText("This tile couldn't load.", {
+      timeout: 15000,
+    });
+    await expect(page.getByRole("alert")).toContainText(reason);
+    await expect(page).toHaveURL(url);
+  }
+  expect(hits).toEqual([]);
+});
+
+test("a detail that takes the keyboard while the reader types elsewhere gets no keys", async ({
+  page,
+}) => {
+  // The reader writes in the session panel's composer, the pointer resting
+  // over a detail that grabs the keyboard every 200ms: what they type stays
+  // in the composer.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, detail("escape_focus"));
+  await frameReady(page, "escape_focus");
+  await page.keyboard.press("`");
+  const composer = page
+    .locator("section.session-panel")
+    .getByRole("textbox", { name: "Message to the agent" });
+  await expect(composer).toBeFocused();
+  const box = (await frameBox(page, "escape_focus").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 60));
+  const text = "the retry delay is capped at thirty seconds";
+  await page.keyboard.type(text, { delay: 60 });
+  await expect(composer).toHaveValue(text);
+  await expect(composer).toBeFocused();
 });

@@ -39,7 +39,7 @@ var CustomTileIDs = []string{WidgetHealth, EscapeProbe, NewerKit}
 // EscapeProbeModes are the escape probe's other modes, each a tile of its
 // own (ID "escape_" and the mode) that AddBrowserTiles adds: their hostile
 // acts in a detail would take the page with them, so each has its own.
-var EscapeProbeModes = []string{"spoof", "flood", "leave_daemon", "leave_outside", "busy"}
+var EscapeProbeModes = []string{"spoof", "flood", "leave_daemon", "leave_outside", "leave_early", "hello_again", "focus", "busy"}
 
 type customFile struct {
 	ID         string               `json:"id"`

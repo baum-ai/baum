@@ -10,6 +10,9 @@
   - flood: posts the page far more messages than it allows, for seconds.
   - leave_daemon, leave_outside: navigates its own frame to a page of the
     daemon, or to the outside origin (a meta refresh as well).
+  - leave_early: navigates its own frame to the daemon before it draws.
+  - hello_again: says hello again, well formed, after it drew.
+  - focus: takes the keyboard every 200ms for three seconds.
   - busy: runs a busy loop of a second and a half after it drew.
 
   Only the probe mode acts in a glance, and spoof's frame messages; the
@@ -57,7 +60,16 @@
     attempt("localStorage", () => localStorage.length);
     attempt("sessionStorage", () => sessionStorage.length);
     attempt("indexedDB", () => indexedDB.open("probe"));
-    attempt("caches", () => typeof caches === "object" && caches.keys());
+    const cacheRead = new Promise((resolve) => {
+      try {
+        caches.keys().then(
+          () => resolve((results.caches = "read")),
+          (error) => resolve((results.caches = `failed ${error && error.name}`)),
+        );
+      } catch (error) {
+        resolve((results.caches = `threw ${error && error.name}`));
+      }
+    });
     attempt("parent bridge", () => parent.__TAURI_INTERNALS__);
     attempt("webkit handlers", () => Object.keys((window.webkit && window.webkit.messageHandlers) || {}).join(","));
     attempt("window.open", () => window.open(`${outside}/open`));
@@ -98,7 +110,11 @@
       window.focus();
       return `focused ${document.hasFocus()}`;
     });
-    attempt("RTCPeerConnection", () => typeof RTCPeerConnection === "function" && new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:4171" }] }));
+    attempt("RTCPeerConnection", () =>
+      typeof RTCPeerConnection === "function"
+        ? Object.prototype.toString.call(new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:4171" }] }))
+        : "absent",
+    );
     attempt("WebSocket outside", () => new WebSocket(`${outside.replace(/^http/, "ws")}/socket`));
     attempt("WebSocket daemon", () => new WebSocket(daemon("/api/events").replace(/^http/, "ws")));
     attempt("EventSource outside", () => new EventSource(`${outside}/events`));
@@ -170,6 +186,7 @@
       xhr("xhr outside", `${outside}/xhr`),
       font("font outside", `${outside}/font.woff2`),
       font("font daemon", daemon("/font.woff2")),
+      cacheRead,
     ]).then(() => new Promise((resolve) => setTimeout(resolve, 300)));
   }
 
@@ -199,7 +216,10 @@
     send("ask", { protocol: PROTOCOL, kind: "ask" });
     send("open", { protocol: PROTOCOL, kind: "open" });
     send("key", { protocol: PROTOCOL, kind: "key", key: "Escape", shift: false });
-    if (face === "detail") send("resize past the bounds", { protocol: PROTOCOL, kind: "resize", height: 1e9 });
+    if (face === "detail") {
+      send("resize past the bounds", { protocol: PROTOCOL, kind: "resize", height: 1e9 });
+      send("ready past the bounds", { protocol: PROTOCOL, kind: "ready", metrics: { height: 1e9 } });
+    }
     // The other frames of the page, told what to draw as if by the page.
     let others = 0;
     for (let index = 0; index < parent.length; index++) {
@@ -242,8 +262,24 @@
     }
   }
 
+  function takeFocus() {
+    const input = document.createElement("input");
+    input.setAttribute("aria-label", "taker");
+    document.body.append(input);
+    const timer = setInterval(() => {
+      input.focus();
+      window.focus();
+    }, 200);
+    setTimeout(() => clearInterval(timer), 3000);
+  }
+
   async function act(face, data) {
     const cite = JSON.stringify(["hunk", data.cite.id, null]);
+    if (face === "detail" && data.mode === "leave_early") {
+      // Before it drew: the page never hears its ready.
+      leave(data.outside, "daemon");
+      return new Promise(() => {});
+    }
     if (data.mode === "probe") {
       await probe(data.outside, face);
       report(data.mode, face);
@@ -260,6 +296,8 @@
         else if (data.mode === "leave_daemon") leave(data.outside, "daemon");
         else if (data.mode === "leave_outside") leave(data.outside, "outside");
         else if (data.mode === "busy") busy();
+        else if (data.mode === "hello_again") parent.postMessage({ protocol: PROTOCOL, kind: "hello", kit: 1, registered: true }, "*");
+        else if (data.mode === "focus") takeFocus();
         report(data.mode, face);
       }, 500);
     }
