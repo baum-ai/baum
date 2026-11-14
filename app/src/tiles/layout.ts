@@ -5,7 +5,6 @@ import {
   type TileDocument,
   type TileGroup,
   type TileLayoutEntry,
-  type TileSize,
 } from "./tile-document";
 
 /** One cell or row of the landing grid, in reading order. */
@@ -28,8 +27,9 @@ export type Landing = {
 /** The landing page's grid, by the rule of the Go layout (`tiles.Hidden`,
  *  `tiles.More`): a group member past its group's `collapse_after` is hidden
  *  wherever it stands, and only its group's own cell reveals it, counting all
- *  of them; every other entry before `landing` shows, and those from
- *  `landing` on wait behind "Show N more tiles" (`more`). */
+ *  of them, unless the group shows some members and would fold only one;
+ *  every other entry before `landing` shows, and those from `landing` on
+ *  wait behind "Show N more tiles" (`more`). */
 export function landingOf(document: TileDocument, expansions: Expansions): Landing {
   const placed = placedTiles(document);
   const groups = new Map(document.layout.groups.map((group) => [group.id, group]));
@@ -50,7 +50,13 @@ export function landingOf(document: TileDocument, expansions: Expansions): Landi
     let end = at;
     while (end < placed.length && placed[end]!.entry.group === group.id) end++;
     const open = expansions.groups.has(group.id);
-    const limit = group.collapse_after;
+    const count = end - at;
+    // A group that shows some members never folds a single one.
+    const limit =
+      group.collapse_after !== undefined &&
+      (group.collapse_after === 0 || count - group.collapse_after >= 2)
+        ? group.collapse_after
+        : undefined;
     const members = placed.slice(at, end).map((member, position) => ({
       ...member,
       index: at + position,
@@ -77,50 +83,44 @@ export function landingOf(document: TileDocument, expansions: Expansions): Landi
   return { items, rest };
 }
 
-/** How a card grows to the end of its row: `wide`, its span in units on the
- *  six-unit grid; `two`, that it spans both columns of the two-column one. */
-export type RowFill = { wide?: number; two?: boolean };
+/** A run of the landing grid: a group's block (its heading, members and
+ *  cells), or the tiles between blocks. A block starts a row and the tile
+ *  after it another, as the Go layout's rows say (`tiles.Rows`). */
+export type LandingBlock = { group?: TileGroup; items: LandingItem[] };
 
-export const UNITS: Record<TileSize, number> = { full: 6, half: 3, third: 2 };
-
-/** The cards that grow so a row the page breaks early has no hole. A group's
- *  heading, a group's show more or fewer cell and the landing area's own
- *  "Show more" row each span the whole grid, so a row ends at them full or
- *  not. The Go layout fills the rows it knows (`tiles.RowFills`), which has
- *  no headings, so a short row before one would leave a hole: its last card
- *  grows to the row's end instead, on the wide grid and on the two-column
- *  one. A row that ends because the next card does not fit is the layout's
- *  to fill, and a last row with nothing after it stays as it is. */
-export function breakFills(landing: Landing, more: boolean): Map<string, RowFill> {
-  const fills = new Map<string, RowFill>();
-  let wide = 0;
-  let two = 0;
-  let lastWide: { id: string; units: number } | null = null;
-  let lastTwo: string | null = null;
-  const close = () => {
-    if (lastWide && wide < 6)
-      fills.set(lastWide.id, { ...fills.get(lastWide.id), wide: lastWide.units + 6 - wide });
-    if (lastTwo && two === 1) fills.set(lastTwo, { ...fills.get(lastTwo), two: true });
-    wide = 0;
-    two = 0;
-    lastWide = null;
-    lastTwo = null;
-  };
-  for (const item of landing.items) {
-    if (item.kind !== "tile") {
-      close();
-      continue;
-    }
-    const units = UNITS[item.entry.size] ?? 6;
-    if (wide + units > 6) wide = 0;
-    wide += units;
-    lastWide = { id: item.tile.id, units };
-    const columns = item.entry.size === "full" ? 2 : 1;
-    if (two + columns > 2) two = 0;
-    two += columns;
-    lastTwo = item.tile.id;
+/** The landing grid's items, in blocks. */
+export function blocksOf(items: LandingItem[]): LandingBlock[] {
+  const blocks: LandingBlock[] = [];
+  for (const item of items) {
+    const group = item.kind === "tile" ? item.entry.group : item.group.id;
+    const last = blocks.at(-1);
+    if (item.kind === "heading" || (group && last?.group?.id !== group)) {
+      const owner = item.kind === "tile" ? undefined : item.group;
+      blocks.push({ group: owner, items: [item] });
+    } else if (!group && (!last || last.group)) blocks.push({ items: [item] });
+    else last!.items.push(item);
   }
-  if (more) close();
+  return blocks;
+}
+
+/** The cards that span both columns of the two-column grid of a narrow
+ *  window: a block's last card when it would be alone in its row. It is the
+ *  page's only rule of its own and changes nothing on the six-unit grid
+ *  (the Go layout's comment on `tiles.Landing` names it). */
+export function narrowFills(blocks: LandingBlock[]): Set<string> {
+  const fills = new Set<string>();
+  for (const block of blocks) {
+    let used = 0;
+    let last: string | null = null;
+    for (const item of block.items) {
+      if (item.kind !== "tile") continue;
+      const columns = item.entry.size === "full" ? 2 : 1;
+      if (used + columns > 2) used = 0;
+      used += columns;
+      last = item.tile.id;
+    }
+    if (last && used === 1) fills.add(last);
+  }
   return fills;
 }
 

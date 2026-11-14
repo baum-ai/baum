@@ -55,13 +55,15 @@ const GLANCE_ROWS = 4;
 
 function TableGlance({ tile }: TileFaceProps) {
   const data = tile.data as TableData;
+  // One row more than the glance holds is shown rather than counted.
+  const shown = data.rows.length === GLANCE_ROWS + 1 ? GLANCE_ROWS + 1 : GLANCE_ROWS;
   return (
     <div className="space-y-1.5">
       <div className="pointer-events-none overflow-hidden">
-        <TableView data={data} rows={data.rows.slice(0, GLANCE_ROWS)} />
+        <TableView data={data} rows={data.rows.slice(0, shown)} />
       </div>
-      {data.rows.length > GLANCE_ROWS ? (
-        <p className="text-xs text-tertiary">{data.rows.length - GLANCE_ROWS} more rows</p>
+      {data.rows.length > shown ? (
+        <p className="text-xs text-tertiary">{data.rows.length - shown} more rows</p>
       ) : null}
     </div>
   );

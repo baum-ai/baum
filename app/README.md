@@ -2543,12 +2543,17 @@ full review's own.
   outdated, a draft, "Writing details for N of M changes", "N changes
   couldn't be written" with Retry, or an earlier version. Below it, the tiles' glance faces in the layout's order,
   on a grid of six units (a full tile six, a half three, a third two) that
-  becomes two columns and then one as the pane narrows. The Changes group
-  shows every change up to eight and otherwise its first six, the rest behind
-  a slim row naming the first three ("Show 4 more changes · …, … and 1
-  more"); the tiles past the
-  landing area wait behind "Show N more tiles · …". Both are kept in the
-  address (`expand=<group,…>`, `more=1`), so Back restores them.
+  becomes two columns and then one as the pane narrows. The rows are the Go
+  layout's (`tiles.Rows`): a group is a block of its own, its heading starting
+  a row and a rule under it ending the block, so the tile after a group never
+  stands in the group's row or, on a phone, under its heading. On two columns
+  a block's last card spans both when it would be alone in its row. The
+  Changes group shows every change up to eight and otherwise its first six,
+  the rest behind a slim row naming the first three ("Show 4 more changes ·
+  …, … and 1 more"); a group never folds a single change. The tiles past the
+  landing area wait behind "Show N more tiles · …", which never holds a single
+  tile. Both are kept in the address (`expand=<group,…>`, `more=1`), so Back
+  restores them.
 - **Glance faces** say whether a tile needs opening. A card is as tall as its
   row asks: it shows what it must (a change's warning, every critical or high
   risk), then fills the rest of its row with more of its own content (more of

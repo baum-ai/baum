@@ -8,7 +8,7 @@ import baseReview from "../../../tiles/testdata/base.review.json" with { type: "
 import { TileBoundary } from "./card";
 import { TileDetail } from "./detail";
 import { TileLanding } from "./landing";
-import { breakFills } from "./layout";
+import { blocksOf, landingOf, narrowFills } from "./layout";
 import { TileHostContext } from "./host";
 import { tileFace } from "./registry";
 import { golden } from "./goldens-test-helper";
@@ -209,67 +209,84 @@ describe("the landing page's markers", () => {
   });
 });
 
-describe("rows the page breaks early", () => {
-  it("grow their last card to the row's end before a group's heading", () => {
-    const doc = structuredClone(golden("example"));
-    const changes = doc.layout.entries.filter((entry) => entry.group === "changes");
-    expect(changes.length).toBeGreaterThan(2);
-    // A change led at half before the group: alone on its row.
-    const [lead, ...rest] = changes;
-    doc.layout.entries = [
-      ...doc.layout.entries.filter((entry) => entry.tile === "overview" || entry.tile === "risks"),
-      { tile: lead!.tile, size: "half" },
-      ...rest,
-    ];
-    doc.layout.landing = doc.layout.entries.length;
+describe("the table tile", () => {
+  it("shows a fifth row rather than counting one more", () => {
+    const { doc, review } = pairs.base();
+    const rows = (n: number) => Array.from({ length: n }, (_, i) => [`r${i}`, `${i}`]);
+    const table = (n: number): Tile =>
+      ({
+        id: "table_rows",
+        type: "table",
+        title: "Rows",
+        state: "ready",
+        data: { columns: ["name", "value"], rows: rows(n), source: [] },
+      }) as unknown as Tile;
+    const face = tileFace(table(5));
+    if (face.kind !== "ready") throw new Error(`the table tile is ${face.kind}`);
+    const Glance = face.type.Glance;
+    const five = render(<Glance tile={table(5)} ctx={contextFor(doc, review)} />);
+    expect(five.textContent).toContain("r4");
+    expect(five.textContent).not.toMatch(/more rows/);
+    act(() => root!.unmount());
+    const six = render(<Glance tile={table(6)} ctx={contextFor(doc, review)} />);
+    expect(six.textContent).toContain("2 more rows");
+  });
+});
+
+describe("the landing grid's blocks", () => {
+  it("draws a group as a block, so the tile after it is not under its heading", () => {
+    const doc = structuredClone(golden("base"));
     const page = render(
       <TileLanding
-        ctx={contextFor(doc, example as unknown as ReviewDocument)}
+        ctx={contextFor(doc, baseReview as unknown as ReviewDocument)}
         generation={null}
         memory={{ current: null }}
       />,
     );
-    const card = page.querySelector(`[data-tile="${lead!.tile}"]`)!;
-    expect(card.className).toContain("@min-[52rem]/tiles:col-span-6");
-    expect(card.className).toContain("@min-[36rem]/tiles:col-span-2");
-    expect(card.getAttribute("data-tile-size")).toBe("half");
-    // A row the next card ends is the layout's: the overview keeps its span.
-    expect(page.querySelector('[data-tile="overview"]')!.className).not.toContain("col-span-6");
+    const block = page.querySelector('[data-tile-group-block="changes"]')!;
+    const members = doc.layout.entries.filter((entry) => entry.group === "changes");
+    expect(block.querySelectorAll("article[data-tile]").length).toBe(members.length);
+    expect(block.querySelector('[data-tile="evidence"]')).toBeNull();
+    expect(page.querySelector('[data-tile="evidence"]')).not.toBeNull();
   });
 
-  it("are found from the landing page's breaks alone", () => {
-    const tile = (id: string, size: "full" | "half" | "third") => ({
+  it("finds the cards that span both narrow columns block by block", () => {
+    const tile = (id: string, size: "full" | "half" | "third", group?: string) => ({
       kind: "tile" as const,
       tile: { id } as Tile,
-      entry: { tile: id, size },
+      entry: { tile: id, size, ...(group ? { group } : {}) },
     });
     const group = { id: "changes", title: "Changes" };
-    const heading = { kind: "heading" as const, group, count: 3 };
-    const fills = breakFills(
-      {
-        items: [
-          tile("a", "half"),
-          tile("b", "half"),
-          tile("c", "third"),
-          heading,
-          tile("d", "half"),
-          tile("e", "third"),
-          { kind: "more", group, hidden: [] },
-          tile("f", "full"),
-          tile("g", "third"),
-        ],
-        rest: [],
-      },
-      false,
-    );
-    // c: alone before the heading, four units short, and alone on the
-    // narrow grid's row. e: one unit short of d's row before the group's
-    // cell, which the narrow grid fills. f fills its rows; g is the last.
-    expect(Object.fromEntries(fills)).toEqual({ c: { wide: 6, two: true }, e: { wide: 3 } });
-    expect(breakFills({ items: [tile("g", "third")], rest: [] }, true).get("g")).toEqual({
-      wide: 6,
-      two: true,
-    });
+    const blocks = blocksOf([
+      tile("overview", "half"),
+      tile("risks", "half"),
+      { kind: "heading", group, count: 3 },
+      tile("a", "third", "changes"),
+      tile("b", "third", "changes"),
+      tile("c", "third", "changes"),
+      tile("evidence", "third"),
+      tile("context", "full"),
+    ]);
+    expect(blocks.map((block) => block.group?.id ?? "")).toEqual(["", "changes", ""]);
+    // c is alone in its narrow row at the end of the group; evidence ends
+    // its row only because the full card after it does not fit, which is
+    // not a block's end.
+    expect([...narrowFills(blocks)]).toEqual(["c"]);
+  });
+
+  it("never folds a single member of a group that shows some", () => {
+    const doc = structuredClone(golden("example"));
+    const group = doc.layout.groups.find((each) => each.id === "changes")!;
+    const members = doc.layout.entries.filter((entry) => entry.group === "changes").length;
+    group.collapse_after = members - 1;
+    doc.layout.landing = doc.layout.entries.length;
+    const folds = () =>
+      landingOf(doc, { more: false, groups: new Set() }).items.some(
+        (item) => item.kind === "more" && item.group.id === "changes",
+      );
+    expect(folds()).toBe(false);
+    group.collapse_after = members - 2;
+    expect(folds()).toBe(true);
   });
 });
 
@@ -333,7 +350,7 @@ describe("tiles that cannot be drawn", () => {
 
   it("show a pending tile without data as being written", () => {
     const doc = structuredClone(golden("base"));
-    const context = tileOf(doc, "context");
+    const context = tileOf(doc, "intent");
     context.state = "pending";
     context.data = {};
     expect(tileFace(context).kind).toBe("pending");
@@ -344,7 +361,7 @@ describe("tiles that cannot be drawn", () => {
         memory={{ current: null }}
       />,
     );
-    expect(page.querySelector('[data-tile="context"]')?.textContent).toContain("Writing details…");
+    expect(page.querySelector('[data-tile="intent"]')?.textContent).toContain("Writing details…");
   });
 });
 
@@ -373,7 +390,9 @@ describe("the landing page", () => {
     // Five changes are all shown; the tiles past the landing area wait
     // behind the page's own control.
     expect(page.textContent).not.toMatch(/more change/);
-    expect(page.textContent).toContain("Show 5 more tiles");
+    expect(page.textContent).toContain(
+      `Show ${doc.layout.entries.length - doc.layout.landing - 1} more tiles`,
+    );
   });
 
   it("names the recommendation and leads to what it cites", () => {

@@ -2416,22 +2416,33 @@ forwards the completion and reports it like the other calls: its phase is
 `arranging` while the composer works, its call, tokens and usage count, and the
 transcript names the call "Composition".
 
-**Filling landing rows.** Every composition, the composer's and the
-templates', is normalised so that no landing row of the composed document ends
-with empty units when the tile after it does not fit and growing the row's
-last tile to its next larger allowed size would fill the row exactly
-(`tiles.RowFills`): that tile grows. Nothing shrinks, the order is kept and a
-pinned tile is never grown. In a composer's layout each growth is a fix of
-its own kind, `row_fill`, which is the host's layout rule rather than a repair
-of the reply (replay reports it as `compose_row_fill`, outside
-`compose_fixes`); in a template it is part of the template. A converted
-document, which no composition lays out, is unchanged. The rows `RowFills` counts know nothing of the page's
-full-width breaks (a group's heading, a group's show more or fewer cell and the
-landing area's "Show more" row), where a row ends whether full or not; the
-tiles page grows the last card before such a break to the row's end itself,
-on the wide grid and on the two-column one (`breakFills` in
-`app/src/tiles/layout.ts`), so a short row there leaves no hole. The card's
-declared size (`data-tile-size`) is unchanged.
+**Rows, filling and guard rails.** The landing page has one row model, in
+Go (`tiles.Rows`), which the tiles page lays out exactly: entries fill rows
+six units wide in order, an entry that does not fit starts the next row, and a
+group is a block under its own heading, so its first member and the entry
+after its last member each start a row (the page draws each group as a grid of
+its own across the row, ended by a rule). `tiles.Landing` takes the first three
+rows, and one more entry when a single one would be left behind "Show more";
+a group that shows some members never folds a single one (`tiles.Hidden`, which
+the page mirrors). Every row another follows is filled when growing its tiles
+to allowed sizes can (`tiles.RowFills`: the last tile to the size that fills
+it, else every tile to equal parts): in converted documents, in templates as
+part of the template, and in a composer's layout as a `row_fill` fix, the
+host's layout rule rather than a repair of the reply (replay reports it as
+`compose_row_fill`, outside `compose_fixes`). Templates give a single change no
+group, keep active risks beside the overview for docs and CI, and put evidence
+with three or more gaps beside the lead change on the second row. A composer's
+layout then passes three guard rails (`tiles/guards.go`), each a fix of its own
+kind: evidence with three or more gaps stays on the landing page
+(`evidence_gaps`), a change featured alone at half takes its full row
+(`lone_featured`), and a first screen (the first two rows) that shows fewer
+current changes than the template's, with nothing that must be seen instead
+(the risks tile with a critical or high risk, a change the recommendation
+names, evidence with gaps, a pinned tile) or tiles a person hid, takes the
+template's layout (`first_screen`). `tilestest.CheckGenerated` checks the rows
+(invariant 13) and the guard rails (14). On a narrow window's two-column grid
+the page lets a block's last card span both columns when it would be alone in
+its row, which changes no row of the canonical grid.
 `tilestest.CheckGenerated` asserts it (invariant 13).
 
 ## `decisions`

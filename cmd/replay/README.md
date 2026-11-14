@@ -173,10 +173,13 @@ once, the round trip back to the review.
 `compose_fixes` and `compose_fix_<kind>`, `compose_differs_from_template`,
 `compose_landing_differs`, `compose_featured_changes`, `compose_promotions`,
 `compose_reasons`, `compose_landing_tiles`, `compose_inventory_bytes`,
-`compose_inventory_cut`, `compose_seconds`, `compose_row_fill` (landing rows
-the host filled by growing their last tile, which `compose_fixes` leaves
-out: it is the host's layout rule, not a repair), `compose_wasted_rows` (landing
-rows left with empty units while a tile follows), `compose_quiet_risks_half`
+`compose_inventory_cut`, `compose_seconds`, `compose_row_fill` (rows the host
+filled by growing their tiles, which `compose_fixes` leaves out: it is the
+host's layout rule, not a repair; the guard rails' `evidence_gaps`,
+`lone_featured` and `first_screen` are fixes like the others, as
+`compose_fix_<kind>`), `compose_wasted_rows` (landing rows, as the page lays
+them out with each group a block, left with empty units while a tile follows),
+`compose_quiet_risks_half`
 (a risks tile ranking nothing above low on half of the first row), both also
 for the template (`template_` prefix), and, on reviews with a breaking change
 only, `compose_breaking_featured` (a change is featured; a proxy for the one

@@ -12,12 +12,17 @@ function goHidden(doc: TileDocument) {
       .filter((g) => g.collapse_after !== undefined)
       .map((g) => [g.id, g.collapse_after!]),
   );
+  const total = new Map<string, number>();
+  for (const e of doc.layout.entries)
+    if (e.group) total.set(e.group, (total.get(e.group) ?? 0) + 1);
   const members = new Map<string, number>();
   return doc.layout.entries.map((e) => {
     if (!e.group) return false;
     members.set(e.group, (members.get(e.group) ?? 0) + 1);
     const limit = collapse.get(e.group);
-    return limit !== undefined && members.get(e.group)! > limit;
+    // A group that shows some members never folds a single one.
+    const folds = limit !== undefined && (limit === 0 || total.get(e.group)! - limit >= 2);
+    return folds && members.get(e.group)! > limit!;
   });
 }
 function check(doc: TileDocument, name: string) {

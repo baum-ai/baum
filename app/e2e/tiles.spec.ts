@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
 
@@ -149,19 +151,19 @@ test("an earlier version and a comparison draw their own tiles", async ({ page }
 
 test("a comment on a tile is kept over a reload", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, `${PR7}&pane=tile&tile=evidence`);
-  await expect(page.getByRole("heading", { name: "Evidence", level: 2 })).toBeVisible();
+  await open(page, `${PR7}&pane=tile&tile=risks`);
+  await expect(page.getByRole("heading", { name: "Risks", level: 2 })).toBeVisible();
   const count = page.locator("[data-review-button] .review-count").first();
   const before = Number((await count.count()) ? await count.textContent() : 0);
   await page.keyboard.press("c");
-  await expect(page.getByLabel("Comment on Evidence")).toBeFocused();
+  await expect(page.getByLabel(/^Comment on Risks/)).toBeFocused();
   await page.keyboard.type("Is the load run coming?");
   await page.keyboard.press("Control+Enter");
   await expect(count).toHaveText(String(before + 1));
   await open(page, PR7);
-  await expect(page.locator('article[data-tile="evidence"]')).toContainText("1");
+  await expect(page.locator('article[data-tile="risks"]')).toBeVisible();
   await expect(
-    page.locator('article[data-tile="evidence"]').getByTitle("1 pending comment"),
+    page.locator('article[data-tile="risks"]').getByTitle("1 pending comment"),
   ).toBeVisible();
   // Leave the fixture's review as it was: without this test's comment.
   await page.evaluate(async () => {
@@ -263,11 +265,11 @@ test("the keys never drop to the page, and Back does not reopen a tile", async (
   await page.setViewportSize({ width: 1440, height: 900 });
   // A link to a tile, with nothing remembered: Escape gives the keys to that
   // tile's card on the landing page.
-  await open(page, `${PR7}&pane=tile&tile=evidence`);
-  await expect(page.getByRole("heading", { name: "Evidence", level: 2 })).toBeVisible();
+  await open(page, `${PR7}&pane=tile&tile=risks`);
+  await expect(page.getByRole("heading", { name: "Risks", level: 2 })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page).not.toHaveURL(/pane=tile/);
-  await expect(page.locator('article[data-tile="evidence"] [data-block-open]')).toBeFocused();
+  await expect(page.locator('article[data-tile="risks"] [data-block-open]')).toBeFocused();
   // A link to an item: brought into view, marked and given the keys.
   await open(page, `${PR7}&pane=tile&tile=risks&tile_item=rsk_api_header`);
   await expect(page.locator("#tile-item-rsk_api_header")).toBeFocused();
@@ -429,5 +431,35 @@ test("with tile reviews on, an arranged version opens on its tiles", async ({ pa
     await expect(strip).toHaveCount(0);
   } finally {
     expect(await labs(false)).toBe(200);
+  }
+});
+
+test("the landing page's cards stand in the Go layout's rows", async ({ page }) => {
+  // The fixture writes each served tile page's landing rows by the Go row
+  // model (tiles.Rows): a group is a block, so its first member and the tile
+  // after its last member each start a row.
+  const expected: Record<string, string[][]> = JSON.parse(
+    await readFile(join(process.env.BAUM_APP_STATE_DIR ?? "", "tile-rows.json"), "utf8"),
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  for (const [pr, rows] of Object.entries(expected)) {
+    await open(page, `repository=acme%2Fdemo&pr=${pr}&view=tiles`);
+    const cards = page.locator("article[data-tile]");
+    await expect(cards.first()).toBeVisible();
+    const drawn = await cards.evaluateAll((elements) => {
+      const placed = elements.map((element) => ({
+        id: (element as HTMLElement).dataset.tile ?? "",
+        top: Math.round(element.getBoundingClientRect().top),
+      }));
+      const rows: string[][] = [];
+      let top = Number.NaN;
+      for (const card of placed) {
+        if (!(Math.abs(card.top - top) < 2)) rows.push([]);
+        top = card.top;
+        rows.at(-1)!.push(card.id);
+      }
+      return rows;
+    });
+    expect(drawn, `pull request ${pr}`).toEqual(rows);
   }
 });

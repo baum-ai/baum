@@ -432,6 +432,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		if err := versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 12}, store.Version{}, arranged); err != nil {
 			t.Fatal(err)
 		}
+		writeTileRows(t, map[string]tileview.Response{
+			"7":  tileview.Build(previous.Document, nil, tiles.Options{}),
+			"12": tileview.Build(document, composition, tiles.Options{}),
+		})
 	}
 	write := true
 	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AssignedToMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 11, HeadSHA: repo.Head, Title: "A branch behind its base", State: "OPEN", URL: "https://github.com/acme/demo/pull/11", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
@@ -853,6 +857,40 @@ func seedAskConversation(t *testing.T, versions *store.Store, version int) {
 	}
 	cost := 0.02
 	if _, err := versions.SettleTurn(ctx, key, c.ID, 1, store.Settlement{State: store.TurnCompleted, Answer: answer, CostUSD: &cost, Finished: asked.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeTileRows writes, for the tiles page's browser test, the rows of each
+// served tile document's landing page by the Go layout (tiles.Rows), as tile
+// IDs: tile-rows.json in BAUM_APP_STATE_DIR, keyed by pull request number.
+// The test measures the cards the page draws against them.
+func writeTileRows(t *testing.T, served map[string]tileview.Response) {
+	t.Helper()
+	out := map[string][][]string{}
+	for key, answer := range served {
+		if answer.Tiles == nil {
+			t.Fatalf("pull request %s has no tile document: %s", key, answer.Problem)
+		}
+		layout := answer.Tiles.Layout
+		rows := [][]string{}
+		for _, row := range tiles.Rows(layout) {
+			if row.Entries[0] >= layout.Landing {
+				break
+			}
+			ids := []string{}
+			for _, i := range row.Entries {
+				ids = append(ids, layout.Entries[i].Tile)
+			}
+			rows = append(rows, ids)
+		}
+		out[key] = rows
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "tile-rows.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

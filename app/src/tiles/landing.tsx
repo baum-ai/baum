@@ -1,5 +1,5 @@
 import pluralize from "pluralize";
-import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { StatusBlock } from "@baum/viewer/components/editorial";
 import { ChevronDownIcon } from "@baum/viewer/components/icons";
@@ -13,7 +13,14 @@ import { navigate } from "../api";
 import { type MenuItem, useContextMenu } from "../context-menu";
 import { GlanceCard } from "./card";
 import { useTileHost, type LandingMemory } from "./host";
-import { breakFills, landingOf, onLanding, type Landing } from "./layout";
+import {
+  blocksOf,
+  landingOf,
+  narrowFills,
+  onLanding,
+  type Landing,
+  type LandingItem,
+} from "./layout";
 import { Clamp, plainText } from "./parts";
 import { readExpansions, withExpansions, type Expansions } from "./place";
 import { FixedStrip } from "./strip";
@@ -154,6 +161,10 @@ function MustShowBand({ ctx, landing }: { ctx: TileContext; landing: Landing }) 
   );
 }
 
+/** The landing grid: six units once wide, two columns below, one on a phone.
+ *  A group's block is a grid of its own across the whole row. */
+const GRID = "grid grid-cols-1 gap-3 @min-[36rem]/tiles:grid-cols-2 @min-[52rem]/tiles:grid-cols-6";
+
 function TileGrid({
   ctx,
   landing,
@@ -167,7 +178,8 @@ function TileGrid({
 }) {
   const host = useTileHost();
   const menu = useContextMenu();
-  const fills = breakFills(landing, landing.rest.length > 0 || expansions.more);
+  const blocks = blocksOf(landing.items);
+  const narrow = narrowFills(blocks);
   const toggleGroup = (group: string, open: boolean) => {
     const groups = new Set(expansions.groups);
     if (open) groups.add(group);
@@ -191,61 +203,77 @@ function TileGrid({
         ]
       : []),
   ];
+  const renderItem = (item: LandingItem) => {
+    switch (item.kind) {
+      case "heading":
+        return (
+          <h3
+            key={`heading-${item.group.id}`}
+            data-tile-group={item.group.id}
+            className="col-span-full -mb-1 flex items-baseline gap-2 pt-3"
+          >
+            <span className="text-xs font-medium tracking-[0.08em] text-tertiary uppercase">
+              {item.group.title}
+            </span>
+            <span className="text-xs text-tertiary tabular-nums">{item.count}</span>
+          </h3>
+        );
+      case "tile":
+        return (
+          <GlanceCard
+            key={item.tile.id}
+            tile={item.tile}
+            size={item.entry.size}
+            narrow={narrow.has(item.tile.id)}
+            ctx={ctx}
+            menu={menu}
+            menuItems={menuItems(item.tile)}
+            comments={host.commentCounts.get(item.tile.id) ?? 0}
+          />
+        );
+      case "more":
+        return (
+          <ControlRow
+            key={`more-${item.group.id}`}
+            expanded={false}
+            onClick={() => toggleGroup(item.group.id, true)}
+            label={`Show ${item.hidden.length} more ${pluralize(item.group.title.toLowerCase(), item.hidden.length)}`}
+            names={item.hidden.map((tile) => tile.title)}
+          />
+        );
+      case "less":
+        return (
+          <ControlRow
+            key={`less-${item.group.id}`}
+            expanded
+            onClick={() => toggleGroup(item.group.id, false)}
+            label={`Show fewer ${item.group.title.toLowerCase()}`}
+          />
+        );
+    }
+  };
   return (
     <>
       {/* The cards' level: Overview and Risks stand under it, a group's under
           the group's own heading. */}
       <h3 className="sr-only">Tiles</h3>
-      <div className="grid grid-cols-1 gap-3 @min-[36rem]/tiles:grid-cols-2 @min-[52rem]/tiles:grid-cols-6">
-        {landing.items.map((item) => {
-          switch (item.kind) {
-            case "heading":
-              return (
-                <h3
-                  key={`heading-${item.group.id}`}
-                  data-tile-group={item.group.id}
-                  className="col-span-full -mb-1 flex items-baseline gap-2 pt-3"
-                >
-                  <span className="text-xs font-medium tracking-[0.08em] text-tertiary uppercase">
-                    {item.group.title}
-                  </span>
-                  <span className="text-xs text-tertiary tabular-nums">{item.count}</span>
-                </h3>
-              );
-            case "tile":
-              return (
-                <GlanceCard
-                  key={item.tile.id}
-                  tile={item.tile}
-                  size={item.entry.size}
-                  fill={fills.get(item.tile.id)}
-                  ctx={ctx}
-                  menu={menu}
-                  menuItems={menuItems(item.tile)}
-                  comments={host.commentCounts.get(item.tile.id) ?? 0}
-                />
-              );
-            case "more":
-              return (
-                <ControlRow
-                  key={`more-${item.group.id}`}
-                  expanded={false}
-                  onClick={() => toggleGroup(item.group.id, true)}
-                  label={`Show ${item.hidden.length} more ${pluralize(item.group.title.toLowerCase(), item.hidden.length)}`}
-                  names={item.hidden.map((tile) => tile.title)}
-                />
-              );
-            case "less":
-              return (
-                <ControlRow
-                  key={`less-${item.group.id}`}
-                  expanded
-                  onClick={() => toggleGroup(item.group.id, false)}
-                  label={`Show fewer ${item.group.title.toLowerCase()}`}
-                />
-              );
-          }
-        })}
+      <div className={GRID}>
+        {blocks.map((block, index) =>
+          block.group ? (
+            // A group is a block of its own: its heading starts a row, and
+            // what follows it starts another, under a rule that ends it.
+            <section
+              key={`group-${block.group.id}`}
+              aria-label={block.group.title}
+              data-tile-group-block={block.group.id}
+              className={cn(GRID, "col-span-full border-b border-default pb-4")}
+            >
+              {block.items.map(renderItem)}
+            </section>
+          ) : (
+            <Fragment key={`run-${index}`}>{block.items.map(renderItem)}</Fragment>
+          ),
+        )}
       </div>
       {landing.rest.length > 0 || expansions.more ? (
         <ControlRow
