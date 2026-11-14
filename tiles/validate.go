@@ -24,7 +24,8 @@ import (
 //   - A tile-level failure marks only that tile unavailable, with its
 //     problems: a single tile not under its type's ID, data that does not
 //     have its type's shape (only a draft's pending context tile may have
-//     empty data), references in the data that do not resolve, a decision ID
+//     empty data), references in the data that do not resolve (a promoted
+//     table or code block's origin among them), a decision ID
 //     repeated in the decisions tile, an unknown type, and a custom tile
 //     whose definition, data or citations fail (see CheckDefinition and
 //     CheckData), which also gets its covers: the hunks its data cites.
@@ -459,6 +460,10 @@ func builtinProblems(data map[string]*jsonschema.Resolved, refs *tileRefs, tile 
 		for _, item := range value.Items {
 			origin(item, "a media item")
 		}
+	case TypeTable, TypeCode:
+		var value itemPlace
+		_ = json.Unmarshal(tile.Data, &value)
+		origin(value, "the promoted block")
 	}
 	return problems
 }

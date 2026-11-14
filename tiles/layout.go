@@ -30,9 +30,10 @@ func (s Size) Units() int {
 // A custom tile's entry of a size its definition does not declare gets the
 // first size it declares. Pinned entries move to the front; so does the
 // risks tile when it ranks an active critical or high risk and would
-// otherwise not be on the landing page. Both moves are stable. A converted
-// document pins nothing and places the risks tile second, where it is always
-// on the landing page, so its order is unchanged.
+// otherwise not be on the landing page. Both moves are stable, and should
+// the pinned entries alone fill the landing page, the risks tile goes first.
+// A converted document pins nothing and places the risks tile second, where
+// it is always on the landing page, so its order is unchanged.
 func Arrange(doc *Document) {
 	layout := doc.Layout
 	layout.Entries = declaredSizes(doc, layout.Entries)
@@ -44,6 +45,10 @@ func Arrange(doc *Document) {
 			if entry.Tile == TypeRisks && i >= layout.Landing {
 				layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin || entry.Tile == TypeRisks })
 				layout.Landing = Landing(layout)
+				if slices.IndexFunc(layout.Entries, func(entry Entry) bool { return entry.Tile == TypeRisks }) >= layout.Landing {
+					layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Tile == TypeRisks })
+					layout.Landing = Landing(layout)
+				}
 				break
 			}
 		}

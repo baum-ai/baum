@@ -143,3 +143,24 @@ func TestArrangeMovesSevereRisksOntoTheLandingPage(t *testing.T) {
 		}
 	}
 }
+
+// When pinned entries alone fill the landing page, a risks tile that ranks a
+// high risk goes before them.
+func TestArrangeKeepsSevereRisksAheadOfPinsThatFillTheLandingPage(t *testing.T) {
+	doc := &tiles.Document{
+		Risks: []tiles.Risk{{ID: "rsk_x", Tier: "high", State: "active", Change: "sec_x"}},
+		Tiles: []tiles.Tile{{ID: tiles.TypeRisks, Type: tiles.TypeRisks, Data: []byte(`{"ranked":["rsk_x"]}`)}},
+		Layout: tiles.Layout{Entries: []tiles.Entry{
+			{Tile: "overview", Size: tiles.SizeHalf},
+			{Tile: "a", Size: tiles.SizeFull, Pin: true}, {Tile: "b", Size: tiles.SizeFull, Pin: true}, {Tile: "c", Size: tiles.SizeFull, Pin: true},
+			{Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
+		}},
+	}
+	tiles.Arrange(doc)
+	if want := []string{"risks", "a", "b", "c", "overview"}; !slices.Equal(order(doc.Layout), want) {
+		t.Errorf("order = %v, want %v", order(doc.Layout), want)
+	}
+	if !tiles.Visible(doc.Layout)[0] {
+		t.Error("the risks tile is not on the landing page")
+	}
+}

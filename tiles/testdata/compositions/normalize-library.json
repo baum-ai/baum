@@ -1,0 +1,323 @@
+{
+  "fixes": [
+    "a library tile fails its checks and is left out: its definition has no valid name",
+    "library tile \"unsealed\" fails its checks and is left out: the definition doesn't match its digest",
+    "library tile \"retry_budget\" has the ID of another tile and is left out",
+    "library tile \"sec_config_flag\" has the ID of another tile and is left out",
+    "library tile \"broken_data\" fails its checks and is left out: the data does not match its schema: at /cites: has 0 items; its minItems is 1",
+    "library tile \"cites_nothing_known\" fails its checks and is left out: the citation at /cites/0 names a hunk this review does not have; cite one from the review",
+    "the layout does not place tile \"overview\"; it is added in the default order",
+    "the layout does not place tile \"risks\"; it is added in the default order",
+    "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
+    "the layout does not place tile \"sec_config_flag\"; it is added in the default order",
+    "the layout does not place tile \"media\"; it is added in the default order",
+    "the layout does not place tile \"evidence\"; it is added in the default order",
+    "the layout does not place tile \"intent\"; it is added in the default order",
+    "the layout does not place tile \"context\"; it is added in the default order",
+    "the layout does not place tile \"decisions\"; it is added in the default order",
+    "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "the layout does not place tile \"retry_budget\"; it is added in the default order",
+    "the layout does not place tile \"planned\"; it is added in the default order"
+  ],
+  "composition": {
+    "schema": "baum.composition/1",
+    "layout": {
+      "entries": [
+        {
+          "tile": "overview",
+          "size": "half"
+        },
+        {
+          "tile": "risks",
+          "size": "half"
+        },
+        {
+          "tile": "sec_retry_policy",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_config_flag",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "media",
+          "size": "third"
+        },
+        {
+          "tile": "evidence",
+          "size": "third"
+        },
+        {
+          "tile": "intent",
+          "size": "third"
+        },
+        {
+          "tile": "context",
+          "size": "third"
+        },
+        {
+          "tile": "decisions",
+          "size": "third"
+        },
+        {
+          "tile": "everything_else",
+          "size": "third"
+        },
+        {
+          "tile": "retry_budget",
+          "size": "half"
+        },
+        {
+          "tile": "planned",
+          "size": "half"
+        }
+      ]
+    },
+    "library": [
+      {
+        "definition": {
+          "name": "retry_budget",
+          "title": "Synthetic retry budget",
+          "use_when": "When a test needs a library tile.",
+          "fill": "Summarise the change and cite the hunks it rests on.",
+          "data_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "summary",
+              "cites"
+            ],
+            "properties": {
+              "summary": {
+                "$ref": "#/$defs/markdown"
+              },
+              "cites": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "kit": 1,
+          "sizes": [
+            "half",
+            "full"
+          ],
+          "source": {
+            "format": "html",
+            "html": "\u003cscript\u003ebaum.tile({glance: (v) =\u003e baum.html`\u003cp\u003e${v.data.summary}\u003c/p\u003e`});\u003c/script\u003e"
+          },
+          "digest": "sha256:4965b235faad9f2e2ceff13789da6112b87d35408b9cea7e32c5dd734826d1ab"
+        },
+        "data": {
+          "cites": [
+            {
+              "id": "h_000000000001",
+              "type": "hunk"
+            }
+          ],
+          "summary": "A synthetic summary."
+        }
+      },
+      {
+        "definition": {
+          "name": "planned",
+          "title": "Synthetic planned",
+          "use_when": "When a test needs a library tile.",
+          "fill": "Summarise the change and cite the hunks it rests on.",
+          "data_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "summary",
+              "cites"
+            ],
+            "properties": {
+              "summary": {
+                "$ref": "#/$defs/markdown"
+              },
+              "cites": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "kit": 1,
+          "sizes": [
+            "half",
+            "full"
+          ],
+          "source": {
+            "format": "html",
+            "html": "\u003cscript\u003ebaum.tile({glance: (v) =\u003e baum.html`\u003cp\u003e${v.data.summary}\u003c/p\u003e`});\u003c/script\u003e"
+          },
+          "digest": "sha256:f8edd618616cd05f72d99f1e027ca178b839ffdabed2db9c57763a1702c1687f"
+        },
+        "data": {},
+        "pending": true
+      }
+    ]
+  },
+  "layout": {
+    "entries": [
+      {
+        "tile": "overview",
+        "size": "half"
+      },
+      {
+        "tile": "risks",
+        "size": "half"
+      },
+      {
+        "tile": "sec_retry_policy",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_config_flag",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "media",
+        "size": "third"
+      },
+      {
+        "tile": "evidence",
+        "size": "third"
+      },
+      {
+        "tile": "intent",
+        "size": "third"
+      },
+      {
+        "tile": "context",
+        "size": "third"
+      },
+      {
+        "tile": "decisions",
+        "size": "third"
+      },
+      {
+        "tile": "everything_else",
+        "size": "third"
+      },
+      {
+        "tile": "retry_budget",
+        "size": "half"
+      },
+      {
+        "tile": "planned",
+        "size": "half"
+      }
+    ],
+    "groups": [
+      {
+        "id": "changes",
+        "title": "Changes",
+        "collapse_after": 4
+      }
+    ],
+    "landing": 8
+  },
+  "tiles": [
+    {
+      "id": "overview",
+      "type": "overview",
+      "title": "Retry failed deliveries with backoff",
+      "state": "ready"
+    },
+    {
+      "id": "risks",
+      "type": "risks",
+      "title": "Risks",
+      "state": "ready"
+    },
+    {
+      "id": "sec_retry_policy",
+      "type": "change",
+      "title": "Retry failed deliveries",
+      "state": "ready",
+      "covers": [
+        "h_000000000001",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "sec_config_flag",
+      "type": "change",
+      "title": "Add a flag that turns retries off",
+      "state": "ready",
+      "covers": [
+        "h_000000000003",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
+      "state": "ready"
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "intent",
+      "type": "intent",
+      "title": "Intent",
+      "state": "ready"
+    },
+    {
+      "id": "context",
+      "type": "context",
+      "title": "Context",
+      "state": "ready"
+    },
+    {
+      "id": "decisions",
+      "type": "decisions",
+      "title": "Decisions",
+      "state": "ready"
+    },
+    {
+      "id": "everything_else",
+      "type": "everything_else",
+      "title": "Everything else",
+      "state": "ready",
+      "covers": [
+        "h_000000000004",
+        "h_000000000005",
+        "h_000000000006",
+        "h_000000000007"
+      ]
+    },
+    {
+      "id": "retry_budget",
+      "type": "custom",
+      "title": "Synthetic retry budget",
+      "state": "ready",
+      "covers": [
+        "h_000000000001"
+      ]
+    },
+    {
+      "id": "planned",
+      "type": "custom",
+      "title": "Synthetic planned",
+      "state": "pending"
+    }
+  ]
+}
