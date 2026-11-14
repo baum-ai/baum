@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -111,7 +112,10 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	differing := fs.Bool("differing", false, "only the cases whose two layouts differ")
 	repeat := fs.Float64("repeat", 0.1, "ask again this share of the calls, in the same order, to measure the judge's noise")
 	seed := fs.Uint64("seed", 1, "seed choosing the repeated calls")
-	phone := fs.Bool("phone", true, "show the judge the phone pictures too")
+	phone := fs.Bool("phone", true, "show the judge the phone pictures too (not under a rubric that shows the whole page)")
+	rubricName := fs.String("rubric", screens.RubricVersion, "the rubric: "+strings.Join(screens.RubricNames, " or ")+"; "+screens.RubricWithTilesVersion+" judges a page with supporting tiles against one without, from the first screens and the whole pages")
+	casesList := fs.String("cases", "", "only these case ids, separated by commas")
+	caseFile := fs.String("case-file", "", "only the case ids in this file, one per line; blank lines and # comments are ignored")
 	timeout := fs.Duration("timeout", 5*time.Minute, "time limit of one call")
 	maxCost := fs.Float64("max-cost-usd", 0, "refuse to start when the estimate is above this (0 is no guard); the estimate is the number of calls times --cost-per-call")
 	perCall := fs.Float64("cost-per-call", 0.08, "the cost of one call the estimate assumes")
@@ -121,18 +125,21 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	if _, err := screens.RubricNamed(*rubricName); err != nil {
+		return err
+	}
+	selected, err := judgeCases(*casesList, *caseFile)
+	if err != nil {
+		return err
+	}
 	p, err := pairing(dir, *against)
 	if err != nil {
 		return err
 	}
-	cases := 0
-	for _, id := range p.Cases() {
-		if strings.Contains(id, *only) && (!*differing || p.Differ(id)) {
-			cases++
-		}
-	}
-	if *limit > 0 {
-		cases = min(cases, *limit)
+	options := screens.JudgeOptions{Limit: *limit, Only: *only, Cases: selected, Differing: *differing, Rubric: *rubricName}
+	cases := len(screens.Selected(p, options))
+	if len(selected) > 0 && cases < len(selected) {
+		_, _ = fmt.Fprintf(stderr, "%d of the %d cases asked for have pictures on both sides\n", cases, len(selected))
 	}
 	calls := int(math.Ceil(float64(cases) * 2 * (1 + *repeat)))
 	if *maxCost > 0 && float64(calls)**perCall > *maxCost {
@@ -143,26 +150,30 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if !config.ValidEffort(*effort) {
 		return fmt.Errorf("unknown reasoning effort %q", *effort)
 	}
-	selected, err := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, generate.DefaultBackendsFor(cfg), io.Discard)
+	desktop, err := generate.SelectDesktop(ctx, cfg.Backend, cfg.Model, generate.DefaultBackendsFor(cfg), io.Discard)
 	if err != nil {
 		return err
 	}
-	completer := generate.CompleterOf(selected.Backend)
+	completer := generate.CompleterOf(desktop.Backend)
 	if completer == nil {
-		return fmt.Errorf("the %s backend cannot make a single structured call", selected.Backend.Name())
+		return fmt.Errorf("the %s backend cannot make a single structured call", desktop.Backend.Name())
 	}
 	prices := pricing.Active()
-	backendName := selected.Backend.Name()
+	backendName := desktop.Backend.Name()
 	reportName := *name
 	if reportName == "" {
 		reportName = screens.JudgeName(p, backendName, *model)
+		if *rubricName != screens.RubricVersion {
+			reportName += "-" + *rubricName
+		}
 	}
 	_, _ = fmt.Fprintf(stdout, "judging %d cases of %s against %s with %s %s, both orders (about %d calls)\n", cases, p.X.Label(), p.Y.Label(), backendName, *model, calls)
-	report, err := screens.Judge(ctx, p, screens.JudgeOptions{Completer: completer, Backend: backendName, Model: *model, Concurrency: *concurrency, Limit: *limit, Only: *only, Differing: *differing,
-		Repeat: *repeat, Seed: *seed, Phone: *phone, Progress: stdout, Timeout: *timeout,
-		Price: func(m string, usage agent.Usage) *float64 {
-			return prices.BackendOutcomeCost(backendName, m, agent.Outcome{Model: m, Usage: usage, Calls: 1})
-		}})
+	options.Completer, options.Backend, options.Model, options.Concurrency = completer, backendName, *model, *concurrency
+	options.Repeat, options.Seed, options.Phone, options.Progress, options.Timeout = *repeat, *seed, *phone, stdout, *timeout
+	options.Price = func(m string, usage agent.Usage) *float64 {
+		return prices.BackendOutcomeCost(backendName, m, agent.Outcome{Model: m, Usage: usage, Calls: 1})
+	}
+	report, err := screens.Judge(ctx, p, options)
 	report.Name = reportName
 	path := filepath.Join(dir, screens.Dir, reportName+".json")
 	if werr := screens.WriteReport(path, report); werr != nil {
@@ -174,6 +185,29 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	printReport(stdout, report)
 	_, _ = fmt.Fprintf(stdout, "wrote %s\n", path)
 	return nil
+}
+
+// judgeCases reads the case ids a judge run is limited to, from a list
+// separated by commas and from a file, one per line; none is every case.
+func judgeCases(list, file string) ([]string, error) {
+	var ids []string
+	for id := range strings.SplitSeq(list, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if file != "" {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return nil, err
+		}
+		for line := range strings.SplitSeq(string(raw), "\n") {
+			if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+				ids = append(ids, line)
+			}
+		}
+	}
+	return ids, nil
 }
 
 func printReport(w io.Writer, r screens.Report) {

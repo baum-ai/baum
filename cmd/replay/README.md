@@ -305,7 +305,20 @@ breaking change). The rubric (`screens.Rubric`, version `layout-judge-v1`)
 asks what a reviewer must see first, whether the most decision-relevant item
 is the most prominent, the grouping, wasted space and whether anything
 important is buried, says length is not quality, and asks for a verdict (A, B
-or tie) with a short reason. Each pair is judged in both orders, A and B
+or tie) with a short reason. That rubric assumes both layouts hold the same
+tiles; `--rubric layout-judge-with-tiles` (`screens.RubricWithTiles`) judges a
+page with supporting tiles (library tiles and authored tables, code and notes)
+against one without, as when the same analysis is composed with and without
+them. Its facts list each layout's supporting tiles by title with a line on
+what each shows, those only one layout has apart; each call shows the first
+screens at 1440 and the whole pages (`-full.png`, the first screen when the
+page fits) and no phone pictures; and it asks, of each tile only one layout
+has, whether it helps the decision, duplicates another tile and is sized to
+its content, which reads better scrolled, and whether either buries a core
+item, which counts only for named missing evidence, a critical or high risk
+or the riskiest change. Its report's default name ends in the rubric's name.
+`--cases a,b` and `--case-file <file>` (one id per line) judge only those
+cases. Each pair is judged in both orders, A and B
 swapped; a pair's verdict is the winner both orders name, else a tie, which
 cancels a preference for a position. `--repeat` (default 0.1) asks a sample of
 calls again to measure the judge's noise. The report, `screens/<name>.json`

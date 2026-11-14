@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -358,4 +359,137 @@ func TestPairsWhosePagesMeasureTheSameDoNotDiffer(t *testing.T) {
 	if p.Differ("case-a") || !p.Differ("case-b") {
 		t.Errorf("case-a differs %v, case-b %v", p.Differ("case-a"), p.Differ("case-b"))
 	}
+}
+
+// addSupportingTiles gives a case's tile document an authored table and a
+// library tile after its overview and risks, as a composition with extras
+// does, and a promoted table, which is the review's own block.
+func addSupportingTiles(t *testing.T, dir, id string) {
+	t.Helper()
+	path := filepath.Join(dir, "cases", id, "tiles.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	extras := []map[string]any{
+		{"id": "table_retry_delays", "type": "table", "title": "Retry delays by attempt", "state": "ready",
+			"data": map[string]any{"columns": []string{"Attempt", "Delay"}, "rows": [][]string{{"1", "1s"}, {"2", "4s"}}, "source": []any{}}},
+		{"id": "api_change", "type": "custom", "title": "Interface changes", "state": "ready",
+			"data": map[string]any{"endpoints": []map[string]any{{"name": "/api/retry", "breaking": true}}, "consumers": []any{}, "related": []map[string]any{{"type": "risk", "id": "r1"}}}},
+		{"id": "table_promoted", "type": "table", "title": "Promoted block", "state": "ready",
+			"data": map[string]any{"columns": []string{"a"}, "rows": [][]string{}, "source": []any{}, "origin": map[string]any{"change": "sec_api", "block": 0}}},
+	}
+	layout := doc["layout"].(map[string]any)
+	entries := layout["entries"].([]any)
+	var added []any
+	for _, extra := range extras {
+		doc["tiles"] = append(doc["tiles"].([]any), extra)
+		added = append(added, map[string]any{"tile": extra["id"], "size": "half"})
+	}
+	layout["entries"] = append(append(slices.Clone(entries[:2]), added...), entries[2:]...)
+	if raw, err = json.Marshal(doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The with-tiles rubric shows each layout's first screen and whole page, no
+// phone pictures, and lists the supporting tiles each layout shows, those
+// only one shows apart, each with a line on what it shows; layout-judge-v1
+// stays as it was.
+func TestWithTilesRubricShowsTheWholePageAndTheSupportingTiles(t *testing.T) {
+	root := t.TempDir()
+	with := load(t, func() string {
+		dir := fakeRun(t, root, "with", "opus", 2)
+		addSupportingTiles(t, dir, "case-a")
+		return dir
+	}())
+	without := load(t, fakeRun(t, root, "without", "opus", 2))
+	p := screens.Pairs(with, without)
+
+	v1, err := screens.RubricNamed("")
+	if err != nil || v1.Version != screens.RubricVersion || v1.WholePage || v1.Digest() != "702f2b9cb03115a76eb1812d9b262eaba52ae26b3b2e7c14f7553b75461bdb30" {
+		t.Fatalf("layout-judge-v1 changed: %+v %v", v1.Version, err)
+	}
+	rubric, err := screens.RubricNamed(screens.RubricWithTilesVersion)
+	if err != nil || rubric.Digest() == v1.Digest() || !json.Valid(rubric.Schema) {
+		t.Fatalf("the with-tiles rubric: %v", err)
+	}
+	if _, err := screens.RubricNamed("layout-judge-v0"); err == nil {
+		t.Error("an unknown rubric was accepted")
+	}
+
+	r, err := screens.Request(rubric, p.X, p.Y, "case-a", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, image := range r.Images {
+		paths = append(paths, filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(image.Path))))+"/"+filepath.Base(image.Path))
+	}
+	want := []string{"with/composed-1440-light.png", "without/composed-1440-light.png", "with/composed-1440-light-full.png", "without/composed-1440-light-full.png"}
+	if !slices.Equal(paths, want) || r.System != screens.RubricWithTiles || string(r.Schema) != string(screens.AnswerSchemaWithTiles) {
+		t.Errorf("images %v", paths)
+	}
+	for _, text := range []string{"Image 3 is A's whole page", "the same analysis in A and B", "Open critical risks",
+		"Supporting tiles only A shows (2):", "Retry delays by attempt: a table of 2 rows, columns: Attempt, Delay",
+		"Interface changes: lists 1 endpoints (/api/retry); one of them is destructive or breaking"} {
+		if !strings.Contains(r.User, text) {
+			t.Errorf("the message lacks %q:\n%s", text, r.User)
+		}
+	}
+	if strings.Contains(r.User, "Promoted block") || strings.Contains(r.User, "only B shows") || strings.Contains(r.User, "phone") {
+		t.Errorf("the message lists a promoted block, a tile B lacks or the phone:\n%s", r.User)
+	}
+	// B shown first: the same tiles are B's.
+	if r, err := screens.Request(rubric, p.Y, p.X, "case-a", false); err != nil || !strings.Contains(r.User, "Supporting tiles only B shows (2):") {
+		t.Errorf("swapped: %v\n%s", err, r.User)
+	}
+	// Neither adds any.
+	if r, err := screens.Request(rubric, p.X, p.Y, "case-b", false); err != nil || !strings.Contains(r.User, "neither layout adds any") {
+		t.Errorf("case-b: %v\n%s", err, r.User)
+	}
+
+	// layout-judge-v1: first screens and phones, no supporting tiles.
+	r, err = screens.Request(v1, p.X, p.Y, "case-a", true)
+	if err != nil || len(r.Images) != 4 || !strings.HasSuffix(r.Images[2].Path, "composed-390-light.png") || strings.Contains(r.User, "Supporting") || r.System != screens.Rubric {
+		t.Errorf("v1: %v %v\n%s", err, r.Images, r.User)
+	}
+}
+
+// A judge run limited to listed cases judges only those, under the rubric
+// it names, and the report says which.
+func TestJudgeOnlyTheListedCases(t *testing.T) {
+	run := load(t, fakeRun(t, t.TempDir(), "run-a", "sonnet", 4))
+	p := screens.Pairs(run, nil)
+	o := screens.JudgeOptions{Completer: &rubricJudge{}, Cases: []string{"case-b", "case-d", "case-x"}, Rubric: screens.RubricWithTilesVersion}
+	if got := screens.Selected(p, o); !slices.Equal(got, []string{"case-b", "case-d"}) {
+		t.Fatalf("selected %v", got)
+	}
+	report, err := screens.Judge(context.Background(), p, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Summary.Pairs != 2 || report.RubricVersion != screens.RubricWithTilesVersion || report.IncompletePair != 0 {
+		t.Errorf("%+v %s", report.Summary, report.RubricVersion)
+	}
+	if _, err := screens.Judge(context.Background(), p, screens.JudgeOptions{Completer: &rubricJudge{}, Rubric: "nope"}); err == nil {
+		t.Error("an unknown rubric ran")
+	}
+}
+
+// rubricJudge answers tie to a with-tiles call that shows the whole pages.
+type rubricJudge struct{}
+
+func (rubricJudge) Complete(_ context.Context, r agent.CompleteRequest) (agent.Completion, error) {
+	if r.System != screens.RubricWithTiles || len(r.Images) != 4 || !strings.HasSuffix(r.Images[3].Path, "-full.png") {
+		return agent.Completion{}, errors.New("not a with-tiles call")
+	}
+	return agent.Completion{Document: json.RawMessage(`{"verdict":"tie","reason":"same","added_tiles":[]}`)}, nil
 }
