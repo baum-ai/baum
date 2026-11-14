@@ -340,4 +340,3 @@ func TestCustomTileFromTheTilesRouteLoadsItsFrame(t *testing.T) {
 		}
 	}
 }
-
