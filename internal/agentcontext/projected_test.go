@@ -19,7 +19,7 @@ import (
 var allowedProjectedReads = map[string][]string{
 	"diagnostics_summary":  {"/api/diagnostics"},
 	"settings_general":     {"/api/settings/appearance"},
-	"settings_reviews":     {"/api/settings"},
+	"settings_reviews":     {"/api/settings", "/api/settings/labs"},
 	"settings_fixes":       {"/api/settings"},
 	"settings_connections": {"/api/github-auth"},
 	"settings_computer":    {"/api/settings", "/api/diagnostics"},

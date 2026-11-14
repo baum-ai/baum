@@ -52,6 +52,7 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 		{settings("fixes"), "propose_fixes", map[string]any{"backend": ""}, TargetFixes, `{"backend":""}`},
 		{settings("computer"), "propose_time_limits", map[string]any{"run_time_limit_minutes": 5}, TargetTimeLimits, `{"run_time_limit_minutes":5}`},
 		{settings("computer"), "propose_job_concurrency", map[string]any{"job_concurrency": 2}, TargetJobConcurrency, `{"job_concurrency":2}`},
+		{settings("reviews"), "propose_labs", map[string]any{"tile_reviews": true}, TargetLabs, `{"tile_reviews":true}`},
 		{settings("computer"), "propose_codex_approvals", map[string]any{"codex_approvals": false}, TargetCodexApprovals, `{"codex_approvals":false}`},
 		{settings("computer"), "propose_agent_env", map[string]any{"name": "API_URL", "action": "add"}, TargetAgentEnv + "API_URL", `{"name":"API_URL","needs_value":true}`},
 		{settings("computer"), "propose_agent_env", map[string]any{"name": "API_URL", "action": "remove"}, TargetAgentEnv + "API_URL", `{"name":"API_URL","remove":true}`},

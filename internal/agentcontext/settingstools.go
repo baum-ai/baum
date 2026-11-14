@@ -124,11 +124,11 @@ func (s *Server) settingsTools() []Tool {
 		Call:      s.callSettingsGeneral,
 	}, {
 		Name: "settings_reviews",
-		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored). " +
+		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored), and whether new reviews are generated as tiles (tile_reviews, an experimental setting, off by default). " +
 			"Resolving an auto backend runs the harnesses' version checks on this computer, as opening the section in the app does; the answer is reused for a short while (45 seconds in the daemon) while the settings are unchanged.",
 		Scope:     ScopeGlobal,
 		Reads:     []string{"/api/automatic"},
-		Projected: []string{"/api/settings"},
+		Projected: []string{"/api/settings", "/api/settings/labs"},
 		Call:      s.callSettingsReviews,
 	}, {
 		Name:        "settings_fixes",
@@ -280,8 +280,20 @@ func (s *Server) callSettingsReviews(ctx context.Context, c CallContext, _ json.
 		Model           string     `json:"model"`
 		Effort          string     `json:"effort"`
 		DecisionCapture *capture   `json:"decision_capture"`
+		TileReviews     *bool      `json:"tile_reviews"`
 		Unavailable     []string   `json:"unavailable,omitempty"`
 	}{Backend: settings.Backend, Model: settings.Model, Effort: settings.Effort}
+	if body, _, err := c.get(ctx, "/api/settings/labs", nil); err == nil {
+		var labs struct {
+			TileReviews *bool `json:"tile_reviews"`
+		}
+		if json.Unmarshal(body, &labs) == nil {
+			out.TileReviews = labs.TileReviews
+		}
+	}
+	if out.TileReviews == nil {
+		out.Unavailable = append(out.Unavailable, "tile_reviews")
+	}
 	if body, _, err := c.get(ctx, "/api/automatic", nil); err == nil && !disabled(body) {
 		var a automatic
 		if json.Unmarshal(body, &a) == nil {
