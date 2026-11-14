@@ -175,8 +175,8 @@ func TestDefaultLayout(t *testing.T) {
 	if got := entryOrder(doc); !slices.Equal(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
 	}
-	if doc.Layout.Landing != 8 {
-		t.Errorf("landing = %d, want 8 (two halves, then two rows of thirds)", doc.Layout.Landing)
+	if doc.Layout.Landing != 7 {
+		t.Errorf("landing = %d, want 7 (two halves, the two changes of their group at half, then a row of thirds)", doc.Layout.Landing)
 	}
 	data := tileByID(t, doc, "sec_retry_policy").Data
 	var change tiles.ChangeData

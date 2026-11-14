@@ -728,12 +728,19 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 		leading bool
 	}{
 		{"raised", nil, true, false},
-		{"leading", []tiles.Entry{{Tile: tiles.TypeOverview, Size: tiles.SizeFull}, {Tile: tiles.TypeRisks, Size: tiles.SizeFull}, {Tile: tiles.TypeEvidence, Size: tiles.SizeFull}}, false, true},
+		// Three changes lead outside the group, so the first screen shows as
+		// many as the template's (the host's guard keeps that), and the group
+		// starts past the landing page.
+		{"leading", []tiles.Entry{{Tile: tiles.TypeOverview, Size: tiles.SizeHalf}, {Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
+			{Tile: members[0], Size: tiles.SizeThird}, {Tile: members[1], Size: tiles.SizeThird}, {Tile: members[2], Size: tiles.SizeThird},
+			{Tile: tiles.TypeEvidence, Size: tiles.SizeFull}}, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: tc.lead, ChangesShown: &one}}
 			for _, id := range members {
-				c.Layout.Entries = append(c.Layout.Entries, tiles.Entry{Tile: id, Size: tiles.SizeThird, Group: tiles.GroupChanges})
+				if !slices.ContainsFunc(tc.lead, func(e tiles.Entry) bool { return e.Tile == id }) {
+					c.Layout.Entries = append(c.Layout.Entries, tiles.Entry{Tile: id, Size: tiles.SizeThird, Group: tiles.GroupChanges})
+				}
 			}
 			n, _ := tiles.NormalizeComposition(doc, c)
 			composed, err := tiles.Compose(doc, &n)
@@ -750,7 +757,7 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 				}
 			}
 			shown := *composed.Layout.Groups[0].CollapseAfter
-			if tc.raised && (shown != len(members) || group[len(group)-1] != named) {
+			if tc.raised && (shown != len(group) || group[len(group)-1] != named) {
 				t.Errorf("the group shows %d with %v last, want all %d with %s last", shown, group[len(group)-1], len(members), named)
 			}
 			if tc.leading && (shown != 1 || group[0] != named) {
@@ -951,7 +958,7 @@ var quiet = fixture{name: "quiet", mutate: func(doc map[string]any) {
 // When the risks tile ranks nothing above low, a template does not give it
 // half of the first row: the lead change takes it in the feature and refactor
 // templates, everything else keeps it in the dependency template, and the
-// risks tile follows at a third.
+// risks tile follows at a third, or grows with its row when that fills it.
 func TestTemplatesWithQuietRisks(t *testing.T) {
 	for _, tc := range []struct {
 		kind  string
@@ -973,14 +980,11 @@ func TestTemplatesWithQuietRisks(t *testing.T) {
 				t.Error(failure)
 			}
 			var first []string
-			units := 0
-			for _, entry := range composed.Layout.Entries {
-				if entry.Tile == tiles.TypeRisks && entry.Size != tiles.SizeThird {
-					t.Errorf("the quiet risks tile is %s", entry.Size)
-				}
-				if units += entry.Size.Units(); units <= tiles.GridUnits {
-					first = append(first, entry.Tile)
-				}
+			for _, i := range tiles.Rows(composed.Layout)[0].Entries {
+				first = append(first, composed.Layout.Entries[i].Tile)
+			}
+			if slices.Contains(first, tiles.TypeRisks) {
+				t.Errorf("the quiet risks tile is on the first row")
 			}
 			if !slices.Equal(first, tc.first) {
 				t.Errorf("the first row is %v, want %v", first, tc.first)

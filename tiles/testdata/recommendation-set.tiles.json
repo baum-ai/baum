@@ -812,12 +812,12 @@
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -851,6 +851,6 @@
         "title": "Changes"
       }
     ],
-    "landing": 8
+    "landing": 7
   }
 }

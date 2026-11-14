@@ -134,19 +134,32 @@ func mustShowRisks(doc *Document) bool {
 	return false
 }
 
-// The landing page follows one rule:
+// The landing page follows one rule, which the tiles page lays out exactly
+// (app/src/tiles/layout.ts mirrors Hidden and Visible; the page reads
+// Landing):
 //
 //   - A member of a group past its CollapseAfter is hidden wherever it
 //     stands (Hidden). It takes no space, and its group's own "Show N more"
-//     reveals it; that control counts all of the group's hidden members.
-//   - Landing is the index after the last entry the landing page places:
-//     the entries fill rows of GridUnits units in order, an entry that does
-//     not fit the rest of its row starts the next, and the first entry that
-//     does not fit in LandingRows rows ends the landing page.
+//     reveals it; that control counts all of the group's hidden members. A
+//     group that shows some of its members never folds a single one: "Show
+//     1 more" would take a row to hide one card, so that member is shown.
+//   - The entries that are not hidden fill rows of GridUnits units in order
+//     (Rows). An entry that does not fit what is left of its row starts the
+//     next. A group is a block of its own: its heading spans the grid, so
+//     its first member starts a row, and the entry after its last member
+//     starts another, never sharing a row with the group's members.
+//   - Landing is the index after the last entry of the first LandingRows
+//     rows, unless a single entry that is not hidden would be left after
+//     it: "Show 1 more tile" is never the landing page's end, so that entry
+//     is on the landing page too.
 //   - The landing page shows the entries before Landing that are not hidden
 //     (Visible). "Show N more tiles" reveals the entries from Landing on
 //     that are not hidden, More of them; hidden members there stay behind
 //     their group's control.
+//
+// On the two-column grid of a narrow window the page lets the last card of
+// a block span both columns when it would be alone in its row; that changes
+// no row of the canonical grid, what the landing page holds, or any size.
 
 // Hidden reports, for each entry, whether it is a member of a collapsed
 // group past the group's CollapseAfter.
@@ -157,6 +170,12 @@ func Hidden(layout Layout) []bool {
 			collapse[group.ID] = *group.CollapseAfter
 		}
 	}
+	total := map[string]int{}
+	for _, entry := range layout.Entries {
+		if entry.Group != "" {
+			total[entry.Group]++
+		}
+	}
 	members := map[string]int{}
 	hidden := make([]bool, len(layout.Entries))
 	for i, entry := range layout.Entries {
@@ -164,30 +183,74 @@ func Hidden(layout Layout) []bool {
 			continue
 		}
 		members[entry.Group]++
-		if limit, ok := collapse[entry.Group]; ok && members[entry.Group] > limit {
+		limit, ok := collapse[entry.Group]
+		if ok && (limit == 0 || total[entry.Group]-limit >= 2) && members[entry.Group] > limit {
 			hidden[i] = true
 		}
 	}
 	return hidden
 }
 
-// Landing returns the index after the last entry the landing page places.
-func Landing(layout Layout) int {
+// Row is one row of the canonical grid as the page lays it out (Rows).
+type Row struct {
+	// Entries are the indexes in Layout.Entries of the row's tiles, in
+	// order.
+	Entries []int
+	// Group is the group whose block holds the row, empty outside groups.
+	Group string
+	// Used is the grid units the row's tiles take.
+	Used int
+}
+
+// Empty is the grid units the row leaves empty.
+func (r Row) Empty() int { return GridUnits - r.Used }
+
+// Rows lays out the entries that are not hidden in rows of GridUnits units,
+// in order, as the landing page and "Show more" do: an entry that does not
+// fit what is left of its row starts the next, and a group's first member
+// and the entry after its last member each start a row (a group is a block
+// under its own heading).
+func Rows(layout Layout) []Row {
 	hidden := Hidden(layout)
-	landing, row, used := 0, 0, 0
+	var rows []Row
+	split := true
 	for i, entry := range layout.Entries {
+		if i > 0 && entry.Group != layout.Entries[i-1].Group {
+			split = true
+		}
 		if hidden[i] {
 			continue
 		}
 		units := entry.Size.Units()
-		if used+units > GridUnits {
-			row, used = row+1, 0
+		if split || rows[len(rows)-1].Used+units > GridUnits {
+			rows = append(rows, Row{Group: entry.Group})
 		}
-		if row >= LandingRows {
+		split = false
+		row := &rows[len(rows)-1]
+		row.Entries = append(row.Entries, i)
+		row.Used += units
+	}
+	return rows
+}
+
+// Landing returns the index after the last entry the landing page places.
+func Landing(layout Layout) int {
+	landing := 0
+	for k, row := range Rows(layout) {
+		if k >= LandingRows {
 			break
 		}
-		used += units
-		landing = i + 1
+		landing = row.Entries[len(row.Entries)-1] + 1
+	}
+	hidden := Hidden(layout)
+	var rest []int
+	for i := landing; i < len(layout.Entries); i++ {
+		if !hidden[i] {
+			rest = append(rest, i)
+		}
+	}
+	if len(rest) == 1 {
+		landing = rest[0] + 1
 	}
 	return landing
 }
@@ -214,60 +277,72 @@ func More(layout Layout) int {
 	return n
 }
 
-// RowFills returns, by tile ID, the size each landing row's last tile grows
-// to so the row has no empty units: a row that ends short because the tile
-// after it does not fit, while a tile follows it, gets its last tile's next
-// larger allowed size (SizesIn) when that fills it exactly. A pinned tile is
-// never grown, nothing shrinks and the order is kept. An arranged document
-// (Arrange) has its Landing set; nil means every row is full or cannot be
-// filled that way.
+// RowFills returns, by tile ID, the sizes that fill the rows (Rows) that
+// end with empty units while another row follows: the row's last tile grows
+// to the larger allowed size (SizesIn) that fills the row exactly, else every
+// tile of the row grows to the one size that fills it in equal parts. A
+// pinned tile is never grown, nothing shrinks, and no tile changes rows. An
+// arranged document (Arrange) has its Landing set; nil means every row is
+// full or cannot be filled that way.
 func RowFills(doc *Document) map[string]Size {
 	layout := doc.Layout
-	hidden := Hidden(layout)
 	byID := map[string]*Tile{}
 	for i := range doc.Tiles {
 		byID[doc.Tiles[i].ID] = &doc.Tiles[i]
 	}
 	var fills map[string]Size
-	used, last := 0, -1
-	closeRow := func() {
-		if last < 0 || used >= GridUnits {
-			return
+	set := func(id string, size Size) {
+		if fills == nil {
+			fills = map[string]Size{}
 		}
-		entry := layout.Entries[last]
-		tile := byID[entry.Tile]
-		if entry.Pin || tile == nil {
-			return
-		}
-		next := Size("")
-		for _, size := range SizesIn(doc, *tile) {
-			if size.Units() > entry.Size.Units() && (next == "" || size.Units() < next.Units()) {
-				next = size
-			}
-		}
-		if next != "" && used-entry.Size.Units()+next.Units() == GridUnits {
-			if fills == nil {
-				fills = map[string]Size{}
-			}
-			fills[entry.Tile] = next
-		}
+		fills[id] = size
 	}
-	for i, entry := range layout.Entries {
-		if hidden[i] {
+	rows := Rows(layout)
+	for k, row := range rows {
+		if row.Used >= GridUnits || k == len(rows)-1 {
 			continue
 		}
-		if i >= layout.Landing {
-			// A tile follows the landing page's last row.
-			closeRow()
-			break
+		growable := true
+		for _, i := range row.Entries {
+			entry := layout.Entries[i]
+			growable = growable && !entry.Pin && byID[entry.Tile] != nil
 		}
-		units := entry.Size.Units()
-		if used+units > GridUnits {
-			closeRow()
-			used = 0
+		if !growable {
+			continue
 		}
-		used += units
-		last = i
+		last := layout.Entries[row.Entries[len(row.Entries)-1]]
+		want := Size("")
+		for _, size := range SizesIn(doc, *byID[last.Tile]) {
+			if size.Units() > last.Size.Units() && row.Used-last.Size.Units()+size.Units() == GridUnits {
+				want = size
+			}
+		}
+		if want != "" {
+			set(last.Tile, want)
+			continue
+		}
+		if GridUnits%len(row.Entries) != 0 {
+			continue
+		}
+		equal := Size("")
+		for _, size := range []Size{SizeFull, SizeHalf, SizeThird} {
+			if size.Units()*len(row.Entries) == GridUnits {
+				equal = size
+			}
+		}
+		fits := equal != ""
+		for _, i := range row.Entries {
+			entry := layout.Entries[i]
+			fits = fits && entry.Size.Units() <= equal.Units() && slices.Contains(SizesIn(doc, *byID[entry.Tile]), equal)
+		}
+		if !fits {
+			continue
+		}
+		for _, i := range row.Entries {
+			if entry := layout.Entries[i]; entry.Size != equal {
+				set(entry.Tile, equal)
+			}
+		}
 	}
 	return fills
 }

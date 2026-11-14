@@ -85,10 +85,15 @@ var templates = map[string][]slot{
 // named. content gives the composition's tiles (library, promoted and
 // authored), normalised as NormalizeComposition does and reported; its
 // layout is not used, and its generator and notes are kept. The changes
-// group shows the converter's default number of changes. When the risks
-// tile ranks no active risk above low, it gives its place on the first row
-// to the lead change (quietSlots). A landing row the slots leave short is
-// filled as RowFills says, as part of the template, not as a fix.
+// group shows the converter's default number of changes; a single change
+// stands alone at half, with no group. When the risks tile ranks no active
+// risk above low, it gives its place on the first row to the lead change
+// (quietSlots); otherwise the docs template sets the risks tile beside the
+// overview at half, so the risks are on the landing page. When the evidence
+// has EvidenceGapsShown gaps or more, the lead change and the evidence tile
+// share the second row at half (gapSlots). A row the slots
+// leave short is filled as RowFills says, as part of the template, not as a
+// fix.
 func Template(doc *Document, content *Composition) (Composition, Report) {
 	if content == nil {
 		content = &Composition{}
@@ -99,11 +104,7 @@ func Template(doc *Document, content *Composition) (Composition, Report) {
 	if err := cm.prepare(content); err != nil {
 		return Composition{Schema: CompositionName}, Report{Fixes: []Fix{{Kind: FixUnusable, Detail: err.Error()}}}
 	}
-	slots := templates[name]
-	if quietRisks(doc) {
-		slots = quietSlots(slots)
-	}
-	out := cm.finish(content, cm.templateLayout(slots))
+	out := cm.finish(content, cm.templateLayout(templateSlots(doc)))
 	generator := Generator{}
 	if out.Generator != nil {
 		generator = *out.Generator
@@ -111,6 +112,51 @@ func Template(doc *Document, content *Composition) (Composition, Report) {
 	generator.Template = name
 	out.Generator = &generator
 	return out, cm.report
+}
+
+// templateSlots returns the slots of a document's template.
+func templateSlots(doc *Document) []slot {
+	name := TemplateName(changeKindOf(doc))
+	slots := templates[name]
+	switch {
+	case quietRisks(doc):
+		slots = quietSlots(slots)
+	case name == TemplateDocs:
+		// A docs or CI pull request with an active risk above low keeps the
+		// risks tile beside the overview, on the landing page.
+		slots = append([]slot{{TypeOverview, SizeHalf}, {TypeRisks, SizeHalf}}, slots[1:]...)
+	}
+	if evidenceGaps(doc) >= EvidenceGapsShown {
+		slots = gapSlots(slots)
+	}
+	return slots
+}
+
+// gapSlots adapts a template to a review whose evidence has
+// EvidenceGapsShown gaps or more: the evidence tile takes half of the second
+// row, beside the lead change, so the gaps are on the first screen.
+func gapSlots(slots []slot) []slot {
+	out := slices.Clone(slots)
+	out = slices.DeleteFunc(out, func(s slot) bool { return s.tile == TypeEvidence })
+	if at := slices.IndexFunc(out, func(s slot) bool { return s.tile == slotLead }); at >= 0 {
+		return slices.Insert(out, at+1, slot{TypeEvidence, SizeHalf})
+	}
+	// After the first row: the overview and risks at half, or a full
+	// overview.
+	at := 1
+	if len(out) > 1 && out[0].size == SizeHalf {
+		at = 2
+	}
+	return slices.Insert(out, min(at, len(out)), slot{slotLead, SizeHalf}, slot{TypeEvidence, SizeHalf})
+}
+
+// templateOf returns the template's layout with this composer's own
+// composition tiles, as Template lays it out; the template's fixes are not
+// the composer's.
+func (cm *composer) templateOf() CompositionLayout {
+	t := &composer{doc: cm.doc, mode: cm.mode, byID: cm.byID, obsolete: cm.obsolete, library: cm.library, promoted: cm.promoted,
+		authored: cm.authored, template: true}
+	return t.finish(&Composition{}, t.templateLayout(templateSlots(cm.doc))).Layout
 }
 
 // changeKindOf returns the change kind the overview tile holds.
@@ -226,10 +272,20 @@ func (cm *composer) templateLayout(slots []slot) CompositionLayout {
 				addComposed(tile, s.size)
 			}
 		case slotChanges:
+			var members []Entry
 			for _, entry := range cm.doc.Layout.Entries {
-				if entry.Group == GroupChanges {
-					add(entry.Tile, s.size, GroupChanges)
+				if entry.Group == GroupChanges && !placed[entry.Tile] {
+					members = append(members, entry)
 				}
+			}
+			if len(members) == 1 {
+				// One change needs no group: it stands alone at half, beside
+				// the tile that follows.
+				add(members[0].Tile, SizeHalf, "")
+				continue
+			}
+			for _, entry := range members {
+				add(entry.Tile, s.size, GroupChanges)
 			}
 		case slotRest:
 			for _, entry := range cm.doc.Layout.Entries {

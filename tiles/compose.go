@@ -283,7 +283,13 @@ func (f Fix) Message() string {
 	case FixUnusable:
 		text = "the composition cannot be applied to this document"
 	case FixRowFill:
-		text = fmt.Sprintf("%s ended a landing row with empty units; it grows to fill the row", tile)
+		text = fmt.Sprintf("%s ended a row with empty units; it grows to fill the row", tile)
+	case FixEvidenceGaps:
+		text = fmt.Sprintf("the evidence tile has %d or more gaps and must be on the landing page; it moves up", EvidenceGapsShown)
+	case FixLoneFeatured:
+		text = fmt.Sprintf("%s is featured alone at half beside empty units; it takes the full row", tile)
+	case FixFirstScreen:
+		text = "the layout shows fewer changes on the first screen than the template, with nothing that must be seen instead; the template's layout is kept"
 	default:
 		text = string(f.Kind)
 	}
@@ -597,15 +603,16 @@ func (cm *composer) finish(c *Composition, layout CompositionLayout) Composition
 		out.Authored = append(out.Authored, cand.authored)
 	}
 	out.Layout = cm.layout(layout)
+	cm.guard(&out)
 	cm.fillRows(&out)
 	out.Notes = cm.notes(c.Notes)
 	return out
 }
 
-// fillRows grows the last tile of each landing row of the generated
-// document that would end with empty units, as RowFills says, in the
-// composition's layout, where the sizes are final. Growing fills a row
-// exactly, so no row breaks move and the arrangement stays the same.
+// fillRows grows the tiles of each row of the generated document that would
+// end with empty units, as RowFills says, in the composition's layout, where
+// the sizes are final. Growing fills a row exactly, so no row breaks move and
+// the arrangement stays the same.
 func (cm *composer) fillRows(c *Composition) {
 	trial := *c
 	trial.Layout.Entries = slices.Clone(c.Layout.Entries)

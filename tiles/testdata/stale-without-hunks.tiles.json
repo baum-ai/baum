@@ -935,12 +935,12 @@
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -989,6 +989,6 @@
         "collapse_after": 0
       }
     ],
-    "landing": 8
+    "landing": 7
   }
 }

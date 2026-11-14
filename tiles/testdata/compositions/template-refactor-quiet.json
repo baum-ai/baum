@@ -17,12 +17,11 @@
         },
         {
           "tile": "sec_config_flag",
-          "size": "third",
-          "group": "changes"
+          "size": "half"
         },
         {
           "tile": "risks",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "evidence",
@@ -63,12 +62,11 @@
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
-        "group": "changes"
+        "size": "half"
       },
       {
         "tile": "risks",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "evidence",
@@ -95,13 +93,8 @@
         "size": "third"
       }
     ],
-    "groups": [
-      {
-        "id": "changes",
-        "title": "Changes"
-      }
-    ],
-    "landing": 8
+    "groups": [],
+    "landing": 7
   },
   "tiles": [
     {

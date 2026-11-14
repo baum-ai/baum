@@ -9,16 +9,20 @@
       "entries": [
         {
           "tile": "overview",
-          "size": "full"
+          "size": "half"
+        },
+        {
+          "tile": "risks",
+          "size": "half"
         },
         {
           "tile": "sec_retry_policy",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
           "tile": "sec_config_flag",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
@@ -26,12 +30,8 @@
           "size": "third"
         },
         {
-          "tile": "risks",
-          "size": "half"
-        },
-        {
           "tile": "evidence",
-          "size": "half"
+          "size": "third"
         },
         {
           "tile": "media",
@@ -142,16 +142,20 @@
     "entries": [
       {
         "tile": "overview",
-        "size": "full"
+        "size": "half"
+      },
+      {
+        "tile": "risks",
+        "size": "half"
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -159,12 +163,8 @@
         "size": "third"
       },
       {
-        "tile": "risks",
-        "size": "half"
-      },
-      {
         "tile": "evidence",
-        "size": "half"
+        "size": "third"
       },
       {
         "tile": "media",
@@ -201,7 +201,7 @@
         "title": "Changes"
       }
     ],
-    "landing": 6
+    "landing": 7
   },
   "tiles": [
     {

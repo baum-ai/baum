@@ -151,30 +151,22 @@ type RowFact struct {
 	Empty int      `json:"empty_units,omitempty"`
 }
 
-// LandingRows returns the rows of a layout's landing page, as tiles.Landing
-// packs them: the entries in order, folded group members left out, a tile
-// that does not fit what is left of a row starting the next one. Nothing
-// moves up to fill a row, so the units a row leaves stay empty.
+// LandingRows returns the rows of a layout's landing page as the page lays
+// them out (tiles.Rows): folded group members left out, a tile that does not
+// fit what is left of a row starting the next, and a group a block of its
+// own, so its first member and the tile after its last member each start a
+// row. Nothing moves up to fill a row, so the units a row leaves stay empty.
 func LandingRows(layout tiles.Layout) []RowFact {
-	hidden := tiles.Hidden(layout)
 	var rows []RowFact
-	used := tiles.GridUnits
-	for i, entry := range layout.Entries {
-		if i >= layout.Landing {
+	for _, row := range tiles.Rows(layout) {
+		if row.Entries[0] >= layout.Landing {
 			break
 		}
-		if hidden[i] {
-			continue
+		fact := RowFact{Empty: row.Empty()}
+		for _, i := range row.Entries {
+			fact.Tiles = append(fact.Tiles, layout.Entries[i].Tile)
 		}
-		units := entry.Size.Units()
-		if used+units > tiles.GridUnits {
-			rows = append(rows, RowFact{})
-			used = 0
-		}
-		used += units
-		row := &rows[len(rows)-1]
-		row.Tiles = append(row.Tiles, entry.Tile)
-		row.Empty = tiles.GridUnits - used
+		rows = append(rows, fact)
 	}
 	return rows
 }

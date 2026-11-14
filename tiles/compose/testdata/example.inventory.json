@@ -35,12 +35,12 @@
       },
       {
         "tile": "sec_ackfix",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_docs",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -76,8 +76,7 @@
       "sec_retry",
       "sec_deadletter",
       "sec_ackfix",
-      "sec_docs",
-      "evidence"
+      "sec_docs"
     ],
     "rows": [
       {
@@ -96,8 +95,7 @@
       {
         "tiles": [
           "sec_ackfix",
-          "sec_docs",
-          "evidence"
+          "sec_docs"
         ]
       }
     ]

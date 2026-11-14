@@ -14,7 +14,7 @@
     "the layout does not place tile \"library_table_flag_defaults\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2\"; it is added in the default order",
     "the layout does not place tile \"table_flag_defaults_2_2\"; it is added in the default order",
-    "tile \"sec_retry_policy\" ended a landing row with empty units; it grows to fill the row"
+    "tile \"risks\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -30,7 +30,7 @@
         },
         {
           "tile": "risks",
-          "size": "half"
+          "size": "full"
         },
         {
           "tile": "sec_retry_policy",
@@ -39,7 +39,7 @@
         },
         {
           "tile": "sec_config_flag",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
@@ -206,7 +206,7 @@
       },
       {
         "tile": "risks",
-        "size": "half"
+        "size": "full"
       },
       {
         "tile": "sec_retry_policy",
@@ -215,7 +215,7 @@
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -261,7 +261,7 @@
         "title": "Changes"
       }
     ],
-    "landing": 7
+    "landing": 5
   },
   "tiles": [
     {

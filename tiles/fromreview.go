@@ -404,6 +404,15 @@ func (c *converter) convert() (*Document, error) {
 	c.doc.Tiles = tiles
 	c.doc.Layout = Layout{Entries: entries, Groups: groupsOf(entries)}
 	Arrange(c.doc)
+	// Rows the default sizes leave short are filled, as a composition's are
+	// (RowFills): a group is a block, so a group of two changes would
+	// otherwise leave its row a third short.
+	fills := RowFills(c.doc)
+	for i, entry := range c.doc.Layout.Entries {
+		if size, ok := fills[entry.Tile]; ok {
+			c.doc.Layout.Entries[i].Size = size
+		}
+	}
 	return c.doc, nil
 }
 

@@ -44,7 +44,10 @@ func inventoryOf(t *testing.T, r agent.CompleteRequest) compose.Inventory {
 }
 
 // keepTemplate answers with the template's layout, as the inventory gives it,
-// with lead first at half when set, and promote's promotions placed first.
+// with promote's promotions placed first and, when lead is set, the changes
+// out of their group at their sizes, lead first with a reason: the host's guard
+// keeps no layout that shows fewer changes on the first screen than the
+// template's.
 func keepTemplate(t *testing.T, lead string, promote func(compose.Inventory) []compose.ReplyPromotion) func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
 	return func(_ context.Context, r agent.CompleteRequest, _ int) (agent.Completion, error) {
 		inv := inventoryOf(t, r)
@@ -56,15 +59,18 @@ func keepTemplate(t *testing.T, lead string, promote func(compose.Inventory) []c
 			}
 		}
 		why := "it needs a decision"
-		if lead != "" {
-			reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: lead, Size: tiles.SizeHalf, Why: &why})
-		}
+		led := false
 		for _, entry := range inv.Template.Entries {
 			if entry.Tile == lead {
 				continue
 			}
+			if lead != "" && entry.Group != "" && !led {
+				// The lead takes the first change's place.
+				led = true
+				reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: lead, Size: entry.Size, Why: &why})
+			}
 			e := compose.ReplyEntry{Tile: entry.Tile, Size: entry.Size}
-			if entry.Group != "" {
+			if lead == "" && entry.Group != "" {
 				group := entry.Group
 				e.Group = &group
 			}

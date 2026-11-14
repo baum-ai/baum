@@ -8,7 +8,8 @@
     "the layout does not place tile \"intent\"; it is added in the default order",
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
-    "the layout does not place tile \"everything_else\"; it is added in the default order"
+    "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "the layout shows fewer changes on the first screen than the template, with nothing that must be seen instead; the template's layout is kept"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -23,17 +24,18 @@
           "size": "half"
         },
         {
+          "tile": "sec_retry_policy",
+          "size": "half",
+          "group": "changes"
+        },
+        {
           "tile": "sec_config_flag",
-          "size": "full"
+          "size": "half",
+          "group": "changes"
         },
         {
           "tile": "evidence",
           "size": "third"
-        },
-        {
-          "tile": "sec_retry_policy",
-          "size": "third",
-          "group": "changes"
         },
         {
           "tile": "media",
@@ -69,17 +71,18 @@
         "size": "half"
       },
       {
+        "tile": "sec_retry_policy",
+        "size": "half",
+        "group": "changes"
+      },
+      {
         "tile": "sec_config_flag",
-        "size": "full"
+        "size": "half",
+        "group": "changes"
       },
       {
         "tile": "evidence",
         "size": "third"
-      },
-      {
-        "tile": "sec_retry_policy",
-        "size": "third",
-        "group": "changes"
       },
       {
         "tile": "media",
@@ -108,7 +111,7 @@
         "title": "Changes"
       }
     ],
-    "landing": 6
+    "landing": 7
   },
   "tiles": [
     {

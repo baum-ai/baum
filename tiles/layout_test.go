@@ -24,11 +24,14 @@ func TestLanding(t *testing.T) {
 	}{
 		{"empty", tiles.Layout{}, 0},
 		{"fewer than fit", tiles.Layout{Entries: entries(h, h, third)}, 3},
-		{"three full rows", tiles.Layout{Entries: entries(full, full, full, full)}, 3},
-		{"halves and thirds", tiles.Layout{Entries: entries(h, h, third, third, third, third, third, third, third)}, 8},
-		{"a half that does not fit its row starts the next", tiles.Layout{Entries: entries(third, third, h, full, full)}, 4},
-		{"an entry past the last row ends the landing page", tiles.Layout{Entries: entries(h, third, h, h, full, third)}, 5},
+		{"three full rows", tiles.Layout{Entries: entries(full, full, full, full, full)}, 3},
+		{"a single entry left is shown", tiles.Layout{Entries: entries(full, full, full, full)}, 4},
+		{"halves and thirds", tiles.Layout{Entries: entries(h, h, third, third, third, third, third, third, third, third)}, 8},
+		{"a half that does not fit its row starts the next", tiles.Layout{Entries: entries(third, third, h, full, full, full)}, 4},
+		{"an entry past the last row ends the landing page", tiles.Layout{Entries: entries(h, third, h, h, full, third, third)}, 5},
 		{
+			// The group is a block: c1 starts a row and d the next, so the
+			// third row ends with f.
 			"collapsed group members take no space",
 			tiles.Layout{
 				Entries: []tiles.Entry{
@@ -39,7 +42,18 @@ func TestLanding(t *testing.T) {
 				},
 				Groups: []tiles.Group{{ID: "g", Title: "G", CollapseAfter: new(1)}},
 			},
-			10,
+			8,
+		},
+		{
+			"a group starts a row and the entry after it another",
+			tiles.Layout{
+				Entries: []tiles.Entry{
+					{Tile: "a", Size: h}, {Tile: "c1", Size: third, Group: "g"}, {Tile: "b", Size: third},
+					{Tile: "d", Size: full}, {Tile: "e", Size: full},
+				},
+				Groups: []tiles.Group{{ID: "g", Title: "G"}},
+			},
+			3,
 		},
 		{
 			"trailing collapsed members are not counted",
@@ -66,7 +80,7 @@ func TestLandingRule(t *testing.T) {
 	layout := tiles.Layout{
 		Entries: []tiles.Entry{
 			{Tile: "a", Size: tiles.SizeFull},
-			{Tile: "c1", Size: tiles.SizeThird, Group: "g"}, {Tile: "c2", Size: tiles.SizeThird, Group: "g"},
+			{Tile: "c1", Size: tiles.SizeThird, Group: "g"}, {Tile: "c2", Size: tiles.SizeThird, Group: "g"}, {Tile: "c3", Size: tiles.SizeThird, Group: "g"},
 			{Tile: "d", Size: tiles.SizeFull}, {Tile: "e", Size: tiles.SizeFull},
 			{Tile: "o1", Size: tiles.SizeThird, Group: "o"}, {Tile: "o2", Size: tiles.SizeThird, Group: "o"},
 			{Tile: "f", Size: tiles.SizeThird},
@@ -74,18 +88,33 @@ func TestLandingRule(t *testing.T) {
 		Groups: []tiles.Group{{ID: "g", Title: "G", CollapseAfter: new(1)}, {ID: "o", Title: "O", CollapseAfter: new(0)}},
 	}
 	layout.Landing = tiles.Landing(layout)
-	if layout.Landing != 4 {
-		t.Fatalf("Landing = %d, want 4", layout.Landing)
+	if layout.Landing != 5 {
+		t.Fatalf("Landing = %d, want 5", layout.Landing)
 	}
-	if got, want := tiles.Hidden(layout), []bool{false, false, true, false, false, true, true, false}; !slices.Equal(got, want) {
+	if got, want := tiles.Hidden(layout), []bool{false, false, true, true, false, false, true, true, false}; !slices.Equal(got, want) {
 		t.Errorf("Hidden = %v, want %v", got, want)
 	}
-	if got, want := tiles.Visible(layout), []bool{true, true, false, true, false, false, false, false}; !slices.Equal(got, want) {
+	if got, want := tiles.Visible(layout), []bool{true, true, false, false, true, false, false, false, false}; !slices.Equal(got, want) {
 		t.Errorf("Visible = %v, want %v", got, want)
 	}
 	// e and f; the obsolete members stay behind their group's control.
 	if got := tiles.More(layout); got != 2 {
 		t.Errorf("More = %d, want 2", got)
+	}
+}
+
+// A group that shows some of its members never folds a single one away, and
+// a group folded to none (the obsolete changes) stays folded.
+func TestHiddenNeverFoldsOneMember(t *testing.T) {
+	layout := tiles.Layout{
+		Entries: []tiles.Entry{
+			{Tile: "c1", Size: tiles.SizeThird, Group: "g"}, {Tile: "c2", Size: tiles.SizeThird, Group: "g"},
+			{Tile: "o1", Size: tiles.SizeThird, Group: "o"},
+		},
+		Groups: []tiles.Group{{ID: "g", Title: "G", CollapseAfter: new(1)}, {ID: "o", Title: "O", CollapseAfter: new(0)}},
+	}
+	if got, want := tiles.Hidden(layout), []bool{false, false, true}; !slices.Equal(got, want) {
+		t.Errorf("Hidden = %v, want %v", got, want)
 	}
 }
 
@@ -174,8 +203,8 @@ func TestArrangeMovesTheOverviewOntoTheLandingPage(t *testing.T) {
 		entries []tiles.Entry
 		want    []string
 	}{
-		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "b", Size: tiles.SizeFull}, {Tile: "c", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}}, []string{"overview", "a", "b", "c"}},
-		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "b", Size: tiles.SizeFull, Pin: true}, {Tile: "c", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}}, []string{"b", "overview", "a", "c"}},
+		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "b", Size: tiles.SizeFull}, {Tile: "c", Size: tiles.SizeFull}, {Tile: "d", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}}, []string{"overview", "a", "b", "c", "d"}},
+		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "b", Size: tiles.SizeFull, Pin: true}, {Tile: "c", Size: tiles.SizeFull}, {Tile: "d", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}}, []string{"b", "overview", "a", "c", "d"}},
 		{[]tiles.Entry{{Tile: "a", Size: tiles.SizeFull}, {Tile: "overview", Size: tiles.SizeHalf}, {Tile: "c", Size: tiles.SizeFull}}, []string{"a", "overview", "c"}},
 	} {
 		doc := &tiles.Document{Tiles: []tiles.Tile{{ID: tiles.TypeOverview, Type: tiles.TypeOverview}}, Layout: tiles.Layout{Entries: tc.entries}}
@@ -186,10 +215,10 @@ func TestArrangeMovesTheOverviewOntoTheLandingPage(t *testing.T) {
 	}
 }
 
-// RowFills grows a short landing row's last tile to its next larger allowed
-// size when that fills the row exactly and a tile follows; it never grows a
-// pinned tile, one whose next size overfills the row, or the last row with
-// nothing after it.
+// RowFills grows a short row's last tile to the larger allowed size that
+// fills the row exactly, else every tile of the row to equal parts, when
+// another row follows; it never grows a pinned tile, shrinks one, or fills
+// the last row with nothing after it.
 func TestRowFills(t *testing.T) {
 	const h, third, full = tiles.SizeHalf, tiles.SizeThird, tiles.SizeFull
 	tilesOf := func(n int) []tiles.Tile {
@@ -207,7 +236,8 @@ func TestRowFills(t *testing.T) {
 	}{
 		{name: "half and third before a half", sizes: []tiles.Size{h, third, h}, pin: -1, want: map[string]tiles.Size{"b": h}},
 		{name: "half before a full", sizes: []tiles.Size{h, full}, pin: -1, want: map[string]tiles.Size{"a": full}},
-		{name: "two thirds before a half", sizes: []tiles.Size{third, third, h}, pin: -1},
+		{name: "two thirds before a half", sizes: []tiles.Size{third, third, h}, pin: -1, want: map[string]tiles.Size{"a": h, "b": h}},
+		{name: "a full row of thirds before a half and a full", sizes: []tiles.Size{third, third, third, h, full}, pin: -1, want: map[string]tiles.Size{"d": full}},
 		{name: "pinned", sizes: []tiles.Size{h, third, h}, pin: 1},
 		{name: "full rows", sizes: []tiles.Size{h, h, third, third, third}, pin: -1},
 		{name: "last row with nothing after", sizes: []tiles.Size{h, h, h}, pin: -1},

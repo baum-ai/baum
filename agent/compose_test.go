@@ -82,7 +82,7 @@ func templateReply(t *testing.T, doc *tiles.Document, lead ...string) compose.Re
 	reply := compose.Reply{Entries: []compose.ReplyEntry{}, Promote: []compose.ReplyPromotion{}, Moves: []tiles.Move{}}
 	why := "named by the recommendation"
 	for _, id := range lead {
-		reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: id, Size: tiles.SizeHalf, Why: &why})
+		reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: id, Size: tiles.SizeThird, Why: &why})
 	}
 	for _, entry := range inv.Template.Entries {
 		if slices.Contains(lead, entry.Tile) {
@@ -149,7 +149,7 @@ func checkGenerated(t *testing.T, normalized []byte, doc *tiles.Document, c tile
 
 func TestComposeRunReplyShapes(t *testing.T) {
 	normalized, doc := converted(t)
-	valid := encode(t, templateReply(t, doc, "sec_retry"))
+	valid := encode(t, templateReply(t, doc, "sec_retry", "sec_api", "sec_deadletter"))
 	emptyEntries := `{"entries": [], "changes_shown": null, "promote": [], "moves": [], "custom_suggestion": null}`
 	unknown := templateReply(t, doc)
 	unknown.Entries = append(unknown.Entries[:3:3], compose.ReplyEntry{Tile: "no_such_tile", Size: tiles.SizeHalf})
@@ -158,7 +158,7 @@ func TestComposeRunReplyShapes(t *testing.T) {
 	hostile.Entries[1].Why = &hostileWhy
 	hostile.Moves = []tiles.Move{{Tile: "sec_api", Why: "key AKIA" + "UJZDEGXDNCF32EPF leaked"}}
 	hostile.Entries[0].Size = tiles.SizeThird // the overview takes half or full
-	rowFill := map[tiles.FixKind]int{tiles.FixRowFill: 1}
+	var none map[tiles.FixKind]int
 
 	for _, c := range []struct {
 		name     string
@@ -169,11 +169,11 @@ func TestComposeRunReplyShapes(t *testing.T) {
 		repaired bool
 		fixes    map[tiles.FixKind]int
 	}{
-		// Leading a change at half leaves its row a unit short: the host
-		// grows the row's last tile (a row fill, not a repair).
-		{name: "valid", replies: []string{valid}, calls: 1, fixes: rowFill},
-		{name: "invalid JSON then valid", replies: []string{`{"entries": [`, valid}, calls: 2, repaired: true, fixes: rowFill},
-		{name: "schema-invalid then valid", replies: []string{`{"entries": []}`, valid}, calls: 2, repaired: true, fixes: rowFill},
+		// Three changes lead at a third, a full row above the overview and
+		// risks: as many changes on the first screen as the template's.
+		{name: "valid", replies: []string{valid}, calls: 1, fixes: none},
+		{name: "invalid JSON then valid", replies: []string{`{"entries": [`, valid}, calls: 2, repaired: true, fixes: none},
+		{name: "schema-invalid then valid", replies: []string{`{"entries": []}`, valid}, calls: 2, repaired: true, fixes: none},
 		{name: "repair fails", replies: []string{`not json`, `{"entries": "x"}`}, calls: 2, repaired: true, fallback: agent.FallbackInvalid},
 		{name: "empty", replies: []string{``, ``}, calls: 2, repaired: true, fallback: agent.FallbackInvalid},
 		{name: "empty entries", replies: []string{emptyEntries, emptyEntries}, calls: 2, repaired: true, fallback: agent.FallbackInvalid},
@@ -228,7 +228,7 @@ func TestComposeRunReplyShapes(t *testing.T) {
 
 func TestComposeRunLeadsWithWhatTheReplyLeads(t *testing.T) {
 	normalized, doc := converted(t)
-	out := run(t, doc, &fakeCompleter{replies: []string{encode(t, templateReply(t, doc, "sec_retry", "sec_api"))}})
+	out := run(t, doc, &fakeCompleter{replies: []string{encode(t, templateReply(t, doc, "sec_retry", "sec_api", "sec_deadletter"))}})
 	composed := checkGenerated(t, normalized, doc, out.Composition)
 	visible := tiles.Visible(composed.Layout)
 	var landing []string

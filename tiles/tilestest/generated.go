@@ -40,9 +40,19 @@ import (
 //     the changes group.
 //   - 12: the encoded document passes the tile schema and the
 //     document-level rules (tiles.Validator.Validate).
-//   - 13: no landing row of a composed document ends with empty units
-//     while growing its last tile to an allowed size would fill it
+//   - 13: no row of a composed document, as the page lays it out
+//     (tiles.Rows: a group a block of its own), ends with empty units while
+//     another follows and growing its tiles to allowed sizes would fill it
 //     (tiles.RowFills).
+//   - 14: the guard rails hold (tiles/guards.go): the first screen
+//     (tiles.FirstScreenRows rows) shows at least as many current changes as
+//     the template's for the same review, unless it shows a pinned tile, the
+//     risks tile ranking a critical or high risk, a change the
+//     recommendation names or the evidence tile with
+//     tiles.EvidenceGapsShown gaps that the template's does not, or a person
+//     hid tiles; no change
+//     is featured alone at half on a row another follows; and the evidence
+//     tile with that many gaps is on the landing page.
 func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document) []string {
 	failures := check(normalized, doc, true)
 	fail := func(invariant int, format string, args ...any) {
@@ -197,10 +207,17 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		}
 	}
 
-	// 13. Landing rows are filled where they can be.
+	// 13. Rows are filled where they can be.
 	if !c.Empty() {
 		for id, size := range tiles.RowFills(doc) {
-			fail(13, "tile %s ends a landing row with empty units; at %s it would fill it", id, size)
+			fail(13, "tile %s ends a row with empty units; at %s it would fill it", id, size)
+		}
+	}
+
+	// 14. The guard rails.
+	if !c.Empty() {
+		for _, failure := range guardFailures(converted, c, doc) {
+			fail(14, "%s", failure)
 		}
 	}
 
@@ -304,4 +321,99 @@ func stableSubject(tile *tiles.Tile) string {
 		return tile.Type + " authored"
 	}
 	return tile.Type
+}
+
+// screenFacts is what the first screen of a document shows: its current
+// changes, and the tiles that may stand in for them.
+type screenFacts struct {
+	changes int
+	others  map[string]bool
+}
+
+func firstScreenFacts(doc *tiles.Document) screenFacts {
+	current := map[string]bool{}
+	for _, change := range doc.Changes {
+		var derived struct {
+			State string `json:"state"`
+		}
+		_ = json.Unmarshal(change.Derived, &derived)
+		current[change.ID] = derived.State != "stale"
+	}
+	named := tiles.RecommendedChanges(doc)
+	gaps := evidenceGaps(doc, current)
+	out := screenFacts{others: map[string]bool{}}
+	for k, row := range tiles.Rows(doc.Layout) {
+		if k >= tiles.FirstScreenRows || row.Entries[0] >= doc.Layout.Landing {
+			break
+		}
+		for _, i := range row.Entries {
+			entry := doc.Layout.Entries[i]
+			if current[entry.Tile] {
+				out.changes++
+			}
+			if entry.Pin || entry.Tile == tiles.TypeRisks && severeRanked(doc) || slices.Contains(named, entry.Tile) ||
+				entry.Tile == tiles.TypeEvidence && gaps >= tiles.EvidenceGapsShown {
+				out.others[entry.Tile] = true
+			}
+		}
+	}
+	return out
+}
+
+func evidenceGaps(doc *tiles.Document, current map[string]bool) int {
+	n := 0
+	for _, item := range doc.Evidence {
+		if current[item.Change] && (item.Status == "missing" || item.Status == "failed") {
+			n++
+		}
+	}
+	return n
+}
+
+// guardFailures checks the guard rails of a document composed from a
+// converted one against the template of the same review.
+func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.Document) []string {
+	var failures []string
+	template, _ := tiles.Template(converted, c)
+	templated, err := tiles.Compose(converted, &template)
+	if err != nil {
+		return []string{"the template does not compose: " + err.Error()}
+	}
+	got, want := firstScreenFacts(doc), firstScreenFacts(templated)
+	if got.changes < want.changes && len(c.Layout.Hidden) == 0 {
+		standsIn := false
+		for id := range got.others {
+			standsIn = standsIn || !want.others[id]
+		}
+		if !standsIn {
+			failures = append(failures, fmt.Sprintf("the first screen shows %d changes, the template's %d, and nothing that must be seen instead", got.changes, want.changes))
+		}
+	}
+	rows := tiles.Rows(doc.Layout)
+	for k, row := range rows {
+		if len(row.Entries) != 1 || row.Group != "" || k == len(rows)-1 {
+			continue
+		}
+		entry := doc.Layout.Entries[row.Entries[0]]
+		if entry.Size == tiles.SizeHalf && !entry.Pin && slices.ContainsFunc(doc.Changes, func(change tiles.Change) bool { return change.ID == entry.Tile }) {
+			failures = append(failures, fmt.Sprintf("change %s is featured alone at half", entry.Tile))
+		}
+	}
+	current := map[string]bool{}
+	for _, change := range doc.Changes {
+		var derived struct {
+			State string `json:"state"`
+		}
+		_ = json.Unmarshal(change.Derived, &derived)
+		current[change.ID] = derived.State != "stale"
+	}
+	if evidenceGaps(doc, current) >= tiles.EvidenceGapsShown {
+		visible := tiles.Visible(doc.Layout)
+		for i, entry := range doc.Layout.Entries {
+			if entry.Tile == tiles.TypeEvidence && !visible[i] {
+				failures = append(failures, "the evidence tile has gaps and is not on the landing page")
+			}
+		}
+	}
+	return failures
 }

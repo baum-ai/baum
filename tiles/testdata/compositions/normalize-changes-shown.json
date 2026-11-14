@@ -25,12 +25,12 @@
         },
         {
           "tile": "sec_retry_policy",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
           "tile": "sec_config_flag",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
@@ -73,12 +73,12 @@
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -113,7 +113,7 @@
         "collapse_after": 1
       }
     ],
-    "landing": 9
+    "landing": 7
   },
   "tiles": [
     {

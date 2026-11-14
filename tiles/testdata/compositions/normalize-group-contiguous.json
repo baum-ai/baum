@@ -5,7 +5,11 @@
     "the layout does not place tile \"intent\"; it is added in the default order",
     "the layout does not place tile \"context\"; it is added in the default order",
     "the layout does not place tile \"decisions\"; it is added in the default order",
-    "the layout does not place tile \"everything_else\"; it is added in the default order"
+    "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "tile \"sec_config_flag\" ended a row with empty units; it grows to fill the row",
+    "tile \"sec_retry_policy\" ended a row with empty units; it grows to fill the row",
+    "tile \"evidence\" ended a row with empty units; it grows to fill the row",
+    "tile \"media\" ended a row with empty units; it grows to fill the row"
   ],
   "composition": {
     "schema": "baum.composition/1",
@@ -13,17 +17,17 @@
       "entries": [
         {
           "tile": "sec_config_flag",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
           "tile": "sec_retry_policy",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
           "tile": "evidence",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "overview",
@@ -35,7 +39,7 @@
         },
         {
           "tile": "media",
-          "size": "third"
+          "size": "half"
         },
         {
           "tile": "intent",
@@ -60,17 +64,17 @@
     "entries": [
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "evidence",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "overview",
@@ -82,7 +86,7 @@
       },
       {
         "tile": "media",
-        "size": "third"
+        "size": "half"
       },
       {
         "tile": "intent",
@@ -107,7 +111,7 @@
         "title": "Changes"
       }
     ],
-    "landing": 8
+    "landing": 6
   },
   "tiles": [
     {

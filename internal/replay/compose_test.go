@@ -23,7 +23,9 @@ import (
 )
 
 // completing is a backend that also completes: it answers a composition with
-// the template's entries, the first change led at half.
+// the template's entries, the changes out of their group at their sizes, the
+// first with a reason (the host's guard keeps a layout that shows fewer changes on
+// the first screen than the template).
 type completing struct {
 	*generatetest.Backend
 	calls atomic.Int32
@@ -43,12 +45,10 @@ func (c *completing) Complete(_ context.Context, r agent.CompleteRequest) (agent
 	why := "the riskiest change"
 	for _, entry := range inv.Template.Entries {
 		e := compose.ReplyEntry{Tile: entry.Tile, Size: entry.Size}
-		switch {
-		case entry.Group != "" && !led:
-			led, e.Size, e.Why = true, tiles.SizeHalf, &why
-		case entry.Group != "":
-			group := entry.Group
-			e.Group = &group
+		if entry.Group != "" {
+			if !led {
+				led, e.Why = true, &why
+			}
 		}
 		reply.Entries = append(reply.Entries, e)
 	}
@@ -117,7 +117,7 @@ func TestComposeOnlyComposesAnEarlierRunsReviews(t *testing.T) {
 	}
 	record := readRecord(t, caseDir)
 	delete(record.Fixes, tiles.FixRowFill) // the host's row fill is not a repair
-	if record.Fallback || !record.DiffersFromTemplate || record.Featured != 1 || record.Review.Match != "run" || len(record.Fixes) != 0 {
+	if record.Fallback || !record.DiffersFromTemplate || record.Featured < 1 || record.Review.Match != "run" || len(record.Fixes) != 0 {
 		t.Errorf("record %+v", record)
 	}
 	metrics, err := replay.ReadMetrics(filepath.Join(outDir, "run"))

@@ -33,16 +33,16 @@
         },
         {
           "tile": "prose_why_jitter",
-          "size": "half"
+          "size": "full"
         },
         {
           "tile": "sec_retry_policy",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
           "tile": "sec_config_flag",
-          "size": "third",
+          "size": "half",
           "group": "changes"
         },
         {
@@ -166,16 +166,16 @@
       },
       {
         "tile": "prose_why_jitter",
-        "size": "half"
+        "size": "full"
       },
       {
         "tile": "sec_retry_policy",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_config_flag",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {

@@ -6001,12 +6001,12 @@
       },
       {
         "tile": "sec_ackfix",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
         "tile": "sec_docs",
-        "size": "third",
+        "size": "half",
         "group": "changes"
       },
       {
@@ -6050,6 +6050,6 @@
         "collapse_after": 0
       }
     ],
-    "landing": 8
+    "landing": 7
   }
 }
