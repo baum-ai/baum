@@ -763,6 +763,11 @@ func stageReason(err error) string {
 	return err.Error()
 }
 
+// Add sums the spending of another part of the run, such as the composition
+// that follows a staged review (ComposeOutcome.Outcome), into the outcome as
+// a stage's is summed.
+func (o *Outcome) Add(part Outcome) { o.add(part) }
+
 // add sums a stage's spending into the run's outcome: its calls, tokens,
 // attempts, repairs, usage, accounting, structured output rejections,
 // diagnostics (within MaxDiagnostics over the run), sessions and model.

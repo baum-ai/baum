@@ -51,6 +51,10 @@ type ComposeRequest struct {
 	MaxOutputTokens int
 	// Now stamps the composition; nil is time.Now.
 	Now func() time.Time
+	// Skip, when set, is why the host leaves the composer out, such as a run
+	// with too little time left (FallbackNoTime): ComposeRun makes no call
+	// and returns the template with this reason.
+	Skip string
 
 	// redact masks a reply; nil is RedactTaskOutput. Tests replace it.
 	redact func(context.Context, *bundle.Redactor, []byte, *Outcome) ([]byte, error)
@@ -81,6 +85,10 @@ const (
 	FallbackInvalid     = "the composer's reply did not match its schema after one repair"
 	FallbackRedaction   = "the composer's reply could not be checked for secrets"
 	FallbackUnusable    = "the composer's layout could not be applied"
+	// FallbackNoTime and FallbackBudget are a host's reasons to skip the
+	// call (ComposeRequest.Skip).
+	FallbackNoTime = "too little of the time limit was left to arrange the tiles"
+	FallbackBudget = "the call or token budget left nothing to arrange the tiles"
 )
 
 // ComposeOutcome is what ComposeRun did. Its Outcome counts the calls, tokens,
@@ -150,6 +158,9 @@ func ComposeRun(ctx context.Context, r ComposeRequest) (ComposeOutcome, error) {
 	var prompt Prompt
 	fallback := func(reason string) (ComposeOutcome, error) {
 		return r.fallback(out, prompt, reason, now)
+	}
+	if r.Skip != "" {
+		return fallback(r.Skip)
 	}
 	if r.Completer == nil {
 		return fallback(FallbackNoCompleter)
@@ -289,12 +300,9 @@ func repairMessage(inventory string, rejected []byte, problems []string) string 
 // fallback sets the outcome's composition to the template of the change
 // kind, with the reason.
 func (r ComposeRequest) fallback(out ComposeOutcome, prompt Prompt, reason string, now func() time.Time) (ComposeOutcome, error) {
-	template, _ := tiles.Template(r.Document, nil)
-	template.Generator = nil // the host sets it below
-	pin(&template, r.Document, r.Preferences.Pins)
-	n, report := tiles.NormalizeComposition(r.Document, &template)
-	if report.Counts()[tiles.FixUnusable] > 0 {
-		return out, fmt.Errorf("agent: the template does not apply: %s", strings.Join(report.Messages(), "; "))
+	n, report, err := TemplateComposition(r.Document, r.Preferences.Pins)
+	if err != nil {
+		return out, err
 	}
 	out.Composition, out.Report = n, report
 	out.Fallback, out.FallbackReason = true, reason
@@ -302,6 +310,22 @@ func (r ComposeRequest) fallback(out ComposeOutcome, prompt Prompt, reason strin
 		return out, err
 	}
 	return out, nil
+}
+
+// TemplateComposition is the layout a composition falls back to: the change
+// kind's template (tiles.Template) with the repository's pins stamped,
+// normalised, without a generator. A host lays out a draft with it while the
+// composer has not answered, so a composer that keeps the template moves
+// nothing on the page.
+func TemplateComposition(doc *tiles.Document, pins []string) (tiles.Composition, tiles.Report, error) {
+	template, _ := tiles.Template(doc, nil)
+	template.Generator = nil // the host sets it
+	pin(&template, doc, pins)
+	n, report := tiles.NormalizeComposition(doc, &template)
+	if report.Counts()[tiles.FixUnusable] > 0 {
+		return n, report, fmt.Errorf("agent: the template does not apply: %s", strings.Join(report.Messages(), "; "))
+	}
+	return n, report, nil
 }
 
 func (r ComposeRequest) generator(prompt Prompt, model string, fixes map[tiles.FixKind]int, fallback bool, reason string, now func() time.Time) tiles.Generator {
