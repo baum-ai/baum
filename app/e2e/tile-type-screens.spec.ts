@@ -42,8 +42,19 @@ type Sample = {
   detail: Record<string, unknown>;
 };
 type TileType = { name: string; title: string; sizes: Size[]; samples: Sample[] };
-type Message = { kind: string; code?: string; message?: string; metrics?: Metrics; height?: number };
-type Metrics = { overflow_x?: boolean; overflow_y?: boolean; unresolved?: number; empty_state?: boolean };
+type Message = {
+  kind: string;
+  code?: string;
+  message?: string;
+  metrics?: Metrics;
+  height?: number;
+};
+type Metrics = {
+  overflow_x?: boolean;
+  overflow_y?: boolean;
+  unresolved?: number;
+  empty_state?: boolean;
+};
 type Mounted = { messages: Message[]; box: { width: number; height: number } };
 
 const PAGE = `<!doctype html>
@@ -202,7 +213,13 @@ async function mount(
   page: Page,
   type: TileType,
   sample: Sample,
-  options: { face: "glance" | "detail"; size: Size; theme: Theme; card?: { width: number; height: number }; pane?: number },
+  options: {
+    face: "glance" | "detail";
+    size: Size;
+    theme: Theme;
+    card?: { width: number; height: number };
+    pane?: number;
+  },
 ) {
   return (await page.evaluate(
     (args) => (window as unknown as { mount: (args: unknown) => Promise<unknown> }).mount(args),
@@ -222,7 +239,9 @@ async function mount(
 
 test("tile types in light and dark, glance and detail", async ({ page }) => {
   const index = join(DIR, "index.json");
-  expect(existsSync(index), "run the Go check first (just local_app::tile-type-screens)").toBe(true);
+  expect(existsSync(index), "run the Go check first (just local_app::tile-type-screens)").toBe(
+    true,
+  );
   const names = JSON.parse(readFileSync(index, "utf8")) as string[];
   const only = (process.env.TILE_TYPE_SAMPLES ?? "").split(",").filter(Boolean);
   await page.setViewportSize({ width: 1200, height: 900 });
@@ -236,28 +255,63 @@ test("tile types in light and dark, glance and detail", async ({ page }) => {
       if (only.length && !only.includes(sample.name)) continue;
       const glances: { label: string; size: Size; card?: { width: number; height: number } }[] = [
         ...type.sizes.map((size) => ({ label: size, size })),
-        { label: "phone", size: type.sizes[0], card: { width: PHONE, height: CARDS[type.sizes[0]].height } },
+        {
+          label: "phone",
+          size: type.sizes[0],
+          card: { width: PHONE, height: CARDS[type.sizes[0]].height },
+        },
       ];
       for (const theme of THEMES) {
         for (const glance of glances) {
           const where = `${name}/${sample.name} glance ${glance.label} ${theme}`;
-          const mounted = await mount(page, type, sample, { face: "glance", size: glance.size, theme, card: glance.card });
+          const mounted = await mount(page, type, sample, {
+            face: "glance",
+            size: glance.size,
+            theme,
+            card: glance.card,
+          });
           const check = judge(mounted, sample, "glance");
           if (check.metrics.overflow_x) check.errors.push(`too wide: ${await widest(page)}`);
-          report.push({ name, sample: sample.name, face: "glance", size: glance.label, theme, box: mounted.box, ...check });
+          report.push({
+            name,
+            sample: sample.name,
+            face: "glance",
+            size: glance.label,
+            theme,
+            box: mounted.box,
+            ...check,
+          });
           failures.push(...check.errors.map((error) => `${where}: ${error}`));
           const path = join(DIR, `${name}-${sample.name}-glance-${glance.label}-${theme}.png`);
           await page.locator("#shot").screenshot({ path });
-          sheet.push({ caption: `${sample.name} · ${glance.label} · ${theme}`, src: `data:image/png;base64,${readFileSync(path).toString("base64")}` });
+          sheet.push({
+            caption: `${sample.name} · ${glance.label} · ${theme}`,
+            src: `data:image/png;base64,${readFileSync(path).toString("base64")}`,
+          });
         }
         for (const pane of PANES) {
           const where = `${name}/${sample.name} detail ${pane} ${theme}`;
-          const mounted = await mount(page, type, sample, { face: "detail", size: type.sizes[0], theme, pane });
+          const mounted = await mount(page, type, sample, {
+            face: "detail",
+            size: type.sizes[0],
+            theme,
+            pane,
+          });
           const check = judge(mounted, sample, "detail");
           if (check.metrics.overflow_x) check.errors.push(`too wide: ${await widest(page)}`);
-          report.push({ name, sample: sample.name, face: "detail", pane, theme, box: mounted.box, ...check });
+          report.push({
+            name,
+            sample: sample.name,
+            face: "detail",
+            pane,
+            theme,
+            box: mounted.box,
+            ...check,
+          });
           failures.push(...check.errors.map((error) => `${where}: ${error}`));
-          await page.locator("#shot").screenshot({ path: join(DIR, `${name}-${sample.name}-detail-${pane}-${theme}.png`) });
+          await page
+            .locator("#shot")
+            .screenshot({ path: join(DIR, `${name}-${sample.name}-detail-${pane}-${theme}.png`) });
         }
       }
     }
@@ -265,10 +319,16 @@ test("tile types in light and dark, glance and detail", async ({ page }) => {
       const shots = sheet.filter((shot) => shot.caption.endsWith(theme));
       if (shots.length === 0) continue;
       await page.evaluate(
-        ([title, list]) => (window as unknown as { sheet: (t: string, s: unknown) => Promise<unknown> }).sheet(title, list),
+        ([title, list]) =>
+          (window as unknown as { sheet: (t: string, s: unknown) => Promise<unknown> }).sheet(
+            title,
+            list,
+          ),
         [`${type.title}: glances, ${theme}`, shots] as const,
       );
-      await page.locator("#stage").screenshot({ path: join(DIR, `${name}-sheet-glance-${theme}.png`) });
+      await page
+        .locator("#stage")
+        .screenshot({ path: join(DIR, `${name}-sheet-glance-${theme}.png`) });
     }
   }
   writeFileSync(join(DIR, "report.json"), `${JSON.stringify({ failures, report }, null, 2)}\n`);
@@ -283,11 +343,16 @@ async function widest(page: Page) {
   return frame.evaluate(() => {
     const width = document.documentElement.clientWidth;
     const wide = [...document.querySelectorAll("#baum-root *")].filter(
-      (el) => el.getBoundingClientRect().right > width + 2 && ![...el.children].some((child) => child.getBoundingClientRect().right > width + 2),
+      (el) =>
+        el.getBoundingClientRect().right > width + 2 &&
+        ![...el.children].some((child) => child.getBoundingClientRect().right > width + 2),
     );
     return wide
       .slice(0, 3)
-      .map((el) => `${el.localName}${el.className && typeof el.className === "string" ? `.${el.className.trim().split(/\s+/).join(".")}` : ""} "${(el.textContent ?? "").slice(0, 40)}"`)
+      .map(
+        (el) =>
+          `${el.localName}${el.className && typeof el.className === "string" ? `.${el.className.trim().split(/\s+/).join(".")}` : ""} "${(el.textContent ?? "").slice(0, 40)}"`,
+      )
       .join(", ");
   });
 }
