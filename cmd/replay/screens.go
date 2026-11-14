@@ -124,11 +124,16 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
-	calls := len(p.Cases())
-	if *limit > 0 {
-		calls = min(calls, *limit)
+	cases := 0
+	for _, id := range p.Cases() {
+		if strings.Contains(id, *only) {
+			cases++
+		}
 	}
-	calls = int(math.Ceil(float64(calls) * 2 * (1 + *repeat)))
+	if *limit > 0 {
+		cases = min(cases, *limit)
+	}
+	calls := int(math.Ceil(float64(cases) * 2 * (1 + *repeat)))
 	if *maxCost > 0 && float64(calls)**perCall > *maxCost {
 		return fmt.Errorf("about %d calls at $%.2f each is above --max-cost-usd %.2f", calls, *perCall, *maxCost)
 	}
@@ -151,7 +156,7 @@ func runJudge(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	if reportName == "" {
 		reportName = screens.JudgeName(p, backendName, *model)
 	}
-	_, _ = fmt.Fprintf(stdout, "judging %d cases of %s against %s with %s %s, both orders (%d calls)\n", len(p.Cases()), p.X.Label(), p.Y.Label(), backendName, *model, calls)
+	_, _ = fmt.Fprintf(stdout, "judging %d cases of %s against %s with %s %s, both orders (about %d calls)\n", cases, p.X.Label(), p.Y.Label(), backendName, *model, calls)
 	report, err := screens.Judge(ctx, p, screens.JudgeOptions{Completer: completer, Backend: backendName, Model: *model, Concurrency: *concurrency, Limit: *limit, Only: *only,
 		Repeat: *repeat, Seed: *seed, Phone: *phone, Progress: stdout, Timeout: *timeout,
 		Price: func(m string, usage agent.Usage) *float64 {
