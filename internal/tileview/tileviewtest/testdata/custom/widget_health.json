@@ -1,6 +1,7 @@
 {
   "id": "widget_health",
   "title": "Widget health",
+  "headline": "One store added, one changed",
   "definition": {
     "name": "widget_health",
     "title": "Widget health",

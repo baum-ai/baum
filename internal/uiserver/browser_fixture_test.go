@@ -273,8 +273,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		t.Skip("Playwright fixture process")
 	}
 	// With BAUM_APP_CUSTOM_TILES=1, the tile routes serve acme/demo#7's
-	// reviews with the synthetic custom tiles (tileviewtest.CustomTileIDs: one
-	// well-behaved, one that tries to escape its frame, one unavailable),
+	// reviews with the synthetic custom tiles (tileviewtest.AddBrowserTiles:
+	// one well-behaved, escape probes that try to leave their frames, one
+	// unavailable),
 	// which no generation writes yet. It is decided when the process starts,
 	// so no kept tile answer is served without them, and only the browser
 	// suites that start the fixture with it see them.
@@ -285,7 +286,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				PullRequest int    `json:"pull_request"`
 			}
 			if json.Unmarshal(doc.Review, &header) == nil && header.Repository == "acme/demo" && header.PullRequest == 7 {
-				tileviewtest.AddCustomTiles(doc)
+				tileviewtest.AddBrowserTiles(doc)
 			}
 		}))
 	}

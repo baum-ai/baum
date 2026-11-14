@@ -10,9 +10,9 @@ import (
 )
 
 // customFiles are the synthetic custom tiles: for each, <id>.json holds the
-// tile's ID and title, its definition without the HTML and digest, and its
-// data, and <id>.html the HTML. Data cites "@hunk" where the document's
-// first hunk goes.
+// tile's ID, title and headline, its definition without the HTML and
+// digest, and its data, and <id>.html the HTML. Data cites "@hunk" where the
+// document's first hunk goes.
 //
 //go:embed testdata/custom
 var customFiles embed.FS
@@ -23,7 +23,10 @@ const (
 	// documented API; it is ready.
 	WidgetHealth = "widget_health"
 	// EscapeProbe tries every way out of its frame and posts what each did
-	// to the page as {probe: "escape_probe", results}; it is ready.
+	// to the page as {probe: "escape_probe", mode, face, results}; it is
+	// ready. Its data's mode chooses what it tries (see its HTML);
+	// EscapeProbeModes are the other tiles of its type the browser suite
+	// adds.
 	EscapeProbe = "escape_probe"
 	// NewerKit names a kit major this version does not ship; it is
 	// unavailable, so its frame is never registered.
@@ -33,9 +36,15 @@ const (
 // CustomTileIDs are the synthetic custom tiles' IDs, in order.
 var CustomTileIDs = []string{WidgetHealth, EscapeProbe, NewerKit}
 
+// EscapeProbeModes are the escape probe's other modes, each a tile of its
+// own (ID "escape_" and the mode) that AddBrowserTiles adds: their hostile
+// acts in a detail would take the page with them, so each has its own.
+var EscapeProbeModes = []string{"spoof", "flood", "leave_daemon", "leave_outside", "busy"}
+
 type customFile struct {
 	ID         string               `json:"id"`
 	Title      string               `json:"title"`
+	Headline   string               `json:"headline"`
 	Definition tiles.TypeDefinition `json:"definition"`
 	Data       json.RawMessage      `json:"data"`
 }
@@ -74,7 +83,30 @@ func CustomTiles(hunk string) []tiles.Tile {
 	for _, id := range CustomTileIDs {
 		f := readCustom(id)
 		data := json.RawMessage(strings.ReplaceAll(string(f.Data), `"@hunk"`, mustQuote(hunk)))
-		out = append(out, tilestest.CustomTile(f.ID, f.Title, f.Definition, data))
+		tile := tilestest.CustomTile(f.ID, f.Title, f.Definition, data)
+		tile.Headline = f.Headline
+		out = append(out, tile)
+	}
+	return out
+}
+
+// EscapeProbeTiles returns a tile of the escape probe's type for each of
+// EscapeProbeModes, citing hunk.
+func EscapeProbeTiles(hunk string) []tiles.Tile {
+	f := readCustom(EscapeProbe)
+	var out []tiles.Tile
+	for _, mode := range EscapeProbeModes {
+		var data map[string]any
+		if err := json.Unmarshal(f.Data, &data); err != nil {
+			panic(err)
+		}
+		data["mode"] = mode
+		data["cite"] = map[string]any{"type": "hunk", "id": hunk}
+		raw, err := json.Marshal(data)
+		if err != nil {
+			panic(err)
+		}
+		out = append(out, tilestest.CustomTile("escape_"+mode, "Escape probe: "+strings.ReplaceAll(mode, "_", " "), f.Definition, raw))
 	}
 	return out
 }
@@ -85,17 +117,31 @@ func CustomTiles(hunk string) []tiles.Tile {
 // full its first declared size). It has the signature
 // tileview.SetFixture takes.
 func AddCustomTiles(doc *tiles.Document) {
+	add(doc, CustomTiles(firstHunk(doc)))
+}
+
+// AddBrowserTiles adds what AddCustomTiles adds and the escape probe's
+// other modes (EscapeProbeTiles), for the browser suite.
+func AddBrowserTiles(doc *tiles.Document) {
+	hunk := firstHunk(doc)
+	add(doc, append(CustomTiles(hunk), EscapeProbeTiles(hunk)...))
+}
+
+func firstHunk(doc *tiles.Document) string {
 	var index struct {
 		Hunks []struct {
 			ID string `json:"id"`
 		} `json:"hunks"`
 	}
 	_ = json.Unmarshal(doc.Index, &index)
-	hunk := ""
 	if len(index.Hunks) > 0 {
-		hunk = index.Hunks[0].ID
+		return index.Hunks[0].ID
 	}
-	for _, tile := range CustomTiles(hunk) {
+	return ""
+}
+
+func add(doc *tiles.Document, custom []tiles.Tile) {
+	for _, tile := range custom {
 		doc.Tiles = append(doc.Tiles, tile)
 		doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: tile.ID, Size: tiles.SizeFull})
 	}
