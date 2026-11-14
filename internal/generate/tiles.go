@@ -13,17 +13,29 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/compose"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
-// Tiles, for a staged run of one pull request (Options.Tiles), arranges the
-// review's tiles once its analysis has ended: one call through the backend's
-// agent.Completer (agent.ComposeRun) chooses the layout, which is stored with
-// the version (Result.Composition). The review itself is published exactly as
-// without it: the composition never fails a run, and a composition that
-// cannot be made leaves the version with the template's layout or none.
+// Tiles, for a staged run of one pull request (Options.Tiles), adds the tile
+// analysis to the review's stages (agent.StagedTiles: library selection in
+// the outline, a fill per selected library type and the exhibits call beside
+// the details and the context) and arranges the review's tiles once its
+// analysis has ended: one call through the backend's agent.Completer
+// (agent.ComposeRun) chooses the layout, which is stored with the version
+// (Result.Composition) with the library and authored tiles. The review itself
+// is published as without it: the composition never fails a run, and a
+// composition that cannot be made leaves the version with the template's
+// layout or none.
 type Tiles struct {
-	// Prompts defaults to prompt.TilesPrompts{}.
+	// Prompts defaults to prompt.TilesPrompts{}. When it does not supply
+	// the tile analysis texts (agent.TileAnalysisPrompts), the built-in ones
+	// are used.
 	Prompts agent.ComposePrompts
+	// Library are the library types offered; nil offers every built-in one
+	// (library.All). NoLibrary offers none, NoExhibits writes no authored
+	// tile.
+	Library               []library.Entry
+	NoLibrary, NoExhibits bool
 	// Previous is the previous version's stored composition
 	// (store.ParseComposition), nil without one. Publish sets it from the
 	// latest version.
@@ -54,6 +66,9 @@ type ComposeReport struct {
 	Elapsed time.Duration
 	// Problem, when set, is why the version has no composition at all.
 	Problem string
+	// Tiles is what the tile analysis gave the composition, nil without
+	// one.
+	Tiles *TilesReport
 }
 
 // composeMinTokens is the least of a token budget left in which the composer
@@ -89,8 +104,10 @@ func converted(document []byte, draft bool) (*tiles.Document, error) {
 // there is one that applies, so a new version's page keeps the layout the
 // reader knows; else the change kind's template with the pins. It is nil
 // when the document does not convert, or when making it fails in any way, a
-// panic included: the draft is then shown in the converted layout.
-func provisional(document []byte, pins []string, previous *tiles.Composition) (out []byte) {
+// panic included: the draft is then shown in the converted layout. library
+// are the draft's library tiles, pending or filled (draftLibrary), which take
+// their default places.
+func provisional(document []byte, pins []string, previous *tiles.Composition, library []tiles.LibraryTile) (out []byte) {
 	defer func() {
 		if recover() != nil {
 			out = nil
@@ -100,7 +117,7 @@ func provisional(document []byte, pins []string, previous *tiles.Composition) (o
 	if err != nil {
 		return nil
 	}
-	c, err := provisionalLayout(doc, pins, previous)
+	c, err := provisionalLayout(doc, pins, previous, library)
 	if err != nil {
 		return nil
 	}
@@ -113,16 +130,20 @@ func provisional(document []byte, pins []string, previous *tiles.Composition) (o
 
 // provisionalLayout is provisional's layout of a converted draft; tests
 // replace it.
-var provisionalLayout = func(doc *tiles.Document, pins []string, previous *tiles.Composition) (tiles.Composition, error) {
+var provisionalLayout = func(doc *tiles.Document, pins []string, previous *tiles.Composition, library []tiles.LibraryTile) (tiles.Composition, error) {
 	if previous != nil && !previous.Empty() {
 		kept := *previous
 		kept.Generator, kept.Layout.Hidden = nil, nil
 		kept.Layout.Entries = slices.Clone(previous.Layout.Entries)
+		// This version's library tiles, not the previous version's; its
+		// authored tiles come with the composition.
+		kept.Library, kept.Authored = library, nil
+		tiles.PlaceExtras(&kept, doc)
 		if n, report := tiles.NormalizeComposition(doc, &kept); report.Counts()[tiles.FixUnusable] == 0 && !n.Empty() {
 			return n, nil
 		}
 	}
-	c, _, err := agent.TemplateComposition(doc, pins)
+	c, _, err := agent.TemplateCompositionWith(doc, pins, &tiles.Composition{Library: library})
 	return c, err
 }
 
@@ -153,7 +174,7 @@ func detached(ctx context.Context) (context.Context, context.CancelFunc) {
 // the run is stopped and stores nothing. Any other failure, a panic
 // included, leaves the version without a composition and says why in the
 // report.
-func composeTiles(ctx context.Context, o Options, document []byte, spent agent.Outcome, redactor *bundle.Redactor) (composition []byte, generator *tiles.Generator, report *ComposeReport, err error) {
+func composeTiles(ctx context.Context, o Options, document []byte, spent agent.Outcome, redactor *bundle.Redactor, analysis *agent.TilesOutcome) (composition []byte, generator *tiles.Generator, report *ComposeReport, err error) {
 	started := time.Now()
 	report = &ComposeReport{}
 	defer func() {
@@ -169,13 +190,19 @@ func composeTiles(ctx context.Context, o Options, document []byte, spent agent.O
 		report.Problem = "the review does not convert to tiles"
 		return nil, nil, report, nil
 	}
-	report.Provisional = provisional(document, t.Preferences.Pins, t.Previous)
+	entries := t.Library
+	if entries == nil {
+		entries = library.All()
+	}
+	fills, authored, duplicates := extras(doc, analysis, entries)
+	report.Tiles = &TilesReport{TilesOutcome: analysis, Duplicates: duplicates}
+	report.Provisional = provisional(document, t.Preferences.Pins, t.Previous, draftLibrary(progressOf(analysis), entries))
 	prompts := t.Prompts
 	if prompts == nil {
 		prompts = prompt.TilesPrompts{}
 	}
 	request := agent.ComposeRequest{Completer: CompleterOf(o.Backend), Backend: o.Backend.Name(), Prompts: prompts, Document: doc,
-		Previous: t.Previous, Preferences: t.Preferences, Redactor: redactor, CallTimeout: o.PassTimeout,
+		Fills: fills, Authored: authored, Previous: t.Previous, Preferences: t.Preferences, Redactor: redactor, CallTimeout: o.PassTimeout,
 		Timeout: agent.DefaultComposeTimeout, MaxCalls: composeCalls(o.Budgets, spent)}
 	if request.MaxCalls == 0 {
 		request.Skip = agent.FallbackBudget
@@ -207,3 +234,109 @@ func composeTiles(ctx context.Context, o Options, document []byte, spent agent.O
 
 // composeRun is agent.ComposeRun; tests replace it.
 var composeRun = agent.ComposeRun
+
+// staged is the tile analysis of a run with Tiles.
+func (t *Tiles) staged() *agent.StagedTiles {
+	prompts, ok := t.Prompts.(agent.TileAnalysisPrompts)
+	if !ok {
+		prompts = prompt.TilesPrompts{}
+	}
+	out := &agent.StagedTiles{Prompts: prompts, Exhibits: !t.NoExhibits}
+	if !t.NoLibrary {
+		out.Library = t.Library
+		if out.Library == nil {
+			out.Library = library.All()
+		}
+	}
+	if len(out.Library) == 0 && !out.Exhibits {
+		return nil
+	}
+	return out
+}
+
+// TilesReport is what the tile analysis gave the composition
+// (Result.TilesAnalysis): the outcome of its calls, already in the run's,
+// and the authored tiles the host dropped as duplicates.
+type TilesReport struct {
+	*agent.TilesOutcome
+	// Duplicates are the authored tiles dropped because they restate the
+	// review (compose.DuplicatesTile).
+	Duplicates []string
+}
+
+// extras turns the tile analysis into what the composer places: each
+// selected type's fill (ready ones with their library tile, its related
+// items written against the review) and the authored tiles that do not
+// restate the review. doc is the review's converted tile document.
+func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry) ([]compose.Fill, []compose.Authored, []string) {
+	if t == nil {
+		return nil, nil, nil
+	}
+	byName := map[string]library.Entry{}
+	for _, e := range entries {
+		byName[e.Definition.Name] = e
+	}
+	var fills []compose.Fill
+	var ready []tiles.Tile
+	for _, f := range t.Fills {
+		e, ok := byName[f.Type]
+		if !ok {
+			continue
+		}
+		state := "failed"
+		var data json.RawMessage
+		if f.State == agent.FillReady {
+			state, data = "ready", library.WithRelated(f.Data, doc)
+			ready = append(ready, tiles.Tile{ID: tiles.LibraryTileID(f.Type), Type: tiles.TypeCustom, Data: data})
+		}
+		if f.State == agent.FillNotApplies {
+			continue
+		}
+		fills = append(fills, compose.FillOf(e, f.Hunks, f.Why, state, data))
+	}
+	var authored []compose.Authored
+	var duplicates []string
+	if x := t.Exhibits; x != nil {
+		for _, a := range x.Tiles {
+			if compose.DuplicatesTile(doc, ready, a) {
+				duplicates = append(duplicates, a.ID)
+				continue
+			}
+			authored = append(authored, compose.Authored{Tile: a, Adds: x.Adds[a.ID]})
+		}
+	}
+	return fills, authored, duplicates
+}
+
+// draftLibrary is the library tiles of a draft: each selected type, pending
+// until its fill lands, then ready with its data; a fill that failed or
+// found the type does not apply is left out.
+func draftLibrary(p *agent.TilesProgress, entries []library.Entry) []tiles.LibraryTile {
+	if p == nil {
+		return nil
+	}
+	var out []tiles.LibraryTile
+	for _, f := range p.Fills {
+		for _, e := range entries {
+			if e.Definition.Name != f.Type {
+				continue
+			}
+			switch f.State {
+			case agent.FillPending:
+				out = append(out, tiles.LibraryTile{Definition: e.Encoded, Data: json.RawMessage(`{}`), Pending: true})
+			case agent.FillReady:
+				out = append(out, tiles.LibraryTile{Definition: e.Encoded, Data: f.Data})
+			}
+		}
+	}
+	return out
+}
+
+// progressOf is the draft view of a finished analysis: the fills as they
+// ended, with the selection.
+func progressOf(t *agent.TilesOutcome) *agent.TilesProgress {
+	if t == nil {
+		return nil
+	}
+	return &agent.TilesProgress{Selection: t.Selection, Fills: t.Fills}
+}

@@ -40,6 +40,7 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // Category classifies why a run failed.
@@ -391,6 +392,15 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	var outcome agent.Outcome
 	var document []byte
 	var genErr, redactErr error
+	// analysis is the tile analysis of a run with Tiles; tileEntries the
+	// library types it offers.
+	var analysis *agent.TilesOutcome
+	var tileEntries []library.Entry
+	if composing {
+		if tileEntries = o.Tiles.Library; tileEntries == nil {
+			tileEntries = library.All()
+		}
+	}
 	closed := 0
 	if staged {
 		continued.Run, continued.Prompts, continued.NoReuse = run, stagedPrompts, o.NoReuse
@@ -403,9 +413,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		}
 		var stopDrafts func()
 		if o.OnDraft != nil {
-			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(draft []byte) (Draft, bool) {
+			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(p agent.StagedProgress) (Draft, bool) {
 				var scratch agent.Outcome
-				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, draft, &b, checkout, &scratch)
+				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, p.Document, &b, checkout, &scratch)
 				if err != nil || closed > 0 {
 					return Draft{}, false
 				}
@@ -416,15 +426,19 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 				d := Draft{Document: completed}
 				switch {
 				case composing:
-					d.Composition = provisional(completed, o.Tiles.Preferences.Pins, o.Tiles.Previous)
+					d.Composition = provisional(completed, o.Tiles.Preferences.Pins, o.Tiles.Previous, draftLibrary(p.Tiles, tileEntries))
 				case o.Continue != nil && len(o.Continue.Composition) > 0:
 					d.Composition = o.Continue.Composition
 				}
 				return d, true
 			})
 		}
+		if composing {
+			continued.Tiles = o.Tiles.staged()
+		}
 		var stages agent.StagedOutcome
 		stages, document, genErr = generator.StagedReview(runCtx, continued)
+		analysis = stages.Tiles
 		if stopDrafts != nil {
 			stopDrafts()
 		}
@@ -493,7 +507,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	if composing {
 		// The review is final: only its layout is left to choose. What the
 		// stage spends counts as the run's.
-		composition, generator, report, composeErr := composeTiles(ctx, o, completed, outcome, redactor)
+		composition, generator, report, composeErr := composeTiles(ctx, o, completed, outcome, redactor, analysis)
 		// The analysis's model prices the run and names the version.
 		model := outcome.Model
 		outcome.Add(report.Outcome)

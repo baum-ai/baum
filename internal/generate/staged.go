@@ -47,8 +47,8 @@ func continuing(saved store.Version, assembled assemble.Result) (agent.StagedRun
 // replaces any still waiting, so the stages never wait on it. Once run, the
 // run's context, is done, or a secret was masked in a closed value (which
 // rejects the run), no draft is delivered.
-func drafts(run context.Context, deliver func(Draft), prepare func([]byte) (Draft, bool)) (func(agent.StagedProgress), func()) {
-	waiting := make(chan []byte, 1)
+func drafts(run context.Context, deliver func(Draft), prepare func(agent.StagedProgress) (Draft, bool)) (func(agent.StagedProgress), func()) {
+	waiting := make(chan agent.StagedProgress, 1)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -67,7 +67,7 @@ func drafts(run context.Context, deliver func(Draft), prepare func([]byte) (Draf
 		}
 		for {
 			select {
-			case waiting <- p.Document:
+			case waiting <- p:
 				return
 			default:
 				select {
@@ -85,7 +85,7 @@ func drafts(run context.Context, deliver func(Draft), prepare func([]byte) (Draf
 
 // show prepares and delivers one draft. A draft is only shown: a panic
 // preparing or delivering it skips it rather than end the process.
-func show(run context.Context, draft []byte, prepare func([]byte) (Draft, bool), deliver func(Draft)) {
+func show(run context.Context, draft agent.StagedProgress, prepare func(agent.StagedProgress) (Draft, bool), deliver func(Draft)) {
 	defer func() { _ = recover() }()
 	if prepared, ok := prepare(draft); ok && run.Err() == nil {
 		deliver(prepared)
