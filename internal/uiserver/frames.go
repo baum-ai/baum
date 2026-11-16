@@ -51,7 +51,9 @@ var framePath = regexp.MustCompile(`^/tile-frames/[0-9a-f]{64}$`)
 //   - The digest is registered and not marked hung.
 //
 // Every refusal is the same plain 404, so a response never says whether a
-// digest is registered, or which check failed.
+// digest is registered, or which check failed. A same-site or cross-site
+// request never gets here: the server refuses it before any route, with the
+// same 403 for every path.
 //
 // The response carries the frame's own CSP (kit.CSP), which replaces the
 // app's: default-src 'none' with inline script and style only, sandbox
