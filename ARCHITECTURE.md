@@ -7441,8 +7441,8 @@ login shell's, or removes it, so the agent gets a socket that works or none.
 A conversation that names no agent, model or mode opens with the panel's
 setting, a global preference in `app.sqlite` (`repos.PanelPreferences`,
 `ResolvePanel`): agent (`claude-code` or `codex`), model, mode (`auto`, the
-default, `full` or `workspace`) and where the panel opens (`bottom`, the default, or
-`top`). An unset agent follows the fix agent (Codex when the fix backend is
+default, `full` or `workspace`) and where the panel opens (`bottom`, the default,
+`top`, `left` or `right`). An unset agent follows the fix agent (Codex when the fix backend is
 `codex`, Claude Code otherwise) and its model (only a Claude Code or Codex
 fix model counts); an unset model with a chosen agent is that agent's own
 default unless it is the fix agent. `GET /api/settings/panel` answers

@@ -34,6 +34,7 @@ import {
   type ConversationSummary,
   type OperationSummary,
   type PanelMode,
+  type PanelPosition,
   type PanelSettings,
   type Progress,
   type Proposal,
@@ -52,13 +53,21 @@ import { MESSAGE, POLL_RUNNING, TranscriptReader, useLiveTranscript } from "./se
 import { isPanelKey, KeyBar, PANEL_KEY, PANEL_KEY_LABEL } from "./shortcuts";
 import { useToast } from "./toast";
 import { useVisibleInterval } from "./visible-interval";
-import { MIN_HEIGHT, sessionPanel, useSessionPanel, type PanelState } from "./session-panel-state";
+import {
+  MIN_HEIGHT,
+  MIN_WIDTH,
+  sessionPanel,
+  useSessionPanel,
+  type PanelState,
+} from "./session-panel-state";
 import "./session-panel.css";
 
 export { PANEL_KEY, PANEL_KEY_LABEL } from "./shortcuts";
 export {
   DEFAULT_HEIGHT,
+  DEFAULT_WIDTH,
   MIN_HEIGHT,
+  MIN_WIDTH,
   resetSessionPanel,
   sessionPanel,
   useSessionPanel,
@@ -433,7 +442,11 @@ function SessionPanel({
   settings: PanelSettings | null;
   go: (href: string) => void;
 }) {
-  const position = settings?.position ?? "bottom";
+  const sideFits = useSideFits();
+  const chosen = settings?.position ?? "bottom";
+  // A window too narrow for the panel beside the page opens it from the foot.
+  const position = (chosen === "left" || chosen === "right") && !sideFits ? "bottom" : chosen;
+  const side = position === "left" || position === "right";
   const id = panel.conversation;
   const { conversation, error: readError, update } = useConversation(id);
   const { proposals, read: readProposals } = useProposals(id);
@@ -486,7 +499,8 @@ function SessionPanel({
     };
   }, []);
   // The page under it scrolls clear of it: its frame knows how much of it the
-  // panel covers, and from which edge (`--session-panel-inset`).
+  // panel covers, and from which edge (`--session-panel-inset`). From a side,
+  // that is the panel's width, and the page's panel narrows beside it.
   useLayoutEffect(() => {
     const element = root.current;
     const frame = element?.closest<HTMLElement>(".local-frame");
@@ -494,7 +508,12 @@ function SessionPanel({
     const measure = () => {
       const box = element.getBoundingClientRect();
       const edge = frame.getBoundingClientRect();
-      const covered = position === "bottom" ? edge.bottom - box.top : box.bottom - edge.top;
+      const covered =
+        position === "bottom"
+          ? edge.bottom - box.top
+          : position === "top"
+            ? box.bottom - edge.top
+            : box.width;
       frame.style.setProperty("--session-panel-inset", `${Math.max(0, Math.round(covered))}px`);
     };
     frame.dataset.sessionPanel = position;
@@ -782,7 +801,13 @@ function SessionPanel({
       className="session-panel"
       data-position={position}
       tabIndex={-1}
-      style={{ height: `min(${panel.height}px, calc(100dvh - 4rem))` }}
+      style={
+        side
+          ? {
+              width: `min(${panel.width}px, calc(100vw - var(--rail-width) - ${MIN_PAGE_WIDTH + SIDE_GAPS}px))`,
+            }
+          : { height: `min(${panel.height}px, calc(100dvh - 4rem))` }
+      }
       onKeyDown={onKeyDown}
       // The message marked is the keys' own: given up once they leave the
       // panel, or go to one of its fields.
@@ -812,7 +837,9 @@ function SessionPanel({
           stay.
         </ConfirmDialog>
       ) : null}
-      {position === "bottom" ? <Grip position={position} height={panel.height} /> : null}
+      {position !== "top" ? (
+        <Grip position={position} size={side ? panel.width : panel.height} />
+      ) : null}
       <header className="session-panel-head">
         <div className="session-panel-title">
           <TerminalIcon size={16} className="flex-none text-tertiary" />
@@ -1033,7 +1060,7 @@ function SessionPanel({
           <kbd>{PANEL_KEY_LABEL}</kbd> hide
         </span>
       </footer>
-      {position === "top" ? <Grip position={position} height={panel.height} /> : null}
+      {position === "top" ? <Grip position={position} size={panel.height} /> : null}
     </section>
   );
 }
@@ -1050,29 +1077,47 @@ function sendErrorText(error: unknown) {
   return error instanceof Error ? error.message : "The message could not be sent.";
 }
 
-/** The edge the panel is resized by: dragged, or ↑ and ↓ while focused. */
-function Grip({ position, height }: { position: "bottom" | "top"; height: number }) {
-  const drag = useRef<{ start: number; height: number } | null>(null);
-  const sign = position === "bottom" ? -1 : 1;
+/** The narrowest the page beside a panel opened from a side is left. */
+const MIN_PAGE_WIDTH = 320;
+
+/** The edge the panel is resized by: dragged, or with the arrow keys across
+ *  it while focused (↑ and ↓ from the top or the foot, ← and → from a side).
+ *  `size` is the panel's height, or its width from a side. */
+function Grip({ position, size }: { position: PanelPosition; size: number }) {
+  const drag = useRef<{ start: number; size: number } | null>(null);
+  const side = position === "left" || position === "right";
+  // Which way along the pointer's axis the panel grows: away from its edge.
+  const sign = position === "bottom" || position === "right" ? -1 : 1;
+  const max = () =>
+    side
+      ? Math.round(window.innerWidth - railWidth() - MIN_PAGE_WIDTH - SIDE_GAPS)
+      : Math.round(window.innerHeight - 64);
+  const min = side ? MIN_WIDTH : MIN_HEIGHT;
+  const set = (next: number) => {
+    const bounded = Math.min(next, max());
+    if (side) sessionPanel.setWidth(bounded);
+    else sessionPanel.setHeight(bounded);
+  };
+  const along = (event: { clientX: number; clientY: number }) =>
+    side ? event.clientX : event.clientY;
   return (
     // biome-ignore lint/a11y/useSemanticElements: a focusable separator is the resize handle's role
     <div
       role="separator"
-      aria-orientation="horizontal"
+      aria-orientation={side ? "vertical" : "horizontal"}
       aria-label="Resize the session panel"
-      aria-valuenow={height}
-      aria-valuemin={MIN_HEIGHT}
-      aria-valuemax={Math.max(MIN_HEIGHT, Math.round(window.innerHeight - 64))}
+      aria-valuenow={size}
+      aria-valuemin={min}
+      aria-valuemax={Math.max(min, max())}
       tabIndex={0}
       className="session-panel-grip"
       onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
         event.currentTarget.setPointerCapture?.(event.pointerId);
-        drag.current = { start: event.clientY, height };
+        drag.current = { start: along(event), size };
       }}
       onPointerMove={(event) => {
         if (!drag.current) return;
-        const next = drag.current.height + sign * (event.clientY - drag.current.start);
-        sessionPanel.setHeight(Math.min(next, window.innerHeight - 64));
+        set(drag.current.size + sign * (along(event) - drag.current.start));
       }}
       onPointerUp={() => {
         drag.current = null;
@@ -1081,13 +1126,39 @@ function Grip({ position, height }: { position: "bottom" | "top"; height: number
         drag.current = null;
       }}
       onKeyDown={(event) => {
-        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+        const [less, more] = side ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
+        if (event.key !== less && event.key !== more) return;
         event.preventDefault();
-        const grow = (event.key === "ArrowUp") === (position === "bottom");
-        sessionPanel.setHeight(Math.min(height + (grow ? 40 : -40), window.innerHeight - 64));
+        // The key towards the page grows it.
+        const grow = (event.key === less) === sign < 0;
+        set(size + (grow ? 40 : -40));
       }}
     />
   );
+}
+
+/** The sidebar's room beside the page, in pixels. */
+function railWidth() {
+  return document.querySelector(".local-rail-lane")?.getBoundingClientRect().width ?? 0;
+}
+
+/** The room a side panel takes beyond its own width and the page's: the
+ *  window's edge and the gap between them. */
+const SIDE_GAPS = 24;
+
+/** Whether the window holds the panel at its narrowest beside the page at
+ *  its narrowest, again as the window is resized. */
+function useSideFits() {
+  const fits = () => window.innerWidth - railWidth() >= MIN_WIDTH + MIN_PAGE_WIDTH + SIDE_GAPS;
+  const [value, setValue] = useState(fits);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `fits` reads the window alone
+  useEffect(() => {
+    const measure = () => setValue(fits());
+    measure();
+    addEventListener("resize", measure);
+    return () => removeEventListener("resize", measure);
+  }, []);
+  return value;
 }
 
 /** The panel's scrolling body, which stays at its end while the reader is

@@ -96,13 +96,16 @@ export type Proposal = {
   };
 };
 
+/** The edge of the window the session panel opens from. */
+export type PanelPosition = "bottom" | "top" | "left" | "right";
+
 /** The session panel's setting (`api/settings/panel`). An agent or model the
  *  person did not choose follows the fix agent's (`fix`). */
 export type PanelSettings = {
   agent: PanelAgent;
   model: string;
   mode: PanelMode;
-  position: "bottom" | "top";
+  position: PanelPosition;
   agent_source: "fix" | "panel";
   model_source: "fix" | "panel";
 };

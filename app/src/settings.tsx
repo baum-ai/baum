@@ -1197,6 +1197,8 @@ const panelModes: { value: PanelMode; label: string }[] = [
 const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
   { value: "bottom", label: "Bottom" },
   { value: "top", label: "Top" },
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
 ];
 
 /** The session panel's setting: the agent and model a new session opens with

@@ -28,6 +28,22 @@
   bottom: auto;
   animation-name: session-panel-down;
 }
+/* From a side it is as tall as the window and as wide as the person drags
+   it, beside the page's panel, which narrows to make room. */
+.session-panel[data-position="left"],
+.session-panel[data-position="right"] {
+  top: 0.5rem;
+  min-height: 0;
+  min-width: 0;
+}
+.session-panel[data-position="left"] {
+  right: auto;
+  animation-name: session-panel-from-left;
+}
+.session-panel[data-position="right"] {
+  left: auto;
+  animation-name: session-panel-from-right;
+}
 @keyframes session-panel-up {
   from {
     transform: translateY(2rem);
@@ -37,6 +53,18 @@
 @keyframes session-panel-down {
   from {
     transform: translateY(-2rem);
+    opacity: 0;
+  }
+}
+@keyframes session-panel-from-left {
+  from {
+    transform: translateX(-2rem);
+    opacity: 0;
+  }
+}
+@keyframes session-panel-from-right {
+  from {
+    transform: translateX(2rem);
     opacity: 0;
   }
 }
@@ -85,6 +113,13 @@
 .local-frame[data-session-panel="top"] {
   padding-top: var(--session-panel-inset, 0px);
 }
+/* From a side, the page's panel keeps the panel's width and a gap clear. */
+.local-frame[data-session-panel="left"] {
+  margin-left: calc(var(--session-panel-inset, 0px) + 0.5rem);
+}
+.local-frame[data-session-panel="right"] {
+  margin-right: calc(var(--session-panel-inset, 0px) + 1rem);
+}
 
 .session-panel-grip {
   flex: none;
@@ -112,6 +147,29 @@
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
 }
+/* From a side, the grip is the panel's edge towards the page, its full
+   height. */
+.session-panel[data-position="left"] .session-panel-grip,
+.session-panel[data-position="right"] .session-panel-grip {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  width: 0.5rem;
+  height: auto;
+  cursor: ew-resize;
+}
+.session-panel[data-position="left"] .session-panel-grip {
+  right: 0;
+}
+.session-panel[data-position="right"] .session-panel-grip {
+  left: 0;
+}
+.session-panel[data-position="left"] .session-panel-grip::after,
+.session-panel[data-position="right"] .session-panel-grip::after {
+  width: 3px;
+  height: 2.5rem;
+}
 
 .session-panel-head {
   flex: none;
@@ -120,9 +178,22 @@
   padding: 0 1rem 0.375rem;
   border-bottom: 1px solid var(--border-subtle);
 }
-/* From the top the grip is at the foot, so the bar keeps its own margin. */
-.session-panel[data-position="top"] .session-panel-head {
+/* From the top the grip is at the foot, and from a side beside it, so the
+   bar keeps its own margin. */
+.session-panel:not([data-position="bottom"]) .session-panel-head {
   padding-top: 0.375rem;
+}
+/* A side panel is narrow: its facts wrap rather than run off its edge. */
+.session-panel:is([data-position="left"], [data-position="right"]) .session-panel-facts {
+  flex-wrap: wrap;
+  row-gap: 0.25rem;
+}
+.session-panel:is([data-position="left"], [data-position="right"])
+  .session-panel-facts
+  > :is(.session-panel-looking, .session-panel-directory) {
+  flex: 1 1 100%;
+  min-width: 0;
+  max-width: none;
 }
 .session-panel-title {
   display: flex;

@@ -966,3 +966,50 @@ it("reads the panel's setting again when the fix agent it follows changes", asyn
   await act(async () => panelSettingsChanged());
   await until(() => expect(section()!.textContent).toContain("Now Codex"));
 });
+
+it("opens from a side of the window, as wide as its grip sets it", async () => {
+  answer = (call) =>
+    call.path === "api/settings/panel" && call.method === "GET"
+      ? Response.json({ ...settings, position: "right" })
+      : undefined;
+  await host();
+  await act(async () => sessionPanel.show());
+  await until(() => expect(panel()!.dataset.position).toBe("right"));
+  expect(panel()!.style.width).toContain("480px");
+  expect(panel()!.style.height).toBe("");
+  expect(node.querySelector<HTMLElement>(".local-frame")!.dataset.sessionPanel).toBe("right");
+  const grip = panel()!.querySelector<HTMLElement>('[role="separator"]')!;
+  expect(grip.getAttribute("aria-orientation")).toBe("vertical");
+  // From the right, ← grows it towards the page and → shrinks it.
+  await key(grip, "ArrowLeft");
+  await until(() => expect(panel()!.style.width).toContain("520px"));
+  await key(grip, "ArrowRight");
+  await key(grip, "ArrowRight");
+  await until(() => expect(panel()!.style.width).toContain("440px"));
+});
+
+it("opens from the foot while the window is too narrow for a side panel beside the page", async () => {
+  const wide = window.innerWidth;
+  const resize = (width: number) =>
+    act(async () => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      window.dispatchEvent(new Event("resize"));
+    });
+  answer = (call) =>
+    call.path === "api/settings/panel" && call.method === "GET"
+      ? Response.json({ ...settings, position: "left" })
+      : undefined;
+  try {
+    await resize(390);
+    await host();
+    await act(async () => sessionPanel.show());
+    await until(() => expect(panel()).not.toBeNull());
+    await until(() => expect(panel()!.dataset.position).toBe("bottom"));
+    expect(panel()!.style.height).not.toBe("");
+    // Wide enough again, it goes back to the side chosen.
+    await resize(1280);
+    await until(() => expect(panel()!.dataset.position).toBe("left"));
+  } finally {
+    await resize(wide);
+  }
+});
