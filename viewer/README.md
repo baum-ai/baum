@@ -807,6 +807,11 @@ text and code blocks stay as written, and without the provider nothing
 changes. The pass runs after sanitising, so a
 comment's own markup cannot create these links.
 
+A host can put its own row under a hunk of a `CodeDiff` file with `afterHunk`
+(the app's overview tabs pin the notes that cite each hunk there): a row
+across the table, in the page's own font, drawn only for a hunk it returns
+something for.
+
 ## Schema
 
 The document types in `src/review-document.ts` mirror
