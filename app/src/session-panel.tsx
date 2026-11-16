@@ -442,7 +442,10 @@ function SessionPanel({
   settings: PanelSettings | null;
   go: (href: string) => void;
 }) {
-  const position = settings?.position ?? "bottom";
+  const sideFits = useSideFits();
+  const chosen = settings?.position ?? "bottom";
+  // A window too narrow for the panel beside the page opens it from the foot.
+  const position = (chosen === "left" || chosen === "right") && !sideFits ? "bottom" : chosen;
   const side = position === "left" || position === "right";
   const id = panel.conversation;
   const { conversation, error: readError, update } = useConversation(id);
@@ -801,7 +804,7 @@ function SessionPanel({
       style={
         side
           ? {
-              width: `min(${panel.width}px, calc(100vw - var(--rail-width) - ${MIN_PAGE_WIDTH}px))`,
+              width: `min(${panel.width}px, calc(100vw - var(--rail-width) - ${MIN_PAGE_WIDTH + SIDE_GAPS}px))`,
             }
           : { height: `min(${panel.height}px, calc(100dvh - 4rem))` }
       }
@@ -1087,7 +1090,7 @@ function Grip({ position, size }: { position: PanelPosition; size: number }) {
   const sign = position === "bottom" || position === "right" ? -1 : 1;
   const max = () =>
     side
-      ? Math.round(window.innerWidth - railWidth() - MIN_PAGE_WIDTH)
+      ? Math.round(window.innerWidth - railWidth() - MIN_PAGE_WIDTH - SIDE_GAPS)
       : Math.round(window.innerHeight - 64);
   const min = side ? MIN_WIDTH : MIN_HEIGHT;
   const set = (next: number) => {
@@ -1137,6 +1140,25 @@ function Grip({ position, size }: { position: PanelPosition; size: number }) {
 /** The sidebar's room beside the page, in pixels. */
 function railWidth() {
   return document.querySelector(".local-rail-lane")?.getBoundingClientRect().width ?? 0;
+}
+
+/** The room a side panel takes beyond its own width and the page's: the
+ *  window's edge and the gap between them. */
+const SIDE_GAPS = 24;
+
+/** Whether the window holds the panel at its narrowest beside the page at
+ *  its narrowest, again as the window is resized. */
+function useSideFits() {
+  const fits = () => window.innerWidth - railWidth() >= MIN_WIDTH + MIN_PAGE_WIDTH + SIDE_GAPS;
+  const [value, setValue] = useState(fits);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `fits` reads the window alone
+  useEffect(() => {
+    const measure = () => setValue(fits());
+    measure();
+    addEventListener("resize", measure);
+    return () => removeEventListener("resize", measure);
+  }, []);
+  return value;
 }
 
 /** The panel's scrolling body, which stays at its end while the reader is

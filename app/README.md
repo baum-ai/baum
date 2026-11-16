@@ -2328,7 +2328,9 @@ Settings), as wide as the page, and is resized by dragging its grip or with
 (also in Settings), it is as tall as the window and sits beside the page's
 panel, which narrows to make room; its grip is its edge towards the page,
 dragged or moved with `←` and `→`, and it never leaves the page less than
-320 px. Its width is kept apart from its height. It stays open across
+320 px; a window too narrow for both at their narrowest (320 px each) opens it
+from the foot until it is wide enough again. Its width is kept apart from its
+height. It stays open across
 navigation; whether it is open, its height, its width and the conversation it
 shows are kept in this window's storage
 (`baum.session-panel.v1`, `src/session-panel-state.ts`, which any page can

@@ -987,3 +987,29 @@ it("opens from a side of the window, as wide as its grip sets it", async () => {
   await key(grip, "ArrowRight");
   await until(() => expect(panel()!.style.width).toContain("440px"));
 });
+
+it("opens from the foot while the window is too narrow for a side panel beside the page", async () => {
+  const wide = window.innerWidth;
+  const resize = (width: number) =>
+    act(async () => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      window.dispatchEvent(new Event("resize"));
+    });
+  answer = (call) =>
+    call.path === "api/settings/panel" && call.method === "GET"
+      ? Response.json({ ...settings, position: "left" })
+      : undefined;
+  try {
+    await resize(390);
+    await host();
+    await act(async () => sessionPanel.show());
+    await until(() => expect(panel()).not.toBeNull());
+    await until(() => expect(panel()!.dataset.position).toBe("bottom"));
+    expect(panel()!.style.height).not.toBe("");
+    // Wide enough again, it goes back to the side chosen.
+    await resize(1280);
+    await until(() => expect(panel()!.dataset.position).toBe("left"));
+  } finally {
+    await resize(wide);
+  }
+});
