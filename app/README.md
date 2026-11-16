@@ -692,7 +692,8 @@ the sheet read). Every page is reached from the keyboard. With the command key
 (their modifier can be changed in Settings › General: Command, Control or
 Option on a Mac, Ctrl or Alt elsewhere; the sidebar, its tooltips and the sheet
 show the chosen one, and the other app-wide keys keep the command key)
-(Inbox, which opens the first saved inbox, Sessions, Timeline, Pull requests,
+(Inbox, which opens the saved inbox last shown in this browser while it
+exists, else the first one, Sessions, Timeline, Pull requests,
 Analytics, Repositories, Jobs, Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
 `,` opens Settings, `K` opens **Go to** (`src/go-to.tsx`) and `R` refreshes
@@ -1225,7 +1226,7 @@ across windows and restarts; a failed save says so with **Retry**.
 
 Inboxes are made and changed on three pages that sit under Inbox in the sidebar
 but are not sidebar pages of their own, so they have no number key, and ⌘1 opens
-the first saved inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
+the inbox last shown, or the first saved inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
 right click on the Inbox heading in the sidebar offers **New inbox…** and **Manage
 inboxes…**; a right click on an inbox's row, like its ⋯, offers **Edit inbox**
 and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull request in
