@@ -31,7 +31,7 @@ func (s *Server) pullTools() []Tool {
 		Call:        callPullRequest,
 	}, {
 		Name:        "diff",
-		Description: "The pull request's changed files (path, change, lines added and deleted, hunks) and their patches: the patch of the file named by path, or of every file up to a limit. Read from the saved review when there is one, else from the facts the app shows before a review.",
+		Description: "The pull request's changed files (path, change, lines added and deleted, hunks, and each hunk's id with its lines in the new file, which a tile's data cites) and their patches: the patch of the file named by path, or of every file up to a limit. Read from the saved review when there is one, else from the facts the app shows before a review.",
 		InputSchema: targetSchema(`"path":{"type":"string","description":"A changed file's path. Omit for every file's patch."}`),
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/facts", "/api/document", "/api/patch"},
@@ -232,13 +232,22 @@ func (c CallContext) inboxState(ctx context.Context, repository string, number i
 
 // fileChange is one changed file as the diff tool lists it.
 type fileChange struct {
-	Path      string          `json:"path"`
-	OldPath   string          `json:"old_path,omitempty"`
-	Change    string          `json:"change"`
-	Additions int             `json:"additions"`
-	Deletions int             `json:"deletions"`
-	Hunks     int             `json:"hunks"`
-	Patch     json.RawMessage `json:"patch"`
+	Path      string `json:"path"`
+	OldPath   string `json:"old_path,omitempty"`
+	Change    string `json:"change"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Hunks     int    `json:"hunks"`
+	// HunkIDs are the file's hunks as a tile's data cites them: each id
+	// and its first and last line in the new file, when it adds any.
+	HunkIDs []hunkRef       `json:"hunk_ids,omitempty"`
+	Patch   json.RawMessage `json:"patch"`
+}
+
+// hunkRef is a hunk a tile's data may cite.
+type hunkRef struct {
+	ID    string `json:"id"`
+	Lines []int  `json:"lines,omitempty"`
 }
 
 func changedFiles(hunks []sourceHunk) []fileChange {
@@ -254,6 +263,13 @@ func changedFiles(hunks []sourceHunk) []fileChange {
 		files[i].Additions += h.Additions
 		files[i].Deletions += h.Deletions
 		files[i].Hunks++
+		if h.ID != "" {
+			ref := hunkRef{ID: h.ID}
+			if len(h.NewRange) == 2 && h.NewRange[1] > 0 {
+				ref.Lines = []int{h.NewRange[0], h.NewRange[0] + h.NewRange[1] - 1}
+			}
+			files[i].HunkIDs = append(files[i].HunkIDs, ref)
+		}
 	}
 	return files
 }

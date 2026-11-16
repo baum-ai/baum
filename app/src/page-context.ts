@@ -1,6 +1,7 @@
 import { agentName, appURL, type ChatFocus } from "./api";
 import { PAGES } from "./pages";
 import type { ReviewPageChoice } from "./preferences";
+import { framesAllowedHere } from "./tiles/custom/environment";
 import { reviewPageOf } from "./tiles/view";
 
 /** The pages a page context names, as the MCP server knows them
@@ -119,6 +120,9 @@ export function pageContextOf(
     const focus: Record<string, string> = tilesFocus(search, reviewPage);
     const anchor = hash.replace(/^#/, "");
     if (anchor) focus.anchor = anchor.slice(0, 512);
+    // A desktop shell that mounts no tile frames cannot show a tile made in
+    // chat: the agent is told so before it starts one.
+    if (typeof window !== "undefined" && !framesAllowedHere()) focus.frames = "off";
     return {
       page: "pull_request",
       repository,

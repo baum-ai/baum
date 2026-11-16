@@ -56,6 +56,12 @@ func (s *Service) publish(e Event) {
 func (s *Service) turn(ctx context.Context, c Conversation, message string, l *live) {
 	defer s.turns.Done()
 	defer close(l.done)
+	// What the turn left half done on the page (a tile being made) is
+	// marked so as it ends, once the lock below is released.
+	s.mu.Lock()
+	consumer := l.consumer
+	s.mu.Unlock()
+	defer s.opts.Registry.EndTurn(consumer)
 	result, backend, err := s.converse(ctx, c, message, l)
 	var accounting agent.Accounting
 	accounting.Add(result, err != nil)

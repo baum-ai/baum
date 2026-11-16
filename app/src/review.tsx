@@ -639,6 +639,17 @@ export function LocalReview({
           }
         : undefined,
       ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
+      saveToLibrary: (tile) => {
+        ask({ kind: "tile", id: tile.id, title: tile.title });
+        sessionPanel.setDraft("Save this tile to my library");
+      },
+      removeDraft: (tile) => {
+        void request(
+          `api/tiles/drafts/${encodeURIComponent(tile)}?${new URLSearchParams({ clone, pr: String(pr.number) })}`,
+          {},
+          "DELETE",
+        ).catch(() => undefined);
+      },
       reread: () => rereadTiles.current(),
       ...(layout ? { layout } : {}),
       fullReview: (tile) =>

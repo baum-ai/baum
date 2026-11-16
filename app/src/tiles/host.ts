@@ -16,6 +16,12 @@ export type TileHost = {
   comment?: (tile: string, item?: string) => void;
   /** Asks the session panel about a tile. */
   ask?: (tile: Tile) => void;
+  /** Opens the session panel about a custom tile with "Save this tile to my
+   *  library" typed, which the agent proposes as a type of the person's
+   *  tile library. */
+  saveToLibrary?: (tile: Tile) => void;
+  /** Removes a pending card of a tile being made in the session panel. */
+  removeDraft?: (tile: string) => void;
   /** The address of the full review at the place a tile shows. */
   fullReview?: (tile: Tile | null) => string;
   renderSectionLabels?: (section: Section, document: ReviewDocument) => ReactNode;

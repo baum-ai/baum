@@ -149,6 +149,8 @@ type Registry struct {
 	byHash map[[sha256.Size]byte]*holder
 	byID   map[string]*holder
 	forget []func(id string)
+	// turnEnded are told when a consumer's turn ends (EndTurn).
+	turnEnded []func(id string)
 }
 
 type holder struct {
@@ -252,6 +254,27 @@ func (r *Registry) revoke(id string) {
 func (r *Registry) onRevoke(f func(id string)) {
 	r.mu.Lock()
 	r.forget = append(r.forget, f)
+	r.mu.Unlock()
+}
+
+// EndTurn tells what follows a consumer's turns that its current turn
+// ended (the tile being made in it is left unfinished, say). The host calls
+// it as each turn ends, however it ended.
+func (r *Registry) EndTurn(id string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	ended := r.turnEnded
+	r.mu.Unlock()
+	for _, f := range ended {
+		f(id)
+	}
+}
+
+func (r *Registry) onTurnEnd(f func(id string)) {
+	r.mu.Lock()
+	r.turnEnded = append(r.turnEnded, f)
 	r.mu.Unlock()
 }
 

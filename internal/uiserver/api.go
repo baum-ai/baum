@@ -22,6 +22,7 @@ import (
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
@@ -164,6 +165,10 @@ type LocalAPI struct {
 	// checked yet", and the check runs in the background on its first
 	// preview once a runner is there, marking it checked (Store.MarkChecked).
 	TileImportCheck tilelibrary.SampleCheck
+	// Drafts are the pending cards of tiles being made in the session panel,
+	// which the tile route serves beside the tiles and DELETE
+	// /api/tiles/drafts removes. Nil serves none.
+	Drafts *tiledrafts.Store
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -583,6 +588,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
 	a.tileLibraryRoutes(mux)
 	a.layoutRoutes(mux)
+	a.draftRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)

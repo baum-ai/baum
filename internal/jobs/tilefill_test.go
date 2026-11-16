@@ -144,3 +144,14 @@ func TestAlwaysTilesComeFromTheLayout(t *testing.T) {
 		t.Fatalf("always: %+v", got)
 	}
 }
+
+// A fill naming a digest is a tile made in chat, whose fill instructions
+// the session agent wrote from untrusted content: it is refused before any
+// model call.
+func TestFillTileRefusesATileMadeInChat(t *testing.T) {
+	l := &Local{}
+	_, _, _, err := l.FillTile(context.Background(), tilelayout.FillRequest{Clone: "c1", Repository: "acme/widgets", Number: 42, Version: 2, Type: "env_vars", Digest: "d_chat"})
+	if err == nil || !strings.Contains(err.Error(), "made in chat") {
+		t.Fatalf("a custom digest: %v", err)
+	}
+}

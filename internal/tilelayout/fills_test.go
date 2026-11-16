@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -194,5 +196,87 @@ func TestFillOriginAndDraftNotes(t *testing.T) {
 	layout := s.Layout("acme/widgets", 7)
 	if len(layout.Added) != 1 || len(layout.Notes) != 1 || layout.Notes[0].From != 2 {
 		t.Errorf("draft layout: %+v", layout)
+	}
+}
+
+// madeInChat is a type made in chat, the kit's starter under its own name,
+// with or without fill instructions, as a kept definition and its add.
+func madeInChat(t *testing.T, fill string) (tiles.Added, json.RawMessage) {
+	t.Helper()
+	e, err := library.Load(kit.Starter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := e.Definition
+	def.Name, def.Fill = "env_vars", fill
+	encoded, err := library.Seal(&def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tiles.Added{Kind: tiles.AddCustom, Name: "env_vars", Digest: def.Digest}, encoded
+}
+
+func starterData(hunk string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"summary":"One variable.","items":[{"title":"PORT","severity":"low","text":null,"cites":[{"type":"hunk","id":%q}]}]}`, hunk))
+}
+
+// A tile made in chat shows its own version's data. On a later version it
+// is never filled again, with or without fill instructions (those came from
+// the session agent, not the person), so every later version shows its newest
+// data, marked as from its version, and never as filling.
+// Its definition gone, it shows nothing.
+func TestAddedForATileMadeInChat(t *testing.T) {
+	diff := []bundle.Hunk{{ID: "h_0123456789ab", Path: "config.go", StartLine: 1, LineCount: 10}}
+	for _, fill := range []string{"List each new environment variable with its default.", ""} {
+		add, encoded := madeInChat(t, fill)
+		kept := func(digest string) (json.RawMessage, bool) { return encoded, digest == add.Digest }
+		own := []tilelayout.Fill{{Tile: "env_vars", Version: 1, Digest: add.Digest, Data: starterData("h_0123456789ab"), Origin: tilelayout.OriginChat}}
+		layout, missing := tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 1, Latest: true, Diff: diff}, kept)
+		if len(layout.Added) != 1 || layout.Added[0].Pending || len(layout.Notes) != 0 || len(missing) != 0 {
+			t.Errorf("fill %q, its own version: %+v %v", fill, layout, missing)
+		}
+		layout, missing = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: diff}, kept)
+		if len(layout.Added) != 1 || len(layout.Notes) != 1 || layout.Notes[0].From != 1 {
+			t.Fatalf("fill %q, a later version: %+v %v", fill, layout, missing)
+		}
+		if layout.Notes[0].Filling || len(missing) != 0 {
+			t.Errorf("a chat tile is filled: %+v %v", layout.Notes, missing)
+		}
+		moved := []bundle.Hunk{{ID: "h_ba9876543210", Path: "config.go", StartLine: 1, LineCount: 10}}
+		layout, _ = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: moved}, kept)
+		if len(layout.Added) != 1 || layout.Added[0].Pending || layout.Notes[0].From != 1 {
+			t.Errorf("a tile without fill instructions whose citations moved: %+v", layout)
+		}
+		gone := func(string) (json.RawMessage, bool) { return nil, false }
+		if layout, missing = tilelayout.AddedFor([]tiles.Added{add}, own, tilelayout.Version{Number: 2, Latest: true, Diff: diff}, gone); len(layout.Added) != 0 || len(missing) != 0 {
+			t.Errorf("fill %q, its definition gone: %+v %v", fill, layout, missing)
+		}
+	}
+}
+
+// A fill a refused add wrote is taken back: deleted when the tile had none
+// on that version, and the earlier one put back when it had.
+func TestRestoreFill(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newService(t)
+	add, encoded := madeInChat(t, "")
+	if err := s.PutFill(ctx, pr, "env_vars", 1, tilelayout.OriginChat, encoded, starterData("h_0123456789ab")); err != nil {
+		t.Fatal(err)
+	}
+	prior := s.HeldFill(ctx, pr, "env_vars", 1)
+	if prior == nil {
+		t.Fatal("no held fill")
+	}
+	if err := s.PutFill(ctx, pr, "env_vars", 1, tilelayout.OriginChat, encoded, starterData("h_ba9876543210")); err != nil {
+		t.Fatal(err)
+	}
+	s.RestoreFill(ctx, pr, "env_vars", 1, prior)
+	fills, err := s.Fills(ctx, pr)
+	if err != nil || len(fills) != 1 || fills[0].Digest != add.Digest || !strings.Contains(string(fills[0].Data), "h_0123456789ab") {
+		t.Fatalf("the earlier fill is not back: %+v %v", fills, err)
+	}
+	s.RestoreFill(ctx, pr, "env_vars", 1, nil)
+	if fills, err = s.Fills(ctx, pr); err != nil || len(fills) != 0 {
+		t.Fatalf("the fill is not deleted: %+v %v", fills, err)
 	}
 }

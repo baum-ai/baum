@@ -1052,7 +1052,8 @@ summary}`, where `id` is `edt_` and 12 hex digits, `by` is `chat` or `page`,
 and each op is keyed by tile ID: `move` (`to`: exactly one of `edge` first or
 last, `before` or `after` a tile), `resize` (`size`), `hide`, `show`, `pin`,
 `unpin`, `changes_shown` (`count`, 1 to 50) and `add` (a library type,
-`{kind: "library", name, digest}`). Anchors are relative, never indices,
+`{kind: "library", name, digest}`, or a type made in chat for this pull
+request, `{kind: "custom", name, digest}`, which needs its digest). Anchors are relative, never indices,
 because the generated order changes from one version to the next. The
 summary is the host's own line per applied op (`tiles.OpSummary`: "Moved
 Risks to the top", "Removed Context"), with titles from the document, never
@@ -1299,6 +1300,50 @@ overlay and definitions no overlay, fill or saved tile type (`tile_types`,
 the tile library cannot be read. An added built-in type
 keeps its built-in label: the served definition is marked by its digest
 (`library.IsBuiltin`), never by data.
+
+**Tiles made in chat.** A `custom` add is a tile type the session panel's
+agent wrote for this pull request (agentcontext's tile making tools;
+`uiserver.ChatTiles`). Its definition is kept by digest in
+`tile_definitions` and its data, for the version it was made for, in
+`tile_fills` (origin `chat`), both written (`Service.PutFill`) before the add names them, the fill taken back (`Service.RestoreFill`) when the layout refuses the add; `tilelayout.CustomEntry` reads the definition back for
+`AddedFor`, the replay and fills, so it goes through the custom tile checks,
+the library limit and `Arrange` as a generated library tile does. On a later
+version it is never filled again (`AddedFor` treats a custom add as not
+fillable and `jobs.Local.FillTile` refuses a request naming a digest): its fill
+instructions were written by the session agent, which reads untrusted pull
+request content, and the person has not seen them. Later versions show its
+newest data, marked as from that version, and never as filling, until the
+person saves it to the library, which shows the fill text first. A
+custom add's name is never a built-in library type's.
+
+The making runs in three steps, each bound to the pull request the turn was
+sent from, as the layout edits are. `start_tile` puts a pending card on the
+page (`internal/tiledrafts`, in the daemon's memory, one per conversation):
+`{tile: draft_<n>, title, size, to, phase, round, reason}`, `phase`
+`writing`, then `checking` with each round, `failed` with the host's reason
+when a check hangs or no runner could draw it, and `unfinished` once the
+conversation's turn ends without the tile added (`Registry.EndTurn`, which
+the panel's conversations call as each turn ends, or the token's
+revocation); an unfinished card goes ten minutes later, an added one at
+once, and the page's Remove takes one away (`DELETE
+/api/tiles/drafts/{tile}?clone=&pr=`, 404 for none). The tile route serves
+the latest version's cards as `drafts` beside the document, and its cache
+key includes them; each change publishes the `layout` event `{pr, revision:
+0, drafts: true}`. `check_tile` masks the data (`agent.RedactTaskOutput`)
+first, refuses a built-in library type's name as a `fail`, checks with the
+validator that every citation of the data resolves to the version shown
+and that it cites at least one hunk, file, prompt or session event
+(`Validator.CheckCitedData`; codes `unresolved_citation` and `uncited`, added
+to the check's errors), and submits the definition, the samples and the
+masked data, with the version as its context, to the render check, waiting
+up to 30 seconds. A check with data is kept in memory for an hour, the 64
+newest, with the definition the checker checked and the masked data.
+`add_custom_tile` takes such a check: it is refused when the check did not
+pass, had no data, is an hour old or more, was for another pull request or
+an earlier version, or when `tiles.CheckOp` refuses the add (the 8-tile
+limit, a tile already shown); otherwise it stores the fill, writes the add
+as the chat's batch with the host's summary ("Added New environment
+variables"), takes the card away and answers the tile and the page's rows.
 
 A fill comes from one of three places. The session panel's agent writes the
 data itself (`add_tile` with `data`, after `tile_type`), which is checked
@@ -1752,7 +1797,10 @@ the library's are checked and draws them.
 shows it: a definition (without a digest), up to 3 samples of its own (data
 and the code it cites, as a library sample's) and optionally the data it
 would show on a pull request with that version's `{clone, pr, version}`.
-`Checker.Submit(ctx, candidate)` is its Go API, which the agent tools call;
+`Checker.Submit(ctx, candidate)` is its Go API, which the agent tools call
+(`check_tile`, through `uiserver.ChatTiles`, which adds the `uncited` code
+for data of a tile made in chat that cites nothing of the review; see "Tiles
+made in chat");
 it waits up to 30 s and answers `{check, digest, kit, verdict, reason?,
 errors[], warnings[], runs[], engine}`, each problem `{code, message, hint,
 sample, face, size, theme, line?, column?}`, `verdict` one of `pass` (no

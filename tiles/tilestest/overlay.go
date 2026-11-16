@@ -11,8 +11,8 @@ import (
 // a person or an agent might ask for them: every kind of operation, aimed
 // mostly at its tiles and anchored to them, with some aimed at tiles it does
 // not have (as an edit made on another version would be), sizes a tile may
-// not have, the overview and risks tiles, and the tile itself as its own
-// anchor. Every operation is well formed (tiles.CheckOpShape), as a stored
+// not have, the overview and risks tiles, the tile itself as its own
+// anchor, and tiles made in chat (ChatTile). Every operation is well formed (tiles.CheckOpShape), as a stored
 // overlay's are. The draw is deterministic for a given rng state.
 func RandomOps(rng *rand.Rand, doc *tiles.Document, n int) []tiles.Op {
 	ids := []string{tiles.TypeOverview, tiles.TypeRisks, "sec_gone_away", "table_gone_away"}
@@ -54,6 +54,15 @@ func RandomOps(rng *rand.Rand, doc *tiles.Document, n int) []tiles.Op {
 		default:
 			if rng.IntN(2) == 0 {
 				op = tiles.Op{Op: tiles.OpChangesShown, Count: new(1 + rng.IntN(8))}
+				break
+			}
+			if chat, _, ok := ChatTile(doc); ok && rng.IntN(3) == 0 {
+				// A tile made in chat (ChatTile), which a replay places
+				// when it is given what the host holds for it.
+				op = tiles.Op{Op: tiles.OpAdd, Add: &chat}
+				if rng.IntN(2) == 0 {
+					op.To = &tiles.Place{After: tiles.TypeOverview}
+				}
 				break
 			}
 			name := "unknown_library"

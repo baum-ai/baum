@@ -121,6 +121,33 @@ func (v *Validator) CheckData(definition, data json.RawMessage) []string {
 	return slices.Clone(verdict.problems)
 }
 
+// CheckCitedData is CheckData, then the data's citations against doc as
+// CheckTiles resolves a custom tile's: every one must resolve. grounded
+// reports whether the data cites at least one hunk, file, prompt or session
+// event of the review, the rule a tile made in chat keeps, so each of its
+// claims leads to code or a transcript the reader can open.
+func (v *Validator) CheckCitedData(doc *Document, definition, data json.RawMessage) (problems []string, grounded bool) {
+	checked := v.definition(definition)
+	if len(checked.problems) > 0 {
+		return slices.Clone(checked.problems), false
+	}
+	verdict, _ := v.verdict(checked, data, validationBudget)
+	if len(verdict.problems) > 0 {
+		return slices.Clone(verdict.problems), false
+	}
+	problems, _ = citationProblems(verdict.citations, newCustomRefs(doc))
+	if len(problems) > 0 {
+		return problems, false
+	}
+	for _, c := range verdict.citations {
+		switch c.kind {
+		case "hunk", "file", "prompt", "session_event":
+			return nil, true
+		}
+	}
+	return nil, false
+}
+
 // definition checks an encoded definition, through the cache.
 func (v *Validator) definition(raw json.RawMessage) *checkedDefinition {
 	key := sha256.Sum256(raw)

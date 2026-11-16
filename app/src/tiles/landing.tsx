@@ -12,6 +12,9 @@ import { humanize, TIER_COLOR } from "@baum/viewer/review-document";
 import { navigate } from "../api";
 import { type MenuItem, useContextMenu } from "../context-menu";
 import { GlanceCard } from "./card";
+import { isBuiltinType } from "./custom/library";
+import { placeDrafts, type DraftCard } from "./drafts";
+import { PendingCard } from "./pending-card";
 import { useTileHost, type LandingMemory } from "./host";
 import { useFlip } from "./flip";
 import {
@@ -195,6 +198,19 @@ function TileGrid({
       .join(" "),
   );
   const layout = host.layout && !ctx.historical && !host.draft ? host.layout : undefined;
+  // The tiles being made in the session panel stand where they will be
+  // added; on the latest version only.
+  const drafts = placeDrafts(
+    ctx.historical || host.draft ? [] : (ctx.doc.drafts ?? []),
+    new Set(
+      landing.items.flatMap((item) =>
+        item.kind === "tile" && item.entry.group !== HIDDEN_GROUP ? [item.tile.id] : [],
+      ),
+    ),
+  );
+  const pending = (draft: DraftCard) => (
+    <PendingCard key={draft.tile} draft={draft} remove={host.removeDraft} />
+  );
   const toggleGroup = (group: string, open: boolean) => {
     const groups = new Set(expansions.groups);
     if (open) groups.add(group);
@@ -207,6 +223,9 @@ function TileGrid({
       ? [{ label: "Comment", hint: "c", onSelect: () => host.comment?.(tile.id) }]
       : []),
     ...(host.ask ? [{ label: "Ask about this tile", onSelect: () => host.ask?.(tile) }] : []),
+    ...(host.saveToLibrary && tile.type === "custom" && !isBuiltinType(tile) && !ctx.historical
+      ? [{ label: "Save to library…", onSelect: () => host.saveToLibrary?.(tile) }]
+      : []),
     ...(host.fullReview && ctx.doc.origin.kind === "converted"
       ? [
           {
@@ -235,7 +254,7 @@ function TileGrid({
         );
       case "tile": {
         const hidden = item.entry.group === HIDDEN_GROUP;
-        return (
+        const card = (
           <GlanceCard
             key={item.tile.id}
             tile={item.tile}
@@ -256,6 +275,16 @@ function TileGrid({
                 : undefined
             }
           />
+        );
+        const before = drafts.before.get(item.tile.id);
+        const after = drafts.after.get(item.tile.id);
+        if (!before && !after) return card;
+        return (
+          <Fragment key={item.tile.id}>
+            {before?.map(pending)}
+            {card}
+            {after?.map(pending)}
+          </Fragment>
         );
       }
       case "more":
@@ -293,6 +322,7 @@ function TileGrid({
           the group's own heading. */}
       <h3 className="sr-only">Tiles</h3>
       <div ref={grid} className={GRID}>
+        {drafts.first.map(pending)}
         {blocks.map((block, index) =>
           block.group ? (
             // A group is a block of its own: its heading starts a row, and
@@ -309,6 +339,7 @@ function TileGrid({
             <Fragment key={`run-${index}`}>{block.items.map(renderItem)}</Fragment>
           ),
         )}
+        {drafts.last.map(pending)}
       </div>
       {landing.rest.length > 0 || expansions.more ? (
         <ControlRow

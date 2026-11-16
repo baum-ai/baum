@@ -322,7 +322,14 @@ type layoutResult struct {
 // result answers a write, with the rows of the page after it.
 func (s *Server) result(ctx context.Context, c CallContext, repository string, number int, change LayoutChange) (string, error) {
 	out := layoutResult{Applied: change.Applied, Refused: change.Refused, Undone: change.Undone, Revision: change.Revision, Edited: change.Edited, CanUndo: change.CanUndo}
-	if shown, err := s.layouts.Shown(ctx, repository, number); err == nil {
+	var shown ShownLayout
+	var err error
+	if s.layouts == nil {
+		err = errNoLayouts
+	} else {
+		shown, err = s.layouts.Shown(ctx, repository, number)
+	}
+	if err == nil {
 		out.Rows, _ = layoutRows(shown.Document)
 		for _, entry := range shown.Document.Layout.Entries {
 			if entry.Group == tiles.GroupHidden {
