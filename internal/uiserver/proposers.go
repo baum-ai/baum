@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/uistate"
 )
 
@@ -61,6 +62,9 @@ type Proposers struct {
 	// UIState keeps the person's pending reviews; nil takes no review
 	// comment proposal.
 	UIState *uistate.Store
+	// TileTypes saves the tile types a chat proposes; nil takes no such
+	// proposal.
+	TileTypes *tilelibrary.Store
 
 	// beforeWrite, a test hook, runs where a save that reads outside its
 	// store's transaction (an inbox, a pending review) has read and not yet
@@ -223,10 +227,11 @@ var settingsTargetSections = []struct{ prefix, section string }{
 	{agentcontext.TargetCodexApprovals, "computer"},
 	{agentcontext.TargetAgentEnv, "computer"},
 	{agentcontext.TargetPrompt, "prompts"},
+	{agentcontext.TargetTileType, agentcontext.SectionTiles},
 }
 
 var sectionTitles = map[string]string{"general": "General", "reviews": "Reviews", "fixes": "Fixes", "connections": "Connections",
-	"computer": "This computer", "prompts": "Prompts", "registration": "Registration"}
+	"computer": "This computer", "prompts": "Prompts", "registration": "Registration", agentcontext.SectionTiles: "Tile library"}
 
 // checkSection refuses a target of another section than the one open, which
 // is open when unnamed.
@@ -244,7 +249,7 @@ func checkSection(page agentcontext.PageContext, want, unnamed, where string) er
 func (p *Proposers) settingsTarget(page agentcontext.PageContext, name string) (*target, error) {
 	section := ""
 	for _, s := range settingsTargetSections {
-		if name == s.prefix || (strings.HasSuffix(s.prefix, "/") && strings.HasPrefix(name, s.prefix) && len(name) > len(s.prefix)) {
+		if name == s.prefix || ((strings.HasSuffix(s.prefix, "/") || strings.HasSuffix(s.prefix, ":")) && strings.HasPrefix(name, s.prefix) && len(name) > len(s.prefix)) {
 			section = s.section
 			break
 		}
@@ -276,6 +281,8 @@ func (p *Proposers) settingsTarget(page agentcontext.PageContext, name string) (
 		return p.codexApprovalsTarget()
 	case strings.HasPrefix(name, agentcontext.TargetAgentEnv):
 		return p.agentEnvTarget(strings.TrimPrefix(name, agentcontext.TargetAgentEnv)), nil
+	case strings.HasPrefix(name, agentcontext.TargetTileType):
+		return p.tileTypeTarget(strings.TrimPrefix(name, agentcontext.TargetTileType))
 	default:
 		return p.promptTarget(repos.GlobalPrompts, strings.TrimPrefix(name, agentcontext.TargetPrompt))
 	}
@@ -791,3 +798,4 @@ func (p *Proposers) agentEnvTarget(name string) *target {
 	}
 	return t
 }
+

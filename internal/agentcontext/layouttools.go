@@ -387,41 +387,6 @@ func (s *Server) layoutTools() []Tool {
 			return s.edit(ctx, c, repository, number, ops)
 		},
 	}, {
-		Name: "tile_type",
-		Description: "A library tile type the person can add to the review on the pull request page they have open (tile_layout lists them under addable): its title, when it applies, what its glance shows, the instructions for filling its data and the JSON Schema the data must match. " +
-			"Read it before add_tile, then write the data yourself from the diff and the checkout you already have, and pass it to add_tile: that shows the tile at once and costs no extra run.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"type":{"type":"string","minLength":1,"maxLength":128,"description":"The type's name from tile_layout's addable, such as api_change."}},"required":["type"],"additionalProperties":false}`),
-		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-			if _, _, err := s.layoutPull(c, false); err != nil {
-				return "", err
-			}
-			var a struct {
-				Type string `json:"type"`
-			}
-			if err := strictArgs(args, &a); err != nil {
-				return "", err
-			}
-			e, ok := library.Find(a.Type)
-			if !ok {
-				return "", unknownType(a.Type)
-			}
-			schema, err := e.FillSchema()
-			if err != nil {
-				return "", err
-			}
-			return compactJSON(struct {
-				Type         string          `json:"type"`
-				Title        string          `json:"title"`
-				UseWhen      string          `json:"use_when"`
-				Glance       string          `json:"glance"`
-				Sizes        []tiles.Size    `json:"sizes"`
-				Instructions string          `json:"fill_instructions"`
-				Schema       json.RawMessage `json:"fill_schema"`
-				Note         string          `json:"note"`
-			}{e.Definition.Name, e.Definition.Title, e.Definition.UseWhen, e.Glance, e.Definition.Sizes, e.Definition.Fill, schema,
-				"Write data matching fill_schema from this pull request's diff and checkout; cite hunks by the IDs the diff tool gives. The host checks it, and every hunk it cites must be in the version shown. If nothing this type shows changes, write empty lists."})
-		},
-	}, {
 		Name: "add_tile",
 		Description: "Adds a tile to the review on the pull request page the person has open, at once, as one undo step, optionally at a size and a place: a library tile type the review does not show yet (tile_layout's addable, such as api_change), or a tile the person removed, which it brings back. " +
 			"For a library type, first read tile_type and write its data yourself from the diff and checkout you have, then pass it as data: the tile shows at once. The host checks the data against the type's schema and this version's hunks and says where it does not fit, never changing anything then; fix it and call again. " +

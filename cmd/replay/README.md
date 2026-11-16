@@ -211,6 +211,21 @@ its cost, time and effect on the review.
 oss/bin/replay --dataset <dir> --generator tiles --case-file <file outside git> --model sonnet
 ```
 
+`--library-dir <dir>` loads the exported tile type files in a directory
+(`*.baumtile.json`, as Settings › Tile library exports them) as the person's
+saved types, each passing every check an import does, and offers them to
+each case as the desktop does (`tilelibrary.Offer`: those whose paths match
+the case's diff, at most six beside the built-in types). They have no record
+of use, so they rank by name, and none is pinned. The manifest's settings
+name each type with its digest (`saved_tile_types`), the per-type metrics
+include them, and `--library-dir` with another generator is refused. This
+measures whether a saved type is selected where it should be and whether its
+fills pass their checks:
+
+```sh
+oss/bin/replay --dataset <dir> --generator tiles --library-dir <types outside git> --case-file <file outside git> --model sonnet
+```
+
 The case's `document.json` is the review, as with the `review` generator, so
 the review metrics, `--chain` and `--reuse` apply; staged prompt overrides and
 `review-tiles-compose` may both be given. `--no-staged` is refused. Beside the

@@ -507,10 +507,13 @@ func (p *Proposers) groupTarget(page agentcontext.PageContext, name string) (*ta
 	}, nil
 }
 
-// pullRequestTarget is a target of a pull request's page: a comment for the
-// person's pending review of the pull request, or the standing tile
-// preferences of its repository.
+// pullRequestTarget is a target of a pull request's page: a tile type to
+// save, the standing tile preferences of its repository, or else a comment
+// for the person's pending review of the pull request.
 func (p *Proposers) pullRequestTarget(page agentcontext.PageContext, name string) (*target, error) {
+	if rest, ok := strings.CutPrefix(name, agentcontext.TargetTileType); ok {
+		return p.tileTypeTarget(rest)
+	}
 	if repository, what, ok := agentcontext.ParseRepositoryTarget(name); ok && what == agentcontext.TargetTilePreferences {
 		return p.tilePreferencesTarget(page, repository)
 	}

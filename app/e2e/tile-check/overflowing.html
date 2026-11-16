@@ -1,0 +1,12 @@
+<style>
+  .tall { height: 80px; }
+  .wide { width: 2000px; }
+</style>
+<script>
+  // Every item a tall block in the glance (`overflow_glance`), and a row
+  // wider than any frame (`overflow_x`).
+  baum.tile({
+    glance: ({ data }) => baum.html`<div>${data.items.map((item) => baum.html`<p class="tall">${item}</p>`)}<p>more</p><p>more</p></div>`,
+    detail: ({ data }) => baum.html`<p class="wide">Items: ${data.items.join(" ")}</p>`,
+  });
+</script>

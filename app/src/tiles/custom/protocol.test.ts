@@ -35,7 +35,35 @@ describe("readMessage", () => {
       ),
     ).toEqual({
       kind: "ready",
-      metrics: { height: 300, text_chars: 40, elements: 9, overflow_x: false, overflow_y: true },
+      metrics: {
+        height: 300,
+        text_chars: 40,
+        elements: 9,
+        overflow_x: false,
+        overflow_y: true,
+        media: 0,
+        empty_state: false,
+        failed: false,
+        unresolved: 0,
+        render_ms: 0,
+      },
+    });
+    expect(
+      readMessage(
+        m({
+          kind: "ready",
+          metrics: {
+            height: 200,
+            media: 2,
+            empty_state: true,
+            failed: "yes",
+            unresolved: 1,
+            render_ms: 40,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      metrics: { media: 2, empty_state: true, failed: false, unresolved: 1, render_ms: 40 },
     });
     expect(readMessage(m({ kind: "resize", height: 480 }))).toEqual({
       kind: "resize",

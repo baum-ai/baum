@@ -270,11 +270,27 @@ func (l *Local) alwaysTiles(ctx context.Context, versions *store.Store, key stor
 	if err != nil {
 		return nil
 	}
-	added := state.AddedTypes()
-	if len(added) == 0 {
+	var names []string
+	for _, a := range state.AddedTypes() {
+		if _, ok := library.Get(a.Name); ok {
+			names = append(names, a.Name)
+		}
+	}
+	return l.lastTiles(ctx, versions, key, names)
+}
+
+// lastTiles are always-filled tiles of the named types, each with the last
+// data held for it (agent.AlwaysTile): the newest of baum's own fills of an
+// added tile and of the latest version's composition, with the hunks of the
+// version it was written for.
+func (l *Local) lastTiles(ctx context.Context, versions *store.Store, key store.Key, names []string) []agent.AlwaysTile {
+	if len(names) == 0 {
 		return nil
 	}
-	fills, _ := l.Layouts.Fills(ctx, pr)
+	var fills []tilelayout.Fill
+	if l.Layouts != nil {
+		fills, _ = l.Layouts.Fills(ctx, tilelayout.Key(key.Repository, key.Number))
+	}
 	latest, latestErr := versions.Latest(ctx, key)
 	hunksOf := map[int][]string{}
 	hunks := func(version int) []string {
@@ -295,16 +311,13 @@ func (l *Local) alwaysTiles(ctx context.Context, versions *store.Store, key stor
 		return ids
 	}
 	var out []agent.AlwaysTile
-	for _, a := range added {
-		if _, ok := library.Get(a.Name); !ok {
-			continue
-		}
-		always := agent.AlwaysTile{Name: a.Name}
+	for _, name := range names {
+		always := agent.AlwaysTile{Name: name}
 		version := 0
 		for _, f := range fills {
 			// Data the agent wrote stays the person's: only baum's own fill
 			// runs may stand for a generated tile.
-			if f.Origin == tilelayout.OriginFill && f.Tile == tiles.LibraryTileID(a.Name) && f.Version > version {
+			if f.Origin == tilelayout.OriginFill && f.Tile == tiles.LibraryTileID(name) && f.Version > version {
 				version, always.Last = f.Version, f.Data
 			}
 		}
@@ -314,7 +327,7 @@ func (l *Local) alwaysTiles(ctx context.Context, versions *store.Store, key stor
 					var def struct {
 						Name string `json:"name"`
 					}
-					if !lib.Pending && json.Unmarshal(lib.Definition, &def) == nil && def.Name == a.Name {
+					if !lib.Pending && json.Unmarshal(lib.Definition, &def) == nil && def.Name == name {
 						version, always.Last = latest.Metadata.Version, lib.Data
 					}
 				}

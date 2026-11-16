@@ -183,15 +183,20 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("PUT /api/repos/{id}/settings", func(w http.ResponseWriter, req *http.Request) {
-		s, _, ok := decodeSettings(w, req)
+		s, tiles, ok := decodeSettings(w, req)
 		if !ok {
 			return
 		}
-		if e := r.Update(req.Context(), req.PathValue("id"), s); e != nil {
+		// The tiles merge member by member with the stored ones.
+		saved, e := r.UpdateIf(req.Context(), req.PathValue("id"), func(stored Settings) (Settings, error) {
+			s.Tiles = mergedTiles(stored.Tiles, s.Tiles, tiles)
+			return s, nil
+		})
+		if e != nil {
 			fail(w, e)
 			return
 		}
-		write(w, s)
+		write(w, saved)
 	})
 	// Picked repositories, with or without a local clone.
 	mux.HandleFunc("GET /api/repositories", func(w http.ResponseWriter, req *http.Request) {

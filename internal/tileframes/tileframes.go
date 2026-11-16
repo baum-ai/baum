@@ -5,8 +5,13 @@
 //
 // The registry holds only definitions the daemon itself handed to the
 // authenticated app: the tile routes register a document's ready custom
-// tiles as they serve it. Nothing a request carries is ever registered, so
-// the frame route serves only bytes the app already received.
+// tiles as they serve it, and the render check registers a candidate when
+// it hands it to the app's check runner (internal/tilechecks). The tile type
+// preview route registers the type it draws, and so does the import check
+// route for a file the person picked, once the file has passed the import's
+// checks: it answers with the very definition the app then loads. Nothing
+// else a request carries is ever registered, so the frame route serves only
+// bytes the app already received or was just sent.
 package tileframes
 
 import (
@@ -140,6 +145,13 @@ func (r *Registry) MarkHung(digest string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.hung[digest] = true
+}
+
+// Hung reports whether digest is marked hung.
+func (r *Registry) Hung(digest string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.hung[digest]
 }
 
 // Stats reports the documents held, their bytes and how many were evicted.

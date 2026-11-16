@@ -1392,7 +1392,10 @@ the document.
   `unavailable` instead; an unavailable or pending tile is never registered.
   Each route's kept answers carry the definitions they registered and
   register them again whenever they are served, so a document the registry
-  dropped comes back with the next read of a tile route that names it.
+  dropped comes back with the next read of a tile route that names it. The
+  render check registers a candidate's definition when the app's check
+  runner claims its job (see "Render check"): that too is a definition the
+  daemon hands the authenticated app, never one a request carries.
 - **What the tile routes serve.** Every custom tile's `definition` is served
   without its HTML: `source` is `{"format": "html", "bytes": <length of the
   HTML in UTF-8>}`, and every other member, `digest` included, is as stored
@@ -1561,7 +1564,9 @@ bootstrap hears only its parent, only plain JSON values within its limits
 malformed. It sends `hello {kit, registered}` once the author's scripts ran;
 takes one `init {face, size, theme, lang, data, refs, check?}`, then `update
 {data, refs}` (a fresh `#baum-root` each time) and `theme {theme}`; and sends
-`ready {metrics}` two frames after a render (with the fonts loaded), `resize
+`ready {metrics}` two frames after a render (with the fonts loaded; the
+metrics are the height, `text_chars`, `elements`, `media`, `empty_state`,
+`failed`, `unresolved`, `overflow_x`, `overflow_y` and `render_ms`), `resize
 {height}` for a detail once per frame (stopped, with a `layout_loop` error,
 when it grows ten times in a second by the same amount), `error {code,
 message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
@@ -1569,6 +1574,10 @@ message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
 `render_failed`, `timeout`, `layout_loop`; at most 10 of each), `jump {key}`, `ask`,
 `open`, and `key {key, shift}` for Escape, u, j, k, the arrows, `[`, `]` and
 `?` from a detail when the tile did not handle them and no field has focus.
+An `init` with `check` (sent only by the render check's runner) settles on
+the frame's fonts and a message turn instead of two animation frames, since
+a hidden window runs none, and the runner may then send `measure`, which a
+detail answers with a `resize` of its height, changed or not.
 A detail frame keeps a 4px inset on every side for focus rings and draws
 nothing else around its content; the host pads the pane, places the frame in
 the pane's content column where a built-in detail's body goes, and sets it
@@ -1737,6 +1746,145 @@ in the library's layout that passes every check; a new type starts as a copy
 of it. `just local_app::tile-type-screens <dirs>` checks type directories as
 the library's are checked and draws them.
 
+### Render check
+
+`internal/tilechecks` checks a candidate custom tile type before anything
+shows it: a definition (without a digest), up to 3 samples of its own (data
+and the code it cites, as a library sample's) and optionally the data it
+would show on a pull request with that version's `{clone, pr, version}`.
+`Checker.Submit(ctx, candidate)` is its Go API, which the agent tools call;
+it waits up to 30 s and answers `{check, digest, kit, verdict, reason?,
+errors[], warnings[], runs[], engine}`, each problem `{code, message, hint,
+sample, face, size, theme, line?, column?}`, `verdict` one of `pass` (no
+errors), `fail`, `hang` and `unavailable`. The codes and their hints are in
+`tiles/kit/GUIDE.md` ("The render check"), which a test keeps equal to
+`tilechecks.Hints`.
+
+`Checker.Result(ctx, id)` is `tilelibrary.Checks`, which `propose_tile_type`
+rests on (the daemon sets `uiserver.TileTypes{Store, Checks}` to the
+checker): it keeps the newest 64 checks' results for an hour, in memory, each
+with its verdict, the definition it checked (with its HTML) and its digest,
+and each of the candidate's own samples (under the name the check gave it)
+with whether it passed (no error of its own or of the whole candidate) and
+whether it is synthetic (hunks or items of its own, every citation on both
+faces resolving to them). Preflights are not kept, nor a check whose
+definition was not valid; an expired or unknown ID is refused as unknown.
+
+- **Before drawing.** `Validator.CheckDefinition` (`definition_invalid`, or
+  `data_schema_invalid` for the schema), `kit.Lint` (errors are `lint`
+  errors and end the check; warnings are reported), each sample against the
+  schema (`sample_invalid`) and against its own hunks and items
+  (`unresolved_citation`, which does not end it), the data against the
+  schema (`data_invalid`; data needs its version), then `tiles.EdgeSamples`
+  (`minimal`, `maximal`), whose citations come from the samples' hunks and
+  resolve against them.
+- **Queue.** A check is a job `chk_<random>`: one runs at a time, at most 4
+  wait (a fifth is `ErrBusy`), and first-show preflights wait beside them (at
+  most 16). Each job publishes `tile_check {id, state}` (`queued`, `running`,
+  `done`, `hung`; never its content) on the app's event stream. A connection
+  that sends no `Last-Event-ID` (a page loading) is not replayed `tile_check`
+  events from before it connected, since a check long over would open or close
+  the check window again; the page asks `GET /api/tile-checks/state`
+  (`{waiting, running}`) once on load and acts as for a `queued` event if
+  checks wait. A reconnection with an ID is replayed them.
+- **Runner routes.** `GET /api/tile-checks/next?wait=<s>` (a long poll, at
+  most 25 s; 204 when none came) claims the next job and answers `{id, kind,
+  digest, kit, title, sizes, definition, context?, samples}`: the served
+  definition (without its HTML) and each sample's `{name, kind, data,
+  refs?}`, its citations' payloads for each face resolved from the samples'
+  hunks and items (`library.Sample.Refs`). The data of a check with a version
+  has none: the runner reads that version's tile document through
+  `GET /api/tiles` and resolves them with the page's `refs.ts`. Claiming
+  registers the definition's frame document. `PUT
+  /api/tile-checks/{id}/result {problems, runs, engine}` ends the running job;
+  the daemon sorts the problems: `slow` warns, an overflowing glance warns
+  for the `maximal` sample, an unresolved citation counts for the data and
+  the author's samples only, every other known code is an error, and
+  problems are de-duplicated by code, sample, face and size.
+- **Hang and unavailable.** While it draws, the runner posts `POST
+  /api/tile-checks/{id}/alive` every 2 s and as frames finish (`Alive`). A
+  claimed job with neither a report nor a sign of life for 10 s, or still
+  running 10 s plus 3 s per frame of its matrix after it was claimed, is
+  `hang`: the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
+  until it restarts), publishes `hung`, and announces each check still
+  waiting as `queued` again, so a page that closed a hung runner brings one
+  back. A candidate whose digest is already hung answers `hang` at once. A
+  long poll whose client left before the job was written puts it back at
+  the head of the queue (`Requeue`), and a report marked `abandoned` (the
+  runner's page went away mid-draw) ends the job `unavailable` without
+  blocking its type. A job no runner claims within 10 s
+  of being queued (or of the last poll; a running job keeps the others
+  waiting) is `unavailable` with a reason, and at once when no page of the
+  app is connected and no runner polled lately.
+- **Preflight.** `POST /api/tile-checks/preflight {digest, data, size,
+  refs: {glance, detail}}` draws a tile the page is about to show for the
+  first time, as a light glance at its size and a light detail, unless the
+  pair's verdict is kept. Verdicts of preflights and of checks with data are
+  kept in `tile_checked(digest, data_sha, verdict, at)` in `app.sqlite`, the
+  newest 10,000 rows; `data_sha` is the SHA-256 of the data decoded and
+  encoded canonically with each number as the exact rational it spells
+  (`tilechecks.DataSHA`), so the page's and an agent's spelling of the same
+  value match. A hung digest answers `hang` at once; one the
+  registry does not hold answers `unavailable`. A hang kept from before a
+  restart is drawn again.
+- **Routes' boundary.** The routes sit behind the app server's Host, session
+  (cookie or bearer), Origin and JSON checks like every other route, and a
+  browser request whose `Sec-Fetch-Site` is not `same-origin` is refused.
+
+**The runner** (`app/src/tiles/custom/check-runner.tsx`) claims jobs and
+draws each in sandboxed frames through the frame route, the page's router
+and protocol, in a `position: fixed` container inside the viewport at
+`opacity: 0`, at most 8 at a time: the data (when given), each sample,
+`minimal` and `maximal`, as glances at each declared size in the guide's
+boxes (third 310×164, half 488×180, full 1022×116) and details at 720 and
+360px, and the data also in the dark theme. It reports `no_hello` (5 s),
+`timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
+`render_failed`, `empty`, `overflow_glance`, `overflow_x`,
+`unresolved_citation` and `slow` from the ready metrics, and `layout_loop`
+when a detail set to the height it asks for keeps growing by the same
+amount. It may run in a hidden window, which on Linux WebKitGTK runs no
+animation frames, ResizeObserver or IntersectionObserver callbacks and runs
+timers about once a second while its layout and fonts are right; so it
+measures with layout reads and messages after the kit settled on its fonts,
+and uses timers only as deadlines. For the same reason it drives frames
+itself rather than through `TileFrame`, which mounts on an
+IntersectionObserver and follows heights by animation frame.
+
+Where it runs: when the desktop shell declares
+`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one,
+currently Linux), the main page calls
+the shell's `open_check_window` on a queued check, which loads
+`?page=tile-check` in a hidden window with its own web process, and
+`close_check_window` on `hung` (ending that process and the loop with it) or
+after 2 minutes without a check; the shell's commands are sent one after
+another, so the `queued` the daemon announces again for waiting checks after
+a hang reopens the window. Anywhere else frames are allowed (a
+browser, the macOS shell) the main page draws queued checks inside itself,
+where a hang freezes the page until the daemon gives up on the job. A shell
+that allows no frames draws nothing, and checks are `unavailable`.
+
+**First-show preflight** (`app/src/tiles/custom/preflight.ts`). Where the
+check window exists, before `TileFrame` mounts a custom tile not of a
+built-in type it posts a preflight of the tile's data and waits (the box
+reads `data-frame-state="checking"`). `pass` and render errors mount (the
+frame's own failure faces show those); `hang` shows "This tile stopped
+responding when it was checked." and the frame route refuses the type. Each
+pair is asked about once per page, one pair at a time: a preflight request
+stays open until its tile is drawn, and the check window shares the page's
+connections to the daemon (WebKit opens at most 6 to one host), so a page
+asking for all its tiles at once would leave the check window none to claim
+them with. A browser skips the preflight.
+
+Tests: `internal/tilechecks` (the queue, timeouts, hang and `MarkHung`, the
+checks before drawing, the classification, preflights and the store),
+`internal/uiserver` (the routes' boundary), and `app/e2e/tile-check.spec.ts`,
+which submits the tiles in `app/e2e/tile-check/` (good, empty, overflowing,
+throwing, network, height loop, slow, failing, never settling, busy) and the
+built-in types and the starter through a route only the browser fixture has
+(`POST /api/tile-checks/submit`), the page's runner drawing them; the busy
+one is claimed by a runner that never answers, so the daemon's hang timer is
+what is tested, not a frozen page.
+
 ### Tile library
 
 `tiles/library` holds baum's built-in custom tile types, which a generation
@@ -1754,7 +1902,9 @@ review's details stage should check when the type applies), `schema.json`,
 with the hunks and items its data cites.
 
 - A generation with tile reviews on offers them all to the outline and
-  fills the ones it selects (see "Tile analysis" under "Staged review").
+  fills the ones it selects (see "Tile analysis" under "Staged review"),
+  with the person's saved types offered beside them (see "Offering saved
+  types" below).
 - `library.All()` returns them in offer order (`library.Names`), each an
   `Entry`: the definition with its digest written, the definition encoded as
   a custom tile embeds it (`tiles.LibraryTile.Definition`), the glance line
@@ -1775,9 +1925,21 @@ with the hunks and items its data cites.
   fill's data against a pull request's diff: no `related`, the type's data
   checks (`tiles.Validator.CheckData`), data that shows nothing the type is
   for (every array its `applies_with` names empty: the fill should answer
-  that the type does not apply rather than make a tile that says so), and
-  every hunk in the diff with its lines inside the hunk's new range. Its problems name places, not values,
-  so they can go back to the model in a repair.
+  that the type does not apply rather than make a tile that says so), every
+  hunk in the diff with its lines inside the hunk's new range, every file a
+  path the diff changes (old paths included), and no risk, evidence item or
+  tile cited. Its problems name places, not values, so they can go back to
+  the model in a repair.
+- **The bundle pass.** A saved type's schema may cite through
+  `#/$defs/citation`, so its data can name more of the pull request than its
+  code. `library.CheckFillIn` (and `CheckAddedFillIn`) is `CheckFill` against
+  the whole bundle: a prompt or session event must name one of the bundle's
+  sessions, which must not be restricted; a check or review thread must be
+  one of the bundle's. A fill runs with the bundle, so the analysis checks
+  every fill and reused tile this way; a stored version, which has no bundle,
+  is checked with `CheckFill`, and the composition's custom tile checks
+  resolve those citations against the review's index (restricted sessions
+  refused there too). This is what lets a type draw on session transcripts.
 - `library.Check(entry)` is every static check a type passes:
   `CheckDefinition` (the dialect included), the kit's lint with warnings as
   errors, the glance line and review checks within their limits, the
@@ -1795,6 +1957,181 @@ with the hunks and items its data cites.
   open with a summary and a critical callout of what loses data or breaks,
   then a card per table or entry point with its fields, its citation chips
   and the cited code, opened only on the first card that cites a hunk.
+
+**Saved types.** A person's own library of tile types is kept on this
+computer by `internal/tilelibrary`, in the private application database
+(`app.sqlite`) and never in a review store.
+
+- Tables, created with `CREATE TABLE IF NOT EXISTS` when a write opens the
+  database (a read of one without them finds an empty library; an older app
+  ignores them): `tile_types` (name, current digest, glance, review checks,
+  `applies_with`, path globs, samples, origin `chat` or `import`, created and
+  updated times, `used_at` and `used_in` for the last fill that used it, and
+  `deleted`), `tile_type_versions` (name, digest, time) and `tile_definitions`
+  (digest, the definition with its HTML, time of the first save). A version is
+  a definition digest, and a saved type's name is its tiles' ID. On this
+  branch only type versions hold definitions: layout edits (`tile_overlays`)
+  name no digest. The sweep that removes unreferenced definitions still keeps
+  one that a `tile_overlays` value or a `tile_fills` row (when those tables
+  exist) names, so a later feature can share the table; a missing table names
+  nothing, and any other error reading one keeps the definition. Reads run in
+  one transaction, so a type's row and the definition it names are read at the
+  same moment, and `List` leaves out (and logs) a type that cannot be loaded
+  rather than failing.
+- `tilelibrary.BuildEntry` writes a saved type in the built-in library's own
+  file layout into an in-memory `fs.FS` and reads it with `library.Load`, so
+  `library.Check` applies to a saved type exactly as to `schema_change`.
+  Saving runs it, and also refuses a name that is `custom`, a built-in tile
+  type's, a built-in library type's, or that starts with `sec_`, `table_`,
+  `code_`, `prose_`, `diagram_` or `library_` (so a tile's ID is always its
+  name), a name already in the library, a sample that is not synthetic and
+  more than 16 paths. Renaming changes the title only (a new version); the
+  name stays.
+- Bounds: 200 types, 20 versions per type (the oldest go first, never the
+  current one), 5 samples of at most 64 KiB each, and 64 MiB of definitions
+  and samples. Deleting sets `deleted` and hides the type with Undo for 30
+  days; then a purge removes it, its versions and the definitions nothing
+  else names. A version can be restored: the earlier digest becomes current
+  again, if it still fits the type's samples.
+- A tile of a saved type in a generated review is a `tiles.LibraryTile`
+  that embeds its full definition (`tilelibrary.LibraryTile`), as a built-in
+  type's does, so editing, restoring or deleting a type never changes a saved
+  review: a test in `internal/uiserver` stores a review version whose
+  composition has a library tile built from a saved type, serves it through
+  `/api/tiles` (a fresh handler each time, so no answer is cached), then edits,
+  renames, deletes and purges the type and compares the served bytes.
+- Two chat tools work on it, on the pull request page and on Settings'
+  Tile library section. `tile_type {type}` returns a saved or built-in type in
+  full (definition with HTML, glance, review checks, samples, versions): the
+  only way an agent reads a type's source, since the tile routes serve a
+  definition without its HTML. It is the layout tools' `tile_type` too: on the
+  pull request page a built-in type also carries what `add_tile` needs (below),
+  and without a library it answers only that. `propose_tile_type` is a proposal, with
+  `Proposes: true`: nothing is saved until the person saves it in the panel.
+  The proposal's After and the current value (Before) are one shape,
+  `tilelibrary.Card` (`CardOf`, `CardOfType`): name, title, `use_when`,
+  `glance`, `review_checks`, `paths`, `applies_with`, the `fill` instructions,
+  origin, `based_on`, the definition with its HTML and the samples, so the
+  panel's generic change view diffs them field by field and the person sees
+  the texts that will instruct future fill models. A richer card with a
+  preview drawn from the check's sample is later UI work. It rests on a render
+  check, which `tilelibrary.Checks` (the render checker's `Result`, see
+  "Render check") looks up by id (verdict, the checked
+  definition and its digest, and per sample whether it passed and is
+  synthetic); it needs a pass on at least one synthetic sample (hunks and
+  items of its own, every citation resolving to them), and saves only the
+  samples that passed and are synthetic. On a pull request's page the tool
+  also reads the open pull request's diff as `diff` does (so it declares those
+  reads) and refuses a sample whose hunks share three or more distinct
+  non-trivial lines with it (trivial: blank, brackets and punctuation,
+  imports, a few common boilerplate lines, short lines), with a reason telling
+  the agent to write sample code for a fake repository; a diff that cannot be
+  read refuses too. The proposal's target is
+  `tile_type:<name>` and its revision covers whether the type exists and its
+  current digest, so a type saved, edited or deleted meanwhile makes the save
+  stale. A proposal for an existing type also names the digest and updated
+  time it started from (`based_on`), which must still be current when the
+  proposal is recorded and when it is saved, so a save never reverts texts the
+  person saved after the agent read the type. Built-in types are never edited: starting from one makes a copy
+  under a name of its own.
+- `GET /api/tile-types/{name}/preview?sample=` draws a built-in or saved
+  type without a review: the served definition (no HTML; `builtin` only by
+  the content's digest), the sample's data, and `Sample.Refs` for the glance
+  and the detail. It registers the definition's digest in the frame registry,
+  as the tile routes do, and has the same authentication as every other
+  `/api` route.
+- The Tile library page's routes (`internal/uiserver/tilelibrarypage.go`) list
+  the saved types (`GET /api/tile-types`) and read one (`GET
+  /api/tile-types/{name}`), both without the HTML, and take the page's own
+  clicks: rename (`PUT …/title`), restore (`POST …/restore`), delete and
+  undelete, and pins (`PUT …/pins`), which write the type's name into each
+  picked repository's `repos.Settings.Tiles.Types` (at most 8 a repository,
+  `Registry.SetTileTypePins`, one transaction). A repository settings `PUT`
+  without a `tiles` member keeps the stored tiles, and one with a `tiles` object merges it per member (`types`, `text`, `pins`: a member left out keeps its stored value, one sent, even empty, replaces it; `tiles: null` clears all). Pins outlive a deletion, so
+  Undo brings a type back pinned; a purged type's name may stay pinned until
+  the repository's pins change, and names no type.
+- **Export and import.** A type travels as one file, `<name>.baumtile.json`
+  (`schema/tile-type-1.json`, `baum.tile-type/1`, at most 3 MiB): the
+  definition without its digest, glance, review checks, `applies_with`, paths,
+  samples and `exported {at, baum}`, one to one with the library's directory
+  layout. `tilelibrary.Export` writes it; `tilelibrary.ReadFile` checks an
+  untrusted one: the size, then a token walk that refuses nesting deeper than
+  64 levels, more than 200,000 values or a NUL, a strict decode with no
+  unknown member, the schema id, the definition's checks, the kit's lint
+  (errors refuse), then `Prepare` (samples validate and cite only their own
+  hunks and items, the name rules). A digest or `builtin` in the file is
+  dropped and the digest computed. `Store.Inspect` plans the import (a name
+  the library holds, a deleted type's included, gets the first free suffix,
+  `name_2`, kept within 64 characters) and `Store.Import` saves it with origin
+  `import`. `POST /api/tile-type-files/check` answers what the dialog shows
+  and registers the checked definition's frame document; `POST
+  /api/tile-type-files` imports. `tile_type_checks (digest, verdict, at)`
+  records an import's render check: `unchecked` ("Not checked yet") unless
+  the `tilelibrary.SampleCheck` (`LocalAPI.TileImportCheck`, the daemon's
+  `tilechecks.Checker.ImportCheck` over the first three samples) passed;
+  a failed check refuses the import, and no runner (`ErrNoRunner`) saves it
+  unchecked. The tile type preview route runs the check in the background
+  for an unchecked type once a runner is there and calls `Store.MarkChecked`
+  on a pass (once per digest per daemon run unless it found no runner), and
+  the sweep removes a verdict with its definition. `Prepare` strips
+  bidirectional, zero-width and tag characters from the title, use-when, fill,
+  glance and review checks (`Invisible`).
+
+**Offering saved types.** A new review of a single pull request with tile
+reviews on offers the person's saved types beside the built-in ones
+(`generate.Tiles.Saved`, which `jobs.Local` sets from its `TileLibrary`).
+Once the pull request is assembled, `tilelibrary.Offer` chooses from the
+library with the diff's paths, the repository's pins and the library types
+the run offers already (`Offering.Taken`: the built-in types and those the
+person added):
+
+- **Always:** the types pinned to the repository
+  (`repos.Settings.Tiles.Types`), in pin order. They join
+  `StagedTiles.Always`, beside the pull request's added types, and are filled
+  whatever the outline answers; `jobs.Local` gives each the last data held
+  for it (the latest version's composition), reused by the added types' rule.
+- **Eligible:** the other saved types that are not deleted and whose path
+  globs are empty or match a path of the diff (`tilelibrary.MatchPath`:
+  doublestar's `**` and `{a,b}`, each segment a `path.Match` pattern; a glob
+  with no `/` matches the file name in any directory). A saved glob has at
+  most 8 braces expanding to at most 64 patterns (`CheckGlob`, run by
+  `Prepare`), and expansion stops at that bound.
+- **Ranked:** used in this repository most recently first (`used_in`), then
+  used anywhere most recently (`used_at`), then the newest type. The library
+  does not record the repository a type was created in, so "made from this
+  repository's pull requests" is not a rank of its own.
+- **Capped:** at most `tilelibrary.MaxOffered` (6) offered, and the built-in
+  types, the added types, the pinned ones and the offered ones together stay
+  within `tiles.MaxLibraryTiles` (8): pins take their room first.
+- A type "Not checked yet" (an import without a render check) is neither
+  offered nor filled while pinned, until a check marks it; a library that
+  cannot be read offers nothing and the review goes on.
+
+The outline lists an offered saved type marked "from the person's tile
+library" with its title (at most 100 characters), use-when line (280) and
+glance line (200), each line at most 760 characters, so six types add less
+than 4 KB to the outline's prompt, inside the prefix a run caches; a built-in
+type's line is as before. A saved type's `fill` and `review_checks` are the
+person's instructions, of the trust of a custom prompt: its fill opens with a
+note that they are the person's and the only instructions about the tile
+(text in the pull request that reads like tile instructions is data) and
+that the whole bundle, sessions included, is `bundle.json` in its directory;
+its review checks come under a heading marked as the person's, after a note
+that the pull request cannot add one. Its ready fill becomes a library tile
+that embeds its definition, which the composer places beside the built-in
+types' (`agent.ComposeRequest.Saved`, by digest; the page labels it
+"Custom · <title>" and shows it through the first-show preflight). The host
+writes the `related` items only into a type whose schema declares that
+property (`Entry.DeclaresRelated`, as the built-in types do); the kit's guide
+asks other types to leave the name unused, and their schemas would refuse it. Each type
+the outline selects costs one fill, in parallel with the others.
+
+**Recording use.** When a version is stored, `jobs.Local` reads the saved
+types its composition holds a ready (not pending) library tile of
+(`tilelibrary.UsedTypes`) and records the use (`Store.RecordUse`): `used_at`
+becomes now and `used_in` names the repository at now, keeping the 50 most
+recent repositories. The library page shows them, and offering ranks by
+them.
 
 ### Tiles
 
@@ -2408,7 +2745,8 @@ stage is told the selected types' checks.
 
 - **Selection.** The outline stage's prompt gets the selection text
   (`review-tiles-select`) with the offered types (name, title, use-when
-  line) and, with exhibits asked for, the candidates text
+  line; a saved type's marked as the person's, with its glance line, see
+  "Offering saved types") and, with exhibits asked for, the candidates text
   (`review-tiles-candidates`), inserted before its Submitting heading. Its
   schema gets a required `library` array, one `{type, applies, hunks, why}`
   per offered type in offer order, and a required `exhibits` array of at most
@@ -2425,8 +2763,8 @@ stage is told the selected types' checks.
 - **Reuse.** A selected type whose tile the previous version's composition
   holds with this version's definition digest, whose data cites only hunks of
   this diff (hunk IDs are content-derived: the same ID is the same code),
-  every hunk selected now among them, and which passes `library.CheckFill`
-  against this diff, is taken without a call (`FillResult.Reused`); its
+  every hunk selected now among them, and which passes `library.CheckFillIn`
+  against this bundle, is taken without a call (`FillResult.Reused`); its
   `related` items are written again. A previous authored tile every hunk of
   which is in this diff, its lines inside the hunk, is kept with its ID.
 - **Added types.** `StagedTiles.Always` are the library types the person
@@ -2440,19 +2778,21 @@ stage is told the selected types' checks.
   is reused by its own rule instead of the previous composition's: with no
   call when every hunk its last data cites is in this diff and no hunk new to
   this diff touches a file it cites, and the data passes
-  `library.CheckAddedFill` (`CheckFill` without the rule that data must show
-  something). Its fill is told the person added it, checked with
-  `CheckAddedFill`, and an answer that the type does not apply is sent back
+  `library.CheckAddedFillIn` (`CheckFillIn` without the rule that data must
+  show something). Its fill is told the person added it, checked with
+  `CheckAddedFillIn`, and an answer that the type does not apply is sent back
   once.
 - **Fills.** Each other selected type gets a task (`fill-<type>`, its files
   named so) with a focused prefix in place of the stages' (the pull request's
   title, the selected hunks with their patches, an index of the other hunks
   without patches, source excerpts around the selected hunks, and the
   checkout to read), the fill text (`review-tiles-fill`), the type's own
-  `fill` instructions, the outline and the selected hunks. Its schema is
+  `fill` instructions (a saved type's after the note that they are the
+  person's), then under a heading of its own the outline and the selected
+  hunks. Its schema is
   `{applies, data}`, `data` the type's `Entry.FillSchema()` or null. The reply
   is masked as a task's output, Codex's null `lines` are dropped, and
-  `library.CheckFill` checks it; one repair sends the host's problems back. A
+  `library.CheckFillIn` checks it against the bundle; one repair sends the host's problems back. A
   fill that answers the type does not apply is not a tile; one that fails, or
   is still invalid after its repair, is dropped with the host's reason.
 - **Exhibits.** The exhibits call (`exhibits`) runs only when the outline
@@ -7755,7 +8095,7 @@ page.
 | --- | --- | --- |
 | `tile_layout` | none | `{pull_request, version, view: "tiles"\|"full", edited, can_undo, focus: {tile, title}\|null, first_screen_rows, landing_rows, rows: [["overview:half", …], …], tiles: [{id, type, title, size, sizes, group, pinned, hidden, on_landing, row, state, can_hide, why_not}], changes_shown, note}`, at most 32 KiB (the tiles past the landing page are left out first) |
 | `edit_tiles` | `{ops: [{op, tile?, to?, size?, count?}]}`, 1 to 20, `op` one of `move`, `resize`, `hide`, `show`, `pin`, `unpin`, `changes_shown` | `{applied: [summary lines], refused: [{index, reason}], revision, edited, can_undo, rows, hidden}`; every op refused is an error naming the reasons, and nothing is written |
-| `tile_type` | `{type}` | a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself; read-only, page-bound like the others |
+| `tile_type` | `{type}` | a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself, beside the type in full from the tile library (its definition with HTML, samples and versions); read-only, page-bound like the others |
 | `add_tile` | `{type, size?, to?, data?}` | a library type the review does not show (tile_layout's `addable`): one `add` batch, placed after the overview unless `to` says otherwise, with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background (`{tile, state: "ready" \| "filling", applied, …}`); a removed tile is brought back (a show, with a resize and a move when asked); an unknown type names the library's types |
 | `undo_tiles` | none | `{undone: [summary lines], revision, …}`, or "Nothing to undo" |
 | `reset_tiles` | none | `{revision, can_undo: true, …}`, or "The layout is already the generated one" |

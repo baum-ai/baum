@@ -52,7 +52,11 @@ func checkedTiles(t *TileSettings) (*TileSettings, error) {
 	}
 	out := TileSettings{Text: strings.TrimSpace(t.Text)}
 	for _, name := range t.Types {
-		if name = strings.TrimSpace(name); name != "" && !slices.Contains(out.Types, name) {
+		name = strings.TrimSpace(name)
+		if name != "" && !tileTypeName.MatchString(name) {
+			return nil, fmt.Errorf("%w: %q is not a saved tile type's name: a lowercase letter, then lowercase letters, digits and underscores", ErrInvalidSettings, name)
+		}
+		if name != "" && !slices.Contains(out.Types, name) {
 			out.Types = append(out.Types, name)
 		}
 	}

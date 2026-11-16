@@ -25,6 +25,7 @@ import {
 import { citedHunks, MAX_EXCERPTS, resolveRefs, type CitationTarget } from "./refs";
 import { isBuiltinType } from "./library";
 import { listenToFrame } from "./router";
+import { HUNG_WORDS, usePreflight } from "./preflight";
 
 /** A custom tile's frame, as its card's glance or its detail draws it. */
 
@@ -126,6 +127,8 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
     () => resolveRefs(tile.data, patches.doc, face, ctx.labels),
     [tile.data, patches.doc, face, ctx.labels],
   );
+  // The glance's placed size: what the preflight draws it at.
+  const preflight = usePreflight(tile, ctx, sizeOf(ctx, tile, "glance"), digest);
 
   const go = (target: CitationTarget) => {
     switch (target.kind) {
@@ -181,6 +184,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   if (!digest) return quiet("This tile couldn't be read.");
   if (newer) return quiet(NEWER_KIT);
   if (!allowed) return quiet(NOT_IN_THIS_SHELL);
+  if (preflight === "hung") return quiet(HUNG_WORDS);
   if (failure)
     return face === "glance" ? (
       <div data-frame-failure={failure.why}>
@@ -215,7 +219,9 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
     <div
       ref={box}
       data-custom-tile={tile.id}
-      data-frame-state={ready ? "ready" : slot ? "loading" : "waiting"}
+      data-frame-state={
+        ready ? "ready" : preflight === "checking" ? "checking" : slot ? "loading" : "waiting"
+      }
       className={cn(
         "relative min-w-0",
         face === "glance"
@@ -226,7 +232,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
       )}
       style={face === "detail" ? { height } : undefined}
     >
-      {slot ? (
+      {slot && preflight === "show" ? (
         <FrameView
           key={attempt}
           src={`/tile-frames/${digest}`}
@@ -279,6 +285,136 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
 }
 
 export const NEWER_KIT = "This tile was made with a newer version of baum. Update baum to see it.";
+
+/** A tile type drawn without a review, as the Tile library page previews
+ *  it: one face of one sample, its data and the payloads of its citations
+ *  as the daemon's preview route resolved them (`library.Sample.Refs`), in
+ *  the same sandboxed frame and under the same checks as on the tiles page.
+ *  Nothing in a preview jumps or asks: a sample's citations name its own
+ *  made-up hunks. `reread` reads the preview route again, which registers
+ *  the type's frame document again, before a frame that did not start is
+ *  mounted once more. A glance fills its box; a detail takes its height.
+ *  The caller keys it by type version and sample: another is a new frame. */
+export function PreviewFrame({
+  digest,
+  kit,
+  title,
+  face,
+  size,
+  data,
+  refs,
+  reread,
+}: {
+  digest: string;
+  kit: number;
+  title: string;
+  face: Face;
+  size: TileSize;
+  data: unknown;
+  refs: Record<string, unknown>;
+  reread?: () => Promise<unknown>;
+}) {
+  const instance = `preview:${digest}:${face}:${size}`;
+  const [attempt, setAttempt] = useState(0);
+  const [failure, setFailure] = useState<FrameFailure | null>(null);
+  const [ready, setReady] = useState(false);
+  const [height, setHeight] = useState(() => heights.get(instance) ?? 240);
+  const box = useRef<HTMLDivElement>(null);
+  const allowed = useMemo(() => framesAllowedHere(), []);
+  const theme = useAppTheme();
+  const slot = useFrameSlot(box, face === "detail");
+  useEffect(() => setReady(false), [slot, attempt]);
+  const retried = useRef(false);
+  const valid = /^[0-9a-f]{64}$/.test(digest);
+  const quiet = (words: string) =>
+    face === "glance" ? (
+      <Quiet>{words}</Quiet>
+    ) : (
+      <div className="rounded-md border border-dashed border-default px-4 py-3">
+        <p className="text-base text-secondary">{words}</p>
+      </div>
+    );
+  if (!valid) return quiet("This tile couldn't be read.");
+  if (kit > KIT_SUPPORTED) return quiet(NEWER_KIT);
+  if (!allowed) return quiet(NOT_IN_THIS_SHELL);
+  const fail = (next: FrameFailure) => {
+    if (next.why === "silent" && !retried.current && reread) {
+      retried.current = true;
+      void reread()
+        .catch(() => undefined)
+        .then(() => setAttempt((count) => count + 1));
+      return;
+    }
+    setFailure(next);
+    setReady(false);
+  };
+  if (failure)
+    return (
+      <div
+        role="alert"
+        data-frame-failure={failure.why}
+        className="space-y-2 rounded-md border border-dashed border-default px-4 py-3"
+      >
+        <p className="text-base text-secondary">This tile couldn't load.</p>
+        <p className="text-xs text-tertiary">{FAILURE_WORDS[failure.why]}</p>
+        <Button
+          variant="secondary"
+          size="compact"
+          onClick={() => {
+            retried.current = false;
+            setFailure(null);
+            setAttempt((count) => count + 1);
+          }}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  return (
+    <div
+      ref={box}
+      data-preview-frame={face}
+      data-frame-state={ready ? "ready" : slot ? "loading" : "waiting"}
+      className={cn(
+        "relative min-w-0",
+        face === "glance" ? "h-full w-full" : "-m-1 w-[calc(100%+8px)]",
+      )}
+      style={face === "detail" ? { height } : undefined}
+    >
+      {slot ? (
+        <FrameView
+          key={attempt}
+          src={`/tile-frames/${digest}`}
+          title={title}
+          face={face}
+          ready={ready}
+          waitFor={() => null}
+          init={() =>
+            initMessage({
+              face,
+              size,
+              theme,
+              lang: document.documentElement.lang || "en",
+              data,
+              refs,
+            })
+          }
+          theme={theme}
+          update={refs}
+          data={data}
+          onReady={() => setReady(true)}
+          onHeight={(next) => {
+            heights.set(instance, next);
+            setHeight(next);
+          }}
+          onFail={fail}
+          onJump={() => false}
+          onAsk={() => {}}
+        />
+      ) : null}
+    </div>
+  );
+}
 
 /** How long a detail's init waits for the patches of the code it cites. */
 const PATCH_WAIT = 1500;

@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -17,6 +18,10 @@ type GeneratorConfig struct {
 	// PromptOverrides are replacement prompts by id (--prompt-override).
 	PromptOverrides map[string]string
 	Options         map[string]string
+	// LibraryDir is a directory of exported tile type files
+	// (*.baumtile.json) the tiles generator offers as the person's saved
+	// types (--library-dir); other generators refuse it.
+	LibraryDir string
 }
 
 var (
@@ -64,6 +69,9 @@ func init() {
 	RegisterGenerator("review", func(c GeneratorConfig) (Generator, error) {
 		if len(c.Options) > 0 {
 			return nil, fmt.Errorf("the review generator takes no --generator-option (got %v)", slices.Sorted(maps.Keys(c.Options)))
+		}
+		if c.LibraryDir != "" {
+			return nil, errors.New("--library-dir goes with --generator tiles")
 		}
 		g := &ReviewGenerator{Staged: c.Staged, Reuse: c.Reuse}
 		for id, text := range c.PromptOverrides {

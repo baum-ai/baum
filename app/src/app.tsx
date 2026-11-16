@@ -1,4 +1,6 @@
 import { SavedStateNotice } from "./ui-state";
+import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
+import { TileCheckPage } from "./tiles/custom/check-runner";
 import { PreferencesProvider, usePreferences } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
@@ -344,7 +346,10 @@ function Application() {
       <ToastProvider>
         <SampleGuard />
         <ViewerLinkProvider link={LocalLink}>
-          {auth === "ready" ? (
+          {auth === "ready" && url.search.get("page") === "tile-check" ? (
+            // The desktop shell's hidden check window: the runner alone.
+            <TileCheckPage />
+          ) : auth === "ready" ? (
             <Workspace url={url} />
           ) : (
             <main className="local-connecting">
@@ -718,6 +723,12 @@ function Workspace({ url }: { url: UrlState }) {
       }
     });
     source.addEventListener("automatic", () => markStale(automaticParts));
+    // The render check: open the check window, or draw in this page.
+    source.addEventListener("tile_check", (event) =>
+      onTileCheckEvent((event as MessageEvent).data),
+    );
+    // A new connection is not sent past checks: ask once what is waiting.
+    void checkWaitingJobs();
     source.addEventListener("reset", () => markStale(allReloadParts));
     const refreshTimeline = () => gate.run("timeline", () => setTimelineTick((n) => n + 1));
     source.addEventListener("timeline", refreshTimeline);
@@ -1719,8 +1730,19 @@ function Workspace({ url }: { url: UrlState }) {
               setSection={(section) =>
                 url.update((current) => {
                   current.set("page", "settings");
+                  current.delete("type");
                   if (section === "general") current.delete("section");
                   else current.set("section", section);
+                  return current;
+                })
+              }
+              tileType={url.search.get("type")}
+              openTileType={(type) =>
+                url.update((current) => {
+                  current.set("page", "settings");
+                  current.set("section", "tiles");
+                  if (type) current.set("type", type);
+                  else current.delete("type");
                   return current;
                 })
               }

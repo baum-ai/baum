@@ -70,7 +70,9 @@ import (
 	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
+	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -490,13 +492,14 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// version and draft the tile routes serve; a write tells the app's
 		// open page to read its tiles again. Reviews fill the tiles people
 		// added (jobs.Local.Layouts).
+		tileLibrary := &tilelibrary.Store{Path: database}
 		layouts := &tilelayout.Service{Path: database, Changed: func(pr string, revision int64) {
 			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
 		}}
 		if err := layouts.Sweep(ctx); err != nil {
 			log.Warn("the tile layouts were not swept", "error", err)
 		}
-		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Layouts: layouts}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Layouts: layouts, TileLibrary: tileLibrary}
 		// The tiles a person added that a version has no data for are
 		// filled beside the queue.
 		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Layouts: layouts, Log: log}
@@ -789,7 +792,18 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				log.Warn("the tile checks could not be prepared", "error", err.Error())
 			}
 		}()
-		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		// The render check: the app's check runner draws candidate tile types
+		// and the tiles page's first-show preflights.
+		tileChecks, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Database: database, Log: log,
+			Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+			Subscribed: server.Subscribed})
+		if err != nil {
+			log.Warn("the render check could not keep its verdicts", "error", err.Error())
+			tileChecks, _ = tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Log: log,
+				Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+				Subscribed: server.Subscribed})
+		}
+		local := uiserver.LocalAPI{TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
@@ -826,13 +840,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts, Fills: tileFills}
+			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts, Fills: tileFills, TileTypes: tileLibrary}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		// What a chat proposes is saved, when the person saves it, through
 		// the pages' own saves.
-		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState}
+		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState, TileTypes: tileLibrary}
 		if requests != nil {
 			proposers.CodexApprovals = func() bool { return requests.Settings().CodexApprovals }
 			proposers.SetCodexApprovals = func(on bool, check func(bool) error) error {
@@ -842,7 +856,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Layouts: uiserver.LayoutEditor{API: local}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Layouts: uiserver.LayoutEditor{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary, Checks: tileChecks}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
 			listing, loaded, err := pickList.Cached(ctx, query)
 			if err != nil {
 				return agentcontext.PickList{}, err
@@ -1021,6 +1035,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Close: func() {
 				sample.Close()
 				api.Close()
+				_ = tileChecks.Close()
 				groupsAPI.Close()
 				unsubscribe()
 				unsubscribeClones()

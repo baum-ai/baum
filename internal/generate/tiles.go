@@ -45,7 +45,76 @@ type Tiles struct {
 	// Always are the library types the person added to the pull request's
 	// review, with the last data held for each (agent.StagedTiles.Always):
 	// each is filled, or its data reused, and appears in the composition.
+	// A saved type pinned to the repository may be named here with its
+	// last data; it is filled only when Saved returns it.
 	Always []agent.AlwaysTile
+	// Saved, when set, chooses the person's saved tile types for the run
+	// once the pull request is assembled (tilelibrary.Offer): always are
+	// filled whatever the outline answers, as Always are, and offered join
+	// the library types the outline is offered. Their tiles are placed as
+	// the built-in types' are.
+	Saved SavedTypes
+
+	// saved are the definition digests of the saved types the run offers.
+	saved []string
+}
+
+// SavedTypes chooses the saved tile types for a run: diffPaths are the
+// paths its diff changes, taken the library types it offers already (the
+// built-in ones and those the person added).
+type SavedTypes func(ctx context.Context, diffPaths, taken []string) (always, offered []library.Entry)
+
+// withSaved is t with the saved types Saved chooses for the pull request:
+// they join the library offered, after the built-in types, and the always
+// ones join Always. Without Saved, or with no library, it is t.
+func (t *Tiles) withSaved(ctx context.Context, b *bundle.Bundle) *Tiles {
+	if t == nil || t.Saved == nil || t.NoLibrary {
+		return t
+	}
+	out := *t
+	base := t.Library
+	if base == nil {
+		base = library.All()
+	}
+	var taken []string
+	for _, e := range base {
+		taken = append(taken, e.Definition.Name)
+	}
+	for _, a := range t.Always {
+		if _, ok := library.Get(a.Name); ok && !slices.Contains(taken, a.Name) {
+			taken = append(taken, a.Name)
+		}
+	}
+	paths := map[string]bool{}
+	var diffPaths []string
+	for _, h := range b.Diff {
+		for _, p := range []string{h.Path, h.OldPath} {
+			if p != "" && !paths[p] {
+				paths[p] = true
+				diffPaths = append(diffPaths, p)
+			}
+		}
+	}
+	always, offered := t.Saved(ctx, diffPaths, taken)
+	out.Library = slices.Clone(base)
+	out.Always = slices.Clone(t.Always)
+	add := func(e library.Entry) bool {
+		if slices.ContainsFunc(out.Library, func(have library.Entry) bool { return have.Definition.Name == e.Definition.Name }) {
+			return false
+		}
+		out.Library = append(out.Library, e)
+		out.saved = append(out.saved, e.Definition.Digest)
+		return true
+	}
+	for _, e := range always {
+		if add(e) && !slices.ContainsFunc(out.Always, func(a agent.AlwaysTile) bool { return a.Name == e.Definition.Name }) {
+			out.Always = append(out.Always, agent.AlwaysTile{Name: e.Definition.Name})
+		}
+	}
+	for _, e := range offered {
+		add(e)
+	}
+	return &out
 }
 
 // ComposeReport is what a run's compose stage did (Result.Compose).
@@ -206,7 +275,7 @@ func composeTiles(ctx context.Context, o Options, document []byte, spent agent.O
 		prompts = prompt.TilesPrompts{}
 	}
 	request := agent.ComposeRequest{Completer: CompleterOf(o.Backend), Backend: o.Backend.Name(), Prompts: prompts, Document: doc,
-		Fills: fills, Authored: authored, Previous: t.Previous, Preferences: t.Preferences, Redactor: redactor, CallTimeout: o.PassTimeout,
+		Fills: fills, Authored: authored, Previous: t.Previous, Preferences: t.Preferences, Saved: t.saved, Redactor: redactor, CallTimeout: o.PassTimeout,
 		Timeout: agent.DefaultComposeTimeout, MaxCalls: composeCalls(o.Budgets, spent)}
 	if request.MaxCalls == 0 {
 		request.Skip = agent.FallbackBudget
@@ -292,12 +361,11 @@ func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry)
 	if t == nil {
 		return nil, nil, nil
 	}
+	// The entries are the types the host offered: the built-in ones and the
+	// person's saved types (Tiles.Saved), never one a pull request names.
 	byName := map[string]library.Entry{}
 	for _, e := range entries {
-		// Only built-in types become library tiles.
-		if library.IsBuiltin(e.Encoded) {
-			byName[e.Definition.Name] = e
-		}
+		byName[e.Definition.Name] = e
 	}
 	var fills []compose.Fill
 	var ready []tiles.Tile
@@ -309,7 +377,10 @@ func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry)
 		state := "failed"
 		var data json.RawMessage
 		if f.State == agent.FillReady {
-			state, data = "ready", library.WithRelated(f.Data, doc)
+			state, data = "ready", f.Data
+			if e.DeclaresRelated() {
+				data = library.WithRelated(f.Data, doc)
+			}
 			ready = append(ready, tiles.Tile{ID: tiles.LibraryTileID(f.Type), Type: tiles.TypeCustom, Data: data})
 		}
 		if f.State == agent.FillNotApplies {

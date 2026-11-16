@@ -4,8 +4,13 @@
 // author API, which is frozen and additive only within v1.
 //
 // It runs in <head>, before any author script, so its listeners see every
-// error. The page sends `init`, `update` and `theme`; the bootstrap sends
-// `hello`, `ready`, `resize`, `error`, `jump`, `ask`, `open` and `key`.
+// error. The page sends `init`, `update` and `theme`, and the render check's
+// runner `measure`; the bootstrap sends `hello`, `ready`, `resize`, `error`,
+// `jump`, `ask`, `open` and `key`.
+//
+// A sandboxed frame's errors reach the page only as "Script error.", so the
+// bootstrap reports each one itself, with its message and its line in the
+// author's HTML.
 
 const KIT = 1;
 const PROTOCOL = "baum.tile/1";
@@ -219,6 +224,7 @@ listen(window, "message", (event) => {
   if (message.kind === "init") onInit(message);
   else if (message.kind === "update") onUpdate(message);
   else if (message.kind === "theme" && started && THEMES.has(message.theme)) applyTheme(message.theme);
+  else if (message.kind === "measure" && state.check && readySent) post("resize", { height: contentHeight() });
 });
 
 // ---------------------------------------------------------------------------
@@ -237,8 +243,31 @@ function frames(count) {
   });
 }
 
-/** Two frames after the render, once the fonts it uses have loaded. */
+/** A turn of the event loop that is neither a timer nor an animation frame:
+ *  a hidden window runs no animation frames and slows its timers to about
+ *  one a second, but still delivers messages. */
+function turn() {
+  if (typeof MessageChannel !== "function") return Promise.resolve();
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
+  });
+}
+
+/** Two frames after the render, once the fonts it uses have loaded. Under the
+ *  render check, which may run in a hidden window, it waits for the fonts
+ *  and a turn instead, and the measures read the layout directly. */
 async function settle() {
+  if (state.check) {
+    const fonts = docGet("fonts");
+    if (fonts && fonts.status === "loading") await fonts.ready;
+    await turn();
+    return;
+  }
   await frames(2);
   const fonts = docGet("fonts");
   if (fonts && fonts.status === "loading") {
@@ -280,11 +309,13 @@ function measure(root) {
     unresolved: state.unresolved.size,
     overflow_x: html.scrollWidth > html.clientWidth + 2,
     overflow_y: state.face === "glance" && root.scrollHeight > root.clientHeight + 2,
+    render_ms: state.renderMS,
   };
 }
 
 async function render() {
   const seq = ++renderSeq;
+  const began = performance.now();
   Object.assign(state, { emptyUsed: false, failed: false, unresolved: new Set() });
   const root = el("div");
   root.id = "baum-root";
@@ -318,6 +349,7 @@ async function render() {
     if (result !== root && !(result instanceof Node && result.parentNode === root)) {
       insert(root, null, result, 0);
     }
+    state.renderMS = Math.round(performance.now() - began);
   } catch (error) {
     if (seq === renderSeq) report("script_error", describeError(error), stackPosition(error));
     return;

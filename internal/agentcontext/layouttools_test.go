@@ -412,6 +412,47 @@ func TestTileTypeAndAddable(t *testing.T) {
 	}
 }
 
+// fakeTileTypes is a tile library that reads every type the same way.
+type fakeTileTypes struct{ read []string }
+
+func (f *fakeTileTypes) Read(_ context.Context, name string) (json.RawMessage, error) {
+	f.read = append(f.read, name)
+	return json.RawMessage(`{"name":"` + name + `","builtin":true,"definition":{"source":{"html":"<script></script>"}}}`), nil
+}
+
+func (f *fakeTileTypes) Propose(context.Context, TileTypeRequest) (string, json.RawMessage, error) {
+	return "", nil, errors.New("not here")
+}
+
+// With a tile library, tile_type is one tool for both: the type in full from
+// the library, and on the pull request page what add_tile needs; on
+// Settings' Tile library section only the type in full.
+func TestTileTypeWithALibrary(t *testing.T) {
+	lib := &fakeTileTypes{}
+	s := New(Options{API: http.NotFoundHandler(), Layouts: newFakeLayouts(t), TileTypes: lib})
+	token, id := chat(t, s)
+	setPage(t, s, id, pullPage)
+	var got struct {
+		Name       string          `json:"name"`
+		Definition json.RawMessage `json:"definition"`
+		Type       string          `json:"type"`
+		Schema     json.RawMessage `json:"fill_schema"`
+	}
+	out(t, s, token, "tile_type", map[string]any{"type": "Interface changes"}, &got)
+	if got.Name != "api_change" || got.Type != "api_change" || !strings.Contains(string(got.Definition), "script") || !strings.Contains(string(got.Schema), `"endpoints"`) {
+		t.Errorf("on the pull request page: %s %s %.80s", got.Name, got.Type, got.Definition)
+	}
+	setPage(t, s, id, PageContext{Page: PageSettings, Section: SectionTiles})
+	got.Schema, got.Type = nil, ""
+	out(t, s, token, "tile_type", map[string]any{"type": "api_change"}, &got)
+	if got.Name != "api_change" || got.Type != "" || got.Schema != nil {
+		t.Errorf("on Settings: %s %q %.80s", got.Name, got.Type, got.Schema)
+	}
+	if len(lib.read) != 2 {
+		t.Errorf("reads: %v", lib.read)
+	}
+}
+
 // add_tile with data the agent wrote shows the tile at once with that data;
 // data that does not fit is refused, naming places and never values, and
 // changes nothing; without data the tile is pending while it is filled.

@@ -401,6 +401,8 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	var analysis *agent.TilesOutcome
 	var tileEntries []library.Entry
 	if composing {
+		// The person's saved types are chosen for this diff.
+		o.Tiles = o.Tiles.withSaved(ctx, &b)
 		if tileEntries = o.Tiles.Library; tileEntries == nil {
 			tileEntries = library.All()
 		}

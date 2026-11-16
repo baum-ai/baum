@@ -1,0 +1,13 @@
+<script>
+  // The glance throws (`script_error`, with its line); the detail logs an
+  // error (`console_error`) and leaves a rejected promise (`unhandled_rejection`).
+  function glance({ data }) {
+    throw new Error(`cannot draw ${data.items.length} items`);
+  }
+  function detail({ data }) {
+    console.error("the detail is unhappy");
+    Promise.reject(new Error("nobody caught this"));
+    return baum.html`<p>${data.items.length} items</p>`;
+  }
+  baum.tile({ glance, detail });
+</script>

@@ -31,6 +31,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
@@ -55,6 +56,10 @@ type Local struct {
 	// fills the library types the person added to its review
 	// (generate.Tiles.Always). Nil adds none.
 	Layouts *tilelayout.Service
+	// TileLibrary is the person's saved tile types: a review fills the types
+	// pinned to its repository and offers others whose paths its diff
+	// matches (tilelibrary.Offer). Nil offers only the built-in types.
+	TileLibrary *tilelibrary.Store
 }
 
 type identityVersions struct {
@@ -445,6 +450,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
 	}
+	l.offerSaved(ctx, options.Tiles, versions, key, p.Repository)
 	if group == nil {
 		options.OnDraft = backend.draft
 		options.Stored = func(ctx context.Context, key store.Key, m store.Metadata) error {
@@ -466,6 +472,9 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		result, e = generate.Publish(ctx, published, key, options, func(r generate.Result) *float64 {
 			return list.BackendOutcomeCost(name, r.Outcome.Model, r.Outcome)
 		})
+	}
+	if e == nil && group == nil {
+		l.recordTileUse(ctx, p.Repository, result)
 	}
 	backend.finish(result, e == nil && group == nil)
 	return list.BackendOutcomeCost(name, result.Outcome.Model, result.Outcome), e

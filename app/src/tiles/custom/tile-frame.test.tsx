@@ -12,6 +12,7 @@ import { framesAllowedHere, NOT_IN_THIS_SHELL } from "./environment";
 import { HELLO_TIMEOUT, PROTOCOL, READY_TIMEOUT } from "./protocol";
 import { listenedFrames } from "./router";
 import { forgetInput, TileFrame, type Face } from "./tile-frame";
+import { forgetPreflights, HUNG_WORDS } from "./preflight";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -599,5 +600,114 @@ describe("custom tiles on the page", () => {
     } finally {
       delete win.__TAURI_INTERNALS__;
     }
+  });
+});
+
+describe("the first-show preflight", () => {
+  type Shell = { __TAURI_INTERNALS__?: unknown; __BAUM_DESKTOP__?: unknown };
+  afterEach(() => {
+    delete (window as Shell).__TAURI_INTERNALS__;
+    delete (window as Shell).__BAUM_DESKTOP__;
+    vi.unstubAllGlobals();
+    forgetPreflights();
+  });
+
+  /** Renders a glance where the shell has a check window, the daemon
+   *  answering the preflight with `verdict`. */
+  async function preflighted(verdict: string) {
+    (window as Shell).__TAURI_INTERNALS__ = { invoke: vi.fn() };
+    (window as Shell).__BAUM_DESKTOP__ = { tileFrames: true, checkWindow: true };
+    const fetched = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ verdict }),
+    }));
+    vi.stubGlobal("fetch", fetched);
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const host: TileHost = { draft: false, commentCounts: new Map() };
+    act(() =>
+      root!.render(
+        <TileHostContext.Provider value={host}>
+          <TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />
+        </TileHostContext.Provider>,
+      ),
+    );
+    const before = container.querySelector("iframe");
+    const state = container.querySelector<HTMLElement>("[data-custom-tile]")?.dataset.frameState;
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return { container, before, state, fetched };
+  }
+
+  it("waits for the check, then mounts a tile that drew", async () => {
+    const { container, before, state, fetched } = await preflighted("pass");
+    expect(before).toBeNull();
+    expect(state).toBe("checking");
+    expect(container.querySelector("iframe")).not.toBeNull();
+    const [url, init] = fetched.mock.calls[0]!;
+    expect(url).toContain("api/tile-checks/preflight");
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      digest: expect.stringMatching(/^sha256:/),
+      size: expect.any(String),
+    });
+  });
+
+  it("keeps a tile that hung down", async () => {
+    const { container } = await preflighted("hang");
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.textContent).toContain(HUNG_WORDS);
+  });
+
+  it("asks for one tile at a time", async () => {
+    // Each request stays open until its tile is drawn, and the check window
+    // shares the page's few connections to the daemon.
+    (window as Shell).__TAURI_INTERNALS__ = { invoke: vi.fn() };
+    (window as Shell).__BAUM_DESKTOP__ = { tileFrames: true, checkWindow: true };
+    const pending: (() => void)[] = [];
+    const fetched = vi.fn(
+      () =>
+        new Promise((resolve) =>
+          pending.push(() => resolve({ ok: true, json: async () => ({ verdict: "pass" }) })),
+        ),
+    );
+    vi.stubGlobal("fetch", fetched);
+    const first = freshTile();
+    const second = freshTile();
+    second.data = { ...(second.data as object), other: true };
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const host: TileHost = { draft: false, commentCounts: new Map() };
+    const settle = () =>
+      act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+    act(() =>
+      root!.render(
+        <TileHostContext.Provider value={host}>
+          <TileFrame tile={first} ctx={contextFor()} face="glance" />
+          <TileFrame tile={second} ctx={contextFor()} face="glance" />
+        </TileHostContext.Provider>,
+      ),
+    );
+    await settle();
+    expect(fetched).toHaveBeenCalledTimes(1);
+    pending[0]!();
+    await settle();
+    expect(fetched).toHaveBeenCalledTimes(2);
+    pending[1]!();
+    await settle();
+    expect(container.querySelectorAll("iframe")).toHaveLength(2);
+  });
+
+  it("does not ask where there is no check window", () => {
+    const fetched = vi.fn();
+    vi.stubGlobal("fetch", fetched);
+    mount("glance");
+    expect(fetched).not.toHaveBeenCalled();
   });
 });

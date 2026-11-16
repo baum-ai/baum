@@ -1897,6 +1897,62 @@ with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
 when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.
 
+**Settings › Tile library** (`TileLibrarySection`, `src/settings-tiles.tsx`;
+`?page=settings&section=tiles`, with `&type=<name>` while a type is open) lists
+the person's saved tile types (`GET api/tile-types`) as list rows: the title
+(which opens the type), a **Custom** pill, the use-when line, where it came
+from (Made in chat or Imported), where it is pinned, and when a review last
+used it and in how many repositories (`used_at`, `used_in`, recorded when a
+generated version is stored with a ready tile of the type; "Not used in a
+review yet" until then). A row's menu has Open, Edit in chat, Export… and Delete. An empty library
+says how to make a type: ask the session panel on a review for a tile, then to
+save it. The section list's line counts the saved types. A type's pane (`GET
+api/tile-types/{name}`, which never carries the HTML) shows its title with
+**Rename** in place (`PUT api/tile-types/{name}/title`; Enter saves, Escape
+puts it back; a rename is a new version), **Edit in chat**, **Delete**, the
+use-when, glance and paths, the fill instructions and review checks behind a
+disclosure, a preview of each sample (a segmented switch between samples): a
+glance in a card at each declared size (third 344px, half 522px and full width,
+as the tiles page's cards) and the detail, each in its sandboxed frame
+(`PreviewFrame`, `src/tiles/custom/tile-frame.tsx`, fed by `GET
+api/tile-types/{name}/preview?sample=`, which registers the frame document;
+nothing in a preview jumps or asks), switches to pin the type to each picked
+repository (`PUT api/tile-types/{name}/pins {repositories}`, written into each
+repository's `settings.tiles.types`, at most 8 a repository; a repository
+settings `PUT` without a `tiles` member keeps them), and its versions, newest
+first, each earlier one with **Restore** (`POST
+api/tile-types/{name}/restore {digest}`). Delete (`DELETE api/tile-types/{name}`)
+goes back to the list with a toast whose **Undo** brings the type back pinned
+where it was (`POST api/tile-types/{name}/undelete`). Edit in chat opens the
+type's pane and the session panel: the page context is `{page: "settings",
+section: "tiles", focus: {type}}`, its bar reads "Settings · Tile library ·
+<name>", and the agent reads the type with `tile_type` and proposes a change
+with `propose_tile_type`. A desktop shell that mounts no tile frames (Windows)
+shows "Custom tiles aren't available in this version of the desktop app yet"
+in place of the previews; everything else works.
+
+**Export…** (the row's menu and the pane) reads `GET
+api/tile-types/{name}/export`, the type's current version as a
+`<name>.baumtile.json` file (`schema/tile-type-1.json`: the definition without
+its digest, glance, review checks, `applies_with`, paths, the synthetic samples
+and `exported {at, baum}`), and saves it through the desktop app's save dialog
+(the `save_tile_type` command, `desktop/src/tile_files.rs`, which writes only
+where the person chose, a file of at most 3 MiB under a tile type's name), or
+as a download in a browser. **Import…** (the section's heading, and the empty
+library) opens a file picker; the file's text goes to `POST
+api/tile-type-files/check {file}`, which runs every import check without
+saving, and a dialog shows the name it would get (saying so when its own is
+taken and it gets a numeric suffix), the title, use-when line, glance, paths,
+the fill instructions ("Given to the review agent when this type is filled"),
+the review checks ("Instructions given to the review agent") and its
+first sample as a glance and a detail in their frames. **Import** sends `POST
+api/tile-type-files {file}`, opens the new type and says so in a toast. A
+refused file names the reason under the heading. An imported version shows a
+**Not checked yet** pill when no render check ran on it (`checked: false` in
+the list and the pane): an import runs the render check on its samples when
+the app can draw them and refuses a type that fails, and with no runner
+available saves it unchecked until its first preview with one.
+
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
 (`--surface-card`), its sections are `ListSection`s (`src/list.tsx`: a heading with a dot
@@ -2226,6 +2282,12 @@ a server on port 4170 that must hear nothing. `just local_app::e2e-webkit`
 runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
 macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
 The main suite starts the fixture without custom tiles.
+`e2e/tile-check.spec.ts` (main suite) submits candidates through a route
+only the fixture has (`POST api/tile-checks/submit`) and lets the page's own
+runner draw them: one tile per problem in `e2e/tile-check/`, the built-in
+library types and the starter, which pass, and a busy tile that a runner
+claims and never answers, which hangs. `just local_app::e2e-webkit` runs it
+in WebKit too.
 `just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
 (synthetic data) with the Go kit and takes pictures of them in sandboxed
 frames under the frame route's headers, glance at each card size and detail at
@@ -2632,6 +2694,28 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   shows custom tiles as not available yet. The protocol, its checks and the
   states are in `ARCHITECTURE.md` ("The app's host"); what a frame cannot
   reach is in `SECURITY.md` ("Custom tiles").
+- **Render check** (`src/tiles/custom/check-runner.tsx`). The daemon's render
+  check has the app draw a candidate tile type: the runner claims a job from
+  `api/tile-checks/next`, draws it in invisible sandboxed frames (each
+  sample as a glance at each declared size and a detail at 720 and 360px,
+  the pull request's data in dark too, 8 at a time) and reports what it saw
+  to `api/tile-checks/{id}/result`. It reads sizes from the layout and from
+  the frame's messages only, never animation frames, ResizeObserver or
+  tight timers, so it works in a hidden window, and tells the daemon it is
+  alive every 2 seconds while it draws (reporting the job abandoned if its
+  page goes away). Where the desktop
+  shell declares `window.__BAUM_DESKTOP__.checkWindow`, the main page opens
+  the shell's check window (`open_check_window`, which loads
+  `?page=tile-check`, the runner alone) on a `tile_check` event and closes it
+  (`close_check_window`) when a check hangs or after 2 minutes without one.
+  In a browser and on macOS the runner draws inside the page; a desktop shell
+  without frames draws nothing.
+- **First-show preflight** (`src/tiles/custom/preflight.ts`). Where the check
+  window exists, a custom tile that is not of a built-in type waits (its
+  box's `data-frame-state` reads `checking`) while the daemon draws its data
+  once in that window, unless it already has. A tile that hung there says
+  "This tile stopped responding when it was checked." instead of mounting;
+  every other answer mounts it.
 - **Links.** A full review's address still works: a section opens its tile
   (the mechanical change's is Everything else), a risk opens Risks at it, and
   the Changes overview scrolls the landing page to the Changes group. A chip

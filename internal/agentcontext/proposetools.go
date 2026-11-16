@@ -99,11 +99,12 @@ var (
 	// propose_* tools of each section, which current_page lists with the
 	// section's tools.
 	settingsSectionProposals = map[string][]string{
-		"general":  {"propose_appearance", "propose_plan_usage"},
-		"reviews":  {"propose_reviews", "propose_decision_capture", "propose_labs"},
-		"fixes":    {"propose_fixes"},
-		"computer": {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
-		"prompts":  {"propose_prompt", "propose_prompt_reset"},
+		"general":    {"propose_appearance", "propose_plan_usage"},
+		"reviews":    {"propose_reviews", "propose_decision_capture", "propose_labs"},
+		"fixes":      {"propose_fixes"},
+		"computer":   {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
+		"prompts":    {"propose_prompt", "propose_prompt_reset"},
+		SectionTiles: {"propose_tile_type"},
 	}
 	repositorySectionProposals = map[string][]string{
 		"reviews": {"propose_repository_settings"},

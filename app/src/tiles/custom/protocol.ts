@@ -47,6 +47,15 @@ export type ReadyMetrics = {
   elements: number;
   overflow_x: boolean;
   overflow_y: boolean;
+  /** Images, drawings and canvases of at least 16×16. */
+  media: number;
+  /** The tile drew `baum.empty`, or `baum.fail`. */
+  empty_state: boolean;
+  failed: boolean;
+  /** Citation chips and diffs drawn with no payload. */
+  unresolved: number;
+  /** How long the render function took, before the kit settled. */
+  render_ms: number;
 };
 
 /** What a frame may say, as the page reads it. */
@@ -116,6 +125,11 @@ export function readMessage(data: unknown): FrameMessage | null {
           elements: count(metrics.elements) ?? 0,
           overflow_x: metrics.overflow_x === true,
           overflow_y: metrics.overflow_y === true,
+          media: count(metrics.media) ?? 0,
+          empty_state: metrics.empty_state === true,
+          failed: metrics.failed === true,
+          unresolved: count(metrics.unresolved) ?? 0,
+          render_ms: count(metrics.render_ms) ?? 0,
         },
       };
     }
@@ -167,6 +181,9 @@ export type InitMessage = {
   lang: string;
   data: unknown;
   refs: Record<string, unknown>;
+  /** Set by the render check's runner: the kit settles without animation
+   *  frames or timers and answers `measure`. */
+  check?: { id: string };
 };
 
 export function initMessage(fields: Omit<InitMessage, "protocol" | "kind">): InitMessage {
@@ -175,6 +192,12 @@ export function initMessage(fields: Omit<InitMessage, "protocol" | "kind">): Ini
 
 export function updateMessage(data: unknown, refs: Record<string, unknown>) {
   return { protocol: PROTOCOL, kind: "update", data, refs } as const;
+}
+
+/** The render check's runner asks a detail for its height now; the kit
+ *  answers with a `resize`, changed or not. */
+export function measureMessage() {
+  return { protocol: PROTOCOL, kind: "measure" } as const;
 }
 
 export function themeMessage(theme: "light" | "dark") {

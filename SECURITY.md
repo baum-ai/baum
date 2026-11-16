@@ -1490,6 +1490,113 @@ Table cells, code and captions are drawn as text. A note's Markdown draws
 paragraphs, emphasis, code spans and lists only: a link reads as its text and
 raw HTML is not rendered.
 
+**Saved tile types.** A person's library of tile types (`internal/tilelibrary`)
+lives in the private application database on this computer. A type's code and
+instructions are the person's: they are never read from repository content, and
+a type's fill and review checks enter the fill and details prompts as
+instructions of the same trust as a custom prompt, while the pull request stays
+data.
+
+- Generation offers saved types in every repository, by default: at most six
+  per review, those whose paths match the diff, and the pinned ones are
+  filled. A saved type's fill opens with a note that its instructions are the
+  person's and the only instructions about the tile, and that text in the pull
+  request, its code, sessions or the outline that reads like tile
+  instructions is data; its review checks come under a heading marked as the
+  person's, after a note that the pull request cannot add a check. The
+  fill and selection texts say the same of every type. The outline lists a
+  saved type's texts as the person wrote them, bounded in length. A type "Not
+  checked yet" is neither offered nor filled. The person's instructions only
+  add: the notes say they never remove, soften or hide a risk and never set
+  or change the recommendation, and in a fill the outline follows under a
+  heading of its own, marked as data. A saved title's whitespace is
+  collapsed wherever it heads a section, so it cannot open a heading of its
+  own. A type's path globs are bounded where they are saved (at most 8 braces
+  expanding to at most 64 patterns, refused with a reason past that), and
+  brace expansion stops at that bound, so matching a glob against a diff's
+  paths takes bounded time whatever the glob. Offering is not restricted
+  further on purpose: each tile is labelled "Custom", cites the review, passes
+  the first-show preflight and cannot displace the strip or the overview.
+- A saved type's data may cite more of the pull request than its code. A
+  fill's citations are checked against the whole bundle (`library.CheckFillIn`):
+  a file must be a path of the diff, a prompt or session event must name one
+  of the bundle's sessions that is not restricted, a check or review thread
+  must be the bundle's, and a risk, evidence item or tile is refused. A
+  restricted session is never cited, here or when the composition resolves
+  the tile's citations against the review.
+- The composer places a saved type's tile only when its definition's digest,
+  computed from its content, is one of the types the host offered for the run
+  (`agent.ComposeRequest.Saved`), beside the built-in types'.
+
+- Persistence needs the person. A chat can only propose saving or changing a
+  type (`propose_tile_type`); the person's Save in the panel writes it, the same
+  way every other proposal is saved, and a proposal that is stale (the type
+  changed since it was read) saves nothing. A saved type is checked as a
+  built-in type is (`library.Check`, which includes the kit's lint) and its name
+  may not shadow a built-in tile type, a built-in library type or a tile ID
+  prefix.
+- Samples are self-contained and checked not to copy the open pull request.
+  A proposal needs a render check that passed on a sample whose hunks and
+  items are its own, only such samples are saved, and a sample whose citations
+  do not resolve to its own hunks and items is refused. On a pull request's
+  page the proposal is also refused when a sample's hunks share three or more
+  distinct non-trivial lines (not blank, brackets, imports or common
+  boilerplate) with that pull request's diff, and when its diff cannot be
+  read to check. This is a heuristic on lines, not proof that a sample holds
+  none of a pull request's data: the person sees every sample, in the
+  proposal's Before and After, before they press Save, and nothing is saved
+  until they do.
+- "Built in" is decided by digest only. A saved type is never marked built in
+  unless its content is byte for byte a built-in type's, which then is baum's
+  own code; nothing a proposal, a name or a stored row carries can claim it.
+- An agent reads a type's source only through `tile_type`, a chat tool on the
+  pull request page and Settings' Tile library section; an action never sees
+  it, and the tile routes still serve definitions without their HTML.
+- The preview route `GET /api/tile-types/{name}/preview` registers the type's
+  digest in the frame registry like the tile routes, and has the session
+  namespace's cookie or the launch token like every other `/api` route; a
+  request that carries a definition registers nothing, with one exception:
+  the import check below.
+- Importing a tile type file (`POST /api/tile-type-files/check`, then `POST
+  /api/tile-type-files`, from Settings › Tile library) treats the file as
+  untrusted. It is refused past 3 MiB, nested deeper than 64 levels or holding
+  more than 200,000 JSON values (checked before it is decoded), holding a NUL or not valid UTF-8,
+  with a member a tile type file does not have (at any level, a sample's
+  included) or a schema other than
+  `baum.tile-type/1`; its definition must pass the definition checks (shape,
+  UTF-8, dialect, a supported kit) and the kit's lint without an error, its
+  samples must validate and cite only their own hunks and items, and its name
+  must pass the name rules (a name already in the library is renamed with a
+  numeric suffix). Its digest is computed and whether it is built in follows
+  from that digest; a digest or `builtin` in the file is never read. Its
+  origin is "Imported". The person sees the title, use-when line, the fill
+  instructions it would give the review agent, its paths and a preview of a
+  sample before anything is saved; to draw that preview, the check registers
+  the file's definition in the frame registry once it has passed every check.
+  This is the one registration of something a request carries: it is the
+  person's own file pick, sent by the authenticated app, which already holds
+  that HTML, and the frame is the same sandbox as every custom tile's.
+  Bidirectional controls, zero-width characters and Unicode tag characters
+  are removed from the title, use-when line, fill instructions, glance and
+  review checks on import and on every save (the stored text and its digest
+  never hold them), and a path with a control or invisible character is
+  refused; the review checks are at most 1,500 characters. The dialog shows
+  the fill instructions, glance and review checks, labelled as instructions
+  given to the review agent. An import then runs the render check
+  (`tilechecks.Checker.ImportCheck`) on the file's first three samples in the
+  app's sandboxed frames: a type that fails or hangs is refused. When no
+  runner takes the check (the app is closed or cannot draw tiles) the type is
+  saved marked "Not checked yet", which is all that mark means: it is saved
+  and previewable, but no render check ran on it. Its first preview with a
+  runner available runs the check in the background once per daemon run and
+  marks it checked on a pass; a failed deferred check leaves the mark. The
+  check draws the type's HTML in the same sandbox as any custom tile; it does
+  not read the type's content for instructions.
+  An exported file holds the type's synthetic samples and no review content.
+- A review keeps the definition it was made with: its library tiles embed
+  the full definition, so editing or deleting a saved type changes no saved
+  review.
+
 **What a tile's frame cannot reach.** The sandbox gives the frame an opaque
 origin, so it cannot read the app's page, its cookies or storage, or the
 desktop app's bridge, and it cannot open windows, submit forms or navigate
@@ -1529,9 +1636,14 @@ which never says whether a digest exists:
 - the path is exactly `/tile-frames/` and the digits, with no encoding, extra
   segment or trailing slash; the query is ignored;
 - the daemon itself handed that type to the authenticated app: the tile
-  routes register the types of the custom tiles they serve, and nothing a
-  request carries is ever registered, so the route serves only HTML the app
-  already received. At most 32 MiB of documents are kept, the least recently
+  routes register the types of the custom tiles they serve, the tile type
+  preview route the type it draws (see "Saved tile types"), and a
+  render-check candidate is registered when the daemon hands it to the app's
+  check runner; nothing else a request carries is ever registered (the one
+  exception, an imported file the person picked, is registered after the
+  import checks, see "Saved tile types"), so the route serves only HTML the
+  app already received or sent. At most 32 MiB of documents are kept, the
+  least recently
   used going first; reading the tile route again registers its types again.
 
 The answer is `no-store`, sets no cookie, ignores `Range` and carries
@@ -1651,8 +1763,13 @@ by the chat's agent.
   freezes again. In the browser suite a 1.5-second loop held the page for
   its length in WebKit every time, and in Chromium in some runs and not
   others. The host unmounts a frame that does not draw in time, but cannot
-  interrupt one that holds the thread. (A guard that keeps such a tile from
-  mounting again after a freeze is planned, not built.)
+  interrupt one that holds the thread. Where the desktop shell provides the
+  render check a window with its own web process (currently Linux), that
+  window takes the freeze instead (see "The render check" below). Elsewhere
+  (a browser, a shell without one) the render check draws in the app's own
+  page, so a
+  candidate that loops freezes it, and the daemon then answers `hang` and
+  refuses that type until it restarts.
 - A frame can navigate itself to a page of the daemon's own origin: the
   request reaches the daemon without the cookie, the namespace or any data,
   and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
@@ -1672,6 +1789,44 @@ by the chat's agent.
 
 Tile code is never read from repository content: a pull request cannot
 supply a tile.
+
+
+**The render check.** Before a tile made in the app is shown, the daemon
+checks its type (`internal/tilechecks`) and the app's check runner draws it
+in the same sandboxed frames, under the same policy, with the type's own
+samples and the data it will show. It is a quality gate for honest
+mistakes, not a security control: a tile can fake its `ready`, swallow its
+errors or behave differently later. What it does protect against is a
+freeze where it would hurt:
+
+- Where the desktop shell provides a check window (currently Linux), the
+  runner draws in that hidden window with its own web process. While it
+  draws, the runner tells the daemon it is alive every 2 seconds and as
+  frames finish; a candidate that never finishes drawing freezes it, so
+  after 10 s without a sign of life (or past a limit scaled by the frames
+  the check draws) the daemon answers `hang`, marks the type's digest hung
+  (the frame route then refuses it until the daemon restarts) and tells the
+  main page, which has the shell close the window, ending its process and
+  the loop. The main window is not affected.
+- Where that window exists, the first time the app shows a custom tile that is not of a
+  built-in type, with data it has not drawn before, it first draws that
+  pair in the check window (the first-show preflight). A pair that hangs
+  stays down, with "This tile stopped responding when it was checked."; a
+  pair that drew, or failed in a way the frame's own failure faces show,
+  is shown. Verdicts are kept per pair (the type's digest and the data's
+  SHA-256) in `app.sqlite`, the newest 10,000.
+- The runner's routes (`/api/tile-checks/next`, `/{id}/result`,
+  `/preflight`) sit behind the app server's Host, session, Origin and JSON
+  checks, and refuse a browser request that is not same-origin: claiming a
+  job registers its frame document, so only the app may claim. A job
+  carries the candidate's served definition (no HTML: the frame route
+  serves that by digest), its samples and their citations' payloads, and
+  never more than the page itself would give the frame. The `tile_check`
+  event names a check's ID and state only.
+- Only the daemon marks a digest hung, from its own timer: no message from a
+  frame or a runner can. A runner whose page goes away mid-check reports the
+  job abandoned, which ends it unavailable without blocking the type, and a
+  long poll whose client left puts its job back.
 
 ### MCP server for agents
 

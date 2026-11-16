@@ -303,6 +303,17 @@ func ServedDefinition(definition json.RawMessage) json.RawMessage {
 	return mustMarshal(members)
 }
 
+// ServedLibraryDefinition is ServedDefinition for a definition read from the
+// library, built in when it is a built-in type's by its content's digest
+// (library.IsBuiltin), as the tile routes serve it.
+func ServedLibraryDefinition(definition json.RawMessage) json.RawMessage {
+	served := ServedDefinition(definition)
+	if library.IsBuiltin(definition) {
+		served = markBuiltin(served)
+	}
+	return served
+}
+
 // markBuiltin adds "builtin": true to a served definition: the stored one
 // is a built-in library type's, current or past, by its content's digest
 // (library.IsBuiltin). The page names such a tile as baum's own.

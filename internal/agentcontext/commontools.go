@@ -435,7 +435,7 @@ var requiredSubjects = map[string][]string{
 }
 
 var (
-	settingsSections   = []string{"general", "reviews", "fixes", "connections", "computer", "prompts"}
+	settingsSections   = []string{"general", "reviews", "fixes", "connections", "computer", "prompts", SectionTiles}
 	repositorySections = []string{"reviews", "prompts", "registration"}
 	// reservedKeys are the address parameters that name a page or its subject:
 	// they are set by their own arguments, which are checked, never by a filter.

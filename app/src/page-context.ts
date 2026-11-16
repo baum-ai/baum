@@ -64,7 +64,18 @@ const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text).length;
 /** The sections the MCP server knows (`settingsSections`,
  *  `repositorySections`); another is left out. */
-const SETTINGS_SECTIONS = ["general", "reviews", "fixes", "connections", "computer", "prompts"];
+const SETTINGS_SECTIONS = [
+  "general",
+  "reviews",
+  "fixes",
+  "connections",
+  "computer",
+  "prompts",
+  "tiles",
+];
+/** A saved tile type's name (`tilelibrary`), which the Tile library
+ *  section's address names as `type`. */
+const TILE_TYPE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const REPOSITORY_SECTIONS = ["reviews", "prompts", "registration"];
 const LIST_PAGES: ContextPage[] = ["inbox", "pulls", "timeline", "sessions", "analytics", "jobs"];
 
@@ -129,7 +140,14 @@ export function pageContextOf(
   if (requested === "settings" || requested === "diagnostics") {
     // As the Settings page opens it: an unknown section is General.
     const asked = requested === "diagnostics" ? "computer" : (search.get("section") ?? "general");
-    return { page: "settings", section: SETTINGS_SECTIONS.includes(asked) ? asked : "general" };
+    const section = SETTINGS_SECTIONS.includes(asked) ? asked : "general";
+    // The Tile library's open type is its focus, as the agent reads it.
+    const type = section === "tiles" ? search.get("type") : null;
+    return {
+      page: "settings",
+      section,
+      ...(type && TILE_TYPE_NAME.test(type) ? { focus: { type } } : {}),
+    };
   }
   if (requested === "repositories") {
     const name = subject("repository");
@@ -175,6 +193,7 @@ const SECTION_TITLES: Record<string, string> = {
   connections: "Connections",
   computer: "This computer",
   prompts: "Prompts",
+  tiles: "Tile library",
   registration: "Registration",
 };
 
@@ -196,8 +215,13 @@ export function pageLabel(context: PageContext, title?: string): string {
       return named("Job");
     case "feature":
       return named("Feature");
-    case "settings":
-      return `Settings · ${SECTION_TITLES[context.section ?? "general"] ?? context.section}`;
+    case "settings": {
+      const section = `Settings · ${SECTION_TITLES[context.section ?? "general"] ?? context.section}`;
+      const type = (context.focus as { type?: unknown } | undefined)?.type;
+      return context.section === "tiles" && typeof type === "string"
+        ? `${section} · ${title ?? type}`
+        : section;
+    }
     case "repositories":
       return context.repository
         ? `${context.repository} · ${SECTION_TITLES[context.section ?? "reviews"] ?? context.section}`
@@ -229,10 +253,14 @@ export function hrefOf(context: PageContext): string {
       query.set("page", "timeline");
       query.set("feature", context.feature ?? "");
       break;
-    case "settings":
+    case "settings": {
       query.set("page", "settings");
       if (context.section) query.set("section", context.section);
+      const type = (context.focus as { type?: unknown } | undefined)?.type;
+      if (context.section === "tiles" && typeof type === "string" && TILE_TYPE_NAME.test(type))
+        query.set("type", type);
       break;
+    }
     case "repositories":
       query.set("page", "repositories");
       if (context.repository) query.set("repository", context.repository);

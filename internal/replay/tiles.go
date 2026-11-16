@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 
@@ -15,8 +17,10 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // TileGenerator generates a review as the desktop does with tile reviews on:
@@ -42,6 +46,11 @@ type TileGenerator struct {
 	// NoLibrary offers no library type and NoExhibits writes no authored
 	// tile (--generator-option library=off, exhibits=off).
 	NoLibrary, NoExhibits bool
+	// Saved are the person's saved tile types, read from exported files
+	// (--library-dir, LoadLibrary): each case offers them as the desktop
+	// does (tilelibrary.Offer), with no record of use, so they rank by
+	// name.
+	Saved []tilelibrary.Type
 
 	mu sync.Mutex
 	// composed holds each generated review's composition by the review's
@@ -79,6 +88,13 @@ func init() {
 		}
 		if !c.Staged {
 			return nil, errors.New("the tiles generator writes the review in stages; drop --no-staged")
+		}
+		if c.LibraryDir != "" {
+			saved, err := LoadLibrary(c.LibraryDir)
+			if err != nil {
+				return nil, err
+			}
+			g.Saved = saved
 		}
 		for id, text := range c.PromptOverrides {
 			if prompt.ID(id) == prompt.IDReviewTilesCompose {
@@ -119,6 +135,13 @@ func (g *TileGenerator) Describe(ctx context.Context, backend string) (map[strin
 		return nil, err
 	}
 	described["compose_prompt_version"], described["compose_prompt_digest"] = instructions.Version, instructions.Digest
+	if len(g.Saved) > 0 {
+		saved := map[string]string{}
+		for _, t := range g.Saved {
+			saved[t.Name] = t.Entry.Definition.Digest
+		}
+		described["saved_tile_types"] = saved
+	}
 	return described, nil
 }
 
@@ -136,6 +159,12 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 	previous := g.previous[c.ID]
 	g.mu.Unlock()
 	o.Tiles = &generate.Tiles{Prompts: g.prompts(), Previous: previous, NoLibrary: g.NoLibrary, NoExhibits: g.NoExhibits}
+	if len(g.Saved) > 0 {
+		repository := c.Repository.String()
+		o.Tiles.Saved = func(_ context.Context, diffPaths, taken []string) ([]library.Entry, []library.Entry) {
+			return tilelibrary.Offer(g.Saved, tilelibrary.Offering{Repository: repository, DiffPaths: diffPaths, Taken: taken})
+		}
+	}
 	result, err := generate.Run(ctx, o)
 	out := Generated{Outcome: result.Outcome}
 	if err != nil {
@@ -356,5 +385,45 @@ func (g *TileGenerator) Definitions() map[string]string {
 	definitions[MetricComposeJump] = "landing entries whose tile or size differs between the provisional layout drafts showed and the composition"
 	definitions[MetricComposeProblem] = "1 when the version would have no composition at all (the default layout)"
 	maps.Copy(definitions, analysisDefinitions())
+	for _, t := range g.Saved {
+		for _, part := range []string{"selected", "ready", "not_applies", "dropped", "repaired", "reused", "landing"} {
+			definitions["library_"+t.Name+"_"+part] = "the saved " + t.Name + " type: " + part
+		}
+	}
 	return definitions
+}
+
+// LoadLibrary reads the tile type files (*.baumtile.json) in dir as an
+// in-memory library: each passes every check an import does
+// (tilelibrary.ReadFile and Prepare) and counts as checked. Two files of
+// one name are refused.
+func LoadLibrary(dir string) ([]tilelibrary.Type, error) {
+	paths, err := filepath.Glob(filepath.Join(dir, "*"+tilelibrary.FileExtension))
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("--library-dir %s holds no %s file", dir, tilelibrary.FileExtension)
+	}
+	slices.Sort(paths)
+	var out []tilelibrary.Type
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		c, err := tilelibrary.ReadFile(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		}
+		p, err := tilelibrary.Prepare(c)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		}
+		if slices.ContainsFunc(out, func(t tilelibrary.Type) bool { return t.Name == p.Name() }) {
+			return nil, fmt.Errorf("%s: a tile type named %s is loaded already", filepath.Base(path), p.Name())
+		}
+		out = append(out, tilelibrary.Type{Name: p.Name(), Entry: p.Entry, Paths: p.Paths, Origin: p.Origin})
+	}
+	return out, nil
 }

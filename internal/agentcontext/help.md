@@ -32,7 +32,9 @@ Repositories lists the picked repositories and lets the person add more from Git
 
 ## settings
 
-Settings has six sections: General (appearance and keyboard), Reviews (the review agent and automation), Fixes (the fix agent), Connections (GitHub and agent hooks), This computer (diagnostics, command line, updates, environment) and Prompts (the prompts baum sends agents, customisable). The 1 to 6 keys go to a section.
+Settings has seven sections: General (appearance and keyboard), Reviews (the review agent and automation), Fixes (the fix agent), Connections (GitHub and agent hooks), This computer (diagnostics, command line, updates, environment), Prompts (the prompts baum sends agents, customisable) and Tile library (the person's saved tile types). The 1 to 7 keys go to a section.
+
+The Tile library section lists the tile types the person saved, each marked Custom, with where it came from (made in chat or imported), its use-when line, the repositories it is pinned to and when a review last used it. A type opens in a pane (the page context's focus then names it as type): previews of its samples, its fill instructions, paths and versions. The person renames a type (its title only), pins it to repositories (a pinned type is always filled in that repository's generated reviews), restores an earlier version, exports it as a file, imports one and deletes it with Undo, all on the page. Edit in chat opens the session panel about the open type: read it with tile_type, change it with propose_tile_type, which the person saves.
 
 ## pull_request
 
@@ -72,6 +74,8 @@ A feature is open in the Timeline's side panel: its title, summary, status, peop
 - **feature**: what a set of related pull requests, sessions and decisions built, kept in the feature log.
 - **prompt**: the instructions baum gives an agent for a task; Settings and each repository can customise them.
 - **layout**: the order and sizes of a review's tiles; the person may change it from the session panel or the page, for that pull request, and reset it to the generated one.
+- **tile type**: the definition of a custom tile: its component, the schema of its data, how to fill it and when to use it. baum's own are built in; a chat can propose saving one to the person's tile library, and tile_type reads one in full.
+- **tile library**: the person's own saved tile types, on this computer, each with versions, synthetic samples and Undo for deleting. propose_tile_type adds or changes one, and nothing is saved until the person clicks Save in the panel; saved reviews keep the definitions they were made with. Types come from a tile's check and are never changed from repository content.
 - **tile**: one card of a review's tiles page (the overview, the risks, a change, evidence, context and so on), with an id the layout tools name it by.
 
 ## shortcuts
@@ -140,5 +144,5 @@ Timeline: `/`: search the features or decisions; `Enter` opens or closes one.
 
 Settings:
 
-- `1–6`: go to a section. `j`, `k`, `↓`, `↑`: move. `Enter`, `l`, `→`: go into the section; `Space`, `Enter`: change the focused control.
+- `1–7`: go to a section. `j`, `k`, `↓`, `↑`: move. `Enter`, `l`, `→`: go into the section; `Space`, `Enter`: change the focused control.
 - `Escape`, `h`, `←`: back to the sections.
