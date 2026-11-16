@@ -7,7 +7,6 @@ import (
 	"time"
 
 	bundlepkg "github.com/baum-ai/baum/bundle"
-	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
 // withoutDetails strips a stored section to its outline, as a live draft or
@@ -21,7 +20,6 @@ func withoutDetails(section map[string]any, details string, summary bool) {
 	}
 	section["attention"] = nil
 	section["risks"], section["evidence"], section["blocks"] = []any{}, []any{}, []any{}
-	delete(section, "tiles")
 }
 
 // A stored section may lack its details while they are being written or
@@ -81,11 +79,7 @@ func TestModelSchemasDoNotOfferSectionDetails(t *testing.T) {
 	checkNoError(t, err)
 	contract, err := json.Marshal(validator.Contract())
 	checkNoError(t, err)
-	none, err := validator.ModelSchema(nil)
-	checkNoError(t, err)
-	all, err := validator.ModelSchema(tilecatalogue.Kinds())
-	checkNoError(t, err)
-	for name, schema := range map[string][]byte{"contract": contract, "model": validator.Schema, "model without tiles": none, "model with tiles": all} {
+	for name, schema := range map[string][]byte{"contract": contract, "model": validator.Schema} {
 		if strings.Contains(string(schema), `"details"`) {
 			t.Errorf("%s schema offers section details", name)
 		}

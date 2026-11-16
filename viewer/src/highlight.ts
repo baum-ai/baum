@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import type { CodeDiffHunk, CodeDiffLine } from "./components/review-tiles/code-diff";
+import type { CodeDiffHunk, CodeDiffLine } from "./components/code-diff";
 
 /** Syntax highlighting for code the viewer shows: diff hunks and Markdown code
  *  blocks. Everything shiki is reached through dynamic `import()`, so a host's

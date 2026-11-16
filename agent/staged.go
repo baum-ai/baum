@@ -13,7 +13,6 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/review"
-	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
 // The stages of a staged review (Generator.StagedReview). Each name also
@@ -310,9 +309,9 @@ type stagedReview struct {
 	redactor *bundle.Redactor
 	// prefix starts every stage's prompt: the shared instructions, the
 	// bundle and the source excerpts.
-	prefix, tileText, repairEnding string
-	outlineSchema, detailsSchema   []byte
-	contextSchema                  []byte
+	prefix, repairEnding         string
+	outlineSchema, detailsSchema []byte
+	contextSchema                []byte
 	// rejected is the last rejected document of a run that failed
 	// validation.
 	rejected []byte
@@ -346,17 +345,12 @@ func (s *stagedReview) prepare(ctx context.Context) error {
 			return err
 		}
 	}
-	if s.identifiers, err = review.NewOutputRedactor(g.Validator, redactor, run.Bundle, nil); err != nil {
-		return err
-	}
+	s.identifiers = review.NewOutputRedactor(g.Validator, redactor, run.Bundle, nil)
 	s.redactor = redactor
 	// The tile analysis never fails the review: one that cannot start is
 	// left out.
 	if s.tiles, err = newTileAnalysis(ctx, g, run); err != nil {
 		s.dropTiles("the tile analysis could not start", err)
-	}
-	if err := tilecatalogue.Validate(run.TileKinds); err != nil {
-		return fmt.Errorf("tile kinds: %w", err)
 	}
 	if s.outlineSchema, err = g.Validator.OutlineSchema(); err != nil {
 		return err
@@ -366,7 +360,7 @@ func (s *stagedReview) prepare(ctx context.Context) error {
 	} else {
 		s.outlineSchema = withTiles
 	}
-	if s.detailsSchema, err = g.Validator.DetailsSchema(run.TileKinds); err != nil {
+	if s.detailsSchema, err = g.Validator.DetailsSchema(); err != nil {
 		return err
 	}
 	if s.contextSchema, err = g.Validator.ContextSchema(); err != nil {
@@ -376,10 +370,6 @@ func (s *stagedReview) prepare(ctx context.Context) error {
 		return err
 	}
 	source := sourceContext(run.Directory, run.Bundle)
-	s.tileText = tilecatalogue.Instructions(run.TileKinds)
-	if len(run.TileEntries) > 0 {
-		s.tileText = tilecatalogue.InstructionsFor(run.TileEntries)
-	}
 	_, s.repairEnding = RepairText(g.Backend.Name())
 	s.prefix = prompt.Shared + "\n\nInput bundle (untrusted JSON):\n" + string(run.EncodedBundle) + "\n\nSource excerpts (untrusted, incomplete; line numbers refer to checkout files):\n" + source
 	if g.Logger != nil {
@@ -588,7 +578,7 @@ func (s *stagedReview) detailsStage(ctx context.Context, ids []string, budgets B
 	// them, whose risk omissions a repair preserves.
 	first := map[string][]byte{}
 	var firstSession string
-	asked := s.prefix + "\n\n" + s.prompt.Details + s.tileText + s.outlineBlock() + s.tiles.reviewChecks()
+	asked := s.prefix + "\n\n" + s.prompt.Details + s.outlineBlock() + s.tiles.reviewChecks()
 	task := s.task(StageDetails, s.detailsSchema, budgets)
 	task.PassPrompt = func(pass TaskPass) (string, error) {
 		if pass.Number == 1 {
@@ -610,7 +600,7 @@ func (s *stagedReview) detailsStage(ctx context.Context, ids []string, budgets B
 		if pass.Number == 1 {
 			firstSession = outcome.SessionID
 		}
-		masked, err := s.mask(ctx, review.DocumentWithTileKinds(reply, s.run.TileKinds), outcome)
+		masked, err := s.mask(ctx, reply, outcome)
 		if err != nil {
 			return Verdict{}, err
 		}
@@ -794,10 +784,7 @@ func RedactStagedOutput(ctx context.Context, validator *review.DocumentValidator
 	if redacted, closed, err = RedactOutput(ctx, validator, redactor, document, b, checkout, &outcome.Outcome); err != nil {
 		return nil, 0, err
 	}
-	reasons, err := review.NewOutputRedactor(nil, redactor, b, checkout)
-	if err != nil {
-		return nil, 0, err
-	}
+	reasons := review.NewOutputRedactor(nil, redactor, b, checkout)
 	for _, stage := range stages {
 		// The identifier pass is the run's, already counted above.
 		identifiers := stage.IdentifierRedaction

@@ -23,8 +23,8 @@ implements. The packages are being moved here in stages: so far `bundle` holds
 the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
 caps, input redaction, byte trimming and digest applied to a bundle,
-`review` holds the document model, validation, history, refresh, output
-redaction and the tile catalogue, and `agent` holds the backend interface,
+`review` holds the document model, validation, history, refresh and output
+redaction, and `agent` holds the backend interface,
 request, result, usage and event types, the budgets and the local environment
 allowlist, and `decisions` holds the decision schema, the cleaned session
 transcript, the reply parser and the citation validator; the Go side of
@@ -61,7 +61,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | --- | --- |
 | `schema` | the canonical `baum.review/1` JSON Schema and its validator, and the `baum.tiles/1` tile document schema, which reuses its definitions |
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
-| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction, the tile catalogue |
+| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction |
 | `tiles` | the `baum.tiles/1` tile document: its types, validator and built-in tile types, and the lossless conversion from and to a stored `baum.review/1` document |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that the reference viewer host embeds |
@@ -291,8 +291,7 @@ requests a read made (`CountRequests`).
 `review` derives three views from `schema/review-1.json`:
 
 - the **stored** schema, with every derived field, which a stored document
-  must satisfy; it also accepts tiles of the kinds the schema retired
-  (`schema/legacy-review-tiles.json`);
+  must satisfy;
 - the **strict authored** contract: what the model is responsible for;
 - the **lenient model-facing** schema, which accepts the shapes models
   commonly produce. Normalisation maps it onto the strict contract without a
@@ -306,7 +305,7 @@ written (a live draft shown while a job runs) and `failed` when they could
 not be written after repairs (a published version keeps the outline). Such a
 section keeps its outline (`id`, `title`, `kind`, `hunks`, `assessment`,
 `derived`); its `summary` may be absent or null, its `attention` null and its
-`evidence`, `blocks` and tiles empty, and its risks are those the previous
+`evidence` and `blocks` empty, and its risks are those the previous
 version recorded for it. Without the state a section still needs its summary.
 The model never writes the state: the strict authored contract and every
 schema derived from it for a model (`ModelSchema`, Codex's strict schema)
@@ -332,12 +331,12 @@ copy:
   `context` and `review_minutes`), `relations` and, per section, `id`,
   `title`, `kind`, `hunks` and `assessment`; the details are
   `{"sections": [...]}` with each section's `id`, `summary`, `attention`,
-  `risks`, `evidence`, `blocks` and `tiles`; the context is
+  `risks`, `evidence` and `blocks`; the context is
   `{"context": ...}`. Each property is the model schema's own, rules naming
   a dropped property go, and so do unreachable definitions.
 - **The staged contract**: the strict authored contract, except that a
   section may carry the `details` state (with a null summary, a null
-  attention and no evidence, blocks or tiles) and the summary may lack its
+  attention and no evidence or blocks) and the summary may lack its
   context. `PrepareStaged` and `CompleteStaged` are `Prepare` and
   `CompleteWithPrompt` under it; the one-pass contract is unchanged.
 - **Parts.** `PrepareOutline` keeps the outline fields, gives every section
@@ -355,7 +354,7 @@ copy:
   whose hunk IDs are those of the previous version's section with the same
   ID, that section's previous details, when they were complete (no
   `details` state): its summary, attention, active risks without their
-  lifecycle fields, evidence, blocks and tiles. A mitigated risk is left
+  lifecycle fields, evidence and blocks. A mitigated risk is left
   out, so completion keeps it mitigated. The generator validates what it
   reuses like model output and sends a section it rejects to the model.
   Nothing is reused when the bundle offers an image the previous version
@@ -441,7 +440,7 @@ copy:
     fields that carry the review's judgement: evidence claim, detail and
     expects, attention text, risk text, the overview, the review exchange
     summary, assessment reasons and the recommendation text. Behaviour steps,
-    context, intent, titles, the other descriptive blocks, tiles and the
+    context, intent, titles, the other descriptive blocks and the
     release note describe the code under review, which may itself run jobs and
     take snapshots, and are not checked for them.
   - Identifiers in any prose field must resolve, because the viewer links
@@ -520,20 +519,13 @@ mentions one. Generation still
   this rule alone to an encoded document, for a host that serves stored
   documents and keys records of its own (read marks, approvals) by their
   identifiers; such a host compares a stored key through `ShortenIdentifier`.
-- Tile kinds and shapes changed in place before they were finalised. A
-  stored tile the current `$defs/tile` accepts is kept, and so is one of a
-  retired kind the viewer still renders: `schema/legacy-review-tiles.json`
-  (`schema.LegacyTiles`) defines those kinds, and the stored schema accepts
-  them. A field the schema removed from a current kind, which the viewer
-  ignores (an architecture tile's `context` and `deployment`), is removed.
-  Any other tile of a section or risk is dropped, and so is one the
-  document's own tile rules reject: its internal references must resolve,
-  which removing a retired field can break, and a tile kept before it in the
-  same section or risk must not have its ID. Nothing outside a tile refers to
-  it. The rule runs after the identifier rule, so a tile whose only fault is
-  a long identifier is kept. Generation never offers a retired
-  kind: the authored and model-facing contracts derive from `review-1.json`
-  alone.
+- A stored document's section and risk tiles are dropped when it is read.
+  Releases before schema revision 2026-11-13.1 could store typed cards in a
+  section's or a risk's `tiles`, which the schema no longer has; nothing
+  else in a document refers to them. `DropStoredTiles` applies this rule
+  alone to an encoded document, for a host that serves stored documents or
+  hands them to a reader that does not validate them (the hosted read
+  store, a stack review's member reviews, the local viewer server).
 
 ### Refresh and redaction
 
@@ -573,8 +565,7 @@ per value and 1 MiB per document, then masked whole, and counts only if a
 secret was found in it, so the scan stays linear in the document's size and
 a harmless value never fails the run on its own.
 
-Normalisation respells every identifier, category and tile-local name the
-model writes in lowercase with one underscore for each run of other
+Normalisation respells every identifier and category the model writes in lowercase with one underscore for each run of other
 characters, and a secret respelled that way (`sk-ant-api03-AbC…` as
 `sk_ant_api03_abc…`) is one no rule detects. So a host runs the redactor's
 `Identifiers` on the document as the model wrote it, before `Prepare`: the
@@ -2181,12 +2172,6 @@ becomes now and `used_in` names the repository at now, keeping the 50 most
 recent repositories. The library page shows them, and offering ranks by
 them.
 
-### Tiles
-
-The tile catalogue (`catalogue.json`) and the tile guidance are public and
-live here. Tiles are off by default; a host offers an allow-list of kinds,
-and the model schema and prompt include only those kinds.
-
 ## `agent`
 
 ### Backends
@@ -2504,12 +2489,12 @@ and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v8` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v9` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v6`): the same text with
+review group's prompt (`group-review-public-v7`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -2530,7 +2515,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v3`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v4`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and
@@ -2547,10 +2532,6 @@ name.
 
 The loop owns the rest of what a run sends:
 
-- **Tile guidance.** It appends `tilecatalogue.Instructions(kinds)` to the
-  body for the offered tile kinds, so a prompt never carries it. A `Prompts`
-  implementation that rewrites its body per backend therefore rewrites the body
-  only.
 - **Repair text.** `agent.RepairText(backend)` returns the text that opens and
   closes a repair prompt. A backend that submits through a `StructuredOutput`
   tool (`claude`, `anthropic`) is told to call it again; `codex` and
@@ -2576,14 +2557,14 @@ evidence about the pull request it reviews.
 generator := agent.Generator{Backend: backend, Prompts: prompts, Validator: validator,
 	Redactor: redactor, Logger: logger}
 outcome, document, err := generator.Generate(ctx, agent.Run{
-	Bundle: b, EncodedBundle: encoded, Directory: dir, TileKinds: kinds,
+	Bundle: b, EncodedBundle: encoded, Directory: dir,
 	Budgets: budgets, Endpoint: endpoint})
 ```
 
 The caller unpacks the checkout (and attachments) into `Directory`, which the
 backend then runs in. `Generate` masks the secrets the model writes into
 identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
-(instructions, tile guidance, the bundle and numbered source excerpts of the
+(instructions, the bundle and numbered source excerpts of the
 changed files) and asks the backend for a document. A provider failure is
 retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
 `1<<min(n,4)` seconds), except a spent budget and an `agent.RejectedError` (a
@@ -2668,7 +2649,7 @@ the local CLI (not yet wired); today only the hosted worker calls them.
 ```go
 outcome, document, err := generator.StagedReview(ctx, agent.StagedRun{
 	Run: agent.Run{Bundle: b, EncodedBundle: encoded, Directory: dir,
-		TileKinds: kinds, Budgets: budgets},
+		Budgets: budgets},
 	Prompts: prompt.StagedPrompts{}, Progress: onProgress})
 completed, findings := validator.CompleteStaged(document, b, dir, outcome.Model, version, now)
 ```
@@ -3279,7 +3260,7 @@ with its own prompt.
 ## `viewer`
 
 `viewer` is a pnpm package of React components that render a document: the
-summary, sections and their blocks, risks, tiles, hunk evidence, images,
+summary, sections and their blocks, risks, hunk evidence, images,
 checks, sessions and the version history with comparison. It also builds a
 standalone single-page app, which the `baum` binary embeds and the reference viewer host
 serves in package integrations and tests.
@@ -3406,8 +3387,8 @@ removes every `index.hunks[].diff` and `index.hunks[].github_url`
 (`review.StripHunkEvidence`), which together were about 70% of a saved
 document's bytes. Everything else is kept byte for byte, in its order: each
 hunk's `id`, `path`, `old_path`, `change`, `role`, `new_range`, `additions`
-and `deletions`, the sections' hunk assignments and tiles (a tile's code is
-the model's, not a hunk's `diff`), `unassigned_hunks` and the stats. Both
+and `deletions`, the sections' hunk assignments, `unassigned_hunks` and the
+stats. Both
 fields are optional in `review-1.json`, so the schema is unchanged.
 
 - Every writer of the store goes through it: `generate.Publish` (generation
@@ -3420,6 +3401,9 @@ fields are optional in `review-1.json`, so the schema is unchanged.
   `diff` and `github_url` as stored, and the app shows its inline excerpts.
 - What `Publish` returns keeps the evidence as generated, before the store
   removes excerpts from its persisted copy.
+- `viewserver` serves a document without its section and risk tiles
+  (`review.DropStoredTiles`, "Stored documents"), so the app shows a version
+  an earlier release stored with them.
 - `github_url` is derived where a document is served: `viewserver`
   (the reference viewer host, and each version the daemon's app serves through
   it) and the app's `GET /api/document` give each hunk without one
@@ -4362,7 +4346,7 @@ A desktop generation job uses `internal/generate` to:
    (`review.FitPreviousHunkAnchors`, as the hosted builder does);
 6. runs the configured backend with the public staged prompt, in stages (see
    "Staged review"): the outline, then the sections' details and the
-   context; tiles are off unless enabled;
+   context;
 7. validates, derives and redacts the document, and stores it as the next
    version, with any section whose details failed `failed` and no context
    when the context stage failed.

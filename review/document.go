@@ -1,7 +1,7 @@
 // Package review owns the review document model: the document types, the
 // strict, lenient and stored views of the baum.review/1 schema, normalisation of
 // model output, validation with located findings, derived fields, version
-// history and model-free refresh, plus the tile catalogue.
+// history and model-free refresh.
 package review
 
 import (
@@ -28,8 +28,7 @@ var reviewSchema = reviewschema.Document
 // DocumentValidator holds three views of the review schema: Schema is the
 // lenient contract the model writes against, strict is the authored contract
 // a normalized document must satisfy before completion, and full is the
-// stored document with the host's derived fields, which also accepts tiles of
-// the kinds the schema retired (storedDocumentSchema).
+// stored document with the host's derived fields.
 type DocumentValidator struct {
 	Schema   []byte
 	Revision string
@@ -81,12 +80,8 @@ func NewDocumentValidator() (*DocumentValidator, error) {
 }
 
 func newDocumentValidator() (*DocumentValidator, error) {
-	stored, err := storedDocumentSchema()
-	if err != nil {
-		return nil, err
-	}
 	var fullSchema jsonschema.Schema
-	if err := json.Unmarshal(stored, &fullSchema); err != nil {
+	if err := json.Unmarshal(reviewSchema, &fullSchema); err != nil {
 		return nil, err
 	}
 	full, err := fullSchema.Resolve(nil)
@@ -116,6 +111,8 @@ func newDocumentValidator() (*DocumentValidator, error) {
 	exchange := summary["properties"].(map[string]any)["review_exchange"].(map[string]any)
 	omitProperties(exchange, "reviews", "back_and_forths", "critical_issues_found", "changes_after_open")
 	defs := contract["$defs"].(map[string]any)
+	// Only the index, which the host writes, has hunk diffs.
+	delete(defs, "diffLine")
 	omitProperties(defs["section"].(map[string]any), "derived")
 	omitCIEvidenceKind(defs["section"].(map[string]any))
 	// The stale-state rule constrains a derived field the model never writes.
@@ -436,9 +433,9 @@ func (v *DocumentValidator) validate(view authoredView, document []byte, bundle 
 // schema and the document's semantic rules, and returns every finding, or nil
 // when it is valid. It checks the document as every reader sees it, after the
 // stored-document rules (normalizeStored), so an identifier stored before
-// identifiers were bounded is not a finding, and neither is a tile of a
-// retired kind the viewer renders or one the rules remove. Images are checked against the
-// document's own index. The rules that need the generation bundle run only
+// identifiers were bounded is not a finding, and neither are the section and
+// risk tiles the rules drop. Images are checked against the document's own
+// index. The rules that need the generation bundle run only
 // when bundle is non-nil.
 func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bundle) []string {
 	value, document, err := decodeStored(document, "document")
@@ -477,7 +474,7 @@ func (v *DocumentValidator) ValidateStored(document []byte, bundle *bundlepkg.Bu
 // run only when bundle is non-nil; attachments lists the image IDs a document
 // may name.
 func ruleFindings(value any, stack *documentStack, sections []authoredSection, bundle *bundlepkg.Bundle, attachments map[string]bool) ([]string, error) {
-	findings := append(validateTileReferences(sections), stackFindings(stack, sections)...)
+	findings := stackFindings(stack, sections)
 	hunks := map[string]bundlepkg.Hunk{}
 	checks := map[string]bundlepkg.Check{}
 	restricted := map[string]bool{}
@@ -794,7 +791,6 @@ func (v *DocumentValidator) prepare(view authoredView, document []byte, bundle *
 	} else {
 		findings = append(findings, semantic...)
 	}
-	findings = append(findings, validateTileSources(restored.Sections, bundle, directory)...)
 	// The prose rules read what the model wrote (value), not the reconciled
 	// document, which also carries trusted sections of the previous version.
 	findings = append(findings, proseFindings(value, bundle, prose)...)
@@ -1273,19 +1269,19 @@ func bundleSources(b *bundlepkg.Bundle) documentReviewSources {
 }
 
 // indexedHunkDiff turns the authoritative, redacted bundle patch into the
-// structured line shape the UI already uses for model-selected tile excerpts.
+// structured line shape the viewer renders.
 // A missing or over-trimmed patch stays absent so readers get a source link,
 // never a partial excerpt presented as complete.
-func indexedHunkDiff(hunk bundlepkg.Hunk) *tileHunk {
+func indexedHunkDiff(hunk bundlepkg.Hunk) *diffHunk {
 	if hunk.Patch == "" {
 		return nil
 	}
 	header, _, _ := strings.Cut(hunk.Patch, "\n")
-	oldLine, oldCount, newLine, newCount, ok := tileHunkRange(header)
+	oldLine, oldCount, newLine, newCount, ok := hunkRange(header)
 	if !ok {
 		return nil
 	}
-	var lines []tileLine
+	var lines []diffLine
 	actualOld, actualNew := 0, 0
 	body := strings.Split(hunk.Patch, "\n")[1:]
 	canMarkNoNewline := false
@@ -1300,7 +1296,7 @@ func indexedHunkDiff(hunk bundlepkg.Hunk) *tileHunk {
 		if line == "" {
 			return nil
 		}
-		item := tileLine{Text: line[1:]}
+		item := diffLine{Text: line[1:]}
 		switch line[0] {
 		case ' ':
 			item.Kind, item.Old, item.New = "context", oldLine, newLine
@@ -1327,7 +1323,7 @@ func indexedHunkDiff(hunk bundlepkg.Hunk) *tileHunk {
 	if len(lines) == 0 || actualOld != oldCount || actualNew != newCount {
 		return nil
 	}
-	return &tileHunk{Header: header, Lines: lines}
+	return &diffHunk{Header: header, Lines: lines}
 }
 
 // checkIndex retains each run's revision and counts the selected head only.

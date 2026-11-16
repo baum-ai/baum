@@ -1,10 +1,10 @@
 import { useId, useState } from "react";
 
-import { useHighlightedHunks } from "../../highlight";
-import { cn, FOCUS_RING } from "../classnames";
-import { CodeFileLink } from "../code-file-link";
-import { HighlightedText } from "../highlighted-text";
-import { ChevronDownIcon } from "../icons";
+import { useHighlightedHunks } from "../highlight";
+import { cn, FOCUS_RING } from "./classnames";
+import { CodeFileLink } from "./code-file-link";
+import { HighlightedText } from "./highlighted-text";
+import { ChevronDownIcon } from "./icons";
 
 export type CodeDiffLine = {
   kind: "context" | "add" | "remove";

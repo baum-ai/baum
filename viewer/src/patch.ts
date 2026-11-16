@@ -1,5 +1,5 @@
 import type { IndexedHunk, IndexedHunkLine } from "./review-document";
-import type { CodeDiffHunk, CodeDiffLine } from "./components/review-tiles/code-diff";
+import type { CodeDiffHunk, CodeDiffLine } from "./components/code-diff";
 
 const hunkHeader = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 

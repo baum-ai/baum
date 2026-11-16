@@ -12,7 +12,6 @@ import {
 } from "react";
 
 import { firstByPath } from "../hunk-index";
-import { useUrlState } from "../navigation";
 import {
   checkStatus,
   type LoadReviewVersion,
@@ -698,10 +697,6 @@ function ReviewWorkspace<F extends ReviewFile>({
         : requested,
     [requested, hasPlaces, hasSessions, hasCommits, hasDecisions, hasFiles],
   );
-  // Tiles are not ready for readers yet, so they stay hidden unless the URL
-  // asks for them with `?tiles=1`, which keeps them reachable while built.
-  const { search } = useUrlState();
-  const showTiles = search.get("tiles") === "1";
   // A section or risk being read has to stay visible in the rail, however
   // the selection arrived (a click, Back, a shared link). File diffs are
   // different: the tree may fold while the selected diff stays in the pane,
@@ -2614,7 +2609,6 @@ function ReviewWorkspace<F extends ReviewFile>({
           loadVersion={loadVersion}
           activeVersions={sectionHistory?.active.get(section.id)}
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}
-          showTiles={showTiles}
           labels={renderSectionLabels?.(section, snapshot)}
           onRetryDetails={historical ? undefined : onRetryDetails}
         />
