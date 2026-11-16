@@ -1,0 +1,71 @@
+<script>
+  const STATUS_TONE = { failing: "critical", flaky: "caution", fixed: "positive" };
+  const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+  baum.tile({
+    glance({ data }) {
+      const failing = data.tests.filter((test) => test.status !== "fixed");
+      if (failing.length === 0) return baum.empty("Every test passed on the last run.");
+      return baum.html`<div class="kit-glance">
+        <div class="kit-row" data-align="baseline" data-gap="2">
+          <span class="kit-count">${failing.length}</span>
+          <span class="kit-muted">${failing.length === 1 ? "test fails or flakes" : "tests fail or flake"} on this branch</span>
+        </div>
+        <ul class="kit-list" data-gap="1">
+          ${failing.slice(0, 2).map(
+            (test) => baum.html`<li>
+              <span class="kit-dot" data-tone=${STATUS_TONE[test.status]}></span>
+              <span class="kit-mono kit-truncate kit-grow">${test.name}</span>
+            </li>`,
+          )}
+        </ul>
+        <p class="kit-foot">
+          <span>${plural(data.runs, "run")}</span>
+          <span>${plural(data.jobs, "job")}</span>
+          <span>since ${data.since}</span>
+        </p>
+      </div>`;
+    },
+
+    detail({ data }) {
+      if (data.tests.length === 0) return baum.empty("Every test passed on the last run.");
+      return baum.html`<div class="kit-stack" data-gap="5">
+        <div class="kit-callout" data-tone="caution">${baum.md(data.note)}</div>
+        <section class="kit-section">
+          <h2 class="kit-heading">Tests</h2>
+          <ul class="kit-list" data-divided>
+            ${data.tests.map(
+              (test) => baum.html`<li>
+                <div class="kit-stack kit-grow" data-gap="2">
+                  <div class="kit-row">
+                    <span class="kit-mono kit-strong kit-break">${test.name}</span>
+                    <span class="kit-badge" data-tone=${STATUS_TONE[test.status]}>${test.status}</span>
+                    <span class="kit-small kit-subtle kit-num">${test.failures} of ${data.runs} runs</span>
+                  </div>
+                  ${baum.md(test.why)}
+                  <div class="kit-row">${test.cites.map((citation) => baum.cite(citation))}</div>
+                </div>
+              </li>`,
+            )}
+          </ul>
+        </section>
+        <section class="kit-section">
+          <h2 class="kit-heading">Runs</h2>
+          <table class="kit-table">
+            <thead><tr><th>Job</th><th class="kit-num">Runs</th><th class="kit-num">Failed</th><th>Last</th></tr></thead>
+            <tbody>
+              ${data.by_job.map(
+                (job) => baum.html`<tr>
+                  <td>${job.name}</td>
+                  <td class="kit-num">${job.runs}</td>
+                  <td class="kit-num">${job.failed}</td>
+                  <td><span class="kit-badge" data-tone=${job.last === "passed" ? "positive" : "critical"}>${job.last}</span></td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </section>
+      </div>`;
+    },
+  });
+</script>

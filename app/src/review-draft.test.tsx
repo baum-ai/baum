@@ -166,10 +166,16 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   forgetLastRows();
 });
-async function render(current: Entry, review?: Job, details?: Job, revision = 0) {
+async function render(
+  current: Entry,
+  review?: Job,
+  details?: Job,
+  revision = 0,
+  search = new URLSearchParams(),
+) {
   await act(async () =>
     root.render(
-      <UrlStateProvider value={{ search: new URLSearchParams("walk=full"), update: () => {} }}>
+      <UrlStateProvider value={{ search, update: () => {} }}>
         <LocalReview
           entry={current}
           clone="clone"
@@ -201,6 +207,15 @@ it("shows the draft of a pull request without a version once the job has one", a
   // When the job ends the draft goes with it.
   await render(entry, job("completed"), undefined, 1);
   expect(node.textContent).not.toContain("Draft text");
+});
+it("shows the full review whatever the walk parameter says", async () => {
+  savedDocument = clone();
+  savedDocument.summary.text = "Saved text";
+  for (const walk of ["tour", "landing", "all", "full"]) {
+    await render(saved, job("completed"), undefined, 0, new URLSearchParams({ walk }));
+    expect(node.textContent).toContain("Saved text");
+    expect(node.querySelector("[data-history]")).not.toBeNull();
+  }
 });
 it("keeps the saved version while regenerating, and offers no view of the draft", async () => {
   savedDocument = clone();

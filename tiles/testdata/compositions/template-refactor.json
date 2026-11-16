@@ -1,0 +1,301 @@
+{
+  "fixes": [],
+  "composition": {
+    "schema": "baum.composition/1",
+    "generator": {
+      "template": "refactor"
+    },
+    "layout": {
+      "entries": [
+        {
+          "tile": "overview",
+          "size": "half"
+        },
+        {
+          "tile": "risks",
+          "size": "half"
+        },
+        {
+          "tile": "table_delays",
+          "size": "half"
+        },
+        {
+          "tile": "sec_retry_policy",
+          "size": "half"
+        },
+        {
+          "tile": "sec_config_flag",
+          "size": "half"
+        },
+        {
+          "tile": "evidence",
+          "size": "half"
+        },
+        {
+          "tile": "retry_budget",
+          "size": "half"
+        },
+        {
+          "tile": "prose_why_jitter",
+          "size": "half"
+        },
+        {
+          "tile": "context",
+          "size": "third"
+        },
+        {
+          "tile": "everything_else",
+          "size": "third"
+        },
+        {
+          "tile": "media",
+          "size": "third"
+        },
+        {
+          "tile": "intent",
+          "size": "half"
+        },
+        {
+          "tile": "decisions",
+          "size": "half"
+        }
+      ]
+    },
+    "library": [
+      {
+        "definition": {
+          "name": "retry_budget",
+          "title": "Synthetic retry budget",
+          "use_when": "When a test needs a library tile.",
+          "fill": "Summarise the change and cite the hunks it rests on.",
+          "data_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "summary",
+              "cites"
+            ],
+            "properties": {
+              "summary": {
+                "$ref": "#/$defs/markdown"
+              },
+              "cites": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "items": {
+                  "$ref": "#/$defs/citation"
+                }
+              }
+            }
+          },
+          "kit": 1,
+          "sizes": [
+            "half",
+            "full"
+          ],
+          "source": {
+            "format": "html",
+            "html": "\u003cscript\u003ebaum.tile({glance: (v) =\u003e baum.html`\u003cp\u003e${v.data.summary}\u003c/p\u003e`});\u003c/script\u003e"
+          },
+          "digest": "sha256:4965b235faad9f2e2ceff13789da6112b87d35408b9cea7e32c5dd734826d1ab"
+        },
+        "data": {
+          "cites": [
+            {
+              "id": "h_000000000001",
+              "type": "hunk"
+            }
+          ],
+          "summary": "A synthetic summary."
+        }
+      }
+    ],
+    "promotions": [
+      {
+        "id": "table_delays",
+        "change": "sec_retry_policy",
+        "block": 4,
+        "digest": "sha256:70797253909d3d04f63b1cb7e23adefa655f96ac07412e83ba148fcdd710a3e9",
+        "title": "Delays by attempt"
+      }
+    ],
+    "authored": [
+      {
+        "id": "prose_why_jitter",
+        "title": "Synthetic prose",
+        "data": {
+          "anchors": [
+            {
+              "id": "h_000000000002",
+              "type": "hunk"
+            }
+          ],
+          "text": "Retries back off before giving up."
+        }
+      }
+    ]
+  },
+  "layout": {
+    "entries": [
+      {
+        "tile": "overview",
+        "size": "half"
+      },
+      {
+        "tile": "risks",
+        "size": "half"
+      },
+      {
+        "tile": "table_delays",
+        "size": "half"
+      },
+      {
+        "tile": "sec_retry_policy",
+        "size": "half"
+      },
+      {
+        "tile": "sec_config_flag",
+        "size": "half"
+      },
+      {
+        "tile": "evidence",
+        "size": "half"
+      },
+      {
+        "tile": "retry_budget",
+        "size": "half"
+      },
+      {
+        "tile": "prose_why_jitter",
+        "size": "half"
+      },
+      {
+        "tile": "context",
+        "size": "third"
+      },
+      {
+        "tile": "everything_else",
+        "size": "third"
+      },
+      {
+        "tile": "media",
+        "size": "third"
+      },
+      {
+        "tile": "intent",
+        "size": "half"
+      },
+      {
+        "tile": "decisions",
+        "size": "half"
+      }
+    ],
+    "groups": [],
+    "landing": 11,
+    "extra_rows": 2
+  },
+  "tiles": [
+    {
+      "id": "overview",
+      "type": "overview",
+      "title": "Retry failed deliveries with backoff",
+      "state": "ready"
+    },
+    {
+      "id": "risks",
+      "type": "risks",
+      "title": "Risks",
+      "state": "ready"
+    },
+    {
+      "id": "sec_retry_policy",
+      "type": "change",
+      "title": "Retry failed deliveries",
+      "state": "ready",
+      "covers": [
+        "h_000000000001",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "sec_config_flag",
+      "type": "change",
+      "title": "Add a flag that turns retries off",
+      "state": "ready",
+      "covers": [
+        "h_000000000003",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
+      "state": "ready"
+    },
+    {
+      "id": "intent",
+      "type": "intent",
+      "title": "Intent",
+      "state": "ready"
+    },
+    {
+      "id": "context",
+      "type": "context",
+      "title": "Context",
+      "state": "ready"
+    },
+    {
+      "id": "decisions",
+      "type": "decisions",
+      "title": "Decisions",
+      "state": "ready"
+    },
+    {
+      "id": "everything_else",
+      "type": "everything_else",
+      "title": "Everything else",
+      "state": "ready",
+      "covers": [
+        "h_000000000004",
+        "h_000000000005",
+        "h_000000000006",
+        "h_000000000007"
+      ]
+    },
+    {
+      "id": "retry_budget",
+      "type": "custom",
+      "title": "Synthetic retry budget",
+      "state": "ready",
+      "covers": [
+        "h_000000000001"
+      ]
+    },
+    {
+      "id": "table_delays",
+      "type": "table",
+      "title": "Delays by attempt",
+      "state": "ready",
+      "covers": [
+        "h_000000000001"
+      ]
+    },
+    {
+      "id": "prose_why_jitter",
+      "type": "prose",
+      "title": "Synthetic prose",
+      "state": "ready",
+      "covers": [
+        "h_000000000002"
+      ]
+    }
+  ]
+}

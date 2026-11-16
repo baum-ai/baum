@@ -1,5 +1,5 @@
 import { SavedStateNotice } from "./ui-state";
-import { PreferencesProvider } from "./preferences";
+import { PreferencesProvider, usePreferences } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
@@ -119,6 +119,7 @@ import {
 } from "./session-panel";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
+import { publishLayoutEvent, publishLayoutResync } from "./tiles/your-layout";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import {
   Notice,
@@ -361,6 +362,7 @@ function Application() {
   );
 }
 function Workspace({ url }: { url: UrlState }) {
+  const { preferences } = usePreferences();
   const [clones, setClones] = useState<Clone[]>([]);
   const [picked, setPicked] = useState<Repository[]>([]);
   const [attached, setAttached] = useState<FoundClones["attached"]>([]);
@@ -692,6 +694,13 @@ function Workspace({ url }: { url: UrlState }) {
     // Like the other reads, not while the window is hidden.
     const resyncConsole = () => gate.run("console", publishConsoleResync);
     source.addEventListener("reset", resyncConsole);
+    // The open review page reads its tiles again when the person's layout
+    // of them changed, from the session panel or another window.
+    source.addEventListener("layout", (event) =>
+      publishLayoutEvent(String((event as MessageEvent).data)),
+    );
+    const resyncLayout = () => gate.run("layout", publishLayoutResync);
+    source.addEventListener("reset", resyncLayout);
     // Each kind of event reads what it can change, and what it may change
     // where that is unclear.
     source.addEventListener("index", () => markStale(indexParts));
@@ -722,6 +731,7 @@ function Workspace({ url }: { url: UrlState }) {
         refreshLive();
         refreshTimeline();
         resyncConsole();
+        resyncLayout();
       }
       connected = true;
     });
@@ -1035,8 +1045,7 @@ function Workspace({ url }: { url: UrlState }) {
     if (first && url.search.get("inbox") === target.id)
       url.update(
         (current) => {
-          for (const key of ["page", "pr", "clone", "repository", "group", "walk"])
-            current.delete(key);
+          for (const key of ["page", "pr", "clone", "repository", "group"]) current.delete(key);
           current.set("inbox", first.id);
           return current;
         },
@@ -1304,20 +1313,18 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : selectedEntry && url.search.get("walk") && url.search.get("walk") !== "full"
-      ? "walkthrough"
-      : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
-        ? "review"
-        : (page === "sessions" && openSession) || openJob || openRepository
-          ? "page"
-          : page === "inbox" ||
-              page === "sessions" ||
-              page === "jobs" ||
-              page === "repositories" ||
-              page === "timeline" ||
-              page === "settings"
-            ? page
-            : "anywhere";
+    : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
+      ? "review"
+      : (page === "sessions" && openSession) || openJob || openRepository
+        ? "page"
+        : page === "inbox" ||
+            page === "sessions" ||
+            page === "jobs" ||
+            page === "repositories" ||
+            page === "timeline" ||
+            page === "settings"
+          ? page
+          : "anywhere";
   // What the person has open, as the session panel reports it to the daemon
   // and names it in its bar, with its subject's name where the app has it,
   // and the part of a pull request's review an Ask picked.
@@ -1329,11 +1336,12 @@ function Workspace({ url }: { url: UrlState }) {
           url.search,
           (id) => clones.find((clone) => clone.id === id)?.repository,
           location.hash,
+          preferences.review_page,
         ),
         panel.ask,
       ),
     // The hash is a pull request's anchor: read again whenever the page draws.
-    [url.search, clones, location.hash, panel.ask],
+    [url.search, clones, location.hash, panel.ask, preferences.review_page],
   );
   const pageTitle =
     pageContext.page === "pull_request"
@@ -1548,7 +1556,7 @@ function Workspace({ url }: { url: UrlState }) {
         event.preventDefault();
         if (backToOpener()) return;
         url.update((current) => {
-          for (const key of ["pr", "clone", "repository", "group", "walk"]) current.delete(key);
+          for (const key of ["pr", "clone", "repository", "group"]) current.delete(key);
           return current;
         });
       } else if (

@@ -12,9 +12,9 @@ import (
 
 // extrasDaemon answers the routes of the pull request and group extras on top
 // of fakeDaemon's: a file, a commit and its patch, the decisions, the
-// person's kept draft review and walkthrough progress, and a group's patch and
-// file. Another repository's answers carry a planted text, so a read that
-// should have been refused shows.
+// person's kept draft review, and a group's patch and file. Another
+// repository's answers carry a planted text, so a read that should have been
+// refused shows.
 type extrasDaemon struct{ *fakeDaemon }
 
 func (d extrasDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -49,14 +49,6 @@ func (d extrasDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(`{"revision":1,"value":{"comments":[{"id":"x","target":{"kind":"general","id":"","title":"The pull request"},"body":"FOREIGN DRAFT of %s","place":null,"head":"h","created":1}],"note":"","sent":[]}}`, key)
 		default:
 			reply(`{"revision":0,"value":{"comments":[],"note":""}}`)
-		}
-		return
-	case p == "/api/ui-state/walkthrough":
-		key := q.Get("key")
-		if key == "acme/web#33@v1" || key == "acme/web#13@v2" {
-			reply(`{"revision":2,"value":{"seen":["stop_1"],"notes":{"stop_1":"This looks off"},"note":"Overall"}}`)
-		} else {
-			reply(`{"revision":0,"value":{"seen":[],"notes":{},"note":""}}`)
 		}
 		return
 	case strings.HasPrefix(p, "/api/groups/") && (strings.HasSuffix(p, "/patch") || strings.HasSuffix(p, "/file")):
@@ -110,11 +102,6 @@ func TestPullRequestExtraToolsReadThePageRoutes(t *testing.T) {
 		// The person's own draft, projected: no ids.
 		{tool: "pending_review", want: []string{`"body":"My draft comment"`, `"note":"My note"`, `"place":{"path":"a.go","line":4,"side":"RIGHT"}`, `"head":"h12"`, `"body":"Sent one"`}},
 		{tool: "pending_review", args: map[string]any{"pr": 14}, want: []string{`"comments":[]`}},
-		// The latest version is the index's latest (pull request 33's is 1).
-		{tool: "walkthrough_position", args: map[string]any{"pr": 33}, want: []string{`"version":1`, `"seen":["stop_1"]`, `This looks off`, `"note":"Overall"`}},
-		{tool: "walkthrough_position", args: map[string]any{"pr": 13, "version": 2}, want: []string{`"version":2`, `"seen":["stop_1"]`}},
-		{tool: "walkthrough_position", args: map[string]any{"pr": 13, "version": 1}, want: []string{`"seen":[]`}},
-		{tool: "walkthrough_position", failed: "no saved review"},
 	} {
 		d.reset()
 		text, failed := data(t, s, token, tt.tool, tt.args)
@@ -158,7 +145,7 @@ func TestPullRequestExtraToolsReadThePageRoutes(t *testing.T) {
 	}
 	// The pages list them.
 	for page, tools := range map[string][]string{
-		PagePullRequest: {"file", "commit", "commit_patch", "pull_request_decisions", "update_branch_options", "rerun_options", "pending_review", "walkthrough_position"},
+		PagePullRequest: {"file", "commit", "commit_patch", "pull_request_decisions", "update_branch_options", "rerun_options", "pending_review"},
 		PageGroup:       {"group_patch", "group_file"},
 	} {
 		spec, _ := s.page(page)
@@ -182,8 +169,8 @@ func contains(list []string, want string) bool {
 	return false
 }
 
-// An action reads these for its own repository only, and its draft and
-// walkthrough for its own pull request only.
+// An action reads these for its own repository only, and its draft for its own
+// pull request only.
 func TestPullRequestExtraToolsAreBoundForActions(t *testing.T) {
 	s, d := extrasServer(t)
 	token, _, revoke := mint(t, s, Consumer{Kind: Action, Repository: "acme/web", PullRequest: 12})
@@ -203,7 +190,6 @@ func TestPullRequestExtraToolsAreBoundForActions(t *testing.T) {
 		"update_branch_options":  with(nil),
 		"rerun_options":          with(nil),
 		"pending_review":         with(nil),
-		"walkthrough_position":   with(map[string]any{"version": 1}),
 		"group_patch":            {"repository": "evil/secrets", "id": "g-evil", "path": "a.go"},
 		"group_file":             {"repository": "evil/secrets", "id": "g-evil", "path": "a.go"},
 	} {
@@ -236,17 +222,6 @@ func TestPullRequestExtraToolsAreBoundForActions(t *testing.T) {
 			t.Errorf("another pull request's draft %v: failed=%v %s %v", args, failed, text, d.requests())
 		}
 	}
-	for _, args := range []map[string]any{{"pr": 13, "version": 2}, {"pr": 33, "version": 1}} {
-		text, failed = data(t, s, token, "walkthrough_position", args)
-		if !failed || strings.Contains(text, "looks off") {
-			t.Errorf("another pull request's walkthrough %v: failed=%v %s", args, failed, text)
-		}
-	}
-	// Its own pull request's walkthrough needs a saved review, which 12 lacks;
-	// at an explicit version it reads its own key.
-	if text, failed = data(t, s, token, "walkthrough_position", map[string]any{"version": 3}); failed || !strings.Contains(text, `"seen":[]`) {
-		t.Errorf("its own walkthrough: %v %s", failed, text)
-	}
 	// Its own repository's other pull requests' files and commits are read.
 	for tool, args := range map[string]map[string]any{
 		"file":                   {"pr": 13, "path": "main.go"},
@@ -262,7 +237,7 @@ func TestPullRequestExtraToolsAreBoundForActions(t *testing.T) {
 	}
 	// The tools exist for it.
 	have := listed(t, s, token)
-	for _, tool := range []string{"file", "commit", "commit_patch", "pull_request_decisions", "pending_review", "walkthrough_position", "group_patch", "group_file", "update_branch_options", "rerun_options"} {
+	for _, tool := range []string{"file", "commit", "commit_patch", "pull_request_decisions", "pending_review", "group_patch", "group_file", "update_branch_options", "rerun_options"} {
 		if !have[tool] {
 			t.Errorf("an action does not list %s", tool)
 		}
@@ -320,9 +295,9 @@ func TestActionRoutesOfTheExtraTools(t *testing.T) {
 	if strings.Contains(strings.Join(d.requests(), " "), "/g-evil/patch") || strings.Contains(strings.Join(d.requests(), " "), "/g-evil/file") {
 		t.Errorf("another repository's group was read: %v", d.requests())
 	}
-	// The kept state: the action's own pull request's key, at any version for
-	// the walkthrough, and nothing else, whoever's it looks like.
-	for _, ok := range []string{"/api/ui-state/review?key=acme%2Fweb%2312", "/api/ui-state/walkthrough?key=acme%2Fweb%2312%40v1", "/api/ui-state/walkthrough?key=acme%2Fweb%2312%40v20"} {
+	// The kept state: the action's own pull request's key and nothing else,
+	// whoever's it looks like.
+	for _, ok := range []string{"/api/ui-state/review?key=acme%2Fweb%2312"} {
 		if err := get(ok); err != nil {
 			t.Errorf("%s: %v", ok, err)
 		}
@@ -331,9 +306,6 @@ func TestActionRoutesOfTheExtraTools(t *testing.T) {
 		"/api/ui-state/review", "/api/ui-state/review?key=", "/api/ui-state/review?key=acme%2Fweb%2313", "/api/ui-state/review?key=acme%2Fweb%23120",
 		"/api/ui-state/review?key=ACME%2Fweb%2312", "/api/ui-state/review?key=evil%2Fsecrets%2312", "/api/ui-state/review?key=acme%2Fweb%2312&key=acme%2Fweb%2313",
 		"/api/ui-state/review?key=acme%2Fweb%2312&x=1", "/api/ui-state/review?key=acme%2Fweb%2312%40v1",
-		"/api/ui-state/walkthrough?key=acme%2Fweb%2312", "/api/ui-state/walkthrough?key=acme%2Fweb%2313%40v1", "/api/ui-state/walkthrough?key=acme%2Fweb%23120%40v1",
-		"/api/ui-state/walkthrough?key=acme%2Fweb%2312%40v", "/api/ui-state/walkthrough?key=acme%2Fweb%2312%40v01", "/api/ui-state/walkthrough?key=acme%2Fweb%2312%40v0",
-		"/api/ui-state/walkthrough?key=acme%2Fweb%2312%40v1x", "/api/ui-state/walkthrough?key=evil%2Fsecrets%2312%40v1",
 		// Every other kept state is the person's, not the action's.
 		"/api/ui-state/inbox", "/api/ui-state/filters", "/api/ui-state/tour",
 	} {
@@ -356,7 +328,6 @@ func TestExtraToolsDeclareTheirRoutes(t *testing.T) {
 		"commit_patch":           {"/api/index", "/api/facts", "/api/commit-patch"},
 		"pull_request_decisions": {"/api/decisions"},
 		"pending_review":         {"/api/ui-state/review"},
-		"walkthrough_position":   {"/api/index", "/api/ui-state/walkthrough"},
 	}
 	got := s.ToolReads()
 	for tool, reads := range want {

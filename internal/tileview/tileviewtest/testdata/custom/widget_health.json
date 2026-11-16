@@ -1,0 +1,43 @@
+{
+  "id": "widget_health",
+  "title": "Widget health",
+  "headline": "One store added, one changed",
+  "definition": {
+    "name": "widget_health",
+    "title": "Widget health",
+    "use_when": "When the pull request changes how acme/widgets stores or lists widgets (not test fixtures).",
+    "fill": "Summarise what changed for widget storage in one sentence. List each changed store with its status and cite the hunk that changes it; write an empty list when none changed.",
+    "data_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "stores"],
+      "properties": {
+        "summary": { "$ref": "#/$defs/markdown" },
+        "stores": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "status", "cites"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 120 },
+              "status": { "enum": ["added", "changed", "removed"] },
+              "cites": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/citation" } }
+            }
+          }
+        }
+      }
+    },
+    "kit": 1,
+    "sizes": ["half", "full"],
+    "source": { "format": "html" }
+  },
+  "data": {
+    "summary": "Widgets keep their **labels** when the store opens.",
+    "stores": [
+      { "name": "widget_tags", "status": "added", "cites": [{ "type": "hunk", "id": "@hunk" }] },
+      { "name": "widgets", "status": "changed", "cites": [{ "type": "tile", "id": "overview" }] }
+    ]
+  }
+}

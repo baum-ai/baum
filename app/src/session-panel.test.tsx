@@ -896,15 +896,15 @@ it("opens on the pull request an Ask names, with the part of the review it picke
     );
   await act(async () => sessionPanel.select("c0"));
   await render(pr);
-  const focus = { kind: "stop" as const, id: "beh_delay", title: "Delays", anchors: [] };
+  const focus = { kind: "section" as const, id: "beh_delay", title: "Delays", anchors: [] };
   await act(async () => sessionPanel.ask({ repository: "acme/demo", number: 7 }, focus));
   await until(() => expect(panel()).not.toBeNull());
   expect(state!.conversation).toBe("c1");
   expect(document.activeElement).toBe(composer());
   // The app adds the picked part to the page's focus; the panel names it and
   // the page reported carries it.
-  const page = withPicked({ ...pr, focus: { walk: "tour" } }, state!.ask);
-  expect(page.focus).toEqual({ walk: "tour", ...focus });
+  const page = withPicked({ ...pr, focus: { anchor: "risk" } }, state!.ask);
+  expect(page.focus).toEqual({ anchor: "risk", ...focus });
   await render(page);
   expect(panel()!.querySelector(".session-panel-focus")!.textContent).toContain("About Delays");
   await until(() =>

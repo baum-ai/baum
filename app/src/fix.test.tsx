@@ -15,7 +15,7 @@ import {
   type Entry,
   type Job,
 } from "./api";
-import { FixDetails, FixNotice } from "./fix";
+import { FixDetails, FixNotice, phaseText } from "./fix";
 import { Inbox } from "./inbox";
 import { forgetLastRows } from "./shortcuts";
 
@@ -308,4 +308,7 @@ it("names an earlier fix from a conversation and offers a fix whenever one may r
   expect(fixEligible(variant({}, { viewer_can_push: false }))).toBe(false);
   expect(fixEligible(variant({}, { state: "MERGED" }))).toBe(false);
   expect(fixEligible(variant({ needs_clone: true }))).toBe(false);
+});
+it("names the phase that arranges a review's tiles", () => {
+  expect(phaseText({ state: "running", phase: "arranging" } as Job)).toBe("Arranging the page…");
 });

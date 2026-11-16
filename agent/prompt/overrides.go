@@ -12,6 +12,7 @@ const (
 	IDReviewStagedOutline ID = "review-staged-outline"
 	IDReviewStagedDetails ID = "review-staged-details"
 	IDReviewStagedContext ID = "review-staged-context"
+	IDReviewTilesCompose  ID = "review-tiles-compose"
 	IDFix                 ID = "fix"
 	IDFixConflicts        ID = "fix-conflicts"
 	IDFixChecks           ID = "fix-checks"

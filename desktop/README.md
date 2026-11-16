@@ -1152,7 +1152,9 @@ The Linux bundles are built in this directory's Docker image, on Ubuntu
 They require Ubuntu 24.04 or newer, or a compatible distribution with glibc
 2.39 or newer and the corresponding system libraries. Ubuntu 22.04 and
 Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
-the 4.1 API (`libwebkit2gtk-4.1-0`), declares its package dependencies and
+the 4.1 API (`libwebkit2gtk-4.1-0`), 2.40 or newer: the first release that
+sends the Fetch Metadata request headers (`Sec-Fetch-*`), without which no
+custom tile's frame loads. It declares its package dependencies and
 installs `baum-desktop` and `baum` in `/usr/bin`.
 
 The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's

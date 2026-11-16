@@ -440,7 +440,7 @@ var (
 	// reservedKeys are the address parameters that name a page or its subject:
 	// they are set by their own arguments, which are checked, never by a filter.
 	reservedKeys = map[string]bool{"page": true, "repository": true, "clone": true, "pr": true, "group": true, "session": true,
-		"job": true, "feature": true, "section": true, "inbox": true, "peek": true, "walk": true}
+		"job": true, "feature": true, "section": true, "inbox": true, "peek": true}
 	filterKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 	// inboxID is the shape of a saved inbox's id, as the inbox store makes it.
 	inboxID = regexp.MustCompile(`^[0-9a-f]{32}$`)

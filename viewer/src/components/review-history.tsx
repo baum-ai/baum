@@ -202,10 +202,14 @@ export function ReviewHistory({
   document,
   view,
   children,
+  labelled = true,
 }: {
   document: ReviewDocument;
   view: ReturnType<typeof useHistoryView>;
   children: (document: ReviewDocument, historical: boolean) => ReactNode;
+  /** Whether an earlier version read alone opens on its "Historical · Review
+   *  vN" line. Two compared versions always carry theirs. */
+  labelled?: boolean;
 }) {
   const { selection, state } = view;
   const compare = selection?.compare === true;
@@ -240,7 +244,12 @@ export function ReviewHistory({
               compare && "2xl:pl-5",
             )}
           >
-            <p className="mb-3 text-base font-medium text-tertiary">
+            <p
+              className={cn(
+                "mb-3 text-base font-medium text-tertiary",
+                !labelled && !compare && "sr-only",
+              )}
+            >
               Historical · Review v{selection.version}
               {state?.status === "ready" &&
                 ` · Generated against ${shortSha(state.document.review.head)} · ${formatDateTime(state.document.review.generated_at)}`}

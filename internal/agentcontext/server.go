@@ -5,7 +5,9 @@
 // Each agent holds its own token, minted in memory (Registry). Tools read the
 // local API through a GET-only Reader, and every result is masked, cut into
 // bounded chunks and fenced as untrusted data (envelope). Proposals change
-// nothing until the user saves them.
+// nothing until the user saves them; the one exception is the person's own
+// tile layout of the pull request page they have open, which the layout
+// tools change at once (layouttools.go).
 package agentcontext
 
 import (
@@ -70,6 +72,10 @@ type Options struct {
 	// each is the same change the page's own save makes (see proposetools.go
 	// for the tools and their targets). A page without one takes none.
 	Proposers map[string]Proposer
+	// Layouts changes the person's own tile layout of the pull request page
+	// they have open, at once (layouttools.go). Nil has the layout tools
+	// report them unavailable.
+	Layouts LayoutEditor
 }
 
 // Server is the MCP server. Register tools and pages before serving.
@@ -84,6 +90,7 @@ type Server struct {
 	planChoices      func(ctx context.Context) ([]json.RawMessage, error)
 	codexHooks       func() (string, time.Time, bool)
 	decisionSettings func(ctx context.Context) (json.RawMessage, error)
+	layouts          LayoutEditor
 	mu               sync.RWMutex
 	tools            []Tool
 	pages            map[string]PageSpec
@@ -93,7 +100,7 @@ type Server struct {
 func New(opts Options) *Server {
 	registry := NewRegistry()
 	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
-		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, layouts: opts.Layouts, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
@@ -103,8 +110,8 @@ func New(opts Options) *Server {
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
-	proposing := proposeTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing) {
+	proposing, layouts := proposeTools(), s.layoutTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, layouts) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -141,11 +148,14 @@ func New(opts Options) *Server {
 	}
 	// The pull request page also reads what its own views open: files,
 	// commits, decisions, what the app offers about the branch and checks,
-	// and the person's draft review and walkthrough place. A group's page
-	// reads its patches and files.
+	// and the person's draft review. A group's page reads its patches and
+	// files.
 	pullPage := slices.Concat(names(pull), names(reviews), names(extras))
 	groupExtras := byName(extras, "group_patch", "group_file")
-	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }))}
+	// It lists the layout tools too, which change the person's own layout
+	// of the review's tiles at once.
+	pullPage = append(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }), layoutPageTools...)
+	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(pullPage)}
 	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: withCommonTools(slices.Concat(forGroup, groupExtras, []string{"focus"}))}
 	// The Inbox lists the queue and its inboxes; Pull requests its list. The
 	// sessions pages read the sessions and what their agents wait for; the
@@ -503,7 +513,8 @@ func (s *Server) handle(ctx context.Context, consumer Consumer, method string, p
 // annotations are a tool's MCP behaviour hints. No tool reaches beyond the
 // local daemon, so none is open-world. A reading tool is read-only; a proposing
 // tool records state, so it is not, but it destroys nothing: the user decides
-// what a proposal changes.
+// what a proposal changes. A layout tool edits the person's own layout of
+// their page at once, which an undo takes back: it destroys nothing either.
 type annotations struct {
 	ReadOnly    bool  `json:"readOnlyHint"`
 	Destructive *bool `json:"destructiveHint,omitempty"`
@@ -511,7 +522,7 @@ type annotations struct {
 }
 
 func (t Tool) annotations() annotations {
-	if !t.Proposes {
+	if !t.Proposes && !t.Edits {
 		return annotations{ReadOnly: true}
 	}
 	no := false
@@ -553,6 +564,7 @@ func (s *Server) call(ctx context.Context, consumer Consumer, t Tool, args json.
 	}
 	c := CallContext{Consumer: consumer, Reader: s.reader.forTool(t, bound, consumer.PullRequest), proposals: s.Proposals}
 	c.Page, c.HasPage = s.Registry.Page(consumer.ID)
+	c.Turn, c.HasTurn = s.Registry.TurnPage(consumer.ID)
 	out, callErr := t.Call(ctx, c, args)
 	if callErr != nil {
 		text, err = s.envelope.wrap(ctx, consumer.ID, callErr.Error())

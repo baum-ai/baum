@@ -24,8 +24,8 @@ const maxDocumentRead = 32 << 20
 
 // readLimit is the body bound of a read of path.
 func readLimit(path string) int {
-	if path == "/api/document" || path == "/api/facts" ||
-		(strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/document")) ||
+	if path == "/api/document" || path == "/api/tiles" || path == "/api/facts" ||
+		(strings.HasPrefix(path, "/api/groups/") && (strings.HasSuffix(path, "/document") || strings.HasSuffix(path, "/tiles"))) ||
 		(strings.HasPrefix(path, "/api/jobs/") && strings.HasSuffix(path, "/draft")) {
 		return maxDocumentRead
 	}
@@ -53,7 +53,7 @@ var unreadable = []string{"/api/settings", "/api/debug", "/api/github", "/api/di
 var projectedReads = map[string][]string{
 	"diagnostics_summary":  {"/api/diagnostics"},
 	"settings_general":     {"/api/settings/appearance"},
-	"settings_reviews":     {"/api/settings"},
+	"settings_reviews":     {"/api/settings", "/api/settings/labs"},
 	"settings_fixes":       {"/api/settings"},
 	"settings_connections": {"/api/github-auth"},
 	"settings_computer":    {"/api/settings", "/api/diagnostics"},
@@ -140,7 +140,7 @@ var actionRoutes = []actionRoute{
 	// One job, by id, and its transcript, which names no repository: the job
 	// it belongs to is read first.
 	{pattern: "/api/jobs/{id}", bind: byResponse, check: repositoryField},
-	{pattern: "/api/jobs/{id}/draft", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
+	{pattern: "/api/jobs/{id}/draft", bind: byLookup, params: []string{"tiles"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
 	{pattern: "/api/jobs/{id}/transcript", bind: byLookup, params: []string{"after"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
 
 	// The pull request page's reads of GitHub, by repository and number.
@@ -165,6 +165,7 @@ var actionRoutes = []actionRoute{
 	// registered clone the handler resolves.
 	{pattern: "/api/versions", bind: byClone, params: []string{"pr"}},
 	{pattern: "/api/document", bind: byClone, params: []string{"pr", "version"}},
+	{pattern: "/api/tiles", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/patch", bind: byClone, params: []string{"pr", "version", "path"}},
 	{pattern: "/api/commits", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/sessions", bind: byClone, params: []string{"pr", "version"}},
@@ -177,10 +178,9 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/commit-patch", bind: byClone, params: []string{"pr", "version", "oid", "path"}},
 	{pattern: "/api/decisions", bind: byRepository, params: []string{"pr"}},
 
-	// The person's own draft review and walkthrough place are kept by key,
-	// which says whose they are: only the action's own pull request's key.
+	// The person's own draft review is kept by key, which says whose it is:
+	// only the action's own pull request's key.
 	{pattern: "/api/ui-state/review", bind: byKey, key: ownReviewKey},
-	{pattern: "/api/ui-state/walkthrough", bind: byKey, key: ownWalkthroughKey},
 
 	// Its facts, before a review exists.
 	{pattern: "/api/facts", bind: byClone, params: []string{"pr", "head"}},
@@ -196,6 +196,7 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/groups", bind: byFilter, filter: filterGroups},
 	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
 	{pattern: "/api/groups/{id}/document", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
+	{pattern: "/api/groups/{id}/tiles", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/patch", bind: byLookup, params: []string{"version", "path", "hunk"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/file", bind: byLookup, params: []string{"version", "path"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
@@ -500,8 +501,8 @@ var (
 	errRefreshFlag     = errors.New("reads never ask for a refresh")
 	errNotActionRoute  = errors.New("not a route this agent reads")
 	errOtherRepository = errors.New("this agent may read only its own pull request's repository")
-	// errOtherPullRequest is a kept state (the person's draft review, their
-	// walkthrough place) of a pull request that is not the action's own.
+	// errOtherPullRequest is a kept state (the person's draft review) of a
+	// pull request that is not the action's own.
 	errOtherPullRequest = errors.New("this agent may read only its own pull request's saved state")
 )
 

@@ -1,0 +1,283 @@
+[
+  {
+    "citation": {
+      "type": "hunk",
+      "id": "h_0123456789ab"
+    },
+    "key": "[\"hunk\",\"h_0123456789ab\",null]"
+  },
+  {
+    "citation": {
+      "type": "hunk",
+      "id": "h_0123456789ab",
+      "lines": [
+        12,
+        20
+      ]
+    },
+    "key": "[\"hunk\",\"h_0123456789ab\",[12,20]]"
+  },
+  {
+    "citation": {
+      "type": "hunk",
+      "id": "h_0123456789ab",
+      "lines": [
+        12
+      ]
+    },
+    "key": "[\"hunk\",\"h_0123456789ab\",null]"
+  },
+  {
+    "citation": {
+      "type": "file",
+      "path": "internal/widgets/store.go"
+    },
+    "key": "[\"file\",\"internal/widgets/store.go\"]"
+  },
+  {
+    "citation": {
+      "type": "file",
+      "path": "docs/a#b:c.md"
+    },
+    "key": "[\"file\",\"docs/a#b:c.md\"]"
+  },
+  {
+    "citation": {
+      "type": "commit",
+      "sha": "0123456789abcdef"
+    },
+    "key": "[\"commit\",\"0123456789abcdef\"]"
+  },
+  {
+    "citation": {
+      "type": "pr",
+      "number": 12
+    },
+    "key": "[\"pr\",12]"
+  },
+  {
+    "citation": {
+      "type": "pr_body"
+    },
+    "key": "[\"pr_body\",null]"
+  },
+  {
+    "citation": {
+      "type": "pr_body",
+      "section": null
+    },
+    "key": "[\"pr_body\",null]"
+  },
+  {
+    "citation": {
+      "type": "pr_body",
+      "section": "Testing"
+    },
+    "key": "[\"pr_body\",\"Testing\"]"
+  },
+  {
+    "citation": {
+      "type": "pr_comment",
+      "id": 99
+    },
+    "key": "[\"pr_comment\",99]"
+  },
+  {
+    "citation": {
+      "type": "pr_comment",
+      "id": "99"
+    },
+    "key": "[\"pr_comment\",\"99\"]"
+  },
+  {
+    "citation": {
+      "type": "review_thread",
+      "id": "PRRT_kwDOabc"
+    },
+    "key": "[\"review_thread\",\"PRRT_kwDOabc\"]"
+  },
+  {
+    "citation": {
+      "type": "prompt",
+      "session": "ses_1",
+      "index": 3
+    },
+    "key": "[\"prompt\",\"ses_1\",3]"
+  },
+  {
+    "citation": {
+      "type": "prompt",
+      "session": "ses_1",
+      "index": 3,
+      "input": "ignored"
+    },
+    "key": "[\"prompt\",\"ses_1\",3]"
+  },
+  {
+    "citation": {
+      "type": "session_event",
+      "session": "ses_1",
+      "event": "ev_2"
+    },
+    "key": "[\"session_event\",\"ses_1\",\"ev_2\"]"
+  },
+  {
+    "citation": {
+      "type": "check",
+      "id": "rspec#User",
+      "test": "save"
+    },
+    "key": "[\"check\",\"rspec#User\",\"save\"]"
+  },
+  {
+    "citation": {
+      "type": "check",
+      "id": "rspec",
+      "test": "User#save"
+    },
+    "key": "[\"check\",\"rspec\",\"User#save\"]"
+  },
+  {
+    "citation": {
+      "type": "check",
+      "id": "ci"
+    },
+    "key": "[\"check\",\"ci\",null]"
+  },
+  {
+    "citation": {
+      "type": "bot_report",
+      "id": "bot_1"
+    },
+    "key": "[\"bot_report\",\"bot_1\"]"
+  },
+  {
+    "citation": {
+      "type": "issue",
+      "system": "tracker",
+      "key": "WID-12"
+    },
+    "key": "[\"issue\",\"tracker\",\"WID-12\"]"
+  },
+  {
+    "citation": {
+      "type": "spec",
+      "page": "SPEC-1"
+    },
+    "key": "[\"spec\",\"SPEC-1\",null]"
+  },
+  {
+    "citation": {
+      "type": "spec",
+      "page": "SPEC-1",
+      "assertion": "SPEC-1-A2"
+    },
+    "key": "[\"spec\",\"SPEC-1\",\"SPEC-1-A2\"]"
+  },
+  {
+    "citation": {
+      "type": "external_url",
+      "url": "https://example.invalid/a?b=\"c\""
+    },
+    "key": "[\"external_url\",\"https://example.invalid/a?b=\\\"c\\\"\"]"
+  },
+  {
+    "citation": {
+      "type": "attachment",
+      "id": "att_1"
+    },
+    "key": "[\"attachment\",\"att_1\",null]"
+  },
+  {
+    "citation": {
+      "type": "attachment",
+      "url": "https://example.invalid/x.png"
+    },
+    "key": "[\"attachment\",null,\"https://example.invalid/x.png\"]"
+  },
+  {
+    "citation": {
+      "type": "attachment"
+    },
+    "key": null
+  },
+  {
+    "citation": {
+      "type": "risk",
+      "id": "rsk_labels"
+    },
+    "key": "[\"risk\",\"rsk_labels\"]"
+  },
+  {
+    "citation": {
+      "type": "evidence",
+      "id": "ev_tests"
+    },
+    "key": "[\"evidence\",\"ev_tests\"]"
+  },
+  {
+    "citation": {
+      "type": "change",
+      "id": "sec_store"
+    },
+    "key": "[\"change\",\"sec_store\"]"
+  },
+  {
+    "citation": {
+      "type": "tile",
+      "id": "schema_change"
+    },
+    "key": "[\"tile\",\"schema_change\"]"
+  },
+  {
+    "citation": {
+      "type": "risk",
+      "id": "r <&> é   \\ \t"
+    },
+    "key": "[\"risk\",\"r <&> é   \\\\ \\t\"]"
+  },
+  {
+    "citation": {
+      "type": "risk"
+    },
+    "key": null
+  },
+  {
+    "citation": {
+      "type": "risk",
+      "id": {
+        "x": 1
+      }
+    },
+    "key": null
+  },
+  {
+    "citation": {
+      "type": "pr_body",
+      "section": 5
+    },
+    "key": "[\"pr_body\",5]"
+  },
+  {
+    "citation": {
+      "type": "toString",
+      "id": "x"
+    },
+    "key": null
+  },
+  {
+    "citation": {
+      "type": "unknown",
+      "id": "x"
+    },
+    "key": null
+  },
+  {
+    "citation": "risk:r",
+    "key": null
+  },
+  {
+    "citation": null,
+    "key": null
+  }
+]

@@ -1,5 +1,7 @@
 import { agentName, appURL, type ChatFocus } from "./api";
 import { PAGES } from "./pages";
+import type { ReviewPageChoice } from "./preferences";
+import { reviewPageOf } from "./tiles/view";
 
 /** The pages a page context names, as the MCP server knows them
  *  (`agentcontext` page names): the sidebar's lists, and the pages of one
@@ -51,7 +53,6 @@ const RESERVED = new Set([
   "section",
   "inbox",
   "peek",
-  "walk",
 ]);
 /** A filter's key as the MCP server's links take it. */
 const FILTER_KEY = /^[a-z][a-z0-9_]{0,31}$/;
@@ -84,11 +85,13 @@ function filtersOf(search: URLSearchParams): Record<string, string> | undefined 
 /** The page context of the app's address, the one place the app derives it:
  *  the inverse of the MCP server's `link`. `cloneRepository` names the
  *  repository of a clone id, for a pull request's address that names its
- *  clone. */
+ *  clone. `reviewPage` is the reader's review page setting, which the
+ *  address's `view` overrides. */
 export function pageContextOf(
   search: URLSearchParams,
   cloneRepository: (clone: string) => string | undefined = () => undefined,
   hash = "",
+  reviewPage: ReviewPageChoice = "full",
 ): PageContext {
   const requested = search.get("page") ?? "inbox";
   // A subject is named only as the MCP server takes it: a field of at most
@@ -102,9 +105,7 @@ export function pageContextOf(
   const clone = subject("clone");
   const repository = subject("repository") ?? (clone ? cloneRepository(clone) : undefined);
   if ((requested === "inbox" || requested === "pulls") && number > 0 && repository) {
-    const focus: Record<string, string> = {};
-    const walk = subject("walk");
-    if (walk) focus.walk = walk;
+    const focus: Record<string, string> = tilesFocus(search, reviewPage);
     const anchor = hash.replace(/^#/, "");
     if (anchor) focus.anchor = anchor.slice(0, 512);
     return {
@@ -115,7 +116,10 @@ export function pageContextOf(
     };
   }
   const group = subject("group");
-  if ((requested === "inbox" || requested === "pulls") && group) return { page: "group", group };
+  if ((requested === "inbox" || requested === "pulls") && group) {
+    const focus = tilesFocus(search, reviewPage);
+    return { page: "group", group, ...(Object.keys(focus).length > 0 ? { focus } : {}) };
+  }
   const session = subject("session");
   if (requested === "sessions" && session) return { page: "session", session };
   const job = subject("job");
@@ -142,6 +146,21 @@ export function pageContextOf(
   // Inbox's; an address naming no known page is the Inbox, as the app opens it.
   const page = LIST_PAGES.includes(requested as ContextPage) ? (requested as ContextPage) : "inbox";
   return withFilters({ page }, search);
+}
+
+/** On the tiles page, the review's focus says so, and names the tile open
+ *  and the item in it; the full review, the default, adds nothing. */
+function tilesFocus(search: URLSearchParams, reviewPage: ReviewPageChoice) {
+  const focus: Record<string, string> = {};
+  if (reviewPageOf(search, reviewPage) !== "tiles") return focus;
+  focus.view = "tiles";
+  const tile = search.get("pane") === "tile" ? search.get("tile") : null;
+  if (tile && bytes(tile) <= MAX_PAGE_TEXT) {
+    focus.tile = tile;
+    const item = search.get("tile_item");
+    if (item && bytes(item) <= MAX_PAGE_TEXT) focus.item = item;
+  }
+  return focus;
 }
 
 function withFilters(context: PageContext, search: URLSearchParams): PageContext {
@@ -254,8 +273,8 @@ export function onPull(
 }
 
 /** The page context with the part of the review an Ask picked (`kind`
- *  section, stop or overview, its `id`, `title` and `anchors`) added to its
- *  focus, beside the address's `walk` and `anchor`, while that pull
+ *  section or overview, its `id`, `title` and `anchors`) added to its
+ *  focus, beside the address's `anchor`, while that pull
  *  request's page is open: the agent reads it with the MCP server's `focus`
  *  tool. */
 export function withPicked(

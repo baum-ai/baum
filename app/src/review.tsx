@@ -20,12 +20,7 @@ import type {
 } from "@baum/viewer/components/session-list";
 import { useVisibleInterval } from "./visible-interval";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
-import {
-  ChevronDownIcon,
-  SparkleIcon,
-  StackIcon,
-  WarningIcon,
-} from "@baum/viewer/components/icons";
+import { ChevronDownIcon, StackIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { type MenuItem, useContextMenu } from "./context-menu";
 import { useHistoryView } from "@baum/viewer/use-review-version";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
@@ -49,6 +44,9 @@ import {
   request,
   selector,
   documentRequest,
+  tiledDocument,
+  tilesRequest,
+  type TilesAnswer,
   type ChatFocus,
   type Entry,
   type Job,
@@ -64,17 +62,16 @@ import {
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, FixRuns, type FixState, useDismissedFixes } from "./fix";
+import { FixNotice, FixRuns, type FixState, phases, useDismissedFixes } from "./fix";
 import { useArchive } from "./up-next";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useVersionLoader } from "./version-cache";
-import { LiveSessionCard, LiveSessions, liveSessionLabel } from "./sessions";
+import { LiveSessionCard, liveSessionLabel } from "./sessions";
 import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
-  PullRequestDecisionsList,
   PullRequestDecisionsPane,
   usePullRequestDecisions,
   type PullRequestDecisionsRead,
@@ -92,13 +89,11 @@ import {
 } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
-import { Walkthrough, type WalkMode } from "./walkthrough";
 import { sessionPanel } from "./session-panel-state";
 import { EarlierQuestions, useEarlierQuestions } from "./chat";
 import { documentFilesSlot, factsFilesSlot, factsQuery, useFacts } from "./facts";
 import { liveDetailsChecks, useChecks } from "./checks";
 import { useLiveThreads } from "./threads";
-import { SECONDARY } from "./action-classes";
 import {
   CommentsPane,
   ReviewButton,
@@ -106,10 +101,16 @@ import {
   usePendingReview,
   type Composer,
 } from "./pending-review";
-import { commentTarget, reviewable } from "./pending-review-model";
-import type { ReviewEvent } from "./walkthrough-model";
+import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
-import { readSelection } from "@baum/viewer/review-selection";
+import { readSelection, withSelection } from "@baum/viewer/review-selection";
+import { fullReviewPlace, useArrangedTiles, useReviewPage, withView } from "./tiles/view";
+import { useTilePlaces } from "./tiles/use-tile-places";
+import { TileHostContext, type TileHost } from "./tiles/host";
+import { commentCounts } from "./tiles/comments";
+import { activeCard, useBackToLanding } from "./tiles/keys";
+import { useTileLayout } from "./tiles/your-layout";
+import { tileDocOf, tilesMissing, withPendingChanges, withTiles } from "./tiles/tile-document";
 
 /** `commitsSlot`'s loaders over the daemon's commit routes under `route`
  *  (`api` for a saved version, `api/facts` for the facts), with the page's
@@ -291,28 +292,23 @@ export function LocalReview({
 }) {
   const pr = entry.pull_request;
   const url = useUrlState();
+  // The tiles page reads each version with its tile document; the full
+  // review reads the review alone.
+  const chosenTiles = useReviewPage() === "tiles";
+  // With tile reviews on and no page chosen, the page reads the tiles too and
+  // shows them for a version whose tiles were arranged.
+  const arranged = useArrangedTiles();
+  const tilesPage = chosenTiles || arranged;
+  const readDocument = tilesPage ? tilesRequest : documentRequest;
+  const places = useTilePlaces();
   const back = backTo(url.search);
   // The refresh key works on every state of the page, also where the button
-  // is not drawn, as while the review loads or has nothing to walk through.
+  // is not drawn, as while the review loads.
   usePageRefreshAction(refresh);
-  // One of the head's actions, on the walkthrough and on the full review alike.
+  // One of the head's actions.
   const refreshButton = refresh ? (
     <RefreshButton refresh={refresh} label="Refresh from GitHub" />
   ) : undefined;
-  // A pull request opens on the full review; walk=landing is the
-  // walkthrough's overview and walk=tour the tour one step in. walk=all named
-  // the list view the walkthrough once had, and walk=full the full review when
-  // the overview was the default.
-  const walk = url.search.get("walk");
-  const walkMode: WalkMode | null =
-    walk === "tour" || walk === "all" ? "tour" : walk === "landing" ? "landing" : null;
-  const setWalk = (mode: WalkMode | null) =>
-    url.update((current) => {
-      if (mode) current.set("walk", mode);
-      else current.delete("walk");
-      current.delete("pane");
-      return current;
-    });
   // Ask opens the session panel on this pull request, about the part of the
   // review picked, if any.
   const ask = (focus: ChatFocus | null = null) =>
@@ -433,15 +429,18 @@ export function LocalReview({
   useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
     // a asks an agent about the pull request: the session panel opens on its
-    // conversation with the keys in its composer. It works in the
-    // walkthrough too.
+    // conversation with the keys in its composer. On the tiles' landing page
+    // a card under the keys is what it asks about, as its Ask about this tile
+    // does, so "make this wider" needs no question.
     if (event.key === "a") {
       event.preventDefault();
-      ask();
+      const card = onTiles && selection.kind === "summary" ? activeCard() : null;
+      const tile = card
+        ? tileDocOf(viewedDocument ?? null)?.tiles.find((t) => t.id === card)
+        : undefined;
+      ask(tile ? { kind: "tile", id: tile.id, title: tile.title } : null);
       return;
     }
-    // The tour has keys of its own; the overview leaves the page's to it.
-    if (walkMode === "tour" && doc && !showingDraft) return;
     // Space opens or closes the fold of the block j and k are on; on a
     // focused button or link it still presses that.
     if (
@@ -492,7 +491,11 @@ export function LocalReview({
       navigate(jobHref(watchable));
     } else if (event.key === "c" && canReview && !showingDraft) {
       event.preventDefault();
-      setComposer({ kind: "new", ...commentOn });
+      const card = onTiles && selection.kind === "summary" ? activeCard() : null;
+      setComposer({
+        kind: "new",
+        ...(card ? commentTarget(viewedDocument ?? null, { kind: "tile", id: card }) : commentOn),
+      });
       setRevealComments((n) => n + 1);
     } else if (event.key === "v") {
       // As a click on the review button: its menu of verdicts.
@@ -502,9 +505,12 @@ export function LocalReview({
       button.click();
     }
   });
+  // A change to the person's layout reads the versions on screen again: an
+  // earlier version's tiles carry the layout too.
+  const [layoutGeneration, setLayoutGeneration] = useState(0);
   const loadVersion = useVersionLoader(
-    `${clone}:${pr.number}`,
-    (version) => documentRequest(clone, pr.number, version),
+    `${clone}:${pr.number}:${tilesPage ? "tiles" : "full"}:${layoutGeneration}`,
+    (version) => readDocument(clone, pr.number, version),
     doc?.review.version,
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
@@ -515,8 +521,9 @@ export function LocalReview({
       ? history.state.document
       : null
     : doc;
-  // What c comments on: the section, risk or file being read.
-  const commentOn = commentTarget(viewedDocument ?? null, readSelection(url.search));
+  // What c comments on: the section, risk, file or tile being read.
+  const selection = readSelection(url.search);
+  const commentOn = commentTarget(viewedDocument ?? null, selection);
   const query = selector(clone, pr.number, viewedVersion);
   const latestQuery = selector(clone, pr.number);
   // While the daemon writes a review in stages it holds a draft of it. It is
@@ -529,21 +536,21 @@ export function LocalReview({
       return;
     }
     const abort = new AbortController();
-    request<{ document?: ReviewDocument }>(
-      `api/jobs/${encodeURIComponent(job.id)}/draft`,
+    request<Partial<TilesAnswer>>(
+      `api/jobs/${encodeURIComponent(job.id)}/draft${tilesPage ? "?tiles=1" : ""}`,
       undefined,
       "GET",
       abort.signal,
     )
       .then((body) => {
-        if (!abort.signal.aborted && Array.isArray(body.document?.sections))
-          setDraft(body.document);
+        if (abort.signal.aborted || !Array.isArray(body.document?.sections)) return;
+        setDraft(tilesPage ? tiledDocument(body as TilesAnswer) : body.document!);
       })
       .catch(() => {
         /* The draft is gone, or the next one is on its way. */
       });
     return () => abort.abort();
-  }, [job?.id, draftCount]);
+  }, [job?.id, draftCount, tilesPage]);
   // A page without a review shows the draft as soon as there is one; one with
   // a saved version keeps showing that version until the new one is saved.
   const showingDraft = draft !== null && !doc && entry.version_count === 0;
@@ -564,16 +571,85 @@ export function LocalReview({
       showingDraft
         ? draft
         : retrying && doc && failedSections.length > 0
-          ? {
-              ...doc,
-              sections: doc.sections.map((s) =>
-                failedSections.includes(s.id) ? { ...s, details: "pending" as const } : s,
-              ),
-            }
+          ? retried(doc, failedSections)
           : doc,
     [showingDraft, draft, retrying, doc, failedSections],
   );
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
+  // The tiles page draws its places once the document carries its tiles; a
+  // review the daemon could not convert is shown as the full review.
+  const onTiles =
+    tilesPage &&
+    Boolean(tileDocOf(shownDocument)) &&
+    (chosenTiles || tileDocOf(shownDocument)?.origin.kind === "generated");
+  // Escape or u inside a tile goes back to the landing page.
+  useBackToLanding(onTiles, url);
+  // The person's own layout of the tiles: read again on each change, from
+  // the session panel or the page, with the change announced and undoable.
+  const layout = useTileLayout({
+    clone,
+    repository: pr.repository,
+    number: pr.number,
+    enabled: onTiles && !showingDraft,
+    reread: async () => {
+      setLayoutGeneration((n) => n + 1);
+      setDoc(await tilesRequest(clone, pr.number));
+    },
+  });
+  const historyRetry = useRef(history.retry);
+  historyRetry.current = history.retry;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a layout change reads the earlier version again
+  useEffect(() => {
+    if (layoutGeneration > 0 && history.selection) historyRetry.current();
+  }, [layoutGeneration]);
+  // Rebuilt only when what the tiles read of it changes, and never on the
+  // full review, which has no tiles.
+  const latestHost = useRef({ viewedDocument, canReview, showingDraft, search: url.search });
+  latestHost.current = { viewedDocument, canReview, showingDraft, search: url.search };
+  // A custom tile's frame that never answered: read the tile route of every
+  // version on screen again, which registers their frame documents again.
+  const rereadTiles = useRef<() => Promise<unknown>>(async () => undefined);
+  rereadTiles.current = () =>
+    Promise.all([
+      showingDraft && job
+        ? request(`api/jobs/${encodeURIComponent(job.id)}/draft?tiles=1`)
+        : tilesRequest(clone, pr.number),
+      ...(history.selection ? [tilesRequest(clone, pr.number, history.selection.version)] : []),
+    ]);
+  const counts = useMemo(
+    () => (onTiles ? commentCounts(viewedDocument ?? null, pending.value.comments) : NO_COUNTS),
+    [onTiles, viewedDocument, pending.value.comments],
+  );
+  const commenting = canReview && !showingDraft;
+  const tileHost = useMemo<TileHost>(
+    () => ({
+      draft: showingDraft,
+      commentCounts: counts,
+      comment: commenting
+        ? (tile, item) => {
+            setComposer({
+              kind: "new",
+              ...commentTarget(latestHost.current.viewedDocument ?? null, {
+                kind: "tile",
+                id: tile,
+                ...(item ? { item } : {}),
+              }),
+            });
+            setRevealComments((n) => n + 1);
+          }
+        : undefined,
+      ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
+      reread: () => rereadTiles.current(),
+      ...(layout ? { layout } : {}),
+      fullReview: (tile) =>
+        appURL(
+          `?${withView(withSelection(latestHost.current.search, fullReviewPlace(tile)), "full")}`,
+        ),
+    }),
+    // `ask` reads the pull request, which keys the page; the rest is read
+    // through `latestHost` when called.
+    [showingDraft, counts, commenting, layout],
+  );
   // Why the last retry did not write the details, said until it is dismissed.
   const [headChanged, setHeadChanged] = useState(false);
   const [retryError, setRetryError] = useState("");
@@ -665,7 +741,7 @@ export function LocalReview({
   useEffect(() => {
     const abort = new AbortController();
     setFailed(false);
-    documentRequest(clone, pr.number, undefined, abort.signal)
+    readDocument(clone, pr.number, undefined, abort.signal)
       .then(setDoc)
       .catch(() => {
         if (!abort.signal.aborted) setFailed(true);
@@ -680,7 +756,7 @@ export function LocalReview({
         if (!abort.signal.aborted) setHistoryFailed(true);
       });
     return () => abort.abort();
-  }, [clone, pr.number, latestQuery, revision, retry]);
+  }, [clone, pr.number, latestQuery, revision, retry, tilesPage]);
   const refreshSessions = useRef<(() => void) | null>(null);
   useVisibleInterval(() => refreshSessions.current?.(), 30_000);
   useEffect(() => {
@@ -863,104 +939,7 @@ export function LocalReview({
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
           <div className="ask-main" inert={narrow && questionsOpen ? true : undefined}>
-            {walkMode && doc && !showingDraft ? (
-              // A new version starts afresh, with that version's own progress.
-              <Walkthrough
-                key={doc.review.version}
-                entry={entry}
-                document={doc}
-                mode={walkMode}
-                setMode={setWalk}
-                close={() => setWalk(null)}
-                back={back}
-                patches={patches}
-                changed={changed}
-                ask={ask}
-                refresh={refreshButton}
-                actions={
-                  <>
-                    {fix && fixLabelText ? (
-                      <button
-                        type="button"
-                        className={SECONDARY}
-                        disabled={fixing || fixStarting}
-                        onClick={() => fix()}
-                      >
-                        <SparkleIcon size={14} className="flex-none text-status-critical" />
-                        {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
-                      </button>
-                    ) : null}
-                    {canMerge(entry) ? (
-                      <button type="button" className={SECONDARY} onClick={() => setMerging(true)}>
-                        Merge…
-                      </button>
-                    ) : null}
-                    {canUpdateBranch(entry) ? (
-                      <button type="button" className={SECONDARY} onClick={() => setUpdating(true)}>
-                        Update branch
-                      </button>
-                    ) : null}
-                    {canRerunChecks(entry) ? (
-                      <button
-                        type="button"
-                        className={SECONDARY}
-                        onClick={() => setRerunning(true)}
-                      >
-                        Re-run checks
-                      </button>
-                    ) : null}
-                    {entry.status === "outdated" || generating ? (
-                      <button
-                        type="button"
-                        className={SECONDARY}
-                        disabled={generating || entry.needs_clone}
-                        onClick={generate}
-                      >
-                        {generating ? "Generating review…" : "Regenerate review"}
-                      </button>
-                    ) : null}
-                  </>
-                }
-                notices={
-                  <>
-                    {archivedNotice}
-                    {fixState.error ? (
-                      <Alert>Couldn't start the fix: {fixState.error}</Alert>
-                    ) : null}
-                    {showFix && fixJob ? (
-                      <FixNotice
-                        key={fixJob.id}
-                        job={fixJob}
-                        changed={changed}
-                        dismiss={fixing ? undefined : () => dismissFix(fixJob.id)}
-                      />
-                    ) : null}
-                    <PullRequestDecisionsList
-                      repository={pr.repository}
-                      number={pr.number}
-                      live={running}
-                      revision={`${ended}:${doc.review.version}`}
-                      read={decisions}
-                    />
-                    <LiveSessions sessions={running} Link={ViewerLink} decisions={decisions} />
-                    {gaps}
-                    {retryNotices}
-                    {failed ? (
-                      <Alert>
-                        The latest review could not be read. This saved version remains available.{" "}
-                        <Button onClick={() => setRetry((n) => n + 1)}>Retry review</Button>
-                      </Alert>
-                    ) : null}
-                    {generating ? (
-                      <Notice>
-                        A new review is being generated. This saved version remains available while
-                        it runs.
-                      </Notice>
-                    ) : null}
-                  </>
-                }
-              />
-            ) : (
+            <TileHostContext.Provider value={tileHost}>
               <ReviewViewer
                 document={shownDocument}
                 openSource={(anchor) => {
@@ -1011,6 +990,7 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
+                places={onTiles ? places : undefined}
                 detailsChecks={(shown) =>
                   liveDetailsChecks(
                     shown,
@@ -1219,6 +1199,23 @@ export function LocalReview({
                 )}
                 notices={
                   <>
+                    {chosenTiles && tilesMissing(shownDocument) ? (
+                      <Notice
+                        action={
+                          <a
+                            href={appURL(`?${withView(url.search, "full")}`)}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              navigate(event.currentTarget.href);
+                            }}
+                          >
+                            Always use the full review here
+                          </a>
+                        }
+                      >
+                        This review can't be shown as tiles, so this is its full review.
+                      </Notice>
+                    ) : null}
                     {archivedNotice}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
@@ -1358,7 +1355,7 @@ export function LocalReview({
                   showingDraft ? (doc ? undefined : (path: string) => factsPatches(path)) : patches
                 }
               />
-            )}
+            </TileHostContext.Provider>
           </div>
           {questionsOpen && earlier ? (
             <>
@@ -1371,7 +1368,7 @@ export function LocalReview({
                 conversations={earlier}
                 // Citations are drawn from the version on screen, which is an
                 // older one while the viewer reads it.
-                document={showingDraft ? null : !walkMode && viewedDocument ? viewedDocument : doc}
+                document={showingDraft ? null : (viewedDocument ?? doc)}
                 patches={patches}
                 close={closeQuestions}
               />
@@ -1444,6 +1441,21 @@ export function LocalReview({
     </ReviewBoundary>
   );
 }
+
+/** The document with its failed sections, and their Change tiles, marked as
+ *  being written while a retry of their details runs. */
+function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
+  const next = {
+    ...doc,
+    sections: doc.sections.map((s) =>
+      ids.includes(s.id) ? { ...s, details: "pending" as const } : s,
+    ),
+  };
+  const tiles = tileDocOf(doc);
+  return tiles ? withTiles(next, withPendingChanges(tiles, ids)) : next;
+}
+
+const NO_COUNTS: ReadonlyMap<string, number> = new Map();
 
 class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   override state = { failed: false };
@@ -1621,7 +1633,7 @@ export function ReviewJob({
           {job.state === "queued" ? "New version queued" : "Generating a new version"}
           {/* The title already says it generates; another phase is news. */}
           {job.state === "running" && job.phase && job.phase !== "generating" ? (
-            <span className="font-normal text-tertiary"> · {job.phase}</span>
+            <span className="font-normal text-tertiary"> · {phases[job.phase] ?? job.phase}</span>
           ) : null}
         </p>
         {started || saved ? (

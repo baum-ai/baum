@@ -1022,6 +1022,7 @@ function ReviewsSection({
           defaults={defaults}
           onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
         />
+        <TileReviewsRow />
       </div>
       <p className="settings-footnote">
         Changes save as you make them and apply to the next review in every repository.
@@ -1998,6 +1999,66 @@ export function SettingsPage({
 
 /** The most jobs the daemon runs at once (repos.MaxJobConcurrency). */
 const MAX_JOB_CONCURRENCY = 4;
+
+/** The labs switch that arranges new reviews as tiles: one more model call
+ *  after a review is written chooses which tiles lead. Off by default. */
+function TileReviewsRow() {
+  // Which page an arranged version opens on follows the switch.
+  const { refresh } = usePreferences();
+  const [on, setOn] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    request<{ tile_reviews?: boolean }>("api/settings/labs").then(
+      (labs) => setOn(labs.tile_reviews ?? false),
+      (e) => setError(errorText(e)),
+    );
+  }, []);
+  async function choose(next: boolean) {
+    if (saving) return;
+    const before = on;
+    setOn(next);
+    setSaving(true);
+    setError("");
+    try {
+      const answer = await request<{ tile_reviews: boolean }>(
+        "api/settings/labs",
+        { tile_reviews: next },
+        "PUT",
+      );
+      setOn(answer.tile_reviews);
+      refresh();
+    } catch (e) {
+      setOn(before);
+      setError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <SettingRow
+      label="Generate reviews as tiles (experimental)"
+      htmlFor="review-tiles"
+      detail={
+        error ? (
+          <Alert>{error}</Alert>
+        ) : (
+          "After a review is written, one more short call arranges its tile page: which tiles lead and how large they are."
+        )
+      }
+    >
+      <input
+        id="review-tiles"
+        type="checkbox"
+        role="switch"
+        className="local-switch"
+        disabled={on === null}
+        checked={on ?? false}
+        onChange={(event) => void choose(event.target.checked)}
+      />
+    </SettingRow>
+  );
+}
 
 /** How many reviews, fixes and feature builds run at once; questions to a
  *  review's agent run beside them. The daemon applies a change at once. */
@@ -3361,6 +3422,24 @@ function GeneralSection() {
             <option value="system">System</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
+          </select>
+        </SettingRow>
+        <SettingRow
+          label="Review page"
+          htmlFor="review-page"
+          detail="How a pull request's or a group's review opens. Tiles shows what matters on one screen, each part a tile to open."
+        >
+          <select
+            id="review-page"
+            disabled={!ready}
+            className="local-field settings-select"
+            value={preferences.review_page}
+            onChange={(event) =>
+              update({ review_page: event.target.value as typeof preferences.review_page })
+            }
+          >
+            <option value="full">Full review</option>
+            <option value="tiles">Tiles (preview)</option>
           </select>
         </SettingRow>
         <SettingRow

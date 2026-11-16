@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/tileview"
+	"github.com/baum-ai/baum/tiles"
 )
 
 // A page of GET /api/jobs?limit=&before= holds defaultJobsPage jobs unless
@@ -20,6 +23,7 @@ const (
 
 func (q *Queue) Handler() http.Handler {
 	mux := http.NewServeMux()
+	drafts := &draftTiles{}
 	respond := func(w http.ResponseWriter, v any) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(v)
@@ -203,10 +207,31 @@ func (q *Queue) Handler() http.Handler {
 	// draft serves a running staged review's latest draft: masked and
 	// completed like a version, with the sections still being written
 	// pending, and never a version. A job without one, or ended, is 404.
+	// Only the exact value tiles=1 answers as GET /api/tiles does, plus the
+	// draft number; any other value, or none, is the plain draft. The tile view
+	// is converted once per draft and kept until the job ends, since the app
+	// polls it while a review generates.
 	mux.HandleFunc("GET /api/jobs/{id}/draft", func(w http.ResponseWriter, r *http.Request) {
-		draft, revision, ok := q.Draft(r.PathValue("id"))
+		id := r.PathValue("id")
+		draft, composition, revision, ok := q.DraftLayout(id)
 		if !ok {
+			drafts.drop(id)
 			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		if r.URL.Query().Get("tiles") == "1" {
+			// The draft's tile view: a missing context is still being
+			// written, so it is a pending context tile. A review whose tiles
+			// are arranged is laid out by the template until the
+			// composition lands, then by the composition.
+			job, _ := q.Find(id)
+			body, err := drafts.get(id, revision, draft, composition, q.layoutOf(job))
+			if err != nil {
+				http.Error(w, http.StatusText(500), 500)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
 			return
 		}
 		respond(w, map[string]any{"draft": revision, "document": json.RawMessage(draft)})
@@ -247,4 +272,58 @@ func (q *Queue) Handler() http.Handler {
 		respond(w, map[string]any{"entries": lines, "next": next, "more": more, "done": job.State != "queued" && job.State != "running"})
 	})
 	return mux
+}
+
+// draftTiles keeps the encoded tile view of each job's latest draft, by the
+// draft's count, so an unchanged draft is not converted on every poll. A job's
+// entry goes when a read finds the job has no draft (it ended).
+type draftTiles struct {
+	mu   sync.Mutex
+	kept map[string]draftTileView
+}
+
+type draftTileView struct {
+	revision    int
+	composition string
+	layout      string
+	body        []byte
+	// frames are registered again whenever the kept view is served.
+	frames tileview.Frames
+}
+
+// get returns the encoded tile view of the draft, composed with composition
+// when given and the pull request's own layout, so a regeneration in
+// progress does not move the page back to the generated layout. The kept
+// view is that of the same draft count, composition and layout.
+func (d *draftTiles) get(id string, revision int, draft, composition []byte, layout tileview.Layout) ([]byte, error) {
+	key, layoutKey := tileview.Key(composition), tileview.LayoutKey(layout)
+	d.mu.Lock()
+	kept, ok := d.kept[id]
+	d.mu.Unlock()
+	if ok && kept.revision == revision && kept.composition == key && kept.layout == layoutKey {
+		kept.frames.Register()
+		return kept.body, nil
+	}
+	built := tileview.BuildWith(draft, composition, layout, tiles.Options{Draft: true})
+	full, err := json.Marshal(struct {
+		Draft int `json:"draft"`
+		tileview.Response
+	}{revision, built})
+	if err != nil {
+		return nil, err
+	}
+	full = append(full, '\n')
+	d.mu.Lock()
+	if d.kept == nil {
+		d.kept = map[string]draftTileView{}
+	}
+	d.kept[id] = draftTileView{revision, key, layoutKey, full, built.Frames}
+	d.mu.Unlock()
+	return full, nil
+}
+
+func (d *draftTiles) drop(id string) {
+	d.mu.Lock()
+	delete(d.kept, id)
+	d.mu.Unlock()
 }

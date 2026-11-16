@@ -22,7 +22,8 @@ import (
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/sessions"
 )
 
@@ -139,6 +140,11 @@ type LocalAPI struct {
 	// Version is this baum's version, named in the "Report a problem" link
 	// that /api/diagnostics returns.
 	Version string
+	// Layouts keeps each person's own tile layout of a pull request, which
+	// the tile route applies and GET and POST /api/tiles/layout read and
+	// change. Without it no layout applies and the layout routes report the
+	// capability unavailable.
+	Layouts *tilelayout.Service
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -369,6 +375,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
+	mux.HandleFunc("GET /api/settings/labs", a.getLabs)
+	mux.HandleFunc("PUT /api/settings/labs", a.putLabs)
 	// Custom prompts; a run resolves them when it starts, so no change
 	// notification is needed.
 	mux.HandleFunc("GET /api/settings/prompts", func(w http.ResponseWriter, r *http.Request) {
@@ -514,39 +522,19 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		defer func() { <-cache.requests }()
-		c, key, n, ok := a.selector(w, r)
+		read, ok := a.selectReview(w, r)
 		if !ok {
-			return
-		}
-		s, err := store.Open(c.CommonDir, "", false)
-		if err != nil {
-			apiError(w, err)
 			return
 		}
 		// The store revision names the document without reading it, so a
 		// kept viewer answers without the document being read or hashed.
-		number, revision, err := s.Revision(r.Context(), key, n)
-		if err != nil {
-			apiError(w, err)
-			return
-		}
-		viewer, release, found, err := cache.cached(r.Context(), revisionKey(c, s, key, number, revision))
+		viewer, release, found, err := cache.cached(r.Context(), read.revisionKey())
 		if !found && err == nil {
-			var version store.Version
-			if n == 0 {
-				version, err = s.Latest(r.Context(), key)
-			} else {
-				version, err = s.Get(r.Context(), key, n)
-			}
-			if err != nil {
-				apiError(w, err)
+			version, ok := read.version(r.Context(), w)
+			if !ok {
 				return
 			}
-			if len(version.Document) > viewserver.MaxDocumentBytes {
-				http.Error(w, "stored document too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			viewer, release, err = cache.get(r.Context(), c, version.Document, revisionKey(c, s, key, version.Metadata.Version, version.Revision))
+			viewer, release, err = cache.get(r.Context(), read.clone, version.Document, revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision))
 		}
 		if err != nil {
 			if r.Context().Err() == nil {
@@ -570,6 +558,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 		viewer.Mux().ServeHTTP(w, routed)
 	}
 	mux.HandleFunc("GET /api/document", document)
+	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
+	mux.HandleFunc("GET /api/tile-library", tileLibrary)
+	a.layoutRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)

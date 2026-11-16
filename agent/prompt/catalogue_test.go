@@ -47,6 +47,7 @@ var baseline = map[string]string{
 	"fix 13":              "dd115a648650fa176de95287b3997141ea7fc68c798cf78519d2b30b6c06ce84",
 	"fix 14":              "741d2786e9150947a1ef445a7f5b7a6c28984adc0584bfc338f95fc03ac9ecc2",
 	"fix 15":              "2b4db4dd265428b3a70d920ebc12441f681457c9afa20559799f21d662d729a1",
+	"tiles compose":       "4f78d9c64a3b955068599bbdef4180cdbabbf4c5e3042fe3af9f5887103345e3",
 }
 
 func sha(s string) string {
@@ -69,6 +70,14 @@ func TestZeroValueMatchesPreviousOutput(t *testing.T) {
 			s, err := prompt.StagedPrompts{Overrides: o}.StagedInstructions(ctx, b)
 			if err != nil || s.Version != prompt.StagedVersion || s.Digest != baseline[b+" staged"] {
 				t.Errorf("%s staged: %v %q %s", b, err, s.Version, s.Digest)
+			}
+		}
+	}
+	for _, b := range backends {
+		for _, o := range []prompt.Overrides{nil, {}, {prompt.IDReviewTilesCompose: "", prompt.IDReviewStagedShared: "x"}} {
+			p, err := prompt.TilesPrompts{Overrides: o}.ComposeInstructions(ctx, b)
+			if err != nil || p.Version != prompt.TilesVersion || p.Digest != baseline["tiles compose"] || sha(p.Body) != p.Digest {
+				t.Errorf("%s tiles compose: %v %q %s", b, err, p.Version, p.Digest)
 			}
 		}
 	}
@@ -209,7 +218,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-tiles-compose", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -246,6 +255,7 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
+		prompt.IDReviewTilesCompose:  {"review-tiles-compose.untrusted-inventory"},
 		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,
@@ -354,5 +364,35 @@ func TestNewExtractorWith(t *testing.T) {
 	}
 	if other := decisions.NewExtractorWith("Another."); other.PromptVersion() == custom.PromptVersion() {
 		t.Error("different texts, same version")
+	}
+}
+
+// The composition prompt is listed, since a review job with tile reviews on
+// uses it, with its built-in text as the default; a text for it is validated
+// and checked for its safety rule.
+func TestTilesComposeIsListed(t *testing.T) {
+	e, ok := prompt.Lookup(prompt.IDReviewTilesCompose)
+	if !ok || e.Group != prompt.GroupReviews || e.Default != readFile(t, "review-tiles-compose-public-v1.md") || e.DefaultVersion != prompt.TilesVersion {
+		t.Errorf("the composition prompt's entry %v %+v", ok, e.Title)
+	}
+	builtin := readFile(t, "review-tiles-compose-public-v1.md")
+	if err := prompt.Validate(prompt.IDReviewTilesCompose, builtin); err != nil {
+		t.Errorf("its own default is invalid: %v", err)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, builtin); len(got) != 0 {
+		t.Errorf("the default misses %v", got)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, "Arrange."); len(got) != 1 || got[0] != "review-tiles-compose.untrusted-inventory" {
+		t.Errorf("missing %v", got)
+	}
+}
+
+func TestTilesComposeOverride(t *testing.T) {
+	p, err := prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewTilesCompose: "Arrange my way."}}.ComposeInstructions(context.Background(), agent.BackendCodex)
+	if err != nil || p.Body != "Arrange my way.\n" || p.Version != prompt.TilesVersion+"+custom" || p.Digest != sha(p.Body) {
+		t.Errorf("%v %q %q", err, p.Version, p.Body)
+	}
+	if err := prompt.Validate(prompt.IDReviewTilesCompose, "## Submitting\n"); err == nil {
+		t.Error("a composition prompt with a Submitting heading was accepted")
 	}
 }

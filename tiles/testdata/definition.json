@@ -1,0 +1,37 @@
+{
+  "title": "API surface",
+  "name": "api_surface",
+  "use_when": "When the pull request adds, removes or changes an HTTP route (not internal functions).",
+  "fill": "List each changed route.\nCite the hunk that registers it, with \"lines\" covering the registration.",
+  "kit": 1,
+  "sizes": ["half", "full"],
+  "data_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["summary", "routes"],
+    "properties": {
+      "summary": { "$ref": "#\/$defs\/markdown" },
+      "routes": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "path", "cites"],
+          "properties": {
+            "method": { "enum": ["GET", "POST", "PUT", "DELETE"] },
+            "path": { "type": "string", "maxLength": 200, "description": "The route’s pattern, café   style." },
+            "breaking": { "type": ["boolean", "null"] },
+            "weight": { "type": "number", "minimum": 0.5, "maximum": 1E3 },
+            "cites": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/citation" } }
+          }
+        }
+      }
+    }
+  },
+  "source": {
+    "format": "html",
+    "html": "<style>.route { font: var(--font-mono); }</style>\n<script>\nbaum.tile({\n  glance: (v) => baum.html`<p class=\"kit-lede\">${v.data.routes.length} routes</p>`,\n  detail: (v) => baum.html`${baum.md(v.data.summary)}`,\n});\n</script>\n"
+  },
+  "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+}

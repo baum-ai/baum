@@ -304,11 +304,11 @@ func TestFocusIsThePagesOwn(t *testing.T) {
 	if text, _ := data(t, s, token, "focus", nil); text != "none" {
 		t.Fatalf("no focus: %q", text)
 	}
-	if err := s.Registry.SetPage(id, PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12, Focus: json.RawMessage(`{"section":"s2","stop":3,"overview":false,"anchors":["h_1"]}`)}); err != nil {
+	if err := s.Registry.SetPage(id, PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12, Focus: json.RawMessage(`{"section":"s2","overview":false,"anchors":["h_1"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	text, _ := data(t, s, token, "focus", nil)
-	if text != `{"page":"pull_request","focus":{"section":"s2","stop":3,"overview":false,"anchors":["h_1"]}}` {
+	if text != `{"page":"pull_request","focus":{"section":"s2","overview":false,"anchors":["h_1"]}}` {
 		t.Fatalf("focus %s", text)
 	}
 	// An action's page is its pull request, with no focus.
@@ -509,7 +509,7 @@ func TestActionReaderFiltersAllRepositoryRoutes(t *testing.T) {
 func TestActionRouteTableCoversTheToolsAndBindsClones(t *testing.T) {
 	s, d := fakeServer(t)
 	// A clone of another repository is refused on every clone route.
-	for _, path := range []string{"/api/versions", "/api/document", "/api/patch", "/api/commits", "/api/sessions", "/api/sessions/s1", "/api/facts", "/api/facts/patch", "/api/facts/commits", "/api/facts/sessions", "/api/facts/sessions/s1"} {
+	for _, path := range []string{"/api/versions", "/api/document", "/api/tiles", "/api/patch", "/api/commits", "/api/sessions", "/api/sessions/s1", "/api/facts", "/api/facts/patch", "/api/facts/commits", "/api/facts/sessions", "/api/facts/sessions/s1"} {
 		for clone, allowed := range map[string]bool{"c-web": true, "c-evil": false, "nope": false} {
 			reader := s.reader.within([]string{"/api"}, "acme/web")
 			d.reset()

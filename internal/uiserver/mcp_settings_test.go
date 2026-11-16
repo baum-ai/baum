@@ -218,7 +218,7 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 	var appearance map[string]any
 	_ = json.Unmarshal(f.route(t, "/api/settings/appearance"), &appearance)
 	text := call(chat, "settings_general", nil)
-	for _, key := range []string{"theme", "key_hints", "page_modifier"} {
+	for _, key := range []string{"theme", "key_hints", "page_modifier", "review_page"} {
 		readSameJSON(t, "settings_general "+key, readField(t, text, key), mustJSON(t, appearance[key]))
 	}
 	if f.fetches.Load() != 0 || !strings.Contains(text, `"provider":"claude"`) {

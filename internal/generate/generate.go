@@ -39,6 +39,8 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // Category classifies why a run failed.
@@ -133,7 +135,11 @@ type Options struct {
 	// (CompleteStaged) but with the sections still being written pending.
 	// It is never a version. Calls come one at a time, from a goroutine of
 	// the run, and the last one returns before Run does.
-	OnDraft func(document []byte)
+	OnDraft func(Draft)
+	// Tiles, for a staged run of one pull request that does not continue a
+	// version, arranges the review's tiles after its analysis (see Tiles).
+	// Nil arranges nothing and makes no call beyond the review's.
+	Tiles *Tiles
 	// Continue, for a staged run, is the saved version to complete instead
 	// of writing a new one: the latest version, some of whose sections
 	// failed. Only the details of those sections are written again
@@ -141,7 +147,11 @@ type Options struct {
 	// base, and the result is the same version with its metadata, model,
 	// prompt version and generation time. Request.Previous must be the
 	// version before it, which it was reconciled with.
-	Continue  *store.Version
+	Continue *store.Version
+	// NoReuse, for a staged run, writes every section's details instead of
+	// reusing the previous version's (agent.StagedRun.NoReuse). Only tools
+	// that measure the prompts set it.
+	NoReuse   bool
 	Validator *review.DocumentValidator
 	Redactor  *bundle.Redactor
 	// Progress receives one line per step; nil discards them. The document is
@@ -184,6 +194,30 @@ type Result struct {
 	// without their details, and ContextFailed says it has no context.
 	FailedSections []string
 	ContextFailed  bool
+	// OutlineRepairs and OutlineRejections, for a staged run, count the
+	// outline stage's validation repairs and the replies its harness
+	// rejected against the schema, which tile reviews widen.
+	OutlineRepairs, OutlineRejections int
+	// Composition, for a run with Tiles, is the composition to store with
+	// the version (store.Version.Composition) and CompositionGenerator where
+	// it came from; nil when none could be made. Compose is what the compose
+	// stage did, nil when it did not run.
+	Composition          json.RawMessage
+	CompositionGenerator *tiles.Generator
+	Compose              *ComposeReport
+}
+
+// Draft is a staged run's review so far (Options.OnDraft).
+type Draft struct {
+	// Document is the review so far, masked and completed as the published
+	// document is, with the sections still being written pending.
+	Document []byte
+	// Composition lays out the draft's tiles. For a run with Tiles it is the
+	// change kind's template (agent.TemplateComposition) while the review is
+	// written, then, in one last draft of the finished review, the
+	// composition the run stores. A draft of a continued version carries
+	// that version's composition. Nil otherwise.
+	Composition []byte
 }
 
 // Run executes the pipeline. The run directory is removed on every path
@@ -339,6 +373,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		runCtx, cancel = context.WithTimeout(ctx, o.Budgets.WallClock)
 	}
 	defer cancel()
+	// With Tiles, the analysis runs exactly as without it, with the whole
+	// wall clock and budgets; the composition follows it (composeTiles).
+	composing := staged && o.Tiles != nil && o.Continue == nil
 	backend := o.Backend
 	if o.PassTimeout > 0 {
 		backend = passBounded{Backend: backend, timeout: o.PassTimeout}
@@ -359,9 +396,18 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	var outcome agent.Outcome
 	var document []byte
 	var genErr, redactErr error
+	// analysis is the tile analysis of a run with Tiles; tileEntries the
+	// library types it offers.
+	var analysis *agent.TilesOutcome
+	var tileEntries []library.Entry
+	if composing {
+		if tileEntries = o.Tiles.Library; tileEntries == nil {
+			tileEntries = library.All()
+		}
+	}
 	closed := 0
 	if staged {
-		continued.Run, continued.Prompts = run, stagedPrompts
+		continued.Run, continued.Prompts, continued.NoReuse = run, stagedPrompts, o.NoReuse
 		draftModel := o.Model
 		if o.Continue != nil {
 			draftModel = o.Continue.Metadata.Model
@@ -371,21 +417,33 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		}
 		var stopDrafts func()
 		if o.OnDraft != nil {
-			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(draft []byte) []byte {
+			continued.Progress, stopDrafts = drafts(runCtx, o.OnDraft, func(p agent.StagedProgress) (Draft, bool) {
 				var scratch agent.Outcome
-				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, draft, &b, checkout, &scratch)
+				masked, closed, err := agent.RedactOutput(redactCtx, validator, redactor, p.Document, &b, checkout, &scratch)
 				if err != nil || closed > 0 {
-					return nil
+					return Draft{}, false
 				}
 				completed, findings := validator.CompleteStaged(masked, &b, runDir, draftModel, promptVersion, now())
 				if findings != "" {
-					return nil
+					return Draft{}, false
 				}
-				return completed
+				d := Draft{Document: completed}
+				switch {
+				case composing:
+					d.Composition = provisional(completed, o.Tiles.Preferences.Pins, o.Tiles.Previous, draftLibrary(p.Tiles, tileEntries))
+				case o.Continue != nil && len(o.Continue.Composition) > 0:
+					d.Composition = o.Continue.Composition
+				}
+				return d, true
 			})
+		}
+		if composing {
+			continued.Tiles = o.Tiles.staged()
 		}
 		var stages agent.StagedOutcome
 		stages, document, genErr = generator.StagedReview(runCtx, continued)
+		analysis = stages.Tiles
+		result.OutlineRepairs, result.OutlineRejections = stages.Outline.ValidationRepairs, stages.Outline.StructuredOutputRejections
 		if stopDrafts != nil {
 			stopDrafts()
 		}
@@ -450,6 +508,35 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		outcome.Reason, outcome.Findings = agent.ReasonValidationRejected, strings.Join(stored, "\n")
 		result.Outcome = outcome
 		return result, rejection(fail, outcome.Findings)
+	}
+	if composing {
+		// The review is final: only its layout is left to choose. What the
+		// stage spends counts as the run's.
+		composition, generator, report, composeErr := composeTiles(ctx, o, completed, outcome, redactor, analysis)
+		// The analysis's model prices the run and names the version.
+		model := outcome.Model
+		outcome.Add(report.Outcome)
+		if model != "" {
+			outcome.Model = model
+		}
+		result.Outcome, result.Compose = outcome, report
+		// Only a cancellation stops the run here: the composition is bounded
+		// by its own limit, not the run's deadline, which may have passed.
+		if composeErr != nil || errors.Is(ctx.Err(), context.Canceled) {
+			return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
+		}
+		result.Composition, result.CompositionGenerator = composition, generator
+		switch {
+		case report.Problem != "":
+			progress("%s; the review is published without a composition", report.Problem)
+		case report.Fallback:
+			progress("tiles laid out by the template: %s", report.FallbackReason)
+		default:
+			progress("tiles arranged in %s", report.Elapsed.Round(time.Second))
+		}
+		if o.OnDraft != nil {
+			o.OnDraft(Draft{Document: completed, Composition: composition})
+		}
 	}
 	var stored struct {
 		Schema string `json:"schema"`

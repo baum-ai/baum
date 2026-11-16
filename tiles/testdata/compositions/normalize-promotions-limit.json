@@ -1,0 +1,413 @@
+{
+  "fixes": [
+    "the composition has more than 3 promotions; the rest are left out",
+    "the composition has more than 3 promotions; the rest are left out",
+    "the layout does not place tile \"overview\"; it is added in the default order",
+    "the layout does not place tile \"risks\"; it is added in the default order",
+    "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
+    "the layout does not place tile \"sec_part_3\"; it is added in the default order",
+    "the layout does not place tile \"sec_part_2\"; it is added in the default order",
+    "the layout does not place tile \"sec_part_6\"; it is added in the default order",
+    "the layout does not place tile \"sec_part_5\"; it is added in the default order",
+    "the layout does not place tile \"sec_config_flag\"; it is added in the default order",
+    "the layout does not place tile \"sec_part_1\"; it is added in the default order",
+    "the layout does not place tile \"sec_part_0\"; it is added in the default order",
+    "the layout does not place tile \"sec_part_4\"; it is added in the default order",
+    "the layout does not place tile \"evidence\"; it is added in the default order",
+    "the layout does not place tile \"media\"; it is added in the default order",
+    "the layout does not place tile \"intent\"; it is added in the default order",
+    "the layout does not place tile \"context\"; it is added in the default order",
+    "the layout does not place tile \"decisions\"; it is added in the default order",
+    "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "the layout does not place tile \"table_part_0\"; it is added in the default order",
+    "the layout does not place tile \"table_part_1\"; it is added in the default order",
+    "the layout does not place tile \"table_part_2\"; it is added in the default order",
+    "tile \"table_part_2\" ended a row with empty units; it grows to fill the row"
+  ],
+  "composition": {
+    "schema": "baum.composition/1",
+    "layout": {
+      "entries": [
+        {
+          "tile": "overview",
+          "size": "half"
+        },
+        {
+          "tile": "risks",
+          "size": "half"
+        },
+        {
+          "tile": "sec_retry_policy",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_part_3",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_part_2",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_part_6",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_part_5",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_config_flag",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_part_1",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_part_0",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_part_4",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "evidence",
+          "size": "third"
+        },
+        {
+          "tile": "media",
+          "size": "third"
+        },
+        {
+          "tile": "intent",
+          "size": "third"
+        },
+        {
+          "tile": "context",
+          "size": "third"
+        },
+        {
+          "tile": "decisions",
+          "size": "third"
+        },
+        {
+          "tile": "everything_else",
+          "size": "third"
+        },
+        {
+          "tile": "table_part_0",
+          "size": "half"
+        },
+        {
+          "tile": "table_part_1",
+          "size": "half"
+        },
+        {
+          "tile": "table_part_2",
+          "size": "full"
+        }
+      ]
+    },
+    "promotions": [
+      {
+        "id": "table_part_0",
+        "change": "sec_part_0",
+        "block": 0,
+        "digest": "sha256:f73f61b5dc0511eb2c8078db3287a03c981255e4d2a527b0d3d43f8cdbff0592",
+        "title": "Part 0"
+      },
+      {
+        "id": "table_part_1",
+        "change": "sec_part_1",
+        "block": 0,
+        "digest": "sha256:99efbb067da7b335fc6a14f0acb987a9fcdcb4fb41a8f8616f0693cc9efeb822",
+        "title": "Part 1"
+      },
+      {
+        "id": "table_part_2",
+        "change": "sec_part_2",
+        "block": 0,
+        "digest": "sha256:70d1e13ae5897e327535cbabd0c827c4473f0ef454f67c414661cdaaeb07b6c0",
+        "title": "Part 2"
+      }
+    ]
+  },
+  "layout": {
+    "entries": [
+      {
+        "tile": "overview",
+        "size": "half"
+      },
+      {
+        "tile": "risks",
+        "size": "half"
+      },
+      {
+        "tile": "sec_retry_policy",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_part_3",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_part_2",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_part_6",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_part_5",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_config_flag",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_part_1",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_part_0",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_part_4",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "evidence",
+        "size": "third"
+      },
+      {
+        "tile": "media",
+        "size": "third"
+      },
+      {
+        "tile": "intent",
+        "size": "third"
+      },
+      {
+        "tile": "context",
+        "size": "third"
+      },
+      {
+        "tile": "decisions",
+        "size": "third"
+      },
+      {
+        "tile": "everything_else",
+        "size": "third"
+      },
+      {
+        "tile": "table_part_0",
+        "size": "half"
+      },
+      {
+        "tile": "table_part_1",
+        "size": "half"
+      },
+      {
+        "tile": "table_part_2",
+        "size": "full"
+      }
+    ],
+    "groups": [
+      {
+        "id": "changes",
+        "title": "Changes",
+        "collapse_after": 6
+      }
+    ],
+    "landing": 8
+  },
+  "tiles": [
+    {
+      "id": "overview",
+      "type": "overview",
+      "title": "Retry failed deliveries with backoff",
+      "state": "ready"
+    },
+    {
+      "id": "risks",
+      "type": "risks",
+      "title": "Risks",
+      "state": "ready"
+    },
+    {
+      "id": "sec_retry_policy",
+      "type": "change",
+      "title": "Retry failed deliveries",
+      "state": "ready",
+      "covers": [
+        "h_000000000001",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "sec_part_3",
+      "type": "change",
+      "title": "Part 3 of the worker",
+      "state": "ready",
+      "covers": [
+        "h_000000000103"
+      ]
+    },
+    {
+      "id": "sec_part_2",
+      "type": "change",
+      "title": "Part 2 of the worker",
+      "state": "ready",
+      "covers": [
+        "h_000000000102"
+      ]
+    },
+    {
+      "id": "sec_part_6",
+      "type": "change",
+      "title": "Part 6 of the worker",
+      "state": "ready",
+      "covers": [
+        "h_000000000106"
+      ]
+    },
+    {
+      "id": "sec_part_5",
+      "type": "change",
+      "title": "Part 5 of the worker",
+      "state": "ready",
+      "covers": [
+        "h_000000000105"
+      ]
+    },
+    {
+      "id": "sec_config_flag",
+      "type": "change",
+      "title": "Add a flag that turns retries off",
+      "state": "ready",
+      "covers": [
+        "h_000000000003",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "sec_part_1",
+      "type": "change",
+      "title": "Part 1 of the worker",
+      "state": "ready",
+      "covers": [
+        "h_000000000101"
+      ]
+    },
+    {
+      "id": "sec_part_0",
+      "type": "change",
+      "title": "Part 0 of the worker",
+      "state": "ready",
+      "covers": [
+        "h_000000000100"
+      ]
+    },
+    {
+      "id": "sec_part_4",
+      "type": "change",
+      "title": "Part 4 of the worker",
+      "state": "ready",
+      "covers": [
+        "h_000000000104"
+      ]
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
+      "state": "ready"
+    },
+    {
+      "id": "intent",
+      "type": "intent",
+      "title": "Intent",
+      "state": "ready"
+    },
+    {
+      "id": "context",
+      "type": "context",
+      "title": "Context",
+      "state": "ready"
+    },
+    {
+      "id": "decisions",
+      "type": "decisions",
+      "title": "Decisions",
+      "state": "ready"
+    },
+    {
+      "id": "everything_else",
+      "type": "everything_else",
+      "title": "Everything else",
+      "state": "ready",
+      "covers": [
+        "h_000000000004",
+        "h_000000000005",
+        "h_000000000006",
+        "h_000000000007"
+      ]
+    },
+    {
+      "id": "table_part_0",
+      "type": "table",
+      "title": "Part 0",
+      "state": "ready",
+      "covers": [
+        "h_000000000100"
+      ]
+    },
+    {
+      "id": "table_part_1",
+      "type": "table",
+      "title": "Part 1",
+      "state": "ready",
+      "covers": [
+        "h_000000000101"
+      ]
+    },
+    {
+      "id": "table_part_2",
+      "type": "table",
+      "title": "Part 2",
+      "state": "ready",
+      "covers": [
+        "h_000000000102"
+      ]
+    }
+  ]
+}

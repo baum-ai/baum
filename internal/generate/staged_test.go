@@ -50,10 +50,13 @@ func TestStagedRunPublishesWithDrafts(t *testing.T) {
 	o := stagedOptions(t, f)
 	var mu sync.Mutex
 	var drafts [][]byte
-	o.OnDraft = func(document []byte) {
+	o.OnDraft = func(d generate.Draft) {
 		mu.Lock()
 		defer mu.Unlock()
-		drafts = append(drafts, document)
+		if d.Composition != nil {
+			t.Error("a draft without tiles carries a composition")
+		}
+		drafts = append(drafts, d.Document)
 	}
 	result, err := generate.Run(context.Background(), o)
 	if err != nil {
@@ -225,10 +228,10 @@ func TestStagedDraftsAreMasked(t *testing.T) {
 		o := stagedOptions(t, f)
 		var mu sync.Mutex
 		var drafts [][]byte
-		o.OnDraft = func(document []byte) {
+		o.OnDraft = func(d generate.Draft) {
 			mu.Lock()
 			defer mu.Unlock()
-			drafts = append(drafts, document)
+			drafts = append(drafts, d.Document)
 		}
 		_, err := generate.Run(context.Background(), o)
 		return drafts, err

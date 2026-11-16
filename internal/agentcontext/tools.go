@@ -43,6 +43,11 @@ type Tool struct {
 	// default, false, is a read-only tool; tools/list reports it in the tool's
 	// annotations so a client can approve read-only tools unasked.
 	Proposes bool
+	// Edits marks a tool that changes state at once, without a proposal:
+	// only the layout tools, which change the person's own tile layout of the
+	// page they have open (layouttools.go). Its annotations say it is not
+	// read-only and destroys nothing.
+	Edits bool
 	// Call runs the tool. Its text, or its error's message, goes back to the
 	// agent through the envelope: masked, cut and fenced.
 	Call func(ctx context.Context, c CallContext, args json.RawMessage) (string, error)
@@ -75,6 +80,10 @@ type CallContext struct {
 	// Page is the consumer's page; HasPage is false until one is set.
 	Page    PageContext
 	HasPage bool
+	// Turn is the page the consumer's current turn was sent from; HasTurn is
+	// false when the host recorded none.
+	Turn    PageContext
+	HasTurn bool
 	// Reader reads the routes the tool declared (Tool.Reads); an action's
 	// reads only its repository's, through actionRoutes.
 	Reader *Reader

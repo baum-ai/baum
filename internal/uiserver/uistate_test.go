@@ -34,8 +34,8 @@ func TestUIStateSurvivesNewOriginBehindSecurityBoundary(t *testing.T) {
 		return server
 	}
 	s := start()
-	body := `{"revision":0,"mutation_id":"mutation-00000001:1","value":{"seen":["one"],"notes":{"one":"draft"},"note":"overall"}}`
-	route := "api/ui-state/walkthrough?key=acme%2Fdemo%237%40v1"
+	body := `{"revision":0,"mutation_id":"mutation-00000001:1","value":{"comments":[],"note":"draft"}}`
+	route := "api/ui-state/review?key=acme%2Fdemo%237"
 	if w := request(t, s, "PUT", "/"+route, "", s.origin, "application/json", "Bearer "+s.launch, body); w.Code != 200 {
 		t.Fatalf("write %d %s", w.Code, w.Body.String())
 	}
@@ -53,7 +53,7 @@ func TestUIStateSurvivesNewOriginBehindSecurityBoundary(t *testing.T) {
 	}
 	reopened := start()
 	got := request(t, reopened, "GET", "/"+route, "", "", "", "Bearer "+reopened.launch, "")
-	if got.Code != 200 || !strings.Contains(got.Body.String(), `"one":"draft"`) || !strings.Contains(got.Body.String(), `"revision":1`) {
+	if got.Code != 200 || !strings.Contains(got.Body.String(), `"note":"draft"`) || !strings.Contains(got.Body.String(), `"revision":1`) {
 		t.Fatalf("reopen %d %s", got.Code, got.Body.String())
 	}
 	exchange := request(t, reopened, "POST", "/api/auth/exchange", "", reopened.origin, "application/json", "", fmt.Sprintf(`{"token":%q}`, reopened.launch))

@@ -1,0 +1,1089 @@
+{
+  "kit": 1,
+  "description": "The baum tile kit, version 1: the API, elements, classes and tokens a custom tile may use. Frozen and additive only: names are added, never removed, renamed or changed in meaning.",
+  "runtime": {
+    "scripts": [
+      "elements.js",
+      "markdown.js",
+      "bootstrap.js"
+    ],
+    "styles": [
+      "kit.css"
+    ],
+    "shared": [
+      "fonts.css",
+      "tokens.css"
+    ]
+  },
+  "api": [
+    {
+      "name": "baum.tile",
+      "kind": "function",
+      "signature": "baum.tile({ glance(view), detail(view) }): void",
+      "description": "Registers the tile's two render functions; call it exactly once. Each is called with a view and may return a Node (or text, or an array of them), append to view.root itself, or return a Promise that settles within 3 seconds. It is called again with a fresh root when the data changes."
+    },
+    {
+      "name": "baum.html",
+      "kind": "function",
+      "signature": "baum.html`<markup ${value}>`: DocumentFragment",
+      "description": "An escaping tagged template. Interpolated values become text, nodes or the items of an array (null, undefined and booleans draw nothing); in an attribute they are set as its value. It throws, for static parts and values alike, on: on* attributes; an a, area or SVG use href that is not a #fragment; any other URL attribute (src, poster, an SVG image href and the like) that is not a data:image/... or blob: URL; a style value holding ; : { } ( ) quotes, a backslash, /* or url (set data-driven sizes as custom properties: style=\"--value:${n}\"); values inside style, script, title or textarea elements, comments, tag or attribute names, or a template; and the elements script, iframe, frame, object, embed, form, base, meta and link. Data is never parsed as HTML."
+    },
+    {
+      "name": "baum.cite",
+      "kind": "function",
+      "signature": "baum.cite(citation, label?: string): HTMLElement",
+      "description": "A <baum-cite> chip for a citation in the data, labelled from what the page resolved (a file and line for a hunk) or with label. In a glance it is plain text; in a detail a navigable citation is a button that jumps there. An unresolved citation draws a dashed \"Citation unavailable\" chip and is reported by the render check."
+    },
+    {
+      "name": "baum.diff",
+      "kind": "function",
+      "signature": "baum.diff(citation, { maxLines?: number }): HTMLElement",
+      "description": "A <baum-diff> for a hunk citation. A glance draws the file, range and +added −removed on one line. A detail draws the excerpt the page sent: a header that jumps to the code, up to maxLines (default 40) numbered lines with a \"Show N more lines\" toggle; long lines wrap, as the review's excerpts do. Without an excerpt it says \"Diff unavailable\" and why."
+    },
+    {
+      "name": "baum.md",
+      "kind": "function",
+      "signature": "baum.md(text: string, { inline?: boolean }): HTMLElement",
+      "description": "A <baum-md> drawing a small Markdown subset as the review does: paragraphs and line breaks, **strong**, *emphasis*, ~~strikethrough~~, `code`, fenced code, lists, ### and #### headings, quotes and rules. Raw HTML stays text; a link is its words with the URL as a tooltip. inline draws one line of words with the block marks dropped."
+    },
+    {
+      "name": "baum.empty",
+      "kind": "function",
+      "signature": "baum.empty(text?: string): HTMLElement",
+      "description": "The standard empty state, for data with nothing to show. The render check counts it as content."
+    },
+    {
+      "name": "baum.fail",
+      "kind": "function",
+      "signature": "baum.fail(message: string): HTMLElement",
+      "description": "The standard error state, for data the tile cannot draw. It reports render_failed to the page; return or append the element it gives."
+    },
+    {
+      "name": "baum.refs.get",
+      "kind": "function",
+      "signature": "baum.refs.get(citation): object | null",
+      "description": "What the page resolved for a citation in the data, or null: {status: \"ok\", label, navigable, ...fields of its kind} or {status: \"unavailable\", label, why}."
+    },
+    {
+      "name": "baum.jump",
+      "kind": "function",
+      "signature": "baum.jump(citation): boolean",
+      "description": "Asks the page to go to a citation, as a cite chip does. Honoured only while the reader is in the tile and only for a citation the page resolved for it as navigable; returns false when it is not."
+    },
+    {
+      "name": "baum.ask",
+      "kind": "function",
+      "signature": "baum.ask(): void",
+      "description": "Asks the page to open the chat about this tile. Honoured only while the reader is in the tile."
+    },
+    {
+      "name": "baum.openDetail",
+      "kind": "function",
+      "signature": "baum.openDetail(): void",
+      "description": "Asks the page to open this tile's detail. Honoured only while the reader is in the tile."
+    }
+  ],
+  "view": [
+    {
+      "name": "data",
+      "kind": "view",
+      "description": "The tile's own data, already valid against its data schema."
+    },
+    {
+      "name": "face",
+      "kind": "view",
+      "description": "\"glance\" or \"detail\"."
+    },
+    {
+      "name": "size",
+      "kind": "view",
+      "description": "The layout size, \"full\", \"half\" or \"third\". Advisory: lay out by the frame's width."
+    },
+    {
+      "name": "theme",
+      "kind": "view",
+      "description": "The app's theme when the render started, \"light\" or \"dark\". Colour through tokens and it follows changes by itself."
+    },
+    {
+      "name": "lang",
+      "kind": "view",
+      "description": "The app's language, such as \"en\"."
+    },
+    {
+      "name": "root",
+      "kind": "view",
+      "description": "The element to draw into, empty and fresh on every render."
+    }
+  ],
+  "elements": [
+    {
+      "name": "baum-cite",
+      "kind": "element",
+      "created_by": "baum.cite",
+      "description": "A citation chip.",
+      "attributes": [
+        {
+          "name": "data-kind",
+          "description": "The citation's type: hunk, file, commit, risk, evidence, change, tile, check, review_thread and the other anchor types."
+        },
+        {
+          "name": "data-state",
+          "values": [
+            "ok",
+            "unavailable"
+          ],
+          "description": "Whether the citation resolved."
+        }
+      ]
+    },
+    {
+      "name": "baum-diff",
+      "kind": "element",
+      "created_by": "baum.diff",
+      "description": "A cited hunk's diff.",
+      "attributes": [
+        {
+          "name": "data-face",
+          "values": [
+            "glance",
+            "detail"
+          ],
+          "description": "One line in a glance, the lines in a detail."
+        },
+        {
+          "name": "data-state",
+          "values": [
+            "ok",
+            "unavailable"
+          ],
+          "description": "Whether there is code to show."
+        }
+      ]
+    },
+    {
+      "name": "baum-md",
+      "kind": "element",
+      "created_by": "baum.md",
+      "description": "Markdown, as the review draws it.",
+      "attributes": [
+        {
+          "name": "data-inline",
+          "description": "Present for baum.md(text, {inline: true})."
+        }
+      ]
+    }
+  ],
+  "classes": [
+    {
+      "name": "kit-stack",
+      "kind": "class",
+      "description": "Children in a column, 12px apart.",
+      "attributes": [
+        {
+          "name": "data-gap",
+          "values": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "description": "The gap in --space-N steps (0 for none)."
+        }
+      ]
+    },
+    {
+      "name": "kit-row",
+      "kind": "class",
+      "description": "Children in a wrapping row, centred, 8px apart.",
+      "attributes": [
+        {
+          "name": "data-gap",
+          "values": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "description": "The gap in --space-N steps."
+        },
+        {
+          "name": "data-wrap",
+          "values": [
+            "no"
+          ],
+          "description": "Keeps the row on one line."
+        },
+        {
+          "name": "data-align",
+          "values": [
+            "start",
+            "baseline"
+          ],
+          "description": "Aligns children to the top or the text baseline."
+        },
+        {
+          "name": "data-justify",
+          "values": [
+            "between"
+          ],
+          "description": "Pushes the first and last children to the ends."
+        }
+      ]
+    },
+    {
+      "name": "kit-grow",
+      "kind": "class",
+      "description": "A row child that takes the remaining width and may shrink.",
+      "attributes": []
+    },
+    {
+      "name": "kit-natural",
+      "kind": "class",
+      "description": "A row child that keeps its natural size (flex: none) while others grow or shrink.",
+      "attributes": []
+    },
+    {
+      "name": "kit-grid",
+      "kind": "class",
+      "description": "Cards in as many columns of at least 14rem as fit.",
+      "attributes": []
+    },
+    {
+      "name": "kit-columns",
+      "kind": "class",
+      "description": "Children in equal columns; the count comes from data as a custom property.",
+      "attributes": [
+        {
+          "name": "style",
+          "description": "--columns: the number of columns, set from a number: style=\"--columns:${n}\" (2 by default)."
+        }
+      ]
+    },
+    {
+      "name": "kit-bar",
+      "kind": "class",
+      "description": "A thin bar filled in proportion to a value from data, as a meter beside a number.",
+      "attributes": [
+        {
+          "name": "style",
+          "description": "--value: a number from 0 to 1, set as style=\"--value:${share}\"."
+        },
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "The fill's status colour; the first chart colour without one."
+        }
+      ]
+    },
+    {
+      "name": "kit-scroll",
+      "kind": "class",
+      "description": "A box that scrolls sideways when its content (a wide table) is wider than the frame.",
+      "attributes": []
+    },
+    {
+      "name": "kit-glance",
+      "kind": "class",
+      "description": "A glance's layout: a full-height column whose kit-foot keeps to the bottom.",
+      "attributes": []
+    },
+    {
+      "name": "kit-foot",
+      "kind": "class",
+      "description": "Small, quiet facts at the foot of a glance, one per child, kept apart by middle dots.",
+      "attributes": []
+    },
+    {
+      "name": "kit-section",
+      "kind": "class",
+      "description": "A part of a detail: a heading (a kit-heading h2) over its content; sections are spaced apart.",
+      "attributes": []
+    },
+    {
+      "name": "kit-card",
+      "kind": "class",
+      "description": "A bordered, rounded box, such as one per table or endpoint.",
+      "attributes": [
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "Tints the border with a status."
+        }
+      ]
+    },
+    {
+      "name": "kit-list",
+      "kind": "class",
+      "description": "An unbulleted list of rows, 8px apart; each li is a row.",
+      "attributes": [
+        {
+          "name": "data-gap",
+          "values": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6"
+          ],
+          "description": "The gap in --space-N steps."
+        },
+        {
+          "name": "data-divided",
+          "description": "Rules between the rows."
+        }
+      ]
+    },
+    {
+      "name": "kit-bullets",
+      "kind": "class",
+      "description": "A bulleted (ul) or numbered (ol) list of prose, as in Markdown.",
+      "attributes": []
+    },
+    {
+      "name": "kit-title",
+      "kind": "class",
+      "description": "A title inside a detail: 18px, heading face.",
+      "attributes": []
+    },
+    {
+      "name": "kit-lede",
+      "kind": "class",
+      "description": "The glance's lead line: the answer to \"do I need to open this?\".",
+      "attributes": []
+    },
+    {
+      "name": "kit-count",
+      "kind": "class",
+      "description": "A headline number: 28px, heading face, tabular figures.",
+      "attributes": []
+    },
+    {
+      "name": "kit-muted",
+      "kind": "class",
+      "description": "Secondary text.",
+      "attributes": []
+    },
+    {
+      "name": "kit-subtle",
+      "kind": "class",
+      "description": "Tertiary text: captions, meta, counts beside a label.",
+      "attributes": []
+    },
+    {
+      "name": "kit-small",
+      "kind": "class",
+      "description": "Small print (13px).",
+      "attributes": []
+    },
+    {
+      "name": "kit-strong",
+      "kind": "class",
+      "description": "Semibold text.",
+      "attributes": []
+    },
+    {
+      "name": "kit-heading",
+      "kind": "class",
+      "description": "A section heading in a detail, as the review's parts draw theirs: 16px, semibold, tracked, uppercase; a kit-section rules it off.",
+      "attributes": null
+    },
+    {
+      "name": "kit-kicker",
+      "kind": "class",
+      "description": "An uppercase section label: 13px, weight 500, tracked, tertiary.",
+      "attributes": []
+    },
+    {
+      "name": "kit-mono",
+      "kind": "class",
+      "description": "Code face: paths, identifiers, types.",
+      "attributes": []
+    },
+    {
+      "name": "kit-num",
+      "kind": "class",
+      "description": "Tabular figures; right-aligned in a kit-table cell.",
+      "attributes": []
+    },
+    {
+      "name": "kit-break",
+      "kind": "class",
+      "description": "Lets a long path or token break anywhere rather than overflow.",
+      "attributes": []
+    },
+    {
+      "name": "kit-truncate",
+      "kind": "class",
+      "description": "One line, cut with an ellipsis.",
+      "attributes": []
+    },
+    {
+      "name": "kit-clamp-1",
+      "kind": "class",
+      "description": "One line, cut with an ellipsis.",
+      "attributes": []
+    },
+    {
+      "name": "kit-clamp-2",
+      "kind": "class",
+      "description": "At most two lines, cut with an ellipsis.",
+      "attributes": []
+    },
+    {
+      "name": "kit-clamp-3",
+      "kind": "class",
+      "description": "At most three lines, cut with an ellipsis.",
+      "attributes": []
+    },
+    {
+      "name": "kit-added",
+      "kind": "class",
+      "description": "The colour of added lines (+3).",
+      "attributes": []
+    },
+    {
+      "name": "kit-removed",
+      "kind": "class",
+      "description": "The colour of removed lines (−1).",
+      "attributes": []
+    },
+    {
+      "name": "kit-sep",
+      "kind": "class",
+      "description": "A middle dot between inline facts.",
+      "attributes": []
+    },
+    {
+      "name": "kit-badge",
+      "kind": "class",
+      "description": "A status pill. Status tones only for status, never for a category.",
+      "attributes": [
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "The status; neutral without one."
+        }
+      ]
+    },
+    {
+      "name": "kit-tag",
+      "kind": "class",
+      "description": "A boxed tag for a category, a kind or a method; add kit-mono for code.",
+      "attributes": []
+    },
+    {
+      "name": "kit-dot",
+      "kind": "class",
+      "description": "An 8px dot before a row: a risk tier or a status.",
+      "attributes": [
+        {
+          "name": "data-tier",
+          "values": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "description": "A risk tier's colour."
+        },
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "A status colour."
+        }
+      ]
+    },
+    {
+      "name": "kit-callout",
+      "kind": "class",
+      "description": "A tinted note in the flow of a detail.",
+      "attributes": [
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "The status it reports; a faint wash without one."
+        }
+      ]
+    },
+    {
+      "name": "kit-tone",
+      "kind": "class",
+      "description": "Text in the colour of its data-tone.",
+      "attributes": [
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "The status colour."
+        }
+      ]
+    },
+    {
+      "name": "kit-facts",
+      "kind": "class",
+      "description": "A dl of label and value pairs in two columns.",
+      "attributes": []
+    },
+    {
+      "name": "kit-table",
+      "kind": "class",
+      "description": "A table of rows: quiet small headings, ruled rows.",
+      "attributes": [
+        {
+          "name": "data-tone",
+          "values": [
+            "positive",
+            "caution",
+            "critical",
+            "info",
+            "neutral"
+          ],
+          "description": "On a tr: tints an added (positive), changed (caution) or removed (critical) row."
+        }
+      ]
+    },
+    {
+      "name": "kit-details",
+      "kind": "class",
+      "description": "A details/summary disclosure styled as the review's.",
+      "attributes": []
+    },
+    {
+      "name": "kit-empty",
+      "kind": "class",
+      "description": "The empty state baum.empty draws.",
+      "attributes": []
+    },
+    {
+      "name": "kit-fail",
+      "kind": "class",
+      "description": "The error state baum.fail draws.",
+      "attributes": []
+    }
+  ],
+  "tokens": [
+    {
+      "name": "--text-primary",
+      "kind": "token",
+      "group": "colour",
+      "description": "Body text."
+    },
+    {
+      "name": "--text-secondary",
+      "kind": "token",
+      "group": "colour",
+      "description": "Secondary text."
+    },
+    {
+      "name": "--text-tertiary",
+      "kind": "token",
+      "group": "colour",
+      "description": "Captions and meta."
+    },
+    {
+      "name": "--text-disabled",
+      "kind": "token",
+      "group": "colour",
+      "description": "Text of something unavailable."
+    },
+    {
+      "name": "--text-link",
+      "kind": "token",
+      "group": "colour",
+      "description": "Links and jump targets."
+    },
+    {
+      "name": "--surface-page",
+      "kind": "token",
+      "group": "colour",
+      "description": "The page behind everything."
+    },
+    {
+      "name": "--surface-card",
+      "kind": "token",
+      "group": "colour",
+      "description": "A tile's own background."
+    },
+    {
+      "name": "--surface-sunken",
+      "kind": "token",
+      "group": "colour",
+      "description": "A recessed fill, as chips use."
+    },
+    {
+      "name": "--surface-wash",
+      "kind": "token",
+      "group": "colour",
+      "description": "A faint static fill, such as a header strip."
+    },
+    {
+      "name": "--surface-selected",
+      "kind": "token",
+      "group": "colour",
+      "description": "A selected row."
+    },
+    {
+      "name": "--border-default",
+      "kind": "token",
+      "group": "colour",
+      "description": "Borders of boxes."
+    },
+    {
+      "name": "--border-subtle",
+      "kind": "token",
+      "group": "colour",
+      "description": "Rules between rows."
+    },
+    {
+      "name": "--border-strong",
+      "kind": "token",
+      "group": "colour",
+      "description": "An emphasised border."
+    },
+    {
+      "name": "--border-focus",
+      "kind": "token",
+      "group": "colour",
+      "description": "The focus colour."
+    },
+    {
+      "name": "--status-positive",
+      "kind": "token",
+      "group": "colour",
+      "description": "The positive status colour, for text and marks."
+    },
+    {
+      "name": "--status-positive-bg",
+      "kind": "token",
+      "group": "colour",
+      "description": "The positive status fill."
+    },
+    {
+      "name": "--status-caution",
+      "kind": "token",
+      "group": "colour",
+      "description": "The caution status colour, for text and marks."
+    },
+    {
+      "name": "--status-caution-bg",
+      "kind": "token",
+      "group": "colour",
+      "description": "The caution status fill."
+    },
+    {
+      "name": "--status-critical",
+      "kind": "token",
+      "group": "colour",
+      "description": "The critical status colour, for text and marks."
+    },
+    {
+      "name": "--status-critical-bg",
+      "kind": "token",
+      "group": "colour",
+      "description": "The critical status fill."
+    },
+    {
+      "name": "--status-info",
+      "kind": "token",
+      "group": "colour",
+      "description": "The info status colour, for text and marks."
+    },
+    {
+      "name": "--status-info-bg",
+      "kind": "token",
+      "group": "colour",
+      "description": "The info status fill."
+    },
+    {
+      "name": "--status-neutral",
+      "kind": "token",
+      "group": "colour",
+      "description": "The neutral status colour, for text and marks."
+    },
+    {
+      "name": "--status-neutral-bg",
+      "kind": "token",
+      "group": "colour",
+      "description": "The neutral status fill."
+    },
+    {
+      "name": "--status-positive-border",
+      "kind": "token",
+      "group": "colour",
+      "description": "A positive border."
+    },
+    {
+      "name": "--status-caution-border",
+      "kind": "token",
+      "group": "colour",
+      "description": "A caution border."
+    },
+    {
+      "name": "--code-fill",
+      "kind": "token",
+      "group": "colour",
+      "description": "The fill behind code."
+    },
+    {
+      "name": "--syntax-foreground",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code text."
+    },
+    {
+      "name": "--syntax-token-keyword",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: keyword."
+    },
+    {
+      "name": "--syntax-token-string",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: string."
+    },
+    {
+      "name": "--syntax-token-comment",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: comment."
+    },
+    {
+      "name": "--syntax-token-constant",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: constant."
+    },
+    {
+      "name": "--syntax-token-function",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: function."
+    },
+    {
+      "name": "--syntax-token-parameter",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: parameter."
+    },
+    {
+      "name": "--syntax-token-punctuation",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: punctuation."
+    },
+    {
+      "name": "--syntax-token-inserted",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: inserted."
+    },
+    {
+      "name": "--syntax-token-deleted",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: deleted."
+    },
+    {
+      "name": "--syntax-token-changed",
+      "kind": "token",
+      "group": "colour",
+      "description": "Code: changed."
+    },
+    {
+      "name": "--data-1",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 1, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-2",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 2, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-3",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 3, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-4",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 4, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-5",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 5, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-6",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 6, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-7",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 7, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-8",
+      "kind": "token",
+      "group": "colour",
+      "description": "Chart series 8, in a fixed order; never for status."
+    },
+    {
+      "name": "--data-muted",
+      "kind": "token",
+      "group": "colour",
+      "description": "A chart's muted series or remainder."
+    },
+    {
+      "name": "--focus-ring",
+      "kind": "token",
+      "group": "colour",
+      "description": "The keyboard focus ring, a box-shadow."
+    },
+    {
+      "name": "--tier-critical",
+      "kind": "token",
+      "group": "colour",
+      "description": "A critical risk's dot."
+    },
+    {
+      "name": "--tier-high",
+      "kind": "token",
+      "group": "colour",
+      "description": "A high risk's dot."
+    },
+    {
+      "name": "--tier-medium",
+      "kind": "token",
+      "group": "colour",
+      "description": "A medium risk's dot."
+    },
+    {
+      "name": "--tier-low",
+      "kind": "token",
+      "group": "colour",
+      "description": "A low risk's dot."
+    },
+    {
+      "name": "--font-text",
+      "kind": "token",
+      "group": "type",
+      "description": "The text face."
+    },
+    {
+      "name": "--font-heading",
+      "kind": "token",
+      "group": "type",
+      "description": "The heading face, for titles and headline numbers."
+    },
+    {
+      "name": "--font-mono",
+      "kind": "token",
+      "group": "type",
+      "description": "The code face."
+    },
+    {
+      "name": "--text-xs",
+      "kind": "token",
+      "group": "type",
+      "description": "13px: small print, captions, badges, kickers."
+    },
+    {
+      "name": "--text-xs--line-height",
+      "kind": "token",
+      "group": "type",
+      "description": "The line height of --text-xs."
+    },
+    {
+      "name": "--text-base",
+      "kind": "token",
+      "group": "type",
+      "description": "16px: everything read."
+    },
+    {
+      "name": "--text-base--line-height",
+      "kind": "token",
+      "group": "type",
+      "description": "The line height of --text-base."
+    },
+    {
+      "name": "--text-lg",
+      "kind": "token",
+      "group": "type",
+      "description": "18px: a title inside a detail."
+    },
+    {
+      "name": "--text-lg--line-height",
+      "kind": "token",
+      "group": "type",
+      "description": "The line height of --text-lg."
+    },
+    {
+      "name": "--text-2xl",
+      "kind": "token",
+      "group": "type",
+      "description": "24px: a large title."
+    },
+    {
+      "name": "--text-2xl--line-height",
+      "kind": "token",
+      "group": "type",
+      "description": "The line height of --text-2xl."
+    },
+    {
+      "name": "--text-3xl",
+      "kind": "token",
+      "group": "type",
+      "description": "28px: a headline number."
+    },
+    {
+      "name": "--text-3xl--line-height",
+      "kind": "token",
+      "group": "type",
+      "description": "The line height of --text-3xl."
+    },
+    {
+      "name": "--radius-xs",
+      "kind": "token",
+      "group": "shape",
+      "description": "4px."
+    },
+    {
+      "name": "--radius-sm",
+      "kind": "token",
+      "group": "shape",
+      "description": "6px: chips and tags."
+    },
+    {
+      "name": "--radius-md",
+      "kind": "token",
+      "group": "shape",
+      "description": "8px: boxes and callouts."
+    },
+    {
+      "name": "--radius-lg",
+      "kind": "token",
+      "group": "shape",
+      "description": "12px: large panels."
+    },
+    {
+      "name": "--radius-full",
+      "kind": "token",
+      "group": "shape",
+      "description": "A pill or a dot."
+    },
+    {
+      "name": "--space-1",
+      "kind": "token",
+      "group": "space",
+      "description": "4px."
+    },
+    {
+      "name": "--space-2",
+      "kind": "token",
+      "group": "space",
+      "description": "8px."
+    },
+    {
+      "name": "--space-3",
+      "kind": "token",
+      "group": "space",
+      "description": "12px."
+    },
+    {
+      "name": "--space-4",
+      "kind": "token",
+      "group": "space",
+      "description": "16px."
+    },
+    {
+      "name": "--space-5",
+      "kind": "token",
+      "group": "space",
+      "description": "20px."
+    },
+    {
+      "name": "--space-6",
+      "kind": "token",
+      "group": "space",
+      "description": "24px."
+    },
+    {
+      "name": "--space-7",
+      "kind": "token",
+      "group": "space",
+      "description": "32px."
+    },
+    {
+      "name": "--space-8",
+      "kind": "token",
+      "group": "space",
+      "description": "40px."
+    },
+    {
+      "name": "--value",
+      "kind": "token",
+      "group": "input",
+      "description": "Set by a tile on a kit-bar from data: a number from 0 to 1."
+    },
+    {
+      "name": "--columns",
+      "kind": "token",
+      "group": "input",
+      "description": "Set by a tile on a kit-columns from data: a number of columns."
+    }
+  ]
+}

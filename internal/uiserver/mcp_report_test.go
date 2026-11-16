@@ -161,25 +161,19 @@ func newReportFixture(t *testing.T) *reportFixture {
 func TestKeptStateAndDecisionsToolsReadTheRealRoutes(t *testing.T) {
 	f := newReportFixture(t)
 	chat, action := f.tokens(t)
-	// The person's draft review and walkthrough place of pull request 7, and
-	// drafts the action must not read: pull request 8's, another repository's.
+	// The person's draft review of pull request 7, and drafts the action must
+	// not read: pull request 8's, another repository's.
 	draft := func(number int, body string) json.RawMessage {
 		return json.RawMessage(fmt.Sprintf(`{"comments":[{"id":"c1","target":{"kind":"file","id":"main.go","title":"main.go"},"body":%q,"place":{"path":"main.go","line":3,"side":"RIGHT"},"head":"aaaaaaaa","created":1700000000000}],"note":"Note of %d","sent":[]}`, body, number))
 	}
 	n := 0
 	for key, value := range map[string]json.RawMessage{
-		"owner/repo#7":    draft(7, "Draft of seven"),
-		"owner/repo#8":    draft(8, "SECRET draft of eight"),
-		"other/repo#7":    draft(7, "SECRET other repository"),
-		"owner/repo#7@v2": json.RawMessage(`{"seen":["stop_1","stop_2"],"notes":{"stop_1":"This looks off"},"note":"Overall seven"}`),
-		"owner/repo#8@v1": json.RawMessage(`{"seen":["stop_9"],"notes":{},"note":"SECRET walkthrough of eight"}`),
+		"owner/repo#7": draft(7, "Draft of seven"),
+		"owner/repo#8": draft(8, "SECRET draft of eight"),
+		"other/repo#7": draft(7, "SECRET other repository"),
 	} {
-		kind := "review"
-		if strings.Contains(key, "@v") {
-			kind = "walkthrough"
-		}
 		n++
-		if _, err := f.ui.Replace(kind, key, 0, fmt.Sprintf("clientclientclient:%d", n), value); err != nil {
+		if _, err := f.ui.Replace("review", key, 0, fmt.Sprintf("clientclientclient:%d", n), value); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -222,17 +216,11 @@ func TestKeptStateAndDecisionsToolsReadTheRealRoutes(t *testing.T) {
 				t.Errorf("pending_review: %s", text)
 			}
 
-			text, failed = f.callTool(t, token, "walkthrough_position", map[string]any{"repository": "owner/repo", "pr": 7, "version": 2})
-			if failed || !strings.Contains(text, `"seen":["stop_1","stop_2"]`) || !strings.Contains(text, "This looks off") || !strings.Contains(text, "Overall seven") || strings.Contains(text, "SECRET") {
-				t.Errorf("walkthrough_position: %v %s", failed, text)
-			}
-
 			// Another pull request's, or another repository's: a chat reads
 			// them; an action reads neither.
 			for tool, args := range map[string]map[string]any{
-				"pending_review":       {"repository": "owner/repo", "pr": 8},
-				"walkthrough_position": {"repository": "owner/repo", "pr": 8, "version": 1},
-				"pending_review ":      {"repository": "other/repo", "pr": 7},
+				"pending_review":  {"repository": "owner/repo", "pr": 8},
+				"pending_review ": {"repository": "other/repo", "pr": 7},
 			} {
 				text, failed := f.callTool(t, token, strings.TrimSpace(tool), args)
 				if name == "action" && (!failed || strings.Contains(text, "SECRET")) {

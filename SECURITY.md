@@ -1234,7 +1234,10 @@ that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
 authentication; `POST /api/mcp` requires the JSON content type but no Origin,
 and refuses a foreign one (see [MCP server for agents](#mcp-server-for-agents)).
-No route enables CORS. The capability is the daemon's app
+No route enables CORS. The one document route outside the namespace and
+without the cookie is a custom tile's frame, `GET /tile-frames/<digest>`,
+served only to a same-origin frame navigation (see
+[Custom tiles](#custom-tiles)). The capability is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
@@ -1456,6 +1459,220 @@ branch update and a re-run you confirm and a fix you start, with that fix's
 replies on the review threads it addressed, and resolving a review thread you
 chose; it supplies no approvals or other discussion controls.
 
+### Custom tiles
+
+A custom tile is HTML and JavaScript an AI agent wrote: a component that
+draws one tile's data in a review's tile document. It is untrusted code, and
+it runs only in its own frame, `<iframe sandbox="allow-scripts">`, whose
+document the daemon serves with its own Content-Security-Policy:
+`default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';
+img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none';
+frame-ancestors 'self'; sandbox allow-scripts`.
+
+**Built-in library types.** baum's own library types (`tiles/library`:
+schema changes, interface changes) are custom tiles too: their HTML is
+baum's, but it draws data a model wrote from the pull request (a fill), so it
+runs in the same frame under the same policy and checks as any custom tile.
+The page names such a tile as baum's own, without the "Custom" mark, only when
+the daemon marks its served definition `builtin: true`, which it does when the
+digest computed from the stored definition's content is a built-in type's,
+current or past; the digest covers the whole definition, so neither a tile's
+title, a `builtin` member it carries nor a stored definition that differs in
+any byte can claim it. The composition holds only built-in types' tiles from a
+generation. A fill's data
+is model output like the review's: it is masked for secrets as a task's
+output, checked against the type's schema and the diff (every citation a hunk
+of the diff), and the host writes `related` itself. Authored tiles (exhibits)
+are table, code and prose data drawn by the page's own built-in faces, with the
+same masking and citation checks; a code excerpt must be the cited code, and a
+file it cites must be a file of the diff, a regular file in the checkout.
+Table cells, code and captions are drawn as text. A note's Markdown draws
+paragraphs, emphasis, code spans and lists only: a link reads as its text and
+raw HTML is not rendered.
+
+**What a tile's frame cannot reach.** The sandbox gives the frame an opaque
+origin, so it cannot read the app's page, its cookies or storage, or the
+desktop app's bridge, and it cannot open windows, submit forms or navigate
+the app's page. The frame's policy allows no request at all: no `fetch`,
+images, fonts, styles or frames from anywhere, the daemon included;
+everything the kit needs is inlined into the document. A request the frame
+tries to send to the daemon anyway would carry no cookie, and the frame
+never learns the secret `/s/<namespace>/` path the app's API lives under.
+
+A frame can still navigate itself (`location.href = …`, a meta refresh): its
+own policy does not govern that. The control for it is the page's
+`frame-src`, which today falls back to the page's `default-src 'self'`, so a
+frame can only be navigated to the daemon's own origin, where every route
+but `/tile-frames/` needs the cookie and that route refuses a navigation a
+frame starts (it is `cross-site`). The frame also talks to the page by
+`postMessage`; the frame protocol (see "Custom tile kit" in
+`ARCHITECTURE.md`) has no message that approves, merges, comments, changes a
+setting or reads anything, and the page must treat every message from a
+frame as untrusted.
+
+**How its document is served.** The frame document is
+`GET /tile-frames/<digest>`, where the digest is the 64 lowercase hex digits
+of the tile type's definition digest. It is the one document route outside
+the session namespace and without the cookie, so that a tile never sees the
+namespace and its document request carries no credential. In its place it is
+served only when all of these hold, and otherwise answers the same plain 404,
+which never says whether a digest exists:
+
+- the Host check passes, as for every route;
+- the method is `GET` or `HEAD`;
+- the request is a frame navigation started by a document of the daemon's own
+  origin: `Sec-Fetch-Dest: iframe`, `Sec-Fetch-Mode: navigate` and
+  `Sec-Fetch-Site: same-origin`, all three present. A client that sends no
+  fetch metadata, a script's fetch, an `<object>` or `<embed>`, an address
+  typed into the address bar (`none`), another loopback service (`same-site`),
+  any web page and a tile's own frame (opaque, so `cross-site`) are refused;
+- the path is exactly `/tile-frames/` and the digits, with no encoding, extra
+  segment or trailing slash; the query is ignored;
+- the daemon itself handed that type to the authenticated app: the tile
+  routes register the types of the custom tiles they serve, and nothing a
+  request carries is ever registered, so the route serves only HTML the app
+  already received. At most 32 MiB of documents are kept, the least recently
+  used going first; reading the tile route again registers its types again.
+
+The answer is `no-store`, sets no cookie, ignores `Range` and carries
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+`Cross-Origin-Resource-Policy: same-origin`.
+
+**What the page checks.** The app's host (see "The app's host" under
+"Custom tile kit" in `ARCHITECTURE.md`) treats every message from a frame as
+untrusted:
+
+- The frame is `<iframe sandbox="allow-scripts">` with no other flag, no
+  `srcdoc`, `referrerpolicy="no-referrer"` and an empty `allow`; so it cannot
+  open windows or dialogs, submit forms, navigate the app's page or reach
+  storage, and its own policy lets it load nothing.
+- **Where frames mount.** In a browser, always. In the desktop app only when
+  the shell declares, by a script it runs in the page before the page's own,
+  `window.__BAUM_DESKTOP__ = { tileFrames: true }`: a shell says so once it
+  refuses every navigation that is not to the daemon's own pages (only a
+  request for a new window opens your browser) and once its commands are
+  checked to be out of a sandboxed frame's reach. A shell without the
+  declaration (an older one, or the Windows shell until its own check is
+  done) mounts no frame, and its custom tiles say they aren't available in
+  this version of the desktop app yet. A frame cannot set the declaration:
+  it cannot write the page's globals.
+- A message counts only from a frame's own window (`event.source`) and with
+  the opaque origin `"null"`, so no frame can speak for another tile or for
+  the page; a frame's kit likewise hears only the page, so a frame posting
+  to its neighbours as if it were the page is ignored. Messages are counted
+  before their data is read: past 30 in a second the rest of that second's
+  are dropped unread, and a frame over that rate in more than three of the
+  last ten seconds, or past 300 in one second, is unmounted.
+- Every field is read with strict type checks; a string longer than 1024
+  UTF-16 code units is dropped, an error's message is cut to 500, and what a
+  tile writes is shown only as text.
+- A detail's height, whether from `ready` or `resize`, is held to 120 to
+  20,000px, applied at most once an animation frame, and stops following a
+  height that keeps growing by one amount or keeps changing direction;
+  `ready` is taken once for each `init` or `update` the page sent, any other
+  is a resize under the same rules. A glance's box is fixed.
+- A frame can ask the page only to jump to an item its own data cites,
+  which the page resolved from the review it already shows (the frame names
+  it by key, never by address), to open the session panel's question about
+  the tile, or to act on a whitelisted key; and only from a detail whose
+  keyboard the reader gave it (below). A jump or a question also needs the
+  browser to report a user activation at that moment (a browser that cannot
+  say is taken as no), and the page honours at most one a second.
+- **The keyboard.** A frame takes no keys unless the reader gives them: a
+  glance never (it lies under its card's link with `tabindex=-1`); a detail
+  when a Tab lands on its frame, or when the pointer is over it, the browser
+  reports a user activation and the page saw no key press of its own in
+  the half second before (the reader typing elsewhere with the pointer
+  resting on a tile is not a click). The page cannot see clicks inside a
+  frame, so this is how it tells one apart. Focus a frame takes otherwise is
+  given back to the page's element that had it, and a frame that takes it a
+  fourth time is unmounted.
+- **Forwarded keys.** The whitelist is the page's reading keys only: Escape
+  and `u` (back to the summary), `j` and `k` (next and previous),
+  ArrowLeft and ArrowRight (previous and next tile), `[` and `]` (the
+  sidebars) and `?` (the shortcuts sheet). The page dispatches a `keydown` on
+  the frame's element carrying the key's name and whether Shift was held,
+  nothing else (no other modifier, code or text), and only while the reader
+  has given the frame the keyboard. No key that acts outward or changes
+  anything is on it: not Enter or Space, `m` (merge), `v` (send a review),
+  `c` (comment), `a` (ask), `f` (fix), `t`, `g`, or any key with Ctrl, Alt
+  or Meta; the frame's kit forwards none of those, and the page drops any
+  other key a frame names.
+- A frame that does not start, does not draw in time, says hello twice,
+  floods or keeps taking the keyboard is unmounted and its tile says it
+  couldn't load, in the host's own words; what the tile reported is shown
+  apart, quoted, behind Details. A frame that navigates itself after it
+  drew is unmounted where the engine reports the navigation as a load (both
+  Chromium and WebKit do for the navigations the suite tries); one that
+  navigates before it drew never draws and is unmounted when its time runs
+  out. That failure is about that frame only: nothing a frame sends marks
+  its tile type, or any other tile, as broken. Only the daemon's own render
+  check or the authenticated app may block a type.
+- What the tile draws is set apart from the page: its kicker reads
+  "Custom ·" and the type's title, whatever the title (one that names a
+  built-in tile too), in the card, the detail and the rail, and its detail
+  sits inside a faint edge under a "Custom tile" caption that the page
+  draws.
+
+The browser suite (`app/custom-tile-tests/tile-frames.spec.ts`) runs hostile
+tiles on the real frame route in Chromium, and in WebKit with
+`just local_app::e2e-webkit`: every way out it tries (reading the page,
+cookies, storage, caches and the shell's message handlers, top and parent
+navigation, `window.open`, dialogs, form submission, nested frames, fetch,
+XHR, WebSocket, EventSource, beacons, images, fonts, stylesheets and CSS
+`url()` to the daemon and to another origin, workers, spoofed and oversized
+messages, a second hello, floods, taking the keyboard while the reader
+types elsewhere, navigating itself before and after it drew) is refused,
+the page stays as it was and a listening server on another port receives
+nothing. The desktop shells' own webviews are checked by hand
+(`desktop/tests/tile-frames-manual.md`).
+
+**What a tile is given.** The frame protocol gives a tile its own data, the
+face and size it draws, the app's theme and language, and the items of the
+review its data cites. Nothing else: not the review, the repository, other
+tiles, or code it does not cite. Anything given to a tile is visible to
+whoever wrote it. The tile routes send each custom tile's definition without
+its HTML (its length in bytes instead), to the app and to every read of them
+by the chat's agent.
+
+**Residual risks.**
+
+- A tile's author can learn what the tile is given, at low bandwidth: the
+  browser may resolve or connect to hosts a tile names in its markup (DNS
+  prefetch and preconnect) before any policy applies, and where the engine
+  offers WebRTC (Chromium, and WebKit outside WebKitGTK; macOS is
+  unverified), a peer connection can reach a server the policy does not
+  govern. baum ships no script that tries to block these inside the frame: a
+  fresh realm gets around such a script. It minimises what a tile receives
+  instead.
+- **A tile in an endless loop freezes the app's window until the app is
+  closed**, where the engine runs the frame on the page's thread, and
+  nothing in the page can stop it; the next time the review is opened it
+  freezes again. In the browser suite a 1.5-second loop held the page for
+  its length in WebKit every time, and in Chromium in some runs and not
+  others. The host unmounts a frame that does not draw in time, but cannot
+  interrupt one that holds the thread. (A guard that keeps such a tile from
+  mounting again after a freeze is planned, not built.)
+- A frame can navigate itself to a page of the daemon's own origin: the
+  request reaches the daemon without the cookie, the namespace or any data,
+  and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
+  host then unmounts the frame.
+- In a desktop shell that hands navigations to external addresses to your
+  browser, a frame navigating itself could open a page of its choosing there,
+  with what the tile was given in its address, and the page would not see it
+  happen. That is why the page mounts frames in a desktop shell only when
+  the shell declares it refuses such navigations (above).
+- A local process that knows a tile type's digest can fetch that type's
+  source by sending the three `Sec-Fetch-*` headers itself; the checks are
+  not authentication. It never gets a tile's data, which is not in the
+  document, and a process running as you can read the app's credential
+  anyway.
+- The author today is your own agent, writing for you; a tile shared by or
+  imported from someone else trusts its author with what it is given.
+
+Tile code is never read from repository content: a pull request cannot
+supply a tile.
+
 ### MCP server for agents
 
 An agent CLI reaches the server over HTTP at the daemon's loopback
@@ -1665,9 +1882,9 @@ from the sessions of its pull requests, the group patches and files its groups'
 reviews cite, and what the app offers about a branch and the failed checks.
 It may also read the last lines of a failing check's log for any check of its
 repository's pull requests (`check_log`; see below).
-It may read the person's own draft review comments and walkthrough place only
-for its own pull request: those are kept by a key that names the repository
-and pull request, the handler cannot tell whose a key is, so the reader refuses
+It may read the person's own draft review comments only for its own pull
+request: those are kept by a key that names the repository and pull request,
+the handler cannot tell whose a key is, so the reader refuses
 any key but the action's own pull request's (and any other kind of saved state),
 whatever the repository. A chat reads them for any pull request, as it reads
 the page the person has open.
@@ -1733,6 +1950,48 @@ setting and is never stored in the proposal, returned to the agent, printed
 or logged. Nothing outside that list can be changed through a saved
 proposal: not your GitHub connection, a repository's registration or clones,
 nor any GitHub write.
+
+One change takes no save: the layout of a review's tiles, your own, on the
+pull request page you have open. A chat may move, resize, remove, bring back
+and pin tiles, undo, and reset the layout to the generated one (`edit_tiles`,
+`add_tile`, `undo_tiles`, `reset_tiles`), and it applies at once. The agent
+reads untrusted pull request text (the diff, the description, threads and
+transcripts), which can tell it to rearrange or hide tiles, and baum accepts
+that without asking, because the worst such text can do is rearrange your own
+page, visibly, undoably and within fixed rules:
+
+- No content changes. An edit only places, sizes, hides and shows tiles of
+  the review as it is; every risk, evidence item, decision and block is still
+  presented once, and the saved version, the repository and GitHub are never
+  touched.
+- What must be seen stays seen. The recommendation and risk score are in the
+  fixed strip; the overview, and the risks tile while it lists a critical or
+  high risk, and a change the recommendation names, cannot be hidden or
+  pushed off the landing page, whatever an edit says, and the recommended
+  change is never folded.
+- Every edit shows, and is undone in one step, and an undo can be taken back
+  (Redo) until the next edit or reset. The page shows what changed
+  in baum's own words, never the agent's, with Undo; the strip says
+  **Your layout** with Undo and Reset; a hidden tile stays in the last group,
+  with Show.
+- Scope is one page. The tools are global, so an action never sees them; they
+  refuse any page but the pull request's, and the edit is checked against
+  the tiles that page shows. A conversation's page follows the person around
+  the app, so an edit is also refused unless the page open now is the pull
+  request the current message was sent from: a long turn begun about one
+  pull request cannot change another's layout. Edits stay on this computer, in `app.sqlite`,
+  for that pull request; the event that tells the page carries only the pull
+  request's key and a revision.
+- Bounded: 20 ops a call, 100 undo steps (older ones are folded and kept),
+  64 KiB per pull request (undone steps included), the 200 most recently
+  edited pull requests. A reset always fits, dropping the oldest steps when
+  it must.
+
+There is no confirmation and no rate cap on purpose: each would make "move
+this" slower for everyone to guard against an attack whose worst result is a
+layout you see and undo. Anything that lasts beyond the page you have open
+(standing preferences for a repository's future reviews, for instance) stays
+a proposal.
 
 A chat may also propose an operation: one of the buttons of the page you
 have open, for something that page shows. The agent never runs anything.

@@ -70,6 +70,8 @@ import (
 	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
+	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
@@ -512,6 +514,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
+		// Each person's own tile layout of a pull request, applied to every
+		// version and draft the tile routes serve; a write tells the app's
+		// open page to read its tiles again.
+		layouts := &tilelayout.Service{Path: database, Changed: func(pr string, revision int64) {
+			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
+		}}
+		queue.SetLayouts(layouts.Layout)
 		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
@@ -765,6 +774,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			conversationRoutes.ServeHTTP(w, r)
 		})
+		// The tile checks compile their schemas on first use; do it now, off
+		// the request path, so the first review opened does not wait.
+		go func() {
+			if err := tileview.Warm(); err != nil {
+				log.Warn("the tile checks could not be prepared", "error", err.Error())
+			}
+		}()
 		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
@@ -802,7 +818,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version()}
+			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
@@ -818,7 +834,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Layouts: uiserver.LayoutEditor{API: local}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
 			listing, loaded, err := pickList.Cached(ctx, query)
 			if err != nil {
 				return agentcontext.PickList{}, err

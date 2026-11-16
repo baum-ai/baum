@@ -496,3 +496,41 @@ func TestProgressNamesTheLatestMessage(t *testing.T) {
 		t.Fatalf("the second message finished: %+v", p)
 	}
 }
+
+// A turn records the page it was sent from, which the page set later for
+// every conversation does not change: a turn begun about one pull request
+// is still about it when the person opens another.
+func TestTurnKeepsThePageItWasSentFrom(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := context.Background()
+	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := f.liveOf(c.ID)
+	if _, ok := f.opts.Registry.TurnPage(l.consumer); ok {
+		t.Fatal("a conversation with no turn has a turn page")
+	}
+	from := agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 3}
+	if _, err := f.service.Send(ctx, c.ID, "move this", &from); err != nil {
+		t.Fatal(err)
+	}
+	f.finished(c.ID)
+	if err := f.service.SetPage(agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if turn, ok := f.opts.Registry.TurnPage(l.consumer); !ok || turn.PullRequest != 3 {
+		t.Fatalf("the turn page %+v %v after the page moved", turn, ok)
+	}
+	if page, _ := f.opts.Registry.Page(l.consumer); page.PullRequest != 4 {
+		t.Fatalf("the page %+v", page)
+	}
+	// A message sent with no page is about the page open now.
+	if _, err := f.service.Send(ctx, c.ID, "and again", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.finished(c.ID)
+	if turn, _ := f.opts.Registry.TurnPage(l.consumer); turn.PullRequest != 4 {
+		t.Fatalf("the turn page %+v after a message with no page", turn)
+	}
+}

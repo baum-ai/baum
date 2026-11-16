@@ -98,6 +98,9 @@ type AppearancePreferences struct {
 	// ("pinned") or folds to its glyphs and opens over the page under the
 	// pointer ("folded"); empty is pinned.
 	Sidebar string `json:"sidebar,omitempty"`
+	// ReviewPage is the page a review opens on: "full" (the review's
+	// sections) or "tiles" (its tile document); empty is full.
+	ReviewPage string `json:"review_page,omitempty"`
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan
@@ -165,7 +168,21 @@ type Preferences struct {
 	// Panel is what the session panel opens a conversation with
 	// (ResolvePanel).
 	Panel PanelPreferences `json:"panel,omitzero"`
+	// Labs are experimental features, each off until turned on.
+	Labs LabsPreferences `json:"labs,omitzero"`
 }
+
+// LabsPreferences turn experimental features on. Each is off by default.
+type LabsPreferences struct {
+	// TileReviews arranges each new review of a single pull request as tiles
+	// after it is written (generate.Options.Tiles): one more model call,
+	// without tools, chooses which tiles lead and their sizes, and the
+	// layout is stored with the version.
+	TileReviews *bool `json:"tile_reviews,omitempty"`
+}
+
+// TileReviewsOn reports whether reviews are arranged as tiles.
+func (l LabsPreferences) TileReviewsOn() bool { return l.TileReviews != nil && *l.TileReviews }
 
 // PanelPreferences are the session panel's defaults. An empty Agent follows
 // the fix agent, model included; a nil Model is the fix agent's model when

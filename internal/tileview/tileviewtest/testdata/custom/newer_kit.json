@@ -1,0 +1,22 @@
+{
+  "id": "newer_kit",
+  "title": "Widget owners",
+  "definition": {
+    "name": "widget_owners",
+    "title": "Widget owners",
+    "use_when": "When the pull request changes who owns a widget in acme/widgets.",
+    "fill": "List each widget whose owner changed.",
+    "data_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owners"],
+      "properties": {
+        "owners": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 80 } }
+      }
+    },
+    "kit": 99,
+    "sizes": ["third"],
+    "source": { "format": "html" }
+  },
+  "data": { "owners": ["widgets-team"] }
+}

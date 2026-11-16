@@ -20,13 +20,13 @@
       "context": { "page": "pull_request", "repository": "acme/demo", "pull_request": 7 }
     },
     {
-      "query": "clone=c1&pr=7&walk=b2",
+      "query": "clone=c1&pr=7",
       "hash": "#sec_rest",
       "context": {
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "walk": "b2", "anchor": "sec_rest" }
+        "focus": { "anchor": "sec_rest" }
       }
     },
     { "query": "page=pulls&clone=gone&pr=7", "context": { "page": "pulls" } },
@@ -55,6 +55,40 @@
     {
       "query": "page=pulls&Bad=1&ok_key=1&inbox=a",
       "context": { "page": "pulls", "filters": { "ok_key": "1" } }
+    },
+    {
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles&pane=tile&tile=risks",
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tile": "risks" }
+      }
+    }
+  ],
+  "picked": [
+    {
+      "description": "An Ask about a tile on the tiles page (Ask about this tile, or a on a card) puts the tile in the focus: the layout tools resolve this tile to it.",
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles",
+      "focus": { "kind": "tile", "id": "sec_api", "title": "API changes" },
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "kind": "tile", "id": "sec_api", "title": "API changes" }
+      },
+      "tile": "sec_api"
+    },
+    {
+      "description": "A tile open in its detail is the focus when none was picked.",
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles&pane=tile&tile=context",
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tile": "context" }
+      },
+      "tile": "context"
     }
   ]
 }

@@ -36,7 +36,9 @@ Settings has six sections: General (appearance and keyboard), Reviews (the revie
 
 ## pull_request
 
-The pull request page shows one pull request: its description, checks, conflicts and review threads, and baum's review of it, a saved version per head commit. The review has a walkthrough (chapters of behaviours) and a full review (sections of risks, tiles and files). The person can comment, ask an agent about it in the session panel (a, or Ask), merge, fix, and send a GitHub review (approve, comment or request changes). The agent uses propose_review_comment for a comment in the person's pending review. Nothing changes until the person clicks Save in the panel; the comment then joins their draft, without sending anything to GitHub. Questions asked of the review's agent before the session panel are listed read-only under Earlier questions.
+The pull request page shows one pull request: its description, checks, conflicts and review threads, and baum's review of it, a saved version per head commit. The review is laid out as sections of risks and files; with the Tiles (preview) review page (Settings, General) it opens on one screen of tiles instead, the page context's focus then naming the view, the tile open and the item in it. The person can comment, ask an agent about it in the session panel (a, or Ask), merge, fix, and send a GitHub review (approve, comment or request changes). The agent uses propose_review_comment for a comment in the person's pending review. Nothing changes until the person clicks Save in the panel; the comment then joins their draft, without sending anything to GitHub. Questions asked of the review's agent before the session panel are listed read-only under Earlier questions.
+
+The tiles page's layout is the person's to change, and the session panel changes it at once, with no Save: this is the one exception to proposals. tile_layout lists the tiles as the page lays them out (rows from the top; the first 2 rows are the first screen, the first 3 the landing page), each tile's id, size, allowed sizes and whether it can be removed, and the focus: the tile the person pointed at (Ask about this tile, or `a` on a card) or has open, which "this", "it" or "that tile" mean; with no focus, ask which tile. edit_tiles moves tiles (to the top, the end, before or after another tile), resizes them (full, half or third width), hides them (they move to the Hidden tiles group at the end, with Show), shows them again, pins them (pinned tiles lead) and sets how many changes the changes group shows; one call is one undo step. add_tile brings a removed tile back; adding a tile the review does not have is not available yet. undo_tiles undoes the last change, whoever made it, and reset_tiles returns to the generated layout (and can itself be undone). The overview, and the risks tile while it lists a critical or high risk, always stay on the landing page. Edits change only the person's own layout of this pull request, on this computer, for every version of it; never the review's content. Say what changed, using the result's own words, and that Undo on the page takes it back; when something was refused, say why.
 
 ## group
 
@@ -67,6 +69,8 @@ A feature is open in the Timeline's side panel: its title, summary, status, peop
 - **decision**: a choice made in an agent session, with who made it (human or agent), its category and summary.
 - **feature**: what a set of related pull requests, sessions and decisions built, kept in the feature log.
 - **prompt**: the instructions baum gives an agent for a task; Settings and each repository can customise them.
+- **layout**: the order and sizes of a review's tiles; the person may change it from the session panel or the page, for that pull request, and reset it to the generated one.
+- **tile**: one card of a review's tiles page (the overview, the risks, a change, evidence, context and so on), with an id the layout tools name it by.
 
 ## shortcuts
 
@@ -109,14 +113,10 @@ A pull request or group:
 
 - `j`, `k`: next and previous item; `⇧J`, `⇧↓`, `→` (`Shift+J`, `Shift+↓` elsewhere): next section; `⇧K`, `⇧↑`, `←` (`Shift+K`, `Shift+↑`): previous section.
 - `Space`: open or close an item's details. `Enter`: open the item.
-- `c`: comment. `v`: send your review. `a`: ask an agent in the session panel.
+- `c`: comment. `v`: send your review. `a`: ask an agent in the session panel (on the tiles page, about the card the keys are on).
+- On the tiles page, `Mod+Z`: undo the last change to the tiles' layout.
 - `]`: toggle the right-hand sidebar; `h`, `l`: Details, Activity and Comments in it.
 - `u`, `Escape`: back to the list.
-
-The walkthrough:
-
-- `j`, `k`: next and previous behaviour. `→`, `←`: next and previous chapter.
-- `o`: show the behaviour's code. `c`: comment. `v`: full review. `a`: ask an agent in the session panel.
 
 Sessions and transcripts:
 

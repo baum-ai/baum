@@ -216,6 +216,7 @@ var settingsTargetSections = []struct{ prefix, section string }{
 	{agentcontext.TargetPlanUsage, "general"},
 	{agentcontext.TargetReviews, "reviews"},
 	{agentcontext.TargetDecisions, "reviews"},
+	{agentcontext.TargetLabs, "reviews"},
 	{agentcontext.TargetFixes, "fixes"},
 	{agentcontext.TargetTimeLimits, "computer"},
 	{agentcontext.TargetJobConcurrency, "computer"},
@@ -269,6 +270,8 @@ func (p *Proposers) settingsTarget(page agentcontext.PageContext, name string) (
 		return p.timeLimitsTarget(), nil
 	case name == agentcontext.TargetJobConcurrency:
 		return p.jobConcurrencyTarget(), nil
+	case name == agentcontext.TargetLabs:
+		return p.labsTarget(), nil
 	case name == agentcontext.TargetCodexApprovals:
 		return p.codexApprovalsTarget()
 	case strings.HasPrefix(name, agentcontext.TargetAgentEnv):
@@ -319,7 +322,7 @@ func (p *Proposers) appearanceTarget() *target {
 			return in, err
 		}
 		if in == (appearanceInput{}) {
-			return in, errors.New("propose a theme, key_hints or page_modifier")
+			return in, errors.New("propose a theme, key_hints, page_modifier or review_page")
 		}
 		return in, in.check()
 	}
@@ -621,6 +624,32 @@ func (p *Proposers) jobConcurrencyTarget() *target {
 				return err
 			}
 			_, err = p.API.saveJobConcurrency(ctx, n, check)
+			return err
+		})
+}
+
+// labsTarget is the labs settings (PUT /api/settings/labs).
+func (p *Proposers) labsTarget() *target {
+	decode := func(after json.RawMessage) (labsInput, error) {
+		var in labsInput
+		if err := decodeAfter(after, &in); err != nil {
+			return in, err
+		}
+		if in.TileReviews == nil {
+			return in, errors.New("tile_reviews is required")
+		}
+		return in, nil
+	}
+	return p.prefsTarget(
+		func(prefs repos.Preferences) any { return labsOf(prefs) },
+		func(prefs repos.Preferences) any { return labsOf(prefs) },
+		func(after json.RawMessage, _ repos.Preferences) error { _, err := decode(after); return err },
+		func(ctx context.Context, after json.RawMessage, check func(repos.Preferences) error) error {
+			in, err := decode(after)
+			if err != nil {
+				return err
+			}
+			_, err = p.API.updatePreferences(ctx, check, in.edit)
 			return err
 		})
 }

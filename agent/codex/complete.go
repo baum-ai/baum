@@ -23,8 +23,9 @@ const completeMaxTurns = 1
 // its read-only sandbox, with the shell and other tools turned off, the
 // Backend's reasoning effort (Codex's own when empty), the request's system prompt as the model instructions and
 // the request's schema as the output schema, in an empty temporary directory.
-// The prompt goes on stdin and starts with sessions.GenerationRunMarker. Only
-// the Local profile completes.
+// The prompt goes on stdin and starts with sessions.GenerationRunMarker; the
+// request's images are attached with --image. Only the Local profile
+// completes.
 func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (agent.Completion, error) {
 	if c.Profile != Local {
 		return agent.Completion{}, errors.New("codex: only the Local profile completes")
@@ -48,6 +49,11 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	}
 	extra := []string{"--disable", "shell_tool", "--disable", "unified_exec",
 		"-c", "model_instructions_file=" + string(path)}
+	for _, image := range request.Images {
+		// One value per flag: the option takes several, and would read the
+		// stdin marker after it as another.
+		extra = append(extra, "--image="+image.Path)
+	}
 	run := agent.Request{Directory: work, Prompt: sessions.GenerationRunMarker + "\n" + request.User, Schema: request.Schema,
 		MaxCalls: completeMaxTurns, MaxTokens: 1 << 30}
 	result, err := c.run(ctx, run, runReview, "", extra)

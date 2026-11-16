@@ -1,0 +1,252 @@
+{
+  "name": "mixed-surfaces",
+  "data": {
+    "endpoints": [
+      {
+        "surface": "cli",
+        "method": null,
+        "name": "widgets export --legacy-format",
+        "change": "removed",
+        "auth": null,
+        "request": [
+          {
+            "field": "--legacy-format",
+            "change": "removed",
+            "before": "bool",
+            "after": null,
+            "required": false
+          }
+        ],
+        "response": [],
+        "errors": [],
+        "breaking": true,
+        "breaking_reason": "Scripts that pass `--legacy-format` now exit with a usage error.",
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_e4dae8c72941",
+            "lines": [
+              70,
+              72
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "schema",
+        "method": null,
+        "name": "schema/widget-1.json",
+        "change": "changed",
+        "auth": null,
+        "request": [],
+        "response": [
+          {
+            "field": "tags",
+            "change": "changed",
+            "before": "array of string",
+            "after": "array of 1–40 character strings, at most 20",
+            "required": false
+          }
+        ],
+        "errors": [],
+        "breaking": true,
+        "breaking_reason": "Documents with more than 20 tags or an empty tag no longer validate.",
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_06fc0aea4b63",
+            "lines": [
+              30,
+              32
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "cli",
+        "method": null,
+        "name": "widgets export --since",
+        "change": "added",
+        "auth": null,
+        "request": [
+          {
+            "field": "--since",
+            "change": "added",
+            "before": null,
+            "after": "date, YYYY-MM-DD",
+            "required": false
+          }
+        ],
+        "response": [],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_e4dae8c72941",
+            "lines": [
+              72,
+              72
+            ]
+          }
+        ]
+      },
+      {
+        "surface": "tool",
+        "method": null,
+        "name": "widget_search",
+        "change": "added",
+        "auth": null,
+        "request": [
+          {
+            "field": "query",
+            "change": "added",
+            "before": null,
+            "after": "string",
+            "required": true
+          }
+        ],
+        "response": [
+          {
+            "field": "widgets",
+            "change": "added",
+            "before": null,
+            "after": "array of {id, name, tags}",
+            "required": true
+          }
+        ],
+        "errors": [],
+        "breaking": false,
+        "breaking_reason": null,
+        "cites": [
+          {
+            "type": "hunk",
+            "id": "h_f5ebf9d83a52",
+            "lines": [
+              210,
+              215
+            ]
+          }
+        ]
+      }
+    ],
+    "consumers": [],
+    "docs": null
+  },
+  "hunks": {
+    "h_e4dae8c72941": {
+      "path": "cmd/widgets/main.go",
+      "change": "modified",
+      "range": [
+        70,
+        72
+      ],
+      "additions": 1,
+      "deletions": 1,
+      "header": "@@ -70,3 +70,3 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 70,
+          "new": 70,
+          "text": "\tfs := flag.NewFlagSet(\"export\", flag.ExitOnError)"
+        },
+        {
+          "kind": "remove",
+          "old": 71,
+          "text": "\tlegacy := fs.Bool(\"legacy-format\", false, \"write the version 1 format\")"
+        },
+        {
+          "kind": "context",
+          "old": 72,
+          "new": 71,
+          "text": "\tout := fs.String(\"out\", \"-\", \"where to write\")"
+        },
+        {
+          "kind": "add",
+          "new": 72,
+          "text": "\tsince := fs.String(\"since\", \"\", \"only widgets changed since this date (YYYY-MM-DD)\")"
+        }
+      ]
+    },
+    "h_f5ebf9d83a52": {
+      "path": "internal/agent/tools.go",
+      "change": "modified",
+      "range": [
+        210,
+        215
+      ],
+      "additions": 6,
+      "deletions": 0,
+      "header": "@@ -210,0 +210,6 @@",
+      "lines": [
+        {
+          "kind": "add",
+          "new": 210,
+          "text": "\t{"
+        },
+        {
+          "kind": "add",
+          "new": 211,
+          "text": "\t\tName:        \"widget_search\","
+        },
+        {
+          "kind": "add",
+          "new": 212,
+          "text": "\t\tDescription: \"Search widgets by name or tag.\","
+        },
+        {
+          "kind": "add",
+          "new": 213,
+          "text": "\t\tInput:       schemaOf[searchInput](),"
+        },
+        {
+          "kind": "add",
+          "new": 214,
+          "text": "\t\tRun:         searchWidgets,"
+        },
+        {
+          "kind": "add",
+          "new": 215,
+          "text": "\t},"
+        }
+      ]
+    },
+    "h_06fc0aea4b63": {
+      "path": "schema/widget-1.json",
+      "change": "modified",
+      "range": [
+        30,
+        32
+      ],
+      "additions": 1,
+      "deletions": 1,
+      "header": "@@ -30,3 +30,3 @@",
+      "lines": [
+        {
+          "kind": "context",
+          "old": 30,
+          "new": 30,
+          "text": "    \"tags\": {"
+        },
+        {
+          "kind": "remove",
+          "old": 31,
+          "text": "      \"type\": \"array\", \"items\": {\"type\": \"string\"}"
+        },
+        {
+          "kind": "add",
+          "new": 31,
+          "text": "      \"type\": \"array\", \"maxItems\": 20, \"items\": {\"type\": \"string\", \"minLength\": 1, \"maxLength\": 40}"
+        },
+        {
+          "kind": "context",
+          "old": 32,
+          "new": 32,
+          "text": "    },"
+        }
+      ]
+    }
+  }
+}

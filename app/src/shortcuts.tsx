@@ -66,17 +66,6 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
   },
   { keys: ["u"], label: "Undo a snooze or an archive", short: "undo" },
 ];
-/** The walkthrough's keys, which `Walkthrough` handles itself. */
-const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
-  { keys: ["j", "ArrowDown"], label: "Next behaviour", short: "move" },
-  { keys: ["k", "ArrowUp"], label: "Previous behaviour", short: "move" },
-  { keys: ["ArrowRight"], label: "Next chapter", short: "chapter" },
-  { keys: ["ArrowLeft"], label: "Previous chapter", short: "chapter" },
-  { keys: ["o"], label: "Show the behaviour's code", short: "code" },
-  { keys: ["c"], label: "Comment on the behaviour", short: "comment" },
-  { keys: ["v"], label: "Open the full review", short: "full review" },
-  { keys: ["a"], label: "Ask an agent about the pull request in the session panel", short: "ask" },
-];
 /** The keys of every other list (Sessions, Jobs, Repositories, Timeline), which
  *  `listKeys` handles. */
 const LIST_SHORTCUTS: Shortcut[] = [
@@ -117,8 +106,7 @@ export type ShortcutsPlace =
   | "timeline"
   | "settings"
   | "panel"
-  | "page"
-  | "walkthrough";
+  | "page";
 const KEY_NAMES: Record<string, string> = {
   ArrowDown: "↓",
   ArrowUp: "↑",
@@ -915,31 +903,41 @@ function shortcutGroups(
       place: "review",
       title: "A pull request or group",
       rows: [
-        { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
-        { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
+        {
+          keys: ["j", "ArrowDown"],
+          label: "Next item in the section, or tile on the tiles page's summary",
+          short: "move",
+        },
+        { keys: ["k", "ArrowUp"], label: "Previous item, or tile", short: "move" },
         {
           keys: MAC ? ["⇧J", "⇧↓", "ArrowRight"] : ["Shift+J", "Shift+↓", "ArrowRight"],
-          label: "Next section",
+          label: "Next section, or tile",
           short: "sections",
         },
         {
           keys: MAC ? ["⇧K", "⇧↑", "ArrowLeft"] : ["Shift+K", "Shift+↑", "ArrowLeft"],
-          label: "Previous section",
+          label: "Previous section, or tile",
           short: "sections",
         },
         {
           keys: [" "],
-          label: "Open or close the item's details, or the selected group in the sidebar",
+          label:
+            "Open or close the item's details, a group's hidden tiles, or the selected group in the sidebar",
           short: "expand",
         },
-        { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
+        {
+          keys: ["Enter"],
+          label: "Open the item, such as a tile or a commit in the list",
+          short: "open",
+        },
+        { keys: ["Escape", "u"], label: "From a tile, back to the tiles page's summary" },
         { keys: ["m"], label: "Merge, where offered", short: "merge" },
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
         { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         {
           keys: ["c"],
-          label: `Comment on the section, risk or file being read; ${COMMAND}↵ saves it`,
+          label: `Comment on the section, risk, file or tile being read; ${COMMAND}↵ saves it`,
           short: "comment",
         },
         {
@@ -964,7 +962,6 @@ function shortcutGroups(
         back,
       ],
     },
-    { place: "walkthrough", title: "Walkthrough", rows: WALKTHROUGH_SHORTCUTS },
     {
       place: "sessions",
       title: "Sessions",

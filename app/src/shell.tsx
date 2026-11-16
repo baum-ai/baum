@@ -680,8 +680,7 @@ const PageRefreshContext = createContext<PageRefresh | null>(null);
 export const PageRefreshProvider = PageRefreshContext.Provider;
 
 /** The page's refresh, kept above the page so that its key (⌘R) has one
- *  place to go and a refresh under way outlives the button, as when a pull
- *  request's walkthrough gives way to its full review. `scope` names the
+ *  place to go and a refresh under way outlives the button. `scope` names the
  *  page shown: each page's refresh runs and shows on its own. A page that
  *  registers none, as one still loading, refreshes with `fallback`. */
 export function usePageRefresh(

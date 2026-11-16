@@ -187,6 +187,10 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, framePrefix) {
+			serveFrame(w, r)
+			return
+		}
 		if r.URL.Path == mcpPath {
 			s.serveMCP(w, r)
 			return
@@ -345,7 +349,7 @@ var errEventTooLarge = errors.New("event too large")
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" {
+	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" && kind != "layout" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)

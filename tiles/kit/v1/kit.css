@@ -1,0 +1,934 @@
+/* baum tile kit v1: base styles, the kit's elements and its kit-* classes.
+
+   v1 is frozen and additive only. A tile saved with `kit: 1` is drawn with
+   these files for good, so never remove or rename a class, attribute value or
+   token here, and never change what one documented thing looks like enough to
+   break a tile laid out against it. Add new names instead; a renamed token
+   keeps its old name as an alias. manifest.json lists everything a tile may
+   use, and the tests tie the two together. */
+
+:root {
+  /* Spacing, which the app's Tailwind scale does not expose as tokens. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  /* Risk tiers, as the review's tier dots draw them. */
+  --tier-critical: var(--red-600);
+  --tier-high: var(--amber-600);
+  --tier-medium: var(--ink-500);
+  --tier-low: var(--ink-300);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-family: var(--font-text);
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overflow-wrap: break-word;
+}
+body {
+  margin: 0;
+}
+/* A glance is a fixed box under the card's link: nothing scrolls, and the
+   root fills the box so a layout can keep to its foot. */
+:root[data-face="glance"],
+:root[data-face="glance"] body {
+  overflow: hidden;
+}
+:root[data-face="glance"],
+:root[data-face="glance"] body,
+:root[data-face="glance"] #baum-root {
+  height: 100%;
+}
+#baum-root {
+  min-width: 0;
+}
+/* A detail keeps 4px clear on every side, for focus rings at its edges; the
+   page sets the frame 4px out on every side, so its text lines up with the
+   pane's. */
+:root[data-face="detail"] body {
+  padding: 4px;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure,
+blockquote,
+dl,
+dd,
+pre {
+  margin: 0;
+}
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+  font-weight: 600;
+}
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+}
+img,
+svg,
+canvas,
+video {
+  max-width: 100%;
+}
+img,
+video {
+  height: auto;
+}
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--font-mono);
+  font-size: 1em;
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+a {
+  color: var(--text-link);
+}
+hr {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+table {
+  border-collapse: collapse;
+}
+summary {
+  cursor: pointer;
+}
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Layout. */
+.kit-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.kit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+.kit-row[data-wrap="no"] {
+  flex-wrap: nowrap;
+}
+.kit-row[data-align="start"] {
+  align-items: flex-start;
+}
+.kit-row[data-align="baseline"] {
+  align-items: baseline;
+}
+.kit-row[data-justify="between"] {
+  justify-content: space-between;
+}
+.kit-grow {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.kit-natural {
+  flex: none;
+}
+.kit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-3);
+}
+/* Columns set by data: style="--columns:3". */
+.kit-columns {
+  --columns: 2;
+  display: grid;
+  grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+  gap: var(--space-3);
+}
+/* A bar filled to style="--value:0.4" (0 to 1), in a status tone. */
+.kit-bar {
+  --value: 0;
+  display: block;
+  height: 6px;
+  min-width: 2rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-wash);
+  overflow: hidden;
+}
+.kit-bar::before {
+  content: "";
+  display: block;
+  height: 100%;
+  width: calc(clamp(0, var(--value), 1) * 100%);
+  border-radius: inherit;
+  background: var(--kit-tone, var(--data-1));
+}
+.kit-scroll {
+  position: relative;
+  overflow-x: auto;
+  max-width: 100%;
+}
+/* A glance: lead, rows, and a foot that keeps to the bottom of the box. */
+.kit-glance {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  min-width: 0;
+}
+.kit-foot {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+.kit-foot > * + *::before {
+  content: "·";
+  margin-right: var(--space-2);
+}
+/* A part of a detail: a kicker heading over its content. */
+.kit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.kit-section + .kit-section {
+  margin-top: var(--space-6);
+}
+.kit-stack > .kit-section + .kit-section {
+  margin-top: 0;
+}
+.kit-section > :is(h2, h3, h4, .kit-heading):first-child {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.kit-card {
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+.kit-card[data-tone] {
+  border-color: color-mix(in srgb, var(--kit-tone) 40%, transparent);
+}
+
+/* Lists of rows. */
+.kit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  min-width: 0;
+}
+.kit-list > li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.kit-list[data-divided] {
+  gap: 0;
+}
+.kit-list[data-divided] > li {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.kit-list[data-divided] > li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+/* Gaps of kit-stack, kit-row and kit-list, in --space-N steps. */
+[data-gap="0"] {
+  gap: 0;
+}
+[data-gap="1"] {
+  gap: var(--space-1);
+}
+[data-gap="2"] {
+  gap: var(--space-2);
+}
+[data-gap="3"] {
+  gap: var(--space-3);
+}
+[data-gap="4"] {
+  gap: var(--space-4);
+}
+[data-gap="5"] {
+  gap: var(--space-5);
+}
+[data-gap="6"] {
+  gap: var(--space-6);
+}
+.kit-bullets {
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+ol.kit-bullets {
+  list-style: decimal;
+}
+.kit-bullets > li + li {
+  margin-top: var(--space-1);
+}
+.kit-bullets > li::marker {
+  color: var(--text-tertiary);
+}
+
+/* Text. */
+.kit-title {
+  font-family: var(--font-heading);
+  font-size: var(--text-lg);
+  line-height: var(--text-lg--line-height);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.kit-lede {
+  font-size: var(--text-base);
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.kit-count {
+  font-family: var(--font-heading);
+  font-size: var(--text-3xl);
+  line-height: var(--text-3xl--line-height);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.kit-muted {
+  color: var(--text-secondary);
+}
+.kit-subtle {
+  color: var(--text-tertiary);
+}
+.kit-small {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+.kit-strong {
+  font-weight: 600;
+}
+.kit-heading {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.kit-kicker {
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.kit-mono {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+.kit-num {
+  font-variant-numeric: tabular-nums;
+}
+.kit-break {
+  overflow-wrap: anywhere;
+}
+.kit-truncate,
+.kit-clamp-1 {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.kit-clamp-2,
+.kit-clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-width: 0;
+}
+.kit-clamp-2 {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.kit-clamp-3 {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+.kit-added {
+  color: var(--status-positive);
+}
+.kit-removed {
+  color: var(--status-critical);
+}
+.kit-sep::before {
+  content: "·";
+  color: var(--text-tertiary);
+}
+
+/* Tones: a status, never a category. */
+[data-tone],
+[data-tone="neutral"] {
+  --kit-tone: var(--status-neutral);
+  --kit-tone-bg: var(--status-neutral-bg);
+}
+[data-tone="positive"] {
+  --kit-tone: var(--status-positive);
+  --kit-tone-bg: var(--status-positive-bg);
+}
+[data-tone="caution"] {
+  --kit-tone: var(--status-caution);
+  --kit-tone-bg: var(--status-caution-bg);
+}
+[data-tone="critical"] {
+  --kit-tone: var(--status-critical);
+  --kit-tone-bg: var(--status-critical-bg);
+}
+[data-tone="info"] {
+  --kit-tone: var(--status-info);
+  --kit-tone-bg: var(--status-info-bg);
+}
+.kit-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--kit-tone-bg, var(--status-neutral-bg));
+  color: var(--kit-tone, var(--status-neutral));
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.kit-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: 1px 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 600;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.kit-tag.kit-mono {
+  font-weight: 500;
+  font-size: var(--text-xs);
+}
+.kit-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--kit-tone, var(--text-tertiary));
+}
+.kit-list > li > .kit-dot:first-child {
+  align-self: flex-start;
+  margin-top: 0.45em;
+}
+.kit-callout {
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--kit-tone-bg, var(--status-neutral-bg));
+  color: var(--text-primary);
+}
+.kit-callout:not([data-tone]) {
+  background: var(--surface-wash);
+}
+.kit-tone {
+  color: var(--kit-tone);
+}
+
+/* Facts: a label column and a value column. */
+.kit-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px var(--space-4);
+}
+.kit-facts > dt,
+.kit-facts > div > dt {
+  color: var(--text-tertiary);
+}
+.kit-facts > dd,
+.kit-facts > div > dd {
+  min-width: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.kit-facts > div {
+  display: contents;
+}
+
+/* Tables. */
+.kit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+}
+.kit-table th {
+  padding: 6px var(--space-3) 6px 0;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 500;
+  text-align: left;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+.kit-table td {
+  padding: 6px var(--space-3) 6px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: baseline;
+}
+.kit-table :is(th, td):first-child {
+  padding-left: var(--space-2);
+}
+.kit-table :is(th, td):last-child {
+  padding-right: var(--space-2);
+}
+.kit-table tr:last-child > td {
+  border-bottom: 0;
+}
+.kit-table tr[data-tone] > td {
+  background: var(--kit-tone-bg);
+}
+.kit-table td.kit-num,
+.kit-table th.kit-num {
+  text-align: right;
+}
+
+/* Disclosure: native details, styled as the review's. */
+.kit-details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  font-weight: 500;
+  list-style: none;
+}
+.kit-details > summary::-webkit-details-marker {
+  display: none;
+}
+.kit-details > summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+.kit-details[open] > summary::after {
+  margin-top: 3px;
+  transform: rotate(-135deg);
+}
+.kit-details > summary:hover {
+  color: var(--text-primary);
+}
+.kit-details[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+/* States drawn by baum.empty and baum.fail. */
+.kit-empty {
+  color: var(--text-tertiary);
+}
+:root[data-face="detail"] .kit-empty {
+  padding: 10px var(--space-3);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+}
+.kit-fail {
+  color: var(--text-secondary);
+}
+:root[data-face="detail"] .kit-fail {
+  padding: 10px var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--status-critical) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--status-critical-bg);
+  color: var(--text-primary);
+}
+
+/* baum-cite: the review's source chip. */
+baum-cite {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+.baum-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+}
+.baum-chip > .baum-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+baum-cite[data-kind="hunk"] > .baum-chip,
+baum-cite[data-kind="file"] > .baum-chip,
+baum-cite[data-kind="commit"] > .baum-chip {
+  font-family: var(--font-mono);
+}
+button.baum-chip {
+  cursor: pointer;
+}
+button.baum-chip:hover {
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+baum-cite[data-state="unavailable"] > .baum-chip {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: inherit;
+}
+.baum-mark {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--kit-tone, var(--text-tertiary));
+}
+.kit-dot[data-tier="critical"],
+.baum-mark[data-tier="critical"] {
+  background: var(--tier-critical);
+}
+.kit-dot[data-tier="high"],
+.baum-mark[data-tier="high"] {
+  background: var(--tier-high);
+}
+.kit-dot[data-tier="medium"],
+.baum-mark[data-tier="medium"] {
+  background: var(--tier-medium);
+}
+.kit-dot[data-tier="low"],
+.baum-mark[data-tier="low"] {
+  background: var(--tier-low);
+}
+
+/* baum-diff: one cited hunk, as the review's code excerpts draw it. */
+baum-diff {
+  display: block;
+  min-width: 0;
+}
+baum-diff > .baum-diff {
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+}
+.baum-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-wash);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+.baum-diff-head:not(:last-child) {
+  border-bottom: 1px solid var(--border-default);
+}
+.baum-diff-path {
+  display: inline-flex;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+}
+button.baum-diff-path {
+  color: var(--text-link);
+  cursor: pointer;
+}
+button.baum-diff-path:hover {
+  text-decoration: underline;
+}
+.baum-diff-path > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The directory gives way first, then the file name from its start. */
+.baum-diff-path > span:first-child {
+  flex: 0 1000 auto;
+  min-width: 0;
+}
+.baum-diff-path > span:last-child {
+  flex: 0 1 auto;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+}
+.baum-diff-path > span:last-child > span {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.baum-diff-stat {
+  flex: none;
+  white-space: nowrap;
+}
+.baum-diff-stat > :first-child {
+  color: var(--status-positive);
+}
+.baum-diff-stat > :last-child {
+  color: var(--status-critical);
+}
+.baum-diff-body {
+  position: relative;
+  overflow-x: auto;
+}
+baum-diff table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}
+/* The review draws code at the body size once there is room. */
+@media (min-width: 640px) {
+  baum-diff table {
+    font-size: var(--text-base);
+  }
+}
+baum-diff col.baum-n {
+  width: 2.75rem;
+}
+baum-diff col.baum-m {
+  width: 1.5rem;
+}
+baum-diff tr {
+  vertical-align: top;
+}
+baum-diff tr[data-kind="add"] {
+  background: var(--status-positive-bg);
+}
+baum-diff tr[data-kind="remove"] {
+  background: var(--status-critical-bg);
+}
+baum-diff tr.baum-hunk,
+baum-diff tr.baum-gap {
+  background: var(--accent-50);
+  color: var(--accent-700);
+}
+baum-diff tr.baum-gap {
+  color: var(--text-tertiary);
+}
+baum-diff :is(tr.baum-hunk, tr.baum-gap) > td {
+  padding: 2px var(--space-3);
+}
+baum-diff td.baum-n {
+  padding: 0 6px;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-tertiary);
+  text-align: right;
+  user-select: none;
+  -webkit-user-select: none;
+}
+baum-diff td.baum-m {
+  padding: 0 4px;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+baum-diff tr[data-kind="add"] > td.baum-m {
+  color: var(--status-positive);
+}
+baum-diff tr[data-kind="remove"] > td.baum-m {
+  color: var(--status-critical);
+}
+baum-diff td.baum-code {
+  padding-right: var(--space-3);
+  tab-size: 4;
+  color: var(--syntax-foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.baum-more {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 6px var(--space-3);
+  border: 0;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-card);
+  color: var(--text-link);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+  text-align: left;
+  cursor: pointer;
+}
+.baum-more:hover {
+  text-decoration: underline;
+}
+.baum-diff-note {
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: var(--text-xs--line-height);
+}
+/* A glance draws the file and range on one line. */
+baum-diff[data-face="glance"] > .baum-diff {
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+baum-diff[data-face="glance"] .baum-diff-head {
+  padding: 0;
+  background: none;
+  border: 0;
+}
+/* baum-md: the review's Markdown look. */
+baum-md {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+baum-md[data-inline] {
+  display: inline;
+}
+baum-md ul {
+  padding-left: 1.25rem;
+  list-style: disc;
+}
+baum-md ol {
+  padding-left: 1.25rem;
+  list-style: decimal;
+}
+baum-md li + li {
+  margin-top: var(--space-1);
+}
+baum-md li::marker {
+  color: var(--text-tertiary);
+}
+baum-md h3 {
+  font-weight: 600;
+}
+baum-md h4 {
+  font-weight: 500;
+}
+baum-md blockquote {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border-default);
+  color: var(--text-secondary);
+}
+baum-md pre {
+  overflow-x: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--code-fill);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}
+baum-md code {
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  background: var(--code-fill);
+  font-size: 0.875em;
+}
+baum-md pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+baum-md .baum-link {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+}
+baum-md del {
+  color: var(--text-tertiary);
+}

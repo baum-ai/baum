@@ -2,8 +2,10 @@ package reviewgroups
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -11,11 +13,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/tiles"
 )
 
 // Registry is the part of *repos.Registry the handler reads: the picked
@@ -40,6 +45,8 @@ type API struct {
 	File func(context.Context, locallink.FileRequest) (locallink.FileResult, error)
 
 	patches chan struct{}
+	// tiles keeps the encoded answers of the tiles route.
+	tileAnswers tileview.Cache
 	// patcher is the Patcher Handler made when Patch was nil; Close closes it.
 	patcher *locallink.Patcher
 }
@@ -79,6 +86,7 @@ func (h *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/groups/{id}", h.remove)
 	mux.HandleFunc("GET /api/groups/{id}/versions", h.versions)
 	mux.HandleFunc("GET /api/groups/{id}/document", h.document)
+	mux.HandleFunc("GET /api/groups/{id}/tiles", h.tiles)
 	mux.HandleFunc("GET /api/groups/{id}/patch", h.patch)
 	mux.HandleFunc("GET /api/groups/{id}/file", h.file)
 	return mux
@@ -352,6 +360,30 @@ func (h *API) document(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(version.Document)
+}
+
+// tiles serves a group review's document with the tile document converted
+// from it, for the version the request names, as GET /api/tiles does for a
+// pull request's.
+func (h *API) tiles(w http.ResponseWriter, r *http.Request) {
+	g, version, ok := h.version(w, r)
+	if !ok {
+		return
+	}
+	// A version is immutable, but its bytes name the answer as well as its
+	// number does, so a rewrite is never answered from the old one.
+	sum := sha256.Sum256(version.Document)
+	key := fmt.Sprintf("%s\x00%d\x00%x", g.ID, version.Metadata.Version, sum)
+	answer, found := h.tileAnswers.Get(key)
+	if !found {
+		var err error
+		if answer, err = tileview.Encode(tileview.Build(version.Document, nil, tiles.Options{})); err != nil {
+			fail(w, err)
+			return
+		}
+		h.tileAnswers.Put(key, answer)
+	}
+	etagjson.Serve(w, r, answer.Body)
 }
 
 // patchDocument is what the patch route reads of a group review.

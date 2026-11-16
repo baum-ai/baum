@@ -503,7 +503,6 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Inbox",
     "Pull requests",
     "A pull request or group",
-    "Walkthrough",
     "Sessions",
     "Jobs",
     "Repositories",
@@ -589,6 +588,8 @@ it("lists exactly the keys that work in the sheet", async () => {
     "←",
     "Space",
     "Enter",
+    "Esc",
+    "u",
     "m",
     "f",
     "t",
@@ -602,7 +603,6 @@ it("lists exactly the keys that work in the sheet", async () => {
     "u",
     "Esc",
   ]);
-  expect(listed("Walkthrough")).toEqual(["j", "↓", "k", "↑", "→", "←", "o", "c", "v", "a"]);
   const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
   expect(listed("Sessions")).toEqual([...list, "p", "r", "f", "Space", "1–9"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
@@ -641,7 +641,6 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Anywhere",
     "Inbox",
     "A pull request or group",
-    "Walkthrough",
     "Sessions",
     "Jobs",
     "Repositories",
@@ -954,10 +953,10 @@ it("keeps a refresh under way when the page draws its button again", async () =>
         </RefreshPage>,
       ),
     );
-  await draw("walkthrough");
+  await draw("first");
   pressRefreshKey();
   await act(async () => {});
-  await draw("full review");
+  await draw("second");
   const button = node.querySelector<HTMLButtonElement>("button")!;
   expect(button.getAttribute("aria-busy")).toBe("true");
   await act(async () => settle());

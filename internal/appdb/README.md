@@ -20,7 +20,7 @@ configuration is still read from `config.toml`.
 | `state/inboxes` | `inboxes`: saved filters and their revision |
 | `state/analytics-actions` | `analytics`: accepted GitHub writes, retained 90 days |
 | `state/plan-usage-history` | `planusage`: plan-window samples, retained 90 days |
-| `ui/inbox`, `ui/walkthrough`, `ui/review` | `uistate`: inbox day/snoozes, per-version walkthrough drafts and per-PR pending review comments, with revisions and retry receipts |
+| `ui/inbox`, `ui/review` | `uistate`: inbox day/snoozes and per-PR pending review comments, with revisions and retry receipts |
 | `state/agent-requests` | `agentrequests`: Codex approval preference |
 | `analytics_sessions`, `analytics_index` | `analytics`: derived per-session statistics without conversation text, one row per session file, and the index's format version and price thresholds. They replace the `cache/analytics-index` document, which the index moves into them on first open |
 | `cache/discovery/<hash>` | `discovery`: snapshots, GitHub's pull request rows, the incremental cursor, conditional responses and author permissions, partitioned by host, credential identity and repository; the credential's API budgets and team memberships under `<hash>.budget` |

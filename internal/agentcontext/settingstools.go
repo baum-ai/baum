@@ -117,18 +117,18 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 func (s *Server) settingsTools() []Tool {
 	return []Tool{{
 		Name: "settings_general",
-		Description: "What the Settings page's General section shows: the theme (system, light or dark), whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
+		Description: "What the Settings page's General section shows: the theme (system, light or dark), whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), the review page (full or tiles), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
 			"The plan choices are worked out from what the daemon already holds; nothing is fetched.",
 		Scope:     ScopeGlobal,
 		Projected: []string{"/api/settings/appearance"},
 		Call:      s.callSettingsGeneral,
 	}, {
 		Name: "settings_reviews",
-		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored). " +
+		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored), and whether new reviews are generated as tiles (tile_reviews, an experimental setting, off by default). " +
 			"Resolving an auto backend runs the harnesses' version checks on this computer, as opening the section in the app does; the answer is reused for a short while (45 seconds in the daemon) while the settings are unchanged.",
 		Scope:     ScopeGlobal,
 		Reads:     []string{"/api/automatic"},
-		Projected: []string{"/api/settings"},
+		Projected: []string{"/api/settings", "/api/settings/labs"},
 		Call:      s.callSettingsReviews,
 	}, {
 		Name:        "settings_fixes",
@@ -226,6 +226,7 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 		Theme        string `json:"theme"`
 		KeyHints     bool   `json:"key_hints"`
 		PageModifier string `json:"page_modifier"`
+		ReviewPage   string `json:"review_page"`
 	}
 	if json.Unmarshal(body, &appearance) != nil {
 		return "", errors.New("the appearance settings are not readable")
@@ -234,9 +235,10 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 		Theme         string       `json:"theme"`
 		KeyHints      bool         `json:"key_hints"`
 		PageModifier  string       `json:"page_modifier"`
+		ReviewPage    string       `json:"review_page"`
 		PlanUsage     []planChoice `json:"plan_usage"`
 		PlanUsageNote string       `json:"plan_usage_note,omitempty"`
-	}{Theme: appearance.Theme, KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, PlanUsage: []planChoice{}}
+	}{Theme: appearance.Theme, KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, ReviewPage: appearance.ReviewPage, PlanUsage: []planChoice{}}
 	var choices []json.RawMessage
 	if s.planChoices != nil {
 		choices, err = s.planChoices(ctx)
@@ -278,8 +280,20 @@ func (s *Server) callSettingsReviews(ctx context.Context, c CallContext, _ json.
 		Model           string     `json:"model"`
 		Effort          string     `json:"effort"`
 		DecisionCapture *capture   `json:"decision_capture"`
+		TileReviews     *bool      `json:"tile_reviews"`
 		Unavailable     []string   `json:"unavailable,omitempty"`
 	}{Backend: settings.Backend, Model: settings.Model, Effort: settings.Effort}
+	if body, _, err := c.get(ctx, "/api/settings/labs", nil); err == nil {
+		var labs struct {
+			TileReviews *bool `json:"tile_reviews"`
+		}
+		if json.Unmarshal(body, &labs) == nil {
+			out.TileReviews = labs.TileReviews
+		}
+	}
+	if out.TileReviews == nil {
+		out.Unavailable = append(out.Unavailable, "tile_reviews")
+	}
 	if body, _, err := c.get(ctx, "/api/automatic", nil); err == nil && !disabled(body) {
 		var a automatic
 		if json.Unmarshal(body, &a) == nil {
