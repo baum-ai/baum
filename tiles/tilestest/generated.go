@@ -48,16 +48,18 @@ import (
 //     take more than tiles.MaxExtraRows of its rows (tiles.ExtraRows).
 //   - 14: the guard rails hold (tiles/guards.go): the first screen
 //     (tiles.FirstScreenRows rows) and the landing page each show at least as
-//     many current changes as the template's for the same review, unless it shows a pinned tile, the
+//     many current changes as the template's for the same review (with the same pins), unless it shows the
 //     risks tile ranking a critical or high risk, a change the
 //     recommendation names, the evidence tile with
 //     tiles.EvidenceGapsShown gaps or a library tile with a destructive or
 //     breaking item (tiles.Leads) that the template's does not, or a person
 //     hid tiles; what must be seen on the template's first screen stays on
-//     it unless a pinned tile is on the first screen; no change
+//     it, with a repository's pins applied to the template too; no change
 //     is featured alone at half on a row another follows; and the evidence
 //     tile with that many gaps is on the landing page, unless a person hid
-//     it or the landing page holds only pinned tiles and those always on it.
+//     it or every tile the landing page shows is pinned or held there by
+//     the hard rules (the overview, the risks tile ranking a critical or
+//     high risk, a change the recommendation names).
 //
 // A layout a person edited (tiles.ApplyOverlay: layout.edited) is theirs:
 // 14 does not apply to it, and 13 allows a row holding a tile they resized
@@ -218,14 +220,14 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		}
 	}
 
-	// An edited layout keeps a change the recommendation names, outside the
-	// changes group, on the landing page; an unedited one does through the
-	// guards and invariants above.
-	if !c.Empty() && c.Layout.Edited {
+	// An edited or pinned layout keeps a change the recommendation names,
+	// outside the changes group, on the landing page; an unedited, unpinned
+	// one does through the guards and invariants above.
+	if !c.Empty() && (c.Layout.Edited || slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Pin })) {
 		for i, entry := range doc.Layout.Entries {
 			if entry.Group != tiles.GroupChanges && entry.Group != tiles.GroupHidden && entry.Group != tiles.GroupObsolete &&
 				slices.Contains(tiles.RecommendedChanges(doc), entry.Tile) && !tiles.Visible(doc.Layout)[i] {
-				fail(11, "change %s, which the recommendation names, is off the landing page of an edited layout", entry.Tile)
+				fail(11, "change %s, which the recommendation names, is off the landing page of an edited or pinned layout", entry.Tile)
 			}
 		}
 	}
@@ -483,20 +485,28 @@ func evidenceGaps(doc *tiles.Document, current map[string]bool) int {
 func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.Document) []string {
 	var failures []string
 	template, _ := tiles.Template(converted, c)
+	// A repository's pins are honoured by both layouts: the template is
+	// compared with the same pins applied.
+	var pins []string
+	for _, e := range c.Layout.Entries {
+		if e.Pin {
+			pins = append(pins, e.Tile)
+		}
+	}
+	template.Layout.Entries = tiles.PinEntries(template.Layout.Entries, converted, pins)
 	templated, err := tiles.Compose(converted, &template)
 	if err != nil {
 		return []string{"the template does not compose: " + err.Error()}
 	}
 	got, want := firstScreenFacts(doc), firstScreenFacts(templated)
-	pinned := slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Pin && got.others[e.Tile] })
-	if len(c.Layout.Hidden) == 0 && !pinned {
+	if len(c.Layout.Hidden) == 0 {
 		for id := range want.others {
 			if !got.others[id] {
 				failures = append(failures, fmt.Sprintf("tile %s, which must be seen, is on the template's first screen and not on this one", id))
 			}
 		}
 	}
-	if (got.changes < want.changes || got.landing < want.landing) && len(c.Layout.Hidden) == 0 && !pinned {
+	if (got.changes < want.changes || got.landing < want.landing) && len(c.Layout.Hidden) == 0 {
 		standsIn := false
 		for id := range got.others {
 			standsIn = standsIn || !want.others[id]
@@ -526,11 +536,14 @@ func guardFailures(converted *tiles.Document, c *tiles.Composition, doc *tiles.D
 	}
 	if evidenceGaps(doc, current) >= tiles.EvidenceGapsShown && !slices.Contains(c.Layout.Hidden, tiles.TypeEvidence) {
 		visible := tiles.Visible(doc.Layout)
-		// No place is left when the landing page holds only pinned tiles and
-		// those always on it.
+		// No place is left exactly when every tile the landing page shows is
+		// pinned or held there by the hard rules (the overview, the risks
+		// tile ranking a critical or high risk, a change the recommendation
+		// names): the evidence may take the place of none of them.
+		named := tiles.RecommendedChanges(doc)
 		full := true
 		for i, entry := range doc.Layout.Entries {
-			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && entry.Tile != tiles.TypeRisks {
+			if visible[i] && !entry.Pin && entry.Tile != tiles.TypeOverview && (entry.Tile != tiles.TypeRisks || !severeRanked(doc)) && !slices.Contains(named, entry.Tile) {
 				full = false
 			}
 		}

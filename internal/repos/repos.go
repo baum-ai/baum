@@ -47,6 +47,9 @@ type Settings struct {
 	// the global switches (see DecisionsEnabled): nil and true follow them,
 	// false turns the repository off.
 	Decisions *bool `json:"decisions,omitempty"`
+	// Tiles are the repository's standing preferences for the tile pages of
+	// its reviews (TileSettings); nil is none.
+	Tiles *TileSettings `json:"tiles,omitempty"`
 }
 
 // AutomaticEnabled reports whether the daemon generates reviews of this
@@ -1162,6 +1165,10 @@ func cloneStamp(clone Clone) (string, bool) {
 
 // Update replaces shared repository settings without needing an available clone.
 func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
+	s, e := s.Checked()
+	if e != nil {
+		return e
+	}
 	data, e := json.Marshal(s)
 	if e != nil {
 		return e
@@ -1462,6 +1469,9 @@ func (r *Registry) UpdateRepositoryIf(ctx context.Context, repository string, ed
 	if e != nil {
 		return Settings{}, e
 	}
+	if next, e = next.Checked(); e != nil {
+		return Settings{}, e
+	}
 	if _, e = tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), identity); e != nil {
 		return Settings{}, e
 	}
@@ -1470,6 +1480,10 @@ func (r *Registry) UpdateRepositoryIf(ctx context.Context, repository string, ed
 
 // UpdateRepository replaces a picked repository's shared settings by identity.
 func (r *Registry) UpdateRepository(ctx context.Context, repository string, s Settings) error {
+	s, e := s.Checked()
+	if e != nil {
+		return e
+	}
 	res, e := r.db.ExecContext(ctx, `UPDATE repositories AS r SET settings=? WHERE r.identity=? AND (`+r.pickedSQL()+`)`, mustJSON(s), strings.ToLower(repository))
 	if e != nil {
 		return e

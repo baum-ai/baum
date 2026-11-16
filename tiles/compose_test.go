@@ -287,7 +287,7 @@ func TestNormalizeRules(t *testing.T) {
 		{"appended", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("evidence:half", "sec_config_flag:third:changes")}}},
 		{"size", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("overview:third", "risks:huge", "sec_config_flag:full", "evidence:")}}},
 		{"group", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("risks:half:changes", "sec_retry_policy:third:other", "sec_config_flag:third:pin", "everything_else:third:changes")}}},
-		{"group-pinned-member", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: "sec_config_flag", Size: tiles.SizeHalf, Group: tiles.GroupChanges, Pin: true}}}}},
+		{"group-pinned-member", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: "overview", Size: tiles.SizeHalf}, {Tile: "risks", Size: tiles.SizeHalf}, {Tile: "sec_config_flag", Size: tiles.SizeHalf, Group: tiles.GroupChanges, Pin: true}}}}},
 		{"group-contiguous", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("sec_config_flag:third:changes", "evidence:third", "overview:half", "sec_retry_policy:third:changes", "risks:half")}}},
 		{"changes-shown", exhibits, tiles.Composition{Layout: tiles.CompositionLayout{Entries: sizes("overview:half"), ChangesShown: &shown}}},
 		{"promotions", exhibits, tiles.Composition{Promotions: []tiles.Promotion{table, delays}, Layout: tiles.CompositionLayout{Entries: sizes("overview:half", "table_flag_defaults:full", "risks:half")}}},
@@ -760,11 +760,91 @@ func TestComposeShowsRecommendedChanges(t *testing.T) {
 				}
 			}
 			shown := *composed.Layout.Groups[0].CollapseAfter
-			if want := slices.Index(group, named) + 1; tc.raised && shown != want {
-				t.Errorf("the group shows %d, want %d, up to %s", shown, want, named)
+			if want := slices.Index(group, named) + 1; tc.raised && shown < want {
+				t.Errorf("the group shows %d, want at least %d, up to %s", shown, want, named)
 			}
 			if tc.leading && (shown != 1 || group[0] != named) {
 				t.Errorf("the group shows %d led by %s, want 1 led by %s", shown, group[0], named)
+			}
+		})
+	}
+}
+
+// Named changes a layout puts past pins that fill the landing page come
+// before the pins, and when even there they do not all fit at full width,
+// they shrink, to half and then to a third, and stay on the landing page.
+// No other tile shrinks. build does this for an edited layout and for a
+// pinned one alike; the edited layout keeps the first-screen guard, which
+// would take the pinned template, out of the way.
+func TestComposeShrinksNamedChangesToKeepThemOnTheLandingPage(t *testing.T) {
+	many := withManyBlocks()
+	pins := []tiles.Entry{
+		{Tile: tiles.TypeIntent, Size: tiles.SizeHalf, Pin: true},
+		{Tile: tiles.TypeContext, Size: tiles.SizeHalf, Pin: true},
+		{Tile: tiles.TypeMedia, Size: tiles.SizeHalf, Pin: true},
+	}
+	for _, tc := range []struct {
+		name     string
+		named    []string
+		overview tiles.Size
+	}{
+		// A full overview leaves a row and a half for two full changes.
+		{"two", []string{"sec_part_5", "sec_part_6"}, tiles.SizeFull},
+		// Beside a half overview and the severe risks, three full changes
+		// take three rows; at half they take a row and a half.
+		{"three", []string{"sec_part_5", "sec_part_6", "sec_part_1"}, tiles.SizeHalf},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fixture{name: "named-" + tc.name, mutate: func(doc map[string]any) {
+				many.mutate(doc)
+				var refs []any
+				for _, id := range tc.named {
+					refs = append(refs, id)
+				}
+				object(doc, "summary")["recommendation"] = map[string]any{"decision": "look_first", "text": "Read these first.", "refs": refs}
+			}}
+			normalized, doc := convert(t, f)
+			if !slices.Equal(tiles.RecommendedChanges(doc), tc.named) {
+				t.Fatalf("named %v", tiles.RecommendedChanges(doc))
+			}
+			c := &tiles.Composition{Layout: tiles.CompositionLayout{Edited: true, Entries: slices.Clone(pins)}}
+			c.Layout.Entries = append(c.Layout.Entries,
+				tiles.Entry{Tile: tiles.TypeOverview, Size: tc.overview},
+				tiles.Entry{Tile: tiles.TypeDecisions, Size: tiles.SizeFull},
+				tiles.Entry{Tile: tiles.TypeEverythingElse, Size: tiles.SizeFull})
+			for _, id := range tc.named {
+				c.Layout.Entries = append(c.Layout.Entries, tiles.Entry{Tile: id, Size: tiles.SizeFull})
+			}
+			composed, err := tiles.Compose(doc, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, failure := range tilestest.CheckGenerated(normalized, c, composed) {
+				t.Error(failure)
+			}
+			visible := tiles.Visible(composed.Layout)
+			for _, id := range tc.named {
+				i := slices.IndexFunc(composed.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == id })
+				if i < 0 || !visible[i] {
+					t.Errorf("named change %s is off the landing page: %v", id, composed.Layout.Entries)
+					continue
+				}
+				if size := composed.Layout.Entries[i].Size; size == tiles.SizeFull {
+					t.Errorf("named change %s kept its full width: %v", id, composed.Layout.Entries)
+				}
+			}
+			for _, in := range c.Layout.Entries {
+				if slices.Contains(tc.named, in.Tile) {
+					continue
+				}
+				i := slices.IndexFunc(composed.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == in.Tile })
+				if i < 0 || composed.Layout.Entries[i].Size.Units() < in.Size.Units() {
+					t.Errorf("tile %s shrank from %s: %v", in.Tile, in.Size, composed.Layout.Entries)
+				}
+			}
+			again, err := tiles.Compose(doc, c)
+			if err != nil || !slices.Equal(again.Layout.Entries, composed.Layout.Entries) {
+				t.Errorf("composing again gives %v", again.Layout.Entries)
 			}
 		})
 	}

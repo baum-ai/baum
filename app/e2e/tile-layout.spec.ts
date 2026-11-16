@@ -161,3 +161,25 @@ test("a hidden tile comes back with Show, and the next version keeps the edits",
   await strip(page).getByRole("button", { name: "Reset" }).click();
   await expect(cards(page).first()).toHaveAttribute("data-tile", "overview");
 });
+
+test("a library tile added from the panel is filled while the page waits", async ({ page }) => {
+  test.setTimeout(120_000);
+  await fresh(page);
+  await page.keyboard.press("`");
+  // The agent adds it without data: the card is there at once, being
+  // filled, and shows its data when baum's fill lands.
+  await say(page, "Add the API changes tile", "Added Interface changes");
+  await expect(card(page, "api_change")).toBeVisible();
+  await expect(card(page, "api_change")).toContainText("Filling this tile…");
+  await expect(card(page, "api_change").locator("[data-added-note]")).toHaveText(
+    "Filling for this version",
+  );
+  await expect(card(page, "api_change")).not.toContainText("Filling this tile…", {
+    timeout: 15_000,
+  });
+  await expect(card(page, "api_change").locator("[data-added-note]")).toHaveCount(0);
+  await expect(card(page, "api_change")).toHaveAttribute("data-tile-type", "custom");
+  // Undo takes the tile away again.
+  await say(page, "undo that", "Added Interface changes");
+  await expect(card(page, "api_change")).toHaveCount(0);
+});

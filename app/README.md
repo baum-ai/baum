@@ -2671,6 +2671,32 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   why. A group, a draft and an earlier version have no layout controls, and
   there is no dragging: the layout changes through the panel, Undo, Reset
   and Show.
+- **Tile preferences.** A repository's page (Repositories, the repository,
+  Reviews) has a **Tile layout** box (`repository-tile-text`, up to 1000
+  characters, saved when it loses focus, 800 ms after typing stops, and when
+  the page closes) and **Pinned tiles** (a list with Unpin and a select to pin
+  another, at most 8, saved at once) beside its other controls, in
+  `RepositoryReviews` (`src/settings.tsx`). The choices come from
+  `GET api/tile-library` (`single`, the built-in types a review has one of,
+  and `types`, the library's), so the daemon alone says what can be pinned.
+  The section follows the stored settings when they change elsewhere (a saved
+  proposal), unless it is saving or holds text not yet saved. They save
+  as the page's other controls do, as the `tiles` field of
+  `PUT api/repositories/{owner}/{name}/settings`, which replaces the whole
+  settings object, so every save of the section sends the stored `tiles` too
+  (and `tiles: null` once both are empty). The daemon answers a refusal with
+  its reason, which the section shows. They change the next review generated
+  in the repository, with tile reviews on. The panel proposes them from a
+  pull request's page (`propose_tile_preferences`) as a proposal card the
+  person saves.
+- **Added tiles.** The panel can add a library tile the review does not show
+  ("add the API changes tile"). The tile route's `added` notes
+  (`[{tile, from?, filling?}]`, put on the tiles by `withAddedNotes` in
+  `src/tiles/tile-document.ts`) say which added tiles are being filled: a
+  card without data yet shows "Filling this tile…" with the live dot, and
+  one showing an earlier version's data says "From version N; filling for
+  this version" under its title until the fill lands, which the `layout`
+  event brings.
 
 The session panel's page context names the page in its `focus`: `view`
 `tiles`, and the `tile` open with its `item`. Ask about this tile, in a

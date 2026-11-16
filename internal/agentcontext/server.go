@@ -110,7 +110,7 @@ func New(opts Options) *Server {
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
-	proposing, layouts := proposeTools(), s.layoutTools()
+	proposing, layouts := proposeTools(), slices.Concat(s.layoutTools(), s.tilePreferenceTools())
 	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, layouts) {
 		if err := t.compile(); err != nil {
 			panic(err)
@@ -154,7 +154,7 @@ func New(opts Options) *Server {
 	groupExtras := byName(extras, "group_patch", "group_file")
 	// It lists the layout tools too, which change the person's own layout
 	// of the review's tiles at once.
-	pullPage = append(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }), layoutPageTools...)
+	pullPage = append(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }), slices.Concat(layoutPageTools, tilePreferencePageTools)...)
 	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(pullPage)}
 	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: withCommonTools(slices.Concat(forGroup, groupExtras, []string{"focus"}))}
 	// The Inbox lists the queue and its inboxes; Pull requests its list. The

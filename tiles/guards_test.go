@@ -103,18 +103,19 @@ func TestGuardKeepsTheTemplatesChangesOnTheFirstScreen(t *testing.T) {
 // A change featured alone at half, empty units beside it, takes the full row.
 func TestGuardWidensALoneFeaturedChange(t *testing.T) {
 	normalized, doc := convert(t, fixtureNamed(t, "example"))
-	// The person pinned the context tile, so the layout is theirs; the
-	// evidence (with gaps) is on the landing page, and the change featured
-	// alone on the row after it still takes the row.
-	c := exampleLayout([]tiles.Entry{
-		{Tile: tiles.TypeContext, Size: tiles.SizeFull, Pin: true}, {Tile: tiles.TypeEvidence, Size: tiles.SizeFull},
-		{Tile: "sec_ackfix", Size: tiles.SizeHalf},
-	}, "sec_api", "sec_retry", "sec_deadletter", "sec_docs")
+	// The first screen is the template's, and the last change stands alone
+	// at half on a row the media tile follows: it still takes the row.
+	c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+		{Tile: tiles.TypeOverview, Size: tiles.SizeHalf}, {Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
+		{Tile: "sec_api", Size: tiles.SizeHalf}, {Tile: tiles.TypeEvidence, Size: tiles.SizeHalf},
+		{Tile: "sec_retry", Size: tiles.SizeThird, Group: tiles.GroupChanges}, {Tile: "sec_deadletter", Size: tiles.SizeThird, Group: tiles.GroupChanges}, {Tile: "sec_ackfix", Size: tiles.SizeThird, Group: tiles.GroupChanges},
+		{Tile: "sec_docs", Size: tiles.SizeHalf}, {Tile: tiles.TypeMedia, Size: tiles.SizeFull},
+	}}}
 	n, report, composed := checkComposed(t, normalized, doc, c)
 	if report.Counts()[tiles.FixLoneFeatured] != 1 || report.Counts()[tiles.FixFirstScreen] != 0 {
 		t.Fatalf("fixes %v", report.Messages())
 	}
-	if _, entry := entryOf(composed, "sec_ackfix"); entry.Size != tiles.SizeFull {
+	if _, entry := entryOf(composed, "sec_docs"); entry.Size != tiles.SizeFull {
 		t.Errorf("the lone change is %s; layout %v", entry.Size, n.Layout.Entries)
 	}
 }
@@ -225,12 +226,12 @@ func TestGuardShowsEvidenceInTheRowsAuthoredTilesAdd(t *testing.T) {
 			{Tile: "table_lead", Size: tiles.SizeFull},
 			{Tile: "sec_retry_policy", Size: tiles.SizeThird},
 			{Tile: "prose_aside", Size: tiles.SizeHalf},
-			{Tile: "sec_config_flag", Size: tiles.SizeFull, Pin: true},
+			{Tile: "sec_config_flag", Size: tiles.SizeFull},
 			{Tile: tiles.TypeOverview, Size: tiles.SizeFull},
 			{Tile: tiles.TypeContext, Size: tiles.SizeFull},
-			{Tile: tiles.TypeIntent, Size: tiles.SizeThird, Pin: true},
+			{Tile: tiles.TypeIntent, Size: tiles.SizeThird},
 			{Tile: tiles.TypeEvidence, Size: tiles.SizeThird},
-			{Tile: tiles.TypeRisks, Size: tiles.SizeHalf, Pin: true},
+			{Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
 		}},
 	}
 	n, report, composed := checkComposed(t, normalized, doc, c)
@@ -242,9 +243,6 @@ func TestGuardShowsEvidenceInTheRowsAuthoredTilesAdd(t *testing.T) {
 		if i, _ := entryOf(composed, id); i < 0 || !visible[i] {
 			t.Errorf("tile %s is not on the landing page: %v", id, n.Layout.Entries)
 		}
-	}
-	if i, _ := entryOf(composed, "sec_retry_policy"); i < 0 || visible[i] {
-		t.Errorf("the change the evidence displaces is still on the landing page: %v", n.Layout.Entries)
 	}
 }
 
@@ -264,5 +262,101 @@ func TestGuardMovesUnlistedEvidenceOntoTheLandingPage(t *testing.T) {
 	}
 	if i, _ := entryOf(composed, tiles.TypeEvidence); i < 0 || !tiles.Visible(composed.Layout)[i] {
 		t.Errorf("the evidence tile is not on the landing page: %v", n.Layout.Entries)
+	}
+}
+
+// A repository's pins are honoured, not a way past the guards: a generated
+// layout with eight half-width pins still keeps the overview, a severe risks
+// tile and the change the recommendation names on the landing page.
+func TestPinnedLayoutKeepsWhatMustBeSeenOnTheLandingPage(t *testing.T) {
+	checked := 0
+	for _, f := range fixtures {
+		normalized, doc := convert(t, f)
+		named := tiles.RecommendedChanges(doc)
+		if len(named) == 0 {
+			continue
+		}
+		checked++
+		template, _ := tiles.Template(doc, nil)
+		var pins []string
+		for _, tile := range doc.Tiles {
+			if tile.ID != tiles.TypeOverview && !slices.Contains(named, tile.ID) && len(pins) < 8 {
+				pins = append(pins, tile.ID)
+			}
+		}
+		// The pins are other tiles, so the guards must still bring the named
+		// changes forward where the pins fill the page.
+		entries := tiles.PinEntries(template.Layout.Entries, doc, pins)
+		for i := range entries {
+			if entries[i].Pin {
+				entries[i].Size = tiles.SizeHalf
+			}
+		}
+		c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: entries}}
+		_, _, composed := checkComposed(t, normalized, doc, c)
+		visible := tiles.Visible(composed.Layout)
+		must := append([]string{tiles.TypeOverview}, named...)
+		for _, id := range must {
+			if i, e := entryOf(composed, id); i < 0 || !visible[i] && e.Group != tiles.GroupChanges {
+				t.Errorf("%s: tile %s is not on the landing page of the pinned layout: %v", f.name, id, composed.Layout.Entries)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no fixture names a change in its recommendation")
+	}
+}
+
+// With one pin the first-screen guard still works: a composer layout that
+// shows fewer changes than the template with the same pin falls back to that
+// template, the pin leading the page.
+func TestPinnedWeakLayoutFallsBackToTheTemplateWithTheSamePins(t *testing.T) {
+	normalized, doc := convert(t, fixtureNamed(t, "example"))
+	c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+		{Tile: tiles.TypeMedia, Size: tiles.SizeHalf, Pin: true},
+		{Tile: tiles.TypeOverview, Size: tiles.SizeFull}, {Tile: tiles.TypeContext, Size: tiles.SizeFull}, {Tile: tiles.TypeIntent, Size: tiles.SizeFull},
+	}}}
+	n, report, composed := checkComposed(t, normalized, doc, c)
+	if report.Counts()[tiles.FixFirstScreen] != 1 {
+		t.Fatalf("fixes %v", report.Messages())
+	}
+	if first := composed.Layout.Entries[0]; first.Tile != tiles.TypeMedia || !first.Pin {
+		t.Errorf("the pin does not lead: %v", composed.Layout.Entries)
+	}
+	template, _ := tiles.Template(doc, nil)
+	if got := len(n.Layout.Entries); got != len(template.Layout.Entries) {
+		t.Errorf("%d entries, the template's %d", got, len(template.Layout.Entries))
+	}
+	if i, _ := entryOf(composed, tiles.TypeOverview); i < 0 || !tiles.Visible(composed.Layout)[i] {
+		t.Errorf("the overview is off the landing page: %v", composed.Layout.Entries)
+	}
+}
+
+// Pins go first and can push the template's evidence place, beside the lead
+// change, off the landing page. The pinned template a weak layout falls back
+// to keeps the evidence with gaps on the landing page in the place of a tile
+// that need not be seen, so the evidence and first-screen guards agree and
+// normalising again changes nothing.
+func TestPinnedTemplateKeepsEvidenceWithGapsOnTheLandingPage(t *testing.T) {
+	normalized, doc := convert(t, withGaps("example"))
+	c := &tiles.Composition{Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
+		{Tile: tiles.TypeRisks, Size: tiles.SizeHalf, Pin: true},
+		{Tile: "sec_config_flag", Size: tiles.SizeThird, Pin: true},
+		{Tile: tiles.TypeContext, Size: tiles.SizeFull, Pin: true},
+		{Tile: tiles.TypeIntent, Size: tiles.SizeHalf, Pin: true},
+		{Tile: tiles.TypeOverview, Size: tiles.SizeFull},
+	}}}
+	_, report, composed := checkComposed(t, normalized, doc, c)
+	if report.Counts()[tiles.FixFirstScreen] != 1 {
+		t.Fatalf("fixes %v", report.Messages())
+	}
+	visible := tiles.Visible(composed.Layout)
+	if i, _ := entryOf(composed, tiles.TypeEvidence); i < 0 || !visible[i] {
+		t.Errorf("the evidence tile is not on the landing page: %v", composed.Layout.Entries)
+	}
+	for i, e := range composed.Layout.Entries {
+		if e.Pin && !visible[i] {
+			t.Errorf("pinned tile %s left the landing page: %v", e.Tile, composed.Layout.Entries)
+		}
 	}
 }

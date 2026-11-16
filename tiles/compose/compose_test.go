@@ -39,7 +39,7 @@ func TestInventoryIsDeterministicAndComplete(t *testing.T) {
 	previous := &tiles.Composition{Schema: tiles.CompositionName, Layout: tiles.CompositionLayout{Entries: []tiles.Entry{
 		{Tile: "sec_api", Size: tiles.SizeHalf}, {Tile: "gone_tile", Size: tiles.SizeHalf}, {Tile: "overview", Size: tiles.SizeHalf},
 	}}, Notes: &tiles.Notes{Why: map[string]string{"sec_api": "named by the recommendation", "gone_tile": "x"}}}
-	prefs := Preferences{Text: "  Lead with API changes.\u0007 ", Pins: []string{"evidence", "nope", "evidence"}}
+	prefs := Preferences{Text: "  Lead with API changes.\u0007 ", Pins: []string{"evidence", "nope", "evidence", "api_change"}}
 	fills := []Fill{{Type: "api_change", Title: "API change", Sizes: []tiles.Size{tiles.SizeHalf}, Hunks: []string{"h_1"}, State: "planned"}}
 	var first []byte
 	for range 3 {
@@ -81,7 +81,9 @@ func TestInventoryIsDeterministicAndComplete(t *testing.T) {
 	if inv.Previous == nil || len(inv.Previous.Entries) != 2 || inv.Previous.Why["gone_tile"] != "" {
 		t.Errorf("previous %+v", inv.Previous)
 	}
-	if inv.Preferences == nil || inv.Preferences.Text != "Lead with API changes." || !slices.Equal(inv.Preferences.Pins, []string{"evidence"}) {
+	if inv.Preferences == nil || inv.Preferences.Text != "Lead with API changes." || !slices.Equal(inv.Preferences.Pins, []string{"evidence", "api_change"}) {
+		// A pin naming a library tile the review has a fill for is kept, though
+		// its tile is not in the document yet.
 		t.Errorf("preferences %+v", inv.Preferences)
 	}
 	if len(inv.Library) != 1 || inv.Library[0].Hunks != 1 {

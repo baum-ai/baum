@@ -1372,8 +1372,8 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 	if showRecommended(doc) {
 		Arrange(doc)
 	}
-	if n.Layout.Edited {
-		keepRecommendedOnLanding(doc, must)
+	if n.Layout.Edited || slices.ContainsFunc(entries, func(e Entry) bool { return e.Pin }) {
+		keepRecommendedOnLanding(doc, must, n.Layout.Resized)
 	}
 	return doc, nil
 }
@@ -1381,9 +1381,11 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 // keepRecommendedOnLanding brings a change the recommendation names, left
 // off the landing page by a person's edit (moved past it, outside the
 // changes group), back to its front, and arranges the layout again. Should
-// the pinned entries alone fill the landing page, it puts such a change
-// before them, as Arrange does for the overview and risks tiles.
-func keepRecommendedOnLanding(doc *Document, must mustBeSeen) {
+// the pinned entries alone fill the landing page, it puts the named changes
+// outside the group before them, as Arrange does for the overview and risks
+// tiles, and when they still do not all fit, they shrink to half, then a
+// third (a pinned one keeps its size), and their rows fill.
+func keepRecommendedOnLanding(doc *Document, must mustBeSeen, resized []string) {
 	stray := strayNamed(doc.Layout, must)
 	if len(stray) == 0 {
 		return
@@ -1392,17 +1394,56 @@ func keepRecommendedOnLanding(doc *Document, must mustBeSeen) {
 		return e.Pin || slices.Contains(stray, e.Tile) || must.kept(e.Tile) && !slices.Contains(must.named, e.Tile)
 	})
 	Arrange(doc)
-	stray = strayNamed(doc.Layout, must)
-	if len(stray) == 0 {
+	if len(strayNamed(doc.Layout, must)) == 0 {
 		return
 	}
-	layout := doc.Layout
-	layout.Entries = frontFirst(layout.Entries, func(e Entry) bool {
-		return slices.Contains(stray, e.Tile) || e.Tile == TypeOverview || e.Tile == TypeRisks && mustShowRisks(doc)
-	})
-	layout.ExtraRows = ExtraRows(doc, layout)
-	layout.Landing = Landing(layout)
-	doc.Layout = layout
+	// Every named change outside the changes group goes in front, not only
+	// those off the page, so one cannot push another off.
+	front := func(e Entry) bool {
+		return slices.Contains(must.named, e.Tile) && e.Group != GroupChanges && e.Group != GroupHidden ||
+			e.Tile == TypeOverview || e.Tile == TypeRisks && mustShowRisks(doc)
+	}
+	// place sets the layout with those in front and its landing page. It
+	// does not arrange again: Arrange would put the pinned entries back in
+	// front of the named changes.
+	place := func(entries []Entry) {
+		layout := doc.Layout
+		layout.Entries = frontFirst(entries, front)
+		layout.ExtraRows = ExtraRows(doc, layout)
+		layout.Landing = Landing(layout)
+		doc.Layout = layout
+	}
+	place(doc.Layout.Entries)
+	// Named changes at their own sizes may still not all fit before the
+	// landing page ends: they take less room (half, then a third; never
+	// more, and a pinned one keeps its size), in the same order.
+	for _, size := range []Size{SizeHalf, SizeThird} {
+		if len(strayNamed(doc.Layout, must)) == 0 {
+			return
+		}
+		entries := slices.Clone(doc.Layout.Entries)
+		for i, e := range entries {
+			if !e.Pin && slices.Contains(must.named, e.Tile) && size.Units() < e.Size.Units() {
+				entries[i].Size = size
+			}
+		}
+		place(entries)
+		// A shorter tile can leave a row with empty units: its tiles grow
+		// to fill, as fillRows does, which moves no tile to another row.
+		fills := RowFills(doc)
+		for _, id := range resizedRows(doc, resized) {
+			delete(fills, id)
+		}
+		if len(fills) > 0 {
+			entries = slices.Clone(doc.Layout.Entries)
+			for i, e := range entries {
+				if size, ok := fills[e.Tile]; ok {
+					entries[i].Size = size
+				}
+			}
+			place(entries)
+		}
+	}
 }
 
 // strayNamed returns the changes the recommendation names that sit outside

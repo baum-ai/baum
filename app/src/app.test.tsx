@@ -950,6 +950,19 @@ function stubAutomatic(
         ]),
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
+    if (path === "/s/test-ns/api/tile-library")
+      return Promise.resolve(
+        Response.json({
+          single: [
+            { name: "risks", title: "Risks" },
+            { name: "evidence", title: "Evidence" },
+          ],
+          types: [
+            { name: "schema_change", title: "Schema changes" },
+            { name: "api_change", title: "Interface changes" },
+          ],
+        }),
+      );
     if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
     if (path === "/s/test-ns/api/settings/labs")
       return Promise.resolve(Response.json({ tile_reviews: false }));
@@ -1591,6 +1604,80 @@ it("shows a repository's decision capture turned off", async () => {
   const region = await openRepository();
   expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
 });
+it("saves a repository's tile layout text when it is left, and pins tiles at once", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  const text = region.querySelector<HTMLTextAreaElement>("#repository-tile-text")!;
+  expect(text.value).toBe("");
+  expect(text.maxLength).toBe(1000);
+  // Typing alone saves nothing; leaving the box does.
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      text,
+      "  Lead with the data model.  ",
+    );
+    text.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(puts).toEqual([]);
+  await act(async () => {
+    text.focus();
+    text.blur();
+  });
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/repositories/acme/demo/settings",
+    body: {
+      automatic: null,
+      decisions: null,
+      tiles: { text: "Lead with the data model.", pins: [] },
+    },
+  });
+  // A pin saves when it is chosen, and the saved text goes with it.
+  const pin = region.querySelector<HTMLSelectElement>("#repository-tile-pin")!;
+  await choose(pin, "schema_change");
+  expect(puts.at(-1)!.body).toMatchObject({
+    tiles: { text: "Lead with the data model.", pins: ["schema_change"] },
+  });
+  expect(region.querySelector('ul[aria-label="Pinned tiles"]')!.textContent).toContain(
+    "Schema changes",
+  );
+  expect(
+    [...region.querySelector<HTMLSelectElement>("#repository-tile-pin")!.options].map(
+      (o) => o.value,
+    ),
+  ).not.toContain("schema_change");
+  // Unpinning the last tile and clearing the text clears the preferences.
+  await act(async () =>
+    region.querySelector<HTMLButtonElement>('button[aria-label="Unpin Schema changes"]')!.click(),
+  );
+  expect(puts.at(-1)!.body).toMatchObject({
+    tiles: { text: "Lead with the data model.", pins: [] },
+  });
+});
+it("shows a repository's saved tile preferences and keeps them when another control saves", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic({
+    ...demoClone,
+    settings: { ...demoClone.settings, tiles: { text: "Schema first.", pins: ["schema_change"] } },
+  });
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  expect(region.querySelector<HTMLTextAreaElement>("#repository-tile-text")!.value).toBe(
+    "Schema first.",
+  );
+  expect(region.querySelector('ul[aria-label="Pinned tiles"]')!.textContent).toContain(
+    "Schema changes",
+  );
+  await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
+  expect(puts.at(-1)!.body).toEqual({
+    automatic: null,
+    decisions: false,
+    tiles: { text: "Schema first.", pins: ["schema_change"] },
+  });
+});
 it("shows a saved extraction model the agent ignores, and lets it be replaced", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
@@ -1879,7 +1966,7 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   );
   await act(async () => root.render(<App />));
   const region = await openRepository();
-  expect(region.querySelector("select")).toBeNull();
+  expect(region.querySelector("#repository-automatic")).toBeNull();
   await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",

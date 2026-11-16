@@ -142,6 +142,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		composeFromStore       = fs.Bool("compose-from-store", false, "run only the compose stage over the dataset's saved reviews of the selected cases (the compose generator)")
 		composeOnly            = fs.Bool("compose-only", false, "run only the compose stage over the review documents of --from-run (the compose generator)")
 		fromRun                = fs.String("from-run", "", "with --compose-only, the earlier run directory whose cases/<id>/document.json are composed")
+		tileText               = fs.String("tile-text", "", "with the compose stage, the repository's standing tile layout instruction, as repositories save it")
+		tilePins               list
 		images, threads, prev  triState
 	)
 	fs.Var(&images, "with-images", "keep cases whose bundle has images (--with-images=false: has none)")
@@ -149,6 +151,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.Var(&prev, "with-previous", "keep cases whose bundle has a previous version (=false: none)")
 	fs.Var(&cases, "case", "case id; repeatable")
 	fs.Var(&sizes, "size", "size bucket xs, s, m, l or xl; repeatable or comma separated")
+	fs.Var(&tilePins, "tile-pin", "with the compose stage, a tile type pinned to the front, as a repository pins it; repeatable")
 	fs.Var(&agentEnv, "agent-env", "KEY=VALUE set for the agent, as the app's agent_env does; repeatable")
 	fs.Var(&genOptions, "generator-option", "KEY=VALUE for the generator; repeatable (the review generator takes none)")
 	fs.Var(&overrides, "prompt-override", "<id>=<file> replaces a staged prompt, or with the compose stage the composition prompt; repeatable. ids: "+promptIDs())
@@ -235,6 +238,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("use --compose-from-store or --compose-only, not both")
 	case *fromRun != "" && !*composeOnly:
 		return errors.New("--from-run goes with --compose-only")
+	case (*tileText != "" || len(tilePins) > 0) && !*composeFromStore && !*composeOnly:
+		return errors.New("--tile-text and --tile-pin go with --compose-from-store or --compose-only")
 	case *composeFromStore || *composeOnly:
 		if *chain {
 			return errors.New("the compose stage runs on reviews that exist; it does not take --chain")
@@ -246,6 +251,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		genConfig.Options = map[string]string{"source": replay.ComposeFromStore, "dataset": *dataset}
 		if *composeOnly {
 			genConfig.Options = map[string]string{"source": replay.ComposeFromRun, "run": *fromRun}
+		}
+		if *tileText != "" {
+			genConfig.Options["tile_text"] = *tileText
+		}
+		if len(tilePins) > 0 {
+			genConfig.Options["tile_pins"] = strings.Join(tilePins, ",")
 		}
 	}
 	if settings.Generator, err = replay.NewGenerator(*generatorName, genConfig); err != nil {

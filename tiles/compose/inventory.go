@@ -395,7 +395,8 @@ func BuildInventory(doc *tiles.Document, fills []Fill, previous *tiles.Compositi
 	if text := clip(strings.TrimSpace(prefs.Text), maxPreference); text != "" || len(prefs.Pins) > 0 {
 		inv.Preferences = &Preferences{Text: text}
 		for _, pin := range prefs.Pins {
-			if byID[pin] != nil && !slices.Contains(inv.Preferences.Pins, pin) {
+			inLibrary := slices.ContainsFunc(inv.Library, func(l LibraryFact) bool { return l.ID == pin })
+			if (byID[pin] != nil || inLibrary) && !slices.Contains(inv.Preferences.Pins, pin) {
 				inv.Preferences.Pins = append(inv.Preferences.Pins, pin)
 			}
 		}

@@ -24,6 +24,7 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/compose"
+	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
@@ -54,6 +55,9 @@ type ComposeGenerator struct {
 	Source, Dataset, Run string
 	// PromptOverrides replaces the composition prompt.
 	PromptOverrides prompt.Overrides
+	// Preferences are a repository's standing tile preferences, which the
+	// composer follows and which pin tiles to the front.
+	Preferences compose.Preferences
 
 	once     sync.Once
 	stores   *reviewStores
@@ -71,8 +75,24 @@ func init() {
 	RegisterGenerator("compose", func(c GeneratorConfig) (Generator, error) {
 		g := &ComposeGenerator{Source: c.Options["source"], Dataset: c.Options["dataset"], Run: c.Options["run"]}
 		for key := range c.Options {
-			if !slices.Contains([]string{"source", "dataset", "run"}, key) {
-				return nil, fmt.Errorf("the compose generator takes the options source, dataset and run, not %q", key)
+			if !slices.Contains([]string{"source", "dataset", "run", "tile_text", "tile_pins"}, key) {
+				return nil, fmt.Errorf("the compose generator takes the options source, dataset, run, tile_text and tile_pins, not %q", key)
+			}
+		}
+		g.Preferences.Text = c.Options["tile_text"]
+		if pins := c.Options["tile_pins"]; pins != "" {
+			for pin := range strings.SplitSeq(pins, ",") {
+				if err := compose.CheckPin(pin); err != nil {
+					return nil, err
+				}
+				// As a repository saves a pin: a library type, by name or
+				// title, is its tile's ID.
+				if e, ok := library.Find(pin); ok {
+					pin = tiles.LibraryTileID(e.Definition.Name)
+				}
+				if !slices.Contains(g.Preferences.Pins, pin) {
+					g.Preferences.Pins = append(g.Preferences.Pins, pin)
+				}
 			}
 		}
 		for id, text := range c.PromptOverrides {
@@ -120,6 +140,9 @@ func (g *ComposeGenerator) Describe(ctx context.Context, backend string) (map[st
 		return nil, err
 	}
 	described := map[string]any{"source": g.Source, "prompt_version": instructions.Version, "prompt_digest": instructions.Digest}
+	if g.Preferences.Text != "" || len(g.Preferences.Pins) > 0 {
+		described["tile_text_chars"], described["tile_pins"] = len(g.Preferences.Text), g.Preferences.Pins
+	}
 	if g.Source == ComposeFromRun {
 		described["from_run"] = filepath.Base(g.Run)
 	}
@@ -243,7 +266,7 @@ func (g *ComposeGenerator) Generate(ctx context.Context, base generate.Options, 
 	completer := generate.CompleterOf(base.Backend)
 	started := time.Now()
 	fills, authored := g.analysis(c, doc)
-	result, err := agent.ComposeRun(ctx, agent.ComposeRequest{Completer: completer, Backend: base.Backend.Name(), Prompts: g.prompts(), Document: doc,
+	result, err := agent.ComposeRun(ctx, agent.ComposeRequest{Completer: completer, Backend: base.Backend.Name(), Prompts: g.prompts(), Document: doc, Preferences: g.Preferences,
 		Fills: fills, Authored: authored, Redactor: g.redactor, CallTimeout: base.PassTimeout})
 	out := Generated{Outcome: result.Outcome}
 	if errors.Is(err, agent.ErrComposeInterrupted) || ctx.Err() != nil {

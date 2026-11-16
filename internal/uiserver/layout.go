@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/baum-ai/baum/internal/repos"
@@ -14,27 +16,13 @@ import (
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // A person's own tile layout of a pull request (internal/tilelayout) is
 // applied to every version the tile route serves, and changed through
 // GET and POST /api/tiles/layout here and the session panel's tools
 // (LayoutEditor), both through LocalAPI.Layouts.
-
-// layoutOf is a pull request's layout to serve, and the key that names it in
-// a cache key; none, without a service or when it cannot be read.
-func (a LocalAPI) layoutOf(ctx context.Context, repository string, number int) (tileview.Layout, string) {
-	if a.Layouts == nil {
-		return tileview.Layout{}, ""
-	}
-	state, err := a.Layouts.Read(ctx, tilelayout.Key(repository, number))
-	if err != nil {
-		a.logger().Warn("a tile layout could not be read", "error", err.Error())
-		return tileview.Layout{}, ""
-	}
-	layout := tileview.Layout{Overlay: state.Overlay}
-	return layout, tileview.LayoutKey(layout)
-}
 
 // layoutAnswer is what the layout routes answer: the layout's summary and,
 // for a write, what it did.
@@ -172,6 +160,21 @@ func (a LocalAPI) cloneByID(w http.ResponseWriter, r *http.Request, id string) (
 // version is shown with, the person's layout applied, and saves those that
 // pass as one batch.
 func (a LocalAPI) editLayout(ctx context.Context, c repos.Clone, number int, by string, ops []tiles.Op) (tilelayout.Change, error) {
+	// An add names a library type by its name; the host writes the digest
+	// of the definition added, and an unknown type is refused.
+	ops = slices.Clone(ops)
+	for i, op := range ops {
+		if op.Op != tiles.OpAdd || op.Add == nil {
+			continue
+		}
+		entry, ok := library.Get(op.Add.Name)
+		if !ok {
+			return tilelayout.Change{}, fmt.Errorf("No tile type %s in baum's tile library", op.Add.Name)
+		}
+		added := *op.Add
+		added.Kind, added.Digest, added.Title = "library", entry.Definition.Digest, entry.Definition.Title
+		ops[i].Add = &added
+	}
 	// The ops are checked inside the write against the layout the tiles were
 	// shown with; when it moved meanwhile (another write), read again.
 	for attempt := 0; ; attempt++ {
@@ -221,7 +224,20 @@ func (a LocalAPI) shownTiles(ctx context.Context, c repos.Clone, number, n int) 
 	if err != nil {
 		return shownLayout{}, err
 	}
-	built := tileview.BuildWith(version.Document, version.Composition, tileview.Layout{Overlay: state.Overlay}, tiles.Options{})
+	var fills []tilelayout.Fill
+	if len(state.AddedTypes()) > 0 {
+		if fills, err = a.Layouts.Fills(ctx, tilelayout.Key(c.Repository, number)); err != nil {
+			return shownLayout{}, err
+		}
+	}
+	latest := n == 0
+	if !latest {
+		if current, err := s.Latest(ctx, key); err == nil {
+			latest = current.Metadata.Version == version.Metadata.Version
+		}
+	}
+	layout := a.layoutFor(ctx, c, number, version, latest, state, fills)
+	built := tileview.BuildWith(version.Document, version.Composition, layout, tiles.Options{})
 	if built.Tiles == nil {
 		return shownLayout{}, errNoTiles
 	}

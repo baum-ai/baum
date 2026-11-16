@@ -80,7 +80,7 @@ func (p *Proposers) Pages() map[string]agentcontext.Proposer {
 		agentcontext.PageRepositories: pageProposer{p, p.repositoryTarget},
 		agentcontext.PageInbox:        pageProposer{p, p.inboxTarget},
 		agentcontext.PageGroup:        pageProposer{p, p.groupTarget},
-		agentcontext.PagePullRequest:  pageProposer{p, p.reviewCommentTarget},
+		agentcontext.PagePullRequest:  pageProposer{p, p.pullRequestTarget},
 	}
 }
 

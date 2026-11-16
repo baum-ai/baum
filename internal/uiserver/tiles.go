@@ -73,9 +73,11 @@ func (rr reviewRead) version(ctx context.Context, w http.ResponseWriter) (store.
 // this version ships (tileview.Library), as {"types": [...]}, each with its
 // name, title, use-when line, glance line, sizes, kit and digest, never its
 // source. The tiles page names a custom tile whose digest is listed as baum's
-// own.
+// own. "single" lists the built-in tile types a review has at most one of
+// (tileview.Singles), which with the library types are what a repository
+// can pin.
 func tileLibrary(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string][]tileview.LibraryType{"types": tileview.Library()})
+	writeJSON(w, map[string]any{"types": tileview.Library(), "single": tileview.Singles()})
 }
 
 // tilesHandler serves GET /api/tiles: the review document and the tile
@@ -98,7 +100,7 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 		if !ok {
 			return
 		}
-		layout, layoutKey := a.layoutOf(r.Context(), read.clone.Repository, read.key.Number)
+		state, fills, layoutKey := a.layoutState(r.Context(), read.clone.Repository, read.key.Number)
 		withLayout := func(key string) string {
 			if key == "" || layoutKey == "" {
 				return key
@@ -111,6 +113,13 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 			if !ok {
 				return
 			}
+			latest := read.n == 0
+			if !latest {
+				if number, _, err := read.store.Revision(r.Context(), read.key, 0); err == nil {
+					latest = number == version.Metadata.Version
+				}
+			}
+			layout := a.layoutFor(r.Context(), read.clone, read.key.Number, version, latest, state, fills)
 			var err error
 			if answer, err = tileview.Encode(tileview.BuildWith(version.Document, version.Composition, layout, tiles.Options{})); err != nil {
 				apiError(w, err)

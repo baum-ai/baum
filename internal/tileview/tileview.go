@@ -35,6 +35,10 @@ type Response struct {
 	Document json.RawMessage `json:"document"`
 	Tiles    *tiles.Document `json:"tiles"`
 	Problem  string          `json:"problem,omitempty"`
+	// Added says, of each tile the person added that the served document
+	// shows, whether its data is from an earlier version and is being filled
+	// for this one (Layout.Notes).
+	Added []AddedNote `json:"added,omitempty"`
 	// Frames are the definitions of the ready custom tiles, kept to register
 	// them again when the answer is served from a cache.
 	Frames Frames `json:"-"`
@@ -138,6 +142,18 @@ func Build(document, composition []byte, opts tiles.Options) Response {
 type Layout struct {
 	Overlay *tiles.Overlay
 	Added   []tiles.LibraryTile
+	// Notes say, of the added tiles, which show an earlier version's data or
+	// none yet while they are filled for this version.
+	Notes []AddedNote
+}
+
+// AddedNote is what the page says of a tile the person added: From is the
+// version its data was written for when that is an earlier one (0 for this
+// version's), and Filling that it is being filled for this version.
+type AddedNote struct {
+	Tile    string `json:"tile"`
+	From    int    `json:"from,omitempty"`
+	Filling bool   `json:"filling,omitempty"`
 }
 
 // LayoutKey names a layout for a cache key: the digest of its overlay's
@@ -150,7 +166,8 @@ func LayoutKey(layout Layout) string {
 	encoded, err := json.Marshal(struct {
 		Batches []tiles.Batch       `json:"batches"`
 		Added   []tiles.LibraryTile `json:"added,omitempty"`
-	}{layout.Overlay.Active(), layout.Added})
+		Notes   []AddedNote         `json:"notes,omitempty"`
+	}{layout.Overlay.Active(), layout.Added, layout.Notes})
 	if err != nil {
 		return "unencodable"
 	}
@@ -185,7 +202,25 @@ func BuildWith(document, composition []byte, layout Layout, opts tiles.Options) 
 		return Response{Document: raw(normalized), Problem: "The tiles could not be checked."}
 	}
 	served, registered := registerFrames(doc)
-	return Response{Document: raw(normalized), Tiles: served, Frames: registered, checked: doc}
+	return Response{Document: raw(normalized), Tiles: served, Added: notesShown(served, layout.Notes), Frames: registered, checked: doc}
+}
+
+// notesShown are the notes of the added tiles the served document shows.
+func notesShown(doc *tiles.Document, notes []AddedNote) []AddedNote {
+	if len(notes) == 0 || doc == nil {
+		return nil
+	}
+	shown := map[string]bool{}
+	for _, tile := range doc.Tiles {
+		shown[tile.ID] = true
+	}
+	var out []AddedNote
+	for _, note := range notes {
+		if shown[note.Tile] && (note.From > 0 || note.Filling) {
+			out = append(out, note)
+		}
+	}
+	return out
 }
 
 // registerFrames registers the frame document of each ready custom tile and

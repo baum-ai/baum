@@ -204,6 +204,18 @@ func Get(name string) (Entry, bool) {
 	return Entry{}, false
 }
 
+// Find returns the built-in type a person or an agent names: by its name,
+// its tile's ID (tiles.LibraryTileID) or its title, in any case.
+func Find(name string) (Entry, bool) {
+	name = strings.TrimSpace(name)
+	for _, entry := range all() {
+		if entry.Definition.Name == name || tiles.LibraryTileID(entry.Definition.Name) == name || strings.EqualFold(entry.Definition.Title, name) {
+			return entry, true
+		}
+	}
+	return Entry{}, false
+}
+
 // Load reads a type from a directory of the library's layout and seals its
 // definition. It fails when a file is missing or does not decode; Check says
 // whether the type is good.
@@ -340,6 +352,18 @@ func (e Entry) FillSchema() (json.RawMessage, error) {
 // may cite a risk, evidence item or tile, which do not exist while fills
 // run. Problems name the place in the data, never its values.
 func CheckFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk) []string {
+	return checkFill(v, e, data, diff, true)
+}
+
+// CheckAddedFill is CheckFill for a tile a person added to a review: the
+// same checks but the one that data shows something the type is for, since
+// the person asked for the tile and an empty one says that this version
+// changes nothing it shows.
+func CheckAddedFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk) []string {
+	return checkFill(v, e, data, diff, false)
+}
+
+func checkFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.Hunk, applies bool) []string {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(data, &top); err == nil {
 		if _, ok := top[Related]; ok {
@@ -349,7 +373,7 @@ func CheckFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.
 	if problems := v.CheckData(e.Encoded, data); len(problems) > 0 {
 		return problems
 	}
-	if len(e.AppliesWith) > 0 && !shows(top, e.AppliesWith) {
+	if applies && len(e.AppliesWith) > 0 && !shows(top, e.AppliesWith) {
 		return []string{fmt.Sprintf("the data shows nothing this tile is for (%s are empty); answer that the tile does not apply instead", strings.Join(e.AppliesWith, ", "))}
 	}
 	hunks := make(map[string]bundle.Hunk, len(diff))
@@ -377,6 +401,37 @@ func CheckFill(v *tiles.Validator, e Entry, data json.RawMessage, diff []bundle.
 		}
 	}
 	return problems
+}
+
+// DiffOf returns the hunks a converted tile document's review index lists,
+// with their IDs, paths and new line ranges: what CheckFill needs to check a
+// fill's citations against a saved version. A document without them has
+// none.
+func DiffOf(doc *tiles.Document) []bundle.Hunk {
+	if doc == nil {
+		return nil
+	}
+	var index struct {
+		Hunks []struct {
+			ID       string `json:"id"`
+			Path     string `json:"path"`
+			Change   string `json:"change"`
+			Role     string `json:"role"`
+			NewRange []int  `json:"new_range"`
+		} `json:"hunks"`
+	}
+	if json.Unmarshal(doc.Index, &index) != nil {
+		return nil
+	}
+	out := make([]bundle.Hunk, 0, len(index.Hunks))
+	for _, h := range index.Hunks {
+		hunk := bundle.Hunk{ID: h.ID, Path: h.Path, Change: h.Change, Role: h.Role}
+		if len(h.NewRange) == 2 {
+			hunk.StartLine, hunk.LineCount = h.NewRange[0], h.NewRange[1]
+		}
+		out = append(out, hunk)
+	}
+	return out
 }
 
 // shows reports whether any of the named top-level arrays has an item.

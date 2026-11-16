@@ -36,7 +36,7 @@ func TestToolsListAnnotatesEveryTool(t *testing.T) {
 		// A proposing tool records a proposal; a layout tool edits the
 		// person's own layout at once. Neither only reads, and neither
 		// destroys anything.
-		if strings.HasPrefix(tool.Name, "propose_") || slices.Contains(layoutPageTools, tool.Name) && tool.Name != "tile_layout" {
+		if strings.HasPrefix(tool.Name, "propose_") || slices.Contains(layoutPageTools, tool.Name) && tool.Name != "tile_layout" && tool.Name != "tile_type" {
 			if a["readOnlyHint"] != false || a["destructiveHint"] != false {
 				t.Errorf("%s: annotations %v", tool.Name, a)
 			}

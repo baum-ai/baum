@@ -486,7 +486,21 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Held until the application is wired below: a journaled feature
 		// build needs the feature log, and the queue's logger and usage
 		// events are set after it opens.
-		queue, err := jobs.OpenHeld(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
+		// Each person's own tile layout of a pull request, applied to every
+		// version and draft the tile routes serve; a write tells the app's
+		// open page to read its tiles again. Reviews fill the tiles people
+		// added (jobs.Local.Layouts).
+		layouts := &tilelayout.Service{Path: database, Changed: func(pr string, revision int64) {
+			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
+		}}
+		if err := layouts.Sweep(ctx); err != nil {
+			log.Warn("the tile layouts were not swept", "error", err)
+		}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Layouts: layouts}
+		// The tiles a person added that a version has no data for are
+		// filled beside the queue.
+		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Layouts: layouts, Log: log}
+		queue, err := jobs.OpenHeld(database, executor, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
 			if job.Phase == "finished" {
 				changed()
@@ -514,12 +528,6 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
-		// Each person's own tile layout of a pull request, applied to every
-		// version and draft the tile routes serve; a write tells the app's
-		// open page to read its tiles again.
-		layouts := &tilelayout.Service{Path: database, Changed: func(pr string, revision int64) {
-			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
-		}}
 		queue.SetLayouts(layouts.Layout)
 		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
@@ -818,7 +826,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts}
+			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts, Fills: tileFills}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}

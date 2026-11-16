@@ -45,6 +45,8 @@ func TestFlagsAreChecked(t *testing.T) {
 		"from-run alone":    {[]string{"--dataset", dir, "--from-run", dir}, "goes with --compose-only"},
 		"compose-only run":  {[]string{"--dataset", dir, "--compose-only"}, "--from-run"},
 		"compose chain":     {[]string{"--dataset", dir, "--compose-from-store", "--chain"}, "does not take --chain"},
+		"tile pin alone":    {[]string{"--dataset", dir, "--tile-pin", "risks"}, "go with --compose-from-store"},
+		"tile pin invalid":  {[]string{"--dataset", dir, "--compose-only", "--from-run", dir, "--tile-pin", "nope"}, "not a tile type that can be pinned"},
 		"compose override":  {[]string{"--dataset", dir, "--compose-only", "--from-run", dir, "--prompt-override", "review-staged-outline=" + empty}, "not the composition prompt"},
 	} {
 		t.Run(name, func(t *testing.T) {

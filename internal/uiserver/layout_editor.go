@@ -59,6 +59,25 @@ func (e LayoutEditor) Edit(ctx context.Context, repository string, number int, o
 	return changeOf(change), err
 }
 
+// Add implements agentcontext.LayoutEditor.
+func (e LayoutEditor) Add(ctx context.Context, repository string, number int, add agentcontext.TileAdd) (agentcontext.TileAdded, error) {
+	if _, err := e.service(); err != nil {
+		return agentcontext.TileAdded{}, err
+	}
+	c, err := e.API.pullClone(ctx, repository, number)
+	if err != nil {
+		return agentcontext.TileAdded{}, err
+	}
+	added, err := e.API.addTile(ctx, c, number, "chat", AddTile{Type: add.Type, Size: add.Size, To: add.To, Data: add.Data})
+	if errors.Is(err, ErrUnknownType) {
+		return agentcontext.TileAdded{}, errors.New("No tile type " + add.Type + " in baum's tile library; tile_layout lists the types it can add")
+	}
+	if err != nil {
+		return agentcontext.TileAdded{}, err
+	}
+	return agentcontext.TileAdded{Tile: added.Tile, State: added.State, Change: changeOf(added.Change)}, nil
+}
+
 // Undo implements agentcontext.LayoutEditor.
 func (e LayoutEditor) Undo(ctx context.Context, repository string, number int) (agentcontext.LayoutChange, error) {
 	service, err := e.service()

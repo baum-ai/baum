@@ -1084,9 +1084,11 @@ overview, the risks tile while it ranks an active critical or high risk, and
 the changes the recommendation names (`tiles.RecommendedChanges`) are never
 hidden, a move of a named change to the end is dropped, and a named change an
 edit leaves past the landing page is brought back to its front. A pinned change leaves the group. An `add` places a library
-tile the composition already has, or one the host holds data for (none yet:
-adding a type that must be filled is not available), and is otherwise
-dropped. An op whose tile or anchor the version lacks is dropped silently, so
+tile the composition already has (generation filled it), or else appends the
+one the host holds for this version (`added`: its fill, an earlier version's
+fill, or a pending tile while it is filled; see "Added tiles"), and is
+dropped when the host holds nothing for it (an unknown type) or the review
+already has `MaxLibraryTiles` (8) library tiles. An op whose tile or anchor the version lacks is dropped silently, so
 edits made on one version carry to the next and those whose tile vanished
 fall away. When any op applies, the layout is marked `edited`, with the tiles
 the person resized in `resized`: both are host-only, never stored
@@ -1271,6 +1273,51 @@ no edits gives exactly `Build`'s answer, so a review nobody edited is served
 as before; ops a version drops are counted in the daemon's work statistics
 (`tileview.overlay_ops_dropped`), never shown. Review groups have no layout
 of their own yet.
+
+**Added tiles.** An `add` names a built-in library type and the digest of
+its definition, both host-written (`library.Find` resolves a name, tile ID or
+title); a type the library does not have is refused. What a version shows for
+an added type is `tilelayout.AddedFor`: nothing when the version's
+generation filled it (the replay only places it); else its fill for that
+version; else, on the latest version, the newest earlier fill while every
+hunk it cites is still in this version's diff (`library.CheckAddedFill`),
+marked as from that version, or a pending tile, and a fill starts; an earlier
+version shows the newest earlier fill, marked, or nothing. The tile route
+answers these notes as `added: [{tile, from?, filling?}]` beside the
+document, and its cache key includes the pull request's fills. Fills live in
+`tile_fills(pr, tile, version, digest, data, at, origin)`, at most 64 KiB of
+data each, `origin` `chat` (the panel's agent wrote it) or `fill` (baum's own
+fill run),
+the two newest versions per added tile, deleted with their pull request's
+overlay; the definition a fill was written against is kept in
+`tile_definitions(digest, definition, at)` while an overlay's add or a fill
+names its digest (the tile library keeps saved types' definitions in the same
+table). A stored fill moves the overlay's revision and publishes the `layout`
+event. `Service.Sweep`, when the daemon starts, drops fills without an
+overlay and definitions no overlay, fill or saved tile type (`tile_types`,
+`tile_type_versions`, when they exist) names, and removes no definition when
+the tile library cannot be read. An added built-in type
+keeps its built-in label: the served definition is marked by its digest
+(`library.IsBuiltin`), never by data.
+
+A fill comes from one of three places. The session panel's agent writes the
+data itself (`add_tile` with `data`, after `tile_type`), which is checked
+against the latest version's hunks, masked like every model output
+(`agent.RedactTaskOutput`) and stored as that version's fill (`chat`) once the add
+is saved, so the tile shows at once. Without data, unless the version already
+has a fill for the type (an add undone and made again shows it), `jobs.TileFills`
+(kind `tile_fill`) runs one fill beside the queue, one at a time: a version's
+type is filled once while the daemon runs (a success is remembered), and not
+again for ten minutes after a failure: `jobs.Local.FillTile` assembles the
+pull request at the version's head (standing down when the pull request moved
+or the version is no longer the latest) and calls `generate.FillTile`, one
+task with the type's fill schema and one repair (`agent.Generator.FillTile`),
+with the review's agent and model and its token budget; the data is checked
+against the saved version's hunks and stored (`fill`). Its spend is logged,
+not a job's: the cost views read the job journal and the decision log, and a
+fill is neither. And a review
+of the pull request fills every added type itself (`generate.Tiles.Always`,
+see "Tile analysis").
 
 - `GET /api/tiles/layout?clone=&pr=` answers `{revision, edited, can_undo,
   last: {id, by, reset?, summary, tiles?} | null, batches, can_redo,
@@ -2382,6 +2429,21 @@ stage is told the selected types' checks.
   against this diff, is taken without a call (`FillResult.Reused`); its
   `related` items are written again. A previous authored tile every hunk of
   which is in this diff, its lines inside the hunk, is kept with its ID.
+- **Added types.** `StagedTiles.Always` are the library types the person
+  added to the pull request's review (`jobs.Local` reads their overlay into
+  `generate.Tiles.Always`), each with its last data: the newest of its fills
+  (baum's own, never the agent's `chat` data, which stays the person's) and of
+  the latest version's composition, with the hunks of the version it was
+  written for. Such a type is offered even when the run offers no other,
+  counts as selected whatever the outline answers (so it is filled beside the
+  details and appears in the composition, and the replay only places it), and
+  is reused by its own rule instead of the previous composition's: with no
+  call when every hunk its last data cites is in this diff and no hunk new to
+  this diff touches a file it cites, and the data passes
+  `library.CheckAddedFill` (`CheckFill` without the rule that data must show
+  something). Its fill is told the person added it, checked with
+  `CheckAddedFill`, and an answer that the type does not apply is sent back
+  once.
 - **Fills.** Each other selected type gets a task (`fill-<type>`, its files
   named so) with a focused prefix in place of the stages' (the pull request's
   title, the selected hunks with their patches, an index of the other hunks
@@ -2703,8 +2765,8 @@ tile, at most two (`tiles.ExtraRows`, served as the
 layout's `extra_rows`, which `landing` already counts), so the other tiles
 keep three rows (`CheckGenerated` invariant 15). A
 composer's layout then passes five guard rails
-(`tiles/guards.go`), each a fix of its own kind; a layout a person edited
-skips all five.
+(`tiles/guards.go`), each a fix of its own kind; only a layout a person edited
+(`layout.edited`) skips all five.
 
 1. A library tile without a destructive or breaking item, or an authored
    tile, never pushes a core tile off the first screen (`extra_place`; the
@@ -2731,14 +2793,32 @@ skips all five.
    place of a tile that need not be seen when the only room left is in the
    rows library and authored tiles add (`evidence_gaps`; the tile it
    displaces is the last shown, one that is not a current change, such as
-   context or decisions, before a change).
+   context or decisions, before a change; only a landing page on which every
+   tile is pinned or held there by the hard rules, the overview, a risks tile
+   with a critical or high risk and the changes the recommendation names, has
+   no place for it, and `CheckGenerated` invariant 14 exempts exactly that).
 4. A change featured alone at half takes its full row (`lone_featured`).
 5. A first screen (the first two rows) or a landing page that shows fewer
    current changes than the template's, with nothing that must be seen
    instead (the risks tile with a critical or high risk, a change the
    recommendation names, evidence with gaps, a library tile with a
    destructive or breaking item, a pinned tile) or tiles a person hid, takes
-   the template's layout (`first_screen`). `tilestest.CheckGenerated` checks the rows
+   the template's layout (`first_screen`).
+
+A repository's pins (`Settings.Tiles`,
+stamped by `tiles.PinEntries`) do not switch the guards off: the layout is
+compared with the template with the same pins applied, pins kept first, so the
+pins are honoured while the rest of the first screen is still guarded, and a
+weak composer layout with a pin falls back to that pinned template. The pins
+can push the template's evidence place off the landing page, so the pinned
+template is itself held to the evidence and lone-featured guards; otherwise
+the evidence guard would move the evidence on and the first-screen guard take
+back the pinned template, which leaves it off. `Compose` also brings a
+change the recommendation names back onto the landing page when any entry is
+pinned, as it does for an edited layout (when pins fill the page, the named
+changes outside the changes group go before them and, if they still do not
+all fit, shrink to half and then a third, a pinned one keeping its size), and `CheckGenerated` invariant 11
+checks it for pinned layouts too (14 compares against the pinned template). `tilestest.CheckGenerated` checks the rows
 (invariant 13) and the guard rails (14). On a narrow window's two-column grid
 the page lets a block's last card span both columns when it would be alone in
 its row, which changes no row of the canonical grid.
@@ -7600,6 +7680,7 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
 | `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
 | `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
+| `pull_request` | `propose_tile_preferences` | `<owner/name>:tile_preferences`, the page's repository | `UpdateRepositoryIf` of the repository's `Settings.Tiles` (`repos.TileSettings`), only the fields given (`text`, null clears it; `pins`, the whole list), tidied and checked as the settings route checks them; refused as stale if the stored tiles changed since the proposal |
 | `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | Save appends the comment through `uistate.Store.Replace`, as `PUT /api/ui-state/review?key=` saves the pending review; other comments, note and sent reviews are kept. The panel reloads that record after Save. Nothing is sent to GitHub. |
 
 A target of another section than the open one (General when none is named;
@@ -7674,9 +7755,13 @@ page.
 | --- | --- | --- |
 | `tile_layout` | none | `{pull_request, version, view: "tiles"\|"full", edited, can_undo, focus: {tile, title}\|null, first_screen_rows, landing_rows, rows: [["overview:half", …], …], tiles: [{id, type, title, size, sizes, group, pinned, hidden, on_landing, row, state, can_hide, why_not}], changes_shown, note}`, at most 32 KiB (the tiles past the landing page are left out first) |
 | `edit_tiles` | `{ops: [{op, tile?, to?, size?, count?}]}`, 1 to 20, `op` one of `move`, `resize`, `hide`, `show`, `pin`, `unpin`, `changes_shown` | `{applied: [summary lines], refused: [{index, reason}], revision, edited, can_undo, rows, hidden}`; every op refused is an error naming the reasons, and nothing is written |
-| `add_tile` | `{type, size?, to?}` | brings a hidden tile back (a show, with a resize and a move when asked) as one batch; a tile the review does not have is "not available yet", since filling a new tile is not part of this version |
+| `tile_type` | `{type}` | a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself; read-only, page-bound like the others |
+| `add_tile` | `{type, size?, to?, data?}` | a library type the review does not show (tile_layout's `addable`): one `add` batch, placed after the overview unless `to` says otherwise, with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background (`{tile, state: "ready" \| "filling", applied, …}`); a removed tile is brought back (a show, with a resize and a move when asked); an unknown type names the library's types |
 | `undo_tiles` | none | `{undone: [summary lines], revision, …}`, or "Nothing to undo" |
 | `reset_tiles` | none | `{revision, can_undo: true, …}`, or "The layout is already the generated one" |
+
+`tile_layout` also lists `addable`: the library types the review does not
+show, `{type, title, use_when, source: "built-in"}`.
 
 Each op is checked against the tiles of the pull request's latest saved
 version as the person is shown them (`tiles.CheckOp`), so the reasons are the
@@ -7690,6 +7775,39 @@ open in the detail (`tile`), so "make this wider" needs no question; the
 shared `testdata/page-contexts.json` carries both shapes, which the Go and the
 app's tests read. On the full review the tools still apply and say that the
 edit shows on the tiles page.
+
+#### Tile preferences
+
+A repository's standing tile preferences are `repos.Settings.Tiles`
+(`repos.TileSettings`, `internal/repos/tilesettings.go`): `text`, at most 1000
+characters, the instruction the composer follows, and `pins`, at most 8 tile
+IDs, each a single built-in tile type or a library type name
+(`compose.CheckPin`; a library name is stored as its tile's ID, repeats are
+dropped). `Settings.Checked` trims and validates them on every write (the
+settings routes, `Update`, `UpdateRepository`, `UpdateRepositoryIf`), and a
+refusal wraps `ErrInvalidSettings`, whose message the routes answer with a 400.
+They are shared by all clones of the repository and replaced with the rest of
+the settings object.
+
+`jobs.Local` reads them when it prepares a review's tiles (`tilesFor`) and
+passes them as `generate.Tiles.Preferences`. The compose inventory carries them
+as its `preferences`, the one part of the inventory that instructs the
+composer, and `agent.pin` stamps the pins on the composition (a pin naming a
+tile the review lacks is ignored). They are read once per job and only with
+`labs.tile_reviews` on; reviews already written keep their layout.
+
+Two tools (`tilepreferences.go`) serve the pull request page, bound to it as
+the layout tools are (`layoutPage`), and global like them: `tile_preferences
+{repository?}` answers `{repository, text, pins}` from `/api/repositories`, and
+`propose_tile_preferences {text?: string | null, pins?: [id]}` records a
+proposal on the `pull_request` page whose target is
+`<owner/name>:tile_preferences`, refusing a pin `compose.CheckPin` refuses.
+Unlike the layout edits it is a proposal (`Proposes: true`), because the
+preference outlives the pull request. Its description tells the agent to also
+call `edit_tiles` to change the open page. `uiserver.Proposers`
+(`tilePreferencesTarget`) saves it through `UpdateRepositoryIf`, so the
+repository's other choices are kept and a change since the proposal is
+`ErrStale`.
 
 #### Operations
 

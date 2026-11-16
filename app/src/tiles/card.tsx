@@ -6,7 +6,7 @@ import { MenuButton, type MenuItem, type useContextMenu } from "../context-menu"
 import { GridIcon } from "./icons";
 import { Quiet, Writing } from "./parts";
 import { tileFace } from "./registry";
-import { mustShowRisks, type Tile, type TileSize } from "./tile-document";
+import { addedNoteText, mustShowRisks, type Tile, type TileSize } from "./tile-document";
 import type { TileContext } from "./types";
 
 /** The grid's spans: six units once wide, two columns below, one on a phone. */
@@ -98,8 +98,11 @@ export function GlanceCard({
               Changed
             </Badge>
           ) : null}
-          {tile.state === "pending" ? (
-            <span className="flex items-center" title="Being written">
+          {tile.state === "pending" || tile.added?.filling ? (
+            <span
+              className="flex items-center"
+              title={tile.added?.filling ? "Being filled" : "Being written"}
+            >
               <LiveDot />
             </span>
           ) : null}
@@ -160,12 +163,17 @@ export function GlanceCard({
           </button>
         </h4>
       )}
+      {addedNoteText(tile.added) ? (
+        <p data-added-note="" className="-mt-1 text-xs text-secondary">
+          {addedNoteText(tile.added)}
+        </p>
+      ) : null}
       <div className="flex min-h-0 grow flex-col">
         <TileBoundary fallback={<Quiet>This tile couldn't be shown.</Quiet>}>
           {face.kind === "ready" ? (
             <face.type.Glance tile={tile} ctx={ctx} />
           ) : face.kind === "pending" ? (
-            <Writing />
+            <Writing>{tile.added?.filling ? "Filling this tile…" : undefined}</Writing>
           ) : (
             <Quiet>{face.why}</Quiet>
           )}

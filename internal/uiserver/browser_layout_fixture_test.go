@@ -16,7 +16,10 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // layoutPR is the browser fixture's pull request whose tiles the layout
@@ -179,6 +182,11 @@ func (a *panelAgent) layout(ctx context.Context, r agent.Request) (answer string
 			}
 		}
 		return fmt.Sprintf("%s is already as wide as it can be.", tile["title"]), true
+	case strings.Contains(prompt, "api changes tile"):
+		// Without data: baum fills it (fixtureFiller), and the card is
+		// pending until then.
+		result, _, err := call("add_tile", map[string]any{"type": "api_change"})
+		return said(result, err), true
 	case strings.Contains(prompt, "remove this") || strings.Contains(prompt, "hide this"):
 		_, tile, err := focused()
 		if err != nil {
@@ -251,4 +259,40 @@ func unfence(text string) string {
 		return text
 	}
 	return strings.Join(inside, "\n")
+}
+
+// fixtureFiller fills an added api_change tile as baum's fill run would, a
+// moment after it is asked: a consumer cited on the version's first hunk.
+type fixtureFiller struct {
+	versions *store.Store
+	layouts  *tilelayout.Service
+}
+
+func (f fixtureFiller) Fill(r tilelayout.FillRequest) {
+	go func() {
+		time.Sleep(8 * time.Second)
+		ctx := context.Background()
+		entry, ok := library.Get(r.Type)
+		if !ok {
+			return
+		}
+		version, err := f.versions.Get(ctx, store.Key{Repository: r.Repository, Number: r.Number}, r.Version)
+		if err != nil {
+			return
+		}
+		normalized, err := review.NormalizeStored(version.Document)
+		if err != nil {
+			return
+		}
+		doc, err := tiles.FromReview(normalized, tiles.Options{})
+		if err != nil {
+			return
+		}
+		diff := library.DiffOf(doc)
+		if len(diff) == 0 {
+			return
+		}
+		data := fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the demo client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID)
+		_ = f.layouts.PutFill(ctx, tilelayout.Key(r.Repository, r.Number), tiles.LibraryTileID(r.Type), r.Version, tilelayout.OriginFill, entry.Encoded, json.RawMessage(data))
+	}()
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -391,26 +390,5 @@ func changeKind(doc *tiles.Document) string {
 // layout omits is added, pinned, at the front. Pins naming no tile of the
 // document are ignored.
 func pin(c *tiles.Composition, doc *tiles.Document, pins []string) {
-	if len(pins) == 0 {
-		return
-	}
-	present := map[string]bool{}
-	for _, tile := range doc.Tiles {
-		present[tile.ID] = true
-	}
-	placed := map[string]bool{}
-	for i, entry := range c.Layout.Entries {
-		placed[entry.Tile] = true
-		if slices.Contains(pins, entry.Tile) {
-			c.Layout.Entries[i].Pin, c.Layout.Entries[i].Group = true, ""
-		}
-	}
-	var front []tiles.Entry
-	for _, id := range pins {
-		if present[id] && !placed[id] {
-			placed[id] = true
-			front = append(front, tiles.Entry{Tile: id, Size: tiles.SizeHalf, Pin: true})
-		}
-	}
-	c.Layout.Entries = append(front, c.Layout.Entries...)
+	c.Layout.Entries = tiles.PinEntries(c.Layout.Entries, doc, pins)
 }
