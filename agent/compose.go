@@ -281,13 +281,21 @@ var errRedaction = errors.New("agent: masking the composer's reply failed")
 // call makes one completion, adds what it spent to o and returns the reply,
 // masked.
 func (r ComposeRequest) call(ctx context.Context, o *Outcome, request CompleteRequest, redactor *bundle.Redactor) ([]byte, error) {
+	return completeOnce(ctx, r.Completer, r.CallTimeout, r.redact, o, request, redactor)
+}
+
+// completeOnce makes one completion of a single structured call (the
+// composition, the view call), adds what it spent to o and returns the
+// reply, masked with redact (nil is RedactTaskOutput).
+func completeOnce(ctx context.Context, completer Completer, callTimeout time.Duration, redact func(context.Context, *bundle.Redactor, []byte, *Outcome) ([]byte, error),
+	o *Outcome, request CompleteRequest, redactor *bundle.Redactor) ([]byte, error) {
 	callCtx := ctx
-	if r.CallTimeout > 0 {
+	if callTimeout > 0 {
 		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, r.CallTimeout)
+		callCtx, cancel = context.WithTimeout(ctx, callTimeout)
 		defer cancel()
 	}
-	completion, err := r.Completer.Complete(callCtx, request)
+	completion, err := completer.Complete(callCtx, request)
 	usage := completion.Usage
 	if usage.IsZero() {
 		usage.Unreported = true
@@ -312,7 +320,6 @@ func (r ComposeRequest) call(ctx context.Context, o *Outcome, request CompleteRe
 		return nil, err
 	}
 	// Masking the reply masks the outcome's model and accounting strings too.
-	redact := r.redact
 	if redact == nil {
 		redact = RedactTaskOutput
 	}

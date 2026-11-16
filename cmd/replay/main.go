@@ -139,8 +139,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		generatorName          = fs.String("generator", "review", "what to generate: "+strings.Join(replay.GeneratorNames(), ", "))
 		detectorReport         = fs.Bool("detector-report", false, "write the case ids by kind of detector evidence into <out>/<name>/detectors (for labelling a sample)")
 		chain                  = fs.Bool("chain", false, "replay each pull request's revisions in order, each reading the previous one's generated document as its previous version")
-		composeFromStore       = fs.Bool("compose-from-store", false, "run only the compose stage over the dataset's saved reviews of the selected cases (the compose generator)")
-		composeOnly            = fs.Bool("compose-only", false, "run only the compose stage over the review documents of --from-run (the compose generator)")
+		composeFromStore       = fs.Bool("compose-from-store", false, "run only the compose stage over the dataset's saved reviews of the selected cases (the compose generator; with --generator view, the view call)")
+		composeOnly            = fs.Bool("compose-only", false, "run only the compose stage over the review documents of --from-run (the compose generator; with --generator view, the view call)")
 		fromRun                = fs.String("from-run", "", "with --compose-only, the earlier run directory whose cases/<id>/document.json are composed")
 		tileText               = fs.String("tile-text", "", "with the compose stage, the repository's standing tile layout instruction, as repositories save it")
 		tilePins               list
@@ -248,7 +248,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		if len(genConfig.Options) > 0 {
 			return errors.New("--compose-from-store and --compose-only set the generator's options themselves")
 		}
-		*generatorName = "compose"
+		// --generator view runs the view call over the same reviews.
+		if *generatorName != "view" {
+			*generatorName = "compose"
+		}
 		genConfig.Options = map[string]string{"source": replay.ComposeFromStore, "dataset": *dataset}
 		if *composeOnly {
 			genConfig.Options = map[string]string{"source": replay.ComposeFromRun, "run": *fromRun}
@@ -291,7 +294,7 @@ func noPositional(fs *flag.FlagSet, args []string) error {
 
 func promptIDs() string {
 	var ids []string
-	for _, id := range append(prompt.ReviewIDs(false, true), prompt.IDReviewTilesCompose) {
+	for _, id := range append(prompt.ReviewIDs(false, true), prompt.IDReviewView, prompt.IDReviewTilesCompose) {
 		ids = append(ids, string(id))
 	}
 	return strings.Join(ids, ", ")

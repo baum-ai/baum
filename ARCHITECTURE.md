@@ -923,7 +923,13 @@ repeated section ID.
   resolves a repeated ID to its first occurrence, so the two pages can differ
   on such an ID.
 
-**Compositions.** A generated review is stored as its `baum.review/1`
+**Compositions.** New versions store a review view composition
+(`baum.composition/2`, see "Review view") in the composition's place; the
+grid reads one for its library and authored tiles alone and lays them out
+with the change kind's template. What follows describes the grid's own
+`baum.composition/1`, which older versions store.
+
+A generated review is stored as its `baum.review/1`
 document and a composition (`baum.composition/1`,
 `schema/composition-1.json`, `tiles.Composition`), and the tile document
 served for it is `tiles.Compose(tiles.FromReview(document), composition)`.
@@ -2906,6 +2912,14 @@ out, err := agent.ComposeRun(ctx, agent.ComposeRequest{Completer: completer, Bac
 	Prompts: prompt.TilesPrompts{}, Document: converted, Previous: previous, Preferences: prefs})
 ```
 
+**The view call replaced it in generation.** A staged run with tiles no
+longer calls `ComposeRun`: its compose stage is the view call (see "Review
+view"), which writes a `baum.composition/2` with no grid layout, and the tile
+grid lays a version's tiles out with the change kind's template. What
+follows describes the composition call as replay's compose generator still
+runs it, and the grid's `baum.composition/1`, which older versions store and
+the grid still reads. The grid itself is removed in a later phase.
+
 After a review is analysed, one structured call with no tools and no files
 chooses and arranges its tiles. It goes through `agent.Completer` (Claude
 Code with no tools but StructuredOutput, Codex with its shell off and the
@@ -3350,6 +3364,132 @@ keeps the last answer on screen while it does.
   opened and drawn with `CodeDiff`, as the Files pane draws a file (see "Local
   commits"). Loading, a failure with Retry and "No diff to show" are its
   states; the list shows a commit's totals once it has been read.
+
+### Review view
+
+```go
+out, err := agent.ViewRun(ctx, agent.ViewRequest{Completer: completer, Backend: name,
+	Prompts: prompt.TilesPrompts{}, Document: normalized, Converted: doc, Fills: fills, Authored: authored})
+```
+
+With tile reviews on, a review's page is three tabs: an overview (the
+summary, a verdict when one is needed, the risk score with a short
+justification, the main screenshots, a main diagram and what the linked
+sessions asked for), "How it works" (the review's context as "Where this
+fits", then each section with the tiles placed on it) and the code. Package
+`tiles/view` holds what the daemon stores and serves for it.
+
+**Stored composition.** A version generated with tiles stores a review view
+composition (`baum.composition/2`, `schema/composition-2.json`,
+`view.Composition`) beside its review, in the same `versions.composition`
+column the grid's `baum.composition/1` used: `overview` (`risk_summary`, at
+most 240 characters; `verdict`, a line and one to three points, each with
+the section it concerns; up to three `screenshots`, attachment IDs; a
+`diagram`, the ID of one of its tiles; up to three `intent` items, a session
+prompt by index with what was asked and what the pull request does about
+it), `sections` (the tiles placed on each section ID or `context`, in
+order), `diagrams` (native tiles, at most 8), and `library` and `authored`,
+the tile analysis's tiles in their `baum.composition/1` shapes. A native tile
+is `{id: "dg_…", type, title, data}`; its type is `flow` (1–4 lanes of 1–6
+steps, each with a title, note, tone and the connector before it), `columns`
+(2–3 labelled lists of 1–8 items), `sequence` (2–4 actors and 1–10 messages
+between them by index) or `table` (2–5 columns, 1–12 rows of their length),
+and every data has an optional `caption` and a `source` of hunk anchors. A
+`baum.composition/1` is ignored by the view, read as no composition.
+
+**Checks.** `view.Normalize(review, converted, composition)` checks what a
+model or a store gave against the review (`view.ParseReview` reads what it
+needs of `baum.review/1`) and drops only the offending item, never the whole
+composition: the library and authored tiles go through
+`tiles.NormalizeComposition`'s checks; a native tile with a bad ID, an ID
+another tile has, a count, actor index or required text out of bounds, or
+text naming a hunk by its ID, is dropped; text is made one plain line, its
+markdown but `code` spans taken out, and cut at a word to its limit with an
+ellipsis; an anchor that cites no hunk of the pull request is dropped; a
+verdict point's unknown section is cleared, a verdict with no point dropped;
+a screenshot, diagram or intent naming nothing the review has is dropped
+(restricted sessions are never named); a placement on a section the review
+does not have, of a tile the composition does not have, or of a tile already
+placed (the overview's diagram counts) is dropped. Placements are kept in
+review order, context first. The result is a fixed point, and fixes are
+counted by kind (`view.Report`, recorded in the generator's `fixes`).
+`view.Place` puts each library and authored tile not placed on the current
+section whose hunks it covers most (`view.ExtraTiles` composes them to read
+their checked covers), the first on a tie, else on `context`; it may place
+past the call's three tiles per section. `Put` stores a review view
+composition as `Normalize` returns it, with the caller's generator
+(`storableView`); one that chooses nothing, without a generator, is stored as
+none. `tiles.ParseComposition` reads a `baum.composition/2` as the grid and
+the tile analysis want it: its generator, library and authored tiles, with
+`View` set and no layout.
+
+**The view call.** `agent.ViewRun` replaces `ComposeRun` in generation, in
+the same place and under the same rules: one structured call through
+`agent.Completer` after the review is final, on a context that follows the
+run's cancellation but not its deadline, bounded by `DefaultViewTimeout` (90
+seconds), making the calls the run's budgets leave (at most two, one repair;
+`FallbackBudget` when they leave none or fewer than 15,000 tokens), its
+spending added to the run's, and never failing the run: a cancelled context
+returns `ErrViewInterrupted`, and any other failure (no completer, the
+prompt, the input, the call, a reply that does not decode after the repair,
+masking) stores the fallback, `fallback: true` with no diagrams, verdict or
+risk summary and the library and authored tiles placed by their hunks, the
+reason the generator's one problem. Its input (`view.BuildInput`, a header
+line and JSON) is the review's title and summary, recommendation, risk score
+and reasons, context parts, current sections (ID, title, summary, hunk IDs
+and paths, behaviour step titles and texts, active risks with tier),
+attachments (ID, alt, heading, origin), the linked sessions' first six
+prompts cut to 400 characters (never a restricted session) and the library
+and authored tiles it may place (ID, kind, title, glance, hunks covered);
+past 48 KiB it cuts hunk paths, low risks' texts, behaviour texts, section
+summaries and prompts beyond three, and names the cuts. The reply
+(`view.ReplySchema`, strict-mode ready: every object closed and every
+property required) is the overview, the placements (at most three tiles per
+section) and the diagrams, a diagram's `source` hunk IDs; `view.ParseReply`
+only refuses what does not decode or a diagram without its type's fields,
+leaving the rest to the checks. Every reply is masked before it is read.
+The prompt is `prompt.TilesPrompts.ViewInstructions` (`review-view`, version
+`review-view-public-v1`, replaceable per repository like the other review
+prompts; the composition prompt left the catalogue for the `unlisted` ones):
+a diagram only where it explains better than text, the overview's diagram
+showing the whole change, a verdict only when the reader must act before
+merging, and the copy rules (plain subjects as titles, no "comma with a
+twist" sentences or dramatic colons, never the word "evidence", no line
+counts, hunk IDs or bare pull request numbers).
+
+Drafts carry a provisional review view composition: the draft's library
+tiles, pending until filled, each placed by the hunks it covers or, while
+pending, the hunks the outline chose for it, so it keeps its section; the
+last draft carries the stored composition. The repository's tile text and
+pins no longer reach a model: they arranged the grid's composition.
+
+**Served view.** The tile routes' answer (`GET /api/tiles`, and the draft
+route with `?tiles=1`) gains `view` (`baum.view/1`, `view.Build`, built in
+`tileview.BuildWith` beside the tile document): `overview` (as stored, with
+`screenshots` and `intent` always arrays and `verdict`/`diagram` null when
+absent), `sections` (context, then every section of the review in order,
+each with its placed tile IDs, possibly none) and `tiles`: the native tiles
+(`state: "ready"`, `covers` from their source), then the library and
+authored tiles as the served tile document shows them (checked, custom tiles
+as `type: "custom"` with their served `definition` and frames registered,
+authored ones as `table`, `code` or `prose` with today's generic tile data,
+pending while a draft's fill runs) and any library tile the person added; a
+tile the composition does not place is placed by its hunks, and a placement
+or overview diagram naming a tile the view does not have is dropped. A
+version without a review view composition gets the empty view (no overview
+parts, no tiles, every section). The tile grid keeps working in this phase:
+it reads a `baum.composition/2` for its tiles and lays them out with the
+change kind's template (`tileview.gridComposition`). The served view of a
+fixture review is `internal/tileview/testdata/view-example.json`.
+
+**Replay.** `replay --generator view` with `--compose-from-store` or
+`--compose-only --from-run <run>` runs only the view call over saved reviews
+or an earlier run's documents (placing that run's library fills and
+exhibits again), writing each case's composition, served view (`view.json`),
+input and reply beside a `replay.view/1` record, measured by the view
+metrics (fallback, repair, fixes by kind, diagrams by type, overview parts,
+placements, input size). `--prompt-override review-view=<file>` replaces the
+prompt. `--generator tiles` writes `view.json` beside the composition too.
 
 ### Reference viewer host
 
@@ -4574,11 +4714,12 @@ two runs by case. `--compose-from-store` and `--compose-only --from-run`
 run only the compose stage (`agent.ComposeRun`) over the dataset's saved
 reviews or an earlier run's documents, writing each case's composition, its
 tile document and the template's for comparison, with fallback, repair and
-normalisation counters. `--generator tiles` runs the whole pipeline with the
-compose stage on: the review is the document, and the composition, the served
-tile document, the provisional draft layout and a compose record are beside
-it, measured with the compose metrics plus the stage's cost and the jump from
-the provisional layout. `just replay-screens` serves a compose or tiles run
+normalisation counters; with `--generator view` they run the view call
+instead (see "Review view"). `--generator tiles` runs the whole pipeline with
+the compose stage, now the view call, on: the review is the document, and the
+composition, the served view and tile document, the provisional draft
+composition and a compose record (fallback, repair, fixes, cost) are beside
+it. `just replay-screens` serves a compose or tiles run
 through the real-reviews fixture, each case's review stored with the run's
 composition and with the template's as the latest version of a clone of its
 own, and photographs both tiles pages, measuring their first screens

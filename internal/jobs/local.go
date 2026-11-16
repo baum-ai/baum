@@ -943,7 +943,7 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 	ids := prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil)
 	if o.Tiles != nil {
 		o.Tiles.Prompts = prompt.TilesPrompts{Overrides: overrides}
-		ids = append(ids, prompt.IDReviewTilesCompose)
+		ids = append(ids, prompt.IDReviewView)
 	}
 	o.PromptSource = promptSourceOf(ids, overrides, sources)
 	return nil

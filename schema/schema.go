@@ -9,6 +9,9 @@
 // schema, which reuses review-1.json's definitions (CompileTiles), and
 // composition-1.json the baum.composition/1 schema of how a generated review
 // is presented as tiles, which reuses the tile schema's (CompileComposition).
+// composition-2.json is baum.composition/2, which replaces it for new
+// versions: how a generated review is presented on its review page
+// (CompileViewComposition).
 package schema
 
 import (

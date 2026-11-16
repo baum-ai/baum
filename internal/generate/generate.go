@@ -198,8 +198,9 @@ type Result struct {
 	OutlineRepairs, OutlineRejections int
 	// Composition, for a run with Tiles, is the composition to store with
 	// the version (store.Version.Composition) and CompositionGenerator where
-	// it came from; nil when none could be made. Compose is what the compose
-	// stage did, nil when it did not run.
+	// it came from (a review view composition); nil when none could be made.
+	// Compose is what the compose stage, the view call, did, nil when it did
+	// not run.
 	Composition          json.RawMessage
 	CompositionGenerator *tiles.Generator
 	Compose              *ComposeReport
@@ -210,11 +211,12 @@ type Draft struct {
 	// Document is the review so far, masked and completed as the published
 	// document is, with the sections still being written pending.
 	Document []byte
-	// Composition lays out the draft's tiles. For a run with Tiles it is the
-	// change kind's template (agent.TemplateComposition) while the review is
-	// written, then, in one last draft of the finished review, the
-	// composition the run stores. A draft of a continued version carries
-	// that version's composition. Nil otherwise.
+	// Composition presents the draft's tiles. For a run with Tiles it is a
+	// provisional review view composition (provisional: the library tiles,
+	// pending or filled, placed by their hunks) while the review is written,
+	// then, in one last draft of the finished review, the composition the run
+	// stores. A draft of a continued version carries that version's
+	// composition. Nil otherwise.
 	Composition []byte
 }
 
@@ -430,7 +432,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 				d := Draft{Document: completed}
 				switch {
 				case composing:
-					d.Composition = provisional(completed, o.Tiles.Preferences.Pins, o.Tiles.Previous, draftLibrary(p.Tiles, tileEntries))
+					d.Composition = provisional(completed, draftLibrary(p.Tiles, tileEntries), draftHunks(p.Tiles))
 				case o.Continue != nil && len(o.Continue.Composition) > 0:
 					d.Composition = o.Continue.Composition
 				}
@@ -510,7 +512,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		return result, rejection(fail, outcome.Findings)
 	}
 	if composing {
-		// The review is final: only its layout is left to choose. What the
+		// The review is final: only its page view is left to write. What the
 		// stage spends counts as the run's.
 		composition, generator, report, composeErr := composeTiles(ctx, o, completed, outcome, redactor, analysis)
 		// The analysis's model prices the run and names the version.
@@ -530,9 +532,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		case report.Problem != "":
 			progress("%s; the review is published without a composition", report.Problem)
 		case report.Fallback:
-			progress("tiles laid out by the template: %s", report.FallbackReason)
+			progress("the review's page view fell back: %s", report.FallbackReason)
 		default:
-			progress("tiles arranged in %s", report.Elapsed.Round(time.Second))
+			progress("the review's page view written in %s", report.Elapsed.Round(time.Second))
 		}
 		if o.OnDraft != nil {
 			o.OnDraft(Draft{Document: completed, Composition: composition})

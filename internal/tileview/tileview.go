@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // Response is the body of a tile route. Document is the baum.review/1
@@ -35,7 +36,15 @@ import (
 type Response struct {
 	Document json.RawMessage `json:"document"`
 	Tiles    *tiles.Document `json:"tiles"`
-	Problem  string          `json:"problem,omitempty"`
+	// View is the review page's view (baum.view/1, view.Build): the
+	// overview's model-written parts, every section with the tiles placed on
+	// it, and the tiles. It is built from the review and its review view
+	// composition (baum.composition/2); a version without one, or with a
+	// baum.composition/1, gets the empty view (view.Empty) with only the
+	// tiles the person added. Nil when the review could not be read or
+	// converted (Problem).
+	View    *view.View `json:"view,omitempty"`
+	Problem string     `json:"problem,omitempty"`
 	// Added says, of each tile the person added that the served document
 	// shows, whether its data is from an earlier version and is being filled
 	// for this one (Layout.Notes).
@@ -207,7 +216,58 @@ func BuildWith(document, composition []byte, layout Layout, opts tiles.Options) 
 		return Response{Document: raw(normalized), Problem: "The tiles could not be checked."}
 	}
 	served, registered := registerFrames(doc)
-	return Response{Document: raw(normalized), Tiles: served, Added: notesShown(served, layout.Notes), Frames: registered, checked: doc}
+	return Response{Document: raw(normalized), Tiles: served, View: pageView(normalized, served, composition, layout),
+		Added: notesShown(served, layout.Notes), Frames: registered, checked: doc}
+}
+
+// pageView is the review page's view of a review, nil when the review cannot
+// be read for it. Its library and authored tiles, and the tiles the person
+// added, are those of the served tile document, checked and with their
+// definitions in served form, so the page draws them as the grid does. A
+// composition that is not a review view composition, or that cannot be
+// used, gives the empty view; one that cannot be used is counted
+// (tileview.views_ignored). Building it never fails the answer: a panic
+// gives no view.
+func pageView(normalized []byte, served *tiles.Document, composition []byte, layout Layout) (out *view.View) {
+	defer func() {
+		if recover() != nil {
+			workstats.Inc("tileview.views_ignored")
+			out = nil
+		}
+	}()
+	r, err := view.ParseReview(normalized)
+	if err != nil {
+		return nil
+	}
+	var c *view.Composition
+	var ids []string
+	if len(composition) > 0 && view.IsComposition(composition) {
+		parsed, err := view.Parse(composition)
+		if err != nil {
+			workstats.Inc("tileview.views_ignored")
+		} else {
+			ids = view.ExtraIDs(parsed)
+			checked := view.Check(r, parsed, ids)
+			c = &checked
+		}
+	}
+	for _, lib := range layout.Added {
+		var def struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(lib.Definition, &def) == nil && def.Name != "" {
+			ids = append(ids, tiles.LibraryTileID(def.Name))
+		}
+	}
+	var extras []tiles.Tile
+	for _, id := range ids {
+		if i := slices.IndexFunc(served.Tiles, func(t tiles.Tile) bool { return t.ID == id }); i >= 0 &&
+			!slices.ContainsFunc(extras, func(t tiles.Tile) bool { return t.ID == id }) {
+			extras = append(extras, served.Tiles[i])
+		}
+	}
+	v := view.Build(r, c, extras)
+	return &v
 }
 
 // notesShown are the notes of the added tiles the served document shows.
@@ -350,7 +410,7 @@ var applyComposition = tiles.Compose
 // are ignored and counted, and the person's layout then applies to the
 // converted layout.
 func compose(doc *tiles.Document, composition []byte, layout Layout) (out *tiles.Document) {
-	parsed := parseComposition(composition)
+	parsed := gridComposition(doc, parseComposition(composition))
 	if layout.Overlay.Edited() {
 		if edited := applyLayout(doc, parsed, layout); edited != nil {
 			return edited
@@ -371,6 +431,31 @@ func compose(doc *tiles.Document, composition []byte, layout Layout) (out *tiles
 		return doc
 	}
 	return composed
+}
+
+// gridComposition is the composition the tile grid composes with: a review
+// view composition (baum.composition/2, read with View set) has no layout,
+// so the grid lays out its library and authored tiles with the change
+// kind's template, as a fallback composition of baum.composition/1 did. A
+// template that cannot be made leaves the converted layout. Any other
+// composition is the grid's as it is.
+func gridComposition(doc *tiles.Document, parsed *tiles.Composition) (out *tiles.Composition) {
+	if parsed == nil || !parsed.View {
+		return parsed
+	}
+	defer func() {
+		if recover() != nil {
+			workstats.Inc("tileview.compositions_ignored")
+			out = nil
+		}
+	}()
+	template, report := tiles.Template(doc, parsed)
+	if report.Counts()[tiles.FixUnusable] > 0 {
+		workstats.Inc("tileview.compositions_ignored")
+		return nil
+	}
+	template.Generator = parsed.Generator
+	return &template
 }
 
 // parseComposition reads a stored composition, nil for none; one that

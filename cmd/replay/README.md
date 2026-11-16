@@ -74,7 +74,7 @@ deterministically, and `--limit` cuts the list):
 | `--detector-report` | Write the case ids by kind of detector evidence; see [Detectors](#detectors). |
 | `--case-file <path>` | Case ids from a file, one per line; blank lines and `#` comments are ignored. Same as repeating `--case`, and not combined with filters. |
 | `--chain` | Replay each pull request's revisions in order; see [Chains](#chains). |
-| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the compose stage over reviews that already exist; see [Composing tiles](#composing-tiles). |
+| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the compose stage over reviews that already exist, or with `--generator view` the view call; see [Composing tiles](#composing-tiles) and [The view call alone](#the-view-call-alone). |
 | `--limit N`, `--shuffle-seed N` | Cut the selection, after a seeded shuffle if given. |
 
 Settings. The defaults are the desktop app's built-in ones: Claude Code, the
@@ -196,6 +196,36 @@ call composes nothing: every case falls back with the reason that it cannot
 complete. A stage the run's interruption stopped is an interrupted case, never
 a fallback.
 
+### The view call alone
+
+The view call (`agent.ViewRun`) replaced the compose stage in generation: it
+writes a review's page view, a `baum.composition/2` with the overview's
+verdict and risk summary, the diagrams and which tiles stand on each section.
+`--generator view` with either flag above runs it alone over the same
+reviews, so its prompt can be iterated on a frozen set; `--prompt-override
+review-view=<file>` replaces the prompt, and `--tile-text` and `--tile-pin`
+are refused (the view call reads no preferences):
+
+```sh
+oss/bin/replay --dataset <dir> --generator view --compose-from-store --case-file <file outside git> --model sonnet
+oss/bin/replay --dataset <dir> --generator view --compose-only --from-run <out>/<earlier-tiles-run> --prompt-override review-view=<file> --model sonnet
+```
+
+From a run of the `tiles` generator it places that run's library fills and
+exhibits again. Each case's `document.json` is a view record
+(`replay.view/1`: the composition, fallback and why, repair, the checks'
+fixes by kind and first problems, diagrams by type, which overview parts are
+set, placements, the input's size and cuts, seconds); beside it are
+`composition.json`, `view.json` (the view the tile route would serve),
+`input.txt` and `reply.json`. Validation checks the composition against its
+schema, that checking it again changes nothing, and that a view is served.
+`replay metrics` adds `view_fallback`, `view_repaired`, `view_fixes` and
+`view_fix_<kind>` (`view_fix_placed` counts the tiles the host placed and is
+not a fix), `view_diagrams` and `view_diagrams_<type>`,
+`view_overview_diagram`, `view_verdict`, `view_risk_summary`,
+`view_screenshots`, `view_intent`, `view_placed`, `view_sections_with_tiles`,
+`view_input_bytes`, `view_input_cut` and `view_seconds`.
+
 ### The whole pipeline with tiles
 
 `--generator tiles` generates each case as the desktop does with tile reviews
@@ -228,16 +258,18 @@ oss/bin/replay --dataset <dir> --generator tiles --library-dir <types outside gi
 
 The case's `document.json` is the review, as with the `review` generator, so
 the review metrics, `--chain` and `--reuse` apply; staged prompt overrides and
-`review-tiles-compose` may both be given. `--no-staged` is refused. Beside the
-document:
+`review-view` may both be given. `--no-staged` is refused. The compose stage
+is the view call, so the compose record holds only its fallback, repair,
+fixes, input size, `cost_usd` and seconds (`problem` when the version would
+have no composition). Beside the document:
 
 | File | Holds |
 | --- | --- |
-| `compose.json` | A compose record, as above, with the stage's `cost_usd` and `jump`; `problem` when the version would have no composition. |
-| `composition.json` | The composition the version would store. |
-| `tiles.json` | The tile document the tile route would serve (`tileview.Build`). |
-| `provisional.json` | The template layout drafts showed while the review was written. |
-| `inventory.txt`, `reply.json` | What the composer read and answered. |
+| `compose.json` | A compose record, as above. |
+| `composition.json` | The review view composition the version would store. |
+| `view.json`, `tiles.json` | The view and the tile document the tile route would serve (`tileview.Build`). |
+| `provisional.json` | The composition drafts showed while the review was written. |
+| `inventory.txt`, `reply.json` | What the view call read and answered. |
 | `analysis.json` | The tile analysis: the outline's selection, each fill's state, reason, repair, time, cost and place on the served page, the exhibits returned, dropped by reason, dropped as restating the review and kept with their places, how long the review waited for them, and the points a library or authored tile states that another tile states too (`compose.Duplicates`). |
 | `outcome.json` details | `outline_repairs` and `outline_rejections`: the outline stage's validation repairs and schema rejections, which the tile parts of its schema could add (compare a run with both options off). |
 | `fills/<type>.json`, `exhibits.json` | Each fill as it ended, its data included, and the exhibits call's result. |

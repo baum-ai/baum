@@ -20,10 +20,16 @@ import (
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/compose"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
-// templateCompletion answers a composition with the template's layout.
+// templateCompletion answers a view call with a reply that writes nothing,
+// and a composition with the template's layout.
 func templateCompletion(_ context.Context, r agent.CompleteRequest, _ int) (agent.Completion, error) {
+	if string(r.Schema) == string(view.ReplySchema()) {
+		raw := []byte(`{"overview": {"risk_summary": null, "verdict": null, "screenshots": [], "diagram": null, "intent": []}, "sections": [], "diagrams": []}`)
+		return agent.Completion{Document: raw, Model: "stub-composer", Usage: agent.Usage{Input: 2000, Output: 300}}, nil
+	}
 	var inv compose.Inventory
 	if err := json.Unmarshal([]byte(r.User[strings.Index(r.User, "\n")+1:]), &inv); err != nil {
 		return agent.Completion{}, err
@@ -169,17 +175,17 @@ func TestTileReviewThroughAJob(t *testing.T) {
 	}
 }
 
-// With tile reviews on, the composition prompt is resolved for the
+// With tile reviews on, the view prompt is resolved for the
 // repository like the review's, and a custom one marks the version's prompt
 // source.
-func TestTileReviewUsesTheRepositorysCompositionPrompt(t *testing.T) {
+func TestTileReviewUsesTheRepositorysViewPrompt(t *testing.T) {
 	registry, clone := registeredClone(t)
-	setOverride(t, registry, clone.Repository, prompt.IDReviewTilesCompose, "ARRANGE FOR ACME")
+	setOverride(t, registry, clone.Repository, prompt.IDReviewView, "ARRANGE FOR ACME")
 	o := generate.Options{Staged: true, Tiles: &generate.Tiles{}}
 	if err := (&Local{Registry: registry}).applyPrompts(context.Background(), clone.Repository, &o); err != nil {
 		t.Fatal(err)
 	}
-	p, err := o.Tiles.Prompts.ComposeInstructions(context.Background(), "claude")
+	p, err := o.Tiles.Prompts.ViewInstructions(context.Background(), "claude")
 	if err != nil || !strings.Contains(p.Body, "ARRANGE FOR ACME") || !strings.HasSuffix(p.Version, prompt.CustomSuffix) || o.PromptSource != "repository" {
 		t.Errorf("%v %q %q", err, p.Version, o.PromptSource)
 	}
@@ -189,9 +195,9 @@ func TestTileReviewUsesTheRepositorysCompositionPrompt(t *testing.T) {
 	}
 }
 
-// A repository's standing tile preferences reach the composer: the review's
-// tiles are arranged with the text and pins its settings hold, and a
-// repository without any gives the composer no preferences.
+// A repository's standing tile preferences reach a tile review's options
+// (generate.Tiles.Preferences), and a repository without any gives none. The
+// view call, which replaced the tile grid's composition, does not read them.
 func TestTileReviewCarriesTheRepositorysPreferences(t *testing.T) {
 	ctx := context.Background()
 	registry, _ := registeredClone(t)
@@ -199,43 +205,21 @@ func TestTileReviewCarriesTheRepositorysPreferences(t *testing.T) {
 	if _, err := registry.Pick(ctx, repository, nil); err != nil {
 		t.Fatal(err)
 	}
-	var mu sync.Mutex
-	var preferences []*compose.Preferences
-	stub := &generatetest.Backend{Version: "9.9.9", CompleteFunc: func(ctx context.Context, r agent.CompleteRequest, attempt int) (agent.Completion, error) {
-		var inv compose.Inventory
-		if err := json.Unmarshal([]byte(r.User[strings.Index(r.User, "\n")+1:]), &inv); err != nil {
-			return agent.Completion{}, err
-		}
-		mu.Lock()
-		preferences = append(preferences, inv.Preferences)
-		mu.Unlock()
-		return templateCompletion(ctx, r, attempt)
-	}}
 	compose1 := func() *compose.Preferences {
 		t.Helper()
-		o := reviewOptions(t, stub)
-		o.Staged, o.Budgets.MaxCalls, o.Budgets.MaxTokens = true, 16, 0
 		versions, err := store.Open("", t.TempDir(), true)
 		if err != nil {
 			t.Fatal(err)
 		}
 		key := store.Key{Repository: repository, Number: assembletest.Number}
-		o.Tiles = (&Local{Registry: registry}).tilesFor(ctx, versions, key, repository)
-		mu.Lock()
-		preferences = nil
-		mu.Unlock()
-		if _, err := generate.Publish(ctx, versions, key, o, nil); err != nil {
-			t.Fatal(err)
+		p := (&Local{Registry: registry}).tilesFor(ctx, versions, key, repository).Preferences
+		if p.Text == "" && len(p.Pins) == 0 {
+			return nil
 		}
-		mu.Lock()
-		defer mu.Unlock()
-		if len(preferences) != 1 {
-			t.Fatalf("the composer was called %d times", len(preferences))
-		}
-		return preferences[0]
+		return &p
 	}
 	if got := compose1(); got != nil {
-		t.Errorf("without settings the composer read %+v", got)
+		t.Errorf("without settings the review carries %+v", got)
 	}
 	if _, err := registry.UpdateRepositoryIf(ctx, repository, func(s repos.Settings) (repos.Settings, error) {
 		s.Tiles = &repos.TileSettings{Text: "Lead with what changed in the data model.", Pins: []string{"risks"}}

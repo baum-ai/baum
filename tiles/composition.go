@@ -44,7 +44,16 @@ type Composition struct {
 	Promotions []Promotion    `json:"promotions,omitempty"`
 	Authored   []AuthoredTile `json:"authored,omitempty"`
 	Notes      *Notes         `json:"notes,omitempty"`
+	// View says the composition was read from a review view composition
+	// (baum.composition/2, ParseComposition): it holds only that
+	// composition's generator, library and authored tiles, and the grid lays
+	// them out with the change kind's template. It is never stored.
+	View bool `json:"-"`
 }
+
+// ViewCompositionName is the value of a review view composition's "schema"
+// field (package tiles/view).
+const ViewCompositionName = schema.ViewCompositionName
 
 // CompositionName is the value of a composition's "schema" field.
 const CompositionName = schema.CompositionName
@@ -212,7 +221,31 @@ var templateName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 // or another schema; members it does not know are ignored, so a composition
 // written by a newer version still applies. It does not normalise: Compose
 // does.
+//
+// A review view composition (baum.composition/2) is read as the grid sees
+// it: a composition with its generator, library and authored tiles and no
+// layout, with View set, which the grid lays out with the change kind's
+// template. Readers that only want a version's library and authored tiles
+// (the previous version's fills, the tile types a review used) read both
+// schemas alike this way.
 func ParseComposition(raw []byte) (*Composition, error) {
+	var head struct {
+		Schema string `json:"schema"`
+	}
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return nil, fmt.Errorf("tiles: decoding the composition: %w", err)
+	}
+	if head.Schema == ViewCompositionName {
+		var v struct {
+			Generator *Generator     `json:"generator"`
+			Library   []LibraryTile  `json:"library"`
+			Authored  []AuthoredTile `json:"authored"`
+		}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, fmt.Errorf("tiles: decoding the composition: %w", err)
+		}
+		return &Composition{Schema: CompositionName, Generator: v.Generator, Library: v.Library, Authored: v.Authored, View: true}, nil
+	}
 	var c Composition
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return nil, fmt.Errorf("tiles: decoding the composition: %w", err)

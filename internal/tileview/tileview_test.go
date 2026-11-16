@@ -165,7 +165,7 @@ func TestBuildWithoutACompositionIsUnchanged(t *testing.T) {
 		"null":       []byte("null"),
 		"chooses":    []byte(`{"schema":"baum.composition/1","layout":{"entries":[]}}`),
 		"unreadable": []byte(`{"schema":`),
-		"other":      []byte(`{"schema":"baum.composition/2","layout":{"entries":[]}}`),
+		"other":      []byte(`{"schema":"baum.composition/9","layout":{"entries":[]}}`),
 		"not json":   []byte(`PRIVATE_TEXT`),
 	} {
 		got, err := Encode(Build(raw, composition, tiles.Options{}))

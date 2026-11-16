@@ -18,13 +18,13 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/compose"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 var tilesNow = func() time.Time { return time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC) }
 
 // tilesOptions is a staged run with tile reviews on, at a fixed time and
-// without a token budget, which would leave the composition no room.
+// without a token budget, which would leave the view call no room.
 func tilesOptions(t *testing.T, f *fixture) generate.Options {
 	o := stagedOptions(t, f)
 	o.Budgets.MaxTokens = 0
@@ -33,56 +33,45 @@ func tilesOptions(t *testing.T, f *fixture) generate.Options {
 	return o
 }
 
-// inventoryOf reads the inventory a completion request carries.
-func inventoryOf(t *testing.T, r agent.CompleteRequest) compose.Inventory {
+// inputOf reads the input a view call's completion request carries.
+func inputOf(t *testing.T, r agent.CompleteRequest) view.Input {
 	t.Helper()
-	var inv compose.Inventory
-	if err := json.Unmarshal([]byte(r.User[strings.Index(r.User, "\n")+1:]), &inv); err != nil {
-		t.Errorf("the inventory does not decode: %v", err)
+	var in view.Input
+	if err := json.Unmarshal([]byte(r.User[strings.Index(r.User, "\n")+1:]), &in); err != nil {
+		t.Errorf("the input does not decode: %v", err)
 	}
-	return inv
+	return in
 }
 
-// keepTemplate answers with the template's layout, as the inventory gives it,
-// with promote's promotions placed first and, when lead is set, the changes
-// out of their group at their sizes, lead first with a reason: the host's guard
-// keeps no layout that shows fewer changes on the first screen than the
-// template's.
-func keepTemplate(t *testing.T, lead string, promote func(compose.Inventory) []compose.ReplyPromotion) func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
+// keepTemplate answers the view call with a reply that writes nothing: no
+// overview parts, no diagrams, no placements, so the host places the
+// analysis's tiles. With lead set, it draws a flow citing that section's
+// first hunk and places it on the section, and gives a risk summary.
+func keepTemplate(t *testing.T, lead string, _ any) func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
 	return func(_ context.Context, r agent.CompleteRequest, _ int) (agent.Completion, error) {
-		inv := inventoryOf(t, r)
-		reply := compose.Reply{Entries: []compose.ReplyEntry{}, Promote: []compose.ReplyPromotion{}, Moves: []tiles.Move{}}
-		if promote != nil {
-			reply.Promote = promote(inv)
-			for _, p := range reply.Promote {
-				reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: p.ID, Size: tiles.SizeHalf})
-			}
+		in := inputOf(t, r)
+		reply := map[string]any{
+			"overview": map[string]any{"risk_summary": nil, "verdict": nil, "screenshots": []any{}, "diagram": nil, "intent": []any{}},
+			"sections": []any{}, "diagrams": []any{},
 		}
-		why := "it needs a decision"
-		led := false
-		for _, entry := range inv.Template.Entries {
-			if entry.Tile == lead {
+		for _, s := range in.Sections {
+			if s.ID != lead || len(s.Hunks) == 0 {
 				continue
 			}
-			// The fixtures' change tiles are sec_*; with one or two changes
-			// the template has no group.
-			if lead != "" && strings.HasPrefix(entry.Tile, "sec_") && !led {
-				// The lead takes the first change's place.
-				led = true
-				reply.Entries = append(reply.Entries, compose.ReplyEntry{Tile: lead, Size: entry.Size, Why: &why})
-			}
-			e := compose.ReplyEntry{Tile: entry.Tile, Size: entry.Size}
-			if lead == "" && entry.Group != "" {
-				group := entry.Group
-				e.Group = &group
-			}
-			reply.Entries = append(reply.Entries, e)
+			reply["overview"].(map[string]any)["risk_summary"] = "The change is small and covered."
+			reply["sections"] = []any{map[string]any{"id": s.ID, "tiles": []any{"dg_lead"}}}
+			reply["diagrams"] = []any{map[string]any{"id": "dg_lead", "type": "flow", "title": "How it runs", "caption": nil, "source": []any{s.Hunks[0].ID},
+				"lanes": []any{map[string]any{"label": nil, "steps": []any{
+					map[string]any{"title": "Before", "note": nil, "tone": nil, "join": nil},
+					map[string]any{"title": "After", "note": nil, "tone": "new", "join": "arrow"}}}}}}
 		}
 		raw, err := json.Marshal(reply)
 		return agent.Completion{Document: raw, Model: "stub-composer", Usage: agent.Usage{Input: 3000, Output: 400}}, err
 	}
 }
 
+// storedComposition reads a stored composition as the grid and the tile
+// analysis read it: its library and authored tiles and its generator.
 func storedComposition(t *testing.T, raw []byte) *tiles.Composition {
 	t.Helper()
 	if len(raw) == 0 {
@@ -91,6 +80,16 @@ func storedComposition(t *testing.T, raw []byte) *tiles.Composition {
 	c, err := tiles.ParseComposition(raw)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return c
+}
+
+// storedView reads a stored review view composition.
+func storedView(t *testing.T, raw []byte) *view.Composition {
+	t.Helper()
+	c, err := view.Parse(raw)
+	if err != nil {
+		t.Fatalf("%v: %s", err, raw)
 	}
 	return c
 }
@@ -109,9 +108,10 @@ func publishTiles(t *testing.T, f *fixture, o generate.Options) (*store.Store, s
 	return s, key, result
 }
 
-// With tile reviews off nothing is arranged: no completion, no composition,
-// drafts without a layout. With them on, the review published is the same
-// bytes; only the layout is added, and what the composer spent is counted.
+// With tile reviews off nothing is presented: no completion, no
+// composition, drafts without one. With them on, the review published is the
+// same bytes; only the composition is added, and what the view call spent is
+// counted.
 func TestTilesOffArrangesNothingAndOnKeepsTheReview(t *testing.T) {
 	off := newFixture(t)
 	off.backend.RunFunc = generatetest.StagedReplies(nil)
@@ -138,7 +138,7 @@ func TestTilesOffArrangesNothingAndOnKeepsTheReview(t *testing.T) {
 	}
 	for _, d := range drafts {
 		if d.Composition != nil {
-			t.Fatal("a draft has a layout")
+			t.Fatal("a draft has a composition")
 		}
 	}
 	if plain.Metadata.Calls != 3 {
@@ -154,16 +154,17 @@ func TestTilesOffArrangesNothingAndOnKeepsTheReview(t *testing.T) {
 	}
 	if arranged.Metadata.Calls != plain.Metadata.Calls+1 || arranged.Metadata.Tokens <= plain.Metadata.Tokens ||
 		len(arranged.Metadata.Accounting.Attempts) != len(plain.Metadata.Accounting.Attempts)+1 {
-		t.Errorf("the composer's call is not counted: %+v against %+v", arranged.Metadata, plain.Metadata)
+		t.Errorf("the view call is not counted: %+v against %+v", arranged.Metadata, plain.Metadata)
 	}
-	// The cost is priced from these attempts, the composer's among them.
+	// The cost is priced from these attempts, the view call's among them.
 	if last := arranged.Metadata.Accounting.Attempts[len(arranged.Metadata.Accounting.Attempts)-1]; last.Model != "stub-composer" || last.Usage.Input != 3000 {
-		t.Errorf("the composer's attempt %+v", last)
+		t.Errorf("the view call's attempt %+v", last)
 	}
 }
 
-// With tile reviews on, the composer's layout is stored with the version,
-// with its generator, and the tile route serves it.
+// With tile reviews on, the view call's composition is stored with the
+// version, with its generator, and the tile route serves its view, the grid
+// falling back to the template's layout.
 func TestTilesOnStoresAndServesTheComposition(t *testing.T) {
 	f := newFixture(t)
 	f.backend.RunFunc = generatetest.StagedReplies(nil)
@@ -173,42 +174,45 @@ func TestTilesOnStoresAndServesTheComposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := storedComposition(t, latest.Composition)
+	c := storedView(t, latest.Composition)
 	if c.Generator == nil || c.Generator.Fallback || c.Generator.Model != "stub-composer" || c.Generator.PromptVersion == "" || c.Generator.ComposedAt == "" {
 		t.Fatalf("generator %+v", c.Generator)
+	}
+	if len(c.Diagrams) != 1 || c.Overview.RiskSummary == "" || len(c.Sections) != 1 || c.Sections[0].ID != "sec_rest" {
+		t.Fatalf("composition %s", latest.Composition)
 	}
 	if result.Compose == nil || result.Compose.Fallback || result.Compose.Problem != "" || f.backend.CompletionCount() != 1 {
 		t.Fatalf("compose %+v", result.Compose)
 	}
 	request := f.backend.Completions[0]
-	if request.System == "" || !strings.Contains(request.User, "sec_rest") || len(request.Schema) == 0 {
+	if request.System == "" || !strings.Contains(request.User, "sec_rest") || string(request.Schema) != string(view.ReplySchema()) {
 		t.Errorf("the request %+v", request)
 	}
-	if inv := inventoryOf(t, request); inv.PullRequest.Previous || inv.Previous != nil {
-		t.Errorf("a first version was offered a previous one")
-	}
 	served := tileview.Build(latest.Document, latest.Composition, tiles.Options{})
-	if served.Tiles == nil || served.Problem != "" {
+	if served.Tiles == nil || served.View == nil || served.Problem != "" {
 		t.Fatalf("served %q", served.Problem)
 	}
-	if served.Tiles.Origin.Kind != tiles.OriginGenerated || served.Tiles.Layout.Entries[0].Tile != "overview" && served.Tiles.Layout.Entries[0].Tile != "sec_rest" {
-		t.Errorf("served origin %q, layout %+v", served.Tiles.Origin.Kind, served.Tiles.Layout.Entries)
+	if served.Tiles.Origin.Kind != tiles.OriginGenerated {
+		t.Errorf("the grid's origin %q", served.Tiles.Origin.Kind)
 	}
-	if i := slices.IndexFunc(served.Tiles.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == "sec_rest" }); i < 0 || served.Tiles.Layout.Entries[i].Group != "" {
-		t.Errorf("the lead change is not featured: %+v", served.Tiles.Layout.Entries)
+	if len(served.View.Tiles) != 1 || served.View.Tiles[0].ID != "dg_lead" || served.View.Overview.RiskSummary == "" {
+		t.Errorf("the view %+v", served.View)
 	}
-	if !strings.Contains(f.progress.String(), "tiles arranged") {
+	if !strings.Contains(f.progress.String(), "page view written") {
 		t.Errorf("progress:\n%s", f.progress.String())
 	}
 	f.requireClean(t)
 }
 
-// Whatever goes wrong with the composer, the review is published: an invalid
-// reply or a provider error falls back to the template, stored as such; a
-// backend that cannot complete gets the template without a call; and the
-// run's call and token budgets bound the composer, which skips the call when
-// they leave nothing and never makes more calls than they allow.
+// Whatever goes wrong with the view call, the review is published: an
+// invalid reply or a provider error falls back, stored as such; a backend
+// that cannot complete gets the fallback without a call; and the run's call
+// and token budgets bound the view call, which skips the call when they
+// leave nothing and never makes more calls than they allow.
 func TestTilesFallBackAndStillPublish(t *testing.T) {
+	invalid := func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
+		return agent.Completion{Document: []byte(`{"diagrams":"no"}`), Model: "stub-composer"}, nil
+	}
 	cases := []struct {
 		name     string
 		complete func(context.Context, agent.CompleteRequest, int) (agent.Completion, error)
@@ -216,19 +220,13 @@ func TestTilesFallBackAndStillPublish(t *testing.T) {
 		reason   string
 		calls    int
 	}{
-		{name: "invalid reply", reason: agent.FallbackInvalid, calls: 2,
-			complete: func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
-				return agent.Completion{Document: []byte(`{"entries":"no"}`), Model: "stub-composer"}, nil
-			}},
-		{name: "provider error", reason: agent.FallbackProvider, calls: 1,
+		{name: "invalid reply", reason: agent.FallbackViewInvalid, calls: 2, complete: invalid},
+		{name: "provider error", reason: agent.FallbackViewProvider, calls: 1,
 			complete: func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
 				return agent.Completion{Model: "stub-composer", Usage: agent.Usage{Input: 10}}, errors.New("overloaded")
 			}},
 		{name: "cannot complete", reason: agent.FallbackNoCompleter},
-		{name: "one call left, no repair", reason: agent.FallbackInvalid, calls: 1,
-			complete: func(context.Context, agent.CompleteRequest, int) (agent.Completion, error) {
-				return agent.Completion{Document: []byte(`{"entries":"no"}`), Model: "stub-composer"}, nil
-			},
+		{name: "one call left, no repair", reason: agent.FallbackViewInvalid, calls: 1, complete: invalid,
 			// The analysis makes three calls.
 			options: func(o *generate.Options) { o.Budgets.MaxCalls = 4 }},
 		{name: "no call left", reason: agent.FallbackBudget,
@@ -264,14 +262,14 @@ func TestTilesFallBackAndStillPublish(t *testing.T) {
 			if max := o.Budgets.MaxCalls; max > 0 && latest.Metadata.Calls > max {
 				t.Errorf("%d calls recorded, more than the budget's %d", latest.Metadata.Calls, max)
 			}
-			stored := storedComposition(t, latest.Composition)
-			if stored.Generator == nil || !stored.Generator.Fallback || !slices.Equal(stored.Generator.Problems, []string{c.reason}) {
+			stored := storedView(t, latest.Composition)
+			if stored.Generator == nil || !stored.Generator.Fallback || !slices.Equal(stored.Generator.Problems, []string{c.reason}) || len(stored.Diagrams) != 0 {
 				t.Fatalf("generator %+v", stored.Generator)
 			}
 			if !result.Compose.Fallback || result.Compose.FallbackReason != c.reason || f.backend.CompletionCount() != c.calls {
 				t.Errorf("compose %+v, %d call(s)", result.Compose, f.backend.CompletionCount())
 			}
-			if !strings.Contains(f.progress.String(), "tiles laid out by the template: "+c.reason) {
+			if !strings.Contains(f.progress.String(), "page view fell back: "+c.reason) {
 				t.Errorf("progress:\n%s", f.progress.String())
 			}
 			f.requireClean(t)
@@ -279,9 +277,9 @@ func TestTilesFallBackAndStillPublish(t *testing.T) {
 	}
 }
 
-// A run cancelled while the composer works stops there: nothing is stored,
-// the run is interrupted as at any other point, and what the composer was
-// asked counts as spent.
+// A run cancelled while the view call works stops there: nothing is stored,
+// the run is interrupted as at any other point, and what the call was asked
+// counts as spent.
 func TestTilesCancelledWhileComposing(t *testing.T) {
 	f := newFixture(t)
 	f.backend.RunFunc = generatetest.StagedReplies(nil)
@@ -310,9 +308,9 @@ func TestTilesCancelledWhileComposing(t *testing.T) {
 	f.requireClean(t)
 }
 
-// Drafts are laid out by the template while the review is written, then
-// once by the composition; a composer that keeps the template moves nothing
-// on the page.
+// Drafts carry a provisional review view composition while the review is
+// written, then once the stored one; the grid's layout of both is the
+// template's, so it does not move.
 func TestTilesDraftsGoFromTheTemplateToTheComposition(t *testing.T) {
 	f := newFixture(t)
 	f.backend.RunFunc = generatetest.StagedReplies(nil)
@@ -334,14 +332,13 @@ func TestTilesDraftsGoFromTheTemplateToTheComposition(t *testing.T) {
 		t.Fatal("the last draft is not the finished review with its composition")
 	}
 	for _, d := range drafts[:len(drafts)-1] {
-		c := storedComposition(t, d.Composition)
-		if c.Generator != nil || c.Empty() {
-			t.Fatalf("a provisional layout %+v", c)
+		if c := storedView(t, d.Composition); c.Generator != nil || len(c.Diagrams) != 0 {
+			t.Fatalf("a provisional composition %+v", c)
 		}
 	}
 	landing := func(d generate.Draft) []tiles.Entry {
 		served := tileview.Build(d.Document, d.Composition, tiles.Options{Draft: true})
-		if served.Tiles == nil {
+		if served.Tiles == nil || served.View == nil {
 			t.Fatalf("draft not served: %s", served.Problem)
 		}
 		visible := tiles.Visible(served.Tiles.Layout)
@@ -355,53 +352,22 @@ func TestTilesDraftsGoFromTheTemplateToTheComposition(t *testing.T) {
 	}
 	before, after := landing(drafts[len(drafts)-2]), landing(final)
 	if !slices.Equal(before, after) {
-		t.Errorf("the page jumped:\n%+v\n%+v", before, after)
+		t.Errorf("the grid jumped:\n%+v\n%+v", before, after)
 	}
 	if !bytes.Equal(result.Compose.Provisional, drafts[len(drafts)-2].Composition) {
-		t.Errorf("the reported provisional layout is not the last draft's")
+		t.Errorf("the reported provisional composition is not the last draft's")
 	}
 }
 
-// withTable adds a table block to sec_changes, which a composer may promote.
-func withTable(d map[string]any) {
-	generatetest.TwoSections(d)
-	section := d["sections"].([]any)[0].(map[string]any)
-	hunk := section["hunks"].([]string)[0]
-	section["blocks"] = []any{map[string]any{"kind": "table", "columns": []any{"Setting", "Default"},
-		"rows": []any{[]any{"timeout", "30s"}, []any{"retries", "3"}}, "source": []any{map[string]any{"type": "hunk", "id": hunk}}}}
-}
-
-// A second version is offered the first's composition, and a block promoted
-// again keeps the ID it had.
-func TestTilesSecondVersionKeepsPromotedIDs(t *testing.T) {
+// A second version is written with the first's stored composition as its
+// previous one: the tile analysis reads its library tiles, and the view
+// call starts afresh.
+func TestTilesSecondVersionReadsTheFirst(t *testing.T) {
 	f := newFixture(t)
-	f.backend.RunFunc = generatetest.StagedReplies(func(stage string, request agent.Request) (agent.Result, error, bool) {
-		document, err := generatetest.Document(request.Directory, withTable)
-		return agent.Result{Document: generatetest.ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100}, err, true
-	})
-	promote := func(id string) func(compose.Inventory) []compose.ReplyPromotion {
-		return func(inv compose.Inventory) []compose.ReplyPromotion {
-			for _, tile := range inv.Tiles {
-				for _, block := range tile.Blocks {
-					if block.Kind == tiles.TypeTable {
-						return []compose.ReplyPromotion{{Block: block.Handle, ID: id, Title: "Defaults"}}
-					}
-				}
-			}
-			t.Error("the inventory offers no table")
-			return nil
-		}
-	}
-	f.backend.CompleteFunc = keepTemplate(t, "", promote("table_defaults"))
+	f.backend.RunFunc = generatetest.StagedReplies(nil)
+	f.backend.CompleteFunc = keepTemplate(t, "sec_rest", nil)
 	s, key, _ := publishTiles(t, f, tilesOptions(t, f))
-	first, err := s.Latest(context.Background(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c := storedComposition(t, first.Composition); len(c.Promotions) != 1 || c.Promotions[0].ID != "table_defaults" {
-		t.Fatalf("first promotions %+v", c.Promotions)
-	}
-	f.backend.CompleteFunc = keepTemplate(t, "", promote("table_settings"))
+	f.backend.CompleteFunc = keepTemplate(t, "", nil)
 	if _, err := generate.Publish(context.Background(), s, key, tilesOptions(t, f), nil); err != nil {
 		t.Fatalf("%v\n%s", err, f.progress.String())
 	}
@@ -409,16 +375,8 @@ func TestTilesSecondVersionKeepsPromotedIDs(t *testing.T) {
 	if err != nil || second.Metadata.Version != 2 {
 		t.Fatalf("version %d: %v", second.Metadata.Version, err)
 	}
-	inv := inventoryOf(t, f.backend.Completions[len(f.backend.Completions)-1])
-	if !inv.PullRequest.Previous || inv.Previous == nil || len(inv.Previous.Promoted) != 1 || inv.Previous.Promoted[0].ID != "table_defaults" {
-		t.Fatalf("the previous composition was not offered: %+v", inv.Previous)
-	}
-	if c := storedComposition(t, second.Composition); len(c.Promotions) != 1 || c.Promotions[0].ID != "table_defaults" {
-		t.Errorf("second promotions %+v", c.Promotions)
-	}
-	served := tileview.Build(second.Document, second.Composition, tiles.Options{})
-	if served.Tiles == nil || !slices.ContainsFunc(served.Tiles.Tiles, func(tile tiles.Tile) bool { return tile.ID == "table_defaults" }) {
-		t.Errorf("the promoted tile is not served: %q", served.Problem)
+	if c := storedView(t, second.Composition); len(c.Diagrams) != 0 || c.Generator == nil || c.Generator.Fallback {
+		t.Errorf("second composition %s", second.Composition)
 	}
 }
 
@@ -491,8 +449,8 @@ func TestTilesLeaveTheAnalysisItsLimits(t *testing.T) {
 	}
 }
 
-// A caller whose deadline passes while the composer works does not lose the
-// finished review: the composer keeps its own bound and the version is
+// A caller whose deadline passes while the view call works does not lose
+// the finished review: the call keeps its own bound and the version is
 // stored with its composition.
 func TestTilesCallerDeadlineDuringComposition(t *testing.T) {
 	f := newFixture(t)
@@ -503,7 +461,7 @@ func TestTilesCallerDeadlineDuringComposition(t *testing.T) {
 	f.backend.CompleteFunc = func(c context.Context, r agent.CompleteRequest, n int) (agent.Completion, error) {
 		<-ctx.Done()
 		if c.Err() != nil {
-			t.Error("the composer's context ended with the caller's deadline")
+			t.Error("the view call's context ended with the caller's deadline")
 		}
 		return answer(c, r, n)
 	}
@@ -523,7 +481,7 @@ func TestTilesCallerDeadlineDuringComposition(t *testing.T) {
 }
 
 // The version keeps the analysis's model, which prices the run, however the
-// composer's model is named.
+// view call's model is named.
 func TestTilesKeepTheAnalysisModel(t *testing.T) {
 	f := newFixture(t)
 	f.backend.RunFunc = generatetest.StagedReplies(nil)
@@ -534,12 +492,12 @@ func TestTilesKeepTheAnalysisModel(t *testing.T) {
 	}
 }
 
-// A panic while arranging the tiles costs neither the review nor the daemon:
-// in the compose stage the version is published without a composition, and
-// in a draft's layout the draft is shown without one.
+// A panic while presenting the review costs neither the review nor the
+// daemon: in the compose stage the version is published without a
+// composition, and in a draft's composition the draft is shown without one.
 func TestTilesContainPanics(t *testing.T) {
 	t.Run("compose", func(t *testing.T) {
-		defer generate.SetComposeRun(func(context.Context, agent.ComposeRequest) (agent.ComposeOutcome, error) { panic("bug") })()
+		defer generate.SetViewRun(func(context.Context, agent.ViewRequest) (agent.ViewOutcome, error) { panic("bug") })()
 		f := newFixture(t)
 		f.backend.RunFunc = generatetest.StagedReplies(nil)
 		s, key, result := publishTiles(t, f, tilesOptions(t, f))
@@ -552,7 +510,9 @@ func TestTilesContainPanics(t *testing.T) {
 		}
 	})
 	t.Run("draft", func(t *testing.T) {
-		defer generate.SetProvisionalLayout(func(*tiles.Document, []string, *tiles.Composition) (tiles.Composition, error) { panic("bug") })()
+		defer generate.SetProvisionalView(func(*view.Review, *tiles.Document, []tiles.LibraryTile, map[string][]string) view.Composition {
+			panic("bug")
+		})()
 		f := newFixture(t)
 		f.backend.RunFunc = generatetest.StagedReplies(nil)
 		f.backend.CompleteFunc = keepTemplate(t, "", nil)
@@ -566,48 +526,7 @@ func TestTilesContainPanics(t *testing.T) {
 		}
 		_, _, result := publishTiles(t, f, o)
 		if len(drafts) < 2 || drafts[0].Composition != nil || result.Composition == nil {
-			t.Fatalf("%d drafts, first layout %s", len(drafts), drafts[0].Composition)
+			t.Fatalf("%d drafts, first composition %s", len(drafts), drafts[0].Composition)
 		}
 	})
-}
-
-// While a later version is written its drafts keep the previous version's
-// layout, then take the new composition.
-func TestTilesDraftsOfALaterVersionKeepThePreviousLayout(t *testing.T) {
-	f := newFixture(t)
-	f.backend.RunFunc = generatetest.StagedReplies(nil)
-	f.backend.CompleteFunc = keepTemplate(t, "sec_rest", nil)
-	s, key, _ := publishTiles(t, f, tilesOptions(t, f))
-	first, err := s.Latest(context.Background(), key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	o := tilesOptions(t, f)
-	f.backend.CompleteFunc = keepTemplate(t, "", nil)
-	var mu sync.Mutex
-	var drafts []generate.Draft
-	o.OnDraft = func(d generate.Draft) {
-		mu.Lock()
-		defer mu.Unlock()
-		drafts = append(drafts, d)
-	}
-	result, err := generate.Publish(context.Background(), s, key, o, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tilesOf := func(raw []byte) []string {
-		var ids []string
-		for _, e := range storedComposition(t, raw).Layout.Entries {
-			ids = append(ids, e.Tile)
-		}
-		return ids
-	}
-	before := tilesOf(first.Composition)
-	if len(drafts) < 2 || !slices.Equal(tilesOf(drafts[0].Composition), before) {
-		t.Fatalf("the first draft of version 2 is not laid out as version 1:\n%v\n%v", tilesOf(drafts[0].Composition), before)
-	}
-	last := drafts[len(drafts)-1]
-	if !bytes.Equal(last.Composition, result.Composition) || slices.Equal(tilesOf(last.Composition), before) {
-		t.Error("version 2's last draft does not carry its own composition")
-	}
 }

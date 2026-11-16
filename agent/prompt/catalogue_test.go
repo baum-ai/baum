@@ -218,7 +218,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-tiles-compose", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-view", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -255,7 +255,7 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
-		prompt.IDReviewTilesCompose:  {"review-tiles-compose.untrusted-inventory"},
+		prompt.IDReviewView:          {"review-view.untrusted-input"},
 		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,
@@ -367,13 +367,40 @@ func TestNewExtractorWith(t *testing.T) {
 	}
 }
 
-// The composition prompt is listed, since a review job with tile reviews on
-// uses it, with its built-in text as the default; a text for it is validated
-// and checked for its safety rule.
-func TestTilesComposeIsListed(t *testing.T) {
-	e, ok := prompt.Lookup(prompt.IDReviewTilesCompose)
-	if !ok || e.Group != prompt.GroupReviews || e.Default != readFile(t, "review-tiles-compose-public-v1.md") || e.DefaultVersion != prompt.TilesVersion {
-		t.Errorf("the composition prompt's entry %v %+v", ok, e.Title)
+// The view prompt is listed, since a review job with tile reviews on uses
+// it, with its built-in text as the default; a text for it is validated and
+// checked for its safety rule.
+func TestViewIsListed(t *testing.T) {
+	e, ok := prompt.Lookup(prompt.IDReviewView)
+	builtin := readFile(t, "review-view-public-v1.md")
+	if !ok || e.Group != prompt.GroupReviews || e.Default != builtin || e.DefaultVersion != prompt.ViewVersion {
+		t.Errorf("the view prompt's entry %v %+v", ok, e.Title)
+	}
+	if err := prompt.Validate(prompt.IDReviewView, builtin); err != nil {
+		t.Errorf("its own default is invalid: %v", err)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDReviewView, builtin); len(got) != 0 {
+		t.Errorf("the default misses %v", got)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDReviewView, "Present."); len(got) != 1 || got[0] != "review-view.untrusted-input" {
+		t.Errorf("missing %v", got)
+	}
+	p, err := prompt.TilesPrompts{}.ViewInstructions(context.Background(), agent.BackendCodex)
+	if err != nil || p.Body != builtin || p.Version != prompt.ViewVersion || p.Digest != sha(p.Body) {
+		t.Errorf("built in: %v %q", err, p.Version)
+	}
+	p, err = prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewView: "Present my way."}}.ViewInstructions(context.Background(), agent.BackendCodex)
+	if err != nil || p.Body != "Present my way.\n" || p.Version != prompt.ViewVersion+"+custom" {
+		t.Errorf("override: %v %q %q", err, p.Version, p.Body)
+	}
+}
+
+// The composition prompt is no longer listed, since no job runs it, but
+// replay's compose generator still validates a text for it and checks its
+// safety rule.
+func TestTilesComposeIsUnlisted(t *testing.T) {
+	if _, ok := prompt.Lookup(prompt.IDReviewTilesCompose); ok {
+		t.Error("the composition prompt is listed")
 	}
 	builtin := readFile(t, "review-tiles-compose-public-v1.md")
 	if err := prompt.Validate(prompt.IDReviewTilesCompose, builtin); err != nil {

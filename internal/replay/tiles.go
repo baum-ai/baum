@@ -21,28 +21,34 @@ import (
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // TileGenerator generates a review as the desktop does with tile reviews on:
-// the staged pipeline, then the compose stage that arranges its tiles
-// (generate.Options.Tiles). Its document is the review, as ReviewGenerator's
-// is, so the review metrics and chains apply unchanged. What the compose
-// stage made is written beside it:
+// the staged pipeline, then the compose stage, the view call that presents
+// it on its page (generate.Options.Tiles). Its document is the review, as
+// ReviewGenerator's is, so the review metrics and chains apply unchanged.
+// What the compose stage made is written beside it:
 //
-//   - composition.json, the composition the version would store;
-//   - compose.json, a ComposeRecord, which the compose metrics read;
-//   - tiles.json, the tile document the tile route would serve;
-//   - provisional.json, the layout drafts showed while the review was written;
-//   - inventory.txt and reply.json, what the composer read and answered.
+//   - composition.json, the composition the version would store (a
+//     review view composition, baum.composition/2);
+//   - compose.json, a ComposeRecord, which the compose metrics read; for a
+//     review view composition only its fallback, repair, fixes, cost and
+//     time are set (view.json holds the rest);
+//   - view.json and tiles.json, the view and the tile document the tile
+//     route would serve;
+//   - provisional.json, the composition drafts showed while the review was
+//     written;
+//   - inventory.txt and reply.json, what the call read and answered.
 //
-// A review the compose stage could not arrange has none of them but
+// A review the compose stage could not present has none of them but
 // compose.json, with its problem.
 type TileGenerator struct {
 	// Review writes the review: it is staged, and its Reuse and staged prompt
 	// overrides apply.
 	Review *ReviewGenerator
-	// ComposePrompt, when set, replaces the composition prompt.
-	ComposePrompt string
+	// ViewPrompt, when set, replaces the view prompt.
+	ViewPrompt string
 	// NoLibrary offers no library type and NoExhibits writes no authored
 	// tile (--generator-option library=off, exhibits=off).
 	NoLibrary, NoExhibits bool
@@ -97,11 +103,11 @@ func init() {
 			g.Saved = saved
 		}
 		for id, text := range c.PromptOverrides {
-			if prompt.ID(id) == prompt.IDReviewTilesCompose {
+			if prompt.ID(id) == prompt.IDReviewView {
 				if err := prompt.Validate(prompt.ID(id), text); err != nil {
 					return nil, fmt.Errorf("prompt override %s: %w", id, err)
 				}
-				g.ComposePrompt = text
+				g.ViewPrompt = text
 				continue
 			}
 			if g.Review.PromptOverrides == nil {
@@ -117,24 +123,24 @@ func init() {
 func (g *TileGenerator) Name() string { return "tiles" }
 
 func (g *TileGenerator) prompts() prompt.TilesPrompts {
-	if g.ComposePrompt == "" {
+	if g.ViewPrompt == "" {
 		return prompt.TilesPrompts{}
 	}
-	return prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewTilesCompose: g.ComposePrompt}}
+	return prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewView: g.ViewPrompt}}
 }
 
-// Describe is the review's description with the composition prompt's
-// version and digest.
+// Describe is the review's description with the view prompt's version and
+// digest.
 func (g *TileGenerator) Describe(ctx context.Context, backend string) (map[string]any, error) {
 	described, err := g.Review.Describe(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
-	instructions, err := g.prompts().ComposeInstructions(ctx, backend)
+	instructions, err := g.prompts().ViewInstructions(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
-	described["compose_prompt_version"], described["compose_prompt_digest"] = instructions.Version, instructions.Digest
+	described["view_prompt_version"], described["view_prompt_digest"] = instructions.Version, instructions.Digest
 	if len(g.Saved) > 0 {
 		saved := map[string]string{}
 		for _, t := range g.Saved {
@@ -189,7 +195,13 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 	}
 	record.CostUSD = list.BackendOutcomeCost(o.Backend.Name(), report.Outcome.Model, report.Outcome)
 	out.Artifacts = map[string][]byte{}
-	if result.Composition != nil {
+	if result.Composition != nil && view.IsComposition(result.Composition) {
+		record.Fallback, record.FallbackReason, record.Repaired, record.Fixes = report.Fallback, report.FallbackReason, report.Repaired, report.Fixes
+		record.InventoryBytes = len(report.Inventory)
+		if err := g.viewArtifacts(out.Artifacts, result, report, list, o.Backend.Name()); err != nil {
+			return out, err
+		}
+	} else if result.Composition != nil {
 		composition, err := tiles.ParseComposition(result.Composition)
 		if err != nil {
 			return out, fmt.Errorf("the stored composition does not parse: %w", err)
@@ -245,6 +257,44 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 	return out, nil
 }
 
+// viewArtifacts writes what the compose stage, the view call, made of a
+// review: its composition, the view and tile document the tile route would
+// serve, the analysis's artifacts, the drafts' composition, the call's input
+// and reply. A chain hands the composition's library tiles to the next case.
+func (g *TileGenerator) viewArtifacts(artifacts map[string][]byte, result generate.Result, report *generate.ComposeReport, list *pricing.List, backend string) error {
+	grid, err := tiles.ParseComposition(result.Composition)
+	if err != nil {
+		return fmt.Errorf("the stored composition does not parse: %w", err)
+	}
+	served := tileview.Build(result.Document, result.Composition, tiles.Options{})
+	if artifacts["tiles.json"], err = json.MarshalIndent(served.Tiles, "", "  "); err != nil {
+		return err
+	}
+	if artifacts["view.json"], err = json.MarshalIndent(served.View, "", "  "); err != nil {
+		return err
+	}
+	if err := analysisArtifacts(artifacts, report.Tiles, served.Tiles, grid, list, backend); err != nil {
+		return err
+	}
+	artifacts["composition.json"] = result.Composition
+	if len(report.Provisional) > 0 {
+		artifacts["provisional.json"] = report.Provisional
+	}
+	if report.Inventory != "" {
+		artifacts["inventory.txt"] = []byte(report.Inventory)
+	}
+	if len(report.Reply) > 0 {
+		artifacts["reply.json"] = report.Reply
+	}
+	g.mu.Lock()
+	if g.composed == nil {
+		g.composed = map[[32]byte]*tiles.Composition{}
+	}
+	g.composed[sha256.Sum256(result.Document)] = grid
+	g.mu.Unlock()
+	return nil
+}
+
 // jump counts the landing entries whose tile or size differs between the
 // provisional layout and the composition, position by position, both
 // applied to the review's tile document.
@@ -298,7 +348,11 @@ func (g *TileGenerator) Validate(document []byte, c Case) []string {
 // without a composition is valid: its version would show the default layout.
 func (g *TileGenerator) ValidateGenerated(generated Generated, c Case) []string {
 	findings := g.Review.Validate(generated.Document, c)
-	if raw := generated.Artifacts["composition.json"]; raw != nil {
+	switch raw := generated.Artifacts["composition.json"]; {
+	case raw == nil:
+	case view.IsComposition(raw):
+		findings = append(findings, checkViewComposition(generated.Document, raw)...)
+	default:
 		findings = append(findings, checkComposition(generated.Document, raw)...)
 	}
 	return findings

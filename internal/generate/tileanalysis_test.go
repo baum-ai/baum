@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // concurrentStub is the stub backend saying its calls may share the run
@@ -129,16 +131,18 @@ func TestTilesAnalysisReachesTheComposition(t *testing.T) {
 	if report == nil || len(report.Fills) != 1 || report.Fills[0].State != agent.FillReady {
 		t.Fatalf("report: %+v", report)
 	}
-	// The draft layouts keep the library tile's place: pending, then ready.
+	// The drafts keep the library tile's section, pending (by the hunks the
+	// outline chose) and then ready (by the hunks it cites), and the stored
+	// composition places it there too.
 	places := map[string]bool{}
-	for _, d := range drafts {
-		c, err := tiles.ParseComposition(d.Composition)
+	for _, d := range append(drafts, generate.Draft{Composition: result.Composition}) {
+		c, err := view.Parse(d.Composition)
 		if err != nil || len(c.Library) == 0 {
 			continue
 		}
-		for i, entry := range c.Layout.Entries {
-			if entry.Tile == "schema_change" {
-				places[fmt.Sprint(i, entry.Size)] = true
+		for _, p := range c.Sections {
+			if slices.Contains(p.Tiles, "schema_change") {
+				places[p.ID] = true
 			}
 		}
 	}

@@ -622,7 +622,7 @@ func TestParseComposition(t *testing.T) {
 	if !bytes.Equal(mustJSON(t, parsed), mustJSON(t, n)) {
 		t.Error("the parsed composition differs")
 	}
-	if _, err := tiles.ParseComposition([]byte(`{"schema": "baum.composition/2", "layout": {"entries": []}}`)); err == nil {
+	if _, err := tiles.ParseComposition([]byte(`{"schema": "baum.composition/9", "layout": {"entries": []}}`)); err == nil {
 		t.Error("another schema parsed")
 	}
 	if _, err := tiles.ParseComposition([]byte(`{"schema": "baum.composition/1", "layout": {"entries": []}, "later": true}`)); err != nil {

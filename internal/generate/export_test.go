@@ -5,22 +5,21 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
-// SetComposeRun replaces the compose stage's call of agent.ComposeRun until
-// the returned function restores it.
-func SetComposeRun(f func(context.Context, agent.ComposeRequest) (agent.ComposeOutcome, error)) func() {
-	saved := composeRun
-	composeRun = f
-	return func() { composeRun = saved }
+// SetViewRun replaces the compose stage's call of agent.ViewRun until the
+// returned function restores it.
+func SetViewRun(f func(context.Context, agent.ViewRequest) (agent.ViewOutcome, error)) func() {
+	saved := viewRun
+	viewRun = f
+	return func() { viewRun = saved }
 }
 
-// SetProvisionalLayout replaces how a draft's provisional layout is made
+// SetProvisionalView replaces how a draft's provisional composition is made
 // until the returned function restores it.
-func SetProvisionalLayout(f func(*tiles.Document, []string, *tiles.Composition) (tiles.Composition, error)) func() {
-	saved := provisionalLayout
-	provisionalLayout = func(doc *tiles.Document, pins []string, previous *tiles.Composition, _ []tiles.LibraryTile) (tiles.Composition, error) {
-		return f(doc, pins, previous)
-	}
-	return func() { provisionalLayout = saved }
+func SetProvisionalView(f func(*view.Review, *tiles.Document, []tiles.LibraryTile, map[string][]string) view.Composition) func() {
+	saved := provisionalView
+	provisionalView = f
+	return func() { provisionalView = saved }
 }

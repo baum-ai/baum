@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/tilestest"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 var compositionKey = Key{"acme/widgets", 42}
@@ -95,6 +97,49 @@ func TestPutStoresANormalisedCompositionAndReadsReturnIt(t *testing.T) {
 		if report.Total != 0 || !bytes.Equal(encoded, got.Composition) {
 			t.Errorf("the stored composition is not a fixed point (%d fixes)", report.Total)
 		}
+	}
+}
+
+// A review view composition is checked against the document and stored
+// with the caller's generator: what the document cannot take is dropped
+// item by item, never the whole composition. One that chooses nothing,
+// without a generator, is stored as none.
+func TestPutChecksAndStoresAReviewViewComposition(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	v := reviewVersion(t, 1)
+	v.Composition = []byte(`{"schema":"baum.composition/2","generator":{"model":"written by a model"},
+	 "overview":{"risk_summary":"Retries can pile up.","verdict":null,"screenshots":["att_aa01","att_nope"],"diagram":null,"intent":[]},
+	 "sections":[{"id":"sec_nope","tiles":["dg_x"]},{"id":"context","tiles":["dg_x"]}],
+	 "diagrams":[{"id":"dg_x","type":"table","title":"Waits","data":{"source":[{"type":"hunk","id":"h_000000000001"},{"type":"hunk","id":"h_0000000000ff"}],"columns":["Try","Wait"],"rows":[["1","1 s"]]}}]}`)
+	v.CompositionGenerator = &tiles.Generator{PromptVersion: "review-view-public-v1", Model: "stub"}
+	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
+		t.Fatal(err)
+	}
+	got := mustLatest(t, s)
+	c, err := view.Parse(got.Composition)
+	if err != nil {
+		t.Fatalf("%v: %s", err, got.Composition)
+	}
+	if c.Generator == nil || c.Generator.Model != "stub" || c.Overview.RiskSummary == "" || !slices.Equal(c.Overview.Screenshots, []string{"att_aa01"}) {
+		t.Fatalf("stored %s", got.Composition)
+	}
+	if len(c.Sections) != 1 || c.Sections[0].ID != "context" || len(c.Diagrams) != 1 || strings.Contains(string(c.Diagrams[0].Data), "h_0000000000ff") {
+		t.Fatalf("stored %s", got.Composition)
+	}
+	// The grid reads it for its tiles, which it has none of.
+	if grid := ParseComposition(got.Composition); grid == nil || !grid.View {
+		t.Fatalf("grid %+v", grid)
+	}
+
+	s = opened(t)
+	v = reviewVersion(t, 1)
+	v.Composition = []byte(`{"schema":"baum.composition/2","overview":{"screenshots":[],"intent":[]},"sections":[{"id":"sec_nope","tiles":["dg_x"]}]}`)
+	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustLatest(t, s); got.Composition != nil {
+		t.Fatalf("an empty composition was stored: %s", got.Composition)
 	}
 }
 
@@ -205,7 +250,7 @@ func TestACompositionProblemNeverCostsTheVersion(t *testing.T) {
 	count := func(name string) int64 { return workstats.Take().Counters[name] }
 	pinned, _ := tileviewtest.PinnedComposition(t, reviewVersion(t, 1).Document)
 	for name, composition := range map[string][]byte{
-		"other schema": []byte(`{"schema":"baum.composition/2","layout":{"entries":[]}}`),
+		"other schema": []byte(`{"schema":"baum.composition/9","layout":{"entries":[]}}`),
 		"not json":     []byte(`not json`),
 		"array":        []byte(`[]`),
 		"too large":    append(append([]byte(`{"schema":"baum.composition/1","x":"`), bytes.Repeat([]byte("a"), tiles.MaxStoredComposition)...), `"}`...),

@@ -1,0 +1,1327 @@
+{
+  "schema": "baum.view/1",
+  "overview": {
+    "risk_summary": "Retries change how every failed delivery behaves. A flag turns them off.",
+    "verdict": {
+      "text": "Decide the retry budget before merging.",
+      "points": [
+        {
+          "text": "The budget has no upper bound, so a down remote is retried forever. Set one in the policy.",
+          "section": "sec_retry_policy"
+        }
+      ]
+    },
+    "screenshots": [
+      "att_aa01"
+    ],
+    "diagram": "dg_delivery",
+    "intent": [
+      {
+        "asked": "Retries with a backoff",
+        "got": "Yes: failed deliveries retry with a doubling wait.",
+        "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+        "prompt": 1
+      }
+    ]
+  },
+  "sections": [
+    {
+      "id": "context",
+      "tiles": []
+    },
+    {
+      "id": "sec_retry_policy",
+      "tiles": [
+        "schema_change",
+        "api_change",
+        "table_retry_states",
+        "code_sync_backoff"
+      ]
+    },
+    {
+      "id": "sec_config_flag",
+      "tiles": [
+        "dg_flag"
+      ]
+    },
+    {
+      "id": "sec_generated_client",
+      "tiles": []
+    }
+  ],
+  "tiles": [
+    {
+      "id": "dg_delivery",
+      "type": "flow",
+      "title": "What happens to a failed delivery",
+      "data": {
+        "caption": "The flag skips the retry lane.",
+        "source": [
+          {
+            "type": "hunk",
+            "id": "h_000000000001"
+          },
+          {
+            "type": "hunk",
+            "id": "h_000000000003"
+          }
+        ],
+        "lanes": [
+          {
+            "label": "Retries on",
+            "steps": [
+              {
+                "title": "Deliver"
+              },
+              {
+                "title": "Remote fails",
+                "tone": "bad"
+              },
+              {
+                "title": "Wait and retry",
+                "note": "the wait doubles",
+                "tone": "new"
+              }
+            ]
+          },
+          {
+            "label": "Retries off",
+            "steps": [
+              {
+                "title": "Deliver"
+              },
+              {
+                "title": "Remote fails",
+                "tone": "bad"
+              },
+              {
+                "title": "Reported at once",
+                "tone": "muted"
+              }
+            ]
+          }
+        ]
+      },
+      "state": "ready",
+      "covers": [
+        "h_000000000001",
+        "h_000000000003"
+      ]
+    },
+    {
+      "id": "dg_flag",
+      "type": "columns",
+      "title": "What the flag changes",
+      "data": {
+        "source": [
+          {
+            "type": "hunk",
+            "id": "h_000000000003"
+          }
+        ],
+        "columns": [
+          {
+            "label": "Flag on",
+            "tone": "good",
+            "items": [
+              {
+                "title": "Failed deliveries retry",
+                "note": "up to the budget"
+              }
+            ]
+          },
+          {
+            "label": "Flag off",
+            "tone": "muted",
+            "items": [
+              {
+                "title": "A failure is reported at once"
+              }
+            ]
+          }
+        ]
+      },
+      "state": "ready",
+      "covers": [
+        "h_000000000003"
+      ]
+    },
+    {
+      "id": "schema_change",
+      "type": "custom",
+      "title": "Schema changes",
+      "data": {
+        "data_changes": [
+          {
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "text": "Copies `owner_email` into `billing_email` for every account without one, in one statement."
+          }
+        ],
+        "engine": "postgres",
+        "migrations": [
+          {
+            "applies": "on_deploy",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              },
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "idempotent": null,
+            "kind": "migration_file",
+            "label": "20261113100300_add_invoices_and_rename_payment_events_to_ledger_entries.up.sql",
+            "reversible": false
+          },
+          {
+            "applies": "unknown",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "idempotent": null,
+            "kind": "query_file",
+            "label": "db/queries/accounts.sql",
+            "reversible": null
+          }
+        ],
+        "readers": [
+          {
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              },
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "label": "GetAccount (db/queries/accounts.sql)",
+            "updated": true
+          },
+          {
+            "cites": [],
+            "label": "Ledger.Sum in internal/billing/ledger.go",
+            "updated": false
+          }
+        ],
+        "tables": [
+          {
+            "change": "created",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "columns": [
+              {
+                "after": "BIGSERIAL PRIMARY KEY",
+                "before": null,
+                "change": "added",
+                "destructive": false,
+                "name": "id",
+                "note": null
+              },
+              {
+                "after": "BIGINT NOT NULL REFERENCES accounts(id)",
+                "before": null,
+                "change": "added",
+                "destructive": false,
+                "name": "account_id",
+                "note": null
+              },
+              {
+                "after": "TEXT NOT NULL",
+                "before": null,
+                "change": "added",
+                "destructive": false,
+                "name": "number",
+                "note": null
+              },
+              {
+                "after": "BIGINT NOT NULL CHECK (total_cents \u003e= 0)",
+                "before": null,
+                "change": "added",
+                "destructive": false,
+                "name": "total_cents",
+                "note": null
+              },
+              {
+                "after": "CHAR(3) NOT NULL DEFAULT 'EUR'",
+                "before": null,
+                "change": "added",
+                "destructive": false,
+                "name": "currency",
+                "note": null
+              },
+              {
+                "after": "TIMESTAMPTZ NOT NULL DEFAULT now()",
+                "before": null,
+                "change": "added",
+                "destructive": false,
+                "name": "issued_at",
+                "note": null
+              }
+            ],
+            "indexes": [
+              {
+                "change": "added",
+                "definition": "(account_id, number)",
+                "name": "invoices_account_number",
+                "online": true,
+                "unique": true
+              }
+            ],
+            "name": "invoices",
+            "renamed_from": null
+          },
+          {
+            "change": "altered",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "columns": [
+              {
+                "after": "TEXT",
+                "before": null,
+                "change": "added",
+                "destructive": false,
+                "name": "billing_email",
+                "note": "Backfilled from owner_email"
+              },
+              {
+                "after": "TEXT NOT NULL",
+                "before": "TEXT",
+                "change": "altered",
+                "destructive": true,
+                "name": "plan",
+                "note": "Fails if any row has no plan"
+              },
+              {
+                "after": null,
+                "before": "TEXT",
+                "change": "removed",
+                "destructive": true,
+                "name": "legacy_plan_code",
+                "note": "The down migration does not restore it"
+              }
+            ],
+            "indexes": [
+              {
+                "change": "added",
+                "definition": "(billing_email)",
+                "name": "accounts_by_billing_email",
+                "online": false,
+                "unique": false
+              }
+            ],
+            "name": "accounts",
+            "renamed_from": null
+          },
+          {
+            "change": "renamed",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "columns": [
+              {
+                "after": "BIGINT",
+                "before": "amount BIGINT",
+                "change": "renamed",
+                "destructive": true,
+                "name": "amount_cents",
+                "note": "Ledger.Sum still reads amount"
+              }
+            ],
+            "indexes": [],
+            "name": "ledger_entries",
+            "renamed_from": "payment_events"
+          }
+        ]
+      },
+      "state": "ready",
+      "covers": [
+        "h_000000000001"
+      ],
+      "definition": {
+        "builtin": true,
+        "data_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "engine",
+            "migrations",
+            "tables",
+            "data_changes",
+            "readers"
+          ],
+          "properties": {
+            "engine": {
+              "enum": [
+                "postgres",
+                "sqlite",
+                "mysql",
+                "other",
+                "unknown"
+              ],
+              "description": "The database the changed schema belongs to, from the driver, the SQL dialect or the migration tool; unknown when the diff does not say."
+            },
+            "migrations": {
+              "type": "array",
+              "maxItems": 20,
+              "description": "Each place that changes the schema: a migration file, DDL embedded in code, a schema dump, an ORM model or a query file.",
+              "items": {
+                "$ref": "#/$defs/migration"
+              }
+            },
+            "tables": {
+              "type": "array",
+              "maxItems": 30,
+              "description": "Each table the pull request creates, alters, drops or renames. Empty when only queries change.",
+              "items": {
+                "$ref": "#/$defs/table"
+              }
+            },
+            "data_changes": {
+              "type": "array",
+              "maxItems": 10,
+              "description": "Statements that change rows rather than the schema: backfills, UPDATE or DELETE in a migration, copies between tables.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text",
+                  "cites"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 300,
+                    "description": "What the statement does to existing rows, in one sentence."
+                  },
+                  "cites": {
+                    "$ref": "#/$defs/cites"
+                  }
+                }
+              }
+            },
+            "readers": {
+              "type": "array",
+              "maxItems": 20,
+              "description": "Code that reads or writes a changed table: queries, generated code, models. Cite it when this pull request changes it.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "label",
+                  "updated",
+                  "cites"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160,
+                    "description": "The function, query or file, as code names it."
+                  },
+                  "updated": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "description": "true when this pull request changes it for the new schema; false when it still uses the old one; null when unknown."
+                  },
+                  "cites": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                      "$ref": "#/$defs/hunk"
+                    }
+                  }
+                }
+              }
+            },
+            "related": {
+              "type": "array",
+              "maxItems": 12,
+              "description": "Written by the host, never by a fill: the review's risks and evidence whose code this tile cites.",
+              "items": {
+                "$ref": "#/$defs/itemRef"
+              }
+            }
+          },
+          "$defs": {
+            "hunk": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "id"
+              ],
+              "description": "A hunk of the diff, optionally narrowed to lines of the new file inside it.",
+              "properties": {
+                "type": {
+                  "const": "hunk"
+                },
+                "id": {
+                  "$ref": "#/$defs/hunkId"
+                },
+                "lines": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "description": "[first, last] line of the new file, inside the hunk's new range."
+                }
+              }
+            },
+            "cites": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "description": "The hunks that show it; the first is the one a reader should see.",
+              "items": {
+                "$ref": "#/$defs/hunk"
+              }
+            },
+            "migration": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "label",
+                "applies",
+                "reversible",
+                "idempotent",
+                "cites"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "migration_file",
+                    "embedded",
+                    "schema_dump",
+                    "orm_model",
+                    "query_file"
+                  ],
+                  "description": "migration_file: a numbered or timestamped migration; embedded: DDL inside application code; schema_dump: a generated schema file; orm_model: a model that defines columns; query_file: queries only (such as sqlc)."
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "description": "The file name, or the function that runs the DDL."
+                },
+                "applies": {
+                  "enum": [
+                    "on_deploy",
+                    "on_start",
+                    "manual",
+                    "unknown"
+                  ],
+                  "description": "on_deploy: a migration tool runs it when the release deploys; on_start: the program runs it when it opens the database; manual: someone must run it."
+                },
+                "reversible": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "true when a down migration or rollback undoes it; false when there is none or it cannot restore data; null when the tool has no such notion."
+                },
+                "idempotent": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "true when running it twice is safe (IF NOT EXISTS, guarded ALTER); false when a second run fails or changes data again; null when the tool records what ran."
+                },
+                "cites": {
+                  "$ref": "#/$defs/cites"
+                }
+              }
+            },
+            "table": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "change",
+                "renamed_from",
+                "columns",
+                "indexes",
+                "cites"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "description": "The table's name after the change, as the DDL writes it."
+                },
+                "change": {
+                  "enum": [
+                    "created",
+                    "altered",
+                    "dropped",
+                    "renamed"
+                  ]
+                },
+                "renamed_from": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 120,
+                  "description": "The old name of a renamed table; otherwise null."
+                },
+                "columns": {
+                  "type": "array",
+                  "maxItems": 60,
+                  "description": "Every column of a created table; the added, removed, altered and renamed columns of any other.",
+                  "items": {
+                    "$ref": "#/$defs/column"
+                  }
+                },
+                "indexes": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "description": "Indexes and constraints added, removed or altered on the table: indexes, unique constraints, foreign keys, checks, triggers.",
+                  "items": {
+                    "$ref": "#/$defs/index"
+                  }
+                },
+                "cites": {
+                  "$ref": "#/$defs/cites"
+                }
+              }
+            },
+            "column": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "change",
+                "before",
+                "after",
+                "destructive",
+                "note"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "change": {
+                  "enum": [
+                    "added",
+                    "removed",
+                    "altered",
+                    "renamed"
+                  ]
+                },
+                "before": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 160,
+                  "description": "The column's definition before (type and constraints as written; for a rename, its old name first); null for an added column."
+                },
+                "after": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 160,
+                  "description": "The column's definition after, as written; null for a removed column."
+                },
+                "destructive": {
+                  "type": "boolean",
+                  "description": "true when existing rows can lose data or start failing: a removed column, a narrowed type, NOT NULL added without a default, a rename old code still reads."
+                },
+                "note": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 200,
+                  "description": "A fact the definition does not show, such as what the default fills in for existing rows; otherwise null."
+                }
+              }
+            },
+            "index": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "change",
+                "definition",
+                "unique",
+                "online"
+              ],
+              "properties": {
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 120,
+                  "description": "The index or constraint's name; null when it has none."
+                },
+                "change": {
+                  "enum": [
+                    "added",
+                    "removed",
+                    "altered"
+                  ]
+                },
+                "definition": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "Its columns and kind, as written, such as \"(repository, pr, created)\" or \"FOREIGN KEY (widget_id) REFERENCES widgets(id)\"."
+                },
+                "unique": {
+                  "type": "boolean"
+                },
+                "online": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Whether building it leaves the table writable: true with CONCURRENTLY or on a table this pull request creates, false for a plain build on an existing Postgres or MySQL table, null when it does not matter (SQLite) or is unknown."
+                }
+              }
+            }
+          }
+        },
+        "digest": "sha256:b15a76f1406641b12153e9561104c81d1e8e10cbed6af91d7a4d0fe97a8db756",
+        "fill": "Fill the schema changes tile: the database schema this pull request changes, table by table, each fact cited to the hunk that shows it.\n\n## Find the schema changes\n\nRead the diff by its content, not by file roles or names. A schema change is any of:\n\n- DDL in added or removed lines of a non-test file: `CREATE TABLE`, `CREATE [UNIQUE] INDEX`, `CREATE TRIGGER`, `ALTER TABLE` (`ADD COLUMN`, `DROP COLUMN`, `RENAME`, `ALTER COLUMN`, `ADD CONSTRAINT`), `DROP TABLE`, `DROP INDEX`. DDL is often in a string inside Go, Python, TypeScript or Ruby code that runs when a store opens.\n- A migration file: a numbered or timestamped file under a `migrations` or `migrate` directory, or a Rails/Django/Alembic/Prisma/Knex migration.\n- A schema dump: `schema.sql`, `structure.sql`, `db/schema.rb`, `schema.prisma`.\n- An ORM model whose fields map to columns, when the pull request adds, removes or retypes a field.\n- A query file (such as sqlc `queries/*.sql`): list it under migrations with kind `query_file`; it changes no table.\n\nLeave out DDL in tests, fixtures and test helpers, and statements that only appear in comments or documentation. A table the code merely renames in a variable is not renamed, and DDL that moves to another place unchanged (a refactor) changes no table. A JSON Schema is not a database schema.\n\n## Fill each part\n\n- `engine`: from the driver, the dialect (`AUTOINCREMENT`, `jsonb`, `SERIAL`) or the migration tool. `unknown` when nothing says.\n- `migrations`: one entry per place that runs the schema change. A down migration is not an entry of its own: cite it after its up migration. `applies`: `on_start` for DDL the program runs when it opens the database; `on_deploy` for migration files a tool runs at release; `manual` when a README or script says someone runs it. `reversible`: true with a down migration or rollback that undoes it; false when there is none for a tool that supports one, or the down step cannot restore dropped data; null for DDL run on start. `idempotent`: true for `IF NOT EXISTS` and guarded `ALTER`s; false when a second run fails (a plain `ADD COLUMN`) or catches the error to carry on; null when the tool records what ran.\n- `tables`: one entry per table, never several tables in one name. A created table lists every column with `before: null` and `after` as written (`INTEGER NOT NULL REFERENCES widgets(id)`). An altered table lists only the columns that change. A dropped table lists no columns unless the diff shows them. For a renamed column, `change: \"renamed\"` and `before` starts with the old name.\n- `destructive` on a column: true for a removed column, a narrowed or changed type, `NOT NULL` added to existing rows without a default, or a rename that old code still reads. Otherwise false.\n- `indexes`: indexes, constraints and triggers, under the table they belong to; a primary key inline in `CREATE TABLE` only when it spans several columns. `online`: true for `CONCURRENTLY` or on a table created in this pull request; false for a plain index build or a validated constraint on an existing Postgres or MySQL table; always null for SQLite, and when unknown.\n- `data_changes`: statements that change existing rows as part of the schema change: backfills, `UPDATE`/`DELETE`/`INSERT … SELECT` in a migration, a one-time copy when the store opens. Not what the application writes as it runs (saving, syncing, pruning): that is the code's behaviour, not the migration's.\n- `readers`: at most eight, the code that queries a changed table directly: query files, generated code (`*.sql.go`), store methods, models. Not their callers, handlers or tests. `updated: true` and cite it when this pull request changes it for the new schema. Name a reader with `updated: false` only when you can see it still uses the old shape, and say where in `label`.\n\n## Cite\n\nEvery migration, table and data change cites at least one hunk; a reader cites its hunks when the pull request changes it. A citation is `{\"type\": \"hunk\", \"id\": \"\u003chunk id from the diff\u003e\", \"lines\": [first, last]}`. `lines` are lines of the new file, inside the hunk's new range, and should cover the statement itself: when a 300-line new file creates three tables, cite each `CREATE TABLE` by its lines, not the whole hunk. For a statement only in removed lines (a dropped table), cite the hunk without `lines`. Put the most telling hunk first: the reader sees it as the table's statement.\n\n## When something is unknown or absent\n\nUse `null` for a value the diff does not show, never a guess. Use empty arrays for parts with nothing in them. When a patch is cut off before the statement ends, describe what is shown and say in `note` that the rest is not in the diff.\n\nWhen the pull request creates, alters, drops or renames no table, column, index or constraint and changes no rows in a migration (it only edits queries, or its DDL is only in tests or moves unchanged), answer that the tile does not apply and write no data: a tile that says the schema does not change is noise.\n\n## Example\n\nA Go store adds a table and a column when it opens a SQLite database:\n\n```json\n{\n  \"engine\": \"sqlite\",\n  \"migrations\": [{\"kind\": \"embedded\", \"label\": \"store.Open\", \"applies\": \"on_start\", \"reversible\": null, \"idempotent\": true,\n    \"cites\": [{\"type\": \"hunk\", \"id\": \"h_0a1b2c3d4e5f\", \"lines\": [40, 52]}]}],\n  \"tables\": [\n    {\"name\": \"widget_tags\", \"change\": \"created\", \"renamed_from\": null,\n     \"columns\": [{\"name\": \"widget_id\", \"change\": \"added\", \"before\": null, \"after\": \"INTEGER NOT NULL REFERENCES widgets(id)\", \"destructive\": false, \"note\": null},\n                 {\"name\": \"tag\", \"change\": \"added\", \"before\": null, \"after\": \"TEXT NOT NULL\", \"destructive\": false, \"note\": null}],\n     \"indexes\": [{\"name\": \"widget_tags_by_tag\", \"change\": \"added\", \"definition\": \"(tag, widget_id)\", \"unique\": true, \"online\": null}],\n     \"cites\": [{\"type\": \"hunk\", \"id\": \"h_0a1b2c3d4e5f\", \"lines\": [40, 46]}]},\n    {\"name\": \"widgets\", \"change\": \"altered\", \"renamed_from\": null,\n     \"columns\": [{\"name\": \"archived_at\", \"change\": \"added\", \"before\": null, \"after\": \"TEXT\", \"destructive\": false, \"note\": \"NULL for existing rows\"}],\n     \"indexes\": [], \"cites\": [{\"type\": \"hunk\", \"id\": \"h_0a1b2c3d4e5f\", \"lines\": [48, 52]}]}],\n  \"data_changes\": [],\n  \"readers\": [{\"label\": \"widgets.List\", \"updated\": true, \"cites\": [{\"type\": \"hunk\", \"id\": \"h_9f8e7d6c5b4a\", \"lines\": [12, 30]}]}]\n}\n```",
+        "kit": 1,
+        "name": "schema_change",
+        "sizes": [
+          "half",
+          "full",
+          "third"
+        ],
+        "source": {
+          "bytes": 16738,
+          "format": "html"
+        },
+        "title": "Schema changes",
+        "use_when": "When the pull request creates, alters or drops database tables, columns, indexes or constraints: migrations, schema dumps, ORM models, a store's DDL. Not JSON Schemas, new rows, queries or tests."
+      }
+    },
+    {
+      "id": "api_change",
+      "type": "custom",
+      "title": "Interface changes",
+      "data": {
+        "consumers": [
+          {
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "label": "createWidget in app/src/api.ts",
+            "updated": true
+          },
+          {
+            "cites": [],
+            "label": "WidgetPage in app/src/widget.tsx (reads labels)",
+            "updated": false
+          }
+        ],
+        "docs": {
+          "cites": [
+            {
+              "id": "h_000000000001",
+              "type": "hunk"
+            }
+          ],
+          "updated": true
+        },
+        "endpoints": [
+          {
+            "auth": null,
+            "breaking": true,
+            "breaking_reason": "Clients that read labels get 404; the app's widget page still calls it.",
+            "change": "removed",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "errors": [],
+            "method": "GET",
+            "name": "/api/widgets/{id}/labels",
+            "request": [],
+            "response": [],
+            "surface": "http"
+          },
+          {
+            "auth": "session cookie",
+            "breaking": true,
+            "breaking_reason": "Callers that create widgets without `owner` now get 400.",
+            "change": "changed",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              },
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "errors": [
+              {
+                "change": "added",
+                "code": "400",
+                "meaning": "owner is missing"
+              }
+            ],
+            "method": "POST",
+            "name": "/api/widgets",
+            "request": [
+              {
+                "after": "string, a user login",
+                "before": null,
+                "change": "added",
+                "field": "owner",
+                "required": true
+              }
+            ],
+            "response": [],
+            "surface": "http"
+          },
+          {
+            "auth": "session cookie",
+            "breaking": false,
+            "breaking_reason": null,
+            "change": "added",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              },
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "errors": [
+              {
+                "change": "added",
+                "code": "400",
+                "meaning": "bad widget id"
+              },
+              {
+                "change": "added",
+                "code": "404",
+                "meaning": "no such widget"
+              }
+            ],
+            "method": "GET",
+            "name": "/api/widgets/{id}/tags",
+            "request": [
+              {
+                "after": "path, int64",
+                "before": null,
+                "change": "added",
+                "field": "id",
+                "required": true
+              }
+            ],
+            "response": [
+              {
+                "after": "int64",
+                "before": null,
+                "change": "added",
+                "field": "widget",
+                "required": true
+              },
+              {
+                "after": "array of string",
+                "before": null,
+                "change": "added",
+                "field": "tags",
+                "required": true
+              }
+            ],
+            "surface": "http"
+          },
+          {
+            "auth": "session cookie",
+            "breaking": false,
+            "breaking_reason": null,
+            "change": "added",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              },
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "errors": [],
+            "method": "PUT",
+            "name": "/api/widgets/{id}/tags",
+            "request": [
+              {
+                "after": "array of string, at most 20",
+                "before": null,
+                "change": "added",
+                "field": "tags",
+                "required": true
+              }
+            ],
+            "response": [],
+            "surface": "http"
+          },
+          {
+            "auth": "session cookie",
+            "breaking": false,
+            "breaking_reason": null,
+            "change": "added",
+            "cites": [
+              {
+                "id": "h_000000000001",
+                "type": "hunk"
+              }
+            ],
+            "errors": [],
+            "method": "DELETE",
+            "name": "/api/widgets/{id}/tags/{tag}",
+            "request": [],
+            "response": [],
+            "surface": "http"
+          }
+        ]
+      },
+      "state": "ready",
+      "covers": [
+        "h_000000000001"
+      ],
+      "definition": {
+        "builtin": true,
+        "data_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "endpoints",
+            "consumers",
+            "docs"
+          ],
+          "properties": {
+            "endpoints": {
+              "type": "array",
+              "maxItems": 40,
+              "description": "Each entry point of the interface the pull request adds, removes, changes or deprecates. Breaking ones first.",
+              "items": {
+                "$ref": "#/$defs/endpoint"
+              }
+            },
+            "consumers": {
+              "type": "array",
+              "maxItems": 20,
+              "description": "Callers of a changed entry point in this repository: an API client module, the app's calls, another service, a CLI's tests. Cite them when this pull request changes them.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "label",
+                  "updated",
+                  "cites"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 160,
+                    "description": "The caller, as code names it: a function, module or file."
+                  },
+                  "updated": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "description": "true when this pull request changes it for the new interface; false when it still calls the old one and needs to change; null when unknown."
+                  },
+                  "cites": {
+                    "type": "array",
+                    "maxItems": 4,
+                    "items": {
+                      "$ref": "#/$defs/hunk"
+                    }
+                  }
+                }
+              }
+            },
+            "docs": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "updated",
+                "cites"
+              ],
+              "description": "The interface's documentation (an API reference, OpenAPI, a README section); null when it has none.",
+              "properties": {
+                "updated": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "true when this pull request updates it; false when it describes the old interface; null when unknown."
+                },
+                "cites": {
+                  "type": "array",
+                  "maxItems": 4,
+                  "items": {
+                    "$ref": "#/$defs/hunk"
+                  }
+                }
+              }
+            },
+            "related": {
+              "type": "array",
+              "maxItems": 12,
+              "description": "Written by the host, never by a fill: the review's risks and evidence whose code this tile cites.",
+              "items": {
+                "$ref": "#/$defs/itemRef"
+              }
+            }
+          },
+          "$defs": {
+            "hunk": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "id"
+              ],
+              "description": "A hunk of the diff, optionally narrowed to lines of the new file inside it.",
+              "properties": {
+                "type": {
+                  "const": "hunk"
+                },
+                "id": {
+                  "$ref": "#/$defs/hunkId"
+                },
+                "lines": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "description": "[first, last] line of the new file, inside the hunk's new range."
+                }
+              }
+            },
+            "change": {
+              "enum": [
+                "added",
+                "removed",
+                "changed"
+              ]
+            },
+            "field": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "field",
+                "change",
+                "before",
+                "after",
+                "required"
+              ],
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120,
+                  "description": "The field, parameter, flag or argument, as the wire or the call names it (nested fields as a.b)."
+                },
+                "change": {
+                  "$ref": "#/$defs/change"
+                },
+                "before": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 160,
+                  "description": "Its type or meaning before; null for an added field."
+                },
+                "after": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 160,
+                  "description": "Its type or meaning after; null for a removed field."
+                },
+                "required": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Whether a caller must send it (request) or can rely on it (response); null when unknown."
+                }
+              }
+            },
+            "endpoint": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "surface",
+                "method",
+                "name",
+                "change",
+                "auth",
+                "request",
+                "response",
+                "errors",
+                "breaking",
+                "breaking_reason",
+                "cites"
+              ],
+              "properties": {
+                "surface": {
+                  "enum": [
+                    "http",
+                    "rpc",
+                    "graphql",
+                    "tool",
+                    "cli",
+                    "library",
+                    "event",
+                    "schema",
+                    "other"
+                  ],
+                  "description": "http: a route; rpc: a gRPC or JSON-RPC method; graphql: a query, mutation or type; tool: an agent or MCP tool; cli: a command or flag; library: an exported symbol of a published package other repositories import; event: a webhook, message or event payload; schema: a published JSON Schema, OpenAPI or proto document."
+                },
+                "method": {
+                  "enum": [
+                    "GET",
+                    "POST",
+                    "PUT",
+                    "PATCH",
+                    "DELETE",
+                    "HEAD",
+                    "OPTIONS",
+                    "ANY",
+                    null
+                  ],
+                  "description": "The HTTP method of a route (ANY when it accepts every method); null for every other surface."
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "The path with its parameters, the tool or method name, the command, the symbol or the schema's ID, as callers write it."
+                },
+                "change": {
+                  "enum": [
+                    "added",
+                    "removed",
+                    "changed",
+                    "deprecated"
+                  ]
+                },
+                "auth": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 120,
+                  "description": "Who may call it, when the code says: \"session cookie\", \"bearer token\", \"public\"; null when unchanged and unknown."
+                },
+                "request": {
+                  "type": "array",
+                  "maxItems": 40,
+                  "description": "Request fields, parameters, flags or arguments: every one of an added entry point, the changed ones of another.",
+                  "items": {
+                    "$ref": "#/$defs/field"
+                  }
+                },
+                "response": {
+                  "type": "array",
+                  "maxItems": 40,
+                  "description": "Response or result fields: every one of an added entry point, the changed ones of another.",
+                  "items": {
+                    "$ref": "#/$defs/field"
+                  }
+                },
+                "errors": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "description": "Status codes, error codes or exit codes added, removed or changed.",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "code",
+                      "change",
+                      "meaning"
+                    ],
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      },
+                      "change": {
+                        "$ref": "#/$defs/change"
+                      },
+                      "meaning": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "maxLength": 200
+                      }
+                    }
+                  }
+                },
+                "breaking": {
+                  "type": "boolean",
+                  "description": "true when an existing caller can break: removed, renamed, a required input added, a field removed or retyped, auth tightened, a status or error code changed."
+                },
+                "breaking_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 300,
+                  "description": "Which existing callers break and how, in one sentence; null when not breaking."
+                },
+                "cites": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 8,
+                  "description": "The hunks that show it: the registration or definition first, then the handler and types.",
+                  "items": {
+                    "$ref": "#/$defs/hunk"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "digest": "sha256:aea255e61a0cd23f5f11642e2c936ae0bbf967974b830e5d9f144d243629a3a5",
+        "fill": "Fill the interface changes tile: every entry point other code calls that this pull request adds, removes, changes or deprecates, each cited to the hunk that shows it.\n\n## Find the entry points\n\nRead the diff by its content. An entry point is any of:\n\n- An HTTP route: a registration such as Go `mux.HandleFunc(\"GET /api/widgets/{id}\", …)` or `r.Get(…)`, Express or Hono `app.get(…)`, Rails `routes.rb`, a Next or Remix route file, a FastAPI or Flask decorator.\n- An RPC, GraphQL or agent tool: a gRPC or JSON-RPC method, a `.proto` or GraphQL schema edit, an MCP or agent tool definition (its name, input schema and result).\n- A CLI command or flag: a subcommand, a flag added, renamed or removed, a changed exit code or output format that scripts read.\n- A published document: a JSON Schema, OpenAPI file or protocol whose consumers are outside this change.\n- An event: a webhook payload, a queue message or an event other services consume.\n- A library export: an exported symbol of a package that is published or used outside this repository, and only when the diff or the repository shows it: a package manifest that publishes it (`package.json` without `\"private\": true` and with a registry, a gem or crate spec), a Go module others import by its public path, or a documented SDK. An application's own exported functions, types and components that only this repository uses are internal, even when exported, and even when they live in a package of their own inside the repository.\n\nLeave out:\n\n- internal code: functions, types and packages only this repository uses (Go `internal/` packages, the app's own modules), test servers and mocks;\n- the user interface: pages and their URLs, components and their props, keyboard shortcuts, styles, CSS classes, data attributes, breakpoints and layout. These are not interfaces even when another part of the repository relies on them;\n- behaviour behind an unchanged interface: a handler that returns different values in the same shape, with the same fields and status codes, is not an interface change.\n\nA configuration file or environment variable counts (surface `other`) only when people outside the code write it: a documented config file, a CLI's settings.\n\n## Fill each entry point\n\n- `surface`, `method` (HTTP only, else null), `name` as callers write it: `/api/widgets/{id}`, `review_get`, `baum review --watch`, `schema/review-1.json`.\n- `change`: `added`, `removed`, `changed` or `deprecated` (still served, marked for removal).\n- `request` and `response`: for an added entry point, every field the handler reads or returns, from the types the registration leads to; for a changed one, only the fields that change. `before` and `after` are the type or meaning (`string`, `int, 1–100`, `array of Widget`); `required` is whether a caller must send the field or can rely on it.\n- `errors`: status, error or exit codes added, removed or changed, with what they mean.\n- `auth`: who may call it, when the code shows it (middleware, a token check). null when unknown.\n- `breaking`: true when an existing caller can break: the entry point is removed or renamed, a request field becomes required, a field is removed or changes type or meaning, auth is tightened, a status or error code changes, a default changes what callers get. An added entry point is not breaking. `breaking_reason` says who breaks and how, in one sentence.\n- `consumers`: callers in this repository of a changed entry point, such as the app's API module or another service; never tests or mocks. `updated: true` and cite the hunks when this pull request changes them. When you see a caller that still uses the old shape, list it with `updated: false` and name its file in `label`.\n- `docs`: the interface's reference or README section; `updated` and its hunks, or null when it has none.\n\nGive each entry point its own entry. When there are more than 30, group the added ones of one kind under a shared name, such as `settings_* (6 tools)`, and keep every breaking, removed and changed one on its own. Order `endpoints` with breaking ones first, then removed, changed, added.\n\n## Cite\n\nEvery entry point cites at least one hunk: the registration or definition first, then the handler and the request and response types. A citation is `{\"type\": \"hunk\", \"id\": \"\u003chunk id from the diff\u003e\", \"lines\": [first, last]}`; `lines` are lines of the new file inside the hunk's new range, covering the registration or type. In a long new file, cite each route's lines, not the whole hunk. For a removed entry point, cite the hunk that removes it without `lines`.\n\n## When something is unknown or absent\n\nUse `null` for what the diff does not show and empty arrays for parts with nothing in them; never guess a field or a status code. When a patch is cut off, list what is shown.\n\nWhen the pull request adds, removes or changes no entry point as defined above, answer that the tile does not apply and write no data.\n\n## Example\n\n```json\n{\n  \"endpoints\": [\n    {\"surface\": \"http\", \"method\": \"POST\", \"name\": \"/api/widgets\", \"change\": \"changed\", \"auth\": \"session cookie\",\n     \"request\": [{\"field\": \"owner\", \"change\": \"added\", \"before\": null, \"after\": \"string, a user login\", \"required\": true}],\n     \"response\": [], \"errors\": [{\"code\": \"400\", \"change\": \"added\", \"meaning\": \"owner is missing\"}],\n     \"breaking\": true, \"breaking_reason\": \"Clients that create widgets without owner now get 400.\",\n     \"cites\": [{\"type\": \"hunk\", \"id\": \"h_0a1b2c3d4e5f\", \"lines\": [88, 104]}]},\n    {\"surface\": \"http\", \"method\": \"GET\", \"name\": \"/api/widgets/{id}/tags\", \"change\": \"added\", \"auth\": \"session cookie\",\n     \"request\": [{\"field\": \"id\", \"change\": \"added\", \"before\": null, \"after\": \"path, widget id\", \"required\": true}],\n     \"response\": [{\"field\": \"tags\", \"change\": \"added\", \"before\": null, \"after\": \"array of string\", \"required\": true}],\n     \"errors\": [{\"code\": \"404\", \"change\": \"added\", \"meaning\": \"no such widget\"}],\n     \"breaking\": false, \"breaking_reason\": null,\n     \"cites\": [{\"type\": \"hunk\", \"id\": \"h_0a1b2c3d4e5f\", \"lines\": [40, 41]}, {\"type\": \"hunk\", \"id\": \"h_1b2c3d4e5f60\", \"lines\": [10, 36]}]}],\n  \"consumers\": [{\"label\": \"app/src/api.ts createWidget\", \"updated\": true, \"cites\": [{\"type\": \"hunk\", \"id\": \"h_2c3d4e5f6071\", \"lines\": [55, 61]}]}],\n  \"docs\": {\"updated\": false, \"cites\": []}\n}\n```",
+        "kit": 1,
+        "name": "api_change",
+        "sizes": [
+          "half",
+          "full",
+          "third"
+        ],
+        "source": {
+          "bytes": 12094,
+          "format": "html"
+        },
+        "title": "Interface changes",
+        "use_when": "When the pull request adds, removes or changes an interface other code calls: HTTP routes and payloads, RPC or agent tools, CLI commands, published schemas or packages. Not app-internal code or UI."
+      }
+    },
+    {
+      "id": "table_retry_states",
+      "type": "table",
+      "title": "How a failed sync is retried",
+      "data": {
+        "columns": [
+          "Failure",
+          "Before",
+          "Now"
+        ],
+        "rows": [
+          [
+            "GitHub answers 502",
+            "gives up and shows an error",
+            "retries after 2 s, 4 s and 8 s"
+          ],
+          [
+            "The token expired",
+            "gives up and shows an error",
+            "asks to sign in again"
+          ],
+          [
+            "The clone is locked",
+            "waits forever",
+            "waits 30 s, then reports the lock"
+          ],
+          [
+            "Rate limited",
+            "retries at once",
+            "waits for the reset time GitHub sends"
+          ]
+        ],
+        "source": [
+          {
+            "type": "hunk",
+            "id": "h_000000000001"
+          }
+        ]
+      },
+      "state": "ready",
+      "covers": [
+        "h_000000000001"
+      ]
+    },
+    {
+      "id": "code_sync_backoff",
+      "type": "code",
+      "title": "The backoff that decides when a sync retries",
+      "data": {
+        "language": "go",
+        "content": "func backoff(attempt int, reset time.Time) time.Duration {\n\tif !reset.IsZero() {\n\t\treturn time.Until(reset)\n\t}\n\t// …\n\treturn time.Duration(1\u003c\u003cattempt) * time.Second\n}",
+        "caption": "A rate limit's reset time wins over the doubling delay.",
+        "source": [
+          {
+            "type": "hunk",
+            "id": "h_000000000001"
+          }
+        ]
+      },
+      "state": "ready",
+      "covers": [
+        "h_000000000001"
+      ]
+    }
+  ]
+}

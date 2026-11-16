@@ -9,10 +9,14 @@ import (
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
-// A version may carry a composition (baum.composition/1, tiles.Composition)
-// beside its review document: how its tiles are laid out. It sits in the
+// A version may carry a composition beside its review document: how it is
+// presented. New versions carry a review view composition
+// (baum.composition/2, view.Composition); older ones a tile grid layout
+// (baum.composition/1, tiles.Composition), which the review page's view
+// ignores and the grid still reads. It sits in the
 // nullable versions.composition column, written with the version's row and
 // never changed after. A NULL column, a store without the column and a
 // composition no reader can use all mean the same: the converted document's
@@ -92,6 +96,13 @@ func storableComposition(document, raw []byte, generator *tiles.Generator) []byt
 	if len(raw) > tiles.MaxStoredComposition {
 		return drop("too large")
 	}
+	if view.IsComposition(raw) {
+		out, reason := storableView(document, raw, generator)
+		if reason != "" {
+			return drop(reason)
+		}
+		return out
+	}
 	given, err := tiles.ParseComposition(raw)
 	if err != nil {
 		return drop("not a composition")
@@ -130,9 +141,61 @@ func storableComposition(document, raw []byte, generator *tiles.Generator) []byt
 	return out
 }
 
+// storableView is storableComposition for a review view composition
+// (baum.composition/2): it is checked against the document
+// (view.Normalize), which drops what it cannot take item by item, never the
+// whole composition, and stored with the caller's generator. It returns the
+// bytes to store, nil for none, or why it is not stored.
+func storableView(document, raw []byte, generator *tiles.Generator) ([]byte, string) {
+	given, err := view.Parse(raw)
+	if err != nil {
+		return nil, "not a composition"
+	}
+	given.Generator = nil
+	normalized, err := review.NormalizeStored(document)
+	if err != nil {
+		return nil, "document not readable"
+	}
+	r, err := view.ParseReview(normalized)
+	if err != nil {
+		return nil, "document not readable"
+	}
+	doc, err := tiles.FromReview(normalized, tiles.Options{})
+	if err != nil {
+		return nil, "document does not convert"
+	}
+	n, _ := view.Normalize(r, doc, given)
+	if generator != nil {
+		var probe tiles.Composition
+		if err := probe.SetGenerator(*generator); err != nil {
+			workstats.Inc("store.composition_generators_dropped")
+			slog.Debug("a composition's generator was not stored")
+		} else {
+			n.Generator = probe.Generator
+		}
+	}
+	if n.Generator == nil && viewEmpty(&n) {
+		return nil, ""
+	}
+	out, err := json.Marshal(n)
+	if err != nil || len(out) > tiles.MaxStoredComposition {
+		return nil, "too large after normalising"
+	}
+	return out, ""
+}
+
+// viewEmpty reports whether a review view composition chooses nothing.
+func viewEmpty(c *view.Composition) bool {
+	o := c.Overview
+	return o.RiskSummary == "" && o.Verdict == nil && len(o.Screenshots) == 0 && o.Diagram == nil && len(o.Intent) == 0 &&
+		len(c.Sections) == 0 && len(c.Diagrams) == 0 && len(c.Library) == 0 && len(c.Authored) == 0
+}
+
 // ParseComposition parses a version's stored composition (Version.Composition)
-// for a reader, such as the compose stage reading the previous version's. It
-// returns nil for none (NULL or empty) and for one that cannot be read.
+// for a reader, such as the tile analysis reading the previous version's
+// library tiles. It returns nil for none (NULL or empty) and for one that
+// cannot be read. A review view composition is read as tiles.ParseComposition
+// reads it: its library and authored tiles, with no layout.
 func ParseComposition(raw []byte) *tiles.Composition {
 	if len(raw) == 0 || len(raw) > tiles.MaxStoredComposition {
 		return nil
