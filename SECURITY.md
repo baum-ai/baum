@@ -1532,7 +1532,8 @@ data.
   brace expansion stops at that bound, so matching a glob against a diff's
   paths takes bounded time whatever the glob. Offering is not restricted
   further on purpose: each tile is labelled "Custom", cites the review, passes
-  the first-show preflight and cannot displace the strip or the overview.
+  the first-show preflight and stands among a section's tiles, never in the
+  place of the review's own text, recommendation or risk score.
 - A saved type's data may cite more of the pull request than its code. A
   fill's citations are checked against the whole bundle (`library.CheckFillIn`):
   a file must be a path of the diff, a prompt or session event must name one
@@ -1540,9 +1541,9 @@ data.
   must be the bundle's, and a risk, evidence item or tile is refused. A
   restricted session is never cited, here or when the composition resolves
   the tile's citations against the review.
-- The composer places a saved type's tile only when its definition's digest,
+- The view call places a saved type's tile only when its definition's digest,
   computed from its content, is one of the types the host offered for the run
-  (`agent.ComposeRequest.Saved`), beside the built-in types'.
+  (`agent.ViewRequest.Saved`), beside the built-in types'.
 
 - Persistence needs the person. A chat can only propose saving or changing a
   type (`propose_tile_type`); the person's Save in the panel writes it, the same
@@ -2122,52 +2123,34 @@ or logged. Nothing outside that list can be changed through a saved
 proposal: not your GitHub connection, a repository's registration or clones,
 nor any GitHub write.
 
-One change takes no save: the layout of a review's tiles, your own, on the
-pull request page you have open. A chat may move, resize, remove, bring back
-and pin tiles, add a library tile type or a tile it made for that page,
-undo, and reset the layout to the generated one (`edit_tiles`, `add_tile`,
-`add_custom_tile`, `undo_tiles`, `reset_tiles`), and it applies at once. The agent
-reads untrusted pull request text (the diff, the description, threads and
-transcripts), which can tell it to rearrange or hide tiles, and baum accepts
-that without asking, because the worst such text can do is rearrange your own
-page, visibly, undoably and within fixed rules:
+One change takes no save: adding a tile to the review on the pull request
+page you have open. A chat may add a library tile type or a tile it made for
+that page (`add_tile`, `start_tile`, `check_tile`, `add_custom_tile`), on one
+of the review's sections, and it applies at once. The agent reads untrusted
+pull request text (the diff, the description, threads and transcripts), which
+can tell it to add tiles, and baum accepts that without asking, because the
+worst such text can do is add a tile to your own page, visibly, removably and
+within fixed rules:
 
-- No content changes. An edit only places, sizes, hides and shows tiles of
-  the review as it is; every risk, evidence item, decision and block is still
-  presented once, and the saved version, the repository and GitHub are never
-  touched.
-- What must be seen stays seen. The recommendation and risk score are in the
-  fixed strip; the overview, and the risks tile while it lists a critical or
-  high risk, and a change the recommendation names, cannot be hidden or
-  pushed off the landing page, whatever an edit says, and the recommended
-  change is never folded.
-- Every edit shows, and is undone in one step, and an undo can be taken back
-  (Redo) until the next edit or reset. The page shows what changed
-  in baum's own words, never the agent's, with Undo; the strip says
-  **Your layout** with Undo and Reset; a hidden tile stays in the last group,
-  with Show.
+- No content changes. An added tile stands among a section's tiles; the
+  review's text, risks, recommendation and risk score, the saved version, the
+  repository and GitHub are never touched.
+- Every added tile shows, and is taken off in one step: Remove on its menu
+  takes it off every version of the pull request, and the toast's Undo puts
+  it back on the section it stood on. Only you remove; the chat has no tool
+  for it.
 - Scope is one page. The tools are global, so an action never sees them; they
-  refuse any page but the pull request's, and the edit is checked against
-  the tiles that page shows. A conversation's page follows the person around
-  the app, so an edit is also refused unless the page open now is the pull
-  request the current message was sent from: a long turn begun about one
-  pull request cannot change another's layout. Edits stay on this computer, in `app.sqlite`,
-  for that pull request; the event that tells the page carries only the pull
-  request's key and a revision.
-- A repository's standing tile preferences are not an edit. They outlive the
-  pull request and instruct the composer of every later review in the
-  repository, so a chat can only propose them (`propose_tile_preferences`):
-  the person sees the instruction and the pins as a diff and saves or
-  dismisses it, and the save is refused if the preference changed since. The
-  composer reads the saved text as the one instructing part of its input; a
-  pin must be a single tile type or a library type. The person's own click on
-  the repository's page saves directly.
-- Bounded: 20 ops a call, 100 undo steps (older ones are folded and kept),
-  64 KiB per pull request (undone steps included), the 200 most recently
-  edited pull requests. A reset always fits, dropping the oldest steps when
-  it must.
+  refuse any page but the pull request's, and a section they name must be one
+  of the review that page shows. A conversation's page follows the person
+  around the app, so an add is also refused unless the page open now is the
+  pull request the current message was sent from: a long turn begun about one
+  pull request cannot change another's page. Added tiles stay on this
+  computer, in `app.sqlite`, for that pull request; the event that tells the
+  page carries only the pull request's key.
+- Bounded: at most 8 added tiles a pull request, the 200 most recently
+  changed pull requests; a removed tile is kept a day for its Undo.
 
-An added tile is the one place an edit brings data. Data the agent writes
+An added library tile brings data. Data the agent writes
 for it is checked against the type's schema, every hunk it cites must be in
 the diff of the version shown (a refusal names the place in the data, never
 its values), and it is masked for secrets, as every model output is, before
@@ -2177,15 +2160,15 @@ definition's digest, which data cannot change. A review never takes the
 agent's data as its own: only fills baum ran itself are reused in a later
 version. An add without data starts one fill run with your review agent (a
 model call at your expense, as a review's fill is): each version's tile type
-is filled at most once while baum runs, however often it is added and
-undone, and a failed run is not retried for ten minutes. The run is checked
+is filled at most once while baum runs, however often it is added, removed
+and added again, and a failed run is not retried for ten minutes. The run is checked
 and masked like any fill.
 
 A tile made in chat brings code as well as data: the agent, which reads
 untrusted pull request content, writes a tile type (HTML and JavaScript) for
 the pull request page you have open (`start_tile`, `check_tile`,
-`add_custom_tile`), and it is added at once, as one more change of your own
-layout. That is safe to do without asking for the same reasons, and these:
+`add_custom_tile`), and it is added at once, as any added tile is. That is
+safe to do without asking for the same reasons, and these:
 
 - The frame is the boundary, unchanged. The tile runs in the custom tile
   frame described above ("Custom tiles"): sandboxed, an opaque origin, the
@@ -2194,14 +2177,14 @@ layout. That is safe to do without asking for the same reasons, and these:
   quality gates for honest mistakes, not security controls; the check draws
   the candidate in the check window where the desktop app has one, else in
   the page, as the first-show preflight does.
-- It is labelled and grounded. It reads "Custom · <title>" wherever the page
-  names it, whatever the title says, and is marked baum's own only by a
+- It is labelled and grounded. It stands under a "Custom tile" caption on
+  the review page, whatever its title says, and is marked baum's own only by a
   built-in type's digest; its name may not be a built-in library type's. Its
   data must cite at least one hunk, file, prompt or session event of the
   review, and every citation must resolve to the version shown, so each
-  claim leads to code or a transcript you can open. It cannot take the
-  strip's place (recommendation and risk score), and the rules above about
-  what must stay seen hold for it as for any edit.
+  claim leads to code or a transcript you can open. It stands among a
+  section's tiles and cannot take the place of the review's own text,
+  recommendation or risk score.
 - Its data is masked for secrets before it is checked or stored, as every
   model output is, and kept, with its definition, in `app.sqlite` for that
   pull request only.
@@ -2217,9 +2200,9 @@ layout. That is safe to do without asking for the same reasons, and these:
 - Where the desktop app does not mount tile frames (Windows, for now), the
   tools refuse before anything is made.
 
-There is no confirmation and no rate cap on purpose: each would make "move
-this" slower for everyone to guard against an attack whose worst result is a
-layout you see and undo. Anything that lasts beyond the page you have open
+There is no confirmation and no rate cap on purpose: each would make "add
+the API changes tile" slower for everyone to guard against an attack whose
+worst result is a tile you see and remove. Anything that lasts beyond the page you have open
 (standing preferences for a repository's future reviews, for instance) stays
 a proposal.
 

@@ -185,13 +185,16 @@ While the stamp is unchanged the answer is reused, for at most `ProbeMaxAge`
 `url.insteadOf`, therefore shows within that time. A clone whose directory or
 `.git` is gone is unavailable without running git.
 
-`tiles` holds a repository's standing tile preferences (`TileSettings`: `text`,
-at most 1000 characters, and `pins`, at most 8 tile types); `Settings.Checked`
-trims and validates them on every write, and a route answers a refusal with
-its reason and a 400. Settings PUTs replace the whole object and require
+`tiles` holds a repository's standing tile settings (`TileSettings`: `types`,
+at most 8 saved tile type names pinned to the repository, which every later
+review fills while tile reviews are on); `Settings.Checked` trims and
+validates them on every write, and a route answers a refusal with its reason
+and a 400. Settings PUTs replace the whole object and require
 `automatic`, `null` for the default. A `daily_cap` an older app still sends, in a settings PUT or in
 the settings of a `POST`, is dropped rather than refused: baum sets no
-spending limits.
+spending limits. So are the `text` and `pins` members of `tiles` (the removed
+tile grid's layout instruction and pins), and settings stored with them keep
+only their `types`.
 
 ## CLI
 

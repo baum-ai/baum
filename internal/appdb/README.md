@@ -12,7 +12,7 @@ configuration is still read from `config.toml`.
 | --- | --- |
 | `repositories`, `clones`, `picked`, `aliases`, `preferences`, `prompt_overrides` | `repos`: picked repositories, clones, settings and global preferences |
 | `groups`, `versions` | `reviewgroups`: group definitions and combined review versions |
-| `tile_checked` | `tilechecks`: the render check's verdict for each pair of a custom tile type's digest and its data's SHA-256, the newest 10,000, so the tiles page preflights a pair once |
+| `tile_checked` | `tilechecks`: the render check's verdict for each pair of a custom tile type's digest and its data's SHA-256, the newest 10,000, so the review page preflights a pair once |
 | `capture_session`, `decision`, `decision_file`, `capture_attempt`, feature/PR/link/search tables | `decisionlog`: decisions, coverage, call ledger and feature history |
 | `jobs`, `job_heads` | `jobs`: queue/history, progress, accounting and fix outcomes, one row per job, kept when archived 120 days after the job ended; and the archived runs of each pull request or group head, which keep automatic generation from running it again. `jobs` replaces the `state/jobs` document, which the queue moves into it on first open |
 | `console_conversations` | `console`: the session panel's conversations (agent, model, mode, directory and the pull request worktree it is, whether baum created that worktree and its branch, why it got an empty directory instead, session id, pages, title, state, last error and cost), closed ones included; their working directories stay on disk under the user cache directory |

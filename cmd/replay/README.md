@@ -74,7 +74,7 @@ deterministically, and `--limit` cuts the list):
 | `--detector-report` | Write the case ids by kind of detector evidence; see [Detectors](#detectors). |
 | `--case-file <path>` | Case ids from a file, one per line; blank lines and `#` comments are ignored. Same as repeating `--case`, and not combined with filters. |
 | `--chain` | Replay each pull request's revisions in order; see [Chains](#chains). |
-| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the compose stage over reviews that already exist, or with `--generator view` the view call; see [Composing tiles](#composing-tiles) and [The view call alone](#the-view-call-alone). |
+| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the view call over reviews that already exist; see [Presenting reviews](#presenting-reviews). |
 | `--limit N`, `--shuffle-seed N` | Cut the selection, after a seeded shuffle if given. |
 
 Settings. The defaults are the desktop app's built-in ones: Claude Code, the
@@ -87,7 +87,7 @@ so a run does not depend on them; the backend is `claude` unless named.
 | `--backend claude\|codex`, `--model`, `--effort` | The agent. Empty model and effort are the agent's own. `--model` takes what the agent takes, such as an alias like `sonnet`. |
 | `--staged` (default), `--no-staged` | Write the review in stages, or in one pass. `--no-staged` wins over `--staged`. |
 | `--reuse` | See [Previous versions](#previous-versions). |
-| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. With the compose stage the only id is `review-tiles-compose`, which replaces the whole composition prompt. |
+| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. With the view call alone, or the `tiles` generator, `review-view` replaces the view call's prompt. |
 | `--time-limit 10m` | Time limit of one case. |
 | `--claude-config-dir`, `--codex-home`, `--agent-env KEY=VALUE` | The config fields the app sets for its agents (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `agent_env`); repeatable for `--agent-env`. Without them the agent runs with the ambient login. |
 | `--no-transcript` | Do not keep the agent's transcript. |
@@ -121,98 +121,37 @@ leaves no files, so `--resume` runs it again.
 `BAUM_REPLAY_OUT`), which is outside any repository. Outputs hold private
 content and are never committed.
 
-## Composing tiles
+## Presenting reviews
 
-The compose stage arranges a review's tiles (`agent.ComposeRun`): one call with
-no tools reads an inventory of the review and returns a layout, which the host
-normalises into a `baum.composition/1` composition, falling back to the change
-kind's template when the call fails. Two flags run that stage alone, through the
-`compose` generator, over reviews that already exist, so a composition prompt
-can be tried for a few cents a case without running the analysis again:
+The view call (`agent.ViewRun`) presents a review on its page: one call with
+no tools writes a `baum.composition/2` with the overview's verdict and risk
+summary, the diagrams and which tiles stand on each section, which the host
+checks, falling back to the tiles placed by their hunks when the call fails.
+Two flags run it alone, through the `view` generator, over reviews that
+already exist, so its prompt can be iterated on a frozen set for a few cents a
+case without running the analysis again; `--prompt-override
+review-view=<file>` replaces the prompt:
 
 ```sh
-oss/bin/replay --dataset <dir> --compose-from-store --split calibration --representative --limit 60 --max-cases 60 --model sonnet
-oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-run> --model sonnet
+oss/bin/replay --dataset <dir> --compose-from-store --case-file <file outside git> --model sonnet
+oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-tiles-run> --prompt-override review-view=<file> --model sonnet
 ```
 
-- `--compose-from-store` composes the dataset's saved reviews
+- `--compose-from-store` presents the dataset's saved reviews
   (`reviews/<machine>/<repository>.versions.sqlite`, with their write-ahead
   logs, copied to a temporary directory that is removed when the run ends,
-  and read read-only). Cases are selected as usual; each composes the saved version
-  generated from its bundle (its metadata's `bundle_digest`), else the latest
-  version at the case's head, else the pull request's latest version. The
-  record says which (`review.match`: `bundle`, `head` or `latest`). A pull
+  and read read-only). Cases are selected as usual; each presents the saved
+  version generated from its bundle (its metadata's `bundle_digest`), else the
+  latest version at the case's head, else the pull request's latest version.
+  The record says which (`review.match`: `bundle`, `head` or `latest`). A pull
   request with no saved review fails with reason `internal`.
-- `--compose-only --from-run <run>` composes the review documents an earlier
+- `--compose-only --from-run <run>` presents the review documents an earlier
   run generated (`<run>/cases/<id>/document.json`), so the same analysis can be
-  arranged by several prompts.
+  presented by several prompts. From a run of the `tiles` generator it places
+  that run's library fills and exhibits again.
 
-`--tile-text <instruction>` and `--tile-pin <tile type>` (repeatable) give
-either mode a repository's standing tile preferences, as the app's repository
-page saves them: the composer follows the instruction and the pinned tiles
-lead the layout. A pin is a single tile type or a library type, as the app
-accepts. They are how to see what a preference does to reviews that already
-exist, for a few cents a case.
-
-Saved reviews have no composition, so neither mode passes a previous
-composition; `--chain` is refused. Each case's `document.json` is a compose
-record (`replay.compose/1`): the composition, the template's, whether it fell
-back and why, whether the reply needed its repair, the normalisation fixes by
-kind, the landing tiles of both layouts, whether the layout differs from the
-template's, the featured changes and promotions, the inventory's size and cuts,
-and the stage's seconds. Beside it:
-
-| File | Holds |
-| --- | --- |
-| `composition.json` | The normalised composition, with its generator (prompt, model, template, fallback, fixes). |
-| `tiles.json` | The tile document the composition gives (`tiles.Compose`). |
-| `template.json`, `template-tiles.json` | The change kind's template and its tile document, for comparison. |
-| `inventory.txt` | The user message the composer read. |
-| `reply.json` | The composer's last reply, masked. |
-
-Validation normalises the stored composition again (it must change nothing),
-checks the composed document with the tile validator, and asserts every
-invariant of a generated document (`tilestest.CheckGenerated`): exact coverage,
-the overview and any severe risk on the landing page, every item presented
-once, the round trip back to the review.
-
-`replay metrics` adds, per case: `compose_fallback`, `compose_repaired`,
-`compose_fixes` and `compose_fix_<kind>`, `compose_differs_from_template`,
-`compose_landing_differs`, `compose_featured_changes`, `compose_promotions`,
-`compose_reasons`, `compose_landing_tiles`, `compose_inventory_bytes`,
-`compose_inventory_cut`, `compose_seconds`, `compose_row_fill` (rows the host
-filled by growing their tiles, which `compose_fixes` leaves out: it is the
-host's layout rule, not a repair; the guard rails' `evidence_gaps`,
-`lone_featured` and `first_screen` are fixes like the others, as
-`compose_fix_<kind>`), `compose_wasted_rows` (landing rows, as the page lays
-them out with each group a block, left with empty units while a tile follows),
-`compose_quiet_risks_half`
-(a risks tile ranking nothing above low on half of the first row), both also
-for the template (`template_` prefix), and, on reviews with a breaking change
-only, `compose_breaking_featured` (a change is featured; a proxy for the one
-carrying it). Their sums are the run's counters (fallbacks, repaired replies,
-cases that differ from the template). A backend that cannot make a single
-call composes nothing: every case falls back with the reason that it cannot
-complete. A stage the run's interruption stopped is an interrupted case, never
-a fallback.
-
-### The view call alone
-
-The view call (`agent.ViewRun`) replaced the compose stage in generation: it
-writes a review's page view, a `baum.composition/2` with the overview's
-verdict and risk summary, the diagrams and which tiles stand on each section.
-`--generator view` with either flag above runs it alone over the same
-reviews, so its prompt can be iterated on a frozen set; `--prompt-override
-review-view=<file>` replaces the prompt, and `--tile-text` and `--tile-pin`
-are refused (the view call reads no preferences):
-
-```sh
-oss/bin/replay --dataset <dir> --generator view --compose-from-store --case-file <file outside git> --model sonnet
-oss/bin/replay --dataset <dir> --generator view --compose-only --from-run <out>/<earlier-tiles-run> --prompt-override review-view=<file> --model sonnet
-```
-
-From a run of the `tiles` generator it places that run's library fills and
-exhibits again. Each case's `document.json` is a view record
+Either flag runs the `view` generator whatever `--generator` names, and
+`--chain` is refused. Each case's `document.json` is a view record
 (`replay.view/1`: the composition, fallback and why, repair, the checks'
 fixes by kind and first problems, diagrams by type, which overview parts are
 set, placements, the input's size and cuts, seconds); beside it are
@@ -224,14 +163,15 @@ schema, that checking it again changes nothing, and that a view is served.
 not a fix), `view_diagrams` and `view_diagrams_<type>`,
 `view_overview_diagram`, `view_verdict`, `view_risk_summary`,
 `view_screenshots`, `view_intent`, `view_placed`, `view_sections_with_tiles`,
-`view_input_bytes`, `view_input_cut` and `view_seconds`.
+`view_input_bytes`, `view_input_cut` and `view_seconds`. A call the run's
+interruption stopped is an interrupted case, never a fallback.
 
 ### The whole pipeline with tiles
 
 `--generator tiles` generates each case as the desktop does with tile reviews
 on: the staged review with its tile analysis (library selection in the
 outline, a fill per selected library type and the exhibits call beside the
-details and the context), then the compose stage at its end, within the time
+details and the context), then the view call at its end, within the time
 it leaves (`generate.Options.Tiles`). `--generator-option library=off` offers
 no library type and `--generator-option exhibits=off` writes no authored
 tile; both off is the pipeline as it was before the analysis, a baseline for
@@ -258,162 +198,36 @@ oss/bin/replay --dataset <dir> --generator tiles --library-dir <types outside gi
 
 The case's `document.json` is the review, as with the `review` generator, so
 the review metrics, `--chain` and `--reuse` apply; staged prompt overrides and
-`review-view` may both be given. `--no-staged` is refused. The compose stage
-is the view call, so the compose record holds only its fallback, repair,
-fixes, input size, `cost_usd` and seconds (`problem` when the version would
-have no composition). Beside the document:
+`review-view` may both be given. `--no-staged` is refused. Beside the
+document:
 
 | File | Holds |
 | --- | --- |
-| `compose.json` | A compose record, as above. |
+| `compose.json` | A record of the view stage (`replay.compose/2`): its fallback and why, repair, fixes by kind, input size, `cost_usd` and seconds, and `problem` when the version would have no composition. |
 | `composition.json` | The review view composition the version would store. |
-| `view.json`, `tiles.json` | The view and the tile document the tile route would serve (`tileview.Build`). |
+| `view.json` | The view the tile route would serve (`tileview.Build`). |
 | `provisional.json` | The composition drafts showed while the review was written. |
 | `inventory.txt`, `reply.json` | What the view call read and answered. |
-| `analysis.json` | The tile analysis: the outline's selection, each fill's state, reason, repair, time, cost and place on the served page, the exhibits returned, dropped by reason, dropped as restating the review and kept with their places, how long the review waited for them, and the points a library or authored tile states that another tile states too (`compose.Duplicates`). |
+| `analysis.json` | The tile analysis: the outline's selection, each fill's state, reason, repair, time, cost and place on the served page, the exhibits returned, dropped by reason, dropped as restating the review and kept with the section each stands on, how long the review waited for them, and the points a library or authored tile states that another tile states too (`view.Duplicates`). |
 | `outcome.json` details | `outline_repairs` and `outline_rejections`: the outline stage's validation repairs and schema rejections, which the tile parts of its schema could add (compare a run with both options off). |
 | `fills/<type>.json`, `exhibits.json` | Each fill as it ended, its data included, and the exhibits call's result. |
 
 Validation is the review's (`ValidateStored`) plus the composition's, as
-above. `replay metrics` adds the review metrics, the compose metrics from
-`compose.json`, `compose_cost_usd` (the stage's share of `cost_usd`),
-`compose_jump` (landing entries whose tile or size moved from the provisional
-layout to the composition) and `compose_no_composition`, and from
+above. `replay metrics` adds the review metrics, from `compose.json`
+`compose_fallback`, `compose_repaired`, `compose_fixes`,
+`compose_inventory_bytes`, `compose_seconds`, `compose_cost_usd` (the stage's
+share of `cost_usd`) and `compose_no_composition`, and from
 `analysis.json`: `library_selected`, `library_ready`, `library_reused`,
-`library_landing` and per type `library_<type>_selected`, `_ready`,
-`_not_applies`, `_dropped`, `_repaired`, `_reused` and `_landing`;
+`library_on_section` (on one of the review's sections, not Where this fits)
+and per type `library_<type>_selected`, `_ready`, `_not_applies`, `_dropped`,
+`_repaired`, `_reused` and `_on_section`;
 `fills_cost_usd`, `fills_seconds_max`; `exhibits_candidates` (proposed by the
-outline), `exhibits_called`, `exhibits_reused`, `exhibits_returned`, `exhibits_kept`, `exhibits_landing`,
+outline), `exhibits_called`, `exhibits_reused`, `exhibits_returned`, `exhibits_kept`, `exhibits_on_section`,
 `exhibits_dropped_<reason>`, `exhibits_cost_usd`, `exhibits_seconds`;
 `extras_wait_seconds`; and `extras_duplicate_pairs` and
 `extras_has_duplicate`. In a chain each
 revision is offered the composition the one before it got, when the same run
 generated it.
-
-## Pictures of a run
-
-A compose or tiles run's layouts can be seen, compared and judged. Pictures
-hold private content: they stay in the run directory, or a directory you
-name outside any repository, and are never committed or attached.
-
-```sh
-just replay-screens <dataset> <out>/<run>
-oss/bin/replay sheet <out>/<run> [--against <out>/<other-run>] [--judge <report>]
-oss/bin/replay judge <out>/<run> [--against <out>/<other-run>] --backend claude --model opus
-oss/bin/replay judge agree <report> <report>
-oss/bin/replay labels make <out>/<run> --out <dir> --n 15 --seed 1
-oss/bin/replay labels agree <dir> <report>...
-```
-
-**Taking them.** `just replay-screens` (in Docker) builds the desktop app and
-the real-reviews fixture and serves the run through it (`TestLocalAppRealReviews`
-with `BAUM_APP_REPLAY_RUN`): each case's review is stored, through the store's
-own `Put`, as the pull request's latest version in two clones of its own, one
-with the run's composition and one with the template's, after the versions
-before it from the dataset's saved store (`replay.ScreenInputs` finds them: the
-saved version a compose run over the stores composed, or the earlier versions
-of a generated review). The page is then the app's own tiles page on its own
-routes. A case it cannot show (no saved history for a generated version, for
-instance) is listed with why in `screens/cases.json` and `screens.json`. The
-spec (`app/e2e/replay-screens.spec.ts`) waits for a steady page as the
-real-review screenshots do and writes, per case, into `<run>/screens/<case>/`:
-
-| File | Holds |
-| --- | --- |
-| `<variant>-<width>-light.png` | The first screen of `composed` or `template` at 1440×900, 900×900 and 390×844 |
-| `<variant>-<width>-light-full.png` | The whole page, when it is longer than the window |
-| `first-screen.json` | What the first screen shows, measured from the page (below), at 1440 (`variants`) and on the phone (`phone`), and the problems the spec found |
-
-`first-screen.json` lists the tile cards in the window (`id`, `type`, `size`,
-wholly or partly visible), the landing page's cards and those below the first
-screen, the grid units (six a row) left empty on rows another row follows
-(`wastedUnits` on the first screen, `wastedUnitsLanding` on the landing page),
-the page's height, and the must-know signals, each visible when at least half
-of its element is inside the window and every region that clips it: the
-recommendation, each active critical or high risk of a current change, each
-change the recommendation cites (its tile's header), the breaking-change line
-and the missing-evidence count. `recall` is the share of the signals given that
-the first screen shows. It is mechanical first-screen recall; it reads the
-page's own markers (`data-tile-type`, `data-tile-size`, `data-risk`,
-`data-breaking`, `data-evidence-gaps`).
-
-The environment narrows the run: `BAUM_APP_REPLAY_ONLY` (text in the case id),
-`BAUM_APP_REPLAY_LIMIT`, `BAUM_APP_REPLAY_VARIANTS` (`composed,template`),
-`REPLAY_SCREENS_THEMES` (`light`, or `light,dark`), `REPLAY_SCREENS_FULL=0`
-(viewport pictures only) and `REPLAY_SCREENS_MINUTES` (per case, default 6).
-
-**Contact sheets.** `replay sheet` writes a static page into the run's
-`screens/` directory: `sheet.html` pairs the run's composition with its
-template, `sheet-vs-<other-run>.html` with another run's composition of the same
-cases. It sums both sides' first-screen recall by signal, the median whole
-tiles on the first screen, landing tiles, wasted units and page heights, then
-shows each case's two first screens at 1440 and on the phone, linking to the
-whole pages, with their facts, the page problems and, with `--judge`, the
-judge's verdict and reasons.
-
-**Judging.** `replay judge` compares each case's two layouts with a model, from
-the pictures (the first screens at 1440 and, unless `--phone=false`, on the
-phone) and a list of the review's facts drawn from its tile document (the
-changes, the recommendation, the open risks by tier, the evidence gaps, a
-breaking change). The rubric (`screens.Rubric`, version `layout-judge-v1`)
-asks what a reviewer must see first, whether the most decision-relevant item
-is the most prominent, the grouping, wasted space and whether anything
-important is buried, says length is not quality, and asks for a verdict (A, B
-or tie) with a short reason. That rubric assumes both layouts hold the same
-tiles; `--rubric layout-judge-with-tiles` (`screens.RubricWithTiles`) judges a
-page with supporting tiles (library tiles and authored tables, code and notes)
-against one without, as when the same analysis is composed with and without
-them. Its facts list each layout's supporting tiles by title with a line on
-what each shows, those only one layout has apart; each call shows the first
-screens at 1440 and the whole pages (`-full.png`, the first screen when the
-page fits) and no phone pictures; and it asks, of each tile only one layout
-has, whether it helps the decision, duplicates another tile and is sized to
-its content, which reads better scrolled, and whether either buries a core
-item, which counts only for named missing evidence, a critical or high risk
-or the riskiest change. Its report's default name ends in the rubric's name.
-`--cases a,b` and `--case-file <file>` (one id per line) judge only those
-cases. Each pair is judged in both orders, A and B
-swapped; a pair's verdict is the winner both orders name, else a tie, which
-cancels a preference for a position. `--repeat` (default 0.1) asks a sample of
-calls again to measure the judge's noise. The report, `screens/<name>.json`
-(`replay.judge/1`), holds every call (order, answer, model, cost, time, error),
-each pair's verdict and the summary: wins, ties and losses, the sign test,
-the decisive win share with its 95% Wilson interval, by size, and how often
-the orders and the repeats agreed. A call that fails is recorded and its pair
-left out. The judge never sees run or model names, nor which layout is the
-template.
-
-The calls go through the backends review generation uses (`--backend claude`
-or `codex`, `--model`, `--effort`) with the developer's login, as `replay`
-does: `agent.CompleteRequest.Images` passes the pictures, which Claude Code
-reads as image blocks of one stream-json message and Codex through
-`--image`. `--max-cost-usd` refuses a run whose estimate (calls times
-`--cost-per-call`) is above it. `--differing` judges only the cases whose two
-layouts differ (a composition that is not its template's, or two runs'
-compositions that are not the same). `replay judge agree` compares two reports of
-the same pairing, such as two model families.
-
-**Owner labels.** `replay labels make` writes a labelling set into `--out`:
-`index.html`, a page that shows `--n` pairs (default 15) side by side as A and
-B, with the first screens embedded so the page opens on its own and the whole
-pages beside it in `full/`; `key.json`, which says which side each pair showed
-as A; and `labels.txt`, the file the owner fills in. Pairs whose two layouts
-are the same are left out; the rest are spread over sizes and change kinds,
-and the sides are put in a random order, both from `--seed`. The page keeps
-the choices in the browser, with keys (`a`, `b`, `t`, `j`, `k`), and downloads
-or copies them in the file's format, one line per pair:
-
-```text
-# comments and blank lines are ignored
-P01 A
-P02 tie the same to me
-P03 B
-```
-
-`replay labels make` never overwrites an existing `labels.txt`. `replay labels
-agree <dir> <report>...` reads the key and the labels and reports, per judge
-report, on how many labelled pairs the judge gives the owner's verdict, and on
-how many of those both call decisive.
 
 ## Detectors
 
@@ -687,8 +501,8 @@ the directory, be one of the runner's files, be the same file as another name
 ignoring case, or be both a file and a directory that holds another artifact, or
 the case fails), and lists them
 in `outcome.json` under `artifacts`; a rerun of the case starts its directory over. A
-generator that produces more than one file, such as a layout next to the review
-it was composed from, returns the rest this way.
+generator that produces more than one file, such as a composition next to the review
+it presents, returns the rest this way.
 
 Two optional interfaces add what depends on the format:
 

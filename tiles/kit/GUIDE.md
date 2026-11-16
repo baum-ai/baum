@@ -46,7 +46,7 @@ my_type/
 | `title` | 1–160 characters. The card's heading. |
 | `use_when` | One line, at most 200 characters: `When …` names the trigger, `Not …` an exclusion. A model reads only this, the pull request's description and its file list to decide whether to fill the type, so be specific about what must be in the diff. |
 | `glance` | One line, at most 200 characters: what the glance shows. |
-| `sizes` | The card sizes the glance is made for, preferred first: `full`, `half`, `third`. List only sizes you checked. |
+| `sizes` | The widths the glance is made for, preferred first: `full`, `half`, `third`. List only sizes you checked. |
 | `kit` | `1`. The kit version the component uses. |
 | `applies_with` | Optional: the top-level arrays of the data that show what the type is for, such as `["items"]`. Data with all of them empty is refused as a fill: the filling model answers that the type does not apply instead of writing a tile that says "nothing". |
 
@@ -89,8 +89,10 @@ host adds `digest` when it loads the type; never write it.
 `"detail"`), `size` (`"full"`, `"half"` or `"third"`), `theme`, `lang` and
 `root`. Return a node (or an array, or text); the kit puts it in `root`.
 
-**Glance**: inside a card, under the card's title. It is not interactive and
-gets no code excerpts. Its box, the frame's whole viewport:
+**Glance**: the tile in brief, inside a card under the card's title, where
+the tile library shows a type (Settings › Tile library); the render check
+draws it at every size `sizes` declares. It is not interactive and gets no
+code excerpts. Its box, the frame's whole viewport:
 
 | size | width × height (px) |
 |---|---|
@@ -108,8 +110,9 @@ rows, `kit-truncate` on anything from data that could be long, and `kit-foot`
 for small facts at the bottom. Show at most what fits; say "N more" in the
 foot. Branch on `size` for how many rows; lay out by width otherwise.
 
-**Detail**: the pane opened from the card, 720px wide on a desktop and 360px
-on a phone. Its height follows its content. Use `kit-section` with a
+**Detail**: the tile as the review page shows it, on the section it stands
+on and as wide as that section, with `size` `"full"`; the render check draws
+it 720px and 360px wide (a phone). Its height follows its content. Use `kit-section` with a
 `kit-heading`, `kit-card` per thing, `kit-table` inside `kit-scroll` for
 tables, `baum.cite` chips, and `baum.diff` for the code. Put the most
 important things first (breaking, destructive, high severity). Long lists go
@@ -382,13 +385,15 @@ data.
 ## 11. Making a type in chat
 
 In the app's session panel, an agent can make a tile for the pull request
-page the person has open and put it on the page at once, as part of their
-own layout of that page. It works with four tools:
+page the person has open and add it to that page's review at once, on one of
+its sections. It works with four tools:
 
-1. `start_tile {title, size?, to?}` puts a pending card where the tile will
-   stand ("Being made in the session panel"). The card counts the check
-   rounds; if the agent stops before adding the tile it says "Not finished"
-   for a few minutes, with Remove.
+1. `start_tile {title, section?}` puts a pending card on the section where
+   the tile will stand ("Being made in the session panel"): `section` is a
+   section's ID, or `context` for Where this fits; without it, the section
+   the person is reading. The card counts the check rounds; if the agent
+   stops before adding the tile it says "Not finished" for a few minutes,
+   with Remove.
 2. `tile_guide` gives this guide (`part: "guide"`), the starter's files
    (`"starter"`) and the kit's names (`"manifest"`).
 3. `check_tile` runs the render check (section 10) on what you send:
@@ -405,9 +410,10 @@ own layout of that page. It works with four tools:
    of it (`uncited` otherwise). The data is masked for secrets before
    anything is kept. A problem with what you sent comes back as a `fail`
    result with its hints, never as an error: fix it and check again.
-4. `add_custom_tile {check}` adds the tile whose check passed with `data`,
-   within the hour. The page shows it at once, "Custom · <title>", with
-   Undo.
+4. `add_custom_tile {check, draft?, section?}` adds the tile whose check
+   passed with `data`, within the hour, on the pending card's section unless
+   `section` names another. The page shows it at once, under a "Custom tile"
+   caption, with Remove on its menu and Undo after a removal.
 
 Two rules matter here:
 
