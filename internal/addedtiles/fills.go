@@ -331,8 +331,9 @@ type Version struct {
 }
 
 // AddedFor is what the host holds for the added tiles on a version, as the
-// tile views apply it (tileview.AddedTile), and the tiles to fill for it. A type the version's generation filled needs nothing: the
-// replay only places it. Otherwise:
+// tile views apply it (tileview.AddedTile), and the tiles to fill for it. A
+// type the version's generation filled needs nothing: the composition's own
+// tile shows. Otherwise:
 //
 //   - a fill for this version is shown as it is;
 //   - else on the latest version, the newest earlier fill is shown while its

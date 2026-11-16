@@ -549,12 +549,12 @@ func TestReviewToolsAreBoundForActions(t *testing.T) {
 		}
 	}
 	// What an action may read of its own.
-	for _, path := range []string{"/api/jobs/j-run/draft", "/api/jobs/j-run/draft?tiles=1", "/api/groups/g-web/document?version=1", "/api/groups/g-web/tiles", "/api/groups/g-web/tiles?version=1", "/api/tiles?clone=c-web&pr=13", "/api/tiles?clone=c-web&pr=13&version=2", "/api/prs/chat?clone=c-web&pr=13", "/api/versions?clone=c-web&pr=13"} {
+	for _, path := range []string{"/api/jobs/j-run/draft", "/api/jobs/j-run/draft?tiles=1", "/api/groups/g-web/document?version=1", "/api/tiles?clone=c-web&pr=13", "/api/tiles?clone=c-web&pr=13&version=2", "/api/prs/chat?clone=c-web&pr=13", "/api/versions?clone=c-web&pr=13"} {
 		if _, err := reader.Get(context.Background(), path); err != nil {
 			t.Errorf("%s: %v", path, err)
 		}
 	}
-	for _, path := range []string{"/api/groups/g-web/document?version=1&extra=1", "/api/groups/g-web/tiles?extra=1", "/api/jobs/j-run/draft?tiles=1&extra=1", "/api/tiles?clone=c-web&pr=13&extra=1"} {
+	for _, path := range []string{"/api/groups/g-web/document?version=1&extra=1", "/api/groups/g-web/tiles", "/api/jobs/j-run/draft?tiles=1&extra=1", "/api/tiles?clone=c-web&pr=13&extra=1"} {
 		if _, err := reader.Get(context.Background(), path); err == nil {
 			t.Errorf("%s: an unlisted parameter was read", path)
 		}
