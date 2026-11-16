@@ -6,6 +6,7 @@ import {
   messages,
   terminal,
   useGitHubConnection,
+  type DelayedBrowser,
   type GitHubAuthCall,
 } from "../github-auth";
 import { invoke } from "./native";
@@ -17,6 +18,11 @@ const TOKEN_DOCS_URL = "https://docs.usebaum.com/getting-started/#use-an-existin
 /** The setup screen reaches the daemon's GitHub sign-in through the app. */
 const viaApp: GitHubAuthCall = (action) =>
   invoke<GitHubConnection>("github_connection", action ? { action } : {});
+// The app opens the device page in the browser: a navigation would not.
+const browser: DelayedBrowser = {
+  delay: 5000,
+  open: () => void invoke("github_connection", { action: "open" }).catch(() => {}),
+};
 
 function GitHubLogo() {
   return (
@@ -41,7 +47,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
     action,
     signIn,
     copy,
-  } = useGitHubConnection(viaApp, undefined, 5000);
+  } = useGitHubConnection(viaApp, undefined, browser);
   // An explicit credential (environment or config) is in use and wins over a
   // saved account, so it counts as connected.
   const connected = Boolean((connection?.saved || connection?.override) && !connection.error);

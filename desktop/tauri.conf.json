@@ -19,7 +19,13 @@
         "connect-src": "ipc: http://ipc.localhost",
         "frame-ancestors": "'none'"
       },
-      "capabilities": ["connecting-screen", "setup-screen", "daemon-pages", "tray-panel"]
+      "capabilities": [
+        "connecting-screen",
+        "setup-screen",
+        "daemon-pages",
+        "tray-panel",
+        "tile-check"
+      ]
     }
   },
   "bundle": {

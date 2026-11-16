@@ -2298,10 +2298,42 @@ It accepts the file only when it is private to you and names a
 `127.0.0.1` launch URL for that daemon, and it never logs that URL.
 
 The window loads only its bundled screens and the attached daemon's
-loopback origin. Links to other web hosts open in your default browser; other
-loopback servers, other schemes and new windows are refused. The daemon's
-pages get no Tauri capability, so they cannot call the app's commands or any
-plugin. The bundled connecting screen may only read the connection state and
+loopback origin, and refuses every other navigation: other web hosts, other
+loopback servers and other schemes, and any address with a user name or
+password in it. A navigation never opens your browser or leaves the app. On
+macOS and Linux the webview asks the app about a navigation in any frame of
+the page, an embedded document or injected content included, and tells it
+only the destination; on Windows it asks only about the page's own
+navigations, and the page's policy alone governs its frames. The daemon's
+pages limit frames to their own origin, which on Linux stops a frame's
+navigation elsewhere before the app is asked, but a page without that policy
+(the development server's) or an engine that asks first would let any frame
+through; if a navigation could open the browser, such a frame could open it
+at an address carrying data it read, as often as it liked. Links to other web
+hosts open in your default browser only as requests for a new window
+(`target="_blank"` links and `window.open`); no window ever opens. A
+sandboxed frame can make such a request only when its sandbox allows pop-ups.
+On Linux the webview allows a page one only while you interact with it; on
+macOS and Windows a page's script can make one at any time, so the app opens
+the browser at most once a second and drops the rest. Setup opens GitHub's
+fixed device sign-in page itself, a few seconds after you start a sign-in.
+
+The daemon's pages can call a few of the app's commands, granted to pages of
+`http://127.0.0.1` on any port and listed in
+`desktop/capabilities/daemon-pages.json`: the
+folder picker, reading and changing the `baum` command and the user-wide agent
+hooks (as Settings does), the window's zoom, and reading, checking for,
+installing and dismissing app updates (only an update the app has already
+downloaded and verified installs), and opening and closing the tile check
+window. They can call no other command and no plugin. Only the page itself can call them: on macOS and Linux the app's
+command bridge is injected into the page's main frame only, so a frame
+embedded in it, even one served from the daemon's origin, cannot reach a
+command; on Linux this is checked with a sandboxed frame trying every way the
+bridge offers. On Windows the bridge is injected into every frame, so there
+the shell declares to the page (`window.__BAUM_DESKTOP__.tileFrames`, set
+before the page's scripts and not replaceable) that it must not embed
+frames of untrusted content from the daemon's origin; on macOS and Linux it
+declares that it may. The bundled connecting screen may only read the connection state and
 ask to reconnect. The bundled setup screen may also read what is installed and
 install or remove the `baum` command and the user-wide agent hooks; it does
 so only when you click the button for that change, and a change that would
@@ -2318,6 +2350,24 @@ is off until you turn it on; it adds one per-user entry (an XDG autostart file,
 a LaunchAgent or a Run key value) that starts the app hidden, which starts
 your daemon. Turn it off in the tray or the window's Background menu, which
 removes the entry.
+
+On Linux the daemon's page checks a custom tile in a hidden second window,
+the tile check window, which runs in a web process of its own. It starts at
+the attached daemon's check page and can load only pages of that daemon's
+origin, under the main window's navigation rules, opens no browser, and its page can call no app command. A tile that never
+yields there stalls only that window, and closing it ends its web process. On
+macOS and Windows there is no check window.
+
+A script that never yields, in the page or in a frame it embeds, freezes the
+whole window: the webview runs a page and its frames in one process, and the
+app does not detect an unresponsive page. The tray, its menu and the daemon
+keep working, and quitting the app from the tray and opening it again loads
+the page anew. Your data is not at risk, but nothing stops a page from being
+unusable until then.
+
+A navigation to an address the app's URL parser cannot read is allowed by the
+app's runtime without asking the app. Such a navigation can never open your
+browser, and the page's own policy still applies to it.
 
 On first run, and from "Command Line and Hooks…" in its menu, the app
 installs its bundled `baum` as your `baum` command, because agent hooks run

@@ -4,6 +4,8 @@ fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
         "connection",
         "reconnect",
+        "open_check_window",
+        "close_check_window",
         "setup_state",
         "install_command",
         "uninstall_command",
