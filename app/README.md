@@ -2324,8 +2324,13 @@ The session panel (`src/session-panel.tsx`) is a real Claude Code or Codex
 session the person opens from any page, drawn as a drop-down terminal over the
 page's panel: it slides in from the foot of the window (or its top, in
 Settings), as wide as the page, and is resized by dragging its grip or with
-`↑` and `↓` on it. It stays open across navigation; whether it is open, its
-height and the conversation it shows are kept in this window's storage
+`↑` and `↓` on it. Opened from the left or the right of the window instead
+(also in Settings), it is as tall as the window and sits beside the page's
+panel, which narrows to make room; its grip is its edge towards the page,
+dragged or moved with `←` and `→`, and it never leaves the page less than
+320 px. Its width is kept apart from its height. It stays open across
+navigation; whether it is open, its height, its width and the conversation it
+shows are kept in this window's storage
 (`baum.session-panel.v1`, `src/session-panel-state.ts`, which any page can
 open it through), as the sidebar's fold is. The sidebar's **Session** button
 and **Open the session panel** in Go to (⌘K) show or hide it. Its key
