@@ -1,36 +1,12 @@
-import { changeTile } from "./builtins/change";
-import { contextTile } from "./builtins/context";
-import { decisionsTile } from "./builtins/decisions";
-import { everythingElseTile } from "./builtins/everything-else";
-import { evidenceTile } from "./builtins/evidence";
 import { codeTile, diagramTile, proseTile, tableTile } from "./builtins/generic";
-import { intentTile } from "./builtins/intent";
-import { mediaTile } from "./builtins/media";
-import { overviewTile } from "./builtins/overview";
-import { risksTile } from "./builtins/risks";
 import { customTile } from "./custom/custom-tile";
-import type { Tile } from "./tile-document";
-import type { TileType } from "./types";
+import type { Tile, TileType } from "./types";
 
-/** The tile types this page draws. A type missing here (one a newer daemon
- *  knows) is drawn unavailable, never guessed at. */
+/** The tile types drawn as exhibits or in a sandboxed frame; the view's
+ *  native diagrams are the review page's own. A type missing here (one a
+ *  newer daemon knows) is drawn unavailable, never guessed at. */
 const TYPES: ReadonlyMap<string, TileType> = new Map(
-  [
-    overviewTile,
-    changeTile,
-    risksTile,
-    evidenceTile,
-    intentTile,
-    decisionsTile,
-    contextTile,
-    mediaTile,
-    everythingElseTile,
-    proseTile,
-    tableTile,
-    diagramTile,
-    codeTile,
-    customTile,
-  ].map((type) => [type.type, type]),
+  [proseTile, tableTile, diagramTile, codeTile, customTile].map((type) => [type.type, type]),
 );
 
 export function tileType(type: string): TileType | undefined {

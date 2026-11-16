@@ -1,9 +1,9 @@
 import { basename } from "node:path";
 import { expect, type Page } from "@playwright/test";
 
-// What the screenshot specs share (real-review-screens and replay-screens):
-// waiting for a steady page, finding what a picture would not show, and
-// taking a viewport and a full-page picture.
+// What the real-review screenshot spec uses: waiting for a steady page,
+// finding what a picture would not show, and taking a viewport and a
+// full-page picture.
 
 /** A problem a picture does not show clearly. `truncated` names a full-page
  *  picture that does not hold the whole page. */

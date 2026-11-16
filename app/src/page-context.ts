@@ -4,6 +4,7 @@ import type { ReviewPageChoice } from "./preferences";
 import { framesAllowedHere } from "./tiles/custom/environment";
 import { reviewPageOf } from "./tiles/view";
 import { CODE_PLACE } from "./review-view/model";
+import { readSelection } from "@baum/viewer/review-selection";
 
 /** The pages a page context names, as the MCP server knows them
  *  (`agentcontext` page names): the sidebar's lists, and the pages of one
@@ -171,27 +172,45 @@ export function pageContextOf(
   return withFilters({ page }, search);
 }
 
-/** On the tiles page, the review's focus says so, and names the tile open
- *  and the item in it; the full review, the default, adds nothing. */
+/** On the review page's tabs, the review's focus says so and names where the
+ *  person is reading, so a tile made or added from chat stands there: the
+ *  tab, and on How it works the section (`context` for Where this fits), or
+ *  the tile a link opened; on Code the file open. The full review, the
+ *  default, adds nothing. */
 function tilesFocus(search: URLSearchParams, reviewPage: ReviewPageChoice) {
   const focus: Record<string, string> = {};
   if (reviewPageOf(search, reviewPage) !== "tiles") return focus;
   focus.view = "tiles";
-  const tile = search.get("pane") === "tile" ? search.get("tile") : null;
-  // The review page's Code tab is a place of the page's own, not a tile: the
-  // focus names the tab and the file open in it.
-  if (tile === CODE_PLACE) {
-    focus.tab = "code";
-    const file = search.get("tile_item");
-    if (file && bytes(file) <= MAX_PAGE_TEXT) focus.file = file;
-    return focus;
+  const fits = (value: string | null): value is string =>
+    Boolean(value) && bytes(value!) <= MAX_PAGE_TEXT;
+  const selection = readSelection(search);
+  switch (selection.kind) {
+    case "tile":
+      // The Code tab is a place of the page's own, not a tile.
+      if (selection.id === CODE_PLACE) {
+        focus.tab = "code";
+        if (fits(selection.item ?? null)) focus.file = selection.item!;
+        return focus;
+      }
+      focus.tab = "sections";
+      if (fits(selection.id)) focus.tile = selection.id;
+      return focus;
+    case "section":
+      focus.tab = "sections";
+      if (fits(selection.id)) focus.section = selection.id;
+      return focus;
+    case "risk":
+      focus.tab = "sections";
+      if (fits(selection.section)) focus.section = selection.section;
+      if (fits(selection.id)) focus.item = selection.id;
+      return focus;
+    case "changes":
+      focus.tab = "sections";
+      return focus;
+    default:
+      focus.tab = "overview";
+      return focus;
   }
-  if (tile && bytes(tile) <= MAX_PAGE_TEXT) {
-    focus.tile = tile;
-    const item = search.get("tile_item");
-    if (item && bytes(item) <= MAX_PAGE_TEXT) focus.item = item;
-  }
-  return focus;
 }
 
 function withFilters(context: PageContext, search: URLSearchParams): PageContext {

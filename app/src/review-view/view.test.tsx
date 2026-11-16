@@ -1,9 +1,11 @@
 import { act, type ReactNode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ReviewViewer } from "@baum/viewer/components/review-viewer";
 import { type SearchUpdate, UrlStateProvider } from "@baum/viewer/navigation";
 import type { ReviewDocument } from "@baum/viewer/review-document";
+import { fixtureTile } from "../tiles/fixture-test-helper";
+import { TileHostContext, type TileHost } from "../tiles/host";
 import type { TileContext } from "../tiles/types";
 import { REVIEW_1303, review1303, VIEW_1303 } from "./fixture-1303";
 import { emptyView, type ReviewView, type ViewTile } from "./model";
@@ -377,6 +379,14 @@ describe("the native tiles", () => {
     expect(broken.textContent).toContain("This tile's content couldn't be read.");
   });
 
+  it("says a custom tile made with a newer kit is, in the page's words", async () => {
+    const container = await card(fixtureTile("routes_newer_kit") as ViewTile);
+    expect(container.textContent).toContain(
+      "This tile was made with a newer version of baum. Update baum to see it.",
+    );
+    expect(container.querySelector("iframe")).toBeNull();
+  });
+
   it("draws an exhibit as the generic tiles do", async () => {
     const container = await card({
       id: "ex_note",
@@ -387,6 +397,89 @@ describe("the native tiles", () => {
     });
     expect(container.querySelector("h3")?.textContent).toBe("Why a relay");
     expect(container.textContent).toContain("Phones can't reach a laptop behind NAT.");
+  });
+});
+
+// ---------- tiles the person added, and those being made ----------
+
+describe("a tile the person added", () => {
+  const added: ViewTile = {
+    id: "ex_added",
+    type: "prose",
+    title: "Retry notes",
+    state: "ready",
+    data: { text: "Retries double their delay.", anchors: [] },
+    added: true,
+    from: 3,
+    filling: true,
+  };
+  const hosted = (tile: ViewTile, host: TileHost) =>
+    render(
+      <Host>
+        <TileHostContext.Provider value={host}>
+          <ViewTileCard tile={tile} review={REVIEW_1303} ctx={ctx} />
+        </TileHostContext.Provider>
+      </Host>,
+    );
+  const menuItems = () =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].map(
+      (each) => each.textContent,
+    );
+
+  it("says where its data is from, and offers Remove in its menu", async () => {
+    const removeAdded = vi.fn();
+    const container = await hosted(added, { draft: false, removeAdded });
+    expect(container.querySelector("[data-added-note]")?.textContent).toBe(
+      "From version 3; filling for this version",
+    );
+    await click(
+      container.querySelector<HTMLButtonElement>('[aria-label="Actions for Retry notes"]')!,
+    );
+    expect(menuItems()).toContain("Remove");
+    const remove = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
+      (each) => each.textContent === "Remove",
+    )!;
+    await click(remove);
+    expect(removeAdded).toHaveBeenCalledWith(expect.objectContaining({ id: "ex_added" }));
+  });
+
+  it("is the only kind of tile that can be removed", async () => {
+    const removeAdded = vi.fn();
+    const container = await hosted(
+      { ...added, added: undefined, from: undefined, filling: undefined },
+      { draft: false, removeAdded, ask: vi.fn() },
+    );
+    expect(container.querySelector("[data-added-note]")).toBeNull();
+    await click(
+      container.querySelector<HTMLButtonElement>('[aria-label="Actions for Retry notes"]')!,
+    );
+    expect(menuItems()).toEqual(["Ask about this tile"]);
+  });
+
+  it("has no menu where there is nothing to do with it", async () => {
+    const container = await hosted(added, { draft: false });
+    expect(container.querySelector('[aria-label="Actions for Retry notes"]')).toBeNull();
+  });
+});
+
+describe("pending cards", () => {
+  const drafts = [
+    { tile: "draft_1", title: "Route table", phase: "writing" as const, section: "sec_allowlist" },
+    { tile: "draft_2", title: "Where it runs", phase: "checking" as const, section: "context" },
+    { tile: "draft_3", title: "Somewhere", phase: "writing" as const, section: "sec_gone" },
+  ];
+  const withDrafts = () => review1303({ ...VIEW_1303, drafts });
+  const cards = (container: HTMLElement) =>
+    [...panel(container).querySelectorAll<HTMLElement>("[data-tile-draft]")].map(
+      (each) => each.dataset.tileDraft,
+    );
+
+  it("stand on their section, and one for a section not listed on the first listed", async () => {
+    const section = await page("pane=section&section=sec_allowlist", withDrafts());
+    expect(cards(section)).toEqual(["draft_1"]);
+    act(() => root?.unmount());
+    const context = await page("pane=section&section=context", withDrafts());
+    expect(cards(context)).toEqual(["draft_2", "draft_3"]);
   });
 });
 

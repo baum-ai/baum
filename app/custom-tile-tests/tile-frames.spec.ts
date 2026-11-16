@@ -2,21 +2,16 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { detail, everyTile, frameBox, frameReady, open, SHOTS } from "./helpers";
-
-// Custom tiles now draw in the overview tabs' sections, where the daemon's
-// view places them (ENG-2056); this suite opens them through the tiles'
-// landing grid and details, which the review page no longer reaches. It
-// comes back pointed at the sections once the fixture serves the view.
-test.skip(true, "Custom tiles draw in the overview tabs' sections now.");
+import { detail, frameBox, frameReady, open, SHOTS, showOnly, tileOn } from "./helpers";
 
 // The adversarial suite: the escape probe tiles (oss/internal/tileview/
-// tileviewtest/testdata/custom/escape_probe.html) on the real tiles page,
-// their frames loaded from the daemon's frame route and hosted by the page's
-// own host component. Each mode of the probe tries a way out of its frame;
-// the page must stay as it was, no request may reach the sink the probes aim
-// at (a server of its own on another loopback port) or the daemon, and no
-// navigation may happen.
+// tileviewtest/testdata/custom/escape_probe.html) on the review page's How it
+// works section the daemon places them on, their frames loaded from the
+// daemon's frame route and hosted by the page's own host component. Each
+// mode of the probe tries a way out of its frame; the page must stay as it
+// was, no request may reach the sink the probes aim at (a server of its own
+// on another loopback port) or the daemon, and no navigation may happen. The
+// probes share a section, so each test serves only the ones it drives.
 
 const SINK_PORT = 4170;
 
@@ -146,16 +141,16 @@ test("a probing frame reaches neither the page, the daemon nor the network", asy
   });
   const popups: string[] = [];
   page.context().on("page", (popup) => popups.push(popup.url()));
+  await showOnly(page, ["escape_probe"]);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, everyTile);
+  await open(page, detail("escape_probe"));
+  await expect(tileOn(page, "escape_probe")).toBeVisible();
   const before = await pageState(page);
-  const card = page.locator('article[data-tile="escape_probe"]');
-  await card.scrollIntoViewIfNeeded();
-  const glance = await report("probe", "glance");
+  const probe = await report("probe", "detail");
   await frameReady(page, "escape_probe");
 
-  const results = glance.results;
-  expect(glance.origin).toBe("null");
+  const results = probe.results;
+  expect(probe.origin).toBe("null");
   expect(results.origin).toBe("null");
   // The frame's address is the frame route's: it never learns the namespace.
   expect(results.location).toMatch(/\/tile-frames\/[0-9a-f]{64}$/);
@@ -213,45 +208,30 @@ test("a probing frame reaches neither the page, the daemon nor the network", asy
   // The page is as it was, and has the keys: the frame took no focus.
   expect(await pageState(page)).toEqual(before);
   expect(await focusedFrame(page), "a frame that took the keyboard").toBeNull();
-
-  // The detail tries the same, with buttons a reader could focus.
-  await open(page, detail("escape_probe"));
-  const detailReport = await report("probe", "detail");
-  expect(detailReport.results.origin).toBe("null");
-  expect(detailReport.results["read API"]).toMatch(/^(failed|threw )/);
-  await frameReady(page, "escape_probe");
-  await page.waitForTimeout(1000);
-  expect(hits).toEqual([]);
-  expect(answered(requests)).toEqual([]);
-  expect(await focusedFrame(page), "a frame that took the keyboard").toBeNull();
   await expect(page).toHaveURL(/tile=escape_probe/);
 });
 
 test("spoofed messages are ignored and other tiles are not reached", async ({ page }) => {
   const report = await collectReports(page);
   const requests = frameRequests(page);
+  await showOnly(page, ["escape_spoof", "widget_health"]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ colorScheme: "light" });
-  await open(page, everyTile);
-  const before = await pageState(page);
-  await page.locator('article[data-tile="escape_spoof"]').scrollIntoViewIfNeeded();
-  const glance = await report("spoof", "glance");
-  expect(Number(glance.results.others)).toBeGreaterThan(0);
-  // The well-behaved tile beside it still draws its own data in the app's
-  // theme: another frame cannot speak for the page.
-  await page.locator('article[data-tile="widget_health"]').scrollIntoViewIfNeeded();
-  await frameReady(page, "widget_health");
-  const widget = page.frameLocator('[data-custom-tile="widget_health"] iframe');
-  await expect(widget.locator("body")).toContainText("2 stores changed");
-  await expect(widget.locator("body")).not.toContainText("No widget store changed");
-  await expect(widget.locator("html")).toHaveAttribute("data-theme", "light");
-  expect(await pageState(page)).toEqual(before);
-
-  // In its detail, jumps, asks and keys without the reader's focus go
-  // nowhere, and a resize far past the bounds is held to them.
   await open(page, detail("escape_spoof"));
+  await expect(tileOn(page, "escape_spoof")).toBeVisible();
   const url = page.url();
   const spoofed = await report("spoof", "detail");
+  expect(Number(spoofed.results.others)).toBeGreaterThan(0);
+  // The well-behaved tile on the same section still draws its own data in
+  // the app's theme: another frame cannot speak for the page.
+  await tileOn(page, "widget_health").scrollIntoViewIfNeeded();
+  await frameReady(page, "widget_health");
+  const widget = page.frameLocator('[data-custom-tile="widget_health"] iframe');
+  await expect(widget.locator("body")).toContainText("widget_tags");
+  await expect(widget.locator("body")).not.toContainText("Spoofed by another tile");
+  await expect(widget.locator("html")).toHaveAttribute("data-theme", "light");
+  // Jumps, asks and keys without the reader's focus go nowhere, and a resize
+  // far past the bounds is held to them.
   expect(spoofed.results.sent).toContain("resize past the bounds");
   expect(spoofed.results.sent).toContain("ready past the bounds");
   // Its ask, without the reader's activation, opened nothing.
@@ -266,6 +246,7 @@ test("spoofed messages are ignored and other tiles are not reached", async ({ pa
 });
 
 test("a frame that floods the page is unmounted, and only that frame", async ({ page }) => {
+  await showOnly(page, ["escape_flood", "escape_probe", "escape_spoof"]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, detail("escape_flood"));
   await expect(page.getByRole("alert")).toContainText("This tile couldn't load.", {
@@ -277,13 +258,12 @@ test("a frame that floods the page is unmounted, and only that frame", async ({ 
     await page.screenshot({ path: join(SHOTS, "flood-detail.png") });
   }
   await expect(frameBox(page, "escape_flood")).toHaveCount(0);
-  await expect(page.locator("iframe")).toHaveCount(0);
-  // Other tiles of the same type still load: nothing a frame sent marked its
-  // type as broken.
-  await open(page, everyTile);
-  await page.locator('article[data-tile="escape_probe"]').scrollIntoViewIfNeeded();
+  await expect(tileOn(page, "escape_flood").locator("iframe")).toHaveCount(0);
+  // Other tiles of the same type on the section still load: nothing a frame
+  // sent marked its type as broken.
+  await tileOn(page, "escape_probe").scrollIntoViewIfNeeded();
   await frameReady(page, "escape_probe");
-  await page.locator('article[data-tile="escape_spoof"]').scrollIntoViewIfNeeded();
+  await tileOn(page, "escape_spoof").scrollIntoViewIfNeeded();
   await frameReady(page, "escape_spoof");
 });
 
@@ -293,6 +273,7 @@ for (const where of ["daemon", "outside"] as const)
   }) => {
     const requests = frameRequests(page);
     const report = await collectReports(page);
+    await showOnly(page, [`escape_leave_${where}`]);
     await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, detail(`escape_leave_${where}`));
     const url = page.url();
@@ -323,6 +304,7 @@ test("a frame in a busy loop holds the page only while it runs", async ({ page }
   // frame on the page's thread, its busy loop freezes the page until the
   // loop ends. This tile's loop ends after 1.5 seconds.
   const report = await collectReports(page);
+  await showOnly(page, ["escape_busy"]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, detail("escape_busy"));
   await frameReady(page, "escape_busy");
@@ -348,7 +330,10 @@ test("a frame in a busy loop holds the page only while it runs", async ({ page }
   console.log(`busy loop: the page's timers were held for at most ${stall}ms`);
   // The page is intact and answers again.
   await expect(page.getByRole("heading", { name: "Escape probe: busy" })).toBeVisible();
-  await page.getByRole("button", { name: "Summary" }).first().click();
+  await page
+    .getByRole("tablist", { name: "Review" })
+    .getByRole("tab", { name: "Overview" })
+    .click();
   await expect(page).not.toHaveURL(/tile=escape_busy/);
   expect(hits).toEqual([]);
 });
@@ -361,6 +346,8 @@ test("a frame that navigates before it draws, or says hello again, is unmounted"
     ["escape_leave_early", "It didn't finish drawing in time."],
     ["escape_hello_again", "It tried to leave its frame."],
   ] as const) {
+    await page.unrouteAll({ behavior: "wait" });
+    await showOnly(page, [tile]);
     await open(page, detail(tile));
     const url = page.url();
     await expect(page.getByRole("alert")).toContainText("This tile couldn't load.", {
@@ -378,10 +365,12 @@ test("a detail that takes the keyboard while the reader types elsewhere gets no 
   // The reader writes in the session panel's composer, the pointer resting
   // over a detail that grabs the keyboard every 200ms: what they type stays
   // in the composer.
+  await showOnly(page, ["escape_focus"]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, detail("escape_focus"));
   await frameReady(page, "escape_focus");
-  await page.keyboard.press("`");
+  // Ctrl+` opens the session panel with the keys in its composer.
+  await page.keyboard.press("Control+Backquote");
   const composer = page
     .locator("section.session-panel")
     .getByRole("textbox", { name: "Message to the agent" });

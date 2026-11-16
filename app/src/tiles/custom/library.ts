@@ -1,4 +1,4 @@
-import type { Tile } from "../tile-document";
+import type { Tile } from "../types";
 
 /** Whether a custom tile is of a built-in library type: the daemon marks
  *  its served definition `builtin: true` only when the stored definition's
@@ -10,10 +10,4 @@ export function isBuiltinType(tile: Tile): boolean {
     tile.type === "custom" &&
     (tile.definition as { builtin?: unknown } | null | undefined)?.builtin === true
   );
-}
-
-/** A tile's name where the page lists it: its title, marked "Custom ·" for
- *  a custom tile that is not of a built-in type. */
-export function tileName(tile: Tile): string {
-  return tile.type === "custom" && !isBuiltinType(tile) ? `Custom · ${tile.title}` : tile.title;
 }

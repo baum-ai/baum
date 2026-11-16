@@ -3,11 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ReviewFilesContext } from "@baum/viewer/components/review-contexts";
 import type { ReviewDocument } from "@baum/viewer/review-document";
-import { golden } from "../goldens-test-helper";
+import { fixtureSource, fixtureTile } from "../fixture-test-helper";
 import { TileHostContext, type TileHost } from "../host";
 import { tileFace } from "../registry";
-import type { Tile, TileDocument } from "../tile-document";
-import type { TileContext } from "../types";
+import type { Tile, TileContext } from "../types";
 import { framesAllowedHere, NOT_IN_THIS_SHELL } from "./environment";
 import { HELLO_TIMEOUT, PROTOCOL, READY_TIMEOUT } from "./protocol";
 import { listenedFrames } from "./router";
@@ -66,33 +65,27 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const doc: TileDocument = golden("custom");
+const source = fixtureSource();
 let counter = 0;
 
-/** A fresh copy of the golden's custom tile, so no frame failure from one
+/** A fresh copy of the fixture's custom tile, so no frame failure from one
  *  test is remembered in the next. */
 function freshTile(): Tile {
-  const tile = structuredClone(doc.tiles.find((each) => each.id === "route_changes")!);
+  const tile = fixtureTile("route_changes");
   tile.id = `route_changes_${++counter}`;
   return tile;
 }
 
 function contextFor(overrides: Partial<TileContext> = {}): TileContext {
   return {
-    doc,
+    source,
     review: {} as ReviewDocument,
     open: vi.fn(),
     openChange: vi.fn(),
     openPane: vi.fn(),
-    historical: false,
-    comparing: false,
-    draft: false,
-    contextPending: false,
     patches: null,
-    activeVersions: () => undefined,
     idPrefix: "",
     labels: new Map(),
-    compare: null,
     ...overrides,
   };
 }
@@ -101,7 +94,6 @@ function mount(face: Face, tile = freshTile()) {
   const ctx = contextFor();
   const host: TileHost = {
     draft: false,
-    commentCounts: new Map(),
     ask: vi.fn(),
     reread: vi.fn(async () => undefined),
   };
@@ -489,7 +481,7 @@ describe("a custom tile's frame", () => {
     const reread = vi.fn(
       () => new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 100)),
     );
-    const host: TileHost = { draft: false, commentCounts: new Map(), reread };
+    const host: TileHost = { draft: false, reread };
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -538,14 +530,14 @@ describe("a custom tile's frame", () => {
 
 describe("custom tiles on the page", () => {
   it("are drawn by their definition, unavailable when made with a newer kit", () => {
-    const ready = doc.tiles.find((each) => each.id === "route_changes")!;
+    const ready = fixtureTile("route_changes");
     expect(tileFace(ready)).toMatchObject({ kind: "ready", type: { type: "custom" } });
-    const newer = doc.tiles.find((each) => each.id === "routes_newer_kit")!;
+    const newer = fixtureTile("routes_newer_kit");
     expect(tileFace(newer)).toMatchObject({
       kind: "unavailable",
       why: "This tile was made with a newer version of baum. Update baum to see it.",
     });
-    const unresolved = doc.tiles.find((each) => each.id === "routes_unresolved")!;
+    const unresolved = fixtureTile("routes_unresolved");
     expect(tileFace(unresolved)).toMatchObject({
       kind: "unavailable",
       why: unresolved.problems![0],
@@ -625,7 +617,7 @@ describe("the first-show preflight", () => {
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    const host: TileHost = { draft: false, commentCounts: new Map() };
+    const host: TileHost = { draft: false };
     act(() =>
       root!.render(
         <TileHostContext.Provider value={host}>
@@ -681,7 +673,7 @@ describe("the first-show preflight", () => {
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    const host: TileHost = { draft: false, commentCounts: new Map() };
+    const host: TileHost = { draft: false };
     const settle = () =>
       act(async () => {
         for (let i = 0; i < 5; i++) await Promise.resolve();

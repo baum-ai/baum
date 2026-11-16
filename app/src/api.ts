@@ -1,13 +1,6 @@
 import { formatUSD } from "@baum/viewer/components/format";
 import type { ReviewDocument } from "@baum/viewer/review-document";
-import {
-  parseTileDocument,
-  withAddedNotes,
-  withDrafts,
-  withTiles,
-  type TiledDocument,
-} from "./tiles/tile-document";
-import { parseReviewView, withReviewView } from "./review-view/model";
+import { parseReviewView, withReviewView, type ViewedDocument } from "./review-view/model";
 export type Clone = {
   id: string;
   path: string;
@@ -19,14 +12,14 @@ export type Clone = {
     /** Decision capture for this repository: false turns it off, null and
      *  true follow the global switches. Absent from an older daemon. */
     decisions?: boolean | null;
-    /** Standing preferences for the tile pages of this repository's
-     *  reviews; absent when there are none. */
+    /** The saved tile types pinned to this repository, which its reviews
+     *  always fill (Settings › Tile library sets them); absent when none
+     *  are. */
     tiles?: TileSettings | null;
   };
 };
-/** What a repository asks of its reviews' tile pages: an instruction for the
- *  composer, and tiles pinned to the front. */
-export type TileSettings = { text?: string; pins?: string[] };
+/** A repository's tile settings: the library types pinned to it. */
+export type TileSettings = { types?: string[] };
 export type Repository = {
   repository: string;
   settings: Clone["settings"];
@@ -1209,9 +1202,9 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     signal,
   ).then(validDocument);
 }
-/** A version of the review with its tile document, as the tiles page reads
- *  it: the review the page's chrome reads, carrying the tiles (or null where
- *  the daemon could not convert it). */
+/** A version of the review with its view, as the review page's tabs read
+ *  it: the review the page's chrome reads, carrying the view (or null where
+ *  the daemon gave none). */
 export function tilesRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
   return request<TilesAnswer>(
     `api/tiles?${selector(clone, pr, version)}`,
@@ -1220,34 +1213,33 @@ export function tilesRequest(clone: string, pr: number, version?: number, signal
     signal,
   ).then(tiledDocument);
 }
-export function groupTilesRequest(id: string, version?: number, signal?: AbortSignal) {
-  return request<TilesAnswer>(
-    `api/groups/${encodeURIComponent(id)}/tiles${version ? `?version=${version}` : ""}`,
-    undefined,
-    "GET",
-    signal,
-  ).then(tiledDocument);
-}
-/** The daemon's answer for a review's tiles: `tiles` is null, with a
- *  `problem`, when the review could not be converted. */
+/** The daemon's answer for a review's tiles: the review, its view, and the
+ *  pending cards of tiles being made in the session panel (latest version
+ *  only). */
 export type TilesAnswer = {
   document: ReviewDocument;
-  tiles: unknown;
-  problem?: string;
-  added?: unknown;
-  drafts?: unknown;
   /** The review page's view (`baum.view/1`); absent from an older daemon. */
   view?: unknown;
+  problem?: string;
+  drafts?: unknown;
 };
-export function tiledDocument(body: TilesAnswer): TiledDocument {
-  const tiles = body.tiles === null ? null : parseTileDocument(body.tiles);
-  return withReviewView(
-    withTiles(
-      validDocument(body.document),
-      tiles && withDrafts(withAddedNotes(tiles, body.added), body.drafts),
-    ),
-    parseReviewView(body.view),
-  );
+export function tiledDocument(body: TilesAnswer): ViewedDocument {
+  return withReviewView(validDocument(body.document), parseReviewView(body.view, body.drafts));
+}
+/** Removes a tile the person added from every version of a pull request, or
+ *  puts it back where it was. */
+export function addedTileRequest(
+  clone: string,
+  pr: number,
+  tile: string,
+  action: "remove" | "restore",
+) {
+  return request<{ tile: string; action: string }>("api/tiles/added", {
+    clone,
+    pr,
+    tile,
+    action,
+  });
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(

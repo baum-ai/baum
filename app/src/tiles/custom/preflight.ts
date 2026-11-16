@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { appURL } from "../../api";
-import type { Tile, TileSize } from "../tile-document";
-import type { TileContext } from "../types";
+import type { Tile, TileContext, TileSize } from "../types";
 import { preflightHere } from "./check-host";
 import { isBuiltinType } from "./library";
 import { resolveRefs } from "./refs";
@@ -46,8 +45,8 @@ function ask(
       data: tile.data,
       size,
       refs: {
-        glance: resolveRefs(tile.data, ctx.doc, "glance", labels).refs,
-        detail: resolveRefs(tile.data, ctx.doc, "detail", labels).refs,
+        glance: resolveRefs(tile.data, ctx.source, "glance", labels).refs,
+        detail: resolveRefs(tile.data, ctx.source, "detail", labels).refs,
       },
     });
     answer = line

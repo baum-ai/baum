@@ -51,7 +51,7 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
   ).json();
   const clone = clones.find((candidate) => candidate.repository === "acme/demo")!;
   const tiled = await (await page.request.get(`${base}api/tiles?clone=${clone.id}&pr=7`)).json();
-  const widget = tiled.tiles.tiles.find((tile: { id: string }) => tile.id === "widget_health");
+  const widget = tiled.view.tiles.find((tile: { id: string }) => tile.id === "widget_health");
   const framePath = `/tile-frames/${widget.definition.digest.slice("sha256:".length)}`;
   const frameResponse = page.waitForResponse(
     (response) => new URL(response.url()).pathname === framePath,

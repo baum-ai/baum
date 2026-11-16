@@ -6,9 +6,7 @@ import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import type { IndexedHunk } from "@baum/viewer/review-document";
 import { useTileHost } from "../host";
 import { Quiet } from "../parts";
-import { itemTarget } from "../place";
-import type { Tile, TileSize } from "../tile-document";
-import type { TileContext } from "../types";
+import type { Tile, TileContext, TileSize } from "../types";
 import { GridIcon } from "../icons";
 import { framesAllowedHere, NOT_IN_THIS_SHELL, useAppTheme, useFrameSlot } from "./environment";
 import {
@@ -89,11 +87,17 @@ export function definitionKit(definition: unknown): number | null {
   return typeof kit === "number" && Number.isInteger(kit) && kit >= 1 ? kit : null;
 }
 
-/** The layout size the tile is placed at; a detail is drawn full. */
-function sizeOf(ctx: TileContext, tile: Tile, face: Face): TileSize {
+/** The size the tile is drawn at: the review page gives a tile the width of
+ *  its section, so a detail is full, as is a glance of a type that declares
+ *  it; else the largest size the type declares. */
+function sizeOf(tile: Tile, face: Face): TileSize {
   if (face === "detail") return "full";
-  return ctx.doc.layout.entries.find((entry) => entry.tile === tile.id)?.size ?? "full";
+  const sizes = (tile.definition as { sizes?: unknown } | null | undefined)?.sizes;
+  const declared: unknown[] = Array.isArray(sizes) ? sizes : [];
+  return SIZES_LARGEST_FIRST.find((size) => declared.includes(size)) ?? "full";
 }
+
+const SIZES_LARGEST_FIRST: TileSize[] = ["full", "half", "third"];
 
 /** The glance box's reserved height by size: the frame fills the room its
  *  card's row leaves, and never less, so nothing moves as it loads. */
@@ -121,14 +125,14 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   const host = useTileHost();
   const files = useReviewFiles();
   const theme = useAppTheme();
-  const size = sizeOf(ctx, tile, face);
+  const size = sizeOf(tile, face);
   const patches = useCitedPatches(tile, ctx, face);
   const resolved = useMemo(
-    () => resolveRefs(tile.data, patches.doc, face, ctx.labels),
-    [tile.data, patches.doc, face, ctx.labels],
+    () => resolveRefs(tile.data, patches.source, face, ctx.labels),
+    [tile.data, patches.source, face, ctx.labels],
   );
-  // The glance's placed size: what the preflight draws it at.
-  const preflight = usePreflight(tile, ctx, sizeOf(ctx, tile, "glance"), digest);
+  // The glance's size: what the preflight draws it at.
+  const preflight = usePreflight(tile, ctx, sizeOf(tile, "glance"), digest);
 
   const go = (target: CitationTarget) => {
     switch (target.kind) {
@@ -143,10 +147,8 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
       case "change":
         ctx.openChange(target.id);
         return;
-      case "item": {
-        const place = itemTarget(ctx.doc, target.change, target.id);
-        if (place) ctx.open(place.tile.id, place.item);
-      }
+      case "item":
+        ctx.openChange(target.change, target.id);
     }
   };
 
@@ -432,15 +434,15 @@ function useCitedPatches(tile: Tile, ctx: TileContext, face: Face) {
   const wanted = useMemo(() => {
     if (face !== "detail" || !ctx.patches) return [];
     const ids = new Set(citedHunks(tile.data).map((anchor) => (anchor as { id: string }).id));
-    return ctx.doc.index.hunks
+    return ctx.source.index.hunks
       .filter((hunk) => ids.has(hunk.id) && !hunk.diff)
       .slice(0, MAX_EXCERPTS);
-  }, [face, ctx.patches, ctx.doc, tile.data]);
+  }, [face, ctx.patches, ctx.source, tile.data]);
   // Started as the frame mounts, well before its hello.
   useEffect(() => {
     if (wanted.length === 0) return;
     const source = ctx.patches!;
-    const version = ctx.doc.review.version;
+    const version = ctx.source.version;
     const data = tile.data;
     let live = true;
     const loading = Promise.all(
@@ -461,21 +463,21 @@ function useCitedPatches(tile: Tile, ctx: TileContext, face: Face) {
     return () => {
       live = false;
     };
-  }, [wanted, tile.data, ctx.patches, ctx.doc.review.version]);
-  const doc = useMemo(() => {
-    if (!loaded || loaded.diffs.size === 0) return ctx.doc;
+  }, [wanted, tile.data, ctx.patches, ctx.source.version]);
+  const source = useMemo(() => {
+    if (!loaded || loaded.diffs.size === 0) return ctx.source;
     return {
-      ...ctx.doc,
+      ...ctx.source,
       index: {
-        ...ctx.doc.index,
-        hunks: ctx.doc.index.hunks.map((hunk) => {
+        ...ctx.source.index,
+        hunks: ctx.source.index.hunks.map((hunk) => {
           const diff = loaded.diffs.get(hunk.id);
           return diff && !hunk.diff ? { ...hunk, diff } : hunk;
         }),
       },
     };
-  }, [ctx.doc, loaded]);
-  return { doc, pending: () => pending.current };
+  }, [ctx.source, loaded]);
+  return { source, pending: () => pending.current };
 }
 
 type FrameViewProps = {

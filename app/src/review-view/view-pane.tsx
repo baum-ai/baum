@@ -4,9 +4,7 @@ import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { tabPanelProps } from "@baum/viewer/components/tabs";
 import { SegmentedControl } from "@baum/viewer/components/ui";
 import { reviewRefs, type ReviewDocument } from "@baum/viewer/review-document";
-import { useTileHost } from "../tiles/host";
-import { tileDocOf, type TileDocument } from "../tiles/tile-document";
-import type { TileContext } from "../tiles/types";
+import { tileSourceOf, type TileContext } from "../tiles/types";
 import { CodeTab } from "./code-tab";
 import {
   defaultSection,
@@ -141,30 +139,6 @@ export function ViewPane({
   );
 }
 
-/** A tile document for a review served without one, so the tiles drawn in
- *  frames (which read the review's index through it) still can be. */
-function bareTileDocument(review: ReviewDocument): TileDocument {
-  return {
-    schema: "baum.tiles/1",
-    origin: { kind: "converted" },
-    review: review.review,
-    facts: {
-      title: review.summary.title,
-      author: review.summary.author,
-      authorship: review.summary.authorship,
-    },
-    stats: review.stats,
-    index: review.index,
-    agent_reviews: review.agent_reviews,
-    unassigned_hunks: review.unassigned_hunks,
-    changes: [],
-    risks: [],
-    evidence: [],
-    tiles: [],
-    layout: { entries: [], groups: [], landing: 0 },
-  };
-}
-
 /** What the exhibits and the library and chat-made tiles read, as the tiles
  *  page gave them: a tile they cite opens where the page places it. */
 function useViewTileContext(
@@ -173,7 +147,6 @@ function useViewTileContext(
   historical: boolean,
   place: ReviewPlaceContext,
 ): TileContext {
-  const host = useTileHost();
   const labels = useMemo(() => {
     const words = new Map<string, string>();
     for (const [key, ref] of reviewRefs(snapshot)) {
@@ -185,30 +158,26 @@ function useViewTileContext(
       words.set(hunk.id, hunk.path.slice(hunk.path.lastIndexOf("/") + 1));
     return words;
   }, [snapshot]);
-  return useMemo(() => {
-    const doc = tileDocOf(snapshot) ?? bareTileDocument(snapshot);
-    const openSection = (section: string) => place.select({ kind: "section", id: section });
-    return {
-      doc,
-      review: snapshot,
-      open: (tile) => {
-        const section = sectionOfTile(view, tile);
-        if (section) openSection(section);
-        else place.select({ kind: "summary" });
-      },
-      openChange: (change) => openSection(change),
-      openPane: (pane) => place.select({ kind: pane }),
-      historical,
-      comparing: place.comparing,
-      draft: host.draft && !historical,
-      contextPending: place.contextPending && !historical,
-      onRetryDetails: historical ? undefined : place.onRetryDetails,
-      loadVersion: place.loadVersion,
-      patches: place.hunkPatches,
-      activeVersions: (change) => place.sectionHistory?.active.get(change),
-      idPrefix: historical ? `history-v${snapshot.review.version}-` : "",
-      labels,
-      compare: null,
-    } satisfies TileContext;
-  }, [snapshot, view, historical, place, host, labels]);
+  return useMemo(
+    () =>
+      ({
+        source: tileSourceOf(snapshot, view.tiles),
+        review: snapshot,
+        open: (tile) =>
+          place.select(
+            sectionOfTile(view, tile) ? { kind: "tile", id: tile } : { kind: "summary" },
+          ),
+        openChange: (change, item) =>
+          place.select(
+            item && snapshot.sections.some((s) => s.risks.some((risk) => risk.id === item))
+              ? { kind: "risk", section: change, id: item }
+              : { kind: "section", id: change },
+          ),
+        openPane: (pane) => place.select({ kind: pane }),
+        patches: place.hunkPatches,
+        idPrefix: historical ? `history-v${snapshot.review.version}-` : "",
+        labels,
+      }) satisfies TileContext,
+    [snapshot, view, historical, place, labels],
+  );
 }

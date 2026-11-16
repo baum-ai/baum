@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import citationKeys from "../../../../tiles/testdata/citation-keys.json" with { type: "json" };
 import citationShapes from "../../../../tiles/testdata/citations.json" with { type: "json" };
-import { golden } from "../goldens-test-helper";
+import { fixtureSource, fixtureTile } from "../fixture-test-helper";
 import { citedHunks, findCitations, isCitation, keyOf, MAX_CITATIONS, resolveRefs } from "./refs";
 
 describe("citation keys", () => {
@@ -34,8 +34,8 @@ describe("citation shapes", () => {
 });
 
 describe("resolveRefs", () => {
-  const doc = golden("custom");
-  const tile = doc.tiles.find((each) => each.id === "route_changes")!;
+  const doc = fixtureSource();
+  const tile = fixtureTile("route_changes");
   const labels = new Map([["rsk_retry_storm", "Retries can pile up"]]);
 
   it("resolves what the tile cites, and only that", () => {
@@ -138,7 +138,7 @@ describe("resolveRefs", () => {
 
 describe("citedHunks", () => {
   it("places a comment on the hunks the data cites, in data order", () => {
-    const tile = golden("custom").tiles.find((each) => each.id === "route_changes")!;
+    const tile = fixtureTile("route_changes");
     expect(citedHunks(tile.data)).toEqual([
       { type: "hunk", id: "h_000000000003", lines: [21, 25] },
       { type: "hunk", id: "h_000000000001" },

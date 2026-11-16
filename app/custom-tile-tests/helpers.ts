@@ -4,8 +4,9 @@ import { launchURL } from "../e2e/inbox-helpers";
 /** Where pictures go, when they are asked for: CUSTOM_TILE_SHOTS=1. */
 export const SHOTS = process.env.CUSTOM_TILE_SHOTS ? "test-results/custom-tiles" : "";
 
-/** The tiles page of acme/demo#7, which the fixture serves with the synthetic
- *  custom tiles when started with BAUM_APP_CUSTOM_TILES=1. */
+/** The review page's tabs of acme/demo#7, which the fixture serves with the
+ *  synthetic custom tiles when started with BAUM_APP_CUSTOM_TILES=1. The
+ *  daemon places each on the How it works section whose hunks it cites. */
 export const PR7 = "repository=acme%2Fdemo&pr=7&view=tiles";
 
 /** Opens the app's address with `search`, signed in. */
@@ -17,11 +18,47 @@ export async function open(page: Page, search: string) {
   await page.goto(`${new URL(page.url()).pathname}?${search}`);
 }
 
-/** A tile's detail on the tiles page. */
+/** A tile's place on the review page: How it works, on the section the
+ *  view places it on, scrolled to the tile. */
 export const detail = (tile: string) => `${PR7}&pane=tile&tile=${tile}`;
 
-/** The landing page with every tile shown, custom tiles included. */
-export const everyTile = `${PR7}&more=1`;
+/** A tile on the review page, under its title. */
+export const tileOn = (page: Page, tile: string) =>
+  page.locator(`[role="figure"][data-tile="${tile}"]`);
+
+/** The fixture's synthetic custom tiles, which all cite the review's first
+ *  hunk and so stand on one section together. */
+const SYNTHETIC = /^(widget_health|newer_kit|escape_\w+)$/;
+
+/** A tile of the served view, as these suites change it. */
+export type ServedTile = { id: string; state: string; data: unknown };
+
+/** Serves acme/demo#7's tiles with only `keep` of the synthetic custom tiles
+ *  in the view, so a hostile probe's frame never runs beside another's on
+ *  the section they share; `change` may then edit each tile kept. */
+export async function showOnly(
+  page: Page,
+  keep: string[],
+  change: (tile: ServedTile) => void = () => {},
+) {
+  const kept = (id: string) => !SYNTHETIC.test(id) || keep.includes(id);
+  await page.route(
+    (url) => url.pathname.endsWith("/api/tiles"),
+    async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      const view = body.view as
+        | { tiles: ServedTile[]; sections: { id: string; tiles: string[] }[] }
+        | undefined;
+      if (view) {
+        view.tiles = view.tiles.filter((tile) => kept(tile.id));
+        for (const section of view.sections) section.tiles = section.tiles.filter(kept);
+        for (const tile of view.tiles) change(tile);
+      }
+      await route.fulfill({ response, json: body });
+    },
+  );
+}
 
 /** A custom tile's frame box, as the page draws it. */
 export const frameBox = (page: Page, tile: string) => page.locator(`[data-custom-tile="${tile}"]`);
@@ -89,27 +126,5 @@ export async function servePatch(page: Page) {
   await page.route(
     (url) => url.pathname.endsWith("/api/patch") && url.searchParams.get("path") === "CHANGELOG.md",
     (route) => route.fulfill({ json: { patch } }),
-  );
-}
-
-/** Serves acme/demo#7's tiles with widget_health placed as a composition
- *  might place it: on the landing area, second, at `size`. */
-export async function placeWidget(page: Page, size: "half" | "third") {
-  await page.route(
-    (url) => url.pathname.endsWith("/api/tiles"),
-    async (route) => {
-      const response = await route.fetch();
-      const body = await response.json();
-      const layout = body.tiles?.layout;
-      if (layout) {
-        const at = layout.entries.findIndex(
-          (entry: { tile: string }) => entry.tile === "widget_health",
-        );
-        const [entry] = layout.entries.splice(at, 1);
-        layout.entries.splice(1, 0, { ...entry, size });
-        if (at >= layout.landing) layout.landing += 1;
-      }
-      await route.fulfill({ response, json: body });
-    },
   );
 }

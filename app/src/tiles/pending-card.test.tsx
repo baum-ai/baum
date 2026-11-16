@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { draftLine, parseDrafts, placeDrafts, type DraftCard } from "./drafts";
+import { draftLine, draftsOn, parseDrafts, type DraftCard } from "./drafts";
 import { PendingCard } from "./pending-card";
 
 declare global {
@@ -39,54 +39,38 @@ describe("the tile route's pending cards", () => {
   it("keeps the well-formed ones", () => {
     expect(
       parseDrafts([
-        {
-          tile: "draft_1",
-          title: "Env",
-          phase: "checking",
-          round: 2,
-          size: "half",
-          to: { after: "overview" },
-        },
+        { tile: "draft_1", title: "Env", phase: "checking", round: 2, section: "sec_retry" },
         { tile: "draft_2", title: "Bad", phase: "weather" },
         "nonsense",
-        {
-          tile: "draft_3",
-          title: "Edge",
-          phase: "unfinished",
-          size: "huge",
-          to: { edge: "first" },
-        },
+        { tile: "draft_3", title: "Edge", phase: "unfinished", section: 7, size: "half" },
       ]),
     ).toEqual([
-      {
-        tile: "draft_1",
-        title: "Env",
-        phase: "checking",
-        round: 2,
-        size: "half",
-        to: { after: "overview" },
-      },
-      { tile: "draft_3", title: "Edge", phase: "unfinished", to: { edge: "first" } },
+      { tile: "draft_1", title: "Env", phase: "checking", round: 2, section: "sec_retry" },
+      { tile: "draft_3", title: "Edge", phase: "unfinished" },
     ]);
     expect(parseDrafts(undefined)).toEqual([]);
   });
 
-  it("places each card next to its tile, or at an edge of the grid", () => {
-    const shown = new Set(["overview", "risks"]);
-    const placed = placeDrafts(
-      [
-        card({ tile: "draft_1", to: { after: "overview" } }),
-        card({ tile: "draft_2", to: { before: "risks" } }),
-        card({ tile: "draft_3", to: { edge: "first" } }),
-        card({ tile: "draft_4", to: { after: "gone" } }),
-        card({ tile: "draft_5" }),
-      ],
-      shown,
-    );
-    expect(placed.after.get("overview")?.map((d) => d.tile)).toEqual(["draft_1"]);
-    expect(placed.before.get("risks")?.map((d) => d.tile)).toEqual(["draft_2"]);
-    expect(placed.first.map((d) => d.tile)).toEqual(["draft_3"]);
-    expect(placed.last.map((d) => d.tile)).toEqual(["draft_4", "draft_5"]);
+  it("stands each card on its section, or on the first listed one", () => {
+    const drafts = [
+      card({ tile: "draft_1", section: "sec_b" }),
+      card({ tile: "draft_2", section: "context" }),
+      card({ tile: "draft_3", section: "sec_gone" }),
+      card({ tile: "draft_4" }),
+    ];
+    const listed = ["context", "sec_a", "sec_b"];
+    const on = (section: string) => draftsOn(drafts, section, listed).map((d) => d.tile);
+    expect(on("context")).toEqual(["draft_2", "draft_3", "draft_4"]);
+    expect(on("sec_a")).toEqual([]);
+    expect(on("sec_b")).toEqual(["draft_1"]);
+    // Without Where this fits listed, every card for a section not listed
+    // stands on the first section.
+    expect(draftsOn(drafts, "sec_a", ["sec_a"]).map((d) => d.tile)).toEqual([
+      "draft_1",
+      "draft_2",
+      "draft_3",
+      "draft_4",
+    ]);
   });
 });
 
@@ -106,10 +90,10 @@ describe("PendingCard", () => {
     return host.querySelector("article")!;
   };
 
-  it("goes from being written through its check rounds, labelled as a custom tile", () => {
+  it("goes from being written through its check rounds, under the tile's title", () => {
     let article = render(card());
     expect(article.dataset.draftPhase).toBe("writing");
-    expect(article.textContent).toContain("Custom · New environment variables");
+    expect(article.querySelector("h3")?.textContent).toBe("New environment variables");
     expect(article.querySelector("[data-draft-line]")?.textContent).toBe(
       "Being made in the session panel · Writing the component",
     );

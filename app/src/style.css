@@ -3682,9 +3682,9 @@ a.local-session-pr:hover {
   .list-row:hover .row-menu-button,
   .list-row:focus-within .row-menu-button,
   .list-row[data-focused] .row-menu-button,
-  .tile-card:hover .row-menu-button,
-  .tile-card:focus-within .row-menu-button,
-  .tile-card[data-review-block-active] .row-menu-button,
+  .view-tile:hover .row-menu-button,
+  .view-tile:focus-within .row-menu-button,
+  .view-tile[data-review-block-active] .row-menu-button,
   .row-menu-button[aria-expanded="true"],
   .row-menu-button:focus-visible {
     opacity: 1;
@@ -7818,27 +7818,6 @@ dialog.review-dialog {
   outline: none;
 }
 
-/* A card the latest change to the person's layout named (tiles/your-layout.ts)
-   is outlined, then the outline fades; with reduced motion it stays a moment
-   and goes without fading. */
-.tile-card[data-layout-mark] {
-  animation: tile-layout-mark 2.4s ease-out forwards;
-}
-@keyframes tile-layout-mark {
-  0%,
-  45% {
-    box-shadow: 0 0 0 2px var(--border-focus);
-  }
-  100% {
-    box-shadow: 0 0 0 2px transparent;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .tile-card[data-layout-mark] {
-    animation: none;
-    box-shadow: 0 0 0 2px var(--border-focus);
-  }
-}
 /* The import dialog scrolls as one; its detail preview keeps to a box of
    its own, and Import stays in reach at the foot. */
 dialog.tile-import-dialog > * + * {

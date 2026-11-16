@@ -121,7 +121,7 @@ import {
 } from "./session-panel";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
-import { publishLayoutEvent, publishLayoutResync } from "./tiles/your-layout";
+import { publishAddedTilesEvent, publishAddedTilesResync } from "./tiles/added-events";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import {
   Notice,
@@ -699,13 +699,14 @@ function Workspace({ url }: { url: UrlState }) {
     // Like the other reads, not while the window is hidden.
     const resyncConsole = () => gate.run("console", publishConsoleResync);
     source.addEventListener("reset", resyncConsole);
-    // The open review page reads its tiles again when the person's layout
-    // of them changed, from the session panel or another window.
-    source.addEventListener("layout", (event) =>
-      publishLayoutEvent(String((event as MessageEvent).data)),
+    // The open review page reads its tiles again when the tiles the person
+    // added, or those being made, changed, from the session panel or another
+    // window.
+    source.addEventListener("added_tiles", (event) =>
+      publishAddedTilesEvent(String((event as MessageEvent).data)),
     );
-    const resyncLayout = () => gate.run("layout", publishLayoutResync);
-    source.addEventListener("reset", resyncLayout);
+    const resyncAddedTiles = () => gate.run("added_tiles", publishAddedTilesResync);
+    source.addEventListener("reset", resyncAddedTiles);
     // Each kind of event reads what it can change, and what it may change
     // where that is unclear.
     source.addEventListener("index", () => markStale(indexParts));
@@ -742,7 +743,7 @@ function Workspace({ url }: { url: UrlState }) {
         refreshLive();
         refreshTimeline();
         resyncConsole();
-        resyncLayout();
+        resyncAddedTiles();
       }
       connected = true;
     });

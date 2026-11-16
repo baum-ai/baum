@@ -28,8 +28,18 @@ import {
   type Risk,
   type Section,
 } from "@baum/viewer/review-document";
+import { draftsOn, type DraftCard } from "../tiles/drafts";
+import { useTileHost } from "../tiles/host";
+import { PendingCard } from "../tiles/pending-card";
 import type { TileContext } from "../tiles/types";
-import { behaviourSteps, CONTEXT_ID, tilesOn, type ListedSection, type ReviewView } from "./model";
+import {
+  behaviourSteps,
+  CONTEXT_ID,
+  tilesOn,
+  type ListedSection,
+  type ReviewView,
+  type ViewTile,
+} from "./model";
 import { NavRow } from "./nav-row";
 import { ViewTileCard } from "./view-tile";
 
@@ -58,6 +68,15 @@ export function SectionsTab({
   historical: boolean;
 }) {
   const shown = document.sections.find((each) => each.id === section);
+  // The tiles being made in the session panel stand on their sections, on
+  // the latest version only.
+  const drafts = historical
+    ? []
+    : draftsOn(
+        view.drafts ?? [],
+        section,
+        list.map((entry) => entry.id),
+      );
   const root = useRef<HTMLElement>(null);
   useItemJump(
     root,
@@ -90,6 +109,7 @@ export function SectionsTab({
             view={view}
             ctx={ctx}
             idPrefix={idPrefix}
+            drafts={drafts}
             pending={context.contextPending && !historical}
           />
         ) : shown ? (
@@ -100,6 +120,7 @@ export function SectionsTab({
             section={shown}
             ctx={ctx}
             idPrefix={idPrefix}
+            drafts={drafts}
             onRetryDetails={historical ? undefined : context.onRetryDetails}
           />
         ) : (
@@ -118,6 +139,7 @@ function SectionBody({
   section,
   ctx,
   idPrefix,
+  drafts,
   onRetryDetails,
 }: {
   document: ReviewDocument;
@@ -125,6 +147,7 @@ function SectionBody({
   section: Section;
   ctx: TileContext;
   idPrefix: string;
+  drafts: DraftCard[];
   onRetryDetails?: (id: string) => void | Promise<unknown>;
 }) {
   const details = sectionDetails(section);
@@ -168,19 +191,13 @@ function SectionBody({
           <AnchorChips document={document} anchors={withoutHunks(section.summary.anchors)} />
         </div>
       ) : null}
-      {tiles.length > 0 ? (
-        <div className="space-y-4">
-          {tiles.map((tile) => (
-            <ViewTileCard
-              key={tile.id}
-              tile={tile}
-              review={document}
-              ctx={ctx}
-              idPrefix={idPrefix}
-            />
-          ))}
-        </div>
-      ) : null}
+      <SectionTiles
+        tiles={tiles}
+        drafts={drafts}
+        document={document}
+        ctx={ctx}
+        idPrefix={idPrefix}
+      />
       {steps.length > 0 ? (
         <Part label="What it does">
           <ol className="space-y-2">
@@ -237,6 +254,35 @@ function SectionBody({
   );
 }
 
+/** The tiles placed on a section, and the pending cards of those being made
+ *  for it in the session panel. */
+function SectionTiles({
+  tiles,
+  drafts,
+  document,
+  ctx,
+  idPrefix,
+}: {
+  tiles: ViewTile[];
+  drafts: DraftCard[];
+  document: ReviewDocument;
+  ctx: TileContext;
+  idPrefix: string;
+}) {
+  const host = useTileHost();
+  if (tiles.length === 0 && drafts.length === 0) return null;
+  return (
+    <div className="space-y-4">
+      {tiles.map((tile) => (
+        <ViewTileCard key={tile.id} tile={tile} review={document} ctx={ctx} idPrefix={idPrefix} />
+      ))}
+      {drafts.map((draft) => (
+        <PendingCard key={draft.tile} draft={draft} remove={host.removeDraft} />
+      ))}
+    </div>
+  );
+}
+
 function RiskItem({ risk, document, id }: { risk: Risk; document: ReviewDocument; id: string }) {
   return (
     <Item id={id} className="space-y-1.5">
@@ -283,12 +329,14 @@ function WhereThisFits({
   view,
   ctx,
   idPrefix,
+  drafts,
   pending,
 }: {
   document: ReviewDocument;
   view: ReviewView;
   ctx: TileContext;
   idPrefix: string;
+  drafts: DraftCard[];
   pending: boolean;
 }) {
   const context = document.summary.context;
@@ -327,20 +375,14 @@ function WhereThisFits({
             ];
           })
         : null}
-      {tiles.length > 0 ? (
-        <div className="space-y-4">
-          {tiles.map((tile) => (
-            <ViewTileCard
-              key={tile.id}
-              tile={tile}
-              review={document}
-              ctx={ctx}
-              idPrefix={idPrefix}
-            />
-          ))}
-        </div>
-      ) : null}
-      {!context && !pending && tiles.length === 0 ? (
+      <SectionTiles
+        tiles={tiles}
+        drafts={drafts}
+        document={document}
+        ctx={ctx}
+        idPrefix={idPrefix}
+      />
+      {!context && !pending && tiles.length === 0 && drafts.length === 0 ? (
         <p className="text-base text-secondary">This review doesn't say where the change sits.</p>
       ) : null}
     </div>

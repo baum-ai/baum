@@ -1,85 +1,97 @@
-import type { ComponentType, ReactElement, ReactNode } from "react";
-import type { IconProps } from "@baum/viewer/components/icons";
+import type { ComponentType } from "react";
 import type { HunkPatchSource } from "@baum/viewer/components/hunk-evidence";
-import type {
-  Anchor,
-  LoadReviewVersion,
-  ReviewDocument,
-  Section,
-} from "@baum/viewer/review-document";
-import type { Tile, TileDocument } from "./tile-document";
+import type { Anchor, Evidence, ReviewDocument, Risk, Section } from "@baum/viewer/review-document";
 
-/** What a tile's faces are given besides the tile: the snapshot they draw
- *  (its tile document and the `baum.review/1` view the viewer's parts read),
- *  and the ways out of the tile. */
+export type TileState = "ready" | "pending" | "failed" | "unavailable";
+/** The sizes a tile type declares (`definition.sizes`), which its frame is
+ *  told; on the review page a tile is drawn full width. */
+export type TileSize = "full" | "half" | "third";
+
+/** A tile as the review page's view serves it (`baum.view/1`): an exhibit
+ *  (code, prose, table, diagram) or a library or chat-made tile drawn in its
+ *  sandboxed frame (`custom`, with its `definition`). */
+export type Tile = {
+  id: string;
+  type: string;
+  title: string;
+  headline?: string;
+  data: unknown;
+  covers?: string[];
+  state: TileState;
+  problems?: string[];
+  definition?: unknown;
+};
+
+/** What a tile's citations resolve against: the shown version's index, its
+ *  sections (`changes`), their risks and evidence each with the section it
+ *  is in, and the tiles on the page. Built from the review and its view by
+ *  `tileSourceOf`. */
+export type TileSource = {
+  version: number;
+  index: ReviewDocument["index"];
+  changes: Pick<Section, "id" | "title" | "kind">[];
+  risks: (Risk & { change: string })[];
+  evidence: (Evidence & { change: string })[];
+  tiles: { id: string; title: string }[];
+};
+
+/** The citation source of a review with the tiles its page shows. */
+export function tileSourceOf(
+  review: ReviewDocument,
+  tiles: readonly { id: string; title: string }[] = [],
+): TileSource {
+  return {
+    version: review.review.version,
+    index: review.index,
+    changes: review.sections.map(({ id, title, kind }) => ({ id, title, kind })),
+    risks: review.sections.flatMap((section) =>
+      (section.risks ?? []).map((risk) => ({ ...risk, change: section.id })),
+    ),
+    evidence: review.sections.flatMap((section) =>
+      (section.evidence ?? []).map((item) => ({ ...item, change: section.id })),
+    ),
+    tiles: tiles.map(({ id, title }) => ({ id, title })),
+  };
+}
+
+/** What a tile's face is given besides the tile: what its citations resolve
+ *  against, the review the viewer's parts read, and the ways out of the
+ *  tile. */
 export type TileContext = {
-  doc: TileDocument;
+  source: TileSource;
   review: ReviewDocument;
-  /** Opens a tile's detail, at an item of it. */
-  open: (tile: string, item?: string) => void;
-  /** Opens the tile that holds a change, at one of its items. */
+  /** Shows a tile where the page places it. */
+  open: (tile: string) => void;
+  /** Shows a section, at one of its items. */
   openChange: (change: string, item?: string) => void;
   /** Opens one of the workspace's own panes. */
   openPane: (pane: "decisions" | "files") => void;
-  /** An earlier version is drawn, alone or compared. */
-  historical: boolean;
-  comparing: boolean;
-  /** The current document is a draft still being written. */
-  draft: boolean;
-  /** A draft whose context is still being written. */
-  contextPending: boolean;
-  /** Asks the host to write a change's details again; current version only. */
-  onRetryDetails?: (change: string) => void | Promise<unknown>;
-  loadVersion?: LoadReviewVersion;
   /** Reads the patch of cited code the document omitted; null while two
    *  versions are compared. */
   patches: HunkPatchSource | null;
-  /** The versions in which a change had hunks, once known. */
-  activeVersions: (change: string) => readonly number[] | undefined;
-  /** Prefixes the item IDs of an earlier version's pane, so both compared
-   *  columns keep their own targets. */
+  /** Prefixes the IDs of an earlier version's tiles, so both compared
+   *  columns keep their own. */
   idPrefix: string;
-  /** The host's labels for a change, such as the stack members it covers. */
-  renderLabels?: (section: Section) => ReactNode;
-  /** What each ID prose may name stands for, as plain words: a glance shows
-   *  "the retry loop" where the text says `rsk_retry_storm`. */
+  /** What each ID prose may name stands for, as plain words. */
   labels: ReadonlyMap<string, string>;
-  /** The tile IDs and change IDs new or changed since the compared version. */
-  compare: { added: ReadonlySet<string>; changed: ReadonlySet<string> } | null;
 };
 
-export type TileFaceProps = { tile: Tile; ctx: TileContext; item?: string };
+export type TileFaceProps = { tile: Tile; ctx: TileContext };
 
 /** A tile type the page can draw. */
 export type TileType = {
   type: string;
-  /** The type's name, as the kicker over a tile and in the rail. */
-  label: string;
-  /** A tile's own kicker where it differs by tile, as a custom tile's is its
-   *  definition's title. */
-  labelOf?: (tile: Tile) => string;
-  icon: (props: IconProps) => ReactElement;
-  /** A tile whose title the page already shows, as the Overview's is the pull
-   *  request's: its card names it only for assistive technology. */
-  untitled?: boolean;
-  /** The face on the landing grid: whether the tile needs opening. */
-  Glance: ComponentType<TileFaceProps>;
-  /** Everything about the tile. */
+  /** The tile, drawn under its title. */
   Detail: ComponentType<TileFaceProps>;
   /** A light check of the tile's data (and, for a custom tile, of its
-   *  definition) before either face reads it; a tile that fails it is drawn
+   *  definition) before the face reads it; a tile that fails it is drawn
    *  unavailable. */
   valid: (data: unknown, tile?: Tile) => boolean;
   /** Why a tile the daemon marked unavailable is, in the type's own words,
    *  where they differ from the daemon's first problem; null to keep it. */
   unavailableWhy?: (tile: Tile) => string | null;
-  /** The code a comment on the tile (or on one of its items) is placed on, or
-   *  null for a comment that belongs in the review's body. */
-  commentAnchors?: (
-    ctx: Pick<TileContext, "doc" | "review">,
-    tile: Tile,
-    item?: string,
-  ) => Anchor[];
+  /** The code a comment on the tile is placed on. */
+  commentAnchors?: (tile: Tile) => Anchor[];
 };
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -9,6 +9,8 @@ import type {
   Section,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
+import { parseDrafts, type DraftCard } from "../tiles/drafts";
+import type { Tile } from "../tiles/types";
 
 /** The review page's view (`baum.view/1`), as the daemon serves it beside the
  *  review on the tile route: what the overview shows beyond the review
@@ -24,20 +26,24 @@ export type ReviewView = {
   };
   sections: { id: string; tiles: string[] }[];
   tiles: ViewTile[];
+  /** Page-only, from the tile route's `drafts`: the tiles being made in the
+   *  session panel, as pending cards on the sections they will stand on. */
+  drafts?: DraftCard[];
 };
 
 export type ViewTileType = "flow" | "columns" | "sequence" | "table" | "code" | "prose" | "custom";
 export type ViewTileState = "ready" | "pending" | "failed" | "unavailable";
 
-export type ViewTile = {
-  id: string;
+export type ViewTile = Tile & {
   type: ViewTileType | string;
-  title: string;
-  data: unknown;
   state: ViewTileState;
-  covers?: string[];
-  definition?: unknown;
-  problems?: string[];
+  /** The person added it (a chat-made tile, or a library type added from the
+   *  session panel): only such a tile can be removed. */
+  added?: true;
+  /** Its data was written for this earlier version. */
+  from?: number;
+  /** Being filled for this version. */
+  filling?: true;
 };
 
 /** A native tile's colour of a step, column or message. */
@@ -79,8 +85,8 @@ const STATES = new Set<string>(["ready", "pending", "failed", "unavailable"]);
 /** A light structural check of a served view: what the page reads without
  *  looking twice. A malformed entry is dropped, never the whole view, and a
  *  view that is not one at all is null (the page then builds the empty view
- *  from the review alone). */
-export function parseReviewView(value: unknown): ReviewView | null {
+ *  from the review alone). `drafts` are the tile route's pending cards. */
+export function parseReviewView(value: unknown, drafts?: unknown): ReviewView | null {
   if (!isRecord(value) || value.schema !== "baum.view/1") return null;
   const overview = isRecord(value.overview) ? value.overview : {};
   const verdict = isRecord(overview.verdict) ? overview.verdict : null;
@@ -131,11 +137,15 @@ export function parseReviewView(value: unknown): ReviewView | null {
                 ...(Array.isArray(tile.covers) ? { covers: strings(tile.covers) } : {}),
                 ...(tile.definition !== undefined ? { definition: tile.definition } : {}),
                 ...(Array.isArray(tile.problems) ? { problems: strings(tile.problems) } : {}),
+                ...(tile.added === true ? { added: true as const } : {}),
+                ...(typeof tile.from === "number" && tile.from > 0 ? { from: tile.from } : {}),
+                ...(tile.filling === true ? { filling: true as const } : {}),
               },
             ]
           : [],
       )
     : [];
+  const pending = parseDrafts(drafts);
   return {
     schema: "baum.view/1",
     overview: {
@@ -152,7 +162,31 @@ export function parseReviewView(value: unknown): ReviewView | null {
     },
     sections,
     tiles,
+    ...(pending.length > 0 ? { drafts: pending } : {}),
   };
+}
+
+/** Whether a view has more than the review alone: a version whose
+ *  composition was generated, or one with tiles on it. */
+export function isArranged(view: ReviewView | null): boolean {
+  if (!view) return false;
+  const { overview } = view;
+  return (
+    view.tiles.length > 0 ||
+    Boolean(overview.risk_summary || overview.verdict || overview.diagram) ||
+    overview.screenshots.length > 0 ||
+    overview.intent.length > 0
+  );
+}
+
+/** The quiet note under an added tile's title: where its data is from while
+ *  it is filled, or nothing. */
+export function addedNote(tile: Pick<ViewTile, "from" | "filling">): string | null {
+  if (tile.from)
+    return tile.filling
+      ? `From version ${tile.from}; filling for this version`
+      : `From version ${tile.from}`;
+  return tile.filling ? "Filling for this version" : null;
 }
 
 /** The view of a version without a composition: nothing beyond the review,
@@ -170,9 +204,8 @@ export function emptyView(document: Pick<ReviewDocument, "sections">): ReviewVie
   };
 }
 
-/** Where a review document carries the view served with it, as `TILES`
- *  carries its tile document: an enumerable symbol, kept by the copies the
- *  page makes and never seen by JSON. */
+/** Where a review document carries the view served with it: an enumerable
+ *  symbol, kept by the copies the page makes and never seen by JSON. */
 export const VIEW: unique symbol = Symbol.for("baum.view");
 
 export type ViewedDocument = ReviewDocument & { [VIEW]?: ReviewView | null };
@@ -225,12 +258,14 @@ export function firstSentence(text: string): string {
   return end >= 0 ? plain.slice(0, end + 1) : plain;
 }
 
-/** How it works lists "Where this fits" first (when the review has a context
- *  or tiles are placed on it), then the review's sections in its order, the
- *  ones no longer in the code last. */
+/** How it works lists "Where this fits" first (when the review has a context,
+ *  or tiles or pending cards stand on it), then the review's sections in its
+ *  order, the ones no longer in the code last. */
 export function listedSections(document: ReviewDocument, view: ReviewView): ListedSection[] {
   const context: ListedSection[] =
-    document.summary.context || tilesOn(view, CONTEXT_ID).length > 0
+    document.summary.context ||
+    tilesOn(view, CONTEXT_ID).length > 0 ||
+    view.drafts?.some((draft) => draft.section === CONTEXT_ID)
       ? [
           {
             id: CONTEXT_ID,

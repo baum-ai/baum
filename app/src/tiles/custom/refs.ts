@@ -1,6 +1,5 @@
 import type { Anchor, IndexedHunk } from "@baum/viewer/review-document";
-import { isRecord } from "../types";
-import type { TileDocument } from "../tile-document";
+import { isRecord, type TileSource } from "../types";
 
 /** The citations in a custom tile's data and what the page tells its frame
  *  about each (see "Custom tiles" and "Citation keys" in
@@ -238,19 +237,20 @@ function excerptOf(hunk: IndexedHunk, lines: [number, number] | null): Excerpt |
 const excerptSize = (excerpt: Excerpt) =>
   excerpt.lines.reduce((total, line) => total + line.text.length, excerpt.header.length);
 
-/** Resolves every citation in a tile's data against the document on screen.
- *  A glance gets labels only; a detail gets code excerpts too. */
+/** Resolves every citation in a tile's data against the version on screen (its
+ *  review and the tiles its page shows). A glance gets labels only; a detail
+ *  gets code excerpts too. */
 export function resolveRefs(
   data: unknown,
-  doc: TileDocument,
+  source: TileSource,
   face: "glance" | "detail",
   labels: ReadonlyMap<string, string>,
 ): ResolvedRefs {
   const refs: Record<string, Record<string, unknown>> = {};
   const targets = new Map<string, CitationTarget>();
-  const hunks = new Map(doc.index.hunks.map((hunk) => [hunk.id, hunk]));
+  const hunks = new Map(source.index.hunks.map((hunk) => [hunk.id, hunk]));
   const files = new Map<string, IndexedHunk[]>();
-  for (const hunk of doc.index.hunks)
+  for (const hunk of source.index.hunks)
     for (const path of new Set([hunk.path, hunk.old_path].filter(Boolean) as string[]))
       files.set(path, [...(files.get(path) ?? []), hunk]);
   let excerpts = 0;
@@ -340,7 +340,7 @@ export function resolveRefs(
         break;
       }
       case "risk": {
-        const risk = doc.risks.find((each) => each.id === citation.id);
+        const risk = source.risks.find((each) => each.id === citation.id);
         if (!risk) {
           missing("Risk");
           break;
@@ -359,7 +359,7 @@ export function resolveRefs(
         break;
       }
       case "evidence": {
-        const evidence = doc.evidence.find((each) => each.id === citation.id);
+        const evidence = source.evidence.find((each) => each.id === citation.id);
         if (!evidence) {
           missing("Evidence");
           break;
@@ -377,7 +377,7 @@ export function resolveRefs(
         break;
       }
       case "change": {
-        const change = doc.changes.find((each) => each.id === citation.id);
+        const change = source.changes.find((each) => each.id === citation.id);
         if (!change) {
           missing("Change");
           break;
@@ -393,7 +393,7 @@ export function resolveRefs(
         break;
       }
       case "tile": {
-        const tile = doc.tiles.find((each) => each.id === citation.id);
+        const tile = source.tiles.find((each) => each.id === citation.id);
         if (!tile) {
           missing("Tile");
           break;
@@ -402,7 +402,7 @@ export function resolveRefs(
         break;
       }
       case "check": {
-        const check = doc.index.checks.find((each) => each.id === citation.id);
+        const check = source.index.checks.find((each) => each.id === citation.id);
         if (!check) {
           missing("Check");
           break;
@@ -415,7 +415,7 @@ export function resolveRefs(
         break;
       }
       case "review_thread": {
-        const thread = doc.index.threads.find((each) => each.id === citation.id);
+        const thread = source.index.threads.find((each) => each.id === citation.id);
         if (!thread) {
           missing("Review thread");
           break;
@@ -440,7 +440,7 @@ export function resolveRefs(
       }
       case "prompt":
       case "session_event": {
-        const session = doc.index.sessions.find((each) => each.id === citation.session);
+        const session = source.index.sessions.find((each) => each.id === citation.session);
         if (!session) missing("Session");
         else ok(session.title || "Session", {});
         break;

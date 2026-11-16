@@ -55,7 +55,11 @@ test("lists the saved types and previews one in its frames", async ({ page }) =>
   const samples = pane(page).getByRole("group", { name: "Sample" }).getByRole("button");
   if ((await samples.count()) > 1) {
     await samples.nth(1).click();
-    await frames.first().scrollIntoViewIfNeeded();
+    // The sample's frames replace the last one's as it switches, so the
+    // first may go between finding it and scrolling to it.
+    await expect(async () => {
+      await frames.first().scrollIntoViewIfNeeded({ timeout: 2000 });
+    }).toPass({ timeout: 10000 });
     await expect(frames.first()).toHaveAttribute("data-frame-state", "ready", { timeout: 20000 });
   }
   // Back goes to the list.

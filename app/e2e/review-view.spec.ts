@@ -12,10 +12,17 @@ import { launchURL } from "./inbox-helpers";
 const PR7 = "repository=acme%2Fdemo&pr=7&view=tiles";
 const SHOTS = process.env.REVIEW_VIEW_SHOTS ?? "";
 
-async function open(page: Page, search: string) {
-  await page.route(/\/api\/tiles\?/, (route) =>
-    route.fulfill({ json: { document: REVIEW_1303, tiles: null, view: VIEW_1303 } }),
-  );
+async function open(
+  page: Page,
+  search: string,
+  answer: Record<string, unknown> = { document: REVIEW_1303, view: VIEW_1303 },
+) {
+  await page.route(/\/api\/tiles\?/, (route) => route.fulfill({ json: answer }));
+  await signedIn(page, search);
+}
+
+/** Opens the app's address with `search`, signed in, as the daemon serves it. */
+async function signedIn(page: Page, search: string) {
   if (!page.url().includes("/s/")) {
     await page.goto(await launchURL());
     await page.waitForURL(/\/s\//);
@@ -92,3 +99,160 @@ for (const width of [390, 900, 1440]) {
     }
   });
 }
+
+test("a tile the person added is removed from its menu, and Undo puts it back", async ({
+  page,
+}) => {
+  const added = {
+    id: "lib_retry_notes",
+    type: "prose",
+    title: "Retry notes",
+    state: "ready",
+    data: { text: "Retries double their delay.", anchors: [] },
+    added: true,
+    from: 1,
+  };
+  const view = {
+    ...VIEW_1303,
+    tiles: [...VIEW_1303.tiles, added],
+    sections: VIEW_1303.sections.map((section) =>
+      section.id === "sec_allowlist"
+        ? { ...section, tiles: [...section.tiles, added.id] }
+        : section,
+    ),
+  };
+  const sent: { tile?: string; action?: string; pr?: number }[] = [];
+  await page.route(/\/api\/tiles\/added$/, async (route) => {
+    const body = route.request().postDataJSON();
+    sent.push(body);
+    await route.fulfill({ json: { tile: body.tile, action: body.action } });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`, { document: REVIEW_1303, view });
+  const tile = page.locator('[role="figure"][data-tile="lib_retry_notes"]');
+  await expect(tile.getByRole("heading", { name: "Retry notes" })).toBeVisible();
+  await expect(tile.locator("[data-added-note]")).toHaveText("From version 1");
+  // A tile the model placed has no Remove. A menu closes as the page
+  // scrolls, so its button is scrolled to (and the scroll's event has
+  // passed) before it is clicked.
+  const openMenu = (title: string) =>
+    expect(async () => {
+      const button = page.getByRole("button", { name: `Actions for ${title}` });
+      await button.scrollIntoViewIfNeeded();
+      await page.evaluate(
+        () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+      );
+      await button.click();
+      await expect(page.getByRole("menuitem", { name: "Ask about this tile" }).first()).toBeVisible(
+        {
+          timeout: 1000,
+        },
+      );
+    }).toPass({ timeout: 10000 });
+  await openMenu("What a phone can reach");
+  await expect(page.getByRole("menuitem", { name: "Remove" })).toHaveCount(0);
+  // Opening another tile's menu closes this one.
+  await openMenu("Retry notes");
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await expect.poll(() => sent.map((each) => each.action)).toEqual(["remove"]);
+  expect(sent[0]).toMatchObject({ tile: "lib_retry_notes", pr: 7 });
+  const toast = page.locator(".local-toast");
+  await expect(toast).toContainText("Removed Retry notes");
+  await toast.getByRole("button", { name: "Undo" }).click();
+  await expect.poll(() => sent.map((each) => each.action)).toEqual(["remove", "restore"]);
+  expect(sent[1]).toMatchObject({ tile: "lib_retry_notes", pr: 7 });
+});
+
+test("tiles being made stand on their sections as pending cards", async ({ page }) => {
+  const drafts = [
+    {
+      tile: "draft_1",
+      title: "Route table",
+      phase: "checking",
+      round: 2,
+      section: "sec_allowlist",
+    },
+    { tile: "draft_2", title: "Where it runs", phase: "writing", section: "context" },
+  ];
+  const removed: string[] = [];
+  await page.route(/\/api\/tiles\/drafts\//, async (route) => {
+    removed.push(new URL(route.request().url()).pathname.split("/").at(-1)!);
+    await route.fulfill({ json: {} });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const answer = { document: REVIEW_1303, view: VIEW_1303, drafts };
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`, answer);
+  const first = page.locator('[data-tile-draft="draft_1"]');
+  await expect(first).toContainText("Route table");
+  await expect(first).toContainText("Checking (round 2)");
+  await expect(page.locator('[data-tile-draft="draft_2"]')).toHaveCount(0);
+  await first.getByRole("button", { name: "Remove Route table" }).click();
+  await expect.poll(() => removed).toEqual(["draft_1"]);
+  await open(page, `${PR7}&pane=section&section=context`, answer);
+  await expect(page.locator('[data-tile-draft="draft_2"]')).toContainText("Where it runs");
+  await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
+});
+
+test("the setting chooses the review page", async ({ page }) => {
+  await page.route(/\/api\/tiles\?/, (route) =>
+    route.fulfill({ json: { document: REVIEW_1303, view: VIEW_1303 } }),
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signedIn(page, "page=settings");
+  const select = page.locator("#review-page");
+  await expect(select).toHaveValue("full");
+  await select.selectOption("tiles");
+  try {
+    await signedIn(page, "repository=acme%2Fdemo&pr=7");
+    await expect(page.getByRole("tablist", { name: "Review" })).toBeVisible();
+    // An address the full review wrote lands on the same place: a risk opens
+    // How it works on its section.
+    await signedIn(
+      page,
+      "repository=acme%2Fdemo&pr=7&pane=risk&risk_section=sec_allowlist&risk_id=rsk_always_allow",
+    );
+    await expect(
+      page.getByRole("tablist", { name: "Review" }).getByRole("tab", { name: "How it works" }),
+    ).toHaveAttribute("aria-selected", "true");
+  } finally {
+    await signedIn(page, "page=settings");
+    await page.locator("#review-page").selectOption("full");
+  }
+  await signedIn(page, "repository=acme%2Fdemo&pr=7");
+  await expect(page.getByRole("heading", { name: "Summary", level: 2 })).toBeVisible();
+  await expect(page.getByRole("tablist", { name: "Review" })).toHaveCount(0);
+});
+
+test("with tile reviews on, an arranged version opens on its tabs", async ({ page }) => {
+  // The fixture's acme/demo#12 was generated with a composition; #7 was not.
+  await signedIn(page, "repository=acme%2Fdemo&pr=12");
+  const labs = (on: boolean) =>
+    page.evaluate(
+      (tile_reviews) =>
+        fetch("api/settings/labs", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tile_reviews }),
+        }).then((r) => r.status),
+      on,
+    );
+  const tabs = page.getByRole("tablist", { name: "Review" });
+  // Off, it opens on the full review, as the setting says.
+  await expect(page.getByText("An arranged fixture review").first()).toBeVisible();
+  await expect(tabs).toHaveCount(0);
+  expect(await labs(true)).toBe(200);
+  try {
+    await signedIn(page, "repository=acme%2Fdemo&pr=12");
+    await expect(tabs).toBeVisible();
+    // The address still picks the full review.
+    await signedIn(page, "repository=acme%2Fdemo&pr=12&view=full");
+    await expect(page.getByText("An arranged fixture review").first()).toBeVisible();
+    await expect(tabs).toHaveCount(0);
+    // A version that was not arranged opens on the full review.
+    await signedIn(page, "repository=acme%2Fdemo&pr=7");
+    await expect(page.getByText("Local fixture review version 2").first()).toBeVisible();
+    await expect(tabs).toHaveCount(0);
+  } finally {
+    expect(await labs(false)).toBe(200);
+  }
+});

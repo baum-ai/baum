@@ -22,7 +22,7 @@ import { capture, inspect, settle, steady, type Issue } from "./review-screens";
 test.skip(!process.env.REAL_REVIEW_SCREENSHOTS, "screenshots are taken on request");
 
 const VIEW = process.env.REAL_REVIEW_VIEW || "full";
-const TILE = process.env.REAL_REVIEW_TILE || "article[data-tile]";
+const TILE = process.env.REAL_REVIEW_TILE || "[data-tile]";
 const OUT = "test-results/real-reviews";
 const BUDGET_MS = Number(process.env.REAL_REVIEW_MINUTES || 8) * 60_000;
 const FULL_PAGE = process.env.REAL_REVIEW_FULL !== "0";

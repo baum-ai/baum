@@ -2,26 +2,19 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AnchorChips, PROSE } from "@baum/viewer/components/review-parts";
 import { type Column, Table } from "@baum/viewer/components/table";
-import { CodeIcon, DiagramIcon, QuoteIcon, TableIcon } from "../icons";
-import { Fill, plainText } from "../parts";
-import type { CodeData, DiagramData, ProseData, TableData } from "../tile-document";
+import type { Anchor } from "@baum/viewer/review-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
+
+export type ProseData = { text: string; anchors: Anchor[] };
+export type TableData = { columns: string[]; rows: string[][]; source: Anchor[] };
+export type DiagramData = { format: string; content: string; source: Anchor[] };
+export type CodeData = { language: string; content: string; caption?: string; source: Anchor[] };
 
 /** The generic tiles a composer writes for a point no other tile fits:
  *  prose, a table, a diagram's source and a code excerpt. */
 
 const strings = (value: unknown) =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
-
-function ProseGlance({ tile, ctx }: TileFaceProps) {
-  return (
-    <Fill min="4.5rem">
-      <p className="text-base leading-normal text-primary">
-        {plainText((tile.data as ProseData).text, ctx.labels)}
-      </p>
-    </Fill>
-  );
-}
 
 /** What a prose tile's Markdown may draw: paragraphs, emphasis, code spans
  *  and lists. Links read as their text, and raw HTML stays text (no HTML
@@ -63,25 +56,11 @@ function ProseDetail({ tile, ctx }: TileFaceProps) {
 
 type Row = { key: string; cells: string[] };
 
-function TableView({
-  data,
-  rows,
-  clamp = false,
-}: {
-  data: TableData;
-  rows: string[][];
-  clamp?: boolean;
-}) {
+function TableView({ data, rows }: { data: TableData; rows: string[][] }) {
   const columns: Column<Row>[] = data.columns.map((column, position) => ({
     key: `${position}-${column}`,
     header: column,
-    // A glance cuts a cell to two lines, so a narrow card stays a card.
-    cell: (row) =>
-      clamp ? (
-        <span className="line-clamp-2">{row.cells[position] ?? ""}</span>
-      ) : (
-        (row.cells[position] ?? "")
-      ),
+    cell: (row) => row.cells[position] ?? "",
   }));
   return (
     <Table
@@ -91,24 +70,6 @@ function TableView({
       density="compact"
       minWidth={240}
     />
-  );
-}
-
-const GLANCE_ROWS = 4;
-
-function TableGlance({ tile }: TileFaceProps) {
-  const data = tile.data as TableData;
-  // One row more than the glance holds is shown rather than counted.
-  const shown = data.rows.length === GLANCE_ROWS + 1 ? GLANCE_ROWS + 1 : GLANCE_ROWS;
-  return (
-    <div className="space-y-1.5">
-      <div className="pointer-events-none overflow-hidden">
-        <TableView data={data} rows={data.rows.slice(0, shown)} clamp />
-      </div>
-      {data.rows.length > shown ? (
-        <p className="text-xs text-tertiary">{data.rows.length - shown} more rows</p>
-      ) : null}
-    </div>
   );
 }
 
@@ -122,27 +83,6 @@ function TableDetail({ tile, ctx }: TileFaceProps) {
   );
 }
 
-/** The first lines of a text block, as code, each cut with an ellipsis
- *  where the card is too narrow for it. */
-function Excerpt({ content, lines }: { content: string; lines: number }) {
-  const all = content.split("\n");
-  return (
-    <pre className="overflow-hidden rounded-md bg-code-fill p-2.5 font-mono text-xs leading-[1.5] text-primary">
-      <code className="block">
-        {all.slice(0, lines).map((line, position) => (
-          <span key={position} className="block overflow-hidden text-ellipsis whitespace-pre">
-            {line || " "}
-          </span>
-        ))}
-      </code>
-    </pre>
-  );
-}
-
-function DiagramGlance({ tile }: TileFaceProps) {
-  return <Excerpt content={(tile.data as DiagramData).content} lines={8} />;
-}
-
 function DiagramDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as DiagramData;
   return (
@@ -152,16 +92,6 @@ function DiagramDetail({ tile, ctx }: TileFaceProps) {
         <code>{data.content}</code>
       </pre>
       <AnchorChips document={ctx.review} anchors={data.source} />
-    </div>
-  );
-}
-
-function CodeGlance({ tile }: TileFaceProps) {
-  const data = tile.data as CodeData;
-  return (
-    <div className="space-y-1.5">
-      <Excerpt content={data.content} lines={8} />
-      {data.caption ? <p className="truncate text-xs text-tertiary">{data.caption}</p> : null}
     </div>
   );
 }
@@ -186,44 +116,32 @@ function CodeDetail({ tile, ctx }: TileFaceProps) {
 
 export const proseTile: TileType = {
   type: "prose",
-  label: "Notes",
-  icon: QuoteIcon,
-  Glance: ProseGlance,
   Detail: ProseDetail,
   valid: (data) => isRecord(data) && typeof data.text === "string",
-  commentAnchors: (_ctx, tile) => (tile.data as ProseData).anchors ?? [],
+  commentAnchors: (tile) => (tile.data as ProseData).anchors ?? [],
 };
 
 export const tableTile: TileType = {
   type: "table",
-  label: "Table",
-  icon: TableIcon,
-  Glance: TableGlance,
   Detail: TableDetail,
   valid: (data) =>
     isRecord(data) &&
     strings(data.columns) &&
     Array.isArray(data.rows) &&
     data.rows.every((row) => strings(row)),
-  commentAnchors: (_ctx, tile) => (tile.data as TableData).source ?? [],
+  commentAnchors: (tile) => (tile.data as TableData).source ?? [],
 };
 
 export const diagramTile: TileType = {
   type: "diagram",
-  label: "Diagram",
-  icon: DiagramIcon,
-  Glance: DiagramGlance,
   Detail: DiagramDetail,
   valid: (data) => isRecord(data) && typeof data.content === "string",
-  commentAnchors: (_ctx, tile) => (tile.data as DiagramData).source ?? [],
+  commentAnchors: (tile) => (tile.data as DiagramData).source ?? [],
 };
 
 export const codeTile: TileType = {
   type: "code",
-  label: "Code",
-  icon: CodeIcon,
-  Glance: CodeGlance,
   Detail: CodeDetail,
   valid: (data) => isRecord(data) && typeof data.content === "string",
-  commentAnchors: (_ctx, tile) => (tile.data as CodeData).source ?? [],
+  commentAnchors: (tile) => (tile.data as CodeData).source ?? [],
 };

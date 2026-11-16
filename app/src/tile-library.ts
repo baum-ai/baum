@@ -1,6 +1,6 @@
 import { appURL, LocalRequestError, request } from "./api";
 import { invoke } from "./desktop/native";
-import type { TileSize } from "./tiles/tile-document";
+import type { TileSize } from "./tiles/types";
 
 /** A saved tile type as Settings › Tile library lists it (`GET
  *  api/tile-types`): never its HTML, which only its frame draws. */

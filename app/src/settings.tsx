@@ -2933,39 +2933,6 @@ const automaticMode = (clone: Clone): AutomaticMode =>
       ? "on"
       : "off";
 
-const MAX_TILE_TEXT = 1000;
-const MAX_TILE_PINS = 8;
-/** How long the Tile layout box waits after typing before it saves. */
-const TILE_TEXT_SAVE_MS = 800;
-
-/** The tiles a repository can pin to the front of its reviews' tile pages, as
- *  the daemon lists them: the built-in types a review has one of, and the
- *  library's. The daemon refuses any other. Empty until it answers. */
-function usePinnableTiles() {
-  const [tiles, setTiles] = useState<{ id: string; title: string }[]>([]);
-  useEffect(() => {
-    let live = true;
-    request<{
-      single?: { name: string; title: string }[];
-      types?: { name: string; title: string }[];
-    }>("api/tile-library")
-      .then((answer) => {
-        if (live)
-          setTiles(
-            [...(answer.single ?? []), ...(answer.types ?? [])].map((t) => ({
-              id: t.name,
-              title: t.title,
-            })),
-          );
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, []);
-  return tiles;
-}
-
 /** A repository's Reviews section, saved as it changes, as Settings' are. */
 function RepositoryReviews({
   clone,
@@ -2982,16 +2949,10 @@ function RepositoryReviews({
   const stored = () => ({
     mode: automaticMode(clone),
     decisions: clone.settings.decisions !== false,
-    tileText: clone.settings.tiles?.text ?? "",
-    pins: clone.settings.tiles?.pins ?? [],
   });
-  const pinnable = usePinnableTiles();
-  const pinTitle = (id: string) => pinnable.find((tile) => tile.id === id)?.title ?? id;
   const [draft, setDraft] = useState(stored);
-  // What the controls hold now, for a save that runs later (the text box's).
+  // What the controls hold now.
   const latest = useRef(draft);
-  const typed = useRef(false);
-  const typing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // A failed save puts the controls back to what is stored.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only after a failure
   useEffect(() => {
@@ -3001,11 +2962,11 @@ function RepositoryReviews({
     }
   }, [saver.failures]);
   // Settings changed elsewhere (the assistant's saved proposal, another
-  // window) show here, unless this page is saving or has text it has not saved.
+  // window) show here, unless this page is saving.
   const storedKey = JSON.stringify(clone.settings);
   // biome-ignore lint/correctness/useExhaustiveDependencies: only when the stored settings change
   useEffect(() => {
-    if (saver.pending() || typed.current) return;
+    if (saver.pending()) return;
     latest.current = stored();
     setDraft(latest.current);
   }, [storedKey]);
@@ -3013,26 +2974,13 @@ function RepositoryReviews({
     const next = { ...latest.current, ...patch };
     latest.current = next;
     setDraft(next);
-    // The whole settings object is saved, so stored tile preferences go with
-    // every change, and clearing them says so.
-    const text = next.tileText.trim();
-    const tiles = text || next.pins.length ? { text, pins: next.pins } : null;
+    // The daemon keeps the stored tile settings (the library types pinned
+    // to the repository) when a save leaves them out.
     saver.save({
       automatic: next.mode === "default" ? null : next.mode === "on",
       decisions: next.decisions ? null : false,
-      ...(tiles || clone.settings.tiles ? { tiles } : {}),
     });
   };
-  // Saves the text box: when it loses focus, a moment after typing stops, and
-  // when the page closes, so typed text is not lost.
-  const saveText = () => {
-    clearTimeout(typing.current);
-    if (!typed.current) return;
-    typed.current = false;
-    change({});
-  };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the cleanup saves what was typed
-  useEffect(() => saveText, []);
   const notice = status ? automaticNotice(status) : null;
   return (
     <section aria-labelledby="repository-reviews-heading" className="settings-section">
@@ -3093,71 +3041,6 @@ function RepositoryReviews({
             checked={draft.decisions}
             onChange={(event) => change({ decisions: event.target.checked })}
           />
-        </SettingRow>
-        <SettingRow
-          label="Tile layout"
-          htmlFor="repository-tile-text"
-          detail="What you want the tile page of this repository's reviews to do, for example lead with what changed in the data model. It applies to the next review, with tile reviews on."
-        >
-          <textarea
-            id="repository-tile-text"
-            className="local-field min-h-20 w-full resize-y"
-            rows={3}
-            maxLength={MAX_TILE_TEXT}
-            value={draft.tileText}
-            onChange={(event) => {
-              latest.current = { ...latest.current, tileText: event.target.value };
-              setDraft(latest.current);
-              typed.current = true;
-              clearTimeout(typing.current);
-              typing.current = setTimeout(saveText, TILE_TEXT_SAVE_MS);
-            }}
-            onBlur={saveText}
-          />
-        </SettingRow>
-        <SettingRow
-          label="Pinned tiles"
-          htmlFor={draft.pins.length < MAX_TILE_PINS ? "repository-tile-pin" : undefined}
-          detail="These tiles lead the page whenever the review has them."
-        >
-          <div className="flex flex-col items-end gap-2">
-            {draft.pins.length ? (
-              <ul className="flex flex-col items-end gap-1" aria-label="Pinned tiles">
-                {draft.pins.map((pin) => (
-                  <li key={pin} className="flex items-center gap-2">
-                    <span>{pinTitle(pin)}</span>
-                    <Button
-                      size="tiny"
-                      variant="ghost"
-                      aria-label={`Unpin ${pinTitle(pin)}`}
-                      onClick={() => change({ pins: draft.pins.filter((id) => id !== pin) })}
-                    >
-                      Unpin
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {draft.pins.length < MAX_TILE_PINS ? (
-              <select
-                id="repository-tile-pin"
-                className="local-field settings-select"
-                value=""
-                onChange={(event) => {
-                  if (event.target.value) change({ pins: [...draft.pins, event.target.value] });
-                }}
-              >
-                <option value="">Pin a tile…</option>
-                {pinnable
-                  .filter((tile) => !draft.pins.includes(tile.id))
-                  .map((tile) => (
-                    <option key={tile.id} value={tile.id}>
-                      {tile.title}
-                    </option>
-                  ))}
-              </select>
-            ) : null}
-          </div>
         </SettingRow>
       </div>
     </section>

@@ -24,7 +24,7 @@ it("derives the page context of every address the app opens", () => {
     expect(of(c.query, c.hash), c.query).toEqual(c.context);
 });
 
-it("adds a tile an Ask picked to the focus, as the layout tools read it", () => {
+it("adds a tile an Ask picked to the focus, as the tile tools read it", () => {
   const picked = shared.picked as {
     query: string;
     focus?: ChatFocus;

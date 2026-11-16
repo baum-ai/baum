@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { appURL } from "../../api";
-import { parseTileDocument, type TileDocument, type TileSize } from "../tile-document";
+import type { ReviewDocument } from "@baum/viewer/review-document";
+import { parseReviewView } from "../../review-view/model";
+import { tileSourceOf, type TileSize } from "../types";
 import { setInPageRunner } from "./check-host";
 import {
   HeightGuard,
@@ -365,7 +367,7 @@ export function drawFrame(
 }
 
 /** The citations of the pull request's data, resolved against that
- *  version's tile document as the tiles page resolves them; null when the
+ *  version's review and view as the review page resolves them; null when the
  *  document could not be read. */
 async function dataRefs(
   job: CheckJob,
@@ -381,13 +383,14 @@ async function dataRefs(
     });
     const response = await fetch(appURL(`api/tiles?${query}`), { cache: "no-store" });
     if (!response.ok) return null;
-    const body = (await response.json()) as { tiles?: unknown };
-    const doc: TileDocument | null = body.tiles ? parseTileDocument(body.tiles) : null;
-    if (!doc) return null;
+    const body = (await response.json()) as { document?: ReviewDocument; view?: unknown };
+    const review = body.document;
+    if (!review?.review || !Array.isArray(review.sections) || !review.index) return null;
+    const source = tileSourceOf(review, parseReviewView(body.view)?.tiles ?? []);
     const labels = new Map<string, string>();
     return {
-      glance: resolveRefs(data, doc, "glance", labels).refs,
-      detail: resolveRefs(data, doc, "detail", labels).refs,
+      glance: resolveRefs(data, source, "glance", labels).refs,
+      detail: resolveRefs(data, source, "detail", labels).refs,
     };
   } catch {
     return null;

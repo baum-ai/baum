@@ -1,17 +1,28 @@
+import { createPortal } from "react-dom";
 import { cn } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { AnchorChips } from "@baum/viewer/components/review-parts";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
-import { TileBoundary } from "../tiles/card";
+import { MenuButton, useContextMenu, type MenuItem } from "../context-menu";
+import { TileBoundary } from "../tiles/boundary";
+import { isBuiltinType } from "../tiles/custom/library";
+import { useTileHost } from "../tiles/host";
 import { tileFace } from "../tiles/registry";
-import type { Tile } from "../tiles/tile-document";
 import type { TileContext } from "../tiles/types";
 import { NATIVE } from "./native-tiles";
-import type { ViewTile } from "./model";
+import { addedNote, type ViewTile } from "./model";
 
 /** The tile's place on the page, which links and the keys reach. */
 export const tileElementId = (prefix: string, tile: string) => `${prefix}tile-${tile}`;
+
+/** The tile the keys (j and k) are on, if any. */
+export function activeTile(): string | null {
+  return (
+    document.querySelector<HTMLElement>("[data-review-block-active][data-tile]")?.dataset.tile ??
+    null
+  );
+}
 
 const anchorsOf = (data: unknown): Anchor[] => {
   const source = (data as { source?: unknown } | null)?.source;
@@ -54,17 +65,44 @@ export function ViewTileCard({
   const Heading = heading;
   const native = NATIVE[tile.type];
   const title = tile.title.trim() || "Untitled diagram";
+  const host = useTileHost();
+  const menu = useContextMenu();
+  // An earlier version's tiles (their IDs prefixed) are read, never changed.
+  const current = idPrefix === "" && !host.draft;
+  const menuItems = (): MenuItem[] => [
+    ...(host.comment && current
+      ? [{ label: "Comment", hint: "c", onSelect: () => host.comment?.(tile.id) }]
+      : []),
+    ...(host.ask ? [{ label: "Ask about this tile", onSelect: () => host.ask?.(tile) }] : []),
+    ...(host.saveToLibrary && tile.type === "custom" && !isBuiltinType(tile) && current
+      ? [{ label: "Save to library…", onSelect: () => host.saveToLibrary?.(tile) }]
+      : []),
+    ...(host.removeAdded && tile.added && current
+      ? [{ label: "Remove", danger: true, onSelect: () => host.removeAdded?.(tile) }]
+      : []),
+  ];
+  const note = tile.added ? addedNote(tile) : null;
   const body = () => {
     if (tile.state === "pending")
       return (
         <p role="status" className="flex items-center gap-2 text-base text-secondary">
           <LiveDot />
-          Being written
+          {tile.filling ? "Filling this tile…" : "Being written"}
         </p>
       );
     if (tile.state === "failed") return <Note>This tile couldn't be written.</Note>;
-    if (tile.state === "unavailable")
-      return <Note>{tile.problems?.[0] ?? "This tile isn't available."}</Note>;
+    // A frame's or exhibit's type may say why in its own words (a tile made
+    // with a newer kit); a native tile says the daemon's.
+    if (tile.state === "unavailable") {
+      const face = native ? null : tileFace(tile);
+      return (
+        <Note>
+          {face?.kind === "unavailable"
+            ? face.why
+            : (tile.problems?.[0] ?? "This tile isn't available.")}
+        </Note>
+      );
+    }
     if (native) {
       if (!native.valid(tile.data)) return <Note>This tile's content couldn't be read.</Note>;
       const caption = captionOf(tile.data);
@@ -83,7 +121,7 @@ export function ViewTileCard({
     }
     // Exhibits (code, prose) and library or chat-made tiles: as the tiles
     // page drew their details.
-    const face = tileFace(tile as Tile);
+    const face = tileFace(tile);
     if (face.kind === "pending")
       return (
         <p role="status" className="flex items-center gap-2 text-base text-secondary">
@@ -92,8 +130,9 @@ export function ViewTileCard({
         </p>
       );
     if (face.kind === "unavailable") return <Note>{face.why}</Note>;
-    return <face.type.Detail tile={tile as Tile} ctx={ctx} />;
+    return <face.type.Detail tile={tile} ctx={ctx} />;
   };
+  const items = menuItems();
   return (
     // A figure by its role: the element's own margins would fight the
     // spacing of the list it stands in.
@@ -103,14 +142,33 @@ export function ViewTileCard({
       data-tile={tile.id}
       data-tile-type={tile.type}
       data-review-block=""
+      data-tile-added={tile.added ? "" : undefined}
       aria-label={title}
+      onContextMenu={items.length > 0 ? (event) => menu.open(event, items, title) : undefined}
       className={cn(
-        "min-w-0 scroll-mt-4 space-y-3 rounded-lg border border-default bg-surface-card p-4 outline-none",
+        "view-tile min-w-0 scroll-mt-4 space-y-3 rounded-lg border border-default bg-surface-card p-4 outline-none",
         "data-[review-block-active]:border-strong",
       )}
     >
-      <Heading className="text-base font-semibold text-primary">{title}</Heading>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <Heading className="text-base font-semibold text-primary">{title}</Heading>
+          {note ? (
+            <p data-added-note="" className="text-xs text-tertiary">
+              {note}
+            </p>
+          ) : null}
+        </div>
+        {items.length > 0 ? (
+          <span className="flex-none">
+            <MenuButton label={title} items={menuItems} menu={menu} />
+          </span>
+        ) : null}
+      </div>
       <TileBoundary fallback={<Note>This tile couldn't be shown.</Note>}>{body()}</TileBoundary>
+      {/* On the body: the tab panel is a size container, which would hold
+          the menu's fixed box inside it and scroll it away. */}
+      {menu.menu ? createPortal(menu.menu, document.body) : null}
     </div>
   );
 }

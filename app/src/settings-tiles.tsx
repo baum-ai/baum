@@ -23,7 +23,7 @@ import {
 } from "./tile-library";
 import { framesAllowedHere, NOT_IN_THIS_SHELL } from "./tiles/custom/environment";
 import { PreviewFrame } from "./tiles/custom/tile-frame";
-import type { TileSize } from "./tiles/tile-document";
+import type { TileSize } from "./tiles/types";
 import { useToast } from "./toast";
 
 /** Settings › Tile library (`?page=settings&section=tiles[&type=<name>]`):
@@ -780,8 +780,8 @@ function Pins({
   );
 }
 
-/** The card sizes of the tiles page (`tiles/card.tsx` in its six-column
- *  grid) and the box a glance draws in inside each. */
+/** The widths a glance is drawn at, one per size a type declares (a kit
+ *  type still draws a glance at each), and the box it draws in inside each. */
 const GLANCE_CARDS: Record<TileSize, { card: string; box: string; label: string }> = {
   third: { card: "w-[344px]", box: "h-48", label: "Third width" },
   half: { card: "w-[522px]", box: "h-52", label: "Half width" },
