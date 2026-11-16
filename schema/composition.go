@@ -16,8 +16,8 @@ const CompositionURL = "https://static.usebaum.com/schemas/composition/1.json"
 // CompositionName is the value of a composition's top-level "schema" field.
 const CompositionName = "baum.composition/1"
 
-// Composition is the schema of a stored composition: how a generated review
-// is presented as tiles. A $ref it does not define names a definition of the
+// Composition is the schema of a stored baum.composition/1, the retired tile
+// grid's layout of a generated review, kept as published. A $ref it does not define names a definition of the
 // merged tile schema (MergedTiles); use MergedComposition or
 // CompileComposition rather than resolving it alone.
 //
@@ -28,8 +28,8 @@ var Composition []byte
 const ViewCompositionURL = "https://static.usebaum.com/schemas/composition/2.json"
 
 // ViewCompositionName is the value of a review view composition's top-level
-// "schema" field. It replaces CompositionName for new versions: a stored
-// baum.composition/1 is read only for its library and authored tiles.
+// "schema" field. It replaced CompositionName: a stored baum.composition/1
+// (the tile grid's layout) is no longer read.
 const ViewCompositionName = "baum.composition/2"
 
 // ViewComposition is the schema of a stored review view composition: the

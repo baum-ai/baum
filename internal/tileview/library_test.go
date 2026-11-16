@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // The built-in types' frame documents are registered at start-up.
@@ -27,7 +29,14 @@ func TestRegisterLibrary(t *testing.T) {
 // definition and digest, and its frame is registered under that digest.
 func TestStoredLibraryTileKeepsItsDefinition(t *testing.T) {
 	document := tileviewtest.Encode(t, tileviewtest.Base(t))
-	doc := Build(document, nil, tiles.Options{}).checked
+	normalized, err := review.NormalizeStored(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := tiles.FromReview(normalized, tiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var hunk string
 	for _, tile := range doc.Tiles {
 		if len(tile.Covers) > 0 {
@@ -50,14 +59,10 @@ func TestStoredLibraryTileKeepsItsDefinition(t *testing.T) {
 		t.Fatal("the earlier definition has the current digest")
 	}
 	data := `{"engine":"sqlite","migrations":[],"tables":[{"name":"widgets","change":"created","renamed_from":null,"columns":[],"indexes":[],"cites":[{"type":"hunk","id":"` + hunk + `"}]}],"data_changes":[],"readers":[]}`
-	composition, _ := json.Marshal(tiles.Composition{Schema: tiles.CompositionName, Library: []tiles.LibraryTile{{Definition: encoded, Data: json.RawMessage(data)}}})
+	composition, _ := json.Marshal(view.Composition{Schema: view.CompositionName, Overview: view.Overview{Screenshots: []string{}, Intent: []view.Intent{}},
+		Sections: []view.Placement{}, Library: []tiles.LibraryTile{{Definition: encoded, Data: json.RawMessage(data)}}})
 	served := Build(document, composition, tiles.Options{})
-	var tile *tiles.Tile
-	for i := range served.Tiles.Tiles {
-		if served.Tiles.Tiles[i].ID == "schema_change" {
-			tile = &served.Tiles.Tiles[i]
-		}
-	}
+	tile := custom(served.View, "schema_change")
 	if tile == nil || tile.State != tiles.StateReady {
 		t.Fatalf("the stored library tile: %+v", tile)
 	}
@@ -74,7 +79,7 @@ func TestLibraryCompositionFixture(t *testing.T) {
 	document := tileviewtest.Encode(t, tileviewtest.Base(t))
 	served := Build(document, tileviewtest.LibraryComposition(t, document), tiles.Options{})
 	ready := map[string]bool{}
-	for _, tile := range served.checked.Tiles {
+	for _, tile := range served.checked {
 		if tile.State == tiles.StateReady {
 			ready[tile.ID] = true
 		} else if tile.Type == tiles.TypeCustom || tile.Type == tiles.TypeTable || tile.Type == tiles.TypeCode {
@@ -86,9 +91,6 @@ func TestLibraryCompositionFixture(t *testing.T) {
 			t.Errorf("%s is not served ready", id)
 		}
 	}
-	if served.Tiles.Layout.Entries[0].Tile != tiles.TypeOverview {
-		t.Errorf("layout: %v", served.Tiles.Layout.Entries)
-	}
 }
 
 // The served definition says "builtin" only when the stored one is a
@@ -99,7 +101,7 @@ func TestServedBuiltinMark(t *testing.T) {
 	document := tileviewtest.Encode(t, tileviewtest.Base(t))
 	composition := tileviewtest.LibraryComposition(t, document)
 	served := Build(document, composition, tiles.Options{})
-	for _, tile := range served.Tiles.Tiles {
+	for _, tile := range served.View.Tiles {
 		if tile.Type == tiles.TypeCustom && !strings.Contains(string(tile.Definition), `"builtin":true`) {
 			t.Errorf("%s is not marked built in", tile.ID)
 		}
@@ -110,11 +112,11 @@ func TestServedBuiltinMark(t *testing.T) {
 	def["title"] = "Schema changes, mine"
 	def["builtin"] = true
 	forged, _ := json.Marshal(def)
-	c, _ := tiles.ParseComposition(composition)
+	c, _ := view.Parse(composition)
 	c.Library[0].Definition = forged
 	raw, _ := json.Marshal(c)
 	served = Build(document, raw, tiles.Options{})
-	for _, tile := range served.Tiles.Tiles {
+	for _, tile := range served.View.Tiles {
 		if tile.ID != "schema_change" {
 			continue
 		}

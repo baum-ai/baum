@@ -47,7 +47,6 @@ var baseline = map[string]string{
 	"fix 13":              "dd115a648650fa176de95287b3997141ea7fc68c798cf78519d2b30b6c06ce84",
 	"fix 14":              "741d2786e9150947a1ef445a7f5b7a6c28984adc0584bfc338f95fc03ac9ecc2",
 	"fix 15":              "2b4db4dd265428b3a70d920ebc12441f681457c9afa20559799f21d662d729a1",
-	"tiles compose":       "4f78d9c64a3b955068599bbdef4180cdbabbf4c5e3042fe3af9f5887103345e3",
 }
 
 func sha(s string) string {
@@ -70,14 +69,6 @@ func TestZeroValueMatchesPreviousOutput(t *testing.T) {
 			s, err := prompt.StagedPrompts{Overrides: o}.StagedInstructions(ctx, b)
 			if err != nil || s.Version != prompt.StagedVersion || s.Digest != baseline[b+" staged"] {
 				t.Errorf("%s staged: %v %q %s", b, err, s.Version, s.Digest)
-			}
-		}
-	}
-	for _, b := range backends {
-		for _, o := range []prompt.Overrides{nil, {}, {prompt.IDReviewTilesCompose: "", prompt.IDReviewStagedShared: "x"}} {
-			p, err := prompt.TilesPrompts{Overrides: o}.ComposeInstructions(ctx, b)
-			if err != nil || p.Version != prompt.TilesVersion || p.Digest != baseline["tiles compose"] || sha(p.Body) != p.Digest {
-				t.Errorf("%s tiles compose: %v %q %s", b, err, p.Version, p.Digest)
 			}
 		}
 	}
@@ -392,34 +383,5 @@ func TestViewIsListed(t *testing.T) {
 	p, err = prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewView: "Present my way."}}.ViewInstructions(context.Background(), agent.BackendCodex)
 	if err != nil || p.Body != "Present my way.\n" || p.Version != prompt.ViewVersion+"+custom" {
 		t.Errorf("override: %v %q %q", err, p.Version, p.Body)
-	}
-}
-
-// The composition prompt is no longer listed, since no job runs it, but
-// replay's compose generator still validates a text for it and checks its
-// safety rule.
-func TestTilesComposeIsUnlisted(t *testing.T) {
-	if _, ok := prompt.Lookup(prompt.IDReviewTilesCompose); ok {
-		t.Error("the composition prompt is listed")
-	}
-	builtin := readFile(t, "review-tiles-compose-public-v1.md")
-	if err := prompt.Validate(prompt.IDReviewTilesCompose, builtin); err != nil {
-		t.Errorf("its own default is invalid: %v", err)
-	}
-	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, builtin); len(got) != 0 {
-		t.Errorf("the default misses %v", got)
-	}
-	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, "Arrange."); len(got) != 1 || got[0] != "review-tiles-compose.untrusted-inventory" {
-		t.Errorf("missing %v", got)
-	}
-}
-
-func TestTilesComposeOverride(t *testing.T) {
-	p, err := prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewTilesCompose: "Arrange my way."}}.ComposeInstructions(context.Background(), agent.BackendCodex)
-	if err != nil || p.Body != "Arrange my way.\n" || p.Version != prompt.TilesVersion+"+custom" || p.Digest != sha(p.Body) {
-		t.Errorf("%v %q %q", err, p.Version, p.Body)
-	}
-	if err := prompt.Validate(prompt.IDReviewTilesCompose, "## Submitting\n"); err == nil {
-		t.Error("a composition prompt with a Submitting heading was accepted")
 	}
 }

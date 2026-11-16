@@ -69,31 +69,40 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tile": "risks" }
+        "focus": { "view": "tiles", "tab": "sections", "tile": "risks" }
+      }
+    },
+    {
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles&pane=section&section=context",
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tab": "sections", "section": "context" }
       }
     }
   ],
   "picked": [
     {
-      "description": "An Ask about a tile on the tiles page (Ask about this tile, or a on a card) puts the tile in the focus: the layout tools resolve this tile to it.",
+      "description": "An Ask about a part of the review page puts it in the focus.",
       "query": "repository=acme%2Fdemo&pr=7&view=tiles",
       "focus": { "kind": "tile", "id": "sec_api", "title": "API changes" },
       "context": {
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "kind": "tile", "id": "sec_api", "title": "API changes" }
+        "focus": { "view": "tiles", "tab": "overview", "kind": "tile", "id": "sec_api", "title": "API changes" }
       },
       "tile": "sec_api"
     },
     {
-      "description": "A tile open in its detail is the focus when none was picked.",
+      "description": "A tile open on the review page is the focus when none was picked.",
       "query": "repository=acme%2Fdemo&pr=7&view=tiles&pane=tile&tile=context",
       "context": {
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tile": "context" }
+        "focus": { "view": "tiles", "tab": "sections", "tile": "context" }
       },
       "tile": "context"
     }

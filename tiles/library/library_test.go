@@ -108,7 +108,7 @@ func TestFramesComposeAndRegister(t *testing.T) {
 }
 
 // A library tile with sample data, cited to a synthetic review's hunks, is
-// ready in a composed document and covers the hunks it cites.
+// ready against a converted document and covers the hunks it cites.
 func TestLibraryTilesAreReadyInADocument(t *testing.T) {
 	_, file, _, _ := runtime.Caller(0)
 	normalized, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "testdata", "base.review.json"))
@@ -130,20 +130,20 @@ func TestLibraryTilesAreReadyInADocument(t *testing.T) {
 			break
 		}
 	}
-	n, report := tiles.Template(doc, &tiles.Composition{Library: libraryTiles})
+	normalizedTiles, _, report := tiles.NormalizeExtras(doc, libraryTiles, nil)
 	if len(report.Fixes) > 0 {
 		t.Fatalf("fixes: %v", report.Messages())
 	}
-	composed, err := tiles.Compose(doc, &n)
+	extras, err := tiles.ExtraTiles(doc, normalizedTiles, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range library.Names {
-		i := slices.IndexFunc(composed.Tiles, func(tile tiles.Tile) bool { return tile.ID == name })
+		i := slices.IndexFunc(extras, func(tile tiles.Tile) bool { return tile.ID == name })
 		if i < 0 {
 			t.Fatalf("the document has no %s tile", name)
 		}
-		tile := composed.Tiles[i]
+		tile := extras[i]
 		if tile.State != tiles.StateReady || len(tile.Problems) > 0 || len(tile.Covers) == 0 {
 			t.Errorf("%s: state %s, problems %v, covers %v", name, tile.State, tile.Problems, tile.Covers)
 		}
@@ -275,36 +275,5 @@ func TestStarterPassesEveryCheck(t *testing.T) {
 	}
 	for _, problem := range library.Check(entry) {
 		t.Error(problem)
-	}
-}
-
-// Every built-in type names the arrays its glance lists as rows
-// (tiles.LibraryGlanceLists), which size its tile by content: each is a
-// top-level array of its data, and the arrays that make the type apply are
-// among them or are the glance's fallback.
-func TestEveryTypeNamesItsGlanceLists(t *testing.T) {
-	for _, entry := range library.All() {
-		def := entry.Definition
-		lists := tiles.LibraryGlanceLists(def.Name)
-		if len(lists) == 0 {
-			t.Errorf("%s: tiles.LibraryGlanceLists names no array; add the arrays its glance lists", def.Name)
-			continue
-		}
-		var schema struct {
-			Properties map[string]struct {
-				Type json.RawMessage `json:"type"`
-			} `json:"properties"`
-		}
-		if err := json.Unmarshal(def.DataSchema, &schema); err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range lists {
-			if string(schema.Properties[name].Type) != `"array"` {
-				t.Errorf("%s: glance list %q is not a top-level array of its data", def.Name, name)
-			}
-		}
-		if !slices.Contains(lists, entry.AppliesWith[0]) {
-			t.Errorf("%s: its glance lists %v leave out %q, which makes it apply", def.Name, lists, entry.AppliesWith[0])
-		}
 	}
 }

@@ -10,7 +10,6 @@ import (
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
-	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -36,8 +35,7 @@ func TestTileLibraryRoute(t *testing.T) {
 		t.Fatalf("status %d", response.StatusCode)
 	}
 	var got struct {
-		Types  []map[string]any    `json:"types"`
-		Single []map[string]string `json:"single"`
+		Types []map[string]any `json:"types"`
 	}
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatal(err)
@@ -51,19 +49,8 @@ func TestTileLibraryRoute(t *testing.T) {
 			t.Errorf("type %d: %v", i, typ)
 		}
 	}
-	// Every name the listing offers is one a repository can pin.
-	if len(got.Single) == 0 {
-		t.Fatal("no single tile types")
-	}
-	for _, s := range got.Single {
-		if s["title"] == "" || !compose.PinnableTile(s["name"]) {
-			t.Errorf("single type %v cannot be pinned", s)
-		}
-	}
-	for _, typ := range got.Types {
-		if !compose.PinnableTile(typ["name"].(string)) {
-			t.Errorf("library type %v cannot be pinned", typ["name"])
-		}
+	if strings.Contains(string(body), `"single"`) {
+		t.Error("the listing names single tile types, which nothing pins any more")
 	}
 	for _, leak := range []string{"source", "<script", "fill", "data_schema"} {
 		if strings.Contains(string(body), leak) {

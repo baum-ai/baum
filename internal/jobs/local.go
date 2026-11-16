@@ -18,6 +18,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/fix"
@@ -30,10 +31,8 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/review"
-	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -52,10 +51,10 @@ type Local struct {
 	// Log receives what a job's agent reports and keeps out of the job, such
 	// as a fix agent's provider error; nil logs nothing.
 	Log *slog.Logger
-	// Layouts holds people's own tile layouts: a review of a pull request
-	// fills the library types the person added to its review
+	// Added holds the tiles people added to pull requests: a review of a
+	// pull request fills the library types the person added to it
 	// (generate.Tiles.Always). Nil adds none.
-	Layouts *tilelayout.Service
+	Added *addedtiles.Service
 	// TileLibrary is the person's saved tile types: a review fills the types
 	// pinned to its repository and offers others whose paths its diff
 	// matches (tilelibrary.Offer). Nil offers only the built-in types.
@@ -445,7 +444,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if group == nil && p.Kind != KindDetails && prefs.Labs.TileReviewsOn() {
 		// The library types the person added to the pull request's review
 		// are filled, or their last data reused, in the new version.
-		options.Tiles = l.tilesFor(ctx, versions, key, p.Repository)
+		options.Tiles = l.tilesFor(ctx, versions, key)
 	}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
@@ -958,20 +957,8 @@ func groupReviewTimeout(review time.Duration, members int) time.Duration {
 	return review + time.Duration(extra)*review/2
 }
 
-// tilesFor is how a new review of the pull request is arranged as tiles: the
-// library types the person added, and the repository's standing preferences.
-func (l *Local) tilesFor(ctx context.Context, versions *store.Store, key store.Key, repository string) *generate.Tiles {
-	return &generate.Tiles{Always: l.alwaysTiles(ctx, versions, key), Preferences: l.tilePreferences(ctx, repository)}
-}
-
-// tilePreferences are the repository's standing tile preferences, which
-// instruct the composer of its new reviews and pin tiles to the front of their
-// pages. A repository without any, or whose settings cannot be read now, has
-// none: the review is generated as it would be without them.
-func (l *Local) tilePreferences(ctx context.Context, repository string) compose.Preferences {
-	settings, _, err := l.Registry.RepositorySettings(ctx, repository)
-	if err != nil || settings.Tiles == nil {
-		return compose.Preferences{}
-	}
-	return compose.Preferences{Text: settings.Tiles.Text, Pins: settings.Tiles.Pins}
+// tilesFor is what a new review of the pull request adds to its page: the
+// library types the person added to it are always filled.
+func (l *Local) tilesFor(ctx context.Context, versions *store.Store, key store.Key) *generate.Tiles {
+	return &generate.Tiles{Always: l.alwaysTiles(ctx, versions, key)}
 }

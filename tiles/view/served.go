@@ -34,23 +34,30 @@ type Tile struct {
 	Covers     []string        `json:"covers,omitempty"`
 	Definition json.RawMessage `json:"definition,omitempty"`
 	Problems   []string        `json:"problems,omitempty"`
+	// Added marks a tile the person added to the pull request, which they
+	// can remove; From is the earlier version its data was written for, and
+	// Filling says it is being filled for this one.
+	Added   bool `json:"added,omitempty"`
+	From    int  `json:"from,omitempty"`
+	Filling bool `json:"filling,omitempty"`
 }
 
 // Empty is the view of a version without a composition: no overview parts,
 // no tiles, and every section listed with none, so the page shows the fixed
 // overview from the review alone.
 func Empty(r *Review) View {
-	return Build(r, nil, nil)
+	return Build(r, nil, nil, nil)
 }
 
 // Build makes the served view of a review r with its composition c
-// (normalised: Normalize), nil for none, and extras: the composition's
-// library and authored tiles, and any custom tile the person added, as the
-// served tile document shows them (checked, custom definitions in their
-// served form). A tile of extras the composition does not place is placed
-// on the section whose hunks it covers most (Place). The overview's diagram
-// and the placements name only tiles the view has.
-func Build(r *Review, c *Composition, extras []tiles.Tile) View {
+// (normalised: Normalize, or checked: Check), nil for none, and extras: the
+// composition's library and authored tiles, and the tiles the person added,
+// checked (tiles.ExtraTiles). A tile of extras the composition does not
+// place goes on the section on names for it, when the review has that
+// current section (or it is context), else on the section whose hunks it
+// covers most (Place). The overview's diagram and the placements name only
+// tiles the view has.
+func Build(r *Review, c *Composition, extras []tiles.Tile, on map[string]string) View {
 	v := View{Schema: Name, Overview: Overview{Screenshots: []string{}, Intent: []Intent{}}, Tiles: []Tile{}}
 	placed := &Composition{Sections: []Placement{}}
 	if c != nil {
@@ -83,6 +90,24 @@ func Build(r *Review, c *Composition, extras []tiles.Tile) View {
 	}
 	for i := range placed.Sections {
 		placed.Sections[i].Tiles = slices.DeleteFunc(placed.Sections[i].Tiles, func(id string) bool { return !has[id] })
+	}
+	if len(on) > 0 {
+		current := map[string]bool{ContextSection: true}
+		for _, s := range r.Sections {
+			current[s.ID] = !s.Stale
+		}
+		already := placed.placed()
+		for _, id := range extraIDs {
+			if section := on[id]; current[section] && !already[id] {
+				i := slices.IndexFunc(placed.Sections, func(p Placement) bool { return p.ID == section })
+				if i < 0 {
+					placed.Sections = append(placed.Sections, Placement{ID: section})
+					i = len(placed.Sections) - 1
+				}
+				placed.Sections[i].Tiles = append(placed.Sections[i].Tiles, id)
+				already[id] = true
+			}
+		}
 	}
 	Place(r, placed, extraIDs, Covers(extras))
 	by := map[string][]string{}

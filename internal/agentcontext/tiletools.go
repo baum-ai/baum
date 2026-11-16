@@ -12,18 +12,19 @@ import (
 )
 
 // The tile making tools let a chat make a tile type for the pull request
-// page the person has open and put it on the page at once, as part of their
-// own layout (layouttools.go): read the guide (tile_guide), show a pending
-// card where the tile will stand (start_tile), check the type with the
-// render check, with this pull request's data (check_tile), and add the tile
-// that passed (add_custom_tile). The tile is personal, shows only on this
-// pull request's page and has an Undo; it reads "Custom · <title>" wherever
-// the page names it. Saving it as a type for later reviews is a proposal
-// (propose_tile_type). Like the layout tools they are chat-only and bound
-// to the pull request the turn was sent from.
+// page the person has open and put it on the page at once, as a tile they
+// added (addtools.go): read the guide (tile_guide), show a pending card
+// on the section where the tile will stand (start_tile), check the type
+// with the render check, with this pull request's data (check_tile), and
+// add the tile that passed (add_custom_tile). The tile is personal, shows
+// only on this pull request's page and has Remove on its menu; it reads
+// "Custom · <title>" wherever the page names it. Saving it as a type for
+// later reviews is a proposal (propose_tile_type). Like add_tile they are
+// chat-only and bound to the pull request the turn was sent from.
 
 // ChatTiles makes tiles in chat for a pull request; the daemon's is
-// uiserver's, over the render checker, the layouts and the pending cards.
+// uiserver's, over the render checker, the added tiles and the pending
+// cards.
 // owner is the conversation's consumer ID: each conversation has its own
 // pending card.
 type ChatTiles interface {
@@ -35,17 +36,17 @@ type ChatTiles interface {
 	// with the candidate is a fail result, not an error.
 	Check(ctx context.Context, owner, repository string, number int, check TileCheck) (json.RawMessage, error)
 	// Add puts the tile a passed check with data checked on the pull
-	// request's page, as one undo step.
+	// request's page.
 	Add(ctx context.Context, owner, repository string, number int, add CustomTileAdd) (TileAdded, error)
 	// TurnEnded leaves owner's pending card unfinished.
 	TurnEnded(owner string)
 }
 
-// TileStart is start_tile's arguments.
+// TileStart is start_tile's arguments: the tile's title and the section it
+// will stand on (empty: the host places it).
 type TileStart struct {
-	Title string
-	Size  tiles.Size
-	To    *tiles.Place
+	Title   string
+	Section string
 }
 
 // TileDraft is a pending card: its ID (draft_<n>) and phase.
@@ -64,12 +65,12 @@ type TileCheck struct {
 	Data       json.RawMessage
 }
 
-// CustomTileAdd is add_custom_tile's arguments.
+// CustomTileAdd is add_custom_tile's arguments: the check, the pending
+// card and the section (empty: the card's).
 type CustomTileAdd struct {
-	Check string
-	Draft string
-	Size  tiles.Size
-	To    *tiles.Place
+	Check   string
+	Draft   string
+	Section string
 }
 
 // tileMakingTools are the tools the pull request page lists for making
@@ -91,38 +92,33 @@ func framesOff(c CallContext) bool {
 	return c.HasPage && json.Unmarshal(c.Page.Focus, &focus) == nil && focus.Frames == "off"
 }
 
-// tilePull is the pull request a tile making tool works on, as the layout
-// edit tools find it, refusing a page that cannot show custom tiles.
+// tilePull is the pull request a tile making tool works on, as add_tile
+// finds it, refusing a page that cannot show custom tiles.
 func (s *Server) tilePull(c CallContext) (string, int, error) {
 	if s.chatTiles == nil {
 		return "", 0, errNoChatTiles
 	}
-	if c.Consumer.Kind == Action || !c.HasPage || c.Page.Page != PagePullRequest || c.Page.Repository == "" || c.Page.PullRequest < 1 {
-		return "", 0, errors.New("tiles are made for the pull request page the person has open: open a pull request's page first")
-	}
-	if c.HasTurn && (c.Turn.Page != PagePullRequest || !strings.EqualFold(c.Turn.Repository, c.Page.Repository) || c.Turn.PullRequest != c.Page.PullRequest) {
-		return "", 0, errOtherTurnPage
+	repository, number, err := tilePage(c)
+	if err != nil {
+		return "", 0, err
 	}
 	if framesOff(c) {
 		return "", 0, errNoFrames
 	}
-	return c.Page.Repository, c.Page.PullRequest, nil
+	return repository, number, nil
 }
 
 // maxTileHTML bounds a candidate's component, as the render check does.
 const maxTileHTML = 256 << 10
 
-const tileRule = " The tile is the person's own: it shows only on this pull request's page, at once, with an Undo, and reads \"Custom · <title>\" wherever the page names it."
+const tileRule = " The tile is the person's own: it shows only on this pull request's page, at once, with Remove on its menu, and reads \"Custom · <title>\" wherever the page names it."
 
 func (s *Server) tileMakingTools() []Tool {
-	place := `"to":{"type":"object","description":"Where the tile stands: exactly one of edge (first or last), before (a tile id) or after (a tile id). Without it, right after the overview.","properties":{` +
-		`"edge":{"type":"string","enum":["first","last"]},"before":{"type":"string","maxLength":128},"after":{"type":"string","maxLength":128}},"minProperties":1,"maxProperties":1,"additionalProperties":false}`
-	size := `"size":{"type":"string","enum":["full","half","third"],"description":"full is the whole row, half half of it, third a third; it must be one of the type's sizes."}`
 	draft := `"draft":{"type":"string","pattern":"^draft_[0-9]{1,9}$","description":"The pending card start_tile gave; without it, this conversation's card, if any."}`
 	return []Tool{{
 		Name: "tile_guide",
 		Description: "How to write a tile type: the guide (part guide, the default: the files, the rules, the two faces, the data schema dialect, citations, the kit API, samples and the render check), the starter type to copy (part starter: its files), or the names the kit offers (part manifest: its API, view, elements, classes and tokens). " +
-			"Read the guide and the starter before writing a tile with check_tile. Look first for a type that already does the job: tile_layout lists the addable library types and tile_type reads one in full.",
+			"Read the guide and the starter before writing a tile with check_tile. Look first for a type that already does the job: add_tile lists baum's library types and tile_type reads one in full.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"part":{"type":"string","enum":["guide","starter","manifest"]}},"additionalProperties":false}`),
 		Call: func(_ context.Context, c CallContext, args json.RawMessage) (string, error) {
 			if c.Consumer.Kind == Action {
@@ -138,9 +134,9 @@ func (s *Server) tileMakingTools() []Tool {
 		},
 	}, {
 		Name: "start_tile",
-		Description: "Starts making a tile for the review on the pull request page the person has open: the page shows a pending card where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. Call it first, when the person asks for a tile no library type gives; then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
+		Description: "Starts making a tile for the review on the pull request page the person has open: the page shows a pending card on the section where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. Call it first, when the person asks for a tile no library type gives; then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
 			"If you stop before adding it, the card says \"Not finished\" for a few minutes, with Remove. The result is the card's id (draft_<n>)." + tileRule,
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":80,"description":"The tile's title, as the card shows it."},` + size + `,` + place + `},"required":["title"],"additionalProperties":false}`),
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":80,"description":"The tile's title, as the card shows it."},` + sectionArg + `},"required":["title"],"additionalProperties":false}`),
 		Edits:       true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			repository, number, err := s.tilePull(c)
@@ -148,9 +144,8 @@ func (s *Server) tileMakingTools() []Tool {
 				return "", err
 			}
 			var a struct {
-				Title string       `json:"title"`
-				Size  tiles.Size   `json:"size"`
-				To    *tiles.Place `json:"to"`
+				Title   string `json:"title"`
+				Section string `json:"section"`
 			}
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
@@ -158,7 +153,11 @@ func (s *Server) tileMakingTools() []Tool {
 			if strings.TrimSpace(a.Title) == "" {
 				return "", errors.New("a tile needs a title")
 			}
-			draft, err := s.chatTiles.Start(ctx, c.Consumer.ID, repository, number, TileStart{Title: a.Title, Size: a.Size, To: a.To})
+			section := strings.TrimSpace(a.Section)
+			if section == "" {
+				section = focusSection(c)
+			}
+			draft, err := s.chatTiles.Start(ctx, c.Consumer.ID, repository, number, TileStart{Title: a.Title, Section: section})
 			if err != nil {
 				return "", err
 			}
@@ -217,9 +216,9 @@ func (s *Server) tileMakingTools() []Tool {
 		},
 	}, {
 		Name: "add_custom_tile",
-		Description: "Adds the tile a check_tile check passed with data for this pull request to the review on the page the person has open, at once, as one undo step: the pending card becomes the tile, and the page says \"Added <title>\" with Undo. " +
-			"check is the passed check's id (chk_…), made in the last hour. Size and place default to the pending card's; the review holds at most 8 library and custom tiles. Tell the person it is added, that Undo on the page takes it back, and that \"Save to library…\" on its menu (or asking you) saves it as a type for later reviews." + tileRule,
-		InputSchema: json.RawMessage(`{"type":"object","properties":{"check":{"type":"string","pattern":"^chk_[A-Za-z0-9_]{1,64}$"},` + draft + `,` + size + `,` + place + `},"required":["check"],"additionalProperties":false}`),
+		Description: "Adds the tile a check_tile check passed with data for this pull request to the review on the page the person has open, at once: the pending card becomes the tile, on its section. " +
+			"check is the passed check's id (chk_…), made in the last hour. The section defaults to the pending card's. Tell the person it is added, that Remove on its menu takes it off, and that \"Save to library…\" on its menu (or asking you) saves it as a type for later reviews." + tileRule,
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"check":{"type":"string","pattern":"^chk_[A-Za-z0-9_]{1,64}$"},` + draft + `,` + sectionArg + `},"required":["check"],"additionalProperties":false}`),
 		Edits:       true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			repository, number, err := s.tilePull(c)
@@ -227,19 +226,18 @@ func (s *Server) tileMakingTools() []Tool {
 				return "", err
 			}
 			var a struct {
-				Check string       `json:"check"`
-				Draft string       `json:"draft"`
-				Size  tiles.Size   `json:"size"`
-				To    *tiles.Place `json:"to"`
+				Check   string `json:"check"`
+				Draft   string `json:"draft"`
+				Section string `json:"section"`
 			}
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
 			}
-			added, err := s.chatTiles.Add(ctx, c.Consumer.ID, repository, number, CustomTileAdd{Check: a.Check, Draft: a.Draft, Size: a.Size, To: a.To})
+			added, err := s.chatTiles.Add(ctx, c.Consumer.ID, repository, number, CustomTileAdd{Check: a.Check, Draft: a.Draft, Section: strings.TrimSpace(a.Section)})
 			if err != nil {
 				return "", err
 			}
-			return s.addResult(ctx, c, repository, number, added)
+			return addResult(added)
 		},
 	}}
 }

@@ -105,7 +105,7 @@ func TestTilesAnalysisReachesTheComposition(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		drafts = append(drafts, d)
-		if c, err := tiles.ParseComposition(d.Composition); err == nil {
+		if c, err := view.Parse(d.Composition); err == nil {
 			for _, lib := range c.Library {
 				if lib.Pending {
 					if !sawPending {
@@ -150,10 +150,10 @@ func TestTilesAnalysisReachesTheComposition(t *testing.T) {
 		t.Errorf("the library tile moved between drafts: %v", places)
 	}
 	served := tileview.Build(result.Document, result.Composition, tiles.Options{})
-	var tile *tiles.Tile
-	for i := range served.Tiles.Tiles {
-		if served.Tiles.Tiles[i].ID == "schema_change" {
-			tile = &served.Tiles.Tiles[i]
+	var tile *view.Tile
+	for i := range served.View.Tiles {
+		if served.View.Tiles[i].ID == "schema_change" {
+			tile = &served.View.Tiles[i]
 		}
 	}
 	if tile == nil || tile.State != tiles.StateReady || tile.Type != tiles.TypeCustom || strings.Contains(string(tile.Definition), "<script") {

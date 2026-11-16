@@ -5,8 +5,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/baum-ai/baum/tiles"
 )
 
 // recorder counts the changes a store tells, per pull request.
@@ -32,8 +30,8 @@ func (r *recorder) count() int {
 func TestACardsPhases(t *testing.T) {
 	r := &recorder{}
 	s := &Store{Changed: r.changed}
-	d := s.Start("chat1", "acme/widgets#42", "  New environment\n variables  ", tiles.SizeHalf, nil)
-	if d.Tile != "draft_1" || d.Phase != PhaseWriting || d.Title != "New environment variables" || d.Size != tiles.SizeHalf {
+	d := s.Start("chat1", "acme/widgets#42", "  New environment\n variables  ", "sec_config")
+	if d.Tile != "draft_1" || d.Phase != PhaseWriting || d.Title != "New environment variables" || d.Section != "sec_config" {
 		t.Fatalf("started: %+v", d)
 	}
 	if got := s.List("acme/widgets#42"); len(got) != 1 || got[0] != d {
@@ -68,9 +66,9 @@ func TestACardsPhases(t *testing.T) {
 // and leaves another conversation's alone.
 func TestOneCardPerConversation(t *testing.T) {
 	s := &Store{}
-	s.Start("chat1", "acme/widgets#42", "First", "", nil)
-	s.Start("chat2", "acme/widgets#42", "Theirs", "", nil)
-	second := s.Start("chat1", "acme/widgets#7", "Second", "", &tiles.Place{Edge: tiles.EdgeFirst})
+	s.Start("chat1", "acme/widgets#42", "First", "")
+	s.Start("chat2", "acme/widgets#42", "Theirs", "")
+	second := s.Start("chat1", "acme/widgets#7", "Second", "context")
 	if got := s.List("acme/widgets#42"); len(got) != 1 || got[0].Title != "Theirs" {
 		t.Errorf("the first pull request's cards: %+v", got)
 	}
@@ -92,7 +90,7 @@ func TestAnUnfinishedCardLingersThenGoes(t *testing.T) {
 		waited, fire = d, f
 		return time.NewTimer(time.Hour)
 	}}
-	s.Start("chat1", "acme/widgets#42", "Env vars", "", nil)
+	s.Start("chat1", "acme/widgets#42", "Env vars", "")
 	s.TurnEnded("chat1")
 	got := s.List("acme/widgets#42")
 	if len(got) != 1 || got[0].Phase != PhaseUnfinished || waited != Linger {
@@ -105,7 +103,7 @@ func TestAnUnfinishedCardLingersThenGoes(t *testing.T) {
 		t.Errorf("after lingering: %+v", got)
 	}
 
-	s.Start("chat1", "acme/widgets#42", "Again", "", nil)
+	s.Start("chat1", "acme/widgets#42", "Again", "")
 	if s.Remove("acme/widgets#42", "draft_9") || !s.Remove("acme/widgets#42", "draft_2") {
 		t.Error("remove")
 	}
@@ -121,7 +119,7 @@ func TestKey(t *testing.T) {
 	if Key(s.List("pr")) != "" {
 		t.Error("no cards have a key")
 	}
-	s.Start("chat1", "pr", strings.Repeat("x", 200), "", nil)
+	s.Start("chat1", "pr", strings.Repeat("x", 200), "")
 	first := Key(s.List("pr"))
 	if d := s.List("pr")[0]; len([]rune(d.Title)) != MaxTitle {
 		t.Errorf("title not bounded: %d", len(d.Title))

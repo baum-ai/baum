@@ -18,25 +18,6 @@ type LibraryType struct {
 	Digest  string       `json:"digest"`
 }
 
-// SingleType is a built-in tile type with at most one tile in a review, as
-// GET /api/tile-library lists it beside the library types: a repository can
-// pin it.
-type SingleType struct {
-	Name  string `json:"name"`
-	Title string `json:"title"`
-}
-
-// Singles lists the single built-in tile types, in catalogue order.
-func Singles() []SingleType {
-	var out []SingleType
-	for _, b := range tiles.Builtins {
-		if b.Single {
-			out = append(out, SingleType{Name: b.Name, Title: b.Title})
-		}
-	}
-	return out
-}
-
 // Library lists the built-in library types, in offer order.
 func Library() []LibraryType {
 	entries := library.All()

@@ -12,7 +12,6 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/view"
 )
 
@@ -76,7 +75,7 @@ func TestViewRunPlacesTheAnalysisTiles(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, err := viewRun(t, tc.completer, func(r *agent.ViewRequest) {
-				r.Authored = []compose.Authored{{Tile: authored, Adds: "why"}, {Tile: table}}
+				r.Authored = []view.Authored{{Tile: authored, Adds: "why"}, {Tile: table}}
 			})
 			if err != nil || out.Fallback != tc.fallback {
 				t.Fatalf("%v %v %q", err, out.Fallback, out.FallbackReason)

@@ -1,5 +1,5 @@
 // Package tileview builds the answer of the daemon's tile routes: a review
-// document and the tile document converted from it, in one JSON body.
+// document and the review page's view of it (baum.view/1), in one JSON body.
 package tileview
 
 import (
@@ -25,44 +25,39 @@ import (
 
 // Response is the body of a tile route. Document is the baum.review/1
 // document the other routes serve, with the stored-document rules applied and
-// the derived hunk URLs added; Tiles is the tile document converted from
-// exactly those bytes, or nil with Problem naming why it could not be. The
+// the derived hunk URLs added; View is the review page's view of exactly
+// those bytes, or nil with Problem naming why it could not be built. The
 // problem never quotes the document.
 //
 // A custom tile's definition is served without its HTML (ServedDefinition):
 // the page loads the tile's frame document by its digest, which Frames
 // registers. The served definition no longer matches its digest, so nothing
-// may check or convert a served tile document again.
+// may check a served tile again.
 type Response struct {
 	Document json.RawMessage `json:"document"`
-	Tiles    *tiles.Document `json:"tiles"`
 	// View is the review page's view (baum.view/1, view.Build): the
 	// overview's model-written parts, every section with the tiles placed on
 	// it, and the tiles. It is built from the review and its review view
-	// composition (baum.composition/2); a version without one, or with a
-	// baum.composition/1, gets the empty view (view.Empty) with only the
-	// tiles the person added. Nil when the review could not be read or
-	// converted (Problem).
+	// composition (baum.composition/2); a version without one, or with an
+	// older composition, gets the empty view (view.Empty) with only the
+	// tiles the person added.
 	View    *view.View `json:"view,omitempty"`
 	Problem string     `json:"problem,omitempty"`
-	// Added says, of each tile the person added that the served document
-	// shows, whether its data is from an earlier version and is being filled
-	// for this one (Layout.Notes).
-	Added []AddedNote `json:"added,omitempty"`
 	// Drafts are the pending cards of tiles being made in the session panel
-	// for the pull request, which the page shows where each will stand; the
-	// tile route sets them on the latest version.
+	// for the pull request, which the page shows on the section each will
+	// stand on; the tile route sets them on the latest version.
 	Drafts []tiledrafts.Draft `json:"drafts,omitempty"`
 	// Frames are the definitions of the ready custom tiles, kept to register
 	// them again when the answer is served from a cache.
 	Frames Frames `json:"-"`
-	// checked is the tile document as checked, before its custom tiles'
-	// definitions were replaced by their served form; tests check it.
-	checked *tiles.Document
+	// checked are the view's library, authored and added tiles as checked,
+	// before their custom definitions were replaced by their served form;
+	// tests check them.
+	checked []tiles.Tile
 }
 
-// validator checks the tiles of every document served. It is shared because
-// it compiles its schemas once.
+// validator checks the custom tiles a fixture adds. It is shared because it
+// compiles its schemas once.
 var validator = tiles.NewValidator()
 
 // frames holds the frame documents of the custom tiles the tile routes
@@ -104,17 +99,19 @@ func Warm() error {
 	return RegisterLibrary()
 }
 
-// Builds counts the conversions Build has run, for tests.
+// Builds counts the views Build has built, for tests.
 var Builds atomic.Int64
 
 // fixture, set only in a test binary (SetFixture), changes each converted
-// tile document before its tiles are checked.
+// tile document before the view is built.
 var fixture atomic.Pointer[func(*tiles.Document)]
 
 // SetFixture makes Build run f on every tile document it converts, before
-// its tiles are checked, and returns a function that removes it. It lets a
-// test fixture serve custom tiles, which no review generation writes yet.
-// It panics outside a test binary, so a release build cannot serve them.
+// the view is built, and returns a function that removes it: each custom
+// tile f adds is checked and served in the view, placed on the section
+// whose hunks it cites most. It lets a test fixture serve custom tiles that
+// no review generation writes. It panics outside a test binary, so a
+// release build cannot serve them.
 func SetFixture(f func(*tiles.Document)) (restore func()) {
 	if !testing.Testing() {
 		panic("tileview: SetFixture is for test binaries only")
@@ -133,55 +130,26 @@ func Key(composition []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Build converts a stored or draft review document, with the composition
-// stored beside it if any: the tile document is
-// tiles.Compose(tiles.FromReview(document), composition). A nil or empty
-// composition gives the converted document, byte for byte as before
-// compositions existed. A composition that does not parse, or that Compose
-// refuses, is ignored: the converted document is served with no problem
-// shown, and the ignored composition is counted (workstats
-// tileview.compositions_ignored). A tile that fails its checks is marked
-// unavailable in the result; a conversion failure leaves the tile document
-// nil. Build runs only the tile-level checks, not the full schema, which the
-// tests cover. It registers the frame documents of the ready custom tiles
-// and serves every custom tile's definition without its HTML, composed or
-// not.
-func Build(document, composition []byte, opts tiles.Options) Response {
-	return BuildWith(document, composition, Layout{}, opts)
+// AddedTile is a tile the person added to the pull request, as one version
+// is served with it: the library tile (its type's definition and the data
+// the host holds for this version, pending without any), the section it
+// sits on (empty or unknown: placed by the hunks it covers), and, when its
+// data is an earlier version's, that version (From) and whether it is being
+// filled for this one (Filling).
+type AddedTile struct {
+	Tile    tiles.LibraryTile
+	Section string
+	From    int
+	Filling bool
 }
 
-// Layout is a person's own layout of the pull request a version belongs to:
-// their overlay (tiles.Overlay, nil for none) and the filled library tiles
-// the host holds for the tiles they added, for this version.
-type Layout struct {
-	Overlay *tiles.Overlay
-	Added   []tiles.LibraryTile
-	// Notes say, of the added tiles, which show an earlier version's data or
-	// none yet while they are filled for this version.
-	Notes []AddedNote
-}
-
-// AddedNote is what the page says of a tile the person added: From is the
-// version its data was written for when that is an earlier one (0 for this
-// version's), and Filling that it is being filled for this version.
-type AddedNote struct {
-	Tile    string `json:"tile"`
-	From    int    `json:"from,omitempty"`
-	Filling bool   `json:"filling,omitempty"`
-}
-
-// LayoutKey names a layout for a cache key: the digest of its overlay's
-// active batches, empty for a layout with no edits, so an answer built with
-// one layout is never served for another.
-func LayoutKey(layout Layout) string {
-	if !layout.Overlay.Edited() {
+// AddedKey names a version's added tiles for a cache key, empty for none,
+// so an answer built with some is never served for others.
+func AddedKey(added []AddedTile) string {
+	if len(added) == 0 {
 		return ""
 	}
-	encoded, err := json.Marshal(struct {
-		Batches []tiles.Batch       `json:"batches"`
-		Added   []tiles.LibraryTile `json:"added,omitempty"`
-		Notes   []AddedNote         `json:"notes,omitempty"`
-	}{layout.Overlay.Active(), layout.Added, layout.Notes})
+	encoded, err := json.Marshal(added)
 	if err != nil {
 		return "unencodable"
 	}
@@ -189,13 +157,26 @@ func LayoutKey(layout Layout) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// BuildWith is Build with the person's layout applied: the composition the
-// tile document is composed with is tiles.ApplyOverlay of the stored one (or
-// of the converted layout, when there is none or it cannot be used) with
-// their overlay. A layout with no edits gives exactly Build's answer. The
-// ops a version drops (their tile is gone) are counted, never shown
-// (workstats tileview.overlay_ops_dropped).
-func BuildWith(document, composition []byte, layout Layout, opts tiles.Options) Response {
+// Build builds the view of a stored or draft review document with the
+// composition stored beside it, if any. It is BuildWith with no added
+// tiles.
+func Build(document, composition []byte, opts tiles.Options) Response {
+	return BuildWith(document, composition, nil, opts)
+}
+
+// BuildWith builds the view of a stored or draft review document, with the
+// composition stored beside it and the tiles the person added to its pull
+// request. The library and authored tiles of a review view composition
+// (baum.composition/2), and the added tiles, are checked against the tile
+// document converted from the review (tiles.ExtraTiles): one that fails is
+// served unavailable with its problems. An added tile whose type the
+// composition already fills is not served twice. Any other composition is
+// ignored (a version shown as one without), and one that cannot be used is
+// counted (workstats tileview.views_ignored). Building the view never
+// fails the answer for a composition or an added tile: a panic gives the
+// view without them. It registers the frame documents of the ready custom
+// tiles and serves every custom tile's definition without its HTML.
+func BuildWith(document, composition []byte, added []AddedTile, opts tiles.Options) Response {
 	Builds.Add(1)
 	normalized, err := review.NormalizeStored(document)
 	if err != nil {
@@ -204,102 +185,151 @@ func BuildWith(document, composition []byte, layout Layout, opts tiles.Options) 
 	if derived, err := review.DeriveHunkURLs(normalized); err == nil {
 		normalized = derived
 	}
+	r, err := view.ParseReview(normalized)
+	if err != nil {
+		return Response{Document: raw(normalized), Problem: "The review could not be read for its page."}
+	}
 	doc, err := tiles.FromReview(normalized, opts)
 	if err != nil {
 		return Response{Document: raw(normalized), Problem: "The review could not be converted to tiles."}
 	}
+	var fixed []tiles.Tile
 	if f := fixture.Load(); f != nil && *f != nil {
-		(*f)(doc)
+		fixed = fixtureTiles(doc, *f)
 	}
-	doc = compose(doc, composition, layout)
-	if err := validator.CheckTiles(doc); err != nil {
-		return Response{Document: raw(normalized), Problem: "The tiles could not be checked."}
-	}
-	served, registered := registerFrames(doc)
-	return Response{Document: raw(normalized), Tiles: served, View: pageView(normalized, served, composition, layout),
-		Added: notesShown(served, layout.Notes), Frames: registered, checked: doc}
+	v, checked := pageView(r, doc, composition, added, fixed)
+	served, registered := registerFrames(v, checked)
+	return Response{Document: raw(normalized), View: served, Frames: registered, checked: checked}
 }
 
-// pageView is the review page's view of a review, nil when the review cannot
-// be read for it. Its library and authored tiles, and the tiles the person
-// added, are those of the served tile document, checked and with their
-// definitions in served form, so the page draws them as the grid does. A
-// composition that is not a review view composition, or that cannot be
-// used, gives the empty view; one that cannot be used is counted
-// (tileview.views_ignored). Building it never fails the answer: a panic
-// gives no view.
-func pageView(normalized []byte, served *tiles.Document, composition []byte, layout Layout) (out *view.View) {
+// fixtureTiles runs a test fixture on a converted document and returns the
+// custom tiles it added, checked.
+func fixtureTiles(doc *tiles.Document, f func(*tiles.Document)) []tiles.Tile {
+	before := len(doc.Tiles)
+	f(doc)
+	_ = validator.CheckTiles(doc)
+	var out []tiles.Tile
+	for _, t := range doc.Tiles[before:] {
+		if t.Type == tiles.TypeCustom {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// pageView is the review page's view of a review r, and its library,
+// authored, added and fixture tiles as checked. A composition that is not a
+// review view composition, or that cannot be used, gives the empty view
+// with the added tiles; one that cannot be used is counted
+// (tileview.views_ignored).
+func pageView(r *view.Review, doc *tiles.Document, composition []byte, added []AddedTile, fixed []tiles.Tile) (*view.View, []tiles.Tile) {
+	var c *view.Composition
+	var library []tiles.LibraryTile
+	var authored []tiles.AuthoredTile
+	if len(composition) > 0 && view.IsComposition(composition) {
+		parsed, err := view.Parse(composition)
+		if err != nil {
+			workstats.Inc("tileview.views_ignored")
+		} else {
+			c, library, authored = parsed, parsed.Library, parsed.Authored
+		}
+	}
+	// The added tiles follow the composition's; a type the composition
+	// already fills is shown once, as the composition has it.
+	on := map[string]string{}
+	notes := map[string]AddedTile{}
+	have := map[string]bool{}
+	for _, lib := range library {
+		have[tiles.LibraryTileID(definitionName(lib.Definition))] = true
+	}
+	for _, a := range added {
+		id := tiles.LibraryTileID(definitionName(a.Tile.Definition))
+		if id == "" || have[id] {
+			continue
+		}
+		have[id] = true
+		library = append(library, a.Tile)
+		on[id], notes[id] = a.Section, a
+	}
+	extras := extraTiles(doc, library, authored)
+	for _, t := range fixed {
+		if !slices.ContainsFunc(extras, func(have tiles.Tile) bool { return have.ID == t.ID }) {
+			extras = append(extras, t)
+		}
+	}
+	v := buildView(r, c, extras, on)
+	for i := range v.Tiles {
+		if note, ok := notes[v.Tiles[i].ID]; ok {
+			v.Tiles[i].Added, v.Tiles[i].From, v.Tiles[i].Filling = true, note.From, note.Filling
+		}
+	}
+	return &v, extras
+}
+
+// extraTiles checks the library and authored tiles against the converted
+// document; a panic or a document that cannot take them gives none, counted
+// as an ignored view.
+func extraTiles(doc *tiles.Document, library []tiles.LibraryTile, authored []tiles.AuthoredTile) (out []tiles.Tile) {
+	if len(library) == 0 && len(authored) == 0 {
+		return nil
+	}
 	defer func() {
 		if recover() != nil {
 			workstats.Inc("tileview.views_ignored")
 			out = nil
 		}
 	}()
-	r, err := view.ParseReview(normalized)
+	out, err := tiles.ExtraTiles(doc, library, authored)
 	if err != nil {
+		workstats.Inc("tileview.views_ignored")
 		return nil
-	}
-	var c *view.Composition
-	var ids []string
-	if len(composition) > 0 && view.IsComposition(composition) {
-		parsed, err := view.Parse(composition)
-		if err != nil {
-			workstats.Inc("tileview.views_ignored")
-		} else {
-			ids = view.ExtraIDs(parsed)
-			checked := view.Check(r, parsed, ids)
-			c = &checked
-		}
-	}
-	for _, lib := range layout.Added {
-		var def struct {
-			Name string `json:"name"`
-		}
-		if json.Unmarshal(lib.Definition, &def) == nil && def.Name != "" {
-			ids = append(ids, tiles.LibraryTileID(def.Name))
-		}
-	}
-	var extras []tiles.Tile
-	for _, id := range ids {
-		if i := slices.IndexFunc(served.Tiles, func(t tiles.Tile) bool { return t.ID == id }); i >= 0 &&
-			!slices.ContainsFunc(extras, func(t tiles.Tile) bool { return t.ID == id }) {
-			extras = append(extras, served.Tiles[i])
-		}
-	}
-	v := view.Build(r, c, extras)
-	return &v
-}
-
-// notesShown are the notes of the added tiles the served document shows.
-func notesShown(doc *tiles.Document, notes []AddedNote) []AddedNote {
-	if len(notes) == 0 || doc == nil {
-		return nil
-	}
-	shown := map[string]bool{}
-	for _, tile := range doc.Tiles {
-		shown[tile.ID] = true
-	}
-	var out []AddedNote
-	for _, note := range notes {
-		if shown[note.Tile] && (note.From > 0 || note.Filling) {
-			out = append(out, note)
-		}
 	}
 	return out
 }
 
-// registerFrames registers the frame document of each ready custom tile and
-// returns the document to serve, with every custom tile's definition in its
-// served form, marked built in when it is a built-in library type's, and the
-// registered definitions. A ready tile whose document
-// cannot be made becomes unavailable, in both documents: its frame would
-// never load.
-func registerFrames(doc *tiles.Document) (*tiles.Document, Frames) {
+// buildView is view.Build of the composition as view.Check reads it, the
+// extra tiles' IDs being those it may name; a panic gives the empty view,
+// counted.
+func buildView(r *view.Review, c *view.Composition, extras []tiles.Tile, on map[string]string) (out view.View) {
+	defer func() {
+		if recover() != nil {
+			workstats.Inc("tileview.views_ignored")
+			out = view.Empty(r)
+		}
+	}()
+	var checked *view.Composition
+	if c != nil {
+		ids := view.ExtraIDs(c)
+		for _, t := range extras {
+			if !slices.Contains(ids, t.ID) {
+				ids = append(ids, t.ID)
+			}
+		}
+		n := view.Check(r, c, ids)
+		checked = &n
+	}
+	return view.Build(r, checked, extras, on)
+}
+
+// definitionName is the name a definition gives, or "".
+func definitionName(definition json.RawMessage) string {
+	var def struct {
+		Name string `json:"name"`
+	}
+	_ = json.Unmarshal(definition, &def)
+	return def.Name
+}
+
+// registerFrames registers the frame document of each ready custom tile of
+// the view and returns the view to serve, with every custom tile's
+// definition in its served form, marked built in when it is a built-in
+// library type's, and the registered definitions. A ready tile whose
+// document cannot be made becomes unavailable, in both the view and
+// checked: its frame would never load.
+func registerFrames(v *view.View, checked []tiles.Tile) (*view.View, Frames) {
 	var registered Frames
-	served := *doc
-	served.Tiles = slices.Clone(doc.Tiles)
-	for i := range served.Tiles {
-		tile := &served.Tiles[i]
+	for i := range v.Tiles {
+		tile := &v.Tiles[i]
 		if tile.Type != tiles.TypeCustom {
 			continue
 		}
@@ -311,7 +341,9 @@ func registerFrames(doc *tiles.Document) (*tiles.Document, Frames) {
 					registered = append(registered, def)
 				} else {
 					tile.State, tile.Problems, tile.Covers = tiles.StateUnavailable, []string{frameProblem(err)}, nil
-					doc.Tiles[i] = *tile
+					if j := slices.IndexFunc(checked, func(t tiles.Tile) bool { return t.ID == tile.ID }); j >= 0 {
+						checked[j].State, checked[j].Problems, checked[j].Covers = tile.State, tile.Problems, nil
+					}
 				}
 			}
 		}
@@ -321,7 +353,7 @@ func registerFrames(doc *tiles.Document) (*tiles.Document, Frames) {
 			tile.Definition = markBuiltin(tile.Definition)
 		}
 	}
-	return &served, registered
+	return v, registered
 }
 
 // frameProblem says why a ready tile's frame document could not be made,
@@ -398,108 +430,6 @@ func mustMarshal(v any) json.RawMessage {
 		panic(err)
 	}
 	return b
-}
-
-// applyComposition is tiles.Compose; tests replace it to force a failure.
-var applyComposition = tiles.Compose
-
-// compose applies the stored composition, with the person's layout, to the
-// converted document, or returns it as it is when there is nothing to apply
-// or nothing can be: a composition over tiles.MaxStoredComposition bytes,
-// one that does not parse, one Compose refuses and one that makes it panic
-// are ignored and counted, and the person's layout then applies to the
-// converted layout.
-func compose(doc *tiles.Document, composition []byte, layout Layout) (out *tiles.Document) {
-	parsed := gridComposition(doc, parseComposition(composition))
-	if layout.Overlay.Edited() {
-		if edited := applyLayout(doc, parsed, layout); edited != nil {
-			return edited
-		}
-	}
-	if parsed == nil || parsed.Empty() {
-		return doc
-	}
-	defer func() {
-		if recover() != nil {
-			workstats.Inc("tileview.compositions_ignored")
-			out = doc
-		}
-	}()
-	composed, err := applyComposition(doc, parsed)
-	if err != nil {
-		workstats.Inc("tileview.compositions_ignored")
-		return doc
-	}
-	return composed
-}
-
-// gridComposition is the composition the tile grid composes with: a review
-// view composition (baum.composition/2, read with View set) has no layout,
-// so the grid lays out its library and authored tiles with the change
-// kind's template, as a fallback composition of baum.composition/1 did. A
-// template that cannot be made leaves the converted layout. Any other
-// composition is the grid's as it is.
-func gridComposition(doc *tiles.Document, parsed *tiles.Composition) (out *tiles.Composition) {
-	if parsed == nil || !parsed.View {
-		return parsed
-	}
-	defer func() {
-		if recover() != nil {
-			workstats.Inc("tileview.compositions_ignored")
-			out = nil
-		}
-	}()
-	template, report := tiles.Template(doc, parsed)
-	if report.Counts()[tiles.FixUnusable] > 0 {
-		workstats.Inc("tileview.compositions_ignored")
-		return nil
-	}
-	template.Generator = parsed.Generator
-	return &template
-}
-
-// parseComposition reads a stored composition, nil for none; one that
-// cannot be used is counted as ignored.
-func parseComposition(composition []byte) *tiles.Composition {
-	if len(composition) == 0 || string(composition) == "null" {
-		return nil
-	}
-	if len(composition) > tiles.MaxStoredComposition {
-		workstats.Inc("tileview.compositions_ignored")
-		return nil
-	}
-	parsed, err := tiles.ParseComposition(composition)
-	if err != nil {
-		workstats.Inc("tileview.compositions_ignored")
-		return nil
-	}
-	return parsed
-}
-
-// applyLayout composes the document with the person's layout replayed on the
-// composition (or the converted layout), or returns nil when none of their
-// edits applies to this version or composing fails, so the version is served
-// as it would be without them.
-func applyLayout(doc *tiles.Document, parsed *tiles.Composition, layout Layout) (out *tiles.Document) {
-	defer func() {
-		if recover() != nil {
-			workstats.Inc("tileview.overlays_ignored")
-			out = nil
-		}
-	}()
-	c, report := tiles.ApplyOverlay(doc, parsed, layout.Overlay, layout.Added)
-	if n := report.DroppedTotal(); n > 0 {
-		workstats.Add("tileview.overlay_ops_dropped", int64(n))
-	}
-	if report.Applied == 0 {
-		return nil
-	}
-	composed, err := applyComposition(doc, &c)
-	if err != nil {
-		workstats.Inc("tileview.overlays_ignored")
-		return nil
-	}
-	return composed
 }
 
 // raw is document as a JSON value, or null when it is not valid JSON.

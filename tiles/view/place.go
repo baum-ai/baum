@@ -6,30 +6,17 @@ import (
 	"github.com/baum-ai/baum/tiles"
 )
 
-// ExtraTiles are a composition's library and authored tiles as the tile
-// document composed with them shows them (tiles.Compose of its Grid): each
-// checked, with its state, problems and the hunks it covers. A tile the
-// document cannot take is missing; doc nil or a composition that cannot be
-// composed gives none.
+// ExtraTiles are a composition's library and authored tiles as tiles of
+// the document converted from its review (tiles.ExtraTiles): each checked,
+// with its state, problems and the hunks it covers. doc nil, or a document
+// that cannot take them, gives none.
 func ExtraTiles(doc *tiles.Document, c *Composition) []tiles.Tile {
 	if doc == nil || len(c.Library) == 0 && len(c.Authored) == 0 {
 		return nil
 	}
-	grid := c.Grid()
-	grid.View = false
-	composed, err := tiles.Compose(doc, grid)
+	out, err := tiles.ExtraTiles(doc, c.Library, c.Authored)
 	if err != nil {
 		return nil
-	}
-	wanted := ExtraIDs(c)
-	var out []tiles.Tile
-	for _, id := range wanted {
-		for _, t := range composed.Tiles {
-			if t.ID == id {
-				out = append(out, t)
-				break
-			}
-		}
 	}
 	return out
 }
@@ -72,6 +59,22 @@ func Place(r *Review, c *Composition, ids []string, covers map[string][]string) 
 		return slices.Index(order, a.ID) - slices.Index(order, b.ID)
 	})
 	return n
+}
+
+// SectionFor is where a tile is placed by the hunks it covers: the current
+// section of r whose hunks they meet most, the first on a tie, else
+// context. A section that is not one of r's current sections, or empty,
+// gives way to it; a current section or context is kept.
+func SectionFor(r *Review, section string, covered []string) string {
+	if section == ContextSection {
+		return section
+	}
+	for _, s := range r.Sections {
+		if s.ID == section && !s.Stale {
+			return section
+		}
+	}
+	return bestSection(r, covered)
 }
 
 // bestSection is the current section whose hunks the covered hunks meet

@@ -12,6 +12,7 @@ import (
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 func names(entries []library.Entry) []string {
@@ -188,7 +189,7 @@ func TestRecordUse(t *testing.T) {
 	ctx := context.Background()
 	saved := mustCreate(t, s, change(t, "migrations", ""))
 	builtin, _ := library.Get("api_change")
-	composition, _ := json.Marshal(tiles.Composition{Schema: tiles.CompositionName, Library: []tiles.LibraryTile{
+	composition, _ := json.Marshal(view.Composition{Schema: view.CompositionName, Library: []tiles.LibraryTile{
 		{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`)},
 		{Definition: builtin.Encoded, Data: json.RawMessage(`{}`)},
 		{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`)},
@@ -197,7 +198,7 @@ func TestRecordUse(t *testing.T) {
 	if !slices.Equal(used, []string{"migrations"}) {
 		t.Fatalf("used %v", used)
 	}
-	pending, _ := json.Marshal(tiles.Composition{Schema: tiles.CompositionName, Library: []tiles.LibraryTile{{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`), Pending: true}}})
+	pending, _ := json.Marshal(view.Composition{Schema: view.CompositionName, Library: []tiles.LibraryTile{{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`), Pending: true}}})
 	if got := tilelibrary.UsedTypes(pending); len(got) != 0 {
 		t.Errorf("a pending tile counts as used: %v", got)
 	}

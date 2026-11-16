@@ -14,7 +14,6 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/repos"
-	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
@@ -40,10 +39,9 @@ func (d *draftExecutor) Execute(ctx context.Context, _ jobs.Prepared, progress f
 	return nil, nil
 }
 
-// What an agent reads of the three tile routes, served by the real handlers
-// (a saved version, a group review and a running review's draft, each with
-// the synthetic custom tiles), holds each custom tile's digest and none of
-// its source.
+// What an agent reads of the two tile routes, served by the real handlers
+// (a saved version and a running review's draft, each with the synthetic
+// custom tiles), holds each custom tile's digest and none of its source.
 func TestTileReadsHoldNoTileSource(t *testing.T) {
 	t.Cleanup(tileview.SetFixture(tileviewtest.AddCustomTiles))
 	ctx := context.Background()
@@ -69,32 +67,10 @@ func TestTileReadsHoldNoTileSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	review := func(version int, stack bool) []byte {
-		doc := tileviewtest.Base(t)
-		doc["review"].(map[string]any)["version"] = version
-		delete(doc["review"].(map[string]any), "previous_version")
-		if stack {
-			doc["stack"] = map[string]any{"title": "Widget train", "members": []any{
-				map[string]any{"number": 7, "head_sha": "aaaaaaa", "review_version": 1},
-				map[string]any{"number": 8, "head_sha": "bbbbbbb", "review_version": 1},
-			}}
-		}
-		return tileviewtest.Encode(t, doc)
-	}
-	if err := versions.Put(ctx, store.Key{Repository: "acme/widgets", Number: 42}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: review(1, false)}); err != nil {
-		t.Fatal(err)
-	}
-
-	groupStore, err := reviewgroups.Open(filepath.Join(home, "groups.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = groupStore.Close() })
-	group, err := groupStore.Create(ctx, "acme/widgets", "Widget train", []int{7, 8})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := groupStore.Put(ctx, group.ID, 0, store.Version{Metadata: store.Metadata{Version: 1, Model: "stub-model"}, Document: review(1, true)}); err != nil {
+	doc := tileviewtest.Base(t)
+	doc["review"].(map[string]any)["version"] = 1
+	delete(doc["review"].(map[string]any), "previous_version")
+	if err := versions.Put(ctx, store.Key{Repository: "acme/widgets", Number: 42}, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: tileviewtest.Encode(t, doc)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -110,7 +86,7 @@ func TestTileReadsHoldNoTileSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	api := uiserver.LocalAPI{Registry: registry, Config: config.Default(), Groups: (&reviewgroups.API{Store: groupStore, Registry: registry}).Handler(), Jobs: queue.Handler()}.Handler()
+	api := uiserver.LocalAPI{Registry: registry, Config: config.Default(), Jobs: queue.Handler()}.Handler()
 	t.Cleanup(api.Close)
 	reader := agentcontext.NewReader(api, func(ctx context.Context, id string) (string, error) {
 		return uiserver.RegisteredRepository(ctx, registry, id)
@@ -136,7 +112,6 @@ func TestTileReadsHoldNoTileSource(t *testing.T) {
 	}{
 		{"version", tool, "/api/tiles?clone=" + clone.ID + "&pr=42"},
 		{"version, action", action, "/api/tiles?clone=" + clone.ID + "&pr=42"},
-		{"group", tool, "/api/groups/" + group.ID + "/tiles"},
 		{"draft", tool, draft},
 	} {
 		response, err := read.reader.Get(ctx, read.target)
@@ -144,18 +119,18 @@ func TestTileReadsHoldNoTileSource(t *testing.T) {
 			t.Fatalf("%s: %v %d %s", read.name, err, response.Status, response.Body)
 		}
 		var answer struct {
-			Tiles *struct {
+			View *struct {
 				Tiles []struct {
 					ID         string          `json:"id"`
 					Definition json.RawMessage `json:"definition"`
 				} `json:"tiles"`
-			} `json:"tiles"`
+			} `json:"view"`
 		}
-		if err := json.Unmarshal(response.Body, &answer); err != nil || answer.Tiles == nil {
+		if err := json.Unmarshal(response.Body, &answer); err != nil || answer.View == nil {
 			t.Fatalf("%s: %v %.300s", read.name, err, response.Body)
 		}
 		found := 0
-		for _, tile := range answer.Tiles.Tiles {
+		for _, tile := range answer.View.Tiles {
 			for _, id := range tileviewtest.CustomTileIDs {
 				if tile.ID == id && strings.Contains(string(tile.Definition), tileviewtest.CustomDefinition(id).Digest) {
 					found++

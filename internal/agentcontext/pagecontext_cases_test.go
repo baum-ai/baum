@@ -40,18 +40,22 @@ func TestAppPageContextsAreValid(t *testing.T) {
 		if _, err := linkOf(p.Page, p.Repository, p.PullRequest, p.Group, p.Session, p.Job, p.Feature, p.Section, "", p.Filters); err != nil {
 			t.Errorf("%q: %+v has no link: %v", c.Query, p, err)
 		}
+		// The section of the review page the person reads is where the add
+		// tools put a tile.
+		var focus struct {
+			Section string `json:"section"`
+		}
+		_ = json.Unmarshal(p.Focus, &focus)
+		if got := focusSection(CallContext{Page: p, HasPage: true}); got != focus.Section {
+			t.Errorf("%q: the focused section is %q, want %q", c.Query, got, focus.Section)
+		}
 	}
-	// A tile picked by an Ask, or open in its detail, is the tile the layout
-	// tools take "this" to mean.
 	if len(file.Picked) == 0 {
 		t.Fatal("no picked cases")
 	}
 	for _, c := range file.Picked {
 		if err := c.Context.Validate(); err != nil {
 			t.Errorf("%+v refused: %v", c.Context, err)
-		}
-		if got := focusOf(CallContext{Page: c.Context, HasPage: true}); got != c.Tile {
-			t.Errorf("%+v: the focused tile is %q, want %q", c.Context, got, c.Tile)
 		}
 	}
 }

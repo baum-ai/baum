@@ -369,13 +369,3 @@ func (refs *tileRefs) admission(tile *Tile) string {
 	}
 	return refs.refused[tile]
 }
-
-// definitionSizes returns the sizes a custom tile's definition declares, or
-// nil when it has problems.
-func definitionSizes(definition json.RawMessage) []Size {
-	checked := defaultValidator.definition(definition)
-	if len(checked.problems) > 0 {
-		return nil
-	}
-	return checked.sizes
-}

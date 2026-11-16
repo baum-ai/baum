@@ -10,7 +10,6 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/view"
 )
 
@@ -36,13 +35,13 @@ type ViewRequest struct {
 	Document  []byte
 	Converted *tiles.Document
 	// Fills are the library tiles the analysis selected, the ready ones with
-	// their tiles (compose.FillOf); Authored are the authored tiles it wrote
+	// their tiles (view.FillOf); Authored are the authored tiles it wrote
 	// that passed the host's checks. The composition holds both, whatever
 	// the call replies: a tile it does not place is placed by the hunks it
 	// covers (view.Place). Saved are the definition digests of the person's
 	// saved tile types the host offered.
-	Fills    []compose.Fill
-	Authored []compose.Authored
+	Fills    []view.Fill
+	Authored []view.Authored
 	Saved    []string
 	// Redactor masks secrets in the replies before they are read; nil uses
 	// bundle.NewRedactor.
@@ -68,9 +67,8 @@ type ViewRequest struct {
 }
 
 // DefaultViewTimeout bounds the view stage, its repair included, when the
-// caller's context has no deadline, as DefaultComposeTimeout bounds the
-// composition it replaces.
-const DefaultViewTimeout = DefaultComposeTimeout
+// caller's context has no deadline. A view call takes 10 to 40 seconds.
+const DefaultViewTimeout = 90 * time.Second
 
 // DefaultViewOutputTokens caps a view reply: a few diagrams and the
 // overview are a few thousand tokens.
@@ -161,7 +159,7 @@ func ViewRun(ctx context.Context, r ViewRequest) (ViewOutcome, error) {
 	}
 	// The library and authored tiles, checked once: the input lists those
 	// that pass, and every composition holds them.
-	library, authored := ComposeRequest{Fills: r.Fills, Authored: r.Authored, Saved: r.Saved}.extras()
+	library, authored := extras(r.Fills, r.Authored, r.Saved)
 	base, baseReport := view.Normalize(review, r.Converted, &view.Composition{Library: library, Authored: authored})
 	extras := view.ExtraTiles(r.Converted, &base)
 
@@ -243,11 +241,11 @@ func (r ViewRequest) finish(out ViewOutcome, review *view.Review, c view.Composi
 	if reason != "" {
 		g.Problems = []string{reason}
 	}
-	var probe tiles.Composition
-	if err := probe.SetGenerator(g); err != nil {
+	checked, err := g.Checked()
+	if err != nil {
 		return out, err
 	}
-	c.Generator = probe.Generator
+	c.Generator = &checked
 	out.Composition, out.Report = c, report
 	out.Fallback, out.FallbackReason = fallback, reason
 	return out, nil
@@ -256,7 +254,7 @@ func (r ViewRequest) finish(out ViewOutcome, review *view.Review, c view.Composi
 // inputTiles are the library and authored tiles as the call's input lists
 // them, in the composition's order.
 func (r ViewRequest) inputTiles(c *view.Composition, extras []tiles.Tile) []view.InputTile {
-	libraryIDs := map[string]compose.Fill{}
+	libraryIDs := map[string]view.Fill{}
 	for _, f := range r.Fills {
 		libraryIDs[tiles.LibraryTileID(f.Type)] = f
 	}

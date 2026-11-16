@@ -23,7 +23,7 @@ import (
 const ViewRecordName = "replay.view/1"
 
 // ViewGenerator runs only the view call (agent.ViewRun) over reviews that
-// already exist, with no analysis, as ComposeGenerator runs the composition:
+// already exist, with no analysis of its own:
 // the saved reviews of the dataset (Source ComposeFromStore), or the
 // documents of an earlier run (ComposeFromRun), whose library fills and
 // exhibits it places again. Its document is a ViewRecord; the composition,
@@ -38,13 +38,13 @@ const ViewRecordName = "replay.view/1"
 //	replay --generator view --compose-from-store --case ... --prompt-override review-view=<file>
 //	replay --generator view --compose-only --from-run <run> ...
 type ViewGenerator struct {
-	// Source, Dataset and Run say where the reviews come from, as
-	// ComposeGenerator's do.
+	// Source, Dataset and Run say where the reviews come from
+	// (savedReviews).
 	Source, Dataset, Run string
 	// PromptOverrides replaces the view prompt.
 	PromptOverrides prompt.Overrides
 
-	reviews *ComposeGenerator
+	reviews *savedReviews
 }
 
 var _ interface {
@@ -81,7 +81,7 @@ func init() {
 		case g.Source != ComposeFromStore && g.Source != ComposeFromRun:
 			return nil, errors.New("the view generator needs --compose-from-store or --compose-only --from-run <run>")
 		}
-		g.reviews = &ComposeGenerator{Source: g.Source, Dataset: g.Dataset, Run: g.Run}
+		g.reviews = &savedReviews{Source: g.Source, Dataset: g.Dataset, Run: g.Run}
 		return g, nil
 	})
 	RegisterMeter("view", &ViewGenerator{})

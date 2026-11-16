@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // savedType saves a type to the library: the built-in schema change type
@@ -77,7 +78,7 @@ func TestReviewsOfferSavedTypesAndRecordTheirUse(t *testing.T) {
 		t.Errorf("a review without a library offers saved types")
 	}
 
-	composition, _ := json.Marshal(tiles.Composition{Schema: tiles.CompositionName, Library: []tiles.LibraryTile{{Definition: pinned.Entry.Encoded, Data: json.RawMessage(`{}`)}}})
+	composition, _ := json.Marshal(view.Composition{Schema: view.CompositionName, Library: []tiles.LibraryTile{{Definition: pinned.Entry.Encoded, Data: json.RawMessage(`{}`)}}})
 	l.recordTileUse(ctx, clone.Repository, generate.Result{Composition: composition})
 	got, err := lib.Get(ctx, "pinned_type")
 	if err != nil || got.UsedAt == "" || got.UsedIn[clone.Repository] == "" {

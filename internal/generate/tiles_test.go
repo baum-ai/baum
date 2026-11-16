@@ -72,12 +72,12 @@ func keepTemplate(t *testing.T, lead string, _ any) func(context.Context, agent.
 
 // storedComposition reads a stored composition as the grid and the tile
 // analysis read it: its library and authored tiles and its generator.
-func storedComposition(t *testing.T, raw []byte) *tiles.Composition {
+func storedComposition(t *testing.T, raw []byte) *view.Composition {
 	t.Helper()
 	if len(raw) == 0 {
 		t.Fatal("no composition was stored")
 	}
-	c, err := tiles.ParseComposition(raw)
+	c, err := view.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,11 +189,8 @@ func TestTilesOnStoresAndServesTheComposition(t *testing.T) {
 		t.Errorf("the request %+v", request)
 	}
 	served := tileview.Build(latest.Document, latest.Composition, tiles.Options{})
-	if served.Tiles == nil || served.View == nil || served.Problem != "" {
+	if served.View == nil || served.Problem != "" {
 		t.Fatalf("served %q", served.Problem)
-	}
-	if served.Tiles.Origin.Kind != tiles.OriginGenerated {
-		t.Errorf("the grid's origin %q", served.Tiles.Origin.Kind)
 	}
 	if len(served.View.Tiles) != 1 || served.View.Tiles[0].ID != "dg_lead" || served.View.Overview.RiskSummary == "" {
 		t.Errorf("the view %+v", served.View)
@@ -336,23 +333,26 @@ func TestTilesDraftsGoFromTheTemplateToTheComposition(t *testing.T) {
 			t.Fatalf("a provisional composition %+v", c)
 		}
 	}
-	landing := func(d generate.Draft) []tiles.Entry {
+	// Where the library and authored tiles stand: the view call's own
+	// diagrams aside, a tile does not move when the call lands.
+	placed := func(d generate.Draft) []string {
 		served := tileview.Build(d.Document, d.Composition, tiles.Options{Draft: true})
-		if served.Tiles == nil || served.View == nil {
+		if served.View == nil {
 			t.Fatalf("draft not served: %s", served.Problem)
 		}
-		visible := tiles.Visible(served.Tiles.Layout)
-		var shown []tiles.Entry
-		for i, e := range served.Tiles.Layout.Entries {
-			if visible[i] {
-				shown = append(shown, tiles.Entry{Tile: e.Tile, Size: e.Size, Group: e.Group})
+		var at []string
+		for _, p := range served.View.Sections {
+			for _, id := range p.Tiles {
+				if !strings.HasPrefix(id, "dg_") {
+					at = append(at, p.ID+"/"+id)
+				}
 			}
 		}
-		return shown
+		return at
 	}
-	before, after := landing(drafts[len(drafts)-2]), landing(final)
+	before, after := placed(drafts[len(drafts)-2]), placed(final)
 	if !slices.Equal(before, after) {
-		t.Errorf("the grid jumped:\n%+v\n%+v", before, after)
+		t.Errorf("a tile moved:\n%+v\n%+v", before, after)
 	}
 	if !bytes.Equal(result.Compose.Provisional, drafts[len(drafts)-2].Composition) {
 		t.Errorf("the reported provisional composition is not the last draft's")

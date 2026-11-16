@@ -128,10 +128,10 @@ const (
 // the whole composition, only the offending item. The result is a fixed
 // point: normalising it again changes nothing.
 //
-//  1. Library and authored tiles: the checks of baum.composition/1
-//     (tiles.NormalizeComposition: a library tile's definition, data and
-//     citations, an authored tile's ID, shape and citations, at most 8 and
-//     3). A review that does not convert keeps neither.
+//  1. Library and authored tiles: tiles.NormalizeExtras (a library tile's
+//     definition, data and citations, an authored tile's ID, shape and
+//     citations, at most 8 and 3). A review that does not convert keeps
+//     neither.
 //  2. Diagrams: a native tile whose ID is not dg_ and a slug, or one another
 //     tile has, or whose type, counts, actors or text break the native
 //     rules, is dropped; text is made one plain line (no markdown but code
@@ -150,8 +150,7 @@ const (
 //     counts), else it is dropped; placements of one section merge, and
 //     they are kept in review order, context first, without empty ones.
 //
-// The generator passes through: the host sets it (tiles.Composition's
-// SetGenerator rules apply to it).
+// The generator passes through: the host sets it (tiles.Generator.Checked).
 func Normalize(r *Review, doc *tiles.Document, c *Composition) (Composition, Report) {
 	var report Report
 	out := Composition{Schema: CompositionName, Generator: c.Generator, Sections: []Placement{}}
@@ -164,12 +163,12 @@ func Normalize(r *Review, doc *tiles.Document, c *Composition) (Composition, Rep
 		if doc == nil {
 			report.fix(FixUnusable, "the review does not convert to tiles")
 		} else {
-			n, fixes := tiles.NormalizeComposition(doc, &tiles.Composition{Schema: tiles.CompositionName, Library: c.Library, Authored: c.Authored})
+			library, authored, fixes := tiles.NormalizeExtras(doc, c.Library, c.Authored)
 			counts := fixes.Counts()
 			if counts[tiles.FixUnusable] > 0 {
 				report.fix(FixUnusable, "the review does not convert to tiles")
 			} else {
-				out.Library, out.Authored = n.Library, n.Authored
+				out.Library, out.Authored = library, authored
 				for kind, count := range counts {
 					if tileFix(kind) {
 						report.add(map[tiles.FixKind]int{kind: count})

@@ -89,8 +89,8 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 		a.proposeComment(ctx, r)
 	}
 	answer := panelAnswer(r.Prompt)
-	// A request about the tiles' layout runs through the layout tools.
-	if said, ok := a.layout(ctx, r); ok {
+	// A request to add a tile runs through the add tools.
+	if said, ok := a.tiles(ctx, r); ok {
 		answer = said
 	}
 	a.mu.Lock()

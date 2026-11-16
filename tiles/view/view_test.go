@@ -371,6 +371,36 @@ func TestParseReplyReportsOnlyWhatItCannotRead(t *testing.T) {
 	}
 }
 
+// A tile the person added goes on the section it was added on, when the
+// review has that current section or it is context; else by its hunks.
+func TestBuildPlacesAddedTilesOnTheirSection(t *testing.T) {
+	r, doc, _ := fixture(t)
+	extras := view.ExtraTiles(doc, &view.Composition{Library: []tiles.LibraryTile{
+		libraryTile(t, "schema_change", "h_000000000003"), libraryTile(t, "api_change", "h_000000000003"),
+	}})
+	if len(extras) != 2 {
+		t.Fatalf("extras %+v", extras)
+	}
+	for _, tc := range []struct {
+		on   map[string]string
+		want map[string]string
+	}{
+		{map[string]string{"schema_change": "context", "api_change": "sec_retry_policy"}, map[string]string{"schema_change": "context", "api_change": "sec_retry_policy"}},
+		{map[string]string{"schema_change": "sec_gone", "api_change": ""}, map[string]string{"schema_change": "sec_config_flag", "api_change": "sec_config_flag"}},
+	} {
+		v := view.Build(r, nil, extras, tc.on)
+		where := map[string]string{}
+		for _, p := range v.Sections {
+			for _, id := range p.Tiles {
+				where[id] = p.ID
+			}
+		}
+		if !reflect.DeepEqual(where, tc.want) {
+			t.Errorf("on %v: placed %v, want %v", tc.on, where, tc.want)
+		}
+	}
+}
+
 func TestBuildListsEverySection(t *testing.T) {
 	r, doc, _ := fixture(t)
 	empty := view.Empty(r)
@@ -384,7 +414,7 @@ func TestBuildListsEverySection(t *testing.T) {
 	n.Diagrams = []view.NativeTile{{ID: "dg_x", Type: view.TypeTable, Title: "X", Data: json.RawMessage(`{"source":[{"type":"hunk","id":"h_000000000004"}],"columns":["A","B"],"rows":[["a","b"]]}`)}}
 	n.Overview.Diagram = ptr("dg_gone")
 	n.Sections = []view.Placement{{ID: "sec_generated_client", Tiles: []string{"dg_x", "dg_gone"}}}
-	v := view.Build(r, &n, view.ExtraTiles(doc, &n))
+	v := view.Build(r, &n, view.ExtraTiles(doc, &n), nil)
 	if len(v.Tiles) != 2 || v.Tiles[0].Covers[0] != "h_000000000004" || v.Tiles[1].Type != tiles.TypeCustom || v.Tiles[1].Definition == nil {
 		t.Fatalf("tiles %+v", v.Tiles)
 	}
@@ -432,10 +462,5 @@ func TestParseTellsTheSchemasApart(t *testing.T) {
 	}
 	if view.IsComposition([]byte(`{"schema": "baum.composition/1"}`)) || !view.IsComposition([]byte(`{"schema": "baum.composition/2"}`)) {
 		t.Error("IsComposition")
-	}
-	// The grid reads a review view composition for its tiles alone.
-	grid, err := tiles.ParseComposition([]byte(`{"schema": "baum.composition/2", "overview": {"screenshots": [], "intent": []}, "sections": [], "authored": [{"id": "prose_x", "title": "X", "data": {}}]}`))
-	if err != nil || !grid.View || len(grid.Authored) != 1 || len(grid.Layout.Entries) != 0 {
-		t.Fatalf("grid %+v %v", grid, err)
 	}
 }

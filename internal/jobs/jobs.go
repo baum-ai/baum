@@ -338,9 +338,9 @@ type Queue struct {
 	wake    chan struct{}
 	// chat lists the stored conversations; nil lists none.
 	chat ChatService
-	// layouts returns a pull request's own tile layout, which a draft's
-	// tile view applies; nil applies none.
-	layouts func(repository string, number int) tileview.Layout
+	// added returns the tiles a person added to a pull request, which a
+	// draft's view shows (SetAdded).
+	added   func(repository string, number int) []tileview.AddedTile
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup

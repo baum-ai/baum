@@ -33,7 +33,7 @@ func viewDocument(t *testing.T) []byte {
 // against the review, and the tiles the call left out placed by their hunks.
 func viewComposition(t *testing.T, document []byte) []byte {
 	t.Helper()
-	grid, err := tiles.ParseComposition(tileviewtest.LibraryComposition(t, document))
+	grid, err := view.Parse(tileviewtest.LibraryComposition(t, document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +85,8 @@ func viewComposition(t *testing.T, document []byte) []byte {
 func TestBuildServesTheView(t *testing.T) {
 	document := viewDocument(t)
 	r := Build(document, viewComposition(t, document), tiles.Options{})
-	if r.View == nil || r.Tiles == nil || r.Problem != "" {
-		t.Fatalf("view %v tiles %v problem %q", r.View != nil, r.Tiles != nil, r.Problem)
+	if r.View == nil || r.Problem != "" {
+		t.Fatalf("view %v problem %q", r.View != nil, r.Problem)
 	}
 	v := r.View
 	if v.Overview.Diagram == nil || *v.Overview.Diagram != "dg_delivery" || v.Overview.Verdict == nil || len(v.Sections) != 4 {
@@ -120,10 +120,6 @@ func TestBuildServesTheView(t *testing.T) {
 			t.Errorf("%s placed %d times", id, placed[id])
 		}
 	}
-	// The grid still serves the template's layout with the tiles.
-	if r.Tiles.Origin.Kind != tiles.OriginGenerated {
-		t.Errorf("the grid's origin %q", r.Tiles.Origin.Kind)
-	}
 	goldentest.Golden(t, "testdata/view-example.json", v)
 }
 
@@ -134,7 +130,7 @@ func TestBuildServesAnEmptyView(t *testing.T) {
 	document := viewDocument(t)
 	for name, composition := range map[string][]byte{
 		"none": nil,
-		"v1":   tileviewtest.LibraryComposition(t, document),
+		"v1":   []byte(`{"schema":"baum.composition/1","layout":{"entries":[]},"library":[]}`),
 	} {
 		r := Build(document, composition, tiles.Options{})
 		if r.View == nil || len(r.View.Tiles) != 0 || len(r.View.Sections) != 4 || r.View.Overview.Verdict != nil {
@@ -145,7 +141,7 @@ func TestBuildServesAnEmptyView(t *testing.T) {
 			t.Errorf("%s: %s", name, encoded)
 		}
 	}
-	grid, err := tiles.ParseComposition(tileviewtest.LibraryComposition(t, document))
+	grid, err := view.Parse(tileviewtest.LibraryComposition(t, document))
 	if err != nil {
 		t.Fatal(err)
 	}

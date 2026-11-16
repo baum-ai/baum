@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
@@ -23,7 +24,6 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tiledrafts"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/sessions"
@@ -146,11 +146,11 @@ type LocalAPI struct {
 	// Version is this baum's version, named in the "Report a problem" link
 	// that /api/diagnostics returns.
 	Version string
-	// Layouts keeps each person's own tile layout of a pull request, which
-	// the tile route applies and GET and POST /api/tiles/layout read and
-	// change. Without it no layout applies and the layout routes report the
+	// Added keeps the tiles each person added to a pull request's review
+	// page, which the tile route serves and POST /api/tiles/added removes
+	// and restores. Without it no tile is added and the route reports the
 	// capability unavailable.
-	Layouts *tilelayout.Service
+	Added *addedtiles.Service
 	// Fills fills the tiles a person added to a review that a version has
 	// no data for; nil leaves them pending.
 	Fills TileFiller
@@ -587,7 +587,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/tile-library", tileLibrary)
 	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
 	a.tileLibraryRoutes(mux)
-	a.layoutRoutes(mux)
+	a.addedRoutes(mux)
 	a.draftRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)

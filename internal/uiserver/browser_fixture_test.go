@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
@@ -54,7 +55,6 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
@@ -432,21 +432,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		review["pull_request"], review["version"], review["previous_version"] = 12, 1, nil
 		doc["summary"].(map[string]any)["text"] = "An arranged fixture review"
 		document, _ := json.Marshal(doc)
-		composition, _ := tileviewtest.PinnedComposition(t, document)
+		composition := tileviewtest.ViewComposition(t)
 		arranged := store.Version{Metadata: store.Metadata{Version: 1, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"},
 			Document: document, Attachments: previous.Attachments, Composition: composition}
 		if err := versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 12}, store.Version{}, arranged); err != nil {
 			t.Fatal(err)
 		}
-		// acme/demo#14, no longer listed, keeps one saved review whose tiles
-		// the layout test lays out its own way; the marker file
-		// layout-next-version saves its next version, which has no docs
-		// change (layoutNextVersion).
-		seedLayoutReview(t, versions, previous)
-		writeTileRows(t, map[string]tileview.Response{
-			"7":  tileview.Build(previous.Document, nil, tiles.Options{}),
-			"12": tileview.Build(document, composition, tiles.Options{}),
-		})
 	}
 	// acme/demo#13, no longer listed, keeps one saved review generated with
 	// tile reviews on: its composition holds two library tiles (a schema
@@ -755,17 +746,17 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		if err != nil {
 			return daemon.App{}, err
 		}
-		// Each person's own layout of a pull request's tiles, which the
-		// session panel's layout tools and the page change.
-		layouts := &tilelayout.Service{Path: filepath.Join(home, "app.sqlite"), Changed: func(pr string, revision int64) {
-			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
+		// The tiles people add to a pull request's review page, which the
+		// session panel's add tools add and the page removes.
+		added := &addedtiles.Service{Path: filepath.Join(home, "app.sqlite"), Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		runner.SetLayouts(layouts.Layout)
+		runner.SetAdded(added.Added)
 		// The pending cards of tiles the session panel's agent makes.
 		drafts := &tiledrafts.Store{Changed: func(pr string) {
-			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": 0, "drafts": true})
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		local := uiserver.LocalAPI{Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Layouts: layouts, Fills: fixtureFiller{versions: versions, layouts: layouts}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		local := uiserver.LocalAPI{Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -786,7 +777,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		// conversation gets an empty directory, as without a clone.
 		// A pull request page takes the comments the agent proposes for the
 		// pending review, saved as the page saves one.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{UIState: uiState, TileTypes: tileLibrary}).Pages(), Layouts: uiserver.LayoutEditor{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary},
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{UIState: uiState, TileTypes: tileLibrary}).Pages(), Added: uiserver.AddedTilesAPI{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary},
 			ChatTiles: &uiserver.ChatTiles{API: local, Checks: tileChecks, Drafts: drafts}})
 		panel := &panelAgent{events: events, home: home, mcp: mcp}
 		conversations, err := console.New(console.Options{Database: filepath.Join(home, "app.sqlite"), Root: filepath.Join(home, "console"),
@@ -833,13 +824,6 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()
 				for {
-					if _, err := os.Stat(filepath.Join(state, "layout-next-version")); err == nil {
-						_ = os.Remove(filepath.Join(state, "layout-next-version"))
-						if err := layoutNextVersion(versions); err != nil {
-							t.Log("the layout review's next version:", err)
-						}
-						changed()
-					}
 					for _, name := range []string{"acme/demo", "acme/other"} {
 						if err := scheduler.Trigger(ctx, name); err != nil && ctx.Err() == nil {
 							t.Log("automatic trigger:", err)
@@ -942,40 +926,6 @@ func seedAskConversation(t *testing.T, versions *store.Store, version int) {
 	}
 	cost := 0.02
 	if _, err := versions.SettleTurn(ctx, key, c.ID, 1, store.Settlement{State: store.TurnCompleted, Answer: answer, CostUSD: &cost, Finished: asked.Add(time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// writeTileRows writes, for the tiles page's browser test, the rows of each
-// served tile document's landing page by the Go layout (tiles.Rows), as tile
-// IDs: tile-rows.json in BAUM_APP_STATE_DIR, keyed by pull request number.
-// The test measures the cards the page draws against them.
-func writeTileRows(t *testing.T, served map[string]tileview.Response) {
-	t.Helper()
-	out := map[string][][]string{}
-	for key, answer := range served {
-		if answer.Tiles == nil {
-			t.Fatalf("pull request %s has no tile document: %s", key, answer.Problem)
-		}
-		layout := answer.Tiles.Layout
-		rows := [][]string{}
-		for _, row := range tiles.Rows(layout) {
-			if row.Entries[0] >= layout.Landing {
-				break
-			}
-			ids := []string{}
-			for _, i := range row.Entries {
-				ids = append(ids, layout.Entries[i].Tile)
-			}
-			rows = append(rows, ids)
-		}
-		out[key] = rows
-	}
-	raw, err := json.Marshal(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "tile-rows.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -38,14 +38,10 @@
 // submit-stage-codex.md, submit-stage-cursor.md, with {part} replaced by what
 // the stage returns), and names its schema file (agent.TaskSchemaFile).
 //
-// The arrangement of a review's tiles (agent.ComposeRun) has one more,
-// returned by TilesPrompts:
-//
-//	review-tiles-compose-public-v1.md  the system prompt of the single call
-//	                                   that chooses and arranges the tiles
-//	                                   from an inventory; it has no
-//	                                   Submitting heading, as the completing
-//	                                   backend says how to submit
+// The review page's view of a review (agent.ViewRun) has one more,
+// returned by TilesPrompts: review-view-public-v1.md, the system prompt of
+// the single call that writes the view. It has no Submitting heading, as
+// the completing backend says how to submit.
 //
 // # Custom prompts
 //

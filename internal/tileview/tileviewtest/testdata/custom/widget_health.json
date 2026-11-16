@@ -37,7 +37,7 @@
     "summary": "Widgets keep their **labels** when the store opens.",
     "stores": [
       { "name": "widget_tags", "status": "added", "cites": [{ "type": "hunk", "id": "@hunk" }] },
-      { "name": "widgets", "status": "changed", "cites": [{ "type": "tile", "id": "overview" }] }
+      { "name": "widgets", "status": "changed", "cites": [{ "type": "tile", "id": "newer_kit" }] }
     ]
   }
 }

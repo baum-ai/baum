@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // The tile analysis test texts: markers the stub reads back.
@@ -578,8 +578,8 @@ func TestTileAnalysisNoExhibits(t *testing.T) {
 // longer has is written again.
 func TestTileAnalysisReuse(t *testing.T) {
 	entry, _ := library.Get("schema_change")
-	previous := func(data string) *tiles.Composition {
-		return &tiles.Composition{Schema: tiles.CompositionName,
+	previous := func(data string) *view.Composition {
+		return &view.Composition{Schema: view.CompositionName,
 			Library: []tiles.LibraryTile{{Definition: entry.Encoded, Data: json.RawMessage(data)}},
 			Authored: []tiles.AuthoredTile{{ID: "table_states", Title: "States", Data: json.RawMessage(
 				`{"columns":["a","b"],"rows":[["x","y"]],"source":[{"type":"hunk","id":"` + testHunk + `"}]}`)}}}
@@ -660,18 +660,18 @@ func TestTileAnalysisExhibitFiles(t *testing.T) {
 	}
 }
 
-// The composition places only built-in library types' tiles.
-func TestComposePlacesOnlyBuiltinLibraryTiles(t *testing.T) {
+// The view places only built-in library types' tiles.
+func TestViewPlacesOnlyBuiltinLibraryTiles(t *testing.T) {
 	entry, _ := library.Get("schema_change")
 	var def map[string]any
 	_ = json.Unmarshal(entry.Encoded, &def)
 	def["title"] = "Not quite"
 	other, _ := json.Marshal(def)
-	r := ComposeRequest{Fills: []compose.Fill{
+	fills := []view.Fill{
 		{Type: "schema_change", Tile: &tiles.LibraryTile{Definition: entry.Encoded, Data: json.RawMessage(schemaFill())}},
 		{Type: "schema_change", Tile: &tiles.LibraryTile{Definition: other, Data: json.RawMessage(schemaFill())}},
-	}}
-	if lib, _ := r.extras(); len(lib) != 1 || string(lib[0].Definition) != string(entry.Encoded) {
+	}
+	if lib, _ := extras(fills, nil, nil); len(lib) != 1 || string(lib[0].Definition) != string(entry.Encoded) {
 		t.Errorf("library tiles: %d", len(lib))
 	}
 }
@@ -757,18 +757,18 @@ func TestSavedTypeInstructionsAreThePersons(t *testing.T) {
 	}
 }
 
-// A saved type the host offered (ComposeRequest.Saved, by digest) is placed;
+// A saved type the host offered (ViewRequest.Saved, by digest) is placed;
 // a definition that only claims its name is not.
-func TestComposePlacesOfferedSavedTiles(t *testing.T) {
+func TestViewPlacesOfferedSavedTiles(t *testing.T) {
 	saved := savedLibraryEntry(t, "saved_schema")
 	other := savedLibraryEntry(t, "saved_schema")
 	other.Definition.Title = "Changed"
 	encoded, _ := library.Seal(&other.Definition)
-	r := ComposeRequest{Saved: []string{saved.Definition.Digest}, Fills: []compose.Fill{
+	fills := []view.Fill{
 		{Type: "saved_schema", Tile: &tiles.LibraryTile{Definition: saved.Encoded, Data: json.RawMessage(schemaFill())}},
 		{Type: "saved_schema", Tile: &tiles.LibraryTile{Definition: encoded, Data: json.RawMessage(schemaFill())}},
-	}}
-	if lib, _ := r.extras(); len(lib) != 1 || string(lib[0].Definition) != string(saved.Encoded) {
+	}
+	if lib, _ := extras(fills, nil, []string{saved.Definition.Digest}); len(lib) != 1 || string(lib[0].Definition) != string(saved.Encoded) {
 		t.Errorf("library tiles: %d", len(lib))
 	}
 }

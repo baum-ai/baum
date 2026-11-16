@@ -12,7 +12,6 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/generate"
@@ -25,23 +24,21 @@ import (
 )
 
 // TileGenerator generates a review as the desktop does with tile reviews on:
-// the staged pipeline, then the compose stage, the view call that presents
-// it on its page (generate.Options.Tiles). Its document is the review, as
-// ReviewGenerator's is, so the review metrics and chains apply unchanged.
-// What the compose stage made is written beside it:
+// the staged pipeline, then the view call that presents it on its page
+// (generate.Options.Tiles). Its document is the review, as ReviewGenerator's
+// is, so the review metrics and chains apply unchanged. What the view stage
+// made is written beside it:
 //
-//   - composition.json, the composition the version would store (a
-//     review view composition, baum.composition/2);
-//   - compose.json, a ComposeRecord, which the compose metrics read; for a
-//     review view composition only its fallback, repair, fixes, cost and
-//     time are set (view.json holds the rest);
-//   - view.json and tiles.json, the view and the tile document the tile
-//     route would serve;
+//   - composition.json, the review view composition the version would
+//     store (baum.composition/2);
+//   - compose.json, a ComposeRecord, which the stage metrics read: its
+//     fallback, repair, fixes, cost and time (view.json holds the rest);
+//   - view.json, the view the tile route would serve;
 //   - provisional.json, the composition drafts showed while the review was
 //     written;
 //   - inventory.txt and reply.json, what the call read and answered.
 //
-// A review the compose stage could not present has none of them but
+// A review the view stage could not present has none of them but
 // compose.json, with its problem.
 type TileGenerator struct {
 	// Review writes the review: it is staged, and its Reuse and staged prompt
@@ -61,8 +58,8 @@ type TileGenerator struct {
 	mu sync.Mutex
 	// composed holds each generated review's composition by the review's
 	// digest, and previous the composition a chain hands to a case (Next).
-	composed map[[32]byte]*tiles.Composition
-	previous map[string]*tiles.Composition
+	composed map[[32]byte]*view.Composition
+	previous map[string]*view.Composition
 }
 
 var _ interface {
@@ -201,47 +198,6 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 		if err := g.viewArtifacts(out.Artifacts, result, report, list, o.Backend.Name()); err != nil {
 			return out, err
 		}
-	} else if result.Composition != nil {
-		composition, err := tiles.ParseComposition(result.Composition)
-		if err != nil {
-			return out, fmt.Errorf("the stored composition does not parse: %w", err)
-		}
-		_, doc, err := converted(result.Document)
-		if err != nil {
-			return out, err
-		}
-		composed := agent.ComposeOutcome{Composition: *composition, Inventory: report.Inventory, Fallback: report.Fallback,
-			FallbackReason: report.FallbackReason, Repaired: report.Repaired}
-		measured, _, _, err := recordOf(doc, composed)
-		if err != nil {
-			return out, err
-		}
-		measured.Problem, measured.Seconds, measured.CostUSD = record.Problem, record.Seconds, record.CostUSD
-		record = measured
-		record.Jump = jump(doc, report.Provisional, composition)
-		served := tileview.Build(result.Document, result.Composition, tiles.Options{})
-		if out.Artifacts["tiles.json"], err = json.MarshalIndent(served.Tiles, "", "  "); err != nil {
-			return out, err
-		}
-		if err := analysisArtifacts(out.Artifacts, report.Tiles, served.Tiles, composition, list, o.Backend.Name()); err != nil {
-			return out, err
-		}
-		out.Artifacts["composition.json"] = record.Composition
-		if len(report.Provisional) > 0 {
-			out.Artifacts["provisional.json"] = report.Provisional
-		}
-		if report.Inventory != "" {
-			out.Artifacts["inventory.txt"] = []byte(report.Inventory)
-		}
-		if len(report.Reply) > 0 {
-			out.Artifacts["reply.json"] = report.Reply
-		}
-		g.mu.Lock()
-		if g.composed == nil {
-			g.composed = map[[32]byte]*tiles.Composition{}
-		}
-		g.composed[sha256.Sum256(result.Document)] = composition
-		g.mu.Unlock()
 	}
 	if out.Artifacts["compose.json"], err = json.MarshalIndent(record, "", "  "); err != nil {
 		return out, err
@@ -257,23 +213,24 @@ func (g *TileGenerator) Generate(ctx context.Context, o generate.Options, c Case
 	return out, nil
 }
 
-// viewArtifacts writes what the compose stage, the view call, made of a
-// review: its composition, the view and tile document the tile route would
-// serve, the analysis's artifacts, the drafts' composition, the call's input
-// and reply. A chain hands the composition's library tiles to the next case.
+// viewArtifacts writes what the view stage made of a review: its
+// composition, the view the tile route would serve, the analysis's
+// artifacts, the drafts' composition, the call's input and reply. A chain
+// hands the composition's library and authored tiles to the next case.
 func (g *TileGenerator) viewArtifacts(artifacts map[string][]byte, result generate.Result, report *generate.ComposeReport, list *pricing.List, backend string) error {
-	grid, err := tiles.ParseComposition(result.Composition)
+	composition, err := view.Parse(result.Composition)
 	if err != nil {
 		return fmt.Errorf("the stored composition does not parse: %w", err)
 	}
 	served := tileview.Build(result.Document, result.Composition, tiles.Options{})
-	if artifacts["tiles.json"], err = json.MarshalIndent(served.Tiles, "", "  "); err != nil {
-		return err
-	}
 	if artifacts["view.json"], err = json.MarshalIndent(served.View, "", "  "); err != nil {
 		return err
 	}
-	if err := analysisArtifacts(artifacts, report.Tiles, served.Tiles, grid, list, backend); err != nil {
+	_, doc, err := converted(result.Document)
+	if err != nil {
+		return err
+	}
+	if err := analysisArtifacts(artifacts, report.Tiles, doc, served.View, composition, list, backend); err != nil {
 		return err
 	}
 	artifacts["composition.json"] = result.Composition
@@ -288,53 +245,11 @@ func (g *TileGenerator) viewArtifacts(artifacts map[string][]byte, result genera
 	}
 	g.mu.Lock()
 	if g.composed == nil {
-		g.composed = map[[32]byte]*tiles.Composition{}
+		g.composed = map[[32]byte]*view.Composition{}
 	}
-	g.composed[sha256.Sum256(result.Document)] = grid
+	g.composed[sha256.Sum256(result.Document)] = composition
 	g.mu.Unlock()
 	return nil
-}
-
-// jump counts the landing entries whose tile or size differs between the
-// provisional layout and the composition, position by position, both
-// applied to the review's tile document.
-func jump(doc *tiles.Document, provisional []byte, final *tiles.Composition) *int {
-	if len(provisional) == 0 {
-		return nil
-	}
-	before, err := tiles.ParseComposition(provisional)
-	if err != nil {
-		return nil
-	}
-	shown := func(c *tiles.Composition) ([]tiles.Entry, bool) {
-		composed, err := tiles.Compose(doc, c)
-		if err != nil {
-			return nil, false
-		}
-		visible := tiles.Visible(composed.Layout)
-		var entries []tiles.Entry
-		for i, entry := range composed.Layout.Entries {
-			if visible[i] {
-				entries = append(entries, entry)
-			}
-		}
-		return entries, true
-	}
-	a, ok := shown(before)
-	if !ok {
-		return nil
-	}
-	b, ok := shown(final)
-	if !ok {
-		return nil
-	}
-	n := 0
-	for i := range max(len(a), len(b)) {
-		if i >= len(a) || i >= len(b) || a[i].Tile != b[i].Tile || a[i].Size != b[i].Size {
-			n++
-		}
-	}
-	return &n
 }
 
 // Validate checks the review alone; the runner calls ValidateGenerated,
@@ -344,16 +259,13 @@ func (g *TileGenerator) Validate(document []byte, c Case) []string {
 }
 
 // ValidateGenerated checks the review as the stored form, and the
-// composition as a host would before storing it (checkComposition). A review
-// without a composition is valid: its version would show the default layout.
+// composition as a host would before storing it (checkViewComposition). A
+// review without a composition is valid: its version would show the review
+// alone.
 func (g *TileGenerator) ValidateGenerated(generated Generated, c Case) []string {
 	findings := g.Review.Validate(generated.Document, c)
-	switch raw := generated.Artifacts["composition.json"]; {
-	case raw == nil:
-	case view.IsComposition(raw):
+	if raw := generated.Artifacts["composition.json"]; raw != nil {
 		findings = append(findings, checkViewComposition(generated.Document, raw)...)
-	default:
-		findings = append(findings, checkComposition(generated.Document, raw)...)
 	}
 	return findings
 }
@@ -370,7 +282,7 @@ func (g *TileGenerator) Next(c Case, document []byte) (bundle.Bundle, error) {
 	defer g.mu.Unlock()
 	if composition := g.composed[sha256.Sum256(document)]; composition != nil {
 		if g.previous == nil {
-			g.previous = map[string]*tiles.Composition{}
+			g.previous = map[string]*view.Composition{}
 		}
 		g.previous[c.ID] = composition
 	}
@@ -392,16 +304,39 @@ func (g *TileGenerator) Derived(sums map[string]float64) map[string]float64 {
 	return g.Review.Derived(sums)
 }
 
-// The metrics the tiles generator adds to the compose metrics.
+// ComposeRecordName is the schema of compose.json, a tiles case's record of
+// its view stage.
+const ComposeRecordName = "replay.compose/2"
+
+// ComposeRecord is compose.json: what the view stage did, which the stage
+// metrics read. Problem says why the version would store no composition
+// at all.
+type ComposeRecord struct {
+	Schema         string                `json:"schema"`
+	Fallback       bool                  `json:"fallback"`
+	FallbackReason string                `json:"fallback_reason,omitempty"`
+	Repaired       bool                  `json:"repaired"`
+	Fixes          map[tiles.FixKind]int `json:"fixes,omitempty"`
+	InventoryBytes int                   `json:"inventory_bytes"`
+	Seconds        float64               `json:"seconds"`
+	CostUSD        *float64              `json:"cost_usd,omitempty"`
+	Problem        string                `json:"problem,omitempty"`
+}
+
+// The view stage's metrics.
 const (
-	MetricComposeCost    = "compose_cost_usd"
-	MetricComposeJump    = "compose_jump"
-	MetricComposeProblem = "compose_no_composition"
+	MetricComposeFallback = "compose_fallback"
+	MetricComposeRepaired = "compose_repaired"
+	MetricComposeFixes    = "compose_fixes"
+	MetricComposeBytes    = "compose_inventory_bytes"
+	MetricComposeSeconds  = "compose_seconds"
+	MetricComposeCost     = "compose_cost_usd"
+	MetricComposeProblem  = "compose_no_composition"
 )
 
-// ArtifactMetrics measures compose.json with the compose metrics, plus the
-// compose stage's cost, the jump from the provisional layout and whether the
-// version would have no composition.
+// ArtifactMetrics measures compose.json (the view stage's fallback, repair,
+// fixes, input size, time and cost, and whether the version would have no
+// composition) and analysis.json.
 func (g *TileGenerator) ArtifactMetrics(read func(string) ([]byte, error)) (map[string]float64, error) {
 	raw, err := read("compose.json")
 	if err != nil {
@@ -414,33 +349,42 @@ func (g *TileGenerator) ArtifactMetrics(read func(string) ([]byte, error)) (map[
 	if record.Problem != "" {
 		return map[string]float64{MetricComposeProblem: 1, MetricComposeSeconds: record.Seconds}, nil
 	}
-	values, err := (&ComposeGenerator{}).DocumentMetrics(raw)
-	if err != nil {
-		return nil, err
+	flag := func(b bool) float64 {
+		if b {
+			return 1
+		}
+		return 0
 	}
+	fixes := 0
+	for _, n := range record.Fixes {
+		fixes += n
+	}
+	values := map[string]float64{MetricComposeFallback: flag(record.Fallback), MetricComposeRepaired: flag(record.Repaired), MetricComposeFixes: float64(fixes),
+		MetricComposeBytes: float64(record.InventoryBytes), MetricComposeSeconds: record.Seconds, MetricComposeProblem: 0}
 	if err := analysisMetrics(read, values); err != nil {
 		return nil, err
 	}
-	values[MetricComposeProblem] = 0
 	if record.CostUSD != nil {
 		values[MetricComposeCost] = *record.CostUSD
-	}
-	if record.Jump != nil {
-		values[MetricComposeJump] = float64(*record.Jump)
 	}
 	return values, nil
 }
 
-// Definitions are the review's and the compose stage's.
+// Definitions are the review's and the view stage's.
 func (g *TileGenerator) Definitions() map[string]string {
 	definitions := g.Review.Definitions()
-	maps.Copy(definitions, (&ComposeGenerator{}).Definitions())
-	definitions[MetricComposeCost] = "what the compose stage cost at API prices (cost_usd includes it)"
-	definitions[MetricComposeJump] = "landing entries whose tile or size differs between the provisional layout drafts showed and the composition"
-	definitions[MetricComposeProblem] = "1 when the version would have no composition at all (the default layout)"
+	maps.Copy(definitions, map[string]string{
+		MetricComposeFallback: "1 when the view call's reply was not used (see the record's fallback_reason)",
+		MetricComposeRepaired: "1 when an invalid reply needed the repair call",
+		MetricComposeFixes:    "fixes the host's checks made to the reply, and tiles it placed",
+		MetricComposeBytes:    "bytes of the view call's user message",
+		MetricComposeSeconds:  "seconds the view stage took",
+		MetricComposeCost:     "what the view stage cost at API prices (cost_usd includes it)",
+		MetricComposeProblem:  "1 when the version would have no composition at all",
+	})
 	maps.Copy(definitions, analysisDefinitions())
 	for _, t := range g.Saved {
-		for _, part := range []string{"selected", "ready", "not_applies", "dropped", "repaired", "reused", "landing"} {
+		for _, part := range []string{"selected", "ready", "not_applies", "dropped", "repaired", "reused", "on_section"} {
 			definitions["library_"+t.Name+"_"+part] = "the saved " + t.Name + " type: " + part
 		}
 	}

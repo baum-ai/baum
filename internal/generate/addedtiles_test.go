@@ -14,6 +14,7 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // apiChangeData is api_change data citing a hunk.
@@ -50,7 +51,7 @@ func fillCalls(f *fixture, stage string) int {
 	return n
 }
 
-func libraryNames(c *tiles.Composition) []string {
+func libraryNames(c *view.Composition) []string {
 	var out []string
 	for _, lib := range c.Library {
 		var def struct {

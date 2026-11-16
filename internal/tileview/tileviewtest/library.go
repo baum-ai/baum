@@ -7,14 +7,16 @@ import (
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
-// LibraryComposition returns a composition of the review (as JSON) as a
-// generation with tile reviews on stores it: the template's layout with two
-// library tiles, filled from the library's synthetic samples (schema_change's
-// postgres-migration, which has a destructive change and leads, and
-// api_change's first sample), and two authored tiles, a table and a code
-// excerpt. Every citation names the first hunk of the review's first change,
+// LibraryComposition returns a review view composition of the review (as
+// JSON) as a generation with tile reviews on stores it when the view call
+// placed nothing: two library tiles, filled from the library's synthetic
+// samples (schema_change's postgres-migration, which has a destructive
+// change, and api_change's first sample), and two authored tiles, a table
+// and a code excerpt, all placed by the host on the section whose hunk they
+// cite. Every citation names the first hunk of the review's first change,
 // without lines.
 func LibraryComposition(t testing.TB, document []byte) []byte {
 	t.Helper()
@@ -37,7 +39,8 @@ func LibraryComposition(t testing.TB, document []byte) []byte {
 	if hunk == "" {
 		t.Fatal("the review has no change with a hunk")
 	}
-	content := &tiles.Composition{Schema: tiles.CompositionName}
+	content := &view.Composition{Schema: view.CompositionName, Generator: &tiles.Generator{PromptVersion: "fixture"},
+		Overview: view.Overview{Screenshots: []string{}, Intent: []view.Intent{}}, Sections: []view.Placement{}}
 	for _, pick := range []struct{ name, sample string }{{"schema_change", "postgres-migration"}, {"api_change", ""}} {
 		entry, ok := library.Get(pick.name)
 		if !ok {
@@ -62,12 +65,10 @@ func LibraryComposition(t testing.TB, document []byte) []byte {
 			mustQuote("func backoff(attempt int, reset time.Time) time.Duration {\n\tif !reset.IsZero() {\n\t\treturn time.Until(reset)\n\t}\n\t// …\n\treturn time.Duration(1<<attempt) * time.Second\n}") +
 			`,"caption":"A rate limit's reset time wins over the doubling delay.","source":` + source + `}`)},
 	}
-	c, report := tiles.Template(doc, content)
-	if report.Counts()[tiles.FixUnusable] > 0 || len(c.Library) != 2 || len(c.Authored) != 2 {
+	if library, authored, report := tiles.NormalizeExtras(doc, content.Library, content.Authored); len(library) != 2 || len(authored) != 2 {
 		t.Fatalf("the library composition does not apply: %v", report.Messages())
 	}
-	c.Generator = &tiles.Generator{PromptVersion: "fixture", Template: c.Generator.Template}
-	encoded, err := json.Marshal(c)
+	encoded, err := json.Marshal(content)
 	if err != nil {
 		t.Fatal(err)
 	}

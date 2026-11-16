@@ -523,12 +523,12 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 		// plan_usage reads the daemon's cache through an accessor, and the
 		// projected tools read one exact route each (ToolProjected). The
 		// propose tools read nothing: their proposers save, when the person
-		// does, through the pages' own saves. The layout tools read and
-		// change the person's layout through the layout editor, never the
-		// reader, and the tools that make a tile in chat through
+		// does, through the pages' own saves. add_tile and tile_type add and
+		// read tiles through the added tiles API and the tile library, never
+		// the reader, and the tools that make a tile in chat through
 		// ChatTiles; the tile guide is the kit's own.
-		layout := slices.Contains([]string{"tile_layout", "edit_tiles", "tile_type", "add_tile", "undo_tiles", "reset_tiles", "tile_guide", "start_tile", "check_tile", "add_custom_tile"}, tool)
-		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && !layout && !strings.HasPrefix(tool, "propose_") && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" && tool != "github_repositories" {
+		tileTool := slices.Contains([]string{"tile_type", "add_tile", "tile_guide", "start_tile", "check_tile", "add_custom_tile"}, tool)
+		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && !tileTool && !strings.HasPrefix(tool, "propose_") && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" && tool != "github_repositories" {
 			t.Errorf("%s declares no route", tool)
 		}
 		prefixes = append(prefixes, tp...)

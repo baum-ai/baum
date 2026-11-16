@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/baum-ai/baum/tiles"
 )
 
 // The phases of a card.
@@ -43,13 +41,14 @@ const MaxTitle = 80
 
 // Draft is a pending card as the tile route serves it.
 type Draft struct {
-	Tile   string       `json:"tile"`
-	Title  string       `json:"title"`
-	Size   tiles.Size   `json:"size,omitempty"`
-	To     *tiles.Place `json:"to,omitempty"`
-	Phase  string       `json:"phase"`
-	Round  int          `json:"round,omitempty"`
-	Reason string       `json:"reason,omitempty"`
+	Tile  string `json:"tile"`
+	Title string `json:"title"`
+	// Section is the section of the review page the tile will stand on (a
+	// section ID or "context"), empty for one the host places once added.
+	Section string `json:"section,omitempty"`
+	Phase   string `json:"phase"`
+	Round   int    `json:"round,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // ErrUnknown is a card that is not there: never started, added, removed or
@@ -67,7 +66,7 @@ type card struct {
 // use.
 type Store struct {
 	// Changed is told the pull request whose cards changed (its
-	// tilelayout.Key); nil tells nobody.
+	// addedtiles.Key); nil tells nobody.
 	Changed func(pr string)
 	// After runs f after d; nil is time.AfterFunc. Tests replace it.
 	After func(d time.Duration, f func()) *time.Timer
@@ -90,10 +89,10 @@ func (s *Store) after(d time.Duration, f func()) *time.Timer {
 	return time.AfterFunc(d, f)
 }
 
-// Start shows a new card on a pull request (its tilelayout.Key) for owner,
+// Start shows a new card on a pull request (its addedtiles.Key) for owner,
 // a conversation's MCP consumer, and returns it. An earlier card of the same
 // owner goes: a conversation makes one tile at a time.
-func (s *Store) Start(owner, pr, title string, size tiles.Size, to *tiles.Place) Draft {
+func (s *Store) Start(owner, pr, title, section string) Draft {
 	title = strings.Join(strings.Fields(title), " ")
 	if r := []rune(title); len(r) > MaxTitle {
 		title = string(r[:MaxTitle])
@@ -109,7 +108,7 @@ func (s *Store) Start(owner, pr, title string, size tiles.Size, to *tiles.Place)
 		return true
 	})
 	s.next++
-	c := &card{Draft: Draft{Tile: fmt.Sprintf("draft_%d", s.next), Title: title, Size: size, To: to, Phase: PhaseWriting}, owner: owner, pr: pr}
+	c := &card{Draft: Draft{Tile: fmt.Sprintf("draft_%d", s.next), Title: title, Section: section, Phase: PhaseWriting}, owner: owner, pr: pr}
 	s.cards = append(s.cards, c)
 	out := c.Draft
 	s.mu.Unlock()

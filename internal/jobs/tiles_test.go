@@ -15,36 +15,14 @@ import (
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
-	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tileview"
-	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/compose"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
-// templateCompletion answers a view call with a reply that writes nothing,
-// and a composition with the template's layout.
-func templateCompletion(_ context.Context, r agent.CompleteRequest, _ int) (agent.Completion, error) {
-	if string(r.Schema) == string(view.ReplySchema()) {
-		raw := []byte(`{"overview": {"risk_summary": null, "verdict": null, "screenshots": [], "diagram": null, "intent": []}, "sections": [], "diagrams": []}`)
-		return agent.Completion{Document: raw, Model: "stub-composer", Usage: agent.Usage{Input: 2000, Output: 300}}, nil
-	}
-	var inv compose.Inventory
-	if err := json.Unmarshal([]byte(r.User[strings.Index(r.User, "\n")+1:]), &inv); err != nil {
-		return agent.Completion{}, err
-	}
-	reply := compose.Reply{Entries: []compose.ReplyEntry{}, Promote: []compose.ReplyPromotion{}, Moves: []tiles.Move{}}
-	for _, entry := range inv.Template.Entries {
-		e := compose.ReplyEntry{Tile: entry.Tile, Size: entry.Size}
-		if entry.Group != "" {
-			group := entry.Group
-			e.Group = &group
-		}
-		reply.Entries = append(reply.Entries, e)
-	}
-	raw, err := json.Marshal(reply)
-	return agent.Completion{Document: raw, Model: "stub-composer", Usage: agent.Usage{Input: 2000, Output: 300}}, err
+// templateCompletion answers a view call with a reply that writes nothing.
+func templateCompletion(_ context.Context, _ agent.CompleteRequest, _ int) (agent.Completion, error) {
+	raw := []byte(`{"overview": {"risk_summary": null, "verdict": null, "screenshots": [], "diagram": null, "intent": []}, "sections": [], "diagrams": []}`)
+	return agent.Completion{Document: raw, Model: "stub-composer", Usage: agent.Usage{Input: 2000, Output: 300}}, nil
 }
 
 // A job's backend forwards the composer's call and reports it as the other
@@ -63,7 +41,7 @@ func TestTrackedBackendReportsTheComposition(t *testing.T) {
 	if generate.CompleterOf(b) == nil {
 		t.Fatal("the job's backend cannot complete")
 	}
-	request := agent.CompleteRequest{System: "s", User: "inventory\n{\"template\":{\"entries\":[{\"tile\":\"overview\",\"size\":\"half\"}]}}"}
+	request := agent.CompleteRequest{System: "s", User: "input\n{}"}
 	if _, err := b.Complete(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -142,19 +120,17 @@ func TestTileReviewThroughAJob(t *testing.T) {
 	}
 	// The queue serves each draft with its layout.
 	var d draftTiles
-	body, err := d.get("job", 1, final.Draft, final.DraftComposition, tileview.Layout{})
+	body, err := d.get("job", 1, final.Draft, final.DraftComposition, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var served struct {
-		Tiles struct {
-			Origin struct {
-				Kind string `json:"kind"`
-			} `json:"origin"`
-		} `json:"tiles"`
+		View *struct {
+			Schema string `json:"schema"`
+		} `json:"view"`
 	}
-	if err := json.Unmarshal(body, &served); err != nil || served.Tiles.Origin.Kind != tiles.OriginGenerated {
-		t.Errorf("the final draft is served %q: %v", served.Tiles.Origin.Kind, err)
+	if err := json.Unmarshal(body, &served); err != nil || served.View == nil || served.View.Schema != "baum.view/1" {
+		t.Errorf("the final draft is served without its view: %v", err)
 	}
 	if tileview.Key(final.DraftComposition) == "" {
 		t.Error("the draft's layout has no cache key")
@@ -192,43 +168,5 @@ func TestTileReviewUsesTheRepositorysViewPrompt(t *testing.T) {
 	plain := generate.Options{Staged: true}
 	if err := (&Local{Registry: registry}).applyPrompts(context.Background(), clone.Repository, &plain); err != nil || plain.PromptSource != "" || plain.Tiles != nil {
 		t.Errorf("without tiles: %v %q", err, plain.PromptSource)
-	}
-}
-
-// A repository's standing tile preferences reach a tile review's options
-// (generate.Tiles.Preferences), and a repository without any gives none. The
-// view call, which replaced the tile grid's composition, does not read them.
-func TestTileReviewCarriesTheRepositorysPreferences(t *testing.T) {
-	ctx := context.Background()
-	registry, _ := registeredClone(t)
-	repository := assembletest.Repository.String()
-	if _, err := registry.Pick(ctx, repository, nil); err != nil {
-		t.Fatal(err)
-	}
-	compose1 := func() *compose.Preferences {
-		t.Helper()
-		versions, err := store.Open("", t.TempDir(), true)
-		if err != nil {
-			t.Fatal(err)
-		}
-		key := store.Key{Repository: repository, Number: assembletest.Number}
-		p := (&Local{Registry: registry}).tilesFor(ctx, versions, key, repository).Preferences
-		if p.Text == "" && len(p.Pins) == 0 {
-			return nil
-		}
-		return &p
-	}
-	if got := compose1(); got != nil {
-		t.Errorf("without settings the review carries %+v", got)
-	}
-	if _, err := registry.UpdateRepositoryIf(ctx, repository, func(s repos.Settings) (repos.Settings, error) {
-		s.Tiles = &repos.TileSettings{Text: "Lead with what changed in the data model.", Pins: []string{"risks"}}
-		return s, nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	got := compose1()
-	if got == nil || got.Text != "Lead with what changed in the data model." || !slices.Equal(got.Pins, []string{"risks"}) {
-		t.Errorf("the composer read %+v", got)
 	}
 }

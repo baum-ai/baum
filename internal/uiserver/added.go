@@ -7,87 +7,96 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/addedtiles"
+	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview"
+	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
-// A tile the person added to a pull request's review (an add op of their
-// overlay) shows, on each version, what generation filled for it or else
-// the fill the host holds (tilelayout.AddedFor). On the latest version a
-// tile with no fill of its own shows its last data, or pending, while a fill
-// runs (LocalAPI.Fills), started when the tile is added without data and
-// when a version that needs one is served.
+// The tiles a person added to a pull request's review page
+// (internal/addedtiles) show on every version the tile route serves, on the
+// section they were added on. On each version an added tile shows what
+// generation filled for it, or else the fill the host holds
+// (addedtiles.AddedFor). On the latest version a tile with no fill of its
+// own shows its last data, or pending, while a fill runs (LocalAPI.Fills),
+// started when the tile is added without data and when a version that
+// needs one is served. POST /api/tiles/added removes one, and its Undo
+// restores it.
 
 // TileFiller starts filling added tiles; jobs.TileFills implements it.
 type TileFiller interface {
 	// Fill starts a fill of an added tile for a version, in the
 	// background, unless one runs or recently failed.
-	Fill(request tilelayout.FillRequest)
+	Fill(request addedtiles.FillRequest)
 }
 
 // fillValidator checks data the agent wrote for an added tile.
 var fillValidator = sync.OnceValue(tiles.NewValidator)
 
-// layoutState is a pull request's overlay and what names it with its fills
-// in a cache key.
-func (a LocalAPI) layoutState(ctx context.Context, repository string, number int) (tilelayout.State, []tilelayout.Fill, string) {
-	if a.Layouts == nil {
-		return tilelayout.State{}, nil, ""
+// addedState is a pull request's added tiles, their fills, and what names
+// both in a cache key.
+func (a LocalAPI) addedState(ctx context.Context, repository string, number int) ([]addedtiles.Added, []addedtiles.Fill, string) {
+	if a.Added == nil {
+		return nil, nil, ""
 	}
-	pr := tilelayout.Key(repository, number)
-	state, err := a.Layouts.Read(ctx, pr)
+	pr := addedtiles.Key(repository, number)
+	added, err := a.Added.List(ctx, pr)
 	if err != nil {
-		a.logger().Warn("a tile layout could not be read", "error", err.Error())
-		return tilelayout.State{}, nil, ""
+		a.logger().Warn("the added tiles could not be read", "error", err.Error())
+		return nil, nil, ""
 	}
-	key := tileview.LayoutKey(tileview.Layout{Overlay: state.Overlay})
-	if key == "" || len(state.AddedTypes()) == 0 {
-		return state, nil, key
+	if len(added) == 0 {
+		return nil, nil, ""
 	}
-	fills, err := a.Layouts.Fills(ctx, pr)
+	fills, err := a.Added.Fills(ctx, pr)
 	if err != nil {
 		a.logger().Warn("the fills of added tiles could not be read", "error", err.Error())
 	}
 	sum := sha256.New()
+	for _, t := range added {
+		_, _ = fmt.Fprintf(sum, "%s\x00%s\x00%s\x00%s\x00", t.Tile, t.Kind, t.Digest, t.Section)
+	}
 	for _, f := range fills {
 		_, _ = fmt.Fprintf(sum, "%s\x00%d\x00%s\x00", f.Tile, f.Version, f.Digest)
 		sum.Write(f.Data)
 	}
-	return state, fills, key + "\x00fills\x00" + hex.EncodeToString(sum.Sum(nil))
+	return added, fills, hex.EncodeToString(sum.Sum(nil))
 }
 
-// layoutFor is the layout a version is served with: the overlay and what
-// the host holds for its added tiles. On the latest version, the added
+// addedFor is what a version is served with of the tiles the person added:
+// what the host holds for each on it. On the latest version, the added
 // tiles it has no fill for are filled (LocalAPI.Fills).
-func (a LocalAPI) layoutFor(ctx context.Context, c repos.Clone, number int, version store.Version, latest bool, state tilelayout.State, fills []tilelayout.Fill) tileview.Layout {
-	layout := tileview.Layout{Overlay: state.Overlay}
-	added := state.AddedTypes()
-	if len(added) == 0 || !state.Edited() {
-		return layout
+func (a LocalAPI) addedFor(ctx context.Context, c repos.Clone, number int, version store.Version, latest bool, added []addedtiles.Added, fills []addedtiles.Fill) []tileview.AddedTile {
+	if len(added) == 0 {
+		return nil
 	}
-	v := tilelayout.Version{Number: version.Metadata.Version, Latest: latest, Generated: tilelayout.Generated(version.Composition), Diff: diffOfStored(version.Document)}
-	held, missing := tilelayout.AddedFor(added, fills, v, func(digest string) (json.RawMessage, bool) { return a.Layouts.Definition(ctx, digest) })
-	layout.Added, layout.Notes = held.Added, held.Notes
+	v := addedtiles.Version{Number: version.Metadata.Version, Latest: latest, Generated: addedtiles.Generated(version.Composition), Diff: diffOfStored(version.Document)}
+	held, missing := addedtiles.AddedFor(added, fills, v, func(digest string) (json.RawMessage, bool) { return a.Added.Definition(ctx, digest) })
 	if a.Fills != nil {
 		for _, add := range missing {
-			request := tilelayout.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: version.Metadata.Version, Type: add.Name}
-			if add.Kind == tiles.AddCustom {
+			request := addedtiles.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: version.Metadata.Version, Type: add.Name}
+			if add.Kind == addedtiles.KindCustom {
 				request.Digest = add.Digest
 			}
 			a.Fills.Fill(request)
 		}
 	}
-	return layout
+	return held
 }
 
 // diffOfStored is the hunks a stored review document's index lists.
@@ -105,53 +114,121 @@ func diffOfStored(document []byte) []bundle.Hunk {
 	return diff
 }
 
-// AddTile is an add_tile request: the library type, its size and place, and
-// the data the agent wrote for it, if any.
+// shownVersion is a pull request's latest saved version as its page shows
+// it: its number, the review (for its sections) and the tile document
+// converted from it, which an added tile's data is checked against.
+type shownVersion struct {
+	Version  int
+	Review   *view.Review
+	Document *tiles.Document
+}
+
+// errNoTiles is a saved version that cannot be shown with tiles.
+var errNoTiles = errors.New("This review cannot be shown with tiles")
+
+// latestShown reads the pull request's latest saved version.
+func (a LocalAPI) latestShown(ctx context.Context, c repos.Clone, number int) (shownVersion, error) {
+	s, err := store.Open(c.CommonDir, "", false)
+	if err != nil {
+		return shownVersion{}, err
+	}
+	version, err := s.Latest(ctx, store.Key{Repository: c.Repository, Number: number})
+	if err != nil {
+		return shownVersion{}, err
+	}
+	if len(version.Document) > viewserver.MaxDocumentBytes {
+		return shownVersion{}, errors.New("The saved review is too large to show")
+	}
+	normalized, err := review.NormalizeStored(version.Document)
+	if err != nil {
+		return shownVersion{}, errNoTiles
+	}
+	r, err := view.ParseReview(normalized)
+	if err != nil {
+		return shownVersion{}, errNoTiles
+	}
+	doc, err := tiles.FromReview(normalized, tiles.Options{})
+	if err != nil {
+		return shownVersion{}, errNoTiles
+	}
+	return shownVersion{Version: version.Metadata.Version, Review: r, Document: doc}, nil
+}
+
+// section is where a tile added to the shown version goes: the section
+// asked for when the review has it (or context), else the one whose hunks
+// the data cites most, else context. Data that cites nothing yet (a tile
+// being filled) with no section asked keeps none: the page places it by
+// what its fill cites.
+func (s shownVersion) section(asked string, data json.RawMessage) string {
+	var hunks []string
+	for _, c := range library.Citations(data) {
+		if c.Type == "hunk" {
+			hunks = append(hunks, c.ID)
+		}
+	}
+	if asked == "" && len(hunks) == 0 {
+		return ""
+	}
+	return view.SectionFor(s.Review, asked, hunks)
+}
+
+// AddTile is an add_tile request: the library type, the section it goes on
+// and the data the agent wrote for it, if any.
 type AddTile struct {
-	Type string
-	Size tiles.Size
-	To   *tiles.Place
-	Data json.RawMessage
+	Type    string
+	Section string
+	Data    json.RawMessage
 }
 
 // AddedTile is what an add did: the tile's ID, whether it shows its data
-// ("ready") or is being filled ("filling"), and the layout's change.
+// ("ready") or is being filled ("filling"), and its section.
 type AddedTile struct {
-	Tile   string
-	State  string
-	Change tilelayout.Change
+	Tile    string
+	State   string
+	Section string
 }
 
 // ErrUnknownType is an add of a type the tile library does not have.
 var ErrUnknownType = errors.New("unknown tile type")
 
-// addTile adds a library type to the review of the pull request's latest
-// version, as one batch. With data, the data is checked against that
-// version's hunks (library.CheckAddedFill: its problems name places, never
-// values), masked as every model output is and stored as the version's
-// fill (the agent's, OriginChat) once the add is saved, so the tile shows
-// at once. Without data, a fill starts once the add is saved and the tile is
-// pending until it lands, unless the version already has a fill for it.
+// roomFor refuses an add of a tile that is not added yet to a pull request
+// that already has tiles.MaxLibraryTiles added tiles: the page shows no
+// more.
+func (a LocalAPI) roomFor(ctx context.Context, pr, id string) error {
+	added, err := a.Added.List(ctx, pr)
+	if err != nil {
+		return err
+	}
+	if len(added) >= tiles.MaxLibraryTiles && !slices.ContainsFunc(added, func(t addedtiles.Added) bool { return t.Tile == id }) {
+		return fmt.Errorf("This pull request's review already has %d added tiles; ask the person to remove one first", tiles.MaxLibraryTiles)
+	}
+	return nil
+}
+
+// addTile adds a library type to the pull request's review page. With
+// data, the data is checked against the latest version's hunks
+// (library.CheckAddedFill: its problems name places, never values), masked
+// as every model output is and stored as the version's fill (the agent's,
+// OriginChat), so the tile shows at once. Without data, a fill starts and
+// the tile is pending until it lands, unless the version already has a
+// fill for it.
 func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by string, add AddTile) (AddedTile, error) {
+	if a.Added == nil {
+		return AddedTile{}, errors.New("adding tiles is not available in this baum")
+	}
 	entry, ok := library.Find(add.Type)
 	if !ok {
 		return AddedTile{}, ErrUnknownType
 	}
-	shown, err := a.shownTiles(ctx, c, number, 0)
+	shown, err := a.latestShown(ctx, c, number)
 	if err != nil {
 		return AddedTile{}, err
 	}
 	id := tiles.LibraryTileID(entry.Definition.Name)
-	// With no place, an added tile stands right after the overview, where
-	// the person sees it, rather than past the landing page.
-	if add.To == nil && slices.ContainsFunc(shown.Document.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == tiles.TypeOverview && e.Group != tiles.GroupHidden }) {
-		add.To = &tiles.Place{After: tiles.TypeOverview}
+	pr := addedtiles.Key(c.Repository, number)
+	if err := a.roomFor(ctx, pr, id); err != nil {
+		return AddedTile{}, err
 	}
-	op := tiles.Op{Op: tiles.OpAdd, Size: add.Size, To: add.To, Add: &tiles.Added{Kind: "library", Name: entry.Definition.Name, Digest: entry.Definition.Digest}}
-	if reason := tiles.CheckOp(shown.Document, op); reason != "" {
-		return AddedTile{}, errors.New(reason)
-	}
-	pr := tilelayout.Key(c.Repository, number)
 	var masked json.RawMessage
 	if len(add.Data) > 0 && string(add.Data) != "null" {
 		if problems := library.CheckAddedFill(fillValidator(), entry, add.Data, library.DiffOf(shown.Document)); len(problems) > 0 {
@@ -161,49 +238,26 @@ func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by str
 			return AddedTile{}, err
 		}
 	}
-	change, err := a.editLayout(ctx, c, number, by, []tiles.Op{op})
-	if err != nil {
+	section := shown.section(strings.TrimSpace(add.Section), masked)
+	if err := a.Added.Add(ctx, pr, addedtiles.Added{Tile: id, Kind: addedtiles.KindLibrary, Name: entry.Definition.Name, Digest: entry.Definition.Digest, Section: section, By: by}); err != nil {
 		return AddedTile{}, err
 	}
-	if !change.Saved {
-		reasons := make([]string, len(change.Refused))
-		for i, refusal := range change.Refused {
-			reasons[i] = refusal.Reason
-		}
-		return AddedTile{Change: change}, errors.New(strings.Join(reasons, "; "))
-	}
-	out := AddedTile{Tile: id, State: "ready", Change: change}
-	// The agent's data is stored once the add is saved, so a refused add
-	// leaves nothing behind.
+	out := AddedTile{Tile: id, State: "ready", Section: section}
 	if masked != nil {
-		if err := a.Layouts.PutFill(ctx, pr, id, shown.Version, tilelayout.OriginChat, entry.Encoded, masked); err == nil {
+		if err := a.Added.PutFill(ctx, pr, id, shown.Version, addedtiles.OriginChat, entry.Encoded, masked); err == nil {
 			return out, nil
 		}
 	}
-	if slices.Contains(shownLibrary(shown.Document), id) {
-		return out, nil
-	}
-	// A fill held for this version (an add undone and made again) is shown
+	// A fill held for this version (a tile removed and added again) is shown
 	// as it is: a version's type is filled once.
-	if fills, err := a.Layouts.Fills(ctx, pr); err == nil && slices.ContainsFunc(fills, func(f tilelayout.Fill) bool { return f.Tile == id && f.Version == shown.Version }) {
+	if fills, err := a.Added.Fills(ctx, pr); err == nil && slices.ContainsFunc(fills, func(f addedtiles.Fill) bool { return f.Tile == id && f.Version == shown.Version }) {
 		return out, nil
 	}
 	out.State = "filling"
 	if a.Fills != nil {
-		a.Fills.Fill(tilelayout.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: shown.Version, Type: entry.Definition.Name})
+		a.Fills.Fill(addedtiles.FillRequest{Clone: c.ID, Repository: c.Repository, Number: number, Version: shown.Version, Type: entry.Definition.Name})
 	}
 	return out, nil
-}
-
-// shownLibrary are the IDs of the custom tiles a document shows.
-func shownLibrary(doc *tiles.Document) []string {
-	var out []string
-	for _, tile := range doc.Tiles {
-		if tile.Type == tiles.TypeCustom && tile.State == tiles.StateReady {
-			out = append(out, tile.ID)
-		}
-	}
-	return out
 }
 
 // maskData masks secret spans in data the agent wrote, as every model
@@ -219,4 +273,129 @@ func maskData(ctx context.Context, data json.RawMessage) (json.RawMessage, error
 		return nil, errors.New("the data could not be checked for secrets, so nothing changed")
 	}
 	return masked, nil
+}
+
+// addedRoutes mounts POST /api/tiles/added ({clone, pr, tile, action:
+// remove or restore}): the page's Remove on an added tile's menu, and the
+// Undo of its toast. It answers {tile, action}, 404 when the pull request
+// has no such added tile (or none removed to restore), 400 for a malformed
+// request and 503 without added tiles.
+func (a LocalAPI) addedRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/tiles/added", func(w http.ResponseWriter, r *http.Request) {
+		if a.Added == nil {
+			http.Error(w, "capability unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var request struct {
+			Clone  string `json:"clone"`
+			PR     int    `json:"pr"`
+			Tile   string `json:"tile"`
+			Action string `json:"action"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil || decoder.Decode(new(any)) != io.EOF {
+			http.Error(w, "invalid JSON request", http.StatusBadRequest)
+			return
+		}
+		if request.PR < 1 || request.Tile == "" {
+			http.Error(w, "positive pr and a tile required", http.StatusBadRequest)
+			return
+		}
+		c, ok := a.cloneByID(w, r, request.Clone)
+		if !ok {
+			return
+		}
+		pr := addedtiles.Key(c.Repository, request.PR)
+		var err error
+		switch request.Action {
+		case "remove":
+			err = a.Added.Remove(r.Context(), pr, request.Tile)
+		case "restore":
+			err = a.Added.Restore(r.Context(), pr, request.Tile)
+		default:
+			http.Error(w, "action is remove or restore", http.StatusBadRequest)
+			return
+		}
+		switch {
+		case errors.Is(err, addedtiles.ErrNotFound):
+			http.NotFound(w, r)
+			return
+		case err != nil:
+			http.Error(w, addedtiles.ErrUnsaved.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]string{"tile": request.Tile, "action": request.Action})
+	})
+}
+
+// cloneByID resolves a registered clone, answering 400 or 404.
+func (a LocalAPI) cloneByID(w http.ResponseWriter, r *http.Request, id string) (repos.Clone, bool) {
+	if id == "" {
+		http.Error(w, "clone required", http.StatusBadRequest)
+		return repos.Clone{}, false
+	}
+	clones, err := a.Registry.List(r.Context())
+	if err != nil {
+		apiError(w, err)
+		return repos.Clone{}, false
+	}
+	for _, c := range clones {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	http.NotFound(w, r)
+	return repos.Clone{}, false
+}
+
+// AddedTilesAPI is the session panel's way to add library tiles
+// (agentcontext.AddedTiles), added by "chat".
+type AddedTilesAPI struct {
+	API LocalAPI
+}
+
+var _ agentcontext.AddedTiles = AddedTilesAPI{}
+
+// Add implements agentcontext.AddedTiles.
+func (e AddedTilesAPI) Add(ctx context.Context, repository string, number int, add agentcontext.TileAdd) (agentcontext.TileAdded, error) {
+	c, err := e.API.pullClone(ctx, repository, number)
+	if err != nil {
+		return agentcontext.TileAdded{}, err
+	}
+	added, err := e.API.addTile(ctx, c, number, "chat", AddTile(add))
+	if errors.Is(err, ErrUnknownType) {
+		return agentcontext.TileAdded{}, errors.New("No tile type " + add.Type + " in baum's tile library")
+	}
+	if err != nil {
+		return agentcontext.TileAdded{}, err
+	}
+	return agentcontext.TileAdded(added), nil
+}
+
+// pullClone is the registered, available clone of a repository whose review
+// store holds a saved version of the pull request.
+func (a LocalAPI) pullClone(ctx context.Context, repository string, number int) (repos.Clone, error) {
+	clones, err := a.Registry.List(ctx)
+	if err != nil {
+		return repos.Clone{}, err
+	}
+	found := false
+	for _, c := range clones {
+		if !strings.EqualFold(c.Repository, repository) {
+			continue
+		}
+		found = true
+		s, err := store.Open(c.CommonDir, "", false)
+		if err != nil {
+			continue
+		}
+		if _, err := s.Latest(ctx, store.Key{Repository: c.Repository, Number: number}); err == nil {
+			return c, nil
+		}
+	}
+	if !found {
+		return repos.Clone{}, errors.New("The repository " + repository + " has no registered clone")
+	}
+	return repos.Clone{}, errors.New("Pull request #" + strconv.Itoa(number) + " has no saved review yet")
 }

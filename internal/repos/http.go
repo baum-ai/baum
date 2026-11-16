@@ -304,8 +304,13 @@ func registerError(e error) string {
 // baum no longer has a spending cap, and the harness and model are global.
 var retiredSettings = []string{"daily_cap", "backend", "model"}
 
-// withoutRetired drops the retiredSettings an older app still sends, in a
-// request or in its settings object, so such an app is not refused for them.
+// retiredTileSettings are the members of a repository's tile settings an
+// older app still sends: the tile grid's layout instruction and pins.
+var retiredTileSettings = []string{"text", "pins"}
+
+// withoutRetired drops the retiredSettings (and retiredTileSettings) an
+// older app still sends, in a request or in its settings object, so such an
+// app is not refused for them.
 // Anything that is not a JSON object is left for the strict decoder to
 // refuse.
 func withoutRetired(raw []byte) []byte {
@@ -325,6 +330,19 @@ func withoutRetired(raw []byte) []byte {
 			delete(settings, name)
 			found = true
 		}
+	}
+	for _, object := range []map[string]json.RawMessage{fields, settings} {
+		var tiles map[string]json.RawMessage
+		if object == nil || json.Unmarshal(object["tiles"], &tiles) != nil || tiles == nil {
+			continue
+		}
+		for _, name := range retiredTileSettings {
+			if _, ok := tiles[name]; ok {
+				delete(tiles, name)
+				found = true
+			}
+		}
+		object["tiles"], _ = json.Marshal(tiles)
 	}
 	if nested {
 		fields["settings"], _ = json.Marshal(settings)

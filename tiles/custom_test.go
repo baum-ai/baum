@@ -302,7 +302,6 @@ func TestCustomTileBuiltinID(t *testing.T) {
 			break
 		}
 	}
-	doc.Layout.Entries = removeEntry(doc.Layout.Entries, tiles.TypeContext)
 	addTile(doc, tilestest.CustomTile(tiles.TypeContext, "Context", routesDefinition(), json.RawMessage(routesData)))
 	validated, err := validate(t, doc)
 	if err != nil {
@@ -490,57 +489,6 @@ func TestCustomTilesConcurrently(t *testing.T) {
 	wg.Wait()
 }
 
-// Arrange gives a custom tile's entry of a size its definition does not
-// declare the first size it declares.
-func TestArrangeCustomSizes(t *testing.T) {
-	doc := customDocument(t)
-	addTile(doc, tilestest.CustomTile("route_changes_full", "Routes", routesDefinition(), json.RawMessage(routesData)))
-	broken := tilestest.CustomTile("broken", "Broken", routesDefinition(), json.RawMessage(routesData))
-	broken.Definition = json.RawMessage(`{"sizes":["huge"]}`)
-	addTile(doc, broken)
-	size := func(id string) tiles.Size {
-		for _, entry := range doc.Layout.Entries {
-			if entry.Tile == id {
-				return entry.Size
-			}
-		}
-		t.Fatalf("no entry for %s", id)
-		return ""
-	}
-	setSize := func(id string, s tiles.Size) {
-		for i := range doc.Layout.Entries {
-			if doc.Layout.Entries[i].Tile == id {
-				doc.Layout.Entries[i].Size = s
-			}
-		}
-	}
-	setSize("route_changes", tiles.SizeThird)
-	setSize("route_changes_full", tiles.SizeFull)
-	setSize("broken", tiles.SizeThird)
-	builtins := map[string]tiles.Size{}
-	for _, entry := range doc.Layout.Entries {
-		builtins[entry.Tile] = entry.Size
-	}
-	tiles.Arrange(doc)
-	if got := size("route_changes"); got != tiles.SizeHalf {
-		t.Errorf("an undeclared third became %s, want half", got)
-	}
-	if got := size("route_changes_full"); got != tiles.SizeFull {
-		t.Errorf("a declared full became %s", got)
-	}
-	if got := size("broken"); got != tiles.SizeThird {
-		t.Errorf("an entry of a broken definition became %s", got)
-	}
-	for id, want := range builtins {
-		if tile := tileOf(doc, id); tile.Type != tiles.TypeCustom && size(id) != want {
-			t.Errorf("built-in %s became %s", id, size(id))
-		}
-	}
-	if doc.Layout.Landing != tiles.Landing(doc.Layout) {
-		t.Errorf("landing %d is not the coerced layout's %d", doc.Layout.Landing, tiles.Landing(doc.Layout))
-	}
-}
-
 // baum.review/1 has no place for custom tiles: ToReview leaves them out,
 // whatever their ID.
 func TestToReviewLeavesOutCustomTiles(t *testing.T) {
@@ -567,7 +515,6 @@ func TestToReviewLeavesOutCustomTiles(t *testing.T) {
 			break
 		}
 	}
-	doc.Layout.Entries = removeEntry(doc.Layout.Entries, tiles.TypeContext)
 	without, err = tiles.ToReview(doc)
 	if err != nil {
 		t.Fatal(err)
@@ -600,7 +547,6 @@ func TestCustomTilesGolden(t *testing.T) {
 	addTile(doc, tilestest.CustomTile("routes_edited", "Routes", routesDefinition(), json.RawMessage(routesData)))
 	edited := tileOf(doc, "routes_edited")
 	edited.Definition = json.RawMessage(strings.Replace(string(edited.Definition), "Route changes", "Edited", 1))
-	tiles.Arrange(doc)
 
 	validated, err := validate(t, doc)
 	if err != nil {

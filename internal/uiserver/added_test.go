@@ -4,235 +4,256 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
-	"github.com/baum-ai/baum/internal/tilelayout"
-	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // fakeFiller records the fills asked for.
 type fakeFiller struct {
 	mu       sync.Mutex
-	requests []tilelayout.FillRequest
+	requests []addedtiles.FillRequest
 }
 
-func (f *fakeFiller) Fill(request tilelayout.FillRequest) {
+func (f *fakeFiller) Fill(request addedtiles.FillRequest) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, request)
 }
 
-func (f *fakeFiller) asked() []tilelayout.FillRequest {
+func (f *fakeFiller) asked() []addedtiles.FillRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]tilelayout.FillRequest(nil), f.requests...)
+	return append([]addedtiles.FillRequest(nil), f.requests...)
 }
 
-func newAddedFixture(t *testing.T) (*layoutFixture, *fakeFiller) {
+// addedFixture is a tiles fixture whose API keeps the tiles people add, and
+// the events it published.
+type addedFixture struct {
+	*tilesFixture
+	api    *LocalAPI
+	mu     sync.Mutex
+	events []string
+}
+
+func newAddedFixture(t *testing.T) (*addedFixture, *fakeFiller) {
 	t.Helper()
-	f := &layoutFixture{}
+	f := &addedFixture{}
 	filler := &fakeFiller{}
-	service := &tilelayout.Service{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite"), Changed: func(pr string, revision int64) {
+	service := &addedtiles.Service{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite"), Changed: func(pr string) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		f.events = append(f.events, fmt.Sprintf("%s@%d", pr, revision))
+		f.events = append(f.events, pr)
 	}}
-	f.tilesFixture = newTilesFixture(t, func(a *LocalAPI) { a.Layouts = service; a.Fills = filler; f.api = a })
+	f.tilesFixture = newTilesFixture(t, func(a *LocalAPI) { a.Added = service; a.Fills = filler; f.api = a })
 	return f, filler
 }
 
-type addedBody struct {
-	Tiles *tiles.Document      `json:"tiles"`
-	Added []tileview.AddedNote `json:"added"`
+func (f *addedFixture) eventCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.events)
 }
 
-func (f *layoutFixture) added(t *testing.T, query string) addedBody {
+// served is the tile route's view of a version ("" the latest).
+func (f *addedFixture) served(t *testing.T, query string) view.View {
 	t.Helper()
 	w := f.get("/api/tiles", query, "")
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
-	var body addedBody
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+	var body struct {
+		View *view.View `json:"view"`
 	}
-	return body
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.View == nil {
+		t.Fatalf("%v: %s", err, w.Body.String())
+	}
+	return *body.View
 }
 
-func tileByID(doc *tiles.Document, id string) *tiles.Tile {
-	for i := range doc.Tiles {
-		if doc.Tiles[i].ID == id {
-			return &doc.Tiles[i]
+func viewTile(v view.View, id string) *view.Tile {
+	for i := range v.Tiles {
+		if v.Tiles[i].ID == id {
+			return &v.Tiles[i]
 		}
 	}
 	return nil
 }
 
-// A library type added from the page's route with no data is pending and
-// being filled, and a fill starts for the latest version. Once the fill is
-// stored the page is told (the layout event) and the tile shows its data. A
-// new version shows that data, marked as from the earlier version, while it
-// is filled again; the earlier version shows its own.
+func sectionOf(v view.View, id string) string {
+	for _, p := range v.Sections {
+		for _, tile := range p.Tiles {
+			if tile == id {
+				return p.ID
+			}
+		}
+	}
+	return ""
+}
+
+// diffOf is the hunks of the latest version the fixture serves.
+func (f *addedFixture) diffOf(t *testing.T) []bundle.Hunk {
+	t.Helper()
+	shown, err := f.api.latestShown(context.Background(), f.clone, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := library.DiffOf(shown.Document)
+	if len(diff) == 0 {
+		t.Fatal("the review has no hunks")
+	}
+	return diff
+}
+
+func apiFill(hunk string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, hunk))
+}
+
+// A library type added with no data is pending and being filled, on the
+// section asked for, and a fill starts for the latest version. Once the
+// fill is stored the page is told and the tile shows its data. A new
+// version shows that data, marked as from the earlier version, while it is
+// filled again; the earlier version shows its own.
 func TestAnAddedTileIsPendingThenFilledAndRefilled(t *testing.T) {
 	f, filler := newAddedFixture(t)
 	f.put(t, titled(t, "First title"))
-	edit := layoutOf(t, f.action("edit", `,"ops":[{"op":"add","add":{"kind":"library","name":"api_change"},"to":{"edge":"first"}}]`))
-	if len(edit.Applied) != 1 || edit.Applied[0] != "Added Interface changes" {
-		t.Fatalf("add: %+v", edit)
+	ctx := context.Background()
+	added, err := AddedTilesAPI{API: *f.api}.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Section: "context"})
+	if err != nil || added.State != "filling" || added.Section != "context" {
+		t.Fatalf("add: %+v %v", added, err)
 	}
-	body := f.added(t, "")
-	tile := tileByID(body.Tiles, "api_change")
-	if tile == nil || tile.State != tiles.StatePending || body.Tiles.Layout.Entries[0].Tile != "api_change" {
+	v := f.served(t, "")
+	tile := viewTile(v, "api_change")
+	if tile == nil || tile.State != tiles.StatePending || !tile.Added || !tile.Filling || sectionOf(v, "api_change") != "context" {
 		t.Fatalf("the added tile: %+v", tile)
-	}
-	if len(body.Added) != 1 || !body.Added[0].Filling || body.Added[0].From != 0 {
-		t.Errorf("notes: %+v", body.Added)
 	}
 	if !strings.Contains(string(tile.Definition), `"builtin":true`) {
 		t.Errorf("an added built-in type is not marked built in: %s", tile.Definition)
 	}
 	asked := filler.asked()
-	if len(asked) != 1 || asked[0].Version != 1 || asked[0].Type != "api_change" || asked[0].Number != 42 {
+	if len(asked) < 1 || asked[0].Version != 1 || asked[0].Type != "api_change" || asked[0].Number != 42 {
 		t.Fatalf("fills asked: %+v", asked)
 	}
 
 	// The fill lands.
-	diff := library.DiffOf(body.Tiles)
-	if len(diff) == 0 {
-		t.Fatal("the review has no hunks")
-	}
 	entry, _ := library.Get("api_change")
-	data := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
-	events := len(f.events)
-	if err := f.api.Layouts.PutFill(context.Background(), "acme/widgets#42", "api_change", 1, tilelayout.OriginFill, entry.Encoded, data); err != nil {
+	events := f.eventCount()
+	if err := f.api.Added.PutFill(ctx, "acme/widgets#42", "api_change", 1, addedtiles.OriginFill, entry.Encoded, apiFill(f.diffOf(t)[0].ID)); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.events) != events+1 {
+	if f.eventCount() != events+1 {
 		t.Error("a stored fill told the page nothing")
 	}
-	body = f.added(t, "")
-	if tile := tileByID(body.Tiles, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") || len(body.Added) != 0 {
-		t.Fatalf("after the fill: %+v %+v", tile, body.Added)
+	v = f.served(t, "")
+	if tile := viewTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") || tile.Filling || tile.From != 0 {
+		t.Fatalf("after the fill: %+v", tile)
 	}
 
 	// A new version: the last data, marked, while it is filled again.
 	f.put(t, titled(t, "Second title"))
-	body = f.added(t, "")
-	if tile := tileByID(body.Tiles, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") {
+	before := len(filler.asked())
+	v = f.served(t, "")
+	if tile := viewTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") || tile.From != 1 || !tile.Filling {
 		t.Fatalf("the new version's tile: %+v", tile)
 	}
-	if len(body.Added) != 1 || body.Added[0].From != 1 || !body.Added[0].Filling {
-		t.Errorf("the new version's notes: %+v", body.Added)
-	}
-	if asked := filler.asked(); len(asked) != 2 || asked[1].Version != 2 {
+	if asked := filler.asked(); len(asked) <= before || asked[len(asked)-1].Version != 2 {
 		t.Errorf("fills asked: %+v", asked)
 	}
-	body = f.added(t, "&version=1")
-	if len(body.Added) != 0 || tileByID(body.Tiles, "api_change") == nil {
-		t.Errorf("the first version: %+v", body.Added)
+	before = len(filler.asked())
+	v = f.served(t, "&version=1")
+	if tile := viewTile(v, "api_change"); tile == nil || tile.From != 0 || tile.Filling {
+		t.Errorf("the first version: %+v", tile)
 	}
-	if asked := filler.asked(); len(asked) != 2 {
-		t.Errorf("an earlier version asked for a fill: %+v", asked)
+	if len(filler.asked()) != before {
+		t.Errorf("an earlier version asked for a fill: %+v", filler.asked())
 	}
 }
 
 // add_tile with data the agent wrote stores it as the latest version's fill
-// and shows the tile at once with no fill run; data citing a hunk the
-// version does not have is refused, naming the place only, and changes
-// nothing.
-func TestAddTileThroughTheLayoutEditor(t *testing.T) {
+// and shows the tile at once with no fill run, on the section its data
+// cites most; data citing a hunk the version does not have is refused,
+// naming the place only, and changes nothing.
+func TestAddTileWithTheAgentsData(t *testing.T) {
 	f, filler := newAddedFixture(t)
 	f.put(t, titled(t, "First title"))
-	editor := LayoutEditor{API: *f.api}
-	diff := library.DiffOf(f.added(t, "").Tiles)
+	adder := AddedTilesAPI{API: *f.api}
+	ctx := context.Background()
 	bad := json.RawMessage(`{"endpoints":[],"docs":null,"consumers":[{"label":"SENTINEL","updated":true,"cites":[{"type":"hunk","id":"h_000000000000"}]}]}`)
-	_, err := editor.Add(context.Background(), "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Data: bad})
+	_, err := adder.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Data: bad})
 	if err == nil || !strings.Contains(err.Error(), "/consumers/0/cites/0 names a hunk that is not in the diff") || strings.Contains(err.Error(), "SENTINEL") {
 		t.Fatalf("bad data: %v", err)
 	}
-	if summary := layoutOf(t, f.get("/api/tiles/layout", "", "")); summary.Edited {
-		t.Fatal("a refused add changed the layout")
+	if list, _ := f.api.Added.List(ctx, "acme/widgets#42"); len(list) != 0 {
+		t.Fatal("a refused add was kept")
 	}
-	good := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
-	added, err := editor.Add(context.Background(), "acme/widgets", 42, agentcontext.TileAdd{Type: "Interface changes", Data: good})
-	if err != nil || added.State != "ready" || added.Tile != "api_change" {
+	added, err := adder.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "Interface changes", Data: apiFill(f.diffOf(t)[0].ID)})
+	if err != nil || added.State != "ready" || added.Tile != "api_change" || added.Section == "" {
 		t.Fatalf("add: %+v %v", added, err)
 	}
-	body := f.added(t, "")
-	if tile := tileByID(body.Tiles, "api_change"); tile == nil || tile.State != tiles.StateReady || len(body.Added) != 0 {
-		t.Errorf("the tile: %+v %+v", tile, body.Added)
+	v := f.served(t, "")
+	if tile := viewTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !tile.Added || tile.Filling || sectionOf(v, "api_change") != added.Section {
+		t.Errorf("the tile: %+v on %s", tile, sectionOf(v, "api_change"))
 	}
 	if len(filler.asked()) != 0 {
 		t.Errorf("data the agent wrote started a fill: %+v", filler.asked())
 	}
-	if _, err := editor.Add(context.Background(), "acme/widgets", 42, agentcontext.TileAdd{Type: "weather"}); err == nil || !strings.Contains(err.Error(), "No tile type weather") {
+	if _, err := adder.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "weather"}); err == nil || !strings.Contains(err.Error(), "No tile type weather") {
 		t.Errorf("an unknown type: %v", err)
 	}
 }
 
-// An add undone and made again on a version that already has a fill shows
-// that fill and starts no other: a version's type is filled once, however
-// often the agent is steered to add it. An add refused with data leaves no
-// fill behind, and the agent's data is stored as the agent's.
-func TestAnAddMadeAgainIsNotFilledAgain(t *testing.T) {
-	f, filler := newAddedFixture(t)
+// The page's Remove takes an added tile off every version, and its Undo
+// puts it back on its section; each write tells the page. A tile that is
+// not added is 404, and a malformed request 400.
+func TestRemoveAndRestoreAnAddedTile(t *testing.T) {
+	f, _ := newAddedFixture(t)
 	f.put(t, titled(t, "First title"))
-	editor := LayoutEditor{API: *f.api}
 	ctx := context.Background()
-	added, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change"})
-	if err != nil || added.State != "filling" || len(filler.asked()) != 1 {
-		t.Fatalf("first add: %+v %v, asked %d", added, err, len(filler.asked()))
-	}
-	diff := library.DiffOf(f.added(t, "").Tiles)
-	entry, _ := library.Get("api_change")
-	data := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"the client","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
-	if err := f.api.Layouts.PutFill(ctx, "acme/widgets#42", "api_change", 1, tilelayout.OriginFill, entry.Encoded, data); err != nil {
+	if _, err := (AddedTilesAPI{API: *f.api}).Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Section: "context"}); err != nil {
 		t.Fatal(err)
 	}
-	// Serving the pending tile above asked for its fill too (the fake
-	// filler does not keep TileFills' once-per-version rule).
-	asked := len(filler.asked())
-	for range 3 {
-		if _, err := editor.Undo(ctx, "acme/widgets", 42); err != nil {
-			t.Fatal(err)
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "http://local/api/tiles/added", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		f.handler.ServeHTTP(w, r)
+		return w
+	}
+	action := func(action, tile string) *httptest.ResponseRecorder {
+		return post(fmt.Sprintf(`{"clone":%q,"pr":42,"tile":%q,"action":%q}`, f.clone.ID, tile, action))
+	}
+	events := f.eventCount()
+	if w := action("remove", "api_change"); w.Code != 200 || !strings.Contains(w.Body.String(), `"action":"remove"`) {
+		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
+	}
+	if viewTile(f.served(t, ""), "api_change") != nil || f.eventCount() != events+1 {
+		t.Fatal("the removed tile is still served, or the page was not told")
+	}
+	if w := action("remove", "api_change"); w.Code != 404 {
+		t.Errorf("removing it again: %d", w.Code)
+	}
+	if w := action("restore", "api_change"); w.Code != 200 {
+		t.Fatalf("restore: %d %s", w.Code, w.Body.String())
+	}
+	if v := f.served(t, ""); viewTile(v, "api_change") == nil || sectionOf(v, "api_change") != "context" {
+		t.Fatal("the restored tile is not back on its section")
+	}
+	for _, body := range []string{`{"clone":"` + f.clone.ID + `","pr":42,"tile":"api_change","action":"hide"}`, `{"clone":"` + f.clone.ID + `","pr":0,"tile":"api_change","action":"remove"}`, `not json`} {
+		if w := post(body); w.Code != 400 {
+			t.Errorf("%s: %d", body, w.Code)
 		}
-		again, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change"})
-		if err != nil || again.State != "ready" {
-			t.Fatalf("add again: %+v %v", again, err)
-		}
 	}
-	if len(filler.asked()) != asked {
-		t.Errorf("adding again asked for %d more fills", len(filler.asked())-asked)
-	}
-	// Already on the review: refused, and the data is not stored.
-	if _, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Data: data}); err == nil {
-		t.Fatal("a second add of a shown type was not refused")
-	}
-	if _, err := editor.Undo(ctx, "acme/widgets", 42); err != nil {
-		t.Fatal(err)
-	}
-	f.put(t, titled(t, "Second title"))
-	if _, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "schema_change", Data: data}); err == nil {
-		t.Fatal("data that does not fit schema_change was accepted")
-	}
-	fills, _ := f.api.Layouts.Fills(ctx, "acme/widgets#42")
-	for _, fill := range fills {
-		if fill.Version == 2 || fill.Tile == "schema_change" {
-			t.Errorf("a refused add left a fill: %+v", fill)
-		}
-	}
-	if _, err := editor.Add(ctx, "acme/widgets", 42, agentcontext.TileAdd{Type: "api_change", Data: data}); err != nil {
-		t.Fatal(err)
-	}
-	fills, _ = f.api.Layouts.Fills(ctx, "acme/widgets#42")
-	if len(fills) == 0 || fills[0].Version != 2 || fills[0].Origin != tilelayout.OriginChat {
-		t.Errorf("the agent's data: %+v", fills)
+	if w := action("remove", "schema_change"); w.Code != 404 {
+		t.Errorf("a tile not added: %d", w.Code)
 	}
 }

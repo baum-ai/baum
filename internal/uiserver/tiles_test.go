@@ -17,7 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
-	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // tilesFixture is a registered clone with a saved review of acme/widgets#42.
@@ -87,9 +87,9 @@ func withVersion(t *testing.T, doc []byte, n int) []byte {
 	return tileviewtest.Encode(t, value)
 }
 
-// putComposed saves doc as the next version with a composition that pins one
-// of its tiles, and returns that tile's ID.
-func (f *tilesFixture) putComposed(t *testing.T, doc []byte) string {
+// putComposed saves doc as the next version with a review view composition
+// (tileviewtest.ViewComposition).
+func (f *tilesFixture) putComposed(t *testing.T, doc []byte) {
 	t.Helper()
 	ctx := context.Background()
 	var previous store.Version
@@ -98,12 +98,10 @@ func (f *tilesFixture) putComposed(t *testing.T, doc []byte) string {
 	}
 	n := previous.Metadata.Version + 1
 	document := withVersion(t, doc, n)
-	composition, pinned := tileviewtest.PinnedComposition(t, document)
-	next := store.Version{Metadata: store.Metadata{Version: n}, Document: document, Composition: composition}
+	next := store.Version{Metadata: store.Metadata{Version: n}, Document: document, Composition: tileviewtest.ViewComposition(t)}
 	if err := f.versions.Put(ctx, f.key, previous, next); err != nil {
 		t.Fatal(err)
 	}
-	return pinned
 }
 
 func (f *tilesFixture) get(path, query, etag string) *httptest.ResponseRecorder {
@@ -118,8 +116,8 @@ func (f *tilesFixture) get(path, query, etag string) *httptest.ResponseRecorder 
 
 type tilesBody struct {
 	Document map[string]any `json:"document"`
-	Tiles    *tiles.Document
-	Problem  string `json:"problem"`
+	View     *view.View     `json:"view"`
+	Problem  string         `json:"problem"`
 }
 
 func decodeTiles(t *testing.T, w *httptest.ResponseRecorder) tilesBody {
@@ -141,15 +139,6 @@ func titled(t *testing.T, title string) []byte {
 	return tileviewtest.Encode(t, doc)
 }
 
-func tileState(doc *tiles.Document, id string) string {
-	for _, tile := range doc.Tiles {
-		if tile.ID == id {
-			return tile.State
-		}
-	}
-	return "missing"
-}
-
 func TestTilesServesTheLatestAndAChosenVersion(t *testing.T) {
 	f := newTilesFixture(t)
 	f.put(t, titled(t, "First title"))
@@ -160,21 +149,15 @@ func TestTilesServesTheLatestAndAChosenVersion(t *testing.T) {
 	if latest.Header().Get("Cache-Control") != "no-store" || latest.Header().Get("ETag") == "" || latest.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("headers %v", latest.Header())
 	}
-	if body.Tiles == nil || body.Tiles.Schema != "baum.tiles/1" || body.Problem != "" {
+	if body.View == nil || body.View.Schema != view.Name || body.Problem != "" {
 		t.Fatalf("latest: %+v", body)
 	}
 	if got := body.Document["summary"].(map[string]any)["title"]; got != "Second title" {
 		t.Fatalf("latest title %v", got)
 	}
-	if got := body.Tiles.Facts.Title; got != "Second title" {
-		t.Fatalf("tile document title %q", got)
-	}
-	if got := tileState(body.Tiles, "overview"); got != tiles.StateReady {
-		t.Fatalf("overview %s", got)
-	}
 
 	first := decodeTiles(t, f.get("/api/tiles", "&version=1", ""))
-	if first.Document["summary"].(map[string]any)["title"] != "First title" || first.Tiles.Facts.Title != "First title" {
+	if first.Document["summary"].(map[string]any)["title"] != "First title" || first.View == nil {
 		t.Fatalf("version 1: %+v", first.Document["summary"])
 	}
 	if w := f.get("/api/tiles", "&version=2", ""); w.Body.String() != latest.Body.String() {
@@ -233,41 +216,17 @@ func TestTilesRefusesWhatDocumentRefuses(t *testing.T) {
 	}
 }
 
-func TestTilesConversionFailureLeavesTilesNull(t *testing.T) {
+func TestTilesConversionFailureLeavesTheViewOut(t *testing.T) {
 	f := newTilesFixture(t)
 	const document = `{"review":{"repository":"acme/widgets","pull_request":42,"version":1,"head":"aaaaaaaa","base":"bbbbbbbb"},"notes":"PRIVATE_TEXT"}`
 	f.put(t, []byte(document))
 	w := f.get("/api/tiles", "", "")
 	body := decodeTiles(t, w)
-	if body.Tiles != nil || body.Problem == "" || strings.Contains(body.Problem, "PRIVATE_TEXT") {
-		t.Fatalf("tiles %v, problem %q", body.Tiles != nil, body.Problem)
+	if body.View != nil || body.Problem == "" || strings.Contains(body.Problem, "PRIVATE_TEXT") {
+		t.Fatalf("view %v, problem %q", body.View != nil, body.Problem)
 	}
-	if !strings.Contains(w.Body.String(), `"tiles":null`) || body.Document["notes"] != "PRIVATE_TEXT" {
+	if strings.Contains(w.Body.String(), `"view"`) || body.Document["notes"] != "PRIVATE_TEXT" {
 		t.Fatalf("body %s", w.Body.String())
-	}
-}
-
-// A tile whose data does not have its type's shape is marked unavailable and
-// the response is still served, with the other tiles ready.
-func TestTilesUnavailableTileDoesNotFailTheResponse(t *testing.T) {
-	f := newTilesFixture(t)
-	doc := tileviewtest.Base(t)
-	doc["summary"].(map[string]any)["change_kind"] = "not-a-kind"
-	f.put(t, tileviewtest.Encode(t, doc))
-	body := decodeTiles(t, f.get("/api/tiles", "", ""))
-	if body.Tiles == nil || body.Problem != "" {
-		t.Fatalf("%+v", body)
-	}
-	if got := tileState(body.Tiles, "overview"); got != tiles.StateUnavailable {
-		t.Fatalf("overview is %s", got)
-	}
-	if got := tileState(body.Tiles, "risks"); got != tiles.StateReady {
-		t.Fatalf("risks is %s", got)
-	}
-	for _, tile := range body.Tiles.Tiles {
-		if tile.ID == "overview" && len(tile.Problems) == 0 {
-			t.Error("the unavailable tile names no problem")
-		}
 	}
 }
 
@@ -349,8 +308,8 @@ func TestTilesDocumentIsNormalisedWhereDocumentIsNot(t *testing.T) {
 			t.Errorf("identifier of %d characters", len(id))
 		}
 	}
-	if body.Tiles == nil || body.Problem != "" {
-		t.Fatalf("tiles %v, problem %q", body.Tiles != nil, body.Problem)
+	if body.View == nil || body.Problem != "" {
+		t.Fatalf("view %v, problem %q", body.View != nil, body.Problem)
 	}
 }
 
@@ -386,31 +345,27 @@ func TestTilesConvertsAnUnchangedVersionOnce(t *testing.T) {
 	}
 }
 
-// A version's stored composition is applied to the tiles served for it, the
-// document served beside them is unchanged, and the next version, which has
-// none, is served with the converted layout.
+// A version's stored composition is applied to the view served for it, the
+// document served beside it is unchanged, and a version without one is
+// served the empty view.
 func TestTilesServesTheStoredComposition(t *testing.T) {
 	f := newTilesFixture(t)
 	f.put(t, titled(t, "Plain"))
 	plain := decodeTiles(t, f.get("/api/tiles", "", ""))
-	pinned := f.putComposed(t, titled(t, "Plain"))
+	f.putComposed(t, titled(t, "Plain"))
 	composed := decodeTiles(t, f.get("/api/tiles", "", ""))
-	if composed.Problem != "" || composed.Tiles == nil {
+	if composed.Problem != "" || composed.View == nil || plain.View == nil {
 		t.Fatalf("problem %q", composed.Problem)
 	}
-	first := composed.Tiles.Layout.Entries[0]
-	if first.Tile != pinned || !first.Pin || plain.Tiles.Layout.Entries[0].Tile == pinned {
-		t.Fatalf("first tile %q (pinned %v), want %q pinned; the plain layout starts with %q", first.Tile, first.Pin, pinned, plain.Tiles.Layout.Entries[0].Tile)
-	}
-	if composed.Tiles.Origin.Kind != tiles.OriginGenerated || plain.Tiles.Origin.Kind != tiles.OriginConverted {
-		t.Errorf("origins %q and %q", composed.Tiles.Origin.Kind, plain.Tiles.Origin.Kind)
+	if composed.View.Overview.RiskSummary != tileviewtest.RiskSummary || plain.View.Overview.RiskSummary != "" {
+		t.Fatalf("risk summaries %q and %q", composed.View.Overview.RiskSummary, plain.View.Overview.RiskSummary)
 	}
 	// Version 1 still has no composition; asking for it by number is the
-	// converted answer, byte for byte.
+	// empty view, byte for byte.
 	one := f.get("/api/tiles", "&version=1", "")
 	again := f.get("/api/tiles", "&version=1", "")
-	if one.Code != 200 || one.Body.String() != again.Body.String() || decodeTiles(t, one).Tiles.Origin.Kind != tiles.OriginConverted {
-		t.Error("version 1 is not served with the converted layout")
+	if one.Code != 200 || one.Body.String() != again.Body.String() || decodeTiles(t, one).View.Overview.RiskSummary != "" {
+		t.Error("version 1 is not served the empty view")
 	}
 	// The same document with and without a composition is answered with
 	// another body and ETag: two clones hold it as version 1, one with a

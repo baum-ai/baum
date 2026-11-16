@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // StagedTiles turns on a staged review's tile analysis (StagedRun.Tiles):
@@ -35,9 +36,9 @@ type StagedTiles struct {
 	// Previous is the previous version's stored composition, nil without
 	// one: its library and authored tiles are reused, without a call, when
 	// the code they cite is unchanged.
-	Previous *tiles.Composition
+	Previous *view.Composition
 	// Always are the library types a person added to the pull request's
-	// review (their layout's add ops). Each is filled whatever the outline
+	// review (internal/addedtiles). Each is filled whatever the outline
 	// answers about it, so it appears in the new version's composition,
 	// unless its last data can be reused without a call (AlwaysTile). A
 	// type that is not offered in Library is ignored.

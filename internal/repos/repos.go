@@ -65,7 +65,7 @@ var ErrTooManyPins = fmt.Errorf("%w: a repository pins at most %d tile types", E
 
 // empty reports settings that choose nothing: every field is empty.
 func (t TileSettings) empty() bool {
-	return len(t.Types) == 0 && t.Text == "" && len(t.Pins) == 0
+	return len(t.Types) == 0
 }
 
 // PinnedTileTypes is the tile types the settings pin, never nil.

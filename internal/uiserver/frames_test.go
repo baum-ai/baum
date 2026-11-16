@@ -19,6 +19,7 @@ import (
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/tilestest"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // frameMetadata is what a browser sends when the app's page loads a frame.
@@ -312,10 +313,10 @@ func TestCustomTileFromTheTilesRouteLoadsItsFrame(t *testing.T) {
 		t.Fatal("the tile route sent a tile's HTML")
 	}
 	for _, id := range tileviewtest.CustomTileIDs {
-		var tile *tiles.Tile
-		for i := range body.Tiles.Tiles {
-			if body.Tiles.Tiles[i].ID == id {
-				tile = &body.Tiles.Tiles[i]
+		var tile *view.Tile
+		for i := range body.View.Tiles {
+			if body.View.Tiles[i].ID == id {
+				tile = &body.View.Tiles[i]
 			}
 		}
 		if tile == nil {

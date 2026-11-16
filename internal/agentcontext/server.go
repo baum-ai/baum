@@ -5,9 +5,9 @@
 // Each agent holds its own token, minted in memory (Registry). Tools read the
 // local API through a GET-only Reader, and every result is masked, cut into
 // bounded chunks and fenced as untrusted data (envelope). Proposals change
-// nothing until the user saves them; the one exception is the person's own
-// tile layout of the pull request page they have open, which the layout
-// tools change at once (layouttools.go).
+// nothing until the user saves them; the one exception is the tiles the
+// person adds to the pull request page they have open, which the add tools
+// add at once (addtools.go).
 package agentcontext
 
 import (
@@ -72,10 +72,9 @@ type Options struct {
 	// each is the same change the page's own save makes (see proposetools.go
 	// for the tools and their targets). A page without one takes none.
 	Proposers map[string]Proposer
-	// Layouts changes the person's own tile layout of the pull request page
-	// they have open, at once (layouttools.go). Nil has the layout tools
-	// report them unavailable.
-	Layouts LayoutEditor
+	// Added adds library tiles to the pull request page the person has
+	// open, at once (addtools.go). Nil has add_tile report it unavailable.
+	Added AddedTiles
 	// TileTypes is the person's tile library, for tile_type and
 	// propose_tile_type (tiletypetools.go). Nil has them report it
 	// unavailable.
@@ -97,7 +96,7 @@ type Server struct {
 	planChoices      func(ctx context.Context) ([]json.RawMessage, error)
 	codexHooks       func() (string, time.Time, bool)
 	decisionSettings func(ctx context.Context) (json.RawMessage, error)
-	layouts          LayoutEditor
+	added            AddedTiles
 	tileTypes        TileTypes
 	chatTiles        ChatTiles
 	mu               sync.RWMutex
@@ -109,7 +108,7 @@ type Server struct {
 func New(opts Options) *Server {
 	registry := NewRegistry()
 	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
-		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, layouts: opts.Layouts, tileTypes: opts.TileTypes, chatTiles: opts.ChatTiles, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, added: opts.Added, tileTypes: opts.TileTypes, chatTiles: opts.ChatTiles, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
@@ -125,8 +124,8 @@ func New(opts Options) *Server {
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
-	proposing, layouts, tileTypes, making := proposeTools(), slices.Concat(s.layoutTools(), s.tilePreferenceTools()), s.tileTypeTools(), s.tileMakingTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, layouts, tileTypes, making) {
+	proposing, adding, tileTypes, making := proposeTools(), s.addTools(), s.tileTypeTools(), s.tileMakingTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, adding, tileTypes, making) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -167,11 +166,11 @@ func New(opts Options) *Server {
 	// files.
 	pullPage := slices.Concat(names(pull), names(reviews), names(extras))
 	groupExtras := byName(extras, "group_patch", "group_file")
-	// It lists the layout tools too, which change the person's own layout
-	// of the review's tiles at once.
-	pullPage = append(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }), slices.Concat(layoutPageTools, tilePreferencePageTools)...)
-	// The tile type tools too (the layout tools already list tile_type),
-	// and the tools that make a tile in chat.
+	// It lists add_tile too, which adds a library tile to the person's own
+	// page at once.
+	pullPage = append(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }), addPageTools...)
+	// The tile type tools too (the add tools already list tile_type), and
+	// the tools that make a tile in chat.
 	for _, name := range slices.Concat(tileTypePageTools, tileMakingTools) {
 		if !slices.Contains(pullPage, name) {
 			pullPage = append(pullPage, name)
@@ -539,8 +538,8 @@ func (s *Server) handle(ctx context.Context, consumer Consumer, method string, p
 // annotations are a tool's MCP behaviour hints. No tool reaches beyond the
 // local daemon, so none is open-world. A reading tool is read-only; a proposing
 // tool records state, so it is not, but it destroys nothing: the user decides
-// what a proposal changes. A layout tool edits the person's own layout of
-// their page at once, which an undo takes back: it destroys nothing either.
+// what a proposal changes. An add tool adds a tile to the person's own page
+// at once, which Remove takes off: it destroys nothing either.
 type annotations struct {
 	ReadOnly    bool  `json:"readOnlyHint"`
 	Destructive *bool `json:"destructiveHint,omitempty"`

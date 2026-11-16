@@ -146,13 +146,6 @@ func IsComposition(raw []byte) bool {
 	return json.Unmarshal(raw, &head) == nil && head.Schema == CompositionName
 }
 
-// Grid is the composition as the tile grid reads it: its library and
-// authored tiles, with no layout, which the grid lays out with the change
-// kind's template (tiles.Composition.View).
-func (c *Composition) Grid() *tiles.Composition {
-	return &tiles.Composition{Schema: tiles.CompositionName, Generator: c.Generator, Library: c.Library, Authored: c.Authored, View: true}
-}
-
 // placed returns every tile the composition places, the overview's diagram
 // first.
 func (c *Composition) placed() map[string]bool {

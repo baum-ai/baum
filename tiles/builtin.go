@@ -5,12 +5,11 @@ type BuiltinType struct {
 	// Name is the tile's type, and the ID of a single tile.
 	Name  string
 	Title string
-	// UseWhen is the one line a composer reads to decide whether to use it.
+	// UseWhen is the one line that says what the type is for.
 	UseWhen string
 	// Single types have at most one tile per document, whose ID is the type
 	// name.
 	Single bool
-	Size   Size
 }
 
 // The built-in tile types.
@@ -36,19 +35,19 @@ const TypeCustom = "custom"
 
 // Builtins lists the built-in tile types in catalogue order.
 var Builtins = []BuiltinType{
-	{TypeOverview, "Overview", "Always: what the pull request does, its kind, what needs attention and the release note.", true, SizeHalf},
-	{TypeChange, "Change", "One per logical change: its summary, behaviour, risks, evidence and the hunks it covers.", false, SizeThird},
-	{TypeRisks, "Risks", "Always: the active risks of the current changes, most severe first.", true, SizeHalf},
-	{TypeEvidence, "Evidence", "Always: what tests, checks, runs and reviews show for each change.", true, SizeThird},
-	{TypeIntent, "Intent", "When the pull request states what it implements or a change states its intent.", true, SizeThird},
-	{TypeDecisions, "Decisions", "When people or agents made design decisions worth reviewing.", true, SizeThird},
-	{TypeContext, "Context", "How the change fits into the codebase around it.", true, SizeThird},
-	{TypeMedia, "Media", "When the pull request carries screenshots, recordings or other media.", true, SizeThird},
-	{TypeEverythingElse, "Everything else", "When there is a mechanical change or hunks no change holds.", true, SizeThird},
-	{TypeProse, "Notes", "A point that needs prose and fits no other tile.", false, SizeHalf},
-	{TypeTable, "Table", "Values that compare best in rows and columns.", false, SizeHalf},
-	{TypeDiagram, "Diagram", "A flow or structure that reads best as a diagram.", false, SizeHalf},
-	{TypeCode, "Code", "A short excerpt of code worth reading in full.", false, SizeHalf},
+	{TypeOverview, "Overview", "Always: what the pull request does, its kind, what needs attention and the release note.", true},
+	{TypeChange, "Change", "One per logical change: its summary, behaviour, risks, evidence and the hunks it covers.", false},
+	{TypeRisks, "Risks", "Always: the active risks of the current changes, most severe first.", true},
+	{TypeEvidence, "Evidence", "Always: what tests, checks, runs and reviews show for each change.", true},
+	{TypeIntent, "Intent", "When the pull request states what it implements or a change states its intent.", true},
+	{TypeDecisions, "Decisions", "When people or agents made design decisions worth reviewing.", true},
+	{TypeContext, "Context", "How the change fits into the codebase around it.", true},
+	{TypeMedia, "Media", "When the pull request carries screenshots, recordings or other media.", true},
+	{TypeEverythingElse, "Everything else", "When there is a mechanical change or hunks no change holds.", true},
+	{TypeProse, "Notes", "A point that needs prose and fits no other tile.", false},
+	{TypeTable, "Table", "Values that compare best in rows and columns.", false},
+	{TypeDiagram, "Diagram", "A flow or structure that reads best as a diagram.", false},
+	{TypeCode, "Code", "A short excerpt of code worth reading in full.", false},
 }
 
 var builtinsByName = func() map[string]BuiltinType {

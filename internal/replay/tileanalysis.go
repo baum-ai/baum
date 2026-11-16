@@ -10,8 +10,8 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // AnalysisRecordName is the schema of analysis.json, what a tiles case's
@@ -32,8 +32,8 @@ type AnalysisRecord struct {
 	// exhibits once its own stages had ended.
 	WaitedSeconds float64 `json:"waited_seconds"`
 	// Duplicates are the pairs of points two tiles state, one of them a
-	// library or authored tile (compose.Duplicates on the served page).
-	Duplicates []compose.Pair `json:"duplicates,omitempty"`
+	// library or authored tile (view.Duplicates on the served page).
+	Duplicates []view.Pair `json:"duplicates,omitempty"`
 }
 
 // FillRecord is one fill: its state, reason, cost, time and placement.
@@ -70,30 +70,37 @@ type ExhibitsRecord struct {
 	Calls      int                  `json:"calls"`
 }
 
-// Placement is where the served page put a tile: its position in the
-// layout, its size and whether it is on the landing page.
+// Placement is where the served page put a tile: the section it is on
+// (context for Where this fits), or the overview as its main diagram.
 type Placement struct {
-	Position int        `json:"position"`
-	Size     tiles.Size `json:"size"`
-	Landing  bool       `json:"landing"`
+	Section  string `json:"section,omitempty"`
+	Overview bool   `json:"overview,omitempty"`
 }
 
-// placements returns where the served document places each tile.
-func placements(doc *tiles.Document) map[string]Placement {
+// onSection reports whether the tile is on one of the review's own
+// sections, not on Where this fits.
+func (p Placement) onSection() bool { return p.Section != "" && p.Section != view.ContextSection }
+
+// placements returns where the served view places each tile.
+func placements(v *view.View) map[string]Placement {
 	out := map[string]Placement{}
-	if doc == nil {
+	if v == nil {
 		return out
 	}
-	visible := tiles.Visible(doc.Layout)
-	for i, entry := range doc.Layout.Entries {
-		out[entry.Tile] = Placement{Position: i, Size: entry.Size, Landing: i < len(visible) && visible[i]}
+	if d := v.Overview.Diagram; d != nil {
+		out[*d] = Placement{Overview: true}
+	}
+	for _, p := range v.Sections {
+		for _, id := range p.Tiles {
+			out[id] = Placement{Section: p.ID}
+		}
 	}
 	return out
 }
 
 // analysisArtifacts writes analysis.json, fills/<type>.json and
 // exhibits.json for a case whose run had a tile analysis.
-func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport, served *tiles.Document, composition *tiles.Composition, list *pricing.List, backend string) error {
+func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport, converted *tiles.Document, served *view.View, composition *view.Composition, list *pricing.List, backend string) error {
 	if report == nil || report.TilesOutcome == nil {
 		return nil
 	}
@@ -145,8 +152,14 @@ func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport
 		}
 		artifacts["exhibits.json"] = encoded
 	}
-	if served != nil && len(only) > 0 {
-		record.Duplicates = compose.Duplicates(compose.DocumentUnits(served), only)
+	if converted != nil && served != nil && len(only) > 0 {
+		units := view.DocumentUnits(converted)
+		for _, t := range served.Tiles {
+			if only[t.ID] {
+				units = append(units, view.TileUnits(tiles.Tile{ID: t.ID, Type: t.Type, Data: t.Data})...)
+			}
+		}
+		record.Duplicates = view.Duplicates(units, only)
 	}
 	encoded, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
@@ -161,7 +174,7 @@ func analysisArtifacts(artifacts map[string][]byte, report *generate.TilesReport
 const (
 	MetricLibrarySelected    = "library_selected"
 	MetricLibraryReady       = "library_ready"
-	MetricLibraryLanding     = "library_landing"
+	MetricLibraryOnSection   = "library_on_section"
 	MetricFillsCost          = "fills_cost_usd"
 	MetricFillsSeconds       = "fills_seconds_max"
 	MetricLibraryReused      = "library_reused"
@@ -171,7 +184,7 @@ const (
 	MetricExhibitsReturned   = "exhibits_returned"
 	MetricExhibitsKept       = "exhibits_kept"
 	MetricExhibitsDuplicate  = "exhibits_dropped_duplicate"
-	MetricExhibitsLanding    = "exhibits_landing"
+	MetricExhibitsOnSection  = "exhibits_on_section"
 	MetricExhibitsCost       = "exhibits_cost_usd"
 	MetricExhibitsSeconds    = "exhibits_seconds"
 	MetricExtrasWait         = "extras_wait_seconds"
@@ -213,9 +226,9 @@ func analysisMetrics(read func(string) ([]byte, error), values map[string]float6
 		add(prefix+"reused", one(f.Reused))
 		add(MetricLibraryReused, one(f.Reused))
 		add(MetricLibraryReady, one(f.State == agent.FillReady))
-		landing := f.Placement != nil && f.Placement.Landing
-		add(prefix+"landing", one(landing))
-		add(MetricLibraryLanding, one(landing))
+		onSection := f.Placement != nil && f.Placement.onSection()
+		add(prefix+"on_section", one(onSection))
+		add(MetricLibraryOnSection, one(onSection))
 		if f.CostUSD != nil {
 			add(MetricFillsCost, *f.CostUSD)
 		}
@@ -233,7 +246,7 @@ func analysisMetrics(read func(string) ([]byte, error), values map[string]float6
 			add("exhibits_dropped_"+d.Reason, 1)
 		}
 		for _, p := range x.Kept {
-			add(MetricExhibitsLanding, one(p.Landing))
+			add(MetricExhibitsOnSection, one(p.onSection()))
 		}
 		if x.CostUSD != nil {
 			add(MetricExhibitsCost, *x.CostUSD)
@@ -250,7 +263,7 @@ func analysisDefinitions() map[string]string {
 	d := map[string]string{
 		MetricLibrarySelected:    "library types the outline selected",
 		MetricLibraryReady:       "library fills whose data passed its checks",
-		MetricLibraryLanding:     "library tiles on the served page's landing page",
+		MetricLibraryOnSection:   "library tiles the served page places on one of the review's sections (not Where this fits)",
 		MetricFillsCost:          "what the fills cost at API prices (cost_usd includes it)",
 		MetricFillsSeconds:       "the longest fill's wall time",
 		MetricExhibitsReturned:   "exhibits the exhibits call returned",
@@ -260,7 +273,7 @@ func analysisDefinitions() map[string]string {
 		MetricExhibitsReused:     "authored tiles kept from the previous version without a call",
 		MetricExhibitsKept:       "authored tiles the composition holds",
 		MetricExhibitsDuplicate:  "exhibits dropped as restating the review or another exhibit",
-		MetricExhibitsLanding:    "authored tiles on the served page's landing page",
+		MetricExhibitsOnSection:  "authored tiles the served page places on one of the review's sections (not Where this fits)",
 		MetricExhibitsCost:       "what the exhibits call cost at API prices (cost_usd includes it)",
 		MetricExhibitsSeconds:    "the exhibits call's wall time",
 		MetricExtrasWait:         "how long the review waited for fills and exhibits after its own stages ended",

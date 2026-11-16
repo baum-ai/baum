@@ -1,34 +1,33 @@
 package uiserver
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
-// A tile made in chat is a custom tile in the person's own layout of the
-// pull request (an add of kind custom): its definition is kept by its
+// A tile made in chat is a tile the person added to the pull request
+// (internal/addedtiles, of kind custom): its definition is kept by its
 // digest in tile_definitions and its data, for the version it was made
 // for, in tile_fills, the agent's (OriginChat). It is personal, shows at
-// once and has an Undo, as every layout edit. The session panel's agent
-// makes it in three steps (agentcontext's tile making tools): a pending
-// card on the page (tiledrafts), render checks with the pull request's data,
-// and the add of a check that passed.
+// once on its section and has Remove on its menu, as every added tile. The
+// session panel's agent makes it in three steps (agentcontext's tile making
+// tools): a pending card on the page (tiledrafts), render checks with the
+// pull request's data, and the add of a check that passed.
 
 // ChatChecks is the render checker as making a tile in chat uses it;
 // *tilechecks.Checker implements it.
@@ -80,45 +79,35 @@ func (t *ChatTiles) now() time.Time {
 
 // Start implements agentcontext.ChatTiles.
 func (t *ChatTiles) Start(ctx context.Context, owner, repository string, number int, start agentcontext.TileStart) (agentcontext.TileDraft, error) {
-	if t.API.Layouts == nil || t.Drafts == nil {
+	if t.API.Added == nil || t.Drafts == nil {
 		return agentcontext.TileDraft{}, errors.New("making tiles in chat is not available in this baum")
 	}
 	c, err := t.API.pullClone(ctx, repository, number)
 	if err != nil {
 		return agentcontext.TileDraft{}, err
 	}
-	shown, err := t.API.shownTiles(ctx, c, number, 0)
+	shown, err := t.API.latestShown(ctx, c, number)
 	if err != nil {
 		return agentcontext.TileDraft{}, err
 	}
-	to, err := placeOn(shown.Document, start.Size, start.To)
+	section, err := shown.asked(start.Section)
 	if err != nil {
 		return agentcontext.TileDraft{}, err
 	}
-	d := t.Drafts.Start(owner, tilelayout.Key(c.Repository, number), start.Title, start.Size, to)
+	d := t.Drafts.Start(owner, addedtiles.Key(c.Repository, number), start.Title, section)
 	return agentcontext.TileDraft{Tile: d.Tile, Phase: d.Phase}, nil
 }
 
-// placeOn checks a size and place on the page shown, and gives a tile with
-// no place the one an added tile takes: right after the overview.
-func placeOn(doc *tiles.Document, size tiles.Size, to *tiles.Place) (*tiles.Place, error) {
-	probe := tiles.Op{Op: tiles.OpAdd, Size: size, To: to, Add: &tiles.Added{Kind: tiles.AddCustom, Name: "probe", Digest: "probe"}}
-	if err := tiles.CheckOpShape(probe); err != nil {
-		return nil, err
+// asked is a section an add tool names, checked against the shown review:
+// a current section or context, or empty.
+func (s shownVersion) asked(section string) (string, error) {
+	if section == "" || section == view.ContextSection {
+		return section, nil
 	}
-	shown := func(id string) bool {
-		return slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == id && e.Group != tiles.GroupHidden })
+	if got := view.SectionFor(s.Review, section, nil); got != section {
+		return "", fmt.Errorf("The review has no section %s; name one of its sections, or context for Where this fits", section)
 	}
-	if to == nil {
-		if shown(tiles.TypeOverview) {
-			return &tiles.Place{After: tiles.TypeOverview}, nil
-		}
-		return nil, nil
-	}
-	if anchor := cmp.Or(to.Before, to.After); anchor != "" && !shown(anchor) {
-		return nil, fmt.Errorf("No tile %s on the page; tile_layout lists them", anchor)
-	}
-	return to, nil
+	return section, nil
 }
 
 // Check implements agentcontext.ChatTiles. The data is masked first, so
@@ -135,7 +124,7 @@ func (t *ChatTiles) Check(ctx context.Context, owner, repository string, number 
 	if err != nil {
 		return nil, err
 	}
-	pr := tilelayout.Key(c.Repository, number)
+	pr := addedtiles.Key(c.Repository, number)
 	if _, ok := library.Get(check.Definition.Name); ok {
 		return answer(tilechecks.Result{Verdict: tilechecks.VerdictFail, Errors: []tilechecks.Problem{chatProblem(tilechecks.CodeDefinitionInvalid, "",
 			fmt.Sprintf("%s is the name of one of baum's own tile types; give the tile a name of its own", check.Definition.Name))}})
@@ -157,7 +146,7 @@ func (t *ChatTiles) Check(ctx context.Context, owner, repository string, number 
 		if err != nil {
 			return nil, err
 		}
-		shown, err := t.API.shownTiles(ctx, c, number, 0)
+		shown, err := t.API.latestShown(ctx, c, number)
 		if err != nil {
 			return nil, err
 		}
@@ -284,17 +273,19 @@ func (t *ChatTiles) keep(pr string, version int, candidate tilechecks.Candidate,
 }
 
 // Add implements agentcontext.ChatTiles: the type and data a passed check
-// with data checked become the version's custom tile, as one batch. The
-// data is stored first, with the definition, so the add can name it.
+// with data checked become a custom tile the person added, on the section
+// asked for, else the pending card's, else the one whose hunks the data
+// cites most. The data is stored first, with the definition, so the added
+// tile can name it.
 func (t *ChatTiles) Add(ctx context.Context, owner, repository string, number int, add agentcontext.CustomTileAdd) (agentcontext.TileAdded, error) {
-	if t.API.Layouts == nil {
+	if t.API.Added == nil {
 		return agentcontext.TileAdded{}, errors.New("making tiles in chat is not available in this baum")
 	}
 	c, err := t.API.pullClone(ctx, repository, number)
 	if err != nil {
 		return agentcontext.TileAdded{}, err
 	}
-	pr := tilelayout.Key(c.Repository, number)
+	pr := addedtiles.Key(c.Repository, number)
 	t.mu.Lock()
 	i := slices.IndexFunc(t.made, func(m chatCheck) bool { return m.id == add.Check })
 	var made chatCheck
@@ -317,61 +308,46 @@ func (t *ChatTiles) Add(ctx context.Context, owner, repository string, number in
 	case !made.passed:
 		return agentcontext.TileAdded{}, errors.New("That check did not pass: fix its errors, check again and add a check that passed")
 	}
-	shown, err := t.API.shownTiles(ctx, c, number, 0)
+	shown, err := t.API.latestShown(ctx, c, number)
 	if err != nil {
 		return agentcontext.TileAdded{}, err
 	}
 	if shown.Version != made.version {
 		return agentcontext.TileAdded{}, fmt.Errorf("The pull request's review has a new version (%d) since that check: check the tile again with data for it", shown.Version)
 	}
-	size, to := add.Size, add.To
+	section, err := shown.asked(add.Section)
+	if err != nil {
+		return agentcontext.TileAdded{}, err
+	}
 	draft := add.Draft
 	if t.Drafts != nil {
 		if d, at, ok := t.Drafts.Current(owner, add.Draft); ok && at == pr {
 			draft = d.Tile
-			if size == "" {
-				size = d.Size
-			}
-			if to == nil {
-				to = d.To
+			if section == "" {
+				section = d.Section
 			}
 		}
 	}
-	if size != "" && !slices.Contains(made.def.Sizes, size) {
-		size = ""
-	}
-	if to, err = placeOn(shown.Document, size, to); err != nil {
-		return agentcontext.TileAdded{}, err
-	}
+	section = shown.section(section, made.data)
 	id := tiles.LibraryTileID(made.def.Name)
-	op := tiles.Op{Op: tiles.OpAdd, Size: size, To: to, Add: &tiles.Added{Kind: tiles.AddCustom, Name: made.def.Name, Digest: made.def.Digest, Title: summaryTitle(made.def.Title)}}
-	if reason := tiles.CheckOp(shown.Document, op); reason != "" {
-		return agentcontext.TileAdded{}, errors.New(reason)
-	}
-	// The layout reads the tile's definition from its fill, so the fill is
-	// written first and taken back (or the hidden tile's earlier one put back)
-	// when the layout refuses the add.
-	prior := t.API.Layouts.HeldFill(ctx, pr, id, made.version)
-	if err := t.API.Layouts.PutFill(ctx, pr, id, made.version, tilelayout.OriginChat, made.definition, made.data); err != nil {
+	if err := t.API.roomFor(ctx, pr, id); err != nil {
 		return agentcontext.TileAdded{}, err
 	}
-	change, err := t.API.editLayout(ctx, c, number, "chat", []tiles.Op{op})
-	if err != nil {
-		t.API.Layouts.RestoreFill(ctx, pr, id, made.version, prior)
+	// The added tile reads its definition from its fill, so the fill is
+	// written first and taken back (or the earlier one put back) when the
+	// add is not saved.
+	prior := t.API.Added.HeldFill(ctx, pr, id, made.version)
+	if err := t.API.Added.PutFill(ctx, pr, id, made.version, addedtiles.OriginChat, made.definition, made.data); err != nil {
 		return agentcontext.TileAdded{}, err
 	}
-	if !change.Saved {
-		t.API.Layouts.RestoreFill(ctx, pr, id, made.version, prior)
-		reasons := make([]string, len(change.Refused))
-		for i, refusal := range change.Refused {
-			reasons[i] = refusal.Reason
-		}
-		return agentcontext.TileAdded{}, errors.New(strings.Join(reasons, "; "))
+	if err := t.API.Added.Add(ctx, pr, addedtiles.Added{Tile: id, Kind: addedtiles.KindCustom, Name: made.def.Name, Digest: made.def.Digest, Section: section, By: "chat"}); err != nil {
+		t.API.Added.RestoreFill(ctx, pr, id, made.version, prior)
+		return agentcontext.TileAdded{}, err
 	}
 	if t.Drafts != nil {
 		t.Drafts.Added(owner, draft)
 	}
-	return agentcontext.TileAdded{Tile: id, State: "ready", Change: changeOf(change)}, nil
+	return agentcontext.TileAdded{Tile: id, State: "ready", Section: section}, nil
 }
 
 // TurnEnded implements agentcontext.ChatTiles.
@@ -393,7 +369,7 @@ func (a LocalAPI) draftRoutes(mux *http.ServeMux) {
 		if !ok {
 			return
 		}
-		if !a.Drafts.Remove(tilelayout.Key(c.Repository, key.Number), r.PathValue("tile")) {
+		if !a.Drafts.Remove(addedtiles.Key(c.Repository, key.Number), r.PathValue("tile")) {
 			http.NotFound(w, r)
 			return
 		}

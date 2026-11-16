@@ -12,6 +12,7 @@ import (
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/tilestest"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // withCustomTiles serves the synthetic custom tiles in every document Build
@@ -29,10 +30,13 @@ func withFrames(t *testing.T, r *tileframes.Registry) {
 	t.Cleanup(func() { frames = previous })
 }
 
-func custom(doc *tiles.Document, id string) *tiles.Tile {
-	for i := range doc.Tiles {
-		if doc.Tiles[i].ID == id {
-			return &doc.Tiles[i]
+func custom(v *view.View, id string) *view.Tile {
+	if v == nil {
+		return nil
+	}
+	for i := range v.Tiles {
+		if v.Tiles[i].ID == id {
+			return &v.Tiles[i]
 		}
 	}
 	return nil
@@ -44,11 +48,11 @@ func TestBuildRegistersReadyCustomTiles(t *testing.T) {
 	withCustomTiles(t)
 	withFrames(t, tileframes.New(tileframes.MaxBytes))
 	r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{})
-	if r.Tiles == nil {
+	if r.View == nil {
 		t.Fatal(r.Problem)
 	}
 	for _, id := range []string{tileviewtest.WidgetHealth, tileviewtest.EscapeProbe} {
-		tile := custom(r.Tiles, id)
+		tile := custom(r.View, id)
 		if tile == nil || tile.State != tiles.StateReady {
 			t.Fatalf("%s: %+v", id, tile)
 		}
@@ -59,7 +63,7 @@ func TestBuildRegistersReadyCustomTiles(t *testing.T) {
 			t.Fatalf("%s: registered %v, %v", id, ok, err)
 		}
 	}
-	unavailable := custom(r.Tiles, tileviewtest.NewerKit)
+	unavailable := custom(r.View, tileviewtest.NewerKit)
 	if unavailable == nil || unavailable.State != tiles.StateUnavailable || len(unavailable.Problems) == 0 {
 		t.Fatalf("newer kit: %+v", unavailable)
 	}
@@ -77,7 +81,7 @@ func TestBuildRegistersReadyCustomTiles(t *testing.T) {
 	}
 }
 
-// The served tile document holds each custom tile's definition without its
+// The served view holds each custom tile's definition without its
 // HTML; the digest is the one the validator checked.
 func TestBuildServesDefinitionsWithoutHTML(t *testing.T) {
 	withCustomTiles(t)
@@ -98,7 +102,7 @@ func TestBuildServesDefinitionsWithoutHTML(t *testing.T) {
 			Sizes  []string       `json:"sizes"`
 			Source map[string]any `json:"source"`
 		}
-		if err := json.Unmarshal(custom(r.Tiles, id).Definition, &served); err != nil {
+		if err := json.Unmarshal(custom(r.View, id).Definition, &served); err != nil {
 			t.Fatal(err)
 		}
 		if served.Digest != def.Digest || served.Title != def.Title || served.Kit != def.Kit || len(served.Sizes) != len(def.Sizes) {
@@ -119,18 +123,17 @@ func TestBuildMarksAnUncomposableTileUnavailable(t *testing.T) {
 	restore := SetFixture(func(doc *tiles.Document) {
 		tile := tilestest.CustomTile("wide_widgets", "Wide widgets", def, json.RawMessage(`{"summary":"x","stores":[]}`))
 		doc.Tiles = append(doc.Tiles, tile)
-		doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: tile.ID, Size: tiles.SizeHalf})
 	})
 	defer restore()
 	r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{})
-	tile := custom(r.Tiles, "wide_widgets")
+	tile := custom(r.View, "wide_widgets")
 	if tile.State != tiles.StateUnavailable || len(tile.Problems) != 1 || !strings.Contains(tile.Problems[0], "256 KiB") || len(r.Frames) != 0 {
 		t.Fatalf("%s: %v, %d frames", tile.State, tile.Problems, len(r.Frames))
 	}
 }
 
 // An answer served from a cache registers its frames again, so a frame the
-// registry dropped comes back with the tile document that names it.
+// registry dropped comes back with the answer that names it.
 func TestCacheRegistersFramesAgain(t *testing.T) {
 	withFrames(t, tileframes.New(1))
 	kept := tileviewtest.CustomDefinition(tileviewtest.WidgetHealth)
@@ -174,17 +177,17 @@ func TestServedDefinition(t *testing.T) {
 // SetFixture's restore puts back what was there.
 func TestSetFixtureRestores(t *testing.T) {
 	restore := SetFixture(tileviewtest.AddCustomTiles)
-	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{}); custom(r.Tiles, tileviewtest.WidgetHealth) == nil {
+	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{}); custom(r.View, tileviewtest.WidgetHealth) == nil {
 		t.Fatal("the fixture did not run")
 	}
 	restore()
-	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{}); custom(r.Tiles, tileviewtest.WidgetHealth) != nil || len(r.Frames) != 0 {
+	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{}); custom(r.View, tileviewtest.WidgetHealth) != nil || len(r.Frames) != 0 {
 		t.Fatal("the fixture outlived its restore")
 	}
 }
 
 // A composed answer's custom tiles, a library tile the composition adds and
-// the stored ones alike, are registered and served with their digests and
+// the fixture's alike, are registered and served with their digests and
 // without their HTML.
 func TestBuildServesComposedCustomTilesWithoutHTML(t *testing.T) {
 	withCustomTiles(t)
@@ -194,16 +197,17 @@ func TestBuildServesComposedCustomTilesWithoutHTML(t *testing.T) {
 	if err := json.Unmarshal(library.Definition, &libraryDef); err != nil {
 		t.Fatal(err)
 	}
-	composition, err := json.Marshal(tiles.Composition{
-		Schema:  tiles.CompositionName,
-		Layout:  tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: libraryDef.Name, Size: tiles.SizeFull, Pin: true}}},
-		Library: []tiles.LibraryTile{library},
+	composition, err := json.Marshal(view.Composition{
+		Schema:   view.CompositionName,
+		Overview: view.Overview{Screenshots: []string{}, Intent: []view.Intent{}},
+		Sections: []view.Placement{},
+		Library:  []tiles.LibraryTile{library},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), composition, tiles.Options{})
-	if r.Tiles == nil || r.Tiles.Origin.Kind != tiles.OriginGenerated {
+	if r.View == nil || custom(r.View, libraryDef.Name) == nil {
 		t.Fatalf("not composed: %q", r.Problem)
 	}
 	answer, err := Encode(r)
@@ -217,7 +221,7 @@ func TestBuildServesComposedCustomTilesWithoutHTML(t *testing.T) {
 		libraryDef.Name:           libraryDef,
 		tileviewtest.WidgetHealth: tileviewtest.CustomDefinition(tileviewtest.WidgetHealth),
 	} {
-		tile := custom(r.Tiles, id)
+		tile := custom(r.View, id)
 		if tile == nil || tile.State != tiles.StateReady {
 			t.Fatalf("%s: %+v", id, tile)
 		}

@@ -508,113 +508,13 @@ func (p *Proposers) groupTarget(page agentcontext.PageContext, name string) (*ta
 }
 
 // pullRequestTarget is a target of a pull request's page: a tile type to
-// save, the standing tile preferences of its repository, or else a comment
-// for the person's pending review of the pull request.
+// save, or else a comment for the person's pending review of the pull
+// request.
 func (p *Proposers) pullRequestTarget(page agentcontext.PageContext, name string) (*target, error) {
 	if rest, ok := strings.CutPrefix(name, agentcontext.TargetTileType); ok {
 		return p.tileTypeTarget(rest)
 	}
-	if repository, what, ok := agentcontext.ParseRepositoryTarget(name); ok && what == agentcontext.TargetTilePreferences {
-		return p.tilePreferencesTarget(page, repository)
-	}
 	return p.reviewCommentTarget(page, name)
-}
-
-// tilePreferencesTarget is the standing tile preferences of the repository
-// the pull request page shows (repos.TileSettings), saved as the repository
-// page's own control saves them, through the registry's own check. An After
-// names the fields that change: text (null clears it) and pins (the whole
-// list).
-func (p *Proposers) tilePreferencesTarget(page agentcontext.PageContext, repository string) (*target, error) {
-	if page.Repository == "" || !strings.EqualFold(repository, page.Repository) {
-		return nil, errors.New("the person has another repository's pull request open: tile preferences are for the repository they see")
-	}
-	repository = page.Repository
-	registry := p.API.Registry
-	type change struct {
-		Text *string   `json:"text"`
-		Pins *[]string `json:"pins"`
-	}
-	// next is the preferences the After makes of the stored ones, checked as
-	// a save checks them.
-	next := func(current *repos.TileSettings, after json.RawMessage) (repos.Settings, error) {
-		var in change
-		if err := decodeAfter(after, &in); err != nil {
-			return repos.Settings{}, err
-		}
-		keys := afterKeys(after)
-		if !keys["text"] && !keys["pins"] {
-			return repos.Settings{}, errors.New("propose text, pins or both")
-		}
-		var tiles repos.TileSettings
-		if current != nil {
-			tiles = *current
-		}
-		if keys["text"] {
-			tiles.Text = ""
-			if in.Text != nil {
-				tiles.Text = *in.Text
-			}
-		}
-		if keys["pins"] {
-			tiles.Pins = nil
-			if in.Pins != nil {
-				tiles.Pins = *in.Pins
-			}
-		}
-		return repos.Settings{Tiles: &tiles}.Checked()
-	}
-	return &target{
-		read: func(ctx context.Context) (any, any, error) {
-			settings, picked, err := registry.RepositorySettings(ctx, repository)
-			if err != nil {
-				return nil, nil, errors.New("the repository's settings could not be read")
-			}
-			if !picked {
-				return nil, nil, fmt.Errorf("%s is not picked in baum", repository)
-			}
-			value := repos.TileSettings{}
-			if settings.Tiles != nil {
-				value = *settings.Tiles
-			}
-			return value, settings.Tiles, nil
-		},
-		validate: func(ctx context.Context, after json.RawMessage) error {
-			settings, _, err := registry.RepositorySettings(ctx, repository)
-			if err != nil {
-				return errors.New("the repository's settings could not be read")
-			}
-			_, err = next(settings.Tiles, after)
-			return reason(err)
-		},
-		apply: func(ctx context.Context, after json.RawMessage, unchanged func(any) error, _ agentcontext.SaveInput) error {
-			_, err := registry.UpdateRepositoryIf(ctx, repository, func(current repos.Settings) (repos.Settings, error) {
-				if err := unchanged(current.Tiles); err != nil {
-					return current, err
-				}
-				checked, err := next(current.Tiles, after)
-				if err != nil {
-					return current, err
-				}
-				current.Tiles = checked.Tiles
-				return current, nil
-			})
-			if err != nil {
-				return reason(err)
-			}
-			p.repositoryChanged()
-			return nil
-		},
-	}, nil
-}
-
-// reason is err with the registry's invalid settings prefix dropped, as the
-// route answers it.
-func reason(err error) error {
-	if errors.Is(err, repos.ErrInvalidSettings) {
-		return errors.New(strings.TrimPrefix(err.Error(), repos.ErrInvalidSettings.Error()+": "))
-	}
-	return err
 }
 
 // reviewCommentTarget is a comment added to the person's pending review of

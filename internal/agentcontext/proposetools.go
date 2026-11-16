@@ -31,9 +31,7 @@ import (
 //   - inbox: TargetNewInbox, or TargetInbox+id for a saved inbox.
 //   - group: TargetGroup+id, the group the page shows.
 //   - pull_request: PullRequestTarget(repository, number), the person's
-//     pending review of the pull request the page shows, and
-//     RepositoryTarget(repository, TargetTilePreferences), the standing tile
-//     preferences of that pull request's repository.
+//     pending review of the pull request the page shows.
 const (
 	TargetAppearance         = "appearance"
 	TargetPlanUsage          = "plan_usage/"
@@ -93,7 +91,7 @@ var (
 		PageRepositories: {"propose_repository_settings", "propose_prompt", "propose_prompt_reset"},
 		PageInbox:        {"propose_inbox"},
 		PageGroup:        {"propose_group"},
-		PagePullRequest:  {"propose_review_comment", "propose_tile_preferences"},
+		PagePullRequest:  {"propose_review_comment"},
 	}
 	// settingsSectionProposals and repositorySectionProposals are the
 	// propose_* tools of each section, which current_page lists with the

@@ -13,14 +13,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // fakeChecker is the render checker without a runner: it records what it is
@@ -73,10 +74,10 @@ func (f *fakeChecker) last() tilechecks.Candidate {
 	return f.sent[len(f.sent)-1]
 }
 
-// chatTilesFixture is a saved review of acme/widgets#42 with layouts, the
-// fake checker and a chat on its tiles page.
+// chatTilesFixture is a saved review of acme/widgets#42 with added tiles,
+// the fake checker and a chat on its review page.
 type chatTilesFixture struct {
-	*layoutFixture
+	*addedFixture
 	filler  *fakeFiller
 	checker *fakeChecker
 	drafts  *tiledrafts.Store
@@ -93,14 +94,14 @@ func newChatTilesFixture(t *testing.T) *chatTilesFixture {
 	f := &chatTilesFixture{t: t, checker: &fakeChecker{}, now: time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)}
 	f.drafts = &tiledrafts.Store{}
 	added, filler := newAddedFixture(t)
-	f.layoutFixture, f.filler = added, filler
+	f.addedFixture, f.filler = added, filler
 	f.api.Drafts = f.drafts
 	// The handler was built before Drafts was set: build it again.
 	f.handler = f.api.Handler()
 	t.Cleanup(f.handler.Close)
 	f.put(t, titled(t, "First title"))
 	f.chat = &ChatTiles{API: *f.api, Checks: f.checker, Drafts: f.drafts, Now: func() time.Time { return f.now }}
-	f.mcp = agentcontext.New(agentcontext.Options{API: f.handler, Layouts: LayoutEditor{API: *f.api}, ChatTiles: f.chat})
+	f.mcp = agentcontext.New(agentcontext.Options{API: f.handler, Added: AddedTilesAPI{API: *f.api}, ChatTiles: f.chat})
 	token, id, revoke, err := f.mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
 	if err != nil {
 		t.Fatal(err)
@@ -184,11 +185,7 @@ func envData(hunk, title string) map[string]any {
 
 func (f *chatTilesFixture) firstHunk() string {
 	f.t.Helper()
-	diff := library.DiffOf(f.added(f.t, "").Tiles)
-	if len(diff) == 0 {
-		f.t.Fatal("the review has no hunks")
-	}
-	return diff[0].ID
+	return f.diffOf(f.t)[0].ID
 }
 
 type checkAnswer struct {
@@ -212,11 +209,11 @@ func (f *chatTilesFixture) check(args map[string]any) checkAnswer {
 }
 
 type tilesWithDrafts struct {
-	Tiles  *tiles.Document    `json:"tiles"`
+	View   view.View          `json:"view"`
 	Drafts []tiledrafts.Draft `json:"drafts"`
 }
 
-func (f *chatTilesFixture) served(query string) tilesWithDrafts {
+func (f *chatTilesFixture) servedWithDrafts(query string) tilesWithDrafts {
 	f.t.Helper()
 	w := f.get("/api/tiles", query, "")
 	if w.Code != 200 {
@@ -229,11 +226,11 @@ func (f *chatTilesFixture) served(query string) tilesWithDrafts {
 	return body
 }
 
-// A tile made in chat: the pending card shows on the page where the tile
-// will stand, counts its check rounds, and becomes the tile when the check
+// A tile made in chat: the pending card shows on the section the person is
+// reading, counts its check rounds, and becomes the tile when the check
 // that passed with data is added: a ready custom tile of the agent's type
-// and data, right after the overview, announced as "Added <title>" and
-// taken back by an undo. The turn's end leaves an unfinished card behind.
+// and data, on that section, which Remove takes off. The turn's end leaves
+// an unfinished card behind.
 func TestATileMadeInChat(t *testing.T) {
 	f := newChatTilesFixture(t)
 	text, failed := f.call("tile_guide", map[string]any{"part": "starter"})
@@ -247,15 +244,16 @@ func TestATileMadeInChat(t *testing.T) {
 		t.Fatalf("tile_guide manifest: %.300s", text)
 	}
 
-	text, failed = f.call("start_tile", map[string]any{"title": "New environment variables", "size": "half"})
+	f.page(`{"view":"tiles","tab":"sections","section":"context"}`)
+	text, failed = f.call("start_tile", map[string]any{"title": "New environment variables"})
 	if failed || !strings.Contains(text, `"tile":"draft_1"`) {
 		t.Fatalf("start_tile: %s", text)
 	}
-	body := f.served("")
-	if len(body.Drafts) != 1 || body.Drafts[0].Phase != tiledrafts.PhaseWriting || body.Drafts[0].To == nil || body.Drafts[0].To.After != tiles.TypeOverview {
+	body := f.servedWithDrafts("")
+	if len(body.Drafts) != 1 || body.Drafts[0].Phase != tiledrafts.PhaseWriting || body.Drafts[0].Section != "context" {
 		t.Fatalf("the pending card: %+v", body.Drafts)
 	}
-	if body := f.served("&version=1"); len(body.Drafts) != 0 {
+	if body := f.servedWithDrafts("&version=1"); len(body.Drafts) != 0 {
 		t.Errorf("an earlier version shows the card: %+v", body.Drafts)
 	}
 
@@ -268,7 +266,7 @@ func TestATileMadeInChat(t *testing.T) {
 	if text, failed := f.call("add_custom_tile", map[string]any{"check": answer.Check}); !failed || !strings.Contains(text, "did not pass") {
 		t.Errorf("adding a failed check: %s", text)
 	}
-	if d := f.served("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseChecking || d[0].Round != 1 {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseChecking || d[0].Round != 1 {
 		t.Errorf("after round 1: %+v", d)
 	}
 	// Round 2 passes.
@@ -279,45 +277,41 @@ func TestATileMadeInChat(t *testing.T) {
 	if sent := f.checker.last(); sent.Context == nil || sent.Context.Version != 1 || sent.Context.PR != 42 {
 		t.Errorf("the check's context: %+v", sent.Context)
 	}
-	if d := f.served("").Drafts; len(d) != 1 || d[0].Round != 2 {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 1 || d[0].Round != 2 {
 		t.Errorf("after round 2: %+v", d)
 	}
 
 	text, failed = f.call("add_custom_tile", map[string]any{"check": answer.Check})
-	if failed || !strings.Contains(text, `"tile":"env_vars"`) || !strings.Contains(text, `"state":"ready"`) || !strings.Contains(text, "Added Custom · New environment variables") {
+	if failed || !strings.Contains(text, `"tile":"env_vars"`) || !strings.Contains(text, `"state":"ready"`) || !strings.Contains(text, `"section":"context"`) {
 		t.Fatalf("add_custom_tile: %s", text)
 	}
-	body = f.served("")
+	body = f.servedWithDrafts("")
 	if len(body.Drafts) != 0 {
 		t.Errorf("the card stays after the add: %+v", body.Drafts)
 	}
-	tile := tileByID(body.Tiles, "env_vars")
-	if tile == nil || tile.Type != tiles.TypeCustom || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "RETRY_LIMIT") || strings.Contains(string(tile.Definition), `"builtin":true`) {
+	tile := viewTile(body.View, "env_vars")
+	if tile == nil || tile.Type != tiles.TypeCustom || tile.State != tiles.StateReady || !tile.Added || !strings.Contains(string(tile.Data), "RETRY_LIMIT") || strings.Contains(string(tile.Definition), `"builtin":true`) {
 		t.Fatalf("the tile: %+v", tile)
 	}
-	if at, entry := entryOf(body.Tiles, "env_vars"); at != 1 || entry.Size != tiles.SizeHalf {
-		t.Errorf("the tile is at %d, %s", at, entry.Size)
+	if at := sectionOf(body.View, "env_vars"); at != "context" {
+		t.Errorf("the tile is on %q", at)
 	}
-	summary := layoutOf(t, f.get("/api/tiles/layout", "", ""))
-	if summary.Last == nil || summary.Last.By != "chat" || summary.Last.Summary[0] != "Added Custom · New environment variables" {
-		t.Errorf("the batch: %+v", summary.Last)
-	}
-	if text, failed = f.call("add_custom_tile", map[string]any{"check": answer.Check}); !failed || !strings.Contains(text, "already on the review") {
-		t.Errorf("adding it twice: %s", text)
+	if list, _ := f.api.Added.List(context.Background(), "acme/widgets#42"); len(list) != 1 || list[0].By != "chat" || list[0].Kind != addedtiles.KindCustom {
+		t.Errorf("the added tile: %+v", list)
 	}
 
-	// Undo takes it away.
-	if text, failed = f.call("undo_tiles", nil); failed || !strings.Contains(text, "Added Custom · New environment variables") {
-		t.Fatalf("undo: %s", text)
+	// Remove takes it away.
+	if err := f.api.Added.Remove(context.Background(), "acme/widgets#42", "env_vars"); err != nil {
+		t.Fatal(err)
 	}
-	if tileByID(f.served("").Tiles, "env_vars") != nil {
-		t.Error("the undone tile is still shown")
+	if viewTile(f.servedWithDrafts("").View, "env_vars") != nil {
+		t.Error("the removed tile is still shown")
 	}
 
 	// A new card left at the turn's end says it is not finished.
 	f.call("start_tile", map[string]any{"title": "Call path"})
 	f.mcp.Registry.EndTurn(f.id)
-	if d := f.served("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseUnfinished {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseUnfinished {
 		t.Errorf("after the turn: %+v", d)
 	}
 	if w := f.delete("draft_2"); w.Code != 204 {
@@ -326,7 +320,7 @@ func TestATileMadeInChat(t *testing.T) {
 	if w := f.delete("draft_2"); w.Code != 404 {
 		t.Errorf("remove again: %d", w.Code)
 	}
-	if d := f.served("").Drafts; len(d) != 0 {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 0 {
 		t.Errorf("after the remove: %+v", d)
 	}
 }
@@ -356,11 +350,11 @@ func TestATileMadeInChatIsMaskedAndCitesTheReview(t *testing.T) {
 	if text, failed := f.call("add_custom_tile", map[string]any{"check": answer.Check}); failed {
 		t.Fatalf("add: %s", text)
 	}
-	fills, err := f.api.Layouts.Fills(context.Background(), "acme/widgets#42")
-	if err != nil || len(fills) != 1 || fills[0].Origin != tilelayout.OriginChat {
+	fills, err := f.api.Added.Fills(context.Background(), "acme/widgets#42")
+	if err != nil || len(fills) != 1 || fills[0].Origin != addedtiles.OriginChat {
 		t.Fatalf("fills: %+v %v", fills, err)
 	}
-	if strings.Contains(string(fills[0].Data), secret) || strings.Contains(string(tileByID(f.served("").Tiles, "env_vars").Data), secret) {
+	if strings.Contains(string(fills[0].Data), secret) || strings.Contains(string(viewTile(f.servedWithDrafts("").View, "env_vars").Data), secret) {
 		t.Errorf("the secret was kept: %s", fills[0].Data)
 	}
 
@@ -396,8 +390,8 @@ func TestAddingATileMadeInChatIsRefused(t *testing.T) {
 	if text, failed := f.call("add_custom_tile", map[string]any{"check": old.Check}); failed {
 		t.Errorf("a check of 59 minutes: %s", text)
 	}
-	if text, failed := f.call("undo_tiles", nil); failed {
-		t.Fatal(text)
+	if err := f.api.Added.Remove(context.Background(), "acme/widgets#42", "env_vars"); err != nil {
+		t.Fatal(err)
 	}
 
 	stale := f.check(checkArgs(t, "env_vars", "", envData(hunk, "PORT")))
@@ -406,7 +400,7 @@ func TestAddingATileMadeInChatIsRefused(t *testing.T) {
 		t.Errorf("a check of an earlier version: %s", text)
 	}
 
-	// Eight custom tiles fill the review's library; the ninth is refused.
+	// Eight added tiles fill the review; the ninth is refused.
 	for i := range tiles.MaxLibraryTiles {
 		answer := f.check(checkArgs(t, fmt.Sprintf("kind_%d", i), "", envData(hunk, "PORT")))
 		if text, failed := f.call("add_custom_tile", map[string]any{"check": answer.Check}); failed {
@@ -414,10 +408,10 @@ func TestAddingATileMadeInChatIsRefused(t *testing.T) {
 		}
 	}
 	answer := f.check(checkArgs(t, "kind_9", "", envData(hunk, "PORT")))
-	if text, failed := f.call("add_custom_tile", map[string]any{"check": answer.Check}); !failed || !strings.Contains(text, "already has 8 library tiles") {
+	if text, failed := f.call("add_custom_tile", map[string]any{"check": answer.Check}); !failed || !strings.Contains(text, "already has 8 added tiles") {
 		t.Errorf("a ninth tile: %s", text)
 	}
-	if fills, err := f.api.Layouts.Fills(context.Background(), "acme/widgets#42"); err != nil || slices.ContainsFunc(fills, func(x tilelayout.Fill) bool { return x.Tile == "kind_9" }) {
+	if fills, err := f.api.Added.Fills(context.Background(), "acme/widgets#42"); err != nil || slices.ContainsFunc(fills, func(x addedtiles.Fill) bool { return x.Tile == "kind_9" }) {
 		t.Errorf("a refused add left a fill: %+v %v", fills, err)
 	}
 }
@@ -464,9 +458,9 @@ func TestChatTilesRefusals(t *testing.T) {
 	}
 
 	g := newChatTilesFixture(t)
-	g.call("start_tile", map[string]any{"title": "Env", "to": map[string]any{"after": "nope"}})
-	if d := g.served("").Drafts; len(d) != 0 {
-		t.Errorf("a card placed after no tile: %+v", d)
+	g.call("start_tile", map[string]any{"title": "Env", "section": "sec_nope"})
+	if d := g.servedWithDrafts("").Drafts; len(d) != 0 {
+		t.Errorf("a card placed on no section: %+v", d)
 	}
 	g.call("start_tile", map[string]any{"title": "Env"})
 	g.checker.verdict, g.checker.reason = tilechecks.VerdictUnavailable, "Open the baum app to check tiles"
@@ -474,7 +468,7 @@ func TestChatTilesRefusals(t *testing.T) {
 	if answer.Verdict != tilechecks.VerdictUnavailable || !strings.Contains(answer.Next, "Open the baum app") {
 		t.Errorf("an unavailable check: %+v", answer)
 	}
-	if d := g.served("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseFailed || d[0].Reason != "Open the baum app to check tiles" {
+	if d := g.servedWithDrafts("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseFailed || d[0].Reason != "Open the baum app to check tiles" {
 		t.Errorf("the card after an unavailable check: %+v", d)
 	}
 }
@@ -490,14 +484,13 @@ func TestATileMadeInChatOnALaterVersion(t *testing.T) {
 			t.Fatal(text)
 		}
 		f.put(t, titled(t, "Second title"))
-		body := f.added(t, "")
-		tile := tileByID(body.Tiles, "env_vars")
-		if tile == nil || tile.State != tiles.StateReady || len(body.Added) != 1 || body.Added[0].From != 1 {
-			t.Fatalf("fill %q: %+v %+v", fill, tile, body.Added)
+		tile := viewTile(f.served(t, ""), "env_vars")
+		if tile == nil || tile.State != tiles.StateReady || tile.From != 1 {
+			t.Fatalf("fill %q: %+v", fill, tile)
 		}
 		asked := f.filler.asked()
-		if body.Added[0].Filling || len(asked) != 0 {
-			t.Errorf("a chat tile with fill %q: %+v %+v", fill, body.Added, asked)
+		if tile.Filling || len(asked) != 0 {
+			t.Errorf("a chat tile with fill %q: %+v %+v", fill, tile, asked)
 		}
 	}
 }
@@ -511,7 +504,7 @@ func TestASubmitThatFailsFailsTheCard(t *testing.T) {
 	if text, failed := f.call("check_tile", checkArgs(t, "env_vars", "", envData(f.firstHunk(), "PORT"))); !failed || !strings.Contains(text, "another check is running") {
 		t.Fatalf("check_tile: %s", text)
 	}
-	if d := f.served("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseFailed || d[0].Reason != "another check is running" {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 1 || d[0].Phase != tiledrafts.PhaseFailed || d[0].Reason != "another check is running" {
 		t.Errorf("the card after a failed submit: %+v", d)
 	}
 }
@@ -536,13 +529,13 @@ func TestRemovingAPendingCardThroughTheServer(t *testing.T) {
 	if w := request(t, s, "DELETE", path, "", s.origin, "", auth, ""); w.Code != http.StatusForbidden {
 		t.Errorf("a DELETE without a JSON content type: %d", w.Code)
 	}
-	if d := f.served("").Drafts; len(d) != 1 {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 1 {
 		t.Fatalf("a refused remove took the card: %+v", d)
 	}
 	if w := request(t, s, "DELETE", path, "", s.origin, "application/json", auth, "{}"); w.Code/100 != 2 {
 		t.Fatalf("the page's remove: %d %s", w.Code, w.Body.String())
 	}
-	if d := f.served("").Drafts; len(d) != 0 {
+	if d := f.servedWithDrafts("").Drafts; len(d) != 0 {
 		t.Errorf("the card after Remove: %+v", d)
 	}
 }

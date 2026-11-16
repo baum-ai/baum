@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
@@ -24,13 +24,13 @@ import (
 // stubFiller answers fills with data, or err, after release is closed.
 type stubFiller struct {
 	mu      sync.Mutex
-	calls   []tilelayout.FillRequest
+	calls   []addedtiles.FillRequest
 	release chan struct{}
 	data    json.RawMessage
 	err     error
 }
 
-func (f *stubFiller) FillTile(ctx context.Context, r tilelayout.FillRequest) (json.RawMessage, json.RawMessage, *float64, error) {
+func (f *stubFiller) FillTile(ctx context.Context, r addedtiles.FillRequest) (json.RawMessage, json.RawMessage, *float64, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, r)
 	release, data, err := f.release, f.data, f.err
@@ -54,11 +54,11 @@ func (f *stubFiller) count() int {
 // tried again for a while.
 func TestTileFillsRunOnceAndStoreTheData(t *testing.T) {
 	var events []string
-	service := &tilelayout.Service{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite"), Changed: func(pr string, revision int64) { events = append(events, pr) }}
+	service := &addedtiles.Service{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite"), Changed: func(pr string) { events = append(events, pr) }}
 	filler := &stubFiller{release: make(chan struct{}), data: json.RawMessage(`{"endpoints":[],"docs":null,"consumers":[]}`)}
 	now := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
-	fills := &TileFills{Filler: filler, Layouts: service, Now: func() time.Time { return now }}
-	request := tilelayout.FillRequest{Clone: "c1", Repository: "acme/widgets", Number: 42, Version: 3, Type: "api_change"}
+	fills := &TileFills{Filler: filler, Added: service, Now: func() time.Time { return now }}
+	request := addedtiles.FillRequest{Clone: "c1", Repository: "acme/widgets", Number: 42, Version: 3, Type: "api_change"}
 	fills.Fill(request)
 	fills.Fill(request)
 	close(filler.release)
@@ -97,9 +97,9 @@ func TestTileFillsRunOnceAndStoreTheData(t *testing.T) {
 // A review of a pull request fills the library types the person added,
 // each with the last data held for it and the hunks of the version that
 // data was written for.
-func TestAlwaysTilesComeFromTheLayout(t *testing.T) {
+func TestAlwaysTilesComeFromTheAddedTiles(t *testing.T) {
 	ctx := context.Background()
-	service := &tilelayout.Service{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
+	service := &addedtiles.Service{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
 	versions, err := store.Open("", t.TempDir(), true)
 	if err != nil {
 		t.Fatal(err)
@@ -112,9 +112,9 @@ func TestAlwaysTilesComeFromTheLayout(t *testing.T) {
 	if err := versions.Put(ctx, key, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document}); err != nil {
 		t.Fatal(err)
 	}
-	l := &Local{Layouts: service}
+	l := &Local{Added: service}
 	if got := l.alwaysTiles(ctx, versions, key); got != nil {
-		t.Fatalf("no layout: %+v", got)
+		t.Fatalf("nothing added: %+v", got)
 	}
 	normalized, err := review.NormalizeStored(document)
 	if err != nil {
@@ -125,18 +125,18 @@ func TestAlwaysTilesComeFromTheLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry, _ := library.Get("api_change")
-	pr := tilelayout.Key(key.Repository, key.Number)
-	if _, err := service.Edit(ctx, pr, "chat", doc, 0, []tiles.Op{{Op: tiles.OpAdd, Add: &tiles.Added{Kind: "library", Name: "api_change", Digest: entry.Definition.Digest}}}); err != nil {
+	pr := addedtiles.Key(key.Repository, key.Number)
+	if err := service.Add(ctx, pr, addedtiles.Added{Tile: "api_change", Kind: addedtiles.KindLibrary, Name: "api_change", Digest: entry.Definition.Digest, By: "chat"}); err != nil {
 		t.Fatal(err)
 	}
 	diff := library.DiffOf(doc)
 	data := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"x","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
-	if err := service.PutFill(ctx, pr, "api_change", 1, tilelayout.OriginFill, entry.Encoded, data); err != nil {
+	if err := service.PutFill(ctx, pr, "api_change", 1, addedtiles.OriginFill, entry.Encoded, data); err != nil {
 		t.Fatal(err)
 	}
 	// Data the agent wrote is the person's: a review never reuses it.
 	chatData := json.RawMessage(strings.Replace(string(data), `"label":"x"`, `"label":"the agent's"`, 1))
-	if err := service.PutFill(ctx, pr, "api_change", 2, tilelayout.OriginChat, entry.Encoded, chatData); err != nil {
+	if err := service.PutFill(ctx, pr, "api_change", 2, addedtiles.OriginChat, entry.Encoded, chatData); err != nil {
 		t.Fatal(err)
 	}
 	got := l.alwaysTiles(ctx, versions, key)
@@ -150,7 +150,7 @@ func TestAlwaysTilesComeFromTheLayout(t *testing.T) {
 // model call.
 func TestFillTileRefusesATileMadeInChat(t *testing.T) {
 	l := &Local{}
-	_, _, _, err := l.FillTile(context.Background(), tilelayout.FillRequest{Clone: "c1", Repository: "acme/widgets", Number: 42, Version: 2, Type: "env_vars", Digest: "d_chat"})
+	_, _, _, err := l.FillTile(context.Background(), addedtiles.FillRequest{Clone: "c1", Repository: "acme/widgets", Number: 42, Version: 2, Type: "env_vars", Digest: "d_chat"})
 	if err == nil || !strings.Contains(err.Error(), "made in chat") {
 		t.Fatalf("a custom digest: %v", err)
 	}

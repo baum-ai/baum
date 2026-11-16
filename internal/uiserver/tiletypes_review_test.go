@@ -14,10 +14,11 @@ import (
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilelibrary"
-	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // savedTypeChange is a type written as the built-in schema_change type is,
@@ -66,10 +67,18 @@ func TestEditingAndDeletingATypeKeepsAStoredReviewsTiles(t *testing.T) {
 	// The review: a document whose composition has a library tile of the
 	// saved type, with data citing one of the document's hunks.
 	document := withVersion(t, tileviewtest.Encode(t, tileviewtest.Base(t)), 1)
+	normalized, err := review.NormalizeStored(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := view.ParseReview(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var hunk string
-	for _, tile := range tileview.Build(document, nil, tiles.Options{}).Tiles.Tiles {
-		if len(tile.Covers) > 0 {
-			hunk = tile.Covers[0]
+	for _, s := range r.Sections {
+		if len(s.Hunks) > 0 {
+			hunk = s.Hunks[0]
 			break
 		}
 	}
@@ -81,7 +90,7 @@ func TestEditingAndDeletingATypeKeepsAStoredReviewsTiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	composition, err := json.Marshal(tiles.Composition{Schema: tiles.CompositionName, Library: []tiles.LibraryTile{tilelibrary.LibraryTile(entry, json.RawMessage(data))}})
+	composition, err := json.Marshal(view.Composition{Schema: view.CompositionName, Library: []tiles.LibraryTile{tilelibrary.LibraryTile(entry, json.RawMessage(data))}})
 	if err != nil {
 		t.Fatal(err)
 	}

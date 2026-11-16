@@ -4,37 +4,24 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
-// PinnedComposition returns a composition of the review (as JSON) that pins
-// the tile placed last in the converted layout, at full width, and the ID of
-// that tile: composing moves it to the front of the page. Entries the
-// composition omits are appended, so it names only the pinned tile.
-func PinnedComposition(t testing.TB, document []byte) (composition []byte, pinned string) {
+// RiskSummary is the overview's risk summary ViewComposition writes, which
+// shows that a served view applied it.
+const RiskSummary = "The fixture's risk summary."
+
+// ViewComposition returns a review view composition (baum.composition/2, as
+// JSON) for any review: only the overview's risk summary (RiskSummary), so
+// a view built with it differs from one built without.
+func ViewComposition(t testing.TB) []byte {
 	t.Helper()
-	normalized, err := review.NormalizeStored(document)
+	c := view.Composition{Schema: view.CompositionName, Generator: &tiles.Generator{PromptVersion: "fixture"},
+		Overview: view.Overview{RiskSummary: RiskSummary, Screenshots: []string{}, Intent: []view.Intent{}}, Sections: []view.Placement{}}
+	encoded, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := tiles.FromReview(normalized, tiles.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := len(doc.Layout.Entries) - 1; i >= 0 && pinned == ""; i-- {
-		e := doc.Layout.Entries[i]
-		if e.Group == "" && e.Tile != tiles.TypeOverview && e.Tile != tiles.TypeRisks {
-			pinned = e.Tile
-		}
-	}
-	if pinned == "" {
-		t.Fatal("the converted document has no tile to pin")
-	}
-	c := tiles.Composition{Schema: tiles.CompositionName, Layout: tiles.CompositionLayout{Entries: []tiles.Entry{{Tile: pinned, Size: tiles.SizeFull, Pin: true}}}}
-	composition, err = json.Marshal(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return composition, pinned
+	return encoded
 }

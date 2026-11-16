@@ -12,7 +12,6 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/compose"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
 )
@@ -38,14 +37,11 @@ type Tiles struct {
 	// tile.
 	Library               []library.Entry
 	NoLibrary, NoExhibits bool
-	// Previous is the previous version's stored composition
+	// Previous is the previous version's stored review view composition
 	// (store.ParseComposition), nil without one: the tile analysis reuses
-	// its library tiles' data. Publish sets it from the latest version.
-	Previous *tiles.Composition
-	// Preferences are the repository's text and pins. The view call does
-	// not read them: they arranged the tile grid's composition, which no
-	// longer runs.
-	Preferences compose.Preferences
+	// its library and authored tiles' data. Publish sets it from the latest
+	// version.
+	Previous *view.Composition
 	// Always are the library types the person added to the pull request's
 	// review, with the last data held for each (agent.StagedTiles.Always):
 	// each is filled, or its data reused, and appears in the composition.
@@ -359,13 +355,13 @@ func (t *Tiles) staged() *agent.StagedTiles {
 type TilesReport struct {
 	*agent.TilesOutcome
 	// Duplicates are the authored tiles dropped because they restate the
-	// review (compose.DuplicatesTile).
+	// review (view.DuplicatesTile).
 	Duplicates []string
 }
 
 // TileExtras is extras, for tools that compose an analysis again (replay's
 // compose generator over an earlier tiles run).
-func TileExtras(doc *tiles.Document, t *agent.TilesOutcome) ([]compose.Fill, []compose.Authored) {
+func TileExtras(doc *tiles.Document, t *agent.TilesOutcome) ([]view.Fill, []view.Authored) {
 	fills, authored, _ := extras(doc, t, library.All())
 	return fills, authored
 }
@@ -374,7 +370,7 @@ func TileExtras(doc *tiles.Document, t *agent.TilesOutcome) ([]compose.Fill, []c
 // selected type's fill (ready ones with their library tile, its related
 // items written against the review) and the authored tiles that do not
 // restate the review. doc is the review's converted tile document.
-func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry) ([]compose.Fill, []compose.Authored, []string) {
+func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry) ([]view.Fill, []view.Authored, []string) {
 	if t == nil {
 		return nil, nil, nil
 	}
@@ -384,7 +380,7 @@ func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry)
 	for _, e := range entries {
 		byName[e.Definition.Name] = e
 	}
-	var fills []compose.Fill
+	var fills []view.Fill
 	var ready []tiles.Tile
 	for _, f := range t.Fills {
 		e, ok := byName[f.Type]
@@ -403,17 +399,17 @@ func extras(doc *tiles.Document, t *agent.TilesOutcome, entries []library.Entry)
 		if f.State == agent.FillNotApplies {
 			continue
 		}
-		fills = append(fills, compose.FillOf(e, f.Hunks, f.Why, state, data))
+		fills = append(fills, view.FillOf(e, f.Hunks, f.Why, state, data))
 	}
-	var authored []compose.Authored
+	var authored []view.Authored
 	var duplicates []string
 	if x := t.Exhibits; x != nil {
 		for _, a := range x.Tiles {
-			if compose.DuplicatesTile(doc, ready, a) {
+			if view.DuplicatesTile(doc, ready, a) {
 				duplicates = append(duplicates, a.ID)
 				continue
 			}
-			authored = append(authored, compose.Authored{Tile: a, Adds: x.Adds[a.ID]})
+			authored = append(authored, view.Authored{Tile: a, Adds: x.Adds[a.ID]})
 		}
 	}
 	return fills, authored, duplicates

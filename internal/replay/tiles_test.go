@@ -55,7 +55,7 @@ func TestTilesGeneratorWritesTheReviewAndItsComposition(t *testing.T) {
 	if _, err := review.NormalizeStored(document); err != nil {
 		t.Errorf("the document is not a review: %v", err)
 	}
-	for _, name := range []string{"composition.json", "compose.json", "tiles.json", "view.json", "provisional.json", "inventory.txt", "reply.json"} {
+	for _, name := range []string{"composition.json", "compose.json", "view.json", "provisional.json", "inventory.txt", "reply.json"} {
 		if _, err := os.Stat(filepath.Join(caseDir, name)); err != nil {
 			t.Error(err)
 		}
@@ -161,7 +161,7 @@ func TestViewGeneratorPresentsSavedReviews(t *testing.T) {
 	for _, c := range []replay.GeneratorConfig{
 		{Options: map[string]string{"source": replay.ComposeFromRun}},
 		{Options: map[string]string{"source": replay.ComposeFromRun, "run": "x", "tile_text": "y"}},
-		{Options: map[string]string{"source": replay.ComposeFromRun, "run": "x"}, PromptOverrides: map[string]string{string(prompt.IDReviewTilesCompose): "Arrange.\n"}},
+		{Options: map[string]string{"source": replay.ComposeFromRun, "run": "x"}, PromptOverrides: map[string]string{string(prompt.IDReviewStagedShared): "Arrange.\n"}},
 	} {
 		if _, err := replay.NewGenerator("view", c); err == nil {
 			t.Errorf("%+v accepted", c)

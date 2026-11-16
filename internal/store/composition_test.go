@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,7 +15,6 @@ import (
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/tilestest"
 	"github.com/baum-ai/baum/tiles/view"
 )
 
@@ -61,8 +59,7 @@ func TestPutStoresANormalisedCompositionAndReadsReturnIt(t *testing.T) {
 	ctx := context.Background()
 	s := opened(t)
 	v := reviewVersion(t, 1)
-	raw, pinned := tileviewtest.PinnedComposition(t, v.Document)
-	v.Composition = raw
+	v.Composition = tileviewtest.ViewComposition(t)
 	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
 		t.Fatal(err)
 	}
@@ -74,17 +71,19 @@ func TestPutStoresANormalisedCompositionAndReadsReturnIt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c, err := tiles.ParseComposition(got.Composition)
+		c, err := view.Parse(got.Composition)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// The stored composition is normalised: it lists every tile, and the
-		// pin the writer gave is kept.
-		if len(c.Layout.Entries) < 3 || c.Layout.Entries[0].Tile != pinned && !pinnedEntry(c, pinned) {
-			t.Errorf("entries %v", c.Layout.Entries)
+		if c.Overview.RiskSummary != tileviewtest.RiskSummary {
+			t.Errorf("stored %s", got.Composition)
 		}
 		// Normalising it again changes nothing.
 		normalized, err := review.NormalizeStored(got.Document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := view.ParseReview(normalized)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,10 +91,10 @@ func TestPutStoresANormalisedCompositionAndReadsReturnIt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		again, report := tiles.NormalizeComposition(doc, c)
+		again, report := view.Normalize(r, doc, c)
 		encoded, _ := json.Marshal(again)
-		if report.Total != 0 || !bytes.Equal(encoded, got.Composition) {
-			t.Errorf("the stored composition is not a fixed point (%d fixes)", report.Total)
+		if report.Total() != 0 || !bytes.Equal(encoded, got.Composition) {
+			t.Errorf("the stored composition is not a fixed point (%d fixes)", report.Total())
 		}
 	}
 }
@@ -127,9 +126,8 @@ func TestPutChecksAndStoresAReviewViewComposition(t *testing.T) {
 	if len(c.Sections) != 1 || c.Sections[0].ID != "context" || len(c.Diagrams) != 1 || strings.Contains(string(c.Diagrams[0].Data), "h_0000000000ff") {
 		t.Fatalf("stored %s", got.Composition)
 	}
-	// The grid reads it for its tiles, which it has none of.
-	if grid := ParseComposition(got.Composition); grid == nil || !grid.View {
-		t.Fatalf("grid %+v", grid)
+	if parsed := ParseComposition(got.Composition); parsed == nil || parsed.Overview.RiskSummary == "" {
+		t.Fatalf("parsed %+v", parsed)
 	}
 
 	s = opened(t)
@@ -140,72 +138,6 @@ func TestPutChecksAndStoresAReviewViewComposition(t *testing.T) {
 	}
 	if got := mustLatest(t, s); got.Composition != nil {
 		t.Fatalf("an empty composition was stored: %s", got.Composition)
-	}
-}
-
-func pinnedEntry(c *tiles.Composition, id string) bool {
-	for _, e := range c.Layout.Entries {
-		if e.Tile == id && e.Pin {
-			return true
-		}
-	}
-	return false
-}
-
-// A composition a model wrote is repaired before it is stored, and the
-// generator the host set is kept.
-func TestPutNormalisesWhatAModelWrote(t *testing.T) {
-	ctx := context.Background()
-	s := opened(t)
-	v := reviewVersion(t, 1)
-	normalized, err := review.NormalizeStored(v.Document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	converted, err := tiles.FromReview(normalized, tiles.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := tilestest.RandomComposition(rand.New(rand.NewPCG(7, 1)), converted, true)
-	c.Layout.Entries = append(c.Layout.Entries, tiles.Entry{Tile: "no_such_tile", Size: tiles.SizeFull})
-	c.Generator = &tiles.Generator{PromptVersion: "body"}
-	c.Layout.Hidden = []string{"media"}
-	v.CompositionGenerator = &tiles.Generator{PromptVersion: "tiles-1", Model: "example-model"}
-	if v.Composition, err = json.Marshal(c); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
-		t.Fatal(err)
-	}
-	got, err := s.Latest(ctx, compositionKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stored, err := tiles.ParseComposition(got.Composition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stored.Generator == nil || stored.Generator.PromptVersion != "tiles-1" {
-		t.Errorf("generator %+v", stored.Generator)
-	}
-	for _, e := range stored.Layout.Entries {
-		if e.Tile == "no_such_tile" {
-			t.Error("an entry naming no tile was stored")
-		}
-	}
-	want, report := tiles.NormalizeComposition(converted, c)
-	if report.Total == 0 {
-		t.Fatal("the hostile composition needed no repair")
-	}
-	if len(stored.Layout.Hidden) != 0 {
-		t.Error("a hidden list was stored")
-	}
-	if err := want.SetGenerator(*v.CompositionGenerator); err != nil {
-		t.Fatal(err)
-	}
-	encoded, _ := json.Marshal(want)
-	if !bytes.Equal(encoded, got.Composition) {
-		t.Error("the stored composition is not the normalised one")
 	}
 }
 
@@ -228,8 +160,7 @@ func TestPutStoresNoCompositionWhenThereIsNothingToStore(t *testing.T) {
 	s := opened(t)
 	key := Key{"owner/repo", 7}
 	v := version(key, 1)
-	raw, _ := tileviewtest.PinnedComposition(t, reviewVersion(t, 1).Document)
-	v.Composition = raw
+	v.Composition = tileviewtest.ViewComposition(t)
 	before := workstats.Take().Counters["store.compositions_dropped"]
 	if err := s.Put(ctx, key, Version{}, v); err != nil {
 		t.Fatal(err)
@@ -248,9 +179,9 @@ func TestPutStoresNoCompositionWhenThereIsNothingToStore(t *testing.T) {
 func TestACompositionProblemNeverCostsTheVersion(t *testing.T) {
 	ctx := context.Background()
 	count := func(name string) int64 { return workstats.Take().Counters[name] }
-	pinned, _ := tileviewtest.PinnedComposition(t, reviewVersion(t, 1).Document)
 	for name, composition := range map[string][]byte{
 		"other schema": []byte(`{"schema":"baum.composition/9","layout":{"entries":[]}}`),
+		"tile grid":    []byte(`{"schema":"baum.composition/1","layout":{"entries":[{"tile":"overview","size":"full"}]}}`),
 		"not json":     []byte(`not json`),
 		"array":        []byte(`[]`),
 		"too large":    append(append([]byte(`{"schema":"baum.composition/1","x":"`), bytes.Repeat([]byte("a"), tiles.MaxStoredComposition)...), `"}`...),
@@ -272,7 +203,7 @@ func TestACompositionProblemNeverCostsTheVersion(t *testing.T) {
 	// A generator the schema refuses is left off; the composition is kept.
 	s := opened(t)
 	v := reviewVersion(t, 1)
-	v.Composition = pinned
+	v.Composition = tileviewtest.ViewComposition(t)
 	v.CompositionGenerator = &tiles.Generator{Problems: make([]string, 21)}
 	before, dropped := count("store.composition_generators_dropped"), count("store.compositions_dropped")
 	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
@@ -283,7 +214,7 @@ func TestACompositionProblemNeverCostsTheVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := ParseComposition(got.Composition)
-	if c == nil || c.Generator != nil || len(c.Layout.Entries) == 0 {
+	if c == nil || c.Generator != nil || c.Overview.RiskSummary == "" {
 		t.Fatalf("composition %s", got.Composition)
 	}
 	if count("store.composition_generators_dropped") != before+1 || count("store.compositions_dropped") != dropped {
@@ -291,9 +222,8 @@ func TestACompositionProblemNeverCostsTheVersion(t *testing.T) {
 	}
 }
 
-// A composition that is only a hidden list chooses nothing once normalised,
-// and is stored as none.
-func TestAHiddenListAloneIsStoredAsNone(t *testing.T) {
+// A tile grid's composition (baum.composition/1) is stored as none.
+func TestATileGridCompositionIsStoredAsNone(t *testing.T) {
 	ctx := context.Background()
 	s := opened(t)
 	v := reviewVersion(t, 1)
@@ -312,7 +242,7 @@ func TestRefreshAndCompleteKeepTheComposition(t *testing.T) {
 	ctx := context.Background()
 	s := opened(t)
 	v := reviewVersion(t, 1)
-	v.Composition, _ = tileviewtest.PinnedComposition(t, v.Document)
+	v.Composition = tileviewtest.ViewComposition(t)
 	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +354,7 @@ func TestOlderBuildWorksOnAStoreWithTheColumn(t *testing.T) {
 	ctx := context.Background()
 	s := opened(t)
 	v := reviewVersion(t, 1)
-	v.Composition, _ = tileviewtest.PinnedComposition(t, v.Document)
+	v.Composition = tileviewtest.ViewComposition(t)
 	if err := s.Put(ctx, compositionKey, Version{}, v); err != nil {
 		t.Fatal(err)
 	}
@@ -539,7 +469,7 @@ func TestOlderStoreIsMigratedOrReadAsHavingNoComposition(t *testing.T) {
 	// A write through a handle opened before the column existed adds it
 	// first, so the generated layout is kept.
 	v2 := reviewVersion(t, 2)
-	v2.Composition, _ = tileviewtest.PinnedComposition(t, v2.Document)
+	v2.Composition = tileviewtest.ViewComposition(t)
 	if err := (&Store{root: old.Root()}).Put(ctx, compositionKey, mustLatest(t, read), v2); err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +492,7 @@ func TestOlderStoreIsMigratedOrReadAsHavingNoComposition(t *testing.T) {
 	}
 	_ = again
 	v := reviewVersion(t, 2)
-	v.Composition, _ = tileviewtest.PinnedComposition(t, v.Document)
+	v.Composition = tileviewtest.ViewComposition(t)
 	if err := w.Put(ctx, compositionKey, mustLatest(t, w), v); err != nil {
 		t.Fatal(err)
 	}
@@ -585,12 +515,12 @@ func mustLatest(t *testing.T, s *Store) Version {
 }
 
 func TestParseCompositionIsNilForNoneAndUnusable(t *testing.T) {
-	raw, _ := tileviewtest.PinnedComposition(t, reviewVersion(t, 1).Document)
+	raw := tileviewtest.ViewComposition(t)
 	if ParseComposition(raw) == nil {
 		t.Error("a stored composition did not parse")
 	}
-	huge := `{"schema":"baum.composition/1","x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`
-	for _, bad := range []string{"", "null", "not json", `{"schema":"baum.composition/9"}`, huge} {
+	huge := `{"schema":"baum.composition/2","x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`
+	for _, bad := range []string{"", "null", "not json", `{"schema":"baum.composition/9"}`, `{"schema":"baum.composition/1","layout":{"entries":[]}}`, huge} {
 		if ParseComposition([]byte(bad)) != nil {
 			t.Errorf("%q parsed", bad)
 		}

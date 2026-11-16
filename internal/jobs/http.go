@@ -225,7 +225,7 @@ func (q *Queue) Handler() http.Handler {
 			// are arranged is laid out by the template until the
 			// composition lands, then by the composition.
 			job, _ := q.Find(id)
-			body, err := drafts.get(id, revision, draft, composition, q.layoutOf(job))
+			body, err := drafts.get(id, revision, draft, composition, q.addedOf(job))
 			if err != nil {
 				http.Error(w, http.StatusText(500), 500)
 				return
@@ -295,8 +295,8 @@ type draftTileView struct {
 // when given and the pull request's own layout, so a regeneration in
 // progress does not move the page back to the generated layout. The kept
 // view is that of the same draft count, composition and layout.
-func (d *draftTiles) get(id string, revision int, draft, composition []byte, layout tileview.Layout) ([]byte, error) {
-	key, layoutKey := tileview.Key(composition), tileview.LayoutKey(layout)
+func (d *draftTiles) get(id string, revision int, draft, composition []byte, added []tileview.AddedTile) ([]byte, error) {
+	key, layoutKey := tileview.Key(composition), tileview.AddedKey(added)
 	d.mu.Lock()
 	kept, ok := d.kept[id]
 	d.mu.Unlock()
@@ -304,7 +304,7 @@ func (d *draftTiles) get(id string, revision int, draft, composition []byte, lay
 		kept.frames.Register()
 		return kept.body, nil
 	}
-	built := tileview.BuildWith(draft, composition, layout, tiles.Options{Draft: true})
+	built := tileview.BuildWith(draft, composition, added, tiles.Options{Draft: true})
 	full, err := json.Marshal(struct {
 		Draft int `json:"draft"`
 		tileview.Response

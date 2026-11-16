@@ -12,7 +12,6 @@ const (
 	IDReviewStagedOutline ID = "review-staged-outline"
 	IDReviewStagedDetails ID = "review-staged-details"
 	IDReviewStagedContext ID = "review-staged-context"
-	IDReviewTilesCompose  ID = "review-tiles-compose"
 	IDReviewView          ID = "review-view"
 	IDFix                 ID = "fix"
 	IDFixConflicts        ID = "fix-conflicts"

@@ -11,7 +11,6 @@ import (
 )
 
 func TestSettingsCheckedTidiesTileSettings(t *testing.T) {
-	long := strings.Repeat("é", MaxTileText)
 	for _, tc := range []struct {
 		name string
 		in   *TileSettings
@@ -19,15 +18,10 @@ func TestSettingsCheckedTidiesTileSettings(t *testing.T) {
 		fail string
 	}{
 		{name: "none", in: nil},
-		{name: "empty settings are none", in: &TileSettings{Text: "  \n", Pins: []string{}}},
-		{name: "text is trimmed", in: &TileSettings{Text: "  lead with data\n"}, want: &TileSettings{Text: "lead with data"}},
-		{name: "text at the limit counts characters, not bytes", in: &TileSettings{Text: long}, want: &TileSettings{Text: long}},
-		{name: "text over the limit", in: &TileSettings{Text: long + "x"}, fail: "1001 characters; the most is 1000"},
-		{name: "single and library types, repeats dropped", in: &TileSettings{Pins: []string{"schema_change", "risks", "schema_change", " risks "}}, want: &TileSettings{Pins: []string{"schema_change", "risks"}}},
-		{name: "a library type by title", in: &TileSettings{Pins: []string{"Schema changes"}}, want: &TileSettings{Pins: []string{"schema_change"}}},
-		{name: "a type that has many tiles", in: &TileSettings{Pins: []string{"change"}}, fail: `"change" is not a tile type that can be pinned`},
-		{name: "an unknown type", in: &TileSettings{Pins: []string{"nope"}}, fail: "one of overview, risks"},
-		{name: "too many pins", in: &TileSettings{Pins: []string{"overview", "risks", "evidence", "intent", "decisions", "context", "media", "everything_else", "schema_change"}}, fail: "9 tiles are pinned; the most is 8"},
+		{name: "empty settings are none", in: &TileSettings{Types: []string{}}},
+		{name: "repeats and blanks dropped", in: &TileSettings{Types: []string{"env_vars", " env_vars ", ""}}, want: &TileSettings{Types: []string{"env_vars"}}},
+		{name: "not a type's name", in: &TileSettings{Types: []string{"Bad Name"}}, fail: "is not a saved tile type's name"},
+		{name: "too many types", in: &TileSettings{Types: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}}, fail: "9 tile types are saved; the most is 8"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := Settings{Tiles: tc.in}.Checked()
@@ -43,13 +37,15 @@ func TestSettingsCheckedTidiesTileSettings(t *testing.T) {
 			switch {
 			case tc.want == nil && got.Tiles != nil:
 				t.Fatalf("got %+v, want none", got.Tiles)
-			case tc.want != nil && (got.Tiles == nil || got.Tiles.Text != tc.want.Text || !slices.Equal(got.Tiles.Pins, tc.want.Pins)):
+			case tc.want != nil && (got.Tiles == nil || !slices.Equal(got.Tiles.Types, tc.want.Types)):
 				t.Fatalf("got %+v, want %+v", got.Tiles, tc.want)
 			}
 		})
 	}
 }
 
+// The routes save a repository's pinned tile types with the host's reason
+// for a refusal, and drop the tile grid's text and pins an older app sends.
 func TestTileSettingsAreSavedByTheRoutesWithTheHostsReason(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
@@ -63,33 +59,16 @@ func TestTileSettingsAreSavedByTheRoutesWithTheHostsReason(t *testing.T) {
 		t.Fatal(e)
 	}
 	const route = "/api/repositories/owner/repo/settings"
-	w := do("PUT", route, `{"automatic":null,"tiles":{"text":" Lead with the schema. ","pins":["schema_change","schema_change"]}}`)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"tiles":{"text":"Lead with the schema.","pins":["schema_change"]}`) {
+	w := do("PUT", route, `{"automatic":null,"tiles":{"types":["env_vars","env_vars"],"text":" Lead with the schema. ","pins":["schema_change"]}}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"tiles":{"types":["env_vars"]}`) {
 		t.Fatal(w.Code, w.Body)
 	}
-	if s, picked, e := r.RepositorySettings(ctx, "owner/repo"); e != nil || !picked || s.Tiles == nil || s.Tiles.Text != "Lead with the schema." || !slices.Equal(s.Tiles.Pins, []string{"schema_change"}) {
-		t.Fatalf("stored %+v %v %v", s, picked, e)
-	}
-	w = do("PUT", route, `{"automatic":null,"tiles":{"pins":["nope"]}}`)
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"nope" is not a tile type that can be pinned`) || strings.Contains(w.Body.String(), "invalid repository settings") {
+	w = do("PUT", route, `{"automatic":null,"tiles":{"types":["Bad Name"]}}`)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "is not a saved tile type's name") || strings.Contains(w.Body.String(), "invalid repository settings") {
 		t.Fatal(w.Code, w.Body)
 	}
-	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil || s.Tiles.Text != "Lead with the schema." {
+	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil || !slices.Equal(s.Tiles.Types, []string{"env_vars"}) {
 		t.Errorf("a refused save changed the stored settings: %+v", s.Tiles)
-	}
-	// Tiles merge per member: an omitted member keeps its stored value, a
-	// sent one, even empty, replaces it.
-	if w = do("PUT", route, `{"automatic":null,"tiles":{"types":["a","b"]}}`); w.Code != http.StatusOK {
-		t.Fatal(w.Code, w.Body)
-	}
-	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil || s.Tiles.Text != "Lead with the schema." || !slices.Equal(s.Tiles.Types, []string{"a", "b"}) || !slices.Equal(s.Tiles.Pins, []string{"schema_change"}) {
-		t.Errorf("an omitted member did not keep its value: %+v", s.Tiles)
-	}
-	if w = do("PUT", route, `{"automatic":null,"tiles":{"text":"","pins":[]}}`); w.Code != http.StatusOK {
-		t.Fatal(w.Code, w.Body)
-	}
-	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles == nil || s.Tiles.Text != "" || len(s.Tiles.Pins) != 0 || !slices.Equal(s.Tiles.Types, []string{"a", "b"}) {
-		t.Errorf("empty members did not replace: %+v", s.Tiles)
 	}
 	if w = do("PUT", route, `{"automatic":null}`); w.Code != http.StatusOK {
 		t.Fatal(w.Code, w.Body)
@@ -100,21 +79,18 @@ func TestTileSettingsAreSavedByTheRoutesWithTheHostsReason(t *testing.T) {
 	if w = do("PUT", route, `{"automatic":null,"tiles":null}`); w.Code != http.StatusOK {
 		t.Fatal(w.Code, w.Body)
 	}
-	if w = do("PUT", route, `{"automatic":null,"tiles":{"types":["1","2","3","4","5","6","7","8","9"]}}`); w.Code != http.StatusBadRequest {
-		t.Fatal(w.Code, w.Body)
-	}
 	if s, _, _ := r.RepositorySettings(ctx, "owner/repo"); s.Tiles != nil {
 		t.Errorf("tiles %+v", s.Tiles)
 	}
 	// A save through the transaction the proposals use checks too.
 	_, e := r.UpdateRepositoryIf(ctx, "owner/repo", func(s Settings) (Settings, error) {
-		s.Tiles = &TileSettings{Text: strings.Repeat("x", MaxTileText+1)}
+		s.Tiles = &TileSettings{Types: []string{"Bad Name"}}
 		return s, nil
 	})
 	if !errors.Is(e, ErrInvalidSettings) {
 		t.Fatal(e)
 	}
-	if w = do("POST", "/api/repositories", `{"repository":"owner/other","settings":{"automatic":null,"tiles":{"pins":["nope"]}}}`); w.Code != http.StatusBadRequest {
+	if w = do("POST", "/api/repositories", `{"repository":"owner/other","settings":{"automatic":null,"tiles":{"types":["Bad Name"]}}}`); w.Code != http.StatusBadRequest {
 		t.Fatal(w.Code, w.Body)
 	}
 }

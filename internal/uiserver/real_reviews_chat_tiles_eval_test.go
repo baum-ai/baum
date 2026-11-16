@@ -3,12 +3,15 @@ package uiserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/daemon"
@@ -25,11 +29,9 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/pricing"
-	"github.com/baum-ai/baum/tiles"
 )
 
 // TestChatTilesWithRealAgents asks the session panel's own agent (the
@@ -177,7 +179,6 @@ func TestChatTilesWithRealAgents(t *testing.T) {
 			time.Sleep(time.Second)
 		}
 		url := env.server.Origin() + "/api/mcp"
-		editor := uiserver.LayoutEditor{API: env.api}
 
 		type result struct {
 			Clone    string  `json:"clone"`
@@ -209,7 +210,8 @@ func TestChatTilesWithRealAgents(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			before, _ := editor.Shown(ctx, c.repository, c.number)
+			pr := addedtiles.Key(c.repository, c.number)
+			before, _ := env.api.Added.List(ctx, pr)
 			// The browser follows the case being made, to picture its card.
 			current, _ := json.Marshal(map[string]any{"clone": clones[c.repository].ID, "number": c.number, "case": i + 1})
 			_ = os.WriteFile(filepath.Join(state, "current.json"), current, 0o600)
@@ -235,12 +237,14 @@ func TestChatTilesWithRealAgents(t *testing.T) {
 			out.Rounds = len(tally.verdicts)
 			out.Verdicts = strings.Join(tally.verdicts, ",")
 			out.Codes = strings.Join(tally.codes, ",")
-			if after, err := editor.Shown(ctx, c.repository, c.number); err == nil {
-				for _, tile := range after.Document.Tiles {
-					if tile.Type != tiles.TypeCustom || slices.ContainsFunc(before.Document.Tiles, func(b tiles.Tile) bool { return b.ID == tile.ID }) {
+			if after, err := env.api.Added.List(ctx, pr); err == nil {
+				for _, a := range after {
+					if a.Kind != addedtiles.KindCustom || slices.ContainsFunc(before, func(b addedtiles.Added) bool { return b.Tile == a.Tile }) {
 						continue
 					}
-					out.Tile, out.Added, out.Ready = tile.ID, true, tile.State == tiles.StateReady
+					// A tile made in chat is stored with the data its check
+					// passed with: it is ready.
+					out.Tile, out.Added, out.Ready = a.Tile, true, true
 				}
 			}
 			t.Logf("case %d: added %v, ready %v, rounds %d (%s), codes [%s], %.0fs, $%.2f %s", i+1, out.Added, out.Ready, out.Rounds, out.Verdicts, out.Codes, out.Seconds, out.CostUSD, out.Turn)
@@ -260,8 +264,8 @@ func TestChatTilesWithRealAgents(t *testing.T) {
 	}()
 	serveRealReviewsUntil(runCtx, t, home, state, registry, videoDiscovery(realPullRequests(t, root, served, heads, titles)), port,
 		func(server *uiserver.Server, local *uiserver.LocalAPI) func(http.Handler, *daemon.App) {
-			layouts := &tilelayout.Service{Path: filepath.Join(work, "app.sqlite"), Changed: func(pr string, revision int64) {
-				_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
+			added := &addedtiles.Service{Path: filepath.Join(work, "app.sqlite"), Changed: func(pr string) {
+				_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 			}}
 			checker, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Publish: func(e tilechecks.Event) { _ = server.Publish("tile_check", e) }, Subscribed: server.Subscribed})
 			if err != nil {
@@ -269,12 +273,12 @@ func TestChatTilesWithRealAgents(t *testing.T) {
 				return nil
 			}
 			drafts := &tiledrafts.Store{Changed: func(pr string) {
-				_ = server.Publish("layout", map[string]any{"pr": pr, "revision": 0, "drafts": true})
+				_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 			}}
-			local.Layouts, local.Drafts, local.TileChecks = layouts, drafts, checker.Handler()
+			local.Added, local.Drafts, local.TileChecks = added, drafts, checker.Handler()
 			return func(api http.Handler, app *daemon.App) {
 				counted := &countingTiles{inner: &uiserver.ChatTiles{API: *local, Checks: checker, Drafts: drafts}, by: map[string]*chatTileTally{}}
-				mcp := agentcontext.New(agentcontext.Options{API: api, Version: "eval", Layouts: uiserver.LayoutEditor{API: *local}, ChatTiles: counted})
+				mcp := agentcontext.New(agentcontext.Options{API: api, Version: "eval", Added: uiserver.AddedTilesAPI{API: *local}, ChatTiles: counted})
 				app.MCP = mcp
 				ready <- struct {
 					server *uiserver.Server
@@ -344,3 +348,25 @@ func (c *countingTiles) Add(ctx context.Context, owner, repository string, numbe
 }
 
 func (c *countingTiles) TurnEnded(owner string) { c.inner.TurnEnded(owner) }
+
+func envInt(name string, fallback int) int {
+	if n, err := strconv.Atoi(os.Getenv(name)); err == nil && n > 0 {
+		return n
+	}
+	return fallback
+}
+
+func firstLine(err error) string {
+	text := err.Error()
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		text = text[:i]
+	}
+	if len(text) > 120 {
+		text = text[:120]
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		text += " (exit " + strconv.Itoa(exit.ExitCode()) + ")"
+	}
+	return text
+}

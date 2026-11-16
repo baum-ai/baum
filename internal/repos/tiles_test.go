@@ -113,9 +113,6 @@ func TestSettingsPutKeepsAndChecksPins(t *testing.T) {
 		for _, body := range []string{
 			`{"automatic":null,"tiles":{"types":["a","b","c","d","e","f","g","h","i"]}}`,
 			`{"automatic":null,"tiles":{"types":["Bad Name"]}}`,
-			`{"automatic":null,"tiles":{"pins":["Bad Name"]}}`,
-			`{"automatic":null,"tiles":{"pins":["a","b","c","d","e","f","g","h","i"]}}`,
-			`{"automatic":null,"tiles":{"text":"` + strings.Repeat("x", MaxTileText+1) + `"}}`,
 			`{"automatic":null,"tiles":{"unknown":1}}`,
 		} {
 			if w := put(path, body); w.Code != 400 {
@@ -132,32 +129,24 @@ func TestSettingsPutKeepsAndChecksPins(t *testing.T) {
 	}
 }
 
-// Unpinning the last type keeps the rest of tiles (its text and pins), and
-// empty considers every field.
-func TestUnpinningKeepsOtherTileSettings(t *testing.T) {
+// Unpinning the last type leaves no tile settings.
+func TestUnpinningTheLastType(t *testing.T) {
 	ctx := context.Background()
 	r := registry(t)
 	if _, e := r.Pick(ctx, "acme/web", nil); e != nil {
 		t.Fatal(e)
 	}
-	stored := &TileSettings{Types: []string{"migrations"}, Text: "Focus on schema.", Pins: []string{"risks"}}
-	if e := r.UpdateRepository(ctx, "acme/web", Settings{Tiles: stored}); e != nil {
+	if e := r.UpdateRepository(ctx, "acme/web", Settings{Tiles: &TileSettings{Types: []string{"migrations"}}}); e != nil {
 		t.Fatal(e)
 	}
 	if e := r.SetTileTypePins(ctx, "migrations", nil); e != nil {
 		t.Fatal(e)
 	}
-	s, _, _ := r.RepositorySettings(ctx, "acme/web")
-	if s.Tiles == nil || s.Tiles.Text != "Focus on schema." || !slices.Equal(s.Tiles.Pins, []string{"risks"}) || len(s.Tiles.Types) != 0 {
+	if s, _, _ := r.RepositorySettings(ctx, "acme/web"); s.Tiles != nil {
 		t.Errorf("tiles after unpinning: %+v", s.Tiles)
 	}
-	for name, tiles := range map[string]TileSettings{"types": {Types: []string{"a"}}, "text": {Text: "t"}, "pins": {Pins: []string{"a"}}} {
-		if tiles.empty() {
-			t.Errorf("%s: settings with a field are empty", name)
-		}
-	}
-	if !(TileSettings{}).empty() {
-		t.Error("no fields is not empty")
+	if (TileSettings{Types: []string{"a"}}).empty() || !(TileSettings{}).empty() {
+		t.Error("empty")
 	}
 }
 
@@ -193,35 +182,19 @@ func TestSettingsPutMergesTilesPerMember(t *testing.T) {
 	}
 	for _, path := range []string{"/api/repositories/acme/web/settings", "/api/repos/" + c.ID + "/settings"} {
 		put(path, `{"automatic":null,"tiles":null}`)
+		// The tile grid's text and pins an older app sends are dropped.
 		put(path, `{"automatic":null,"tiles":{"types":["migrations"],"text":"Focus.","pins":["risks"]}}`)
-		// Only types: text and pins stay.
-		put(path, `{"automatic":null,"tiles":{"types":["env_vars"]}}`)
-		if got := tilesOf(); !slices.Equal(got.Types, []string{"env_vars"}) || got.Text != "Focus." || !slices.Equal(got.Pins, []string{"risks"}) {
-			t.Fatalf("%s: only types: %+v", path, got)
+		if got := tilesOf(); !slices.Equal(got.Types, []string{"migrations"}) {
+			t.Fatalf("%s: types: %+v", path, got)
 		}
-		// Only text: types and pins stay.
-		put(path, `{"automatic":null,"tiles":{"text":"Other."}}`)
-		if got := tilesOf(); !slices.Equal(got.Types, []string{"env_vars"}) || got.Text != "Other." || !slices.Equal(got.Pins, []string{"risks"}) {
-			t.Fatalf("%s: only text: %+v", path, got)
-		}
-		// Only pins: types and text stay.
-		put(path, `{"automatic":null,"tiles":{"pins":["overview","evidence"]}}`)
-		if got := tilesOf(); !slices.Equal(got.Types, []string{"env_vars"}) || got.Text != "Other." || !slices.Equal(got.Pins, []string{"overview", "evidence"}) {
-			t.Fatalf("%s: only pins: %+v", path, got)
-		}
-		// A member sent empty clears just it.
-		put(path, `{"automatic":null,"tiles":{"types":[]}}`)
-		if got := tilesOf(); len(got.Types) != 0 || got.Text != "Other." || len(got.Pins) != 2 {
-			t.Fatalf("%s: types cleared: %+v", path, got)
-		}
-		// No tiles member keeps all; an empty object keeps all too.
+		// No tiles member keeps them; an empty object keeps them too.
 		put(path, `{"automatic":null}`)
 		put(path, `{"automatic":null,"tiles":{}}`)
-		if got := tilesOf(); got.Text != "Other." || len(got.Pins) != 2 {
+		if got := tilesOf(); !slices.Equal(got.Types, []string{"migrations"}) {
 			t.Fatalf("%s: kept: %+v", path, got)
 		}
-		// Clearing every member leaves no tiles.
-		put(path, `{"automatic":null,"tiles":{"text":"","pins":[]}}`)
+		// Types sent empty clear them.
+		put(path, `{"automatic":null,"tiles":{"types":[]}}`)
 		if got := tilesOf(); !got.empty() {
 			t.Fatalf("%s: cleared: %+v", path, got)
 		}

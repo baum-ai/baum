@@ -27,6 +27,7 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentdirs"
@@ -72,7 +73,6 @@ import (
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
-	"github.com/baum-ai/baum/internal/tilelayout"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
@@ -489,21 +489,21 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Held until the application is wired below: a journaled feature
 		// build needs the feature log, and the queue's logger and usage
 		// events are set after it opens.
-		// Each person's own tile layout of a pull request, applied to every
-		// version and draft the tile routes serve; a write tells the app's
-		// open page to read its tiles again. Reviews fill the tiles people
-		// added (jobs.Local.Layouts).
+		// The tiles each person added to a pull request's review page, served
+		// on every version and draft the tile routes serve; a write tells
+		// the app's open page to read its tiles again. Reviews fill the
+		// library types people added (jobs.Local.Added).
 		tileLibrary := &tilelibrary.Store{Path: database}
-		layouts := &tilelayout.Service{Path: database, Changed: func(pr string, revision int64) {
-			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
+		added := &addedtiles.Service{Path: database, Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
-		if err := layouts.Sweep(ctx); err != nil {
-			log.Warn("the tile layouts were not swept", "error", err)
+		if err := added.Sweep(ctx); err != nil {
+			log.Warn("the added tiles were not swept", "error", err)
 		}
-		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Layouts: layouts, TileLibrary: tileLibrary}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary}
 		// The tiles a person added that a version has no data for are
 		// filled beside the queue.
-		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Layouts: layouts, Log: log}
+		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Added: added, Log: log}
 		queue, err := jobs.OpenHeld(database, executor, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
 			if job.Phase == "finished" {
@@ -532,7 +532,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
-		queue.SetLayouts(layouts.Layout)
+		queue.SetAdded(added.Added)
 		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
@@ -807,7 +807,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// The pending cards of tiles being made in the session panel; a
 		// change tells the open page to read its tiles again.
 		drafts := &tiledrafts.Store{Changed: func(pr string) {
-			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": 0, "drafts": true})
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
 		}}
 		local := uiserver.LocalAPI{Drafts: drafts, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
@@ -846,7 +846,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version(), Layouts: layouts, Fills: tileFills, TileTypes: tileLibrary}
+			Diagnostics: uiDiagnostics, Version: version(), Added: added, Fills: tileFills, TileTypes: tileLibrary}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
@@ -862,7 +862,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Layouts: uiserver.LayoutEditor{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary, Checks: tileChecks}, ChatTiles: &uiserver.ChatTiles{API: local, Checks: tileChecks, Drafts: drafts}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Added: uiserver.AddedTilesAPI{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary, Checks: tileChecks}, ChatTiles: &uiserver.ChatTiles{API: local, Checks: tileChecks, Drafts: drafts}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
 			listing, loaded, err := pickList.Cached(ctx, query)
 			if err != nil {
 				return agentcontext.PickList{}, err

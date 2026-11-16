@@ -1,7 +1,6 @@
 // Command replay runs review generation again on the frozen cases of a dataset
 // directory, with no GitHub access, and saves what it generates. Its metrics
-// subcommand measures a finished run; sheet, judge and labels work on the
-// pictures `just replay-screens` takes of a run's layouts. See README.md.
+// subcommand measures a finished run. See README.md.
 package main
 
 import (
@@ -93,15 +92,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		switch args[0] {
 		case "metrics":
 			return runMetrics(args[1:], stdout, stderr)
-		case "sheet":
-			return runSheet(args[1:], stdout, stderr)
-		case "judge":
-			if len(args) > 1 && args[1] == "agree" {
-				return runJudgeAgree(args[2:], stdout)
-			}
-			return runJudge(ctx, args[1:], stdout, stderr)
-		case "labels":
-			return runLabels(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
@@ -139,11 +129,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		generatorName          = fs.String("generator", "review", "what to generate: "+strings.Join(replay.GeneratorNames(), ", "))
 		detectorReport         = fs.Bool("detector-report", false, "write the case ids by kind of detector evidence into <out>/<name>/detectors (for labelling a sample)")
 		chain                  = fs.Bool("chain", false, "replay each pull request's revisions in order, each reading the previous one's generated document as its previous version")
-		composeFromStore       = fs.Bool("compose-from-store", false, "run only the compose stage over the dataset's saved reviews of the selected cases (the compose generator; with --generator view, the view call)")
-		composeOnly            = fs.Bool("compose-only", false, "run only the compose stage over the review documents of --from-run (the compose generator; with --generator view, the view call)")
-		fromRun                = fs.String("from-run", "", "with --compose-only, the earlier run directory whose cases/<id>/document.json are composed")
-		tileText               = fs.String("tile-text", "", "with the compose stage, the repository's standing tile layout instruction, as repositories save it")
-		tilePins               list
+		composeFromStore       = fs.Bool("compose-from-store", false, "run only the view call over the dataset's saved reviews of the selected cases (the view generator)")
+		composeOnly            = fs.Bool("compose-only", false, "run only the view call over the review documents of --from-run (the view generator)")
+		fromRun                = fs.String("from-run", "", "with --compose-only, the earlier run directory whose cases/<id>/document.json are presented")
 		libraryDir             = fs.String("library-dir", "", "with --generator tiles, a directory of exported tile type files (*.baumtile.json) offered as the person's saved types")
 		images, threads, prev  triState
 	)
@@ -152,10 +140,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.Var(&prev, "with-previous", "keep cases whose bundle has a previous version (=false: none)")
 	fs.Var(&cases, "case", "case id; repeatable")
 	fs.Var(&sizes, "size", "size bucket xs, s, m, l or xl; repeatable or comma separated")
-	fs.Var(&tilePins, "tile-pin", "with the compose stage, a tile type pinned to the front, as a repository pins it; repeatable")
 	fs.Var(&agentEnv, "agent-env", "KEY=VALUE set for the agent, as the app's agent_env does; repeatable")
 	fs.Var(&genOptions, "generator-option", "KEY=VALUE for the generator; repeatable (the review generator takes none)")
-	fs.Var(&overrides, "prompt-override", "<id>=<file> replaces a staged prompt, or with the compose stage the composition prompt; repeatable. ids: "+promptIDs())
+	fs.Var(&overrides, "prompt-override", "<id>=<file> replaces a staged prompt, or with the view generator the view prompt; repeatable. ids: "+promptIDs())
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -239,28 +226,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("use --compose-from-store or --compose-only, not both")
 	case *fromRun != "" && !*composeOnly:
 		return errors.New("--from-run goes with --compose-only")
-	case (*tileText != "" || len(tilePins) > 0) && !*composeFromStore && !*composeOnly:
-		return errors.New("--tile-text and --tile-pin go with --compose-from-store or --compose-only")
 	case *composeFromStore || *composeOnly:
 		if *chain {
-			return errors.New("the compose stage runs on reviews that exist; it does not take --chain")
+			return errors.New("the view call runs on reviews that exist; it does not take --chain")
 		}
 		if len(genConfig.Options) > 0 {
 			return errors.New("--compose-from-store and --compose-only set the generator's options themselves")
 		}
-		// --generator view runs the view call over the same reviews.
-		if *generatorName != "view" {
-			*generatorName = "compose"
-		}
+		*generatorName = "view"
 		genConfig.Options = map[string]string{"source": replay.ComposeFromStore, "dataset": *dataset}
 		if *composeOnly {
 			genConfig.Options = map[string]string{"source": replay.ComposeFromRun, "run": *fromRun}
-		}
-		if *tileText != "" {
-			genConfig.Options["tile_text"] = *tileText
-		}
-		if len(tilePins) > 0 {
-			genConfig.Options["tile_pins"] = strings.Join(tilePins, ",")
 		}
 	}
 	if settings.Generator, err = replay.NewGenerator(*generatorName, genConfig); err != nil {
@@ -294,7 +270,7 @@ func noPositional(fs *flag.FlagSet, args []string) error {
 
 func promptIDs() string {
 	var ids []string
-	for _, id := range append(prompt.ReviewIDs(false, true), prompt.IDReviewView, prompt.IDReviewTilesCompose) {
+	for _, id := range append(prompt.ReviewIDs(false, true), prompt.IDReviewView) {
 		ids = append(ids, string(id))
 	}
 	return strings.Join(ids, ", ")

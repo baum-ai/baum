@@ -366,7 +366,7 @@ func (r *Registry) SetPage(id string, p PageContext) error {
 
 // SetTurnPage records the page the consumer's current turn was sent from.
 // A tool that edits at once compares it with the page open now (see the
-// layout tools), so a turn begun about one page cannot edit another.
+// add tools), so a turn begun about one page cannot edit another.
 func (r *Registry) SetTurnPage(id string, p PageContext) error {
 	p.Repository = strings.TrimSpace(p.Repository)
 	if err := p.validate(); err != nil {

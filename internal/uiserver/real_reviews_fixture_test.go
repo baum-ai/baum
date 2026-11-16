@@ -73,15 +73,7 @@ type realPick struct {
 	Versions   []int    `json:"versions"`
 	Clone      string   `json:"clone"`
 	Tags       []string `json:"tags,omitempty"`
-	// Case, Variant and Size are set when the fixture serves a replay run's
-	// layouts (BAUM_APP_REPLAY_RUN): the run's case, which layout this
-	// clone's latest version carries (composed or template), and the case's
-	// size bucket.
-	Case    string `json:"case,omitempty"`
-	Variant string `json:"variant,omitempty"`
-	Size    string `json:"size,omitempty"`
-
-	machine string
+	machine    string
 }
 
 func (p realPick) id() string { return fmt.Sprintf("%s#%d", p.Repository, p.Number) }
@@ -529,12 +521,6 @@ func TestLocalAppRealReviews(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = registry.Close() }()
-	if run := os.Getenv(replayRunEnv); run != "" {
-		picks, heads, titles := seedReplayRun(t, dataset, registry, state, run)
-		serveRealReviews(t, home, state, registry, videoDiscovery(realPullRequests(t, root, picks, heads, titles)))
-		return
-	}
-
 	list := os.Getenv("BAUM_APP_REAL_PICK")
 	var picks []realPick
 	if strings.TrimSpace(list) != "" {

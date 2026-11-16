@@ -40,24 +40,25 @@ func (q *Queue) SetChat(service ChatService) {
 	q.chat = service
 }
 
-// SetLayouts installs what reads a pull request's own tile layout (the
-// person's edits, internal/tilelayout), which the draft route's tile view
-// applies, so a review being generated keeps the layout the person chose.
-func (q *Queue) SetLayouts(layouts func(repository string, number int) tileview.Layout) {
+// SetAdded installs what reads the tiles a person added to a pull request
+// (internal/addedtiles), which the draft route's view shows, so a review
+// being generated keeps them.
+func (q *Queue) SetAdded(added func(repository string, number int) []tileview.AddedTile) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.layouts = layouts
+	q.added = added
 }
 
-// layoutOf is a job's pull request's own tile layout; none for a group's.
-func (q *Queue) layoutOf(job Job) tileview.Layout {
+// addedOf is the tiles the person added to a job's pull request; none for a
+// group's.
+func (q *Queue) addedOf(job Job) []tileview.AddedTile {
 	q.mu.Lock()
-	layouts := q.layouts
+	added := q.added
 	q.mu.Unlock()
-	if layouts == nil || job.PR < 1 || job.Group != "" {
-		return tileview.Layout{}
+	if added == nil || job.PR < 1 || job.Group != "" {
+		return nil
 	}
-	return layouts(job.Repository, job.PR)
+	return added(job.Repository, job.PR)
 }
 
 func (q *Queue) chatService() ChatService {

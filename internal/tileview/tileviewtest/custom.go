@@ -112,10 +112,8 @@ func EscapeProbeTiles(hunk string) []tiles.Tile {
 }
 
 // AddCustomTiles adds the synthetic custom tiles to a converted document,
-// citing its first hunk, each placed at the end of the layout at full width,
-// and arranges the layout again (which gives a tile that does not declare
-// full its first declared size). It has the signature
-// tileview.SetFixture takes.
+// citing its first hunk, so the served view places them on the section that
+// holds it. It has the signature tileview.SetFixture takes.
 func AddCustomTiles(doc *tiles.Document) {
 	add(doc, CustomTiles(firstHunk(doc)))
 }
@@ -141,11 +139,7 @@ func firstHunk(doc *tiles.Document) string {
 }
 
 func add(doc *tiles.Document, custom []tiles.Tile) {
-	for _, tile := range custom {
-		doc.Tiles = append(doc.Tiles, tile)
-		doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: tile.ID, Size: tiles.SizeFull})
-	}
-	tiles.Arrange(doc)
+	doc.Tiles = append(doc.Tiles, custom...)
 }
 
 func mustQuote(s string) string {

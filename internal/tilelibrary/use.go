@@ -8,22 +8,23 @@ import (
 	"slices"
 	"time"
 
-	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // MaxUsedIn bounds the repositories a type remembers being used in: the
 // most recent ones are kept.
 const MaxUsedIn = 50
 
-// UsedTypes are the names of the saved types a stored composition holds a
-// ready fill of: its library tiles that are not pending and not built in,
-// each once. A composition that does not parse holds none.
+// UsedTypes are the names of the saved types a stored review view
+// composition holds a ready fill of: its library tiles that are not pending
+// and not built in, each once. A composition that does not parse holds
+// none.
 func UsedTypes(composition json.RawMessage) []string {
 	if len(composition) == 0 {
 		return nil
 	}
-	c, err := tiles.ParseComposition(composition)
+	c, err := view.Parse(composition)
 	if err != nil {
 		return nil
 	}
