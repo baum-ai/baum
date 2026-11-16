@@ -1234,10 +1234,26 @@ that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
 authentication; `POST /api/mcp` requires the JSON content type but no Origin,
 and refuses a foreign one (see [MCP server for agents](#mcp-server-for-agents)).
-No route enables CORS. The one document route outside the namespace and
-without the cookie is a custom tile's frame, `GET /tile-frames/<digest>`,
-served only to a same-origin frame navigation (see
-[Custom tiles](#custom-tiles)). The capability is the daemon's app
+No route enables CORS. Right after the Host check, before any route, the
+server refuses with 403 every request whose `Sec-Fetch-Site` header is
+`cross-site` or `same-site`, except a top-level document navigation (`GET` or
+`HEAD` with `Sec-Fetch-Mode: navigate` and `Sec-Fetch-Dest: document`). Browsers
+set these headers on every request and a page cannot change them, so a page
+from another origin, a sandboxed frame or a service on another loopback port
+cannot make the daemon answer with fetch, XHR, an event stream, an image,
+script or other subresource, a frame navigation or a form post, even where the
+browser would attach the session cookie to a `GET`. A top-level navigation
+passes so that a link or the desktop shell can open the app from elsewhere; it
+needs the launch secret and cannot read the response. The header is absent from
+agent CLIs calling the MCP endpoint, the hook command, the desktop shell's own
+client, health checks and test clients, and those pass; the browser app's own
+requests are `same-origin` and a typed launch URL is `none`, and those pass too.
+The page's Content-Security-Policy names `frame-src 'self'` explicitly. The
+one document route outside the namespace and without the cookie is a custom
+tile's frame, `GET /tile-frames/<digest>`, served only to a same-origin frame
+navigation (see [Custom tiles](#custom-tiles)); the app's own frames are
+same-origin navigations, so the check above lets them through. The capability
+is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
