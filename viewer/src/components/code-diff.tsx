@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 
 import { useHighlightedHunks } from "../highlight";
 import { cn, FOCUS_RING } from "./classnames";
@@ -41,7 +41,15 @@ const mark: Record<CodeDiffLine["kind"], string> = {
 
 /** One file's hunks. Highlighting is client-only: the first render is the
  *  plain text, and the tokens replace it once they are ready. */
-function CodeDiffTable({ file, highlight }: { file: CodeDiffFile; highlight: boolean }) {
+function CodeDiffTable({
+  file,
+  highlight,
+  afterHunk,
+}: {
+  file: CodeDiffFile;
+  highlight: boolean;
+  afterHunk?: (file: CodeDiffFile, hunk: number) => ReactNode;
+}) {
   // An empty path has no language, which reads as "do not highlight".
   const highlighted = useHighlightedHunks(highlight ? file.path : "", file.hunks);
   return (
@@ -85,11 +93,30 @@ function CodeDiffTable({ file, highlight }: { file: CodeDiffFile; highlight: boo
                 </td>
               </tr>
             )),
+            ...hunkNotes(file, hunkIndex, afterHunk),
           ])}
         </tbody>
       </table>
     </div>
   );
+}
+
+/** What a host puts under a hunk, such as the notes that explain it, as a row
+ *  of its own across the table; nothing when it has none. */
+function hunkNotes(
+  file: CodeDiffFile,
+  hunkIndex: number,
+  afterHunk?: (file: CodeDiffFile, hunk: number) => ReactNode,
+) {
+  const notes = afterHunk?.(file, hunkIndex);
+  if (notes === null || notes === undefined || notes === false) return [];
+  return [
+    <tr key={`${file.path}:notes:${hunkIndex}`} className="border-y border-subtle bg-surface-wash">
+      <td colSpan={4} className="px-3 py-2 font-sans">
+        {notes}
+      </td>
+    </tr>,
+  ];
 }
 
 /** A compact GitHub-style unified diff for evidence that benefits from reading in place.
@@ -100,9 +127,12 @@ export function CodeDiff({
   bare = false,
   highlight = true,
   className,
+  afterHunk,
 }: {
   files: readonly CodeDiffFile[];
   bare?: boolean;
+  /** Drawn under a hunk, across the table: a host's notes on it. */
+  afterHunk?: (file: CodeDiffFile, hunk: number) => ReactNode;
   /** False for a diff that is on the page but not yet shown, so nothing is
    *  tokenised until the reader can see it. */
   highlight?: boolean;
@@ -193,7 +223,9 @@ export function CodeDiff({
               {/* Stays on the page for aria-controls; a folded file draws and
                   highlights nothing. */}
               <div id={body} hidden={!expanded}>
-                {expanded ? <CodeDiffTable file={file} highlight={highlight} /> : null}
+                {expanded ? (
+                  <CodeDiffTable file={file} highlight={highlight} afterHunk={afterHunk} />
+                ) : null}
               </div>
             </article>
           );

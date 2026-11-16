@@ -3,6 +3,7 @@ import { PAGES } from "./pages";
 import type { ReviewPageChoice } from "./preferences";
 import { framesAllowedHere } from "./tiles/custom/environment";
 import { reviewPageOf } from "./tiles/view";
+import { CODE_PLACE } from "./review-view/model";
 
 /** The pages a page context names, as the MCP server knows them
  *  (`agentcontext` page names): the sidebar's lists, and the pages of one
@@ -177,6 +178,14 @@ function tilesFocus(search: URLSearchParams, reviewPage: ReviewPageChoice) {
   if (reviewPageOf(search, reviewPage) !== "tiles") return focus;
   focus.view = "tiles";
   const tile = search.get("pane") === "tile" ? search.get("tile") : null;
+  // The review page's Code tab is a place of the page's own, not a tile: the
+  // focus names the tab and the file open in it.
+  if (tile === CODE_PLACE) {
+    focus.tab = "code";
+    const file = search.get("tile_item");
+    if (file && bytes(file) <= MAX_PAGE_TEXT) focus.file = file;
+    return focus;
+  }
   if (tile && bytes(tile) <= MAX_PAGE_TEXT) {
     focus.tile = tile;
     const item = search.get("tile_item");

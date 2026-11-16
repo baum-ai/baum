@@ -1606,7 +1606,8 @@ a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
 straight to Connections. **General**, the default, offers System, Light and Dark
 themes, the review page a pull request opens on (**Full review**, the
-default, or **Tiles (preview)**; see [Tiles page](#tiles-page)), the modifier
+default, or **Overview tabs (preview)**, stored as `tiles`; see
+[Overview tabs](#overview-tabs)), the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
 elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
@@ -1660,7 +1661,7 @@ api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
 and says why. It applies to reviews that start after the change. While it is
 on, the appearance settings report `arranged_tiles`, and a pull request's
 review page (without `?view=`) reads the version's tiles and opens a version
-whose layout was chosen (origin `generated`) on the tiles page, any other on
+whose layout was chosen (origin `generated`) on the overview tabs, any other on
 the full review (`useArrangedTiles`). A running review's `arranging` phase reads
 "Arranging the page…".
 
@@ -2270,6 +2271,13 @@ Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
 `../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
 `pnpm test:unit` runs them again against the compacted script the daemon inlines
 (`KIT_SCRIPT=inlined`, `../tiles/kit/testdata/v1.inlined.js`).
+The overview tabs: `e2e/review-view.spec.ts` serves acme/demo#7's tile route
+with the review and view of `src/review-view/fixture-1303.ts` and checks the
+tabs, the address and that no tab scrolls sideways at 390, 900 and 1440px;
+`REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each tab, light and dark.
+The suites that drive the tiles' landing grid and details (`e2e/tiles.spec.ts`,
+`e2e/tile-layout.spec.ts`, `custom-tile-tests/`, the development proxy's
+custom tile) are skipped while the review page does not reach the grid.
 Custom tiles on the tiles page: `pnpm test:custom-tiles`
 (`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`:
@@ -2605,7 +2613,64 @@ page offers **Open in panel** instead of Focus and has no reply bar, and a
 pull request's sessions tag it **Panel** with **Open in panel** beside Open
 transcript.
 
+## Overview tabs
+
+With the review page set to **Overview tabs (preview)** (`review_page` `tiles`,
+or `?view=tiles`), or with tile reviews on and a version whose composition was
+generated, a pull request's review opens on three tabs (`src/review-view/`,
+drawn through the viewer's places seam by `useViewPlaces`): **Overview**,
+**How it works** and **Code**. A group's or a stack's page always shows the
+full review. The head, the version menu, history, Compare, the side pane, the
+Files, Decisions, Sessions and Commits panes and the review dialog are the
+full review's own; the rail lists the tabs and the sections and starts folded.
+
+The page reads each version from `GET api/tiles` (a draft's from
+`api/jobs/{id}/draft?tiles=1`), whose `view` (`baum.view/1`: the overview's
+`risk_summary`, `verdict`, `screenshots`, `diagram` and `intent`, the tiles
+placed on each section, and the tiles) `parseReviewView` reads, dropping a
+malformed entry rather than the view. A version served without one shows the
+overview from the review alone, every section with no tiles.
+
+- **Where the reader is** stays in the address, so a reload, Back and a link
+  land there: the Overview is the Summary (no `pane`), How it works is
+  `pane=section&section=<id>` (`context` is "Where this fits"; a risk's
+  `pane=risk` opens its section at the risk, and the Changes its first
+  section), and Code is `pane=tile&tile=code&tile_item=<path>`. A link to a
+  tile opens the section it is placed on. Switching tabs comes back to the
+  section and file read last.
+- **Overview**, always in this order: the summary, the verdict when the view
+  has one (each point linking to its section), the risk (score, level and why,
+  the view's `risk_summary` or else the score's first reason), what it looks
+  like (the view's screenshots), the main diagram under its title, and what
+  was asked (the view's rows, else each linked session's first prompt), each
+  linking to the prompt in its session.
+- **How it works** lists "Where this fits" first (the review's context, its
+  files as chips, and the tiles placed on `context`) and opens on the first
+  real section. A section shows its title, summary, the tiles placed on it, its
+  behaviour steps, its risks and its code, folded. The full review's check
+  callouts and line counts are not shown.
+- **Code** lists every changed file grouped as code, tests, docs, config and
+  generated (folded, and a generated file's diff waits for Show the diff), and
+  shows the open file's hunks with the behaviour steps and open risks that cite
+  each pinned under it, each linking to its section. A code chip anywhere on
+  the page opens its file here.
+- **Tiles** always show their title. Flows, columns, sequences and tables are
+  drawn by the page (`native-tiles.tsx`) in palette tones, and lay themselves
+  out by the room they have: lanes wrap and then stack, columns stack, and a
+  sequence becomes a list. Exhibits draw as the generic tiles do, and library
+  and chat-made tiles in their sandboxed frames. A tile being written, one that
+  failed and one that cannot be read say so in its place.
+- **Comments and keys.** `c` comments on the section read, the file open in
+  Code, or the pull request on the Overview; on a library tile or exhibit the
+  keys are on (`j`/`k`), on that tile. `a` asks the session panel about the
+  tile the keys are on, else the pull request. `←`/`→` step through the rail,
+  and Escape and `u` leave the pull request as on the full review. The session
+  panel's focus names `view: tiles` and, on Code, `tab: code` and the `file`.
+
 ## Tiles page
+
+The review page no longer reaches the landing grid and the details below:
+phase 2 of the overview tabs removes them.
 
 A pull request's or a group's review can open as tiles instead of the full
 review (`src/tiles/`). Settings > General chooses which (`review_page`), and

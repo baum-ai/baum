@@ -7,6 +7,7 @@ import {
   withTiles,
   type TiledDocument,
 } from "./tiles/tile-document";
+import { parseReviewView, withReviewView } from "./review-view/model";
 export type Clone = {
   id: string;
   path: string;
@@ -1235,12 +1236,17 @@ export type TilesAnswer = {
   problem?: string;
   added?: unknown;
   drafts?: unknown;
+  /** The review page's view (`baum.view/1`); absent from an older daemon. */
+  view?: unknown;
 };
 export function tiledDocument(body: TilesAnswer): TiledDocument {
   const tiles = body.tiles === null ? null : parseTileDocument(body.tiles);
-  return withTiles(
-    validDocument(body.document),
-    tiles && withDrafts(withAddedNotes(tiles, body.added), body.drafts),
+  return withReviewView(
+    withTiles(
+      validDocument(body.document),
+      tiles && withDrafts(withAddedNotes(tiles, body.added), body.drafts),
+    ),
+    parseReviewView(body.view),
   );
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {

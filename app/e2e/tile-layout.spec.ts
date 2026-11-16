@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
 
+// The review page no longer reaches the tiles' landing grid and details
+// (ENG-2056, phase 1 of the overview tabs); phase 2 removes the grid and
+// this suite with it.
+test.skip(true, "The review page shows the overview tabs, not the tile grid.");
+
 // The person's own layout of a review's tiles, changed from the session
 // panel, on the fixture's acme/demo#14: its scripted agent
 // (`panelAgent.layout` in the uiserver fixture) calls the real layout tools

@@ -1320,7 +1320,7 @@ it("chooses the review page in General, the full review by default", async () =>
   expect(select.value).toBe("full");
   expect([...select.options].map((option) => option.text)).toEqual([
     "Full review",
-    "Tiles (preview)",
+    "Overview tabs (preview)",
   ]);
   await act(async () => {
     select.value = "tiles";

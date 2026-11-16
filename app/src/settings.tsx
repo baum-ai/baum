@@ -3623,7 +3623,7 @@ function GeneralSection() {
         <SettingRow
           label="Review page"
           htmlFor="review-page"
-          detail="How a pull request's or a group's review opens. Tiles shows what matters on one screen, each part a tile to open."
+          detail="How a pull request's review opens. Overview tabs show the overview first, then how it works section by section, then the code with its notes."
         >
           <select
             id="review-page"
@@ -3635,7 +3635,7 @@ function GeneralSection() {
             }
           >
             <option value="full">Full review</option>
-            <option value="tiles">Tiles (preview)</option>
+            <option value="tiles">Overview tabs (preview)</option>
           </select>
         </SettingRow>
         <SettingRow

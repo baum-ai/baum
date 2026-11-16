@@ -105,12 +105,13 @@ import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-mo
 import { useMedia } from "./media";
 import { readSelection, withSelection } from "@baum/viewer/review-selection";
 import { fullReviewPlace, useArrangedTiles, useReviewPage, withView } from "./tiles/view";
-import { useTilePlaces } from "./tiles/use-tile-places";
+import { useViewPlaces } from "./review-view/places";
+import { commentSelection, reviewViewOf } from "./review-view/model";
 import { TileHostContext, type TileHost } from "./tiles/host";
 import { commentCounts } from "./tiles/comments";
-import { activeCard, useBackToLanding } from "./tiles/keys";
+import { activeCard } from "./tiles/keys";
 import { useTileLayout } from "./tiles/your-layout";
-import { tileDocOf, tilesMissing, withPendingChanges, withTiles } from "./tiles/tile-document";
+import { tileDocOf, withPendingChanges, withTiles } from "./tiles/tile-document";
 
 /** `commitsSlot`'s loaders over the daemon's commit routes under `route`
  *  (`api` for a saved version, `api/facts` for the facts), with the page's
@@ -300,7 +301,7 @@ export function LocalReview({
   const arranged = useArrangedTiles();
   const tilesPage = chosenTiles || arranged;
   const readDocument = tilesPage ? tilesRequest : documentRequest;
-  const places = useTilePlaces();
+  const places = useViewPlaces();
   const back = backTo(url.search);
   // The refresh key works on every state of the page, also where the button
   // is not drawn, as while the review loads.
@@ -429,14 +430,14 @@ export function LocalReview({
   useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
     // a asks an agent about the pull request: the session panel opens on its
-    // conversation with the keys in its composer. On the tiles' landing page
-    // a card under the keys is what it asks about, as its Ask about this tile
-    // does, so "make this wider" needs no question.
+    // conversation with the keys in its composer. On the review page a tile
+    // under the keys is what it asks about, so "explain this" needs no
+    // question.
     if (event.key === "a") {
       event.preventDefault();
-      const card = onTiles && selection.kind === "summary" ? activeCard() : null;
+      const card = onView && viewedDocument ? activeCard() : null;
       const tile = card
-        ? tileDocOf(viewedDocument ?? null)?.tiles.find((t) => t.id === card)
+        ? reviewViewOf(viewedDocument!).tiles.find((t) => t.id === card)
         : undefined;
       ask(tile ? { kind: "tile", id: tile.id, title: tile.title } : null);
       return;
@@ -491,10 +492,13 @@ export function LocalReview({
       navigate(jobHref(watchable));
     } else if (event.key === "c" && canReview && !showingDraft) {
       event.preventDefault();
-      const card = onTiles && selection.kind === "summary" ? activeCard() : null;
+      // A library tile or exhibit under the keys takes the comment, placed as
+      // the tiles page placed it; elsewhere it is on what is being read.
+      const card = onView ? activeCard() : null;
+      const tiled = card && tileDocOf(viewedDocument ?? null)?.tiles.some((t) => t.id === card);
       setComposer({
         kind: "new",
-        ...(card ? commentTarget(viewedDocument ?? null, { kind: "tile", id: card }) : commentOn),
+        ...(tiled ? commentTarget(viewedDocument ?? null, { kind: "tile", id: card }) : commentOn),
       });
       setRevealComments((n) => n + 1);
     } else if (event.key === "v") {
@@ -521,9 +525,7 @@ export function LocalReview({
       ? history.state.document
       : null
     : doc;
-  // What c comments on: the section, risk, file or tile being read.
   const selection = readSelection(url.search);
-  const commentOn = commentTarget(viewedDocument ?? null, selection);
   const query = selector(clone, pr.number, viewedVersion);
   const latestQuery = selector(clone, pr.number);
   // While the daemon writes a review in stages it holds a draft of it. It is
@@ -576,21 +578,27 @@ export function LocalReview({
     [showingDraft, draft, retrying, doc, failedSections],
   );
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
-  // The tiles page draws its places once the document carries its tiles; a
-  // review the daemon could not convert is shown as the full review.
-  const onTiles =
+  // The review page's tabs (the Overview, How it works and Code) draw their
+  // places when the page was chosen, or, with tile reviews on, for a version
+  // whose composition was generated. A version served without a view shows
+  // the overview from the review alone.
+  const onView =
     tilesPage &&
-    Boolean(tileDocOf(shownDocument)) &&
+    Boolean(shownDocument) &&
     (chosenTiles || tileDocOf(shownDocument)?.origin.kind === "generated");
-  // Escape or u inside a tile goes back to the landing page.
-  useBackToLanding(onTiles, url);
+  // What c comments on: the section, risk, file or tile being read; on the
+  // review page's Code tab, the file open there.
+  const commentOn = commentTarget(
+    viewedDocument ?? null,
+    onView ? commentSelection(selection) : selection,
+  );
   // The person's own layout of the tiles: read again on each change, from
   // the session panel or the page, with the change announced and undoable.
   const layout = useTileLayout({
     clone,
     repository: pr.repository,
     number: pr.number,
-    enabled: onTiles && !showingDraft,
+    enabled: onView && !showingDraft,
     reread: async () => {
       setLayoutGeneration((n) => n + 1);
       setDoc(await tilesRequest(clone, pr.number));
@@ -617,8 +625,8 @@ export function LocalReview({
       ...(history.selection ? [tilesRequest(clone, pr.number, history.selection.version)] : []),
     ]);
   const counts = useMemo(
-    () => (onTiles ? commentCounts(viewedDocument ?? null, pending.value.comments) : NO_COUNTS),
-    [onTiles, viewedDocument, pending.value.comments],
+    () => (onView ? commentCounts(viewedDocument ?? null, pending.value.comments) : NO_COUNTS),
+    [onView, viewedDocument, pending.value.comments],
   );
   const commenting = canReview && !showingDraft;
   const tileHost = useMemo<TileHost>(
@@ -1001,7 +1009,7 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
-                places={onTiles ? places : undefined}
+                places={onView ? places : undefined}
                 detailsChecks={(shown) =>
                   liveDetailsChecks(
                     shown,
@@ -1210,23 +1218,6 @@ export function LocalReview({
                 )}
                 notices={
                   <>
-                    {chosenTiles && tilesMissing(shownDocument) ? (
-                      <Notice
-                        action={
-                          <a
-                            href={appURL(`?${withView(url.search, "full")}`)}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              navigate(event.currentTarget.href);
-                            }}
-                          >
-                            Always use the full review here
-                          </a>
-                        }
-                      >
-                        This review can't be shown as tiles, so this is its full review.
-                      </Notice>
-                    ) : null}
                     {archivedNotice}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>

@@ -16,6 +16,7 @@
     "./components/avatar": "./src/components/avatar.tsx",
     "./components/brand-logo": "./src/components/brand-logo.tsx",
     "./components/chat": "./src/components/chat.tsx",
+    "./components/chip-classes": "./src/components/chip-classes.ts",
     "./components/classnames": "./src/components/classnames.ts",
     "./components/code-diff": "./src/components/code-diff.tsx",
     "./components/code-file-link": "./src/components/code-file-link.tsx",
