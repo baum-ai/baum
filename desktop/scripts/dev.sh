@@ -45,7 +45,7 @@ frontend="baum-desktop-vite-${shared##*.}"
 "$compose" run -d --no-deps --service-ports ${container_user:+--user "$container_user"} --name "$frontend" \
     -v "$shared:/desktop-dev" \
     -e BAUM_DESKTOP_DEV_DIR=/desktop-dev --workdir /oss/app \
-    "$service" sh -ec 'pnpm generate; exec pnpm exec vite'
+    "$service" sh -ec 'exec pnpm exec vite'
 echo "Starting Vite; dependency installation may take a moment."
 attempt=0
 until [ -f "$shared/vite-ready" ]; do
