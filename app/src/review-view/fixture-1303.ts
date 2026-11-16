@@ -9,7 +9,7 @@ import example from "../../../schema/review-example.json" with { type: "json" };
 import { HUNKS } from "./fixture-1303-hunks";
 import { withReviewView, type ReviewView } from "./model";
 
-/** baum-ai/baum-monorepo#1303, a phone transport for the daemon, as the
+/** acme/demo#7, a phone transport for the daemon, as the
  *  approved review page prototype tells it: its review and its view. The
  *  code is the pull request's own. */
 
@@ -229,7 +229,7 @@ export const REVIEW_1303: ReviewDocument = {
   ...base,
   review: {
     ...base.review,
-    repository: "baum-ai/baum-monorepo",
+    repository: "acme/demo",
     pull_request: 1303,
     pr_state: "open",
     merged_commit: null,

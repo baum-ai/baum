@@ -1,4 +1,4 @@
-// Generated from the diff of baum-ai/baum-monorepo#1303 (a phone transport for
+// Generated from the diff of acme/demo#7 (a phone transport for
 // the daemon): the hunks the review view's fixture cites, as the index stores them.
 import type { IndexedHunk } from "@baum/viewer/review-document";
 
@@ -11,7 +11,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [17, 49],
     additions: 49,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_routes",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_routes",
     diff: {
       header: "@@ -0,0 +17,49 @@",
       lines: [
@@ -271,7 +271,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [91, 20],
     additions: 20,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_refusals",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_refusals",
     diff: {
       header: "@@ -0,0 +91,20 @@",
       lines: [
@@ -386,7 +386,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [915, 7],
     additions: 1,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_daemon",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_daemon",
     diff: {
       header: "@@ -915,6 +915,7 @@",
       lines: [
@@ -442,7 +442,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [992, 17],
     additions: 7,
     deletions: 1,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_shutdown",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_shutdown",
     diff: {
       header: "@@ -990,11 +992,17 @@",
       lines: [
@@ -557,7 +557,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [21, 20],
     additions: 20,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_pairing",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_pairing",
     diff: {
       header: "@@ -0,0 +21,20 @@",
       lines: [
@@ -672,7 +672,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [21, 12],
     additions: 12,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_devices",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_devices",
     diff: {
       header: "@@ -0,0 +21,12 @@",
       lines: [
@@ -747,7 +747,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [140, 21],
     additions: 21,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_session",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_session",
     diff: {
       header: "@@ -0,0 +140,21 @@",
       lines: [
@@ -867,7 +867,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [484, 15],
     additions: 15,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_relay",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_relay",
     diff: {
       header: "@@ -0,0 +484,15 @@",
       lines: [
@@ -957,7 +957,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [538, 27],
     additions: 27,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_redirect",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_redirect",
   },
   {
     id: "h_serve",
@@ -967,7 +967,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [199, 10],
     additions: 10,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_serve",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_serve",
     diff: {
       header: "@@ -0,0 +199,10 @@",
       lines: [
@@ -1032,7 +1032,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [1, 20],
     additions: 20,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_remote_test",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_remote_test",
     diff: {
       header: "@@ -0,0 +1,20 @@",
       lines: [
@@ -1147,7 +1147,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [1246, 15],
     additions: 15,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_security",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_security",
     diff: {
       header: "@@ -0,0 +1246,15 @@",
       lines: [
@@ -1237,7 +1237,7 @@ export const HUNKS: IndexedHunk[] = [
     new_range: [12, 9],
     additions: 2,
     deletions: 0,
-    github_url: "https://github.com/baum-ai/baum-monorepo/pull/1303/files#h_gosum",
+    github_url: "https://github.com/acme/demo/pull/7/files#h_gosum",
     diff: {
       header: "@@ -12,7 +12,9 @@",
       lines: [
