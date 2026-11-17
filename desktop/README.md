@@ -886,9 +886,13 @@ commit signing turned off, since the signing key is not there.
 `--copy-data`, when the instance has no data yet, copies this machine's
 repositories, reviews and settings with consistent SQLite snapshots. It
 leaves out `credentials.json`, the daemon's runtime folder and locks, and the
-Claude and Codex account folders the settings name, which exist only on the
+Claude and Codex account folders the settings name (data extraction's too), which exist only on the
 host. `--workspace DIR` mounts DIR read-only at the same path, so the copied
-repositories are found. `BAUM_RELAY_URL` is written to the home's `.profile`,
+repositories are found. The daemon always opens a repository's existing
+review store (`.git/baum/reviews`), so each one under DIR gets a writable copy
+in the instance's `review-stores/`, mounted over it; `--copy-data` fills new
+copies with a snapshot of the repository's reviews, and without it they start
+empty. `BAUM_RELAY_URL` is written to the home's `.profile`,
 which the daemon's environment comes from.
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs

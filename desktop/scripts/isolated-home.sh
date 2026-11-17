@@ -1,14 +1,15 @@
 #!/bin/sh
 # Runs inside the desktop-isolated container that isolated.sh starts.
 #   seed      copy the host's baum data, mounted at /seed/config and
-#             /seed/state, into this home
+#             /seed/state, and review stores at /seed/reviews/<key>, into
+#             this home
 #   app CMD   prepare the home, start a D-Bus session with an unlocked
 #             keyring for the app's credential store, then run CMD
 set -eu
 
 # Account folders are the host's, which the instance does not have: settings
 # that name one would fail validation, so they go back to the defaults.
-FOLDER_KEYS="'\$.claude_config_dir', '\$.fix_claude_config_dir', '\$.codex_home', '\$.fix_codex_home'"
+FOLDER_KEYS="'\$.claude_config_dir', '\$.fix_claude_config_dir', '\$.codex_home', '\$.fix_codex_home', '\$.decisions.claude_config_dir', '\$.decisions.codex_home'"
 
 seed() {
   for pair in /seed/config:"$HOME/.config/baum" /seed/state:"$HOME/.local/state/baum"; do
@@ -31,6 +32,15 @@ seed() {
         fi
       done
     done
+  done
+  # Review stores, mounted over the repositories' own when the app runs.
+  for src in /seed/reviews/*; do
+    [ -f "$src/versions.sqlite" ] || continue
+    dst=$HOME/review-stores/${src##*/}
+    mkdir -p "$dst"
+    chmod 700 "$dst"
+    sqlite3 "file:$src/versions.sqlite?mode=ro" ".backup '$dst/versions.sqlite'"
+    chmod 600 "$dst/versions.sqlite"
   done
   echo "isolated: copied baum data into $HOME"
 }

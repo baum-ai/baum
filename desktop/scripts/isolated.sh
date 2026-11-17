@@ -16,7 +16,9 @@ usage: isolated.sh [name] [--copy-data] [--workspace DIR]...
                    credentials, the daemon's runtime files or the Claude
                    account folders; only when the instance has none yet
   --workspace DIR  mount DIR read-only at the same path, so repositories
-                   the app knows from the copied data are there; repeatable
+                   the app knows from the copied data are there; repeatable.
+                   Their review stores get writable copies of the instance's,
+                   which --copy-data fills from the repositories' own
 
 BAUM_RELAY_URL, when set, is passed to the instance's daemon.
 EOF
@@ -56,29 +58,55 @@ mkdir -p "$home"
 chmod 700 "$home"
 compose() { BAUM_OP_RUN=0 "$repo/dev-compose.sh" run --build --rm --no-deps -e HOME="$HOME" -v "$home:$HOME" "$@"; }
 
+nl='
+'
+# The repositories' review stores (.git/baum/reviews) under the workspaces.
+# The daemon always opens an existing one, which the read-only mount would
+# make fail, so each gets a writable copy of the instance's mounted over it.
+dirs=
+stores=
+old_ifs=$IFS
+IFS=$nl
+for dir in $workspaces; do
+  dir=$(CDPATH='' cd -- "$dir" && pwd)
+  dirs="$dirs$nl$dir"
+  stores="$stores$nl$(find "$dir" \( -name node_modules -o -name target -o -name .cache -o -name dist \) -prune \
+    -o -path '*/.git/baum/reviews/versions.sqlite' -print 2>/dev/null | sed 's#/versions.sqlite$##')"
+done
+IFS=$old_ifs
+store_key() { printf %s "$1" | sha256sum | cut -c1-16; }
+
 if [ "$copy" = 1 ]; then
+  # Mounted writable so sqlite3 can read databases a running daemon holds
+  # open (WAL) and take a consistent snapshot; nothing is written.
+  set --
   if [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
     echo "isolated: $name already has baum data, kept; delete $home to start again"
   else
-    # Mounted writable so sqlite3 can read databases the running daemon
-    # holds open (WAL) and take a consistent snapshot; nothing is written.
-    set --
     for pair in "${XDG_CONFIG_HOME:-$HOME/.config}/baum:/seed/config" "${XDG_STATE_HOME:-$HOME/.local/state}/baum:/seed/state"; do
       [ -d "${pair%:*}" ] && set -- "$@" -v "$pair"
     done
-    compose "$@" desktop-isolated sh scripts/isolated-home.sh seed
   fi
+  IFS=$nl
+  for store in $stores; do
+    key=$(store_key "$store")
+    [ -e "$home/review-stores/$key" ] || set -- "$@" -v "$store:/seed/reviews/$key"
+  done
+  IFS=$old_ifs
+  [ "$#" -gt 0 ] && compose "$@" desktop-isolated sh scripts/isolated-home.sh seed
 fi
 
 set -- -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0"
 [ -f "$HOME/.gitconfig" ] && set -- "$@" -v "$HOME/.gitconfig:/seed/gitconfig:ro"
 [ -n "${BAUM_RELAY_URL:-}" ] && set -- "$@" -e BAUM_RELAY_URL
-old_ifs=$IFS
-IFS='
-'
-for dir in $workspaces; do
-  dir=$(CDPATH='' cd -- "$dir" && pwd)
+IFS=$nl
+for dir in $dirs; do
   set -- "$@" -v "$dir:$dir:ro"
+done
+for store in $stores; do
+  copy=$home/review-stores/$(store_key "$store")
+  mkdir -p "$copy"
+  set -- "$@" -v "$copy:$store"
 done
 IFS=$old_ifs
 echo "isolated: $name, home $home"
