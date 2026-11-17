@@ -26,6 +26,10 @@ tauri-plugin-single-instance = "2.5.4"
 tauri-plugin-updater = "2.13.3"
 url = "2"
 
+# The version wry uses, to end the check window's web process (check_window.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2.0.2", features = ["v2_40"] }
+
 [dev-dependencies]
 base64 = "0.22"
 minisign-verify = "0.3"

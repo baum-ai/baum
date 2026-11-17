@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-check-window"
+description = "Enables the close_check_window command without any pre-configured scope."
+commands.allow = ["close_check_window"]
+
+[[permission]]
+identifier = "deny-close-check-window"
+description = "Denies the close_check_window command without any pre-configured scope."
+commands.deny = ["close_check_window"]
