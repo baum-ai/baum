@@ -6,12 +6,10 @@ import type {
   ReviewPlaceSteps,
   ReviewRailRow,
 } from "@baum/viewer/components/review-viewer";
-import { SideNavButton, SideNavNest } from "@baum/viewer/components/side-nav";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
 import {
   CONTEXT_ID,
-  defaultSection,
   listedSections,
   placeOf,
   reviewViewOf,
@@ -20,15 +18,16 @@ import {
   viewFiles,
   type ViewPlace,
 } from "./model";
-import { ViewPane, type ViewMemory } from "./view-pane";
+import { ViewPane, ViewTabs, type ViewMemory } from "./view-pane";
 
 export const TAB_LABEL = { overview: "Overview", sections: "How it works", code: "Code" } as const;
 
 /** The review page's tabs as the review viewer's places: the Overview on the
  *  Summary, How it works on a section (the Changes and a risk open it too),
- *  and Code on the host's own `code` place. The rail lists the tabs, the
- *  sections under How it works, so the keys that step through the rail step
- *  through them; it starts folded, as the tabs lead. */
+ *  and Code on the host's own `code` place. The tabs are the way through the
+ *  page, so the viewer draws no rail (`noRail`): the side pane lists the
+ *  Sessions, Commits and Decisions, whose items open under the tabs. The keys
+ *  that stepped through the rail step through the tabs and the sections. */
 export function useViewPlaces(): ReviewPlaces {
   // The latest document the viewer named, for the chips of its prose, which
   // are resolved without a context.
@@ -36,8 +35,15 @@ export function useViewPlaces(): ReviewPlaces {
   const memory = useRef<ViewMemory>({ section: null, file: null });
   return useMemo<ReviewPlaces>(
     () => ({
-      renderRail: (context) => <ViewRail context={context} />,
+      noRail: true,
       railRows: (context) => railRows(context),
+      // A session, a commit or the decisions opened from the side pane sit
+      // under the tabs, with none current: the way back to the review.
+      paneHead: (context) => (
+        <div className="mb-5">
+          <ViewTabs document={context.document} context={context} memory={memory} />
+        </div>
+      ),
       steps: (selection, context) => {
         latest.current = context.document;
         return context.document ? stepsOf(selection, context.document, context) : null;
@@ -55,18 +61,15 @@ export function useViewPlaces(): ReviewPlaces {
           return { kind: "risk", section, id: item };
         return { kind: "section", id: section };
       },
-      // The tabs lead, so the rail starts folded on the page's own places;
-      // the workspace's panes (Files, Sessions and the rest) keep it open.
-      railFolded: onPage,
-      sidePaneFolded: onPage,
+      // The side pane starts folded, as the tabs want the width, and then
+      // stays as the reader leaves it, on the tabs and on what its lists
+      // open alike.
+      sidePaneFolded: () => true,
       quietHistory: true,
     }),
     [],
   );
 }
-
-const onPage = (selection: Selection) =>
-  ["summary", "changes", "risks", "section", "risk", "tile"].includes(selection.kind);
 
 function railKey(place: ViewPlace): string {
   if (place.tab === "overview") return "overview";
@@ -148,55 +151,4 @@ function stepsOf(
     railKey: railKey(place),
     sectionId: place.tab === "sections" && place.section !== CONTEXT_ID ? place.section : undefined,
   };
-}
-
-/** The rail: the tabs, with the sections under How it works. */
-function ViewRail({ context }: { context: ReviewPlaceContext }) {
-  const document = context.document;
-  if (!document) return null;
-  const view = reviewViewOf(document);
-  const place = placeOf(context.selection, document, view);
-  const list = listedSections(document, view);
-  const first = defaultSection(list);
-  return (
-    <>
-      <SideNavButton
-        label={TAB_LABEL.overview}
-        icon={SummaryIcon}
-        tint="accent"
-        active={place.tab === "overview"}
-        controls="review-section"
-        onSelect={() => context.select({ kind: "summary" })}
-      />
-      <SideNavButton
-        label={TAB_LABEL.sections}
-        icon={SectionIcon}
-        tint="accent"
-        active={false}
-        controls="review-section"
-        onSelect={() => first && context.select({ kind: "section", id: first })}
-      />
-      <SideNavNest>
-        {list.map((section) => (
-          <SideNavButton
-            key={section.id}
-            label={section.title}
-            depth={1}
-            wrap
-            active={place.tab === "sections" && place.section === section.id}
-            controls="review-section"
-            onSelect={() => context.select({ kind: "section", id: section.id })}
-          />
-        ))}
-      </SideNavNest>
-      <SideNavButton
-        label={TAB_LABEL.code}
-        icon={FilesIcon}
-        tint="accent"
-        active={place.tab === "code"}
-        controls="review-section"
-        onSelect={() => context.select(selectionOf({ tab: "code", file: null }))}
-      />
-    </>
-  );
 }

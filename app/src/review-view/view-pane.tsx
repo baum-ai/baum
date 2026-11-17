@@ -1,5 +1,6 @@
 import { type RefObject, useEffect, useMemo } from "react";
 import { ReviewFilesProvider } from "@baum/viewer/components/code-file-link";
+import { ReviewSidePaneButton } from "@baum/viewer/components/review-navigator";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { tabPanelProps } from "@baum/viewer/components/tabs";
 import { SegmentedControl } from "@baum/viewer/components/ui";
@@ -60,15 +61,6 @@ export function ViewPane({
     if (place.tab === "sections") memory.current.section = place.section;
     if (file) memory.current.file = file.path;
   }, [historical, place.tab, place.tab === "sections" ? place.section : "", file, memory]);
-  const openTab = (tab: ViewTab) => {
-    if (tab === "overview") return go({ tab });
-    if (tab === "sections") {
-      const last = memory.current.section;
-      const section = last && list.some((each) => each.id === last) ? last : defaultSection(list);
-      return section ? go({ tab, section }) : undefined;
-    }
-    go({ tab, file: memory.current.file });
-  };
   // A code link on the page (a hunk chip, a file in "Where this fits", a
   // diff's file name) opens the file in the Code tab rather than the Files
   // pane.
@@ -87,13 +79,14 @@ export function ViewPane({
   return (
     <ReviewFilesProvider files={reviewFiles}>
       <div className="flex min-w-0 flex-1 flex-col gap-5">
-        <SegmentedControl
-          label="Review"
-          variant="tabs"
+        <ViewTabs
+          document={snapshot}
+          context={context}
+          memory={memory}
+          tab={place.tab}
           tablist={tablist}
-          value={place.tab}
-          items={TABS}
-          onChange={openTab}
+          // One way to the side pane, beside the current version's tabs.
+          sidePane={!(historical && context.comparing)}
         />
         {TABS.map((tab) => (
           <div
@@ -137,6 +130,61 @@ export function ViewPane({
         ))}
       </div>
     </ReviewFilesProvider>
+  );
+}
+
+/** The page's tabs, which open where each was read last. On a place the
+ *  viewer draws (a session, a commit or the decisions, opened from the side
+ *  pane) no tab is current, and they are the way back to the review. Where
+ *  the panes stack, the button at their end opens the side pane. */
+export function ViewTabs({
+  document,
+  context,
+  memory,
+  tab,
+  tablist,
+  sidePane = true,
+}: {
+  document: ReviewDocument | null;
+  context: ReviewPlaceContext;
+  memory: RefObject<ViewMemory>;
+  /** The tab on show; absent away from the tabs. */
+  tab?: ViewTab;
+  /** The tab panels' ids, with the tab on show. */
+  tablist?: string;
+  sidePane?: boolean;
+}) {
+  const list = useMemo(
+    () => (document ? listedSections(document, reviewViewOf(document)) : []),
+    [document],
+  );
+  const go = (next: ViewPlace) => context.select(selectionOf(next));
+  const openTab = (next: ViewTab) => {
+    if (next === "overview") return go({ tab: next });
+    if (next === "sections") {
+      const last = memory.current.section;
+      const section = last && list.some((each) => each.id === last) ? last : defaultSection(list);
+      return section ? go({ tab: next, section }) : undefined;
+    }
+    go({ tab: next, file: memory.current.file });
+  };
+  return (
+    <div className="flex min-w-0 items-end">
+      <SegmentedControl<ViewTab | "">
+        label="Review"
+        variant="tabs"
+        tablist={tab ? tablist : undefined}
+        value={tab ?? ""}
+        items={TABS}
+        onChange={(next) => next && openTab(next)}
+        className="min-w-0 flex-1"
+      />
+      {sidePane ? (
+        <span className="box-content flex h-9 flex-none items-center border-b border-subtle wide:hidden">
+          <ReviewSidePaneButton className="h-9" />
+        </span>
+      ) : null}
+    </div>
   );
 }
 

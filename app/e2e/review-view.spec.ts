@@ -241,6 +241,152 @@ test("tiles being made stand on their sections as pending cards", async ({ page 
   await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
 });
 
+/** A session at work on #7 and two decisions it made, as the daemon lists
+ *  them, so the side pane has Sessions, Commits and Decisions. */
+async function withSessionWork(page: Page) {
+  const now = new Date().toISOString();
+  await page.route("**/api/live-sessions", (route) =>
+    route.fulfill({
+      json: {
+        sessions: [
+          {
+            agent: "claude-code",
+            session_id: "running-on-7",
+            state: "idle",
+            waiting_reason: "turn_finished",
+            started_at: now,
+            last_activity_at: now,
+            last_event: "stop",
+            repository: "acme/demo",
+            branch: "feature",
+            pr: 7,
+            title: "Resolve the conflict with the base",
+          },
+        ],
+      },
+    }),
+  );
+  const decision = (id: string, title: string, who: string) => ({
+    decision_id: id,
+    title,
+    summary: `${title}, in short.`,
+    category: "architecture",
+    who,
+    superseded: false,
+    files: [],
+    decided_at: now,
+  });
+  await page.route(/\/api\/decisions\?/, (route) =>
+    route.fulfill({
+      json: {
+        review_generated_at: now,
+        sessions: [
+          {
+            agent: "claude-code",
+            session_id: "running-on-7",
+            title: "Resolve the conflict with the base",
+            live: true,
+            coverage: "extracted",
+            updated_at: now,
+            capturing: false,
+            decisions: [
+              decision("dec_1", "Keep the relay opt-in", "user"),
+              decision("dec_2", "Deny by default in the allowlist", "agent"),
+            ],
+          },
+        ],
+      },
+    }),
+  );
+}
+
+/** Opens a tab of the side pane, from under its ⋯ when it did not fit, once
+ *  the pull request's lists have arrived. */
+async function sideTab(page: Page, name: string) {
+  const tab = page.locator(`#conversation-tab-${name.toLowerCase()}`);
+  await expect(async () => {
+    if (await tab.count()) await tab.click({ timeout: 1000 });
+    else {
+      const more = page.getByRole("group", { name: "More tabs" });
+      if (!(await more.isVisible())) await page.locator("[data-pane-tabs-more]").click();
+      await more.getByRole("button", { name }).click({ timeout: 1000 });
+    }
+    await expect(tab).toHaveAttribute("aria-selected", "true", { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+test("the side pane lists the sessions and decisions, which open under the tabs", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await withSessionWork(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7);
+  // No rail: the tabs are the way through the page.
+  await expect(page.locator("#review-rail")).toHaveCount(0);
+  // The side pane starts folded; ] unfolds it.
+  await expect(page.getByRole("button", { name: "Expand side pane" })).toBeVisible();
+  await page.keyboard.press("]");
+  await expect(page.getByRole("button", { name: "Collapse side pane" })).toBeVisible();
+  await sideTab(page, "Sessions");
+  const aside = page.locator("#review-aside");
+  await aside.getByRole("button", { name: /Resolve the conflict with the base/ }).click();
+  await expect(page).toHaveURL(/pane=session&session=running-on-7/);
+  // The side pane stays open, on the session's row.
+  await expect(
+    aside.getByRole("button", { name: /Resolve the conflict with the base/ }),
+  ).toHaveAttribute("aria-pressed", "true");
+  // The tabs stand above the session, none of them current, and lead back.
+  const tabs = page.locator("#review-section").getByRole("group", { name: "Review" });
+  await expect(tabs.getByRole("button", { name: "Overview" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await sideTab(page, "Decisions");
+  await aside.getByRole("button", { name: /Deny by default in the allowlist/ }).click();
+  await expect(page).toHaveURL(/pane=decisions&decision=dec_2/);
+  await expect(
+    page
+      .locator("#review-section")
+      .getByRole("button", { name: /Deny by default in the allowlist/ }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await tabs.getByRole("button", { name: "Overview" }).click();
+  await expect(
+    page.getByRole("tablist", { name: "Review" }).getByRole("tab", { name: "Overview" }),
+  ).toHaveAttribute("aria-selected", "true");
+  expect(errors).toEqual([]);
+});
+
+test("below the side by side width the tabs open the side pane, with no navigator bar", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 900 });
+  await open(page, PR7);
+  await expect(page.locator('button[aria-controls="review-rail"]')).toHaveCount(0);
+  await page.locator('#review-section button[aria-controls="review-aside"]').click();
+  const aside = page.locator("#review-aside");
+  await expect(aside).toBeVisible();
+  await sideTab(page, "Commits");
+  await page.locator("#conversation-panel-commits button").first().click();
+  await expect(page).toHaveURL(/pane=commit&commit=/);
+  // Picking it closes the sheet; the commit sits under the tabs.
+  await expect(aside).toBeHidden();
+  await expect(
+    page.locator("#review-section").getByRole("group", { name: "Review" }),
+  ).toBeVisible();
+  expect(await overflows(page)).toBe(false);
+});
+
+test("the Code tab names the open file once, in its diff's header", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, `${PR7}${PLACES.find(([name]) => name === "code")![1]}`);
+  const file = page.locator("#review-view-file");
+  await expect(
+    file.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" }),
+  ).toContainText("Explained in");
+  await expect(file.getByText("oss/internal/uiserver/remote.go", { exact: true })).toHaveCount(1);
+});
+
 test("the setting chooses the review page", async ({ page }) => {
   await page.route(/\/api\/tiles\?/, (route) =>
     route.fulfill({ json: { document: REVIEW_1303, view: VIEW_1303 } }),

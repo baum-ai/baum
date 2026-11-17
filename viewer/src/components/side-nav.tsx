@@ -240,6 +240,50 @@ export function SideNavDisclosure({
   );
 }
 
+/** A row of a list in the side pane that opens its item in the pane beside
+ *  it: a title of up to two lines and a line of small print under it, such
+ *  as a session's agent and time. The whole row is the one control. */
+export function SideNavEntry({
+  title,
+  meta,
+  active,
+  indicator,
+  controls,
+  onSelect,
+}: {
+  title: string;
+  meta?: ReactNode;
+  active: boolean;
+  /** Something happening now, as on a rail row: see `RowIndicator`. */
+  indicator?: "live" | "attention";
+  controls?: string;
+  onSelect: () => void;
+}) {
+  const state = active ? "active" : "idle";
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-controls={controls}
+      onClick={onSelect}
+      className={cn(rowClass(state, 0), "cursor-pointer items-start active:translate-y-px")}
+    >
+      <ActiveMark active={active} />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="line-clamp-2 leading-snug [overflow-wrap:anywhere]" title={title}>
+          {title}
+        </span>
+        {meta ? <span className="truncate text-xs font-normal text-tertiary">{meta}</span> : null}
+      </span>
+      {indicator ? (
+        <span className="mt-1 flex flex-none">
+          <RowIndicator indicator={indicator} />
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 /** A row that switches what the pane beside it shows. */
 export function SideNavButton({
   label,

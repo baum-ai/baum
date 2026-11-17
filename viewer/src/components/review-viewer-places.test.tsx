@@ -783,3 +783,113 @@ describe("ReviewViewer places: keys and chips in earlier versions", () => {
     expect(search(container)).toContain("pane=tile&tile=sec_retry&tile_item=dec_snapshot");
   });
 });
+
+/** A host's Decisions, Sessions and Commits, one item each. */
+const groups = () => ({
+  decisions: {
+    renderPane: (_actions: unknown, open?: string) => <p>Decisions pane {open ?? "all"}</p>,
+    renderList: (actions: { select: (selection: Selection) => void }) => (
+      <button type="button" onClick={() => actions.select({ kind: "decisions", id: "dec_a" })}>
+        Decision a
+      </button>
+    ),
+  },
+  sessions: {
+    state: { status: "ready" as const, items: [{ id: "ses_a", label: "Session a" }] },
+    renderPane: (id: string | null) => <p>Session pane {id ?? "all"}</p>,
+  },
+  commits: {
+    state: { status: "ready" as const, items: [{ id: "c0ffee", label: "Commit a" }] },
+    renderPane: (id: string | null) => <p>Commit pane {id ?? "all"}</p>,
+  },
+});
+const asideTabs = (container: HTMLElement) =>
+  [...container.querySelectorAll('#review-aside [role="tab"]')].map((tab) => tab.textContent);
+const asideTab = (container: HTMLElement, name: string) =>
+  [...container.querySelectorAll<HTMLButtonElement>('#review-aside [role="tab"]')].find(
+    (each) => each.textContent === name,
+  )!;
+const buttonNamed = (container: HTMLElement, name: string) =>
+  [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+    (each) => each.textContent === name,
+  )!;
+
+describe("ReviewViewer places without a rail", () => {
+  it("draws no rail and no navigator bar, and lists the groups as side pane tabs", async () => {
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({ noRail: true, renderRail: undefined }),
+          ...groups(),
+          comments: { count: 0, render: () => <p>Comments</p> },
+        })}
+      </Host>,
+    );
+    expect(container.querySelector("#review-rail")).toBeNull();
+    expect(container.querySelector('button[aria-controls="review-rail"]')).toBeNull();
+    expect(container.querySelector('button[aria-label^="Next:"]')).toBeNull();
+    expect(asideTabs(container)).toEqual([
+      "Details",
+      "Activity",
+      "Comments",
+      "Sessions",
+      "Commits",
+      "Decisions",
+    ]);
+  });
+
+  it("keeps the rail and the side pane's tabs as they were without noRail", async () => {
+    const container = await render(<Host>{viewer({ places: dummyPlaces(), ...groups() })}</Host>);
+    expect(container.querySelector("#review-rail")).not.toBeNull();
+    expect(asideTabs(container)).toEqual(["Details", "Activity"]);
+  });
+
+  it("opens an item of a side pane list in the review pane, under the host's head", async () => {
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({
+            noRail: true,
+            renderRail: undefined,
+            paneHead: (context) => (
+              <button type="button" onClick={() => context.select({ kind: "summary" })}>
+                Back to the review
+              </button>
+            ),
+          }),
+          ...groups(),
+        })}
+      </Host>,
+    );
+    await act(async () => asideTab(container, "Sessions").click());
+    await act(async () => buttonNamed(container, "Session a").click());
+    const pane = container.querySelector("#review-section")!;
+    expect(pane.textContent).toContain("Session pane ses_a");
+    expect(pane.textContent).toContain("Back to the review");
+    expect(buttonNamed(container, "Session a").getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () => asideTab(container, "Decisions").click());
+    await act(async () => buttonNamed(container, "Decision a").click());
+    expect(search(container)).toContain("pane=decisions&decision=dec_a");
+    expect(pane.textContent).toContain("Decisions pane dec_a");
+
+    await act(async () => buttonNamed(container, "Back to the review").click());
+    expect(pane.textContent).not.toContain("Back to the review");
+    expect(pane.querySelector('[data-testid="host-pane"]')?.textContent).toContain("summary:");
+  });
+
+  it("steps the keys through the host's places alone", async () => {
+    const steps = { current: null } as NonNullable<ReviewViewerProps["steps"]>;
+    await render(
+      <Host initial="pane=tile&tile=tile-b">
+        {viewer({
+          places: dummyPlaces({ noRail: true, renderRail: undefined }),
+          ...groups(),
+          steps,
+        })}
+      </Host>,
+    );
+    expect(steps.current?.rail?.previous?.label).toBe("Host row tile-a");
+    expect(steps.current?.rail?.next).toBeNull();
+  });
+});

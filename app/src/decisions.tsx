@@ -1,8 +1,10 @@
-import { createContext, useContext, useEffect, useId, useState } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
 import { formatRelative, formatDateTime, formatTime } from "@baum/viewer/components/format";
 import { ChevronRightIcon } from "@baum/viewer/components/icons";
+import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { Item } from "@baum/viewer/components/review-parts";
+import { SideNavEntry } from "@baum/viewer/components/side-nav";
 import { Badge, CardHeader } from "@baum/viewer/components/ui";
 import {
   agentName,
@@ -175,13 +177,30 @@ function decisionGroups(decisions: CapturedDecision[]) {
 /** One decision as a row to scan: its title, kind and time, with its summary
  *  on a line under it; opened, the whole summary, why it was made and the
  *  files it touched. Who decided is the group it is listed under. */
-function DecisionRow({ decision: d }: { decision: CapturedDecision }) {
-  const [open, setOpen] = useState(false);
+function DecisionRow({
+  decision: d,
+  opened = false,
+}: {
+  decision: CapturedDecision;
+  /** Opens with the pane, brought into view: the one the reader picked from
+   *  the side pane's list. */
+  opened?: boolean;
+}) {
+  const [open, setOpen] = useState(opened);
   const id = useId();
+  const row = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    const target = row.current;
+    if (!opened || !target) return;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+    const cancel = centerJump(target, reduced);
+    flashJump(target, reduced);
+    return cancel;
+  }, [opened]);
   const title = d.title || d.summary;
   const summary = d.title && d.summary ? d.summary : "";
   return (
-    <li className="local-decision" data-review-block="">
+    <li ref={row} className="local-decision" data-review-block="">
       <button
         type="button"
         className="local-decision-head"
@@ -387,6 +406,7 @@ export function PullRequestDecisionsPane({
   live,
   heading = false,
   scope = "this pull request",
+  open,
 }: {
   read: PullRequestDecisionsRead;
   /** Titles of the sessions in progress, which the answer leaves out. */
@@ -395,6 +415,8 @@ export function PullRequestDecisionsPane({
   heading?: boolean;
   /** What the sessions are linked to, in the heading. */
   scope?: string;
+  /** The decision to open and bring into view. */
+  open?: string;
 }) {
   const now = useNow();
   const { sessions, total, provisional, reviewGeneratedAt } = read;
@@ -419,10 +441,7 @@ export function PullRequestDecisionsPane({
       ) : null}
       <ol className="local-decisions-sessions">
         {sessions.map((s) => {
-          const title =
-            s.title ||
-            live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
-            s.session_id;
+          const title = sessionTitle(s, live);
           return (
             <Item key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
               <h3>
@@ -448,7 +467,11 @@ export function PullRequestDecisionsPane({
                   </h4>
                   <ul className="local-decisions-list">
                     {group.decisions.map((d) => (
-                      <DecisionRow key={d.decision_id} decision={d} />
+                      <DecisionRow
+                        key={d.decision_id}
+                        decision={d}
+                        opened={d.decision_id === open}
+                      />
                     ))}
                   </ul>
                 </section>
@@ -457,6 +480,77 @@ export function PullRequestDecisionsPane({
           );
         })}
       </ol>
+    </div>
+  );
+}
+
+/** What to call a session of the decisions: its title, else the title of the
+ *  session in progress, else its id. */
+function sessionTitle(s: SessionDecisions & { title?: string }, live: LiveSession[]) {
+  return (
+    s.title ||
+    live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
+    s.session_id
+  );
+}
+
+/** Markdown's marks left out of a title shown as plain text. */
+const plain = (text: string) => text.replace(/[`*_]/g, "");
+
+/** A pull request's decisions as a compact list, for the side pane of the
+ *  overview tabs: a row each, under its session's name when there are
+ *  several, that opens the Decisions pane on it (`{ kind: "decisions", id }`). */
+export function PullRequestDecisionsList({
+  read,
+  live,
+  selected,
+  onOpen,
+}: {
+  read: PullRequestDecisionsRead;
+  live: LiveSession[];
+  selected?: string;
+  onOpen: (id: string) => void;
+}) {
+  const sessions = read.sessions.filter((s) => s.decisions.length > 0);
+  if (sessions.length === 0)
+    return (
+      <p className="px-2.5 py-1.5 text-base text-secondary">
+        {read.sessions.map((s) => captureState(s, Date.now())).find(Boolean) ||
+          "No decisions were captured for this pull request."}
+      </p>
+    );
+  return (
+    <div className="flex flex-col gap-3">
+      {sessions.map((s) => (
+        <section
+          key={`${s.agent}:${s.session_id}`}
+          aria-label={sessionTitle(s, live)}
+          className="flex flex-col gap-0.5"
+        >
+          {sessions.length > 1 ? (
+            <p className="truncate px-2.5 pb-1 text-xs text-tertiary">
+              {agentName(s.agent)} · {sessionTitle(s, live)}
+            </p>
+          ) : null}
+          {s.decisions.map((d) => (
+            <SideNavEntry
+              key={d.decision_id}
+              title={plain(d.title || d.summary)}
+              meta={[
+                label(d.category),
+                d.who === "agent" ? "By the agent" : "By you",
+                formatTime(d.decided_at),
+                d.provisional ? "Provisional" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              active={d.decision_id === selected}
+              controls="review-section"
+              onSelect={() => onOpen(d.decision_id)}
+            />
+          ))}
+        </section>
+      ))}
     </div>
   );
 }
