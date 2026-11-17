@@ -51,9 +51,10 @@ ignore it.
 
 A diagram only where it explains better than text: how parts connect, what
 happens in what order, what changed between before and after, what is
-allowed against what is not. Most sections get none. Never draw a diagram
-that lists what the section's text already says in the same order. At most
-8, and usually 0 to 3.
+allowed against what is not. Most sections of a small change get none; a
+change with several moving parts usually has 2 to 4, each on the section it
+explains. Never draw a diagram that lists what the section's text already
+says in the same order. At most 8.
 
 The overview's `diagram` shows the whole change at a glance: the parts it
 touches and how a request, a job or a person goes through them. Draw it when
@@ -69,7 +70,10 @@ notice) and a `source`: the hunk ids it rests on, from the sections'
   "Once", "Always"); one lane without a label is a plain flow. A step has a
   `title` (at most 60 characters), an optional `note` (at most 80), a
   `tone` and a `join`, the connector before it: `arrow` (the default),
-  `both` for a two-way exchange, `none` to list steps side by side.
+  `both` for a two-way exchange, `none` to list steps side by side. An
+  arrow means "then": a lane is one path, so an outcome that happens
+  instead of the next step (a refusal, a fallback, an error) goes in a lane
+  of its own ("Refused", "Fallback") or in the caption, never after it.
 - `columns`: 2 or 3 labelled lists side by side, up to 8 items each: before
   and after, can and can't, kept and removed. An item has a `title` and an
   optional `note`.
@@ -100,8 +104,9 @@ needs no entry.
 ### The overview
 
 - `risk_summary`: why the score is what it is, in at most two sentences:
-  what could go wrong and what limits it. Null when the score's reasons
-  already say it.
+  what could go wrong and what limits it. Always write it when the review
+  has a score: the score's reasons are a list per section, not a
+  justification of the number.
 - `verdict`: only when the reader must do something before merging: merge
   another pull request first, make a decision, or fix something. Null
   otherwise, which is most reviews. It must make sense with no other
@@ -111,6 +116,11 @@ needs no entry.
 - `screenshots`: up to 3 attachment ids that show what the change looks like
   to a person (a screen, a page, terminal output). Never a diagram the
   author drew when your own diagram shows the same. Empty when none does.
+  An image's `heading` is only the heading above where it sits in the
+  description, and uploaded images are often appended at its end, under
+  whatever section comes last: judge an image by its alt text and by what
+  the change does. When a change alters a screen and the description has
+  pictures of it, show them.
 - `intent`: up to 3 things a person asked for in the linked sessions, each
   with the `session` id and the `prompt` index it comes from: `asked` in a
   few words of their own, and `got`, what the pull request does about it,
@@ -122,7 +132,11 @@ needs no entry.
 These rules are mandatory for every text you write.
 
 - Plain text: no markdown, no bold, no headings, no links. `code` spans are
-  allowed for identifiers.
+  allowed for identifiers in the overview's texts, never in a diagram.
+- A diagram is in plain words: no code, function, type, file, table or
+  column names. Name a part by what it does ("the build loop", "the
+  checkpoint", "the session check"); the section's text and code name the
+  identifiers. A library tile or an exhibit is where code names belong.
 - Titles are plain subjects: "How a phone reaches the daemon", "Pairing a
   phone", "What a phone can reach". Never two things joined by a comma and
   "and" ("Pairing, and revoking").
@@ -130,7 +144,8 @@ These rules are mandatory for every text you write.
   mobile, after one decision."), and no dramatic colon ("A new entry point:
   phones reach it through a relay."). Write "Phones reach the daemon through
   a relay." instead.
-- Never use the word "evidence".
+- Never use the word "evidence", in any text, diagram steps included, even
+  when the review uses it: say what it is (tests, a log, the code, a run).
 - No line counts, no per-file breakdowns, no hunk ids in text (cite hunks in
   `source` only), and no bare pull request numbers: say what the other pull
   request did ("the relay pull request fixes the close codes").
