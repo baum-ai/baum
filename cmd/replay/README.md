@@ -229,6 +229,43 @@ outline), `exhibits_called`, `exhibits_reused`, `exhibits_returned`, `exhibits_k
 revision is offered the composition the one before it got, when the same run
 generated it.
 
+### baum.review/2 in levels
+
+`--generator v2` writes each case as a baum.review/2 document, as the desktop
+does with tile reviews on once the levels land (`generate.Options.V2`,
+`agent/orchestrate`): the map, then the section agents and the context agent
+at once, each tile once its section is written, and the overview. Every
+section is written; nothing is reused. `--generator-option concurrency=N`
+bounds a case's calls at once (default 4). Prompt overrides take the ids
+`review-v2-shared`, `review-map`, `review-section`, `review-context-v2`,
+`review-tile` and `review-overview`.
+
+```sh
+oss/bin/replay --dataset <dir> --generator v2 --case <id> --name v2-first --max-cost-usd 20
+```
+
+A case has no clone and no daemon, so its calls run over the unpacked
+`head/` and `merge-base/` trees and `bundle.json`, without baum's MCP server:
+what a backend without MCP gets. Claude Code has its sandboxed shell where the
+machine can enforce the sandbox (bubblewrap and socat on Linux, macOS);
+`progress.log` says when it does not.
+
+The case's `document.json` is the completed document. Beside it:
+
+| File | Holds |
+| --- | --- |
+| `calls/<level>/<id>/prompt.md`, `input.txt` | A call's instructions (with the tools and workspace sections) and the data after them. The levels are `map`, `sections`, `context`, `tiles` and `overview`; the id is the section's or tile's. |
+| `calls/<level>/<id>/reply.json`, `reply-2.json`, `findings-N.txt` | Each pass's reply, masked, and what the host found in it when it sent it back. A library tile's reply is its fill's data. |
+| `levels.json` | A `replay.v2/1` record: calls, tokens, repairs, seconds and `cost_usd` per level, the calls that ran, failed, were reused or skipped, and the document's generation record. |
+
+Validation checks the schema and that every hunk is in a section.
+`replay metrics` reports, from the document, `v2_sections`,
+`v2_logical_sections`, `v2_sections_failed`, `v2_tiles`, `v2_tiles_ready`,
+`v2_tiles_failed`, `v2_tiles_type_<type>`, `v2_steps`, `v2_risks`,
+`v2_context_missing` and `v2_overview_failed`; from `levels.json`
+`v2_repairs` and per level `v2_<level>_calls`, `_tokens`, `_seconds`,
+`_failed` and `_cost_usd`. Chains are not replayed.
+
 ## Detectors
 
 A detector is a small pure function over a case's diff (`detect.go`), so a

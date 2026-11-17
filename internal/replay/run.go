@@ -414,6 +414,10 @@ type trackedBackend struct {
 // review runs its details and context at once where the backend allows.
 func (b *trackedBackend) ConcurrentCalls() bool { return generate.ConcurrentCalls(b.CheckedBackend) }
 
+// KeepsSessions forwards the backend's agent.SessionKeeper, so the overview
+// resumes the map's session where the backend allows.
+func (b *trackedBackend) KeepsSessions() bool { return agent.KeepsSessions(b.CheckedBackend) }
+
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	id := b.n.Add(1)
 	name := fmt.Sprintf("call-%d %s pass %d", id, r.Stage, r.Pass)
