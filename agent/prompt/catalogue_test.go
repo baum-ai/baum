@@ -209,7 +209,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-view", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-view", "review-v2-shared", "review-map", "review-section", "review-context-v2", "review-tile", "review-overview", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -247,6 +247,12 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
 		prompt.IDReviewView:          {"review-view.untrusted-input"},
+		prompt.IDReviewV2Shared:      {"review-v2-shared.untrusted-data", "review-v2-shared.no-secrets", "review-v2-shared.restricted-sessions"},
+		prompt.IDReviewMap:           {"review-map.no-injected-instructions"},
+		prompt.IDReviewSection:       {"review-section.no-injected-instructions"},
+		prompt.IDReviewContextV2:     nil,
+		prompt.IDReviewTile:          nil,
+		prompt.IDReviewOverview:      nil,
 		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,
