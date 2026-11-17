@@ -602,6 +602,9 @@ export function focusSession(
     {},
   );
 }
+/** A path with the home folder written as `~`. */
+export const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
   // Analytics names agents by their session store's vendor slug.

@@ -1,6 +1,7 @@
 package tiles
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 )
@@ -27,20 +28,33 @@ func (s Size) Units() int {
 }
 
 // Arrange orders a document's layout for its landing page and sets Landing.
-// Pinned entries move to the front; so does the risks tile when it ranks an
-// active critical or high risk and would otherwise not be on the landing
-// page. Both moves are stable. A converted document pins nothing and places
-// the risks tile second, where it is always on the landing page, so its order
-// is unchanged.
+// Pinned entries move to the front; when the risks tile ranks an active
+// critical or high risk and would otherwise not be on the landing page, it
+// moves to the very front, ahead of the pinned entries. Entries move with
+// their group, so groups stay contiguous, and both moves are stable. A
+// converted document pins nothing and places the risks tile second, where it
+// is always on the landing page, so its order is unchanged.
 func Arrange(doc *Document) {
 	layout := doc.Layout
-	front := func(entry Entry) bool { return entry.Pin }
-	layout.Entries = frontFirst(layout.Entries, front)
+	layout.Entries = rankFirst(layout.Entries, func(entry Entry) int {
+		if entry.Pin {
+			return 0
+		}
+		return 1
+	})
 	layout.Landing = Landing(layout)
 	if mustShowRisks(doc) {
 		for i, entry := range layout.Entries {
 			if entry.Tile == TypeRisks && i >= layout.Landing {
-				layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin || entry.Tile == TypeRisks })
+				layout.Entries = rankFirst(layout.Entries, func(entry Entry) int {
+					switch {
+					case entry.Tile == TypeRisks:
+						return 0
+					case entry.Pin:
+						return 1
+					}
+					return 2
+				})
 				layout.Landing = Landing(layout)
 				break
 			}
@@ -49,18 +63,30 @@ func Arrange(doc *Document) {
 	doc.Layout = layout
 }
 
-func frontFirst(entries []Entry, front func(Entry) bool) []Entry {
-	entries = slices.Clone(entries)
-	slices.SortStableFunc(entries, func(a, b Entry) int {
-		switch {
-		case front(a) && !front(b):
-			return -1
-		case front(b) && !front(a):
-			return 1
+// rankFirst stably orders entries by rank, lowest first, moving each run of
+// consecutive members of one group as a unit ranked by its lowest member.
+func rankFirst(entries []Entry, rank func(Entry) int) []Entry {
+	type block struct {
+		entries []Entry
+		rank    int
+	}
+	var blocks []block
+	for i, entry := range entries {
+		r := rank(entry)
+		if i > 0 && entry.Group != "" && entry.Group == entries[i-1].Group {
+			last := &blocks[len(blocks)-1]
+			last.entries = append(last.entries, entry)
+			last.rank = min(last.rank, r)
+			continue
 		}
-		return 0
-	})
-	return entries
+		blocks = append(blocks, block{entries: []Entry{entry}, rank: r})
+	}
+	slices.SortStableFunc(blocks, func(a, b block) int { return cmp.Compare(a.rank, b.rank) })
+	out := make([]Entry, 0, len(entries))
+	for _, b := range blocks {
+		out = append(out, b.entries...)
+	}
+	return out
 }
 
 // mustShowRisks reports whether the risks tile ranks an active critical or

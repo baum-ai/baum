@@ -14,14 +14,7 @@
       "version": "19"
     }
   },
-  "ignorePatterns": [
-    "coverage/**",
-    "e2e-dist/**",
-    "generated/**",
-    "playwright-report/**",
-    "src/precompiled/**",
-    "test-results/**"
-  ],
+  "ignorePatterns": ["coverage/**", "e2e-dist/**", "playwright-report/**", "test-results/**"],
   "rules": {
     "eqeqeq": ["error", "smart"],
     "no-alert": "error",

@@ -526,8 +526,9 @@ func TestRedactPreviousTextUnderLinesObjects(t *testing.T) {
 	}
 }
 
-// The previous review's code excerpts are redacted a line array at a time.
-func TestRedactMasksSecretsSpanningPreviousTileLines(t *testing.T) {
+// A previous section's "lines" arrays, such as a code excerpt's, are redacted
+// a line array at a time.
+func TestRedactMasksSecretsSpanningPreviousContentLines(t *testing.T) {
 	redactor, err := NewRedactor()
 	if err != nil {
 		t.Fatal(err)
@@ -537,7 +538,7 @@ func TestRedactMasksSecretsSpanningPreviousTileLines(t *testing.T) {
 	for i, line := range key {
 		lines = append(lines, map[string]any{"kind": "add", "new_line": i + 1, "text": line})
 	}
-	content, err := json.Marshal(map[string]any{"tiles": []any{map[string]any{"id": "tile_key", "kind": "bug-fix", "code": []any{map[string]any{"path": "key.pem", "revision": strings.Repeat("a", 40), "why": "Adds the key", "review_version": 1, "diff": map[string]any{"hunks": []any{map[string]any{"header": fmt.Sprintf("@@ -0,0 +1,%d @@", len(key)), "lines": lines}}}}}}}})
+	content, err := json.Marshal(map[string]any{"excerpts": []any{map[string]any{"code": []any{map[string]any{"path": "key.pem", "revision": strings.Repeat("a", 40), "why": "Adds the key", "review_version": 1, "diff": map[string]any{"hunks": []any{map[string]any{"header": fmt.Sprintf("@@ -0,0 +1,%d @@", len(key)), "lines": lines}}}}}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +552,7 @@ func TestRedactMasksSecretsSpanningPreviousTileLines(t *testing.T) {
 		t.Fatalf("masked spans = %d, want 1", bundle.MaskedSpanCount)
 	}
 	var section struct {
-		Tiles []struct {
+		Excerpts []struct {
 			Code []struct {
 				Path string `json:"path"`
 				Diff struct {
@@ -563,12 +564,12 @@ func TestRedactMasksSecretsSpanningPreviousTileLines(t *testing.T) {
 					} `json:"hunks"`
 				} `json:"diff"`
 			} `json:"code"`
-		} `json:"tiles"`
+		} `json:"excerpts"`
 	}
 	if err := json.Unmarshal(bundle.Previous.Sections[0].Content, &section); err != nil {
 		t.Fatal(err)
 	}
-	code := section.Tiles[0].Code[0]
+	code := section.Excerpts[0].Code[0]
 	got := code.Diff.Hunks[0].Lines
 	if code.Path != "key.pem" || len(got) != len(key) {
 		t.Fatalf("source changed shape: %s", redacted)

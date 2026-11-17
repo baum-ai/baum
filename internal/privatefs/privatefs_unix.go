@@ -24,6 +24,10 @@ func ProtectDirectory(path string) error {
 	return nil
 }
 
+// ProtectFile does nothing on Unix: a file created with mode 0600 is private,
+// as the umask only removes permissions.
+func ProtectFile(string) error { return nil }
+
 // PrivateFile reports whether info describes a regular file owned by the
 // current user with no group or other permissions.
 func PrivateFile(_ string, info os.FileInfo) bool {

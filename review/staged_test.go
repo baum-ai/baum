@@ -9,7 +9,6 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 
 	bundlepkg "github.com/baum-ai/baum/bundle"
-	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
 const stagedTestHunk = "h_abcdefabcdef"
@@ -86,9 +85,7 @@ func properties(node any) map[string]any {
 func TestStagedSchemasAreProjectionsOfTheModelSchema(t *testing.T) {
 	v, err := sharedValidator()
 	checkNoError(t, err)
-	modelSchema, err := v.ModelSchema(tilecatalogue.Kinds())
-	checkNoError(t, err)
-	model := schemaTree(t, modelSchema)
+	model := schemaTree(t, v.Schema)
 	modelSection := properties(model["$defs"].(map[string]any)["section"])
 	modelSummary := properties(properties(model)["summary"])
 
@@ -103,18 +100,13 @@ func TestStagedSchemasAreProjectionsOfTheModelSchema(t *testing.T) {
 	checkEqual(t, modelSummary["text"], summary["text"])
 	checkEqual(t, modelSection["assessment"], section["assessment"])
 
-	detailsSchema, err := v.DetailsSchema(tilecatalogue.Kinds())
+	detailsSchema, err := v.DetailsSchema()
 	checkNoError(t, err)
 	details := schemaTree(t, detailsSchema)
 	section = properties(details["$defs"].(map[string]any)["section"])
-	checkEqual(t, []string{"attention", "blocks", "evidence", "id", "risks", "summary", "tiles"}, sortedKeys(keySet(section)))
+	checkEqual(t, []string{"attention", "blocks", "evidence", "id", "risks", "summary"}, sortedKeys(keySet(section)))
 	checkEqual(t, modelSection["risks"], section["risks"])
 	checkEqual(t, []any{"id", "summary"}, details["$defs"].(map[string]any)["section"].(map[string]any)["required"])
-	withoutTiles, err := v.DetailsSchema(nil)
-	checkNoError(t, err)
-	if strings.Contains(string(withoutTiles), `"tiles"`) {
-		t.Fatal("a details schema without tile kinds offers tiles")
-	}
 
 	contextSchema, err := v.ContextSchema()
 	checkNoError(t, err)
@@ -395,10 +387,9 @@ func TestReviewMinutes(t *testing.T) {
 				map[string]any{"kind": "code", "content": "a\nb\nc\n"},
 				map[string]any{"kind": "intent", "text": words(500)},
 			},
-			"tiles": []any{map[string]any{"kind": "bug-fix", "data": map[string]any{"code": map[string]any{"diff": map[string]any{"hunks": []any{map[string]any{"header": "@@ -1 +1 @@", "lines": []any{1, 2, 3}}}}}}}},
 		}},
 	}
-	// 400 words is 1 minute; the anchored, block and tile code adds no time.
+	// 400 words is 1 minute; the anchored and block code adds no time.
 	checkEqual(t, 1, ReviewMinutes(encodeJSON(t, document)))
 	document["summary"].(map[string]any)["breaking_change"] = "one"
 	checkEqual(t, 2, ReviewMinutes(encodeJSON(t, document)))

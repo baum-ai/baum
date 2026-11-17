@@ -1050,9 +1050,25 @@ var removeAll = os.RemoveAll
 
 // inside reports whether child is parent or below it.
 func inside(parent, child string) bool {
-	if p, err := filepath.EvalSymlinks(parent); err == nil {
-		parent = p
-	}
-	rel, err := filepath.Rel(parent, child)
+	rel, err := filepath.Rel(resolveExisting(parent), resolveExisting(child))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// resolveExisting is path with symlinks and Windows short names resolved in
+// its deepest existing part and the rest appended, so an alias of a directory
+// (/var for /private/var on macOS, RUNNER~1 on Windows) compares as the
+// directory, whether or not path itself exists yet.
+func resolveExisting(path string) string {
+	existing, rest := filepath.Clean(path), ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(existing); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		next := filepath.Dir(existing)
+		if next == existing {
+			return filepath.Clean(path)
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = next
+	}
 }
