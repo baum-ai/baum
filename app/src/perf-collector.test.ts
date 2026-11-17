@@ -55,6 +55,45 @@ describe("navigations", () => {
     ]);
   });
 
+  it("left before they settled stop there, and the next page does not complete them", () => {
+    const { clock, collector } = setup();
+    collector.navigation("?page=jobs");
+    const jobsLoading = collector.loading();
+    clock.now = 5;
+    collector.render("main", "update", 1, 1);
+    clock.now = 10;
+    // Leaving Jobs while it still loads unmounts its loader.
+    collector.navigation("?page=sessions");
+    jobsLoading();
+    clock.now = 12;
+    collector.render("main", "update", 1, 1);
+    collector.frame(20);
+    const [jobs, sessions] = collector.snapshot().navigations;
+    expect(jobs).toEqual({ search: "?page=jobs", start: 0, superseded: true });
+    expect(sessions).toMatchObject({
+      search: "?page=sessions",
+      start: 10,
+      content: 10,
+      settled: 10,
+    });
+  });
+
+  it("continue through a redirect", () => {
+    const { clock, collector } = setup();
+    collector.navigation("");
+    clock.now = 3;
+    collector.navigation("?inbox=1", true);
+    collector.render("app", "mount", 1, 1);
+    collector.frame(16);
+    expect(collector.snapshot().navigations).toEqual([
+      { search: "?inbox=1", start: 0, content: 16, settled: 16 },
+    ]);
+    // Once settled, a replaced entry is a navigation of its own.
+    clock.now = 20;
+    collector.navigation("?inbox=2", true);
+    expect(collector.snapshot().navigations).toHaveLength(2);
+  });
+
   it("count a loader released twice once", () => {
     const { collector } = setup();
     const first = collector.loading();

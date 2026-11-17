@@ -49,19 +49,19 @@ function install(): Collector {
 
   // Navigations: the app writes the address through history.
   let search = location.search;
-  const changed = () => {
+  const changed = (redirect: boolean) => {
     if (location.search === search) return;
     search = location.search;
-    collector.navigation(search);
+    collector.navigation(search, redirect);
   };
   for (const method of ["pushState", "replaceState"] as const) {
     const original = history[method].bind(history);
     history[method] = (...args: Parameters<History["pushState"]>) => {
       original(...args);
-      changed();
+      changed(method === "replaceState");
     };
   }
-  addEventListener("popstate", changed);
+  addEventListener("popstate", () => changed(false));
 
   // Requests, to their headers: a body may stream for as long as the page lives.
   const fetchOriginal = window.fetch.bind(window);

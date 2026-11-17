@@ -26,14 +26,16 @@ unchanged snapshot sets no new state. Every daemon answer the app polls is
 `no-store`, so none goes through the webview's HTTP cache: WebKitGTK 2.50's
 cache path leaks memory in its network process.
 
-`pnpm build:profile` builds the same pages for profiling (ENG-2059): with
+`pnpm build:profile` builds the same pages for profiling: with
 source maps, React's profiling build, and a collector, `window.__baumPerf`
 (`src/perf.ts`, `src/perf-collector.ts`). `__baumPerf.snapshot()` returns, as
 JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
 
 - each navigation, with `content` (the first frame after React committed with
   no `LoadingStatus` on screen) and `settled` (as content, with no request in
-  flight);
+  flight). Only the latest navigation completes: one left before it settled
+  is marked `superseded`, and a redirect (a replaced history entry) continues
+  the navigation on its way;
 - each key press and click, with `duration` from the input to the frame drawn
   after it, `delay` before the first listener ran and `processing` until the
   window's own listeners ran after React's;

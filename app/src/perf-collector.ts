@@ -1,16 +1,20 @@
 /** What the profiling build measures, kept apart from the browser so it can be
  *  tested: the installer in `perf.ts` feeds it events and frames. Times are
  *  milliseconds on the page's clock (`performance.now()`, which an event's
- *  `timeStamp` shares). See ENG-2059 for how scenarios read it. */
+ *  `timeStamp` shares). The local app's README says how scenarios read it. */
 
 export type Navigation = {
-  /** The address's search part: the app's pages are all query parameters. */
+  /** The address's search part: the app's pages are all query parameters.
+   *  A redirect (a replaced history entry) updates it in place. */
   search: string;
   start: number;
   /** The first frame after `start` with no loader on screen. */
   content?: number;
   /** As `content`, with no request in flight as well. */
   settled?: number;
+  /** Left for another navigation before it settled: its timings stop where
+   *  they were, since the next page's frames say nothing about this one. */
+  superseded?: true;
 };
 export type Interaction = {
   type: "keydown" | "click";
@@ -111,8 +115,18 @@ export function createCollector(env: CollectorEnv) {
   }
 
   return {
-    /** The address changed to `search` (or the app started on it). */
-    navigation(search: string) {
+    /** The address changed to `search` (or the app started on it). A
+     *  `redirect` replaced the history entry: while the current navigation
+     *  is still on its way it continues there, rather than starting anew. */
+    navigation(search: string, redirect = false) {
+      const current = navigations.at(-1);
+      if (current && current.settled === undefined) {
+        if (redirect) {
+          current.search = search;
+          return;
+        }
+        current.superseded = true;
+      }
       keep("navigations", navigations, { search, start: env.now() });
     },
     /** A loader is on screen until the returned function runs. */
@@ -171,11 +185,16 @@ export function createCollector(env: CollectorEnv) {
         if (gap > LONG_FRAME) keep("frames", frames.long, { start: lastFrame, duration: gap });
       }
       lastFrame = at;
-      // A navigation waits for React to commit after it, then for a frame
-      // with no loader showing.
-      for (const navigation of navigations) {
-        if (navigation.settled !== undefined || at <= navigation.start) continue;
-        if (lastCommit < navigation.start || loaders > 0) continue;
+      // The current navigation waits for React to commit after it, then for
+      // a frame with no loader showing.
+      const navigation = navigations.at(-1);
+      if (
+        navigation &&
+        navigation.settled === undefined &&
+        at > navigation.start &&
+        lastCommit >= navigation.start &&
+        loaders === 0
+      ) {
         navigation.content ??= at - navigation.start;
         if (inFlight === 0) navigation.settled = at - navigation.start;
       }
