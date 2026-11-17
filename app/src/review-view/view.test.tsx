@@ -128,7 +128,9 @@ describe("the review page's tabs", () => {
       "pane=tile&tile=code&tile_item=oss%2Finternal%2Fremote%2Frelay.go",
     );
     expect(tab(container, "Code").getAttribute("aria-selected")).toBe("true");
-    expect(panel(container).querySelector("h2")?.textContent).toBe("oss/internal/remote/relay.go");
+    expect(panel(container).querySelector("#review-view-file")?.getAttribute("aria-label")).toBe(
+      "oss/internal/remote/relay.go",
+    );
   });
 });
 
@@ -383,7 +385,7 @@ describe("Code", () => {
     await click(button(list, "Generated"));
     expect(list.textContent).toContain("go.sum");
     // It opens on the first file that is not generated.
-    expect(panel(container).querySelector("h2")?.textContent).toBe(
+    expect(panel(container).querySelector("#review-view-file")?.getAttribute("aria-label")).toBe(
       "oss/internal/uiserver/remote.go",
     );
   });
@@ -393,7 +395,9 @@ describe("Code", () => {
       "pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go",
     );
     const file = panel(container).querySelector<HTMLElement>("#review-view-file")!;
-    expect(file.textContent).toContain("Explained in");
+    // The diff's header names the file once, with where it is explained.
+    expect(file.querySelector("h2")).toBeNull();
+    expect(file.querySelector("article header")?.textContent).toContain("Explained in");
     const notes = [...file.querySelectorAll<HTMLElement>('ul[aria-label="Notes"] li')];
     expect(notes.map((note) => note.dataset.note)).toEqual(["step", "risk", "step"]);
     expect(notes[0]?.textContent).toContain("Deny by default");

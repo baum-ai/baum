@@ -1,5 +1,5 @@
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import pluralize from "pluralize";
 import { CodeDiff, type CodeDiffFile, type CodeDiffHunk } from "@baum/viewer/components/code-diff";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
@@ -158,39 +158,54 @@ function FileView({
     const entry = list.find((section) => section.id === id);
     return entry ? [entry] : [];
   });
+  const where =
+    explained.length > 0 ? (
+      <p className="text-xs text-secondary">
+        Explained in{" "}
+        {explained.map((section, at) => (
+          <span key={section.id}>
+            {at > 0 ? ", " : ""}
+            <JumpLink onClick={() => context.select({ kind: "section", id: section.id })}>
+              <InlineMarkdown>{section.title}</InlineMarkdown>
+            </JumpLink>
+          </span>
+        ))}
+      </p>
+    ) : null;
+  // The diff's header names the file, with where it is explained under its
+  // path; without a diff on show, a heading says both.
+  const heading = (
+    <div className="space-y-1">
+      <h2 className="font-mono text-base font-medium text-primary [overflow-wrap:anywhere]">
+        {file.path}
+      </h2>
+      {where}
+    </div>
+  );
   return (
     <section
       id={`${idPrefix}review-view-file`}
       aria-label={file.path}
       className="min-w-0 space-y-3"
     >
-      <div className="space-y-1">
-        <h2 className="font-mono text-base font-medium text-primary [overflow-wrap:anywhere]">
-          {file.path}
-        </h2>
-        {explained.length > 0 ? (
-          <p className="text-base text-secondary">
-            Explained in{" "}
-            {explained.map((section, at) => (
-              <span key={section.id}>
-                {at > 0 ? ", " : ""}
-                <JumpLink onClick={() => context.select({ kind: "section", id: section.id })}>
-                  <InlineMarkdown>{section.title}</InlineMarkdown>
-                </JumpLink>
-              </span>
-            ))}
-          </p>
-        ) : null}
-      </div>
       {shown ? (
-        <FileDiff document={document} file={file} notes={notes} context={context} />
+        <FileDiff
+          document={document}
+          file={file}
+          notes={notes}
+          context={context}
+          header={{ heading, note: where }}
+        />
       ) : (
-        <div className="flex flex-wrap items-center gap-3 rounded-md border border-dashed border-default px-3 py-2">
-          <p className="text-base text-secondary">This file is generated, so it's folded.</p>
-          <Button variant="secondary" size="compact" onClick={() => setShown(true)}>
-            Show the diff
-          </Button>
-        </div>
+        <>
+          {heading}
+          <div className="flex flex-wrap items-center gap-3 rounded-md border border-dashed border-default px-3 py-2">
+            <p className="text-base text-secondary">This file is generated, so it's folded.</p>
+            <Button variant="secondary" size="compact" onClick={() => setShown(true)}>
+              Show the diff
+            </Button>
+          </div>
+        </>
       )}
     </section>
   );
@@ -218,12 +233,16 @@ export function FileDiff({
   notes,
   context,
   noteLink = (note) => `${note.sectionTitle} →`,
+  header,
 }: {
   document: ReviewDocument;
   file: ViewFile;
   notes: Map<string, HunkNote[]>;
   context: ReviewPlaceContext;
   noteLink?: (note: HunkNote) => string;
+  /** The file's own heading, for when no diff is drawn, and a note for the
+   *  diff's header under its path. */
+  header?: { heading: ReactNode; note: ReactNode };
 }) {
   const missing = file.hunks.filter((hunk) => !hunk.diff);
   const source = context.hunkPatches;
@@ -253,7 +272,13 @@ export function FileDiff({
     Boolean(item.diff),
   );
   const lost = shown.filter((item) => !item.diff);
-  if (patch === undefined) return <LoadingStatus block>Reading {file.path}…</LoadingStatus>;
+  if (patch === undefined)
+    return (
+      <>
+        {header?.heading}
+        <LoadingStatus block>Reading {file.path}…</LoadingStatus>
+      </>
+    );
   const diff: CodeDiffFile | null =
     drawn.length > 0
       ? {
@@ -273,11 +298,13 @@ export function FileDiff({
     );
   return (
     <div className="space-y-3">
+      {diff ? null : header?.heading}
       {diff ? (
         <CodeDiff
           bare
           files={[diff]}
           className="mt-0"
+          headerNote={header?.note ? () => header.note : undefined}
           afterHunk={(_file, index) => {
             const pinned = notes.get(drawn[index]?.hunk.id ?? "");
             return pinned?.length ? <HunkNotes notes={pinned} go={go} link={noteLink} /> : null;

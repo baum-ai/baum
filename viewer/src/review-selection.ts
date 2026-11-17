@@ -2,7 +2,8 @@
  *  overview, one section or risk, the changed files (all folded, or one
  *  opened), the linked sessions
  *  (all of them, or one opened), the pull request's commits (all, or one
- *  named by its sha), the decisions its sessions made, or a host's own tile
+ *  named by its sha), the decisions its sessions made (with one opened, by
+ *  its id), or a host's own tile
  *  (and an item within it). A tile exists only where the host supplies
  *  places; elsewhere it reads as the Summary. Kept in the URL rather than component
  *  state, the same way the pull request itself already is, so a section or
@@ -19,7 +20,7 @@ export type Selection =
   | { kind: "session"; id: string }
   | { kind: "commits" }
   | { kind: "commit"; id: string }
-  | { kind: "decisions" }
+  | { kind: "decisions"; id?: string }
   | { kind: "tile"; id: string; item?: string };
 
 const PARAM = {
@@ -84,7 +85,10 @@ export function readSelection(search: URLSearchParams): Selection {
     }
   }
   if (pane === "commits") return { kind: "commits" };
-  if (pane === "decisions") return { kind: "decisions" };
+  if (pane === "decisions") {
+    const id = search.get(PARAM.decision);
+    return { kind: "decisions", ...(id ? { id } : {}) };
+  }
   if (pane === "commit") {
     const id = search.get(PARAM.commit);
     if (id) return { kind: "commit", id };
@@ -110,10 +114,12 @@ export function withSelection(search: URLSearchParams, selection: Selection): UR
     selection.kind === "risks" ||
     selection.kind === "files" ||
     selection.kind === "sessions" ||
-    selection.kind === "commits" ||
-    selection.kind === "decisions"
+    selection.kind === "commits"
   ) {
     next.set(PARAM.pane, selection.kind);
+  } else if (selection.kind === "decisions") {
+    next.set(PARAM.pane, "decisions");
+    if (selection.id) next.set(PARAM.decision, selection.id);
   } else if (selection.kind === "section") {
     next.set(PARAM.pane, "section");
     next.set(PARAM.section, selection.id);

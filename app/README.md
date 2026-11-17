@@ -2626,8 +2626,29 @@ generated, a pull request's review opens on three tabs (`src/review-view/`,
 drawn through the viewer's places seam by `useViewPlaces`): **Overview**,
 **How it works** and **Code**. A group's or a stack's page always shows the
 full review. The head, the version menu, history, Compare, the side pane, the
-Files, Decisions, Sessions and Commits panes and the review dialog are the
-full review's own; the rail lists the tabs and the sections and starts folded.
+Decisions, Sessions and Commits panes and the review dialog are the full
+review's own. The tabs are the way through the page, so it has no rail and,
+where the panes stack, no navigator bar (the viewer's `noRail`).
+
+- **The side pane** starts folded and then stays as the reader leaves it. Its
+  tabs are Details, Activity and Comments, then **Sessions**, **Commits** and
+  **Decisions** for the pull request that has them, each a compact list:
+  a session by title over its agent, start and duration (one at work first,
+  marked live or waiting), a commit by subject over its short id, author and
+  time, a decision by title over its kind, who made it and when, under its
+  session's name when there are several. The tabs that do not fit the pane's
+  width go under a ⋯ at the strip's end, which carries a tab's dot; the tab
+  on show always stands in the strip. Files is not offered: Code has the
+  files.
+- **An item opened from those lists** (a session's transcript, a commit with
+  its diff, the decisions with the one picked open and brought into view,
+  `pane=decisions&decision=<id>`) shows in the review pane under the page's
+  tabs, none of them current. The tabs are the way back: each opens where it
+  was read last, so the tab the reader came from returns them to the same
+  section or file. Its row stays marked in the side pane.
+- **Where the panes stack** the button at the end of the tabs opens the side
+  pane as a sheet (as `]` does), with the navigator bar's dot when CI fails or
+  a thread is open; picking an item closes the sheet.
 
 The page reads each version from `GET api/tiles` (a draft's from
 `api/jobs/{id}/draft?tiles=1`), whose `view` (`baum.view/1`: the overview's
@@ -2683,8 +2704,12 @@ has more than the review alone (tiles, or an overview part the model wrote:
 - **Comments and keys.** `c` comments on the section read (in any of its
   views), the file open in Code, or the pull request on the Overview; on a tile the keys are on
   (`j`/`k`), on that tile, placed on the code it cites. `a` asks the session
-  panel about the tile the keys are on, else the pull request. `←`/`→` step
-  through the rail, and Escape and `u` leave the pull request as on the full
+  panel about the tile the keys are on, else the pull request. `←`/`→`
+  (and `Shift+J`/`Shift+K`) step through the places the rail listed: the
+  Overview, each section, then Code, where `→` goes on from file to file; they do
+  nothing on a session, a commit or the decisions, whose tabs lead back. `]`
+  opens the side pane and gives it the keys (`h`/`l` move between its tabs,
+  those under the ⋯ too). Escape and `u` leave the pull request as on the full
   review. The session panel's focus names `view: tiles` and the tab: on the
   Overview `tab: overview`; on How it works `tab: sections` and the `section`
   read (`context` for Where this fits; a risk adds its `item`; a link to a

@@ -119,6 +119,21 @@ export const STATES: State[] = [
     },
   },
   {
+    // The side pane open on its Sessions tab (a sheet where the panes stack).
+    name: "side-sessions",
+    views: ["tiles"],
+    open: async (c) => openSideSessions(c),
+  },
+  {
+    // The first session of that list, opened in the review pane under the tabs.
+    name: "side-session",
+    views: ["tiles"],
+    open: async (c) => {
+      if (!(await openSideSessions(c))) return false;
+      await c.page.locator("#conversation-panel-sessions button").first().click();
+    },
+  },
+  {
     // The first hunk excerpt of the detail, opened to code.
     name: "excerpt",
     open: async ({ page }) => {
@@ -129,6 +144,44 @@ export const STATES: State[] = [
     },
   },
 ];
+
+/** Opens the side pane on its Sessions tab from the Overview: `]` unfolds it,
+ *  or opens its sheet where the panes stack. False when the pull request has
+ *  no Sessions tab or no session in it. */
+async function openSideSessions({ page, address }: Context) {
+  await page.goto(address());
+  await page.getByRole("tablist", { name: "Review" }).waitFor();
+  await page.keyboard.press("]");
+  await page.locator("#review-aside [role='tablist']").waitFor();
+  const tab = page.locator("#conversation-tab-sessions");
+  const more = page.locator("[data-pane-tabs-more]");
+  // The pull request's sessions arrive after the page: give them a moment.
+  await page
+    .waitForFunction(
+      () =>
+        document.querySelector("#conversation-tab-sessions") ||
+        document
+          .querySelector("[data-pane-tabs-more]")
+          ?.getAttribute("title")
+          ?.includes("Sessions"),
+      undefined,
+      { timeout: 10_000 },
+    )
+    .catch(() => undefined);
+  if (await tab.isVisible()) await tab.click();
+  else if ((await more.count()) && (await more.getAttribute("title"))?.includes("Sessions")) {
+    await more.click();
+    await page
+      .getByRole("group", { name: "More tabs" })
+      .getByRole("button", { name: "Sessions" })
+      .click();
+  } else return false;
+  const first = page.locator("#conversation-panel-sessions button").first();
+  return first.waitFor({ timeout: 10_000 }).then(
+    () => true,
+    () => false,
+  );
+}
 
 const slugOf = (pick: Pick) =>
   `${pick.repository.replace("/", "-")}-${pick.number}-v${pick.version || pick.versions.at(-1)}`;

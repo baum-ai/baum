@@ -128,11 +128,15 @@ export function CodeDiff({
   highlight = true,
   className,
   afterHunk,
+  headerNote,
 }: {
   files: readonly CodeDiffFile[];
   bare?: boolean;
   /** Drawn under a hunk, across the table: a host's notes on it. */
   afterHunk?: (file: CodeDiffFile, hunk: number) => ReactNode;
+  /** Drawn in a file's header, on a line under its path: a host's word on
+   *  the file, such as where it is explained. */
+  headerNote?: (file: CodeDiffFile) => ReactNode;
   /** False for a diff that is on the page but not yet shown, so nothing is
    *  tokenised until the reader can see it. */
   highlight?: boolean;
@@ -219,6 +223,9 @@ export function CodeDiff({
                   <span className="text-status-positive">+{file.additions}</span>{" "}
                   <span className="text-status-critical">−{file.deletions}</span>
                 </span>
+                {headerNote ? (
+                  <div className="min-w-0 basis-full pl-6">{headerNote(file)}</div>
+                ) : null}
               </header>
               {/* Stays on the page for aria-controls; a folded file draws and
                   highlights nothing. */}
