@@ -43,6 +43,7 @@ import {
 import {
   appURL,
   documentRequest,
+  readableDocument,
   groupDocumentRequest,
   fixJob,
   fixLabel,
@@ -954,8 +955,8 @@ function useReviewDocument(entry: Entry | undefined, clone: string, job: Job | u
       abort.signal,
     )
       .then(({ document }) => {
-        if (!abort.signal.aborted && document && Array.isArray(document.sections))
-          setDraft({ job: job.id, doc: document });
+        if (!abort.signal.aborted && document)
+          setDraft({ job: job.id, doc: readableDocument(document) });
       })
       .catch(() => {});
     return () => abort.abort();

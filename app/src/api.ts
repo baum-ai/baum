@@ -1197,13 +1197,24 @@ function validDocument(doc: ReviewDocument) {
     throw Error("Invalid review document.");
   return doc;
 }
+/** A saved review or a draft as the app's lists, previews and chrome read
+ *  it: a baum.review/1 document as served, a baum.review/2 one as the review
+ *  it makes (its summary, risk and sections). */
+export function readableDocument(doc: ReviewDocument | ReviewV2 | Record<string, unknown>) {
+  if ((doc as { schema?: unknown }).schema === REVIEW_V2) {
+    const review = parseReviewV2(doc);
+    if (!review) throw Error("Invalid review document.");
+    return chromeOf(review);
+  }
+  return validDocument(doc as ReviewDocument);
+}
 export function documentRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
-  return request<ReviewDocument>(
+  return request<ReviewDocument | ReviewV2>(
     `api/document?${selector(clone, pr, version)}`,
     undefined,
     "GET",
     signal,
-  ).then(validDocument);
+  ).then(readableDocument);
 }
 /** A version of the review as the review page's tabs read it: the review the
  *  page's chrome reads, carrying the baum.review/2 document the tabs read. */
@@ -1271,7 +1282,7 @@ export function groupDocumentRequest(id: string, version?: number, signal?: Abor
     undefined,
     "GET",
     signal,
-  ).then(validDocument);
+  ).then(readableDocument);
 }
 export function rowKey(row: Entry) {
   return `${row.clone_id ?? ""}:${row.pull_request.repository}:${row.pull_request.number}`;
