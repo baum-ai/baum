@@ -174,6 +174,7 @@ import { PageRead, ReadFailed, readState } from "./page-state";
 import { LoadingStatus } from "./nine-dots";
 import { FixDetails } from "./fix";
 import { useLocation } from "./location";
+import { Profiled } from "./perf";
 import {
   AnalyticsPage,
   GroupPage,
@@ -310,7 +311,9 @@ function errorText(error: unknown) {
 export function App() {
   return (
     <PreferencesProvider>
-      <Application />
+      <Profiled id="app">
+        <Application />
+      </Profiled>
     </PreferencesProvider>
   );
 }
@@ -1569,45 +1572,47 @@ function Workspace({ url }: { url: UrlState }) {
   );
   const shell = (
     <div className="local-shell">
-      <Sidebar
-        page={railPage}
-        inbox={inbox.queue.length}
-        inboxes={
-          inboxes.available
-            ? {
-                list: inboxes.inboxes,
-                // An inbox counts everything it lists but the person's own
-                // that wait, others' pull requests included; the Inbox
-                // total above counts only the queue.
-                counts: Object.fromEntries(
-                  inboxes.inboxes.map((candidate) => [
-                    candidate.id,
-                    countOf(candidate, inboxPageProps.items, held),
-                  ]),
-                ),
-                selected: selectedInbox?.id ?? null,
-                remove: askRemoveInbox,
-                edit: (target) => navigate(editInboxHref(target.id)),
-                create: () => navigate(newInboxHref()),
-                manage: () => navigate(manageInboxesHref()),
-              }
-            : undefined
-        }
-        activeJobs={jobs.filter(isActiveJob).length}
-        runningSessions={live.filter((s) => s.state === "running").length}
-        needsYou={asksYou(live).length}
-        problems={diagnostics.problems}
-        settingsWarning={
-          [codexTrust.warning, commandLine.warning].filter(Boolean).join(" ") || null
-        }
-        update={pendingUpdate(appUpdates.view)}
-        help={{
-          shortcuts: () => setShortcuts(true),
-          report: () => setReporting(true),
-          opener: openHelp,
-        }}
-        Link={LocalLink}
-      />
+      <Profiled id="sidebar">
+        <Sidebar
+          page={railPage}
+          inbox={inbox.queue.length}
+          inboxes={
+            inboxes.available
+              ? {
+                  list: inboxes.inboxes,
+                  // An inbox counts everything it lists but the person's own
+                  // that wait, others' pull requests included; the Inbox
+                  // total above counts only the queue.
+                  counts: Object.fromEntries(
+                    inboxes.inboxes.map((candidate) => [
+                      candidate.id,
+                      countOf(candidate, inboxPageProps.items, held),
+                    ]),
+                  ),
+                  selected: selectedInbox?.id ?? null,
+                  remove: askRemoveInbox,
+                  edit: (target) => navigate(editInboxHref(target.id)),
+                  create: () => navigate(newInboxHref()),
+                  manage: () => navigate(manageInboxesHref()),
+                }
+              : undefined
+          }
+          activeJobs={jobs.filter(isActiveJob).length}
+          runningSessions={live.filter((s) => s.state === "running").length}
+          needsYou={asksYou(live).length}
+          problems={diagnostics.problems}
+          settingsWarning={
+            [codexTrust.warning, commandLine.warning].filter(Boolean).join(" ") || null
+          }
+          update={pendingUpdate(appUpdates.view)}
+          help={{
+            shortcuts: () => setShortcuts(true),
+            report: () => setReporting(true),
+            opener: openHelp,
+          }}
+          Link={LocalLink}
+        />
+      </Profiled>
       <div className="local-frame">
         <div className="local-notices">
           {attached.map((a) => (
@@ -1635,7 +1640,7 @@ function Workspace({ url }: { url: UrlState }) {
             </Notice>
           ) : null}
         </div>
-        <main className="local-main">
+        <LocalMain>
           <SavedStateNotice state={inbox.persistence} label="inbox state" />
           {refreshError ? (
             <div className="local-list-note">
@@ -2374,13 +2379,28 @@ function Workspace({ url }: { url: UrlState }) {
               pending={generating}
             />
           ) : null}
-        </main>
+        </LocalMain>
         <KeyBar place={shortcutsPlace} className="local-key-bar" />
-        <SessionPanelHost page={pageContext} title={pageTitle} liveTick={liveTick} go={navigate} />
+        <Profiled id="session-panel">
+          <SessionPanelHost
+            page={pageContext}
+            title={pageTitle}
+            liveTick={liveTick}
+            go={navigate}
+          />
+        </Profiled>
       </div>
     </div>
   );
   return <PageRefreshProvider value={pageRefresh}>{shell}</PageRefreshProvider>;
+}
+/** The page's column, its renders counted as region `main` when profiling. */
+function LocalMain({ children }: { children: ReactNode }) {
+  return (
+    <Profiled id="main">
+      <main className="local-main">{children}</main>
+    </Profiled>
+  );
 }
 /** The one confirmation generation still asks for: an agent runs with code
  *  from a fork, or from an author without known write access. */

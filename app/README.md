@@ -26,6 +26,29 @@ unchanged snapshot sets no new state. Every daemon answer the app polls is
 `no-store`, so none goes through the webview's HTTP cache: WebKitGTK 2.50's
 cache path leaks memory in its network process.
 
+`pnpm build:profile` builds the same pages for profiling (ENG-2059): with
+source maps, React's profiling build, and a collector, `window.__baumPerf`
+(`src/perf.ts`, `src/perf-collector.ts`). `__baumPerf.snapshot()` returns, as
+JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
+
+- each navigation, with `content` (the first frame after React committed with
+  no `LoadingStatus` on screen) and `settled` (as content, with no request in
+  flight);
+- each key press and click, with `duration` from the input to the frame drawn
+  after it, `delay` before the first listener ran and `processing` until the
+  window's own listeners ran after React's;
+- the gaps between animation frames, bucketed, and those over 50 ms;
+- commits per `<Profiled>` region (`app`, `sidebar`, `main`, `session-panel`),
+  each tagged with the page shown;
+- requests made with `fetch`, to their headers, without the secret namespace;
+- the scenario's own `__baumPerf.mark(name)` markers, the DOM's element count
+  and, where the engine has it, the JS heap size.
+
+It measures by hand rather than with the Event Timing or Long Tasks APIs,
+which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
+things. Every other build leaves it out, and fails if `__baumPerf` reaches a
+chunk.
+
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
