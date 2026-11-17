@@ -860,9 +860,36 @@ just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--in
 just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
+just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
+
+`isolated` runs the app from this checkout beside the installed one, each
+instance with its own home, credential store and daemon, so several
+branches can be tried at once on Linux with Wayland:
+
+```sh
+just desktop::isolated mobile --copy-data --workspace ~/workspace
+just desktop::isolated-shell mobile   # a login shell in it, e.g. to run claude
+BAUM_RELAY_URL=https://… just desktop::isolated mobile
+```
+
+An instance's home stays between runs under
+`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/desktop-homes/<name>`; delete the
+folder to start again. Its container is `baum-desktop-<name>`, and only one
+can run per name. The `desktop-isolated` image adds gnome-keyring on a D-Bus
+session, so sign-in can store credentials, plus git, ssh and sqlite3. The
+first run installs Claude Code into the home and copies `~/.gitconfig` with
+commit signing turned off, since the signing key is not there.
+
+`--copy-data`, when the instance has no data yet, copies this machine's
+repositories, reviews and settings with consistent SQLite snapshots. It
+leaves out `credentials.json`, the daemon's runtime folder and locks, and the
+Claude and Codex account folders the settings name, which exist only on the
+host. `--workspace DIR` mounts DIR read-only at the same path, so the copied
+repositories are found. `BAUM_RELAY_URL` is written to the home's `.profile`,
+which the daemon's environment comes from.
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
