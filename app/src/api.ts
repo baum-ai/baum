@@ -1,6 +1,9 @@
 import { formatUSD } from "@baum/viewer/components/format";
 import type { ReviewDocument } from "@baum/viewer/review-document";
-import { parseReviewView, withReviewView, type ViewedDocument } from "./review-view/model";
+import { chromeOf } from "./review-view/chrome";
+import { parseReviewV2, REVIEW_V2, type ReviewV2 } from "./review-view/document";
+import { fromV1 } from "./review-view/from-v1";
+import { withReview } from "./review-view/model";
 export type Clone = {
   id: string;
   path: string;
@@ -1202,9 +1205,8 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     signal,
   ).then(validDocument);
 }
-/** A version of the review with its view, as the review page's tabs read
- *  it: the review the page's chrome reads, carrying the view (or null where
- *  the daemon gave none). */
+/** A version of the review as the review page's tabs read it: the review the
+ *  page's chrome reads, carrying the baum.review/2 document the tabs read. */
 export function tilesRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
   return request<TilesAnswer>(
     `api/tiles?${selector(clone, pr, version)}`,
@@ -1213,18 +1215,40 @@ export function tilesRequest(clone: string, pr: number, version?: number, signal
     signal,
   ).then(tiledDocument);
 }
-/** The daemon's answer for a review's tiles: the review, its view, and the
- *  pending cards of tiles being made in the session panel (latest version
- *  only). */
+/** The daemon's answer for a review's tiles (and a draft's, `?tiles=1`): the
+ *  review as a baum.review/2 document, and the pending cards of tiles being
+ *  made in the session panel (latest version only). Until the daemon converts
+ *  every version, it answers with a baum.review/1 document and its `view`
+ *  instead. */
 export type TilesAnswer = {
-  document: ReviewDocument;
-  /** The review page's view (`baum.view/1`); absent from an older daemon. */
+  document: ReviewDocument | ReviewV2 | Record<string, unknown>;
+  /** TEMPORARY: the review page's view (`baum.view/1`) beside a
+   *  baum.review/1 document; gone once the daemon answers baum.review/2. */
   view?: unknown;
   problem?: string;
   drafts?: unknown;
 };
-export function tiledDocument(body: TilesAnswer): ViewedDocument {
-  return withReviewView(validDocument(body.document), parseReviewView(body.view, body.drafts));
+/** The tile route's answer as both of the page's documents: the
+ *  baum.review/2 document the tabs read, and the review the chrome reads
+ *  (the served baum.review/1 one while the daemon still answers with it,
+ *  else one made from the baum.review/2 document). */
+export function tilesAnswer(body: TilesAnswer): { chrome: ReviewDocument; review: ReviewV2 } {
+  const served = body.document as { schema?: unknown } | undefined;
+  if (served?.schema === REVIEW_V2) {
+    const review = parseReviewV2(served, body.drafts);
+    if (!review) throw Error("Invalid review document.");
+    return { chrome: chromeOf(review), review };
+  }
+  // TEMPORARY: a baum.review/1 document and its view, converted here until
+  // the daemon converts them (delete with review-view/from-v1.ts).
+  const chrome = validDocument(body.document as ReviewDocument);
+  return { chrome, review: fromV1(chrome, body.view, body.drafts) };
+}
+/** The review the page's chrome reads, carrying the baum.review/2 document
+ *  the tabs read. */
+export function tiledDocument(body: TilesAnswer): ReviewDocument {
+  const { chrome, review } = tilesAnswer(body);
+  return withReview(chrome, review);
 }
 /** Removes a tile the person added from every version of a pull request, or
  *  puts it back where it was. */

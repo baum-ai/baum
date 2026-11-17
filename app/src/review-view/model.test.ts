@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { IndexedHunk, IndexedHunkLine, Section } from "@baum/viewer/review-document";
-import { REVIEW_1303, review1303, VIEW_1303 } from "./fixture-1303";
+import type { Anchor, IndexedHunk, IndexedHunkLine } from "@baum/viewer/review-document";
+import { chromeOf } from "./chrome";
+import { parseReviewV2, type ReviewV2, type V2Section } from "./document";
+import { REVIEW_1303, review1303 } from "./fixture-1303";
 import {
   CODE_PLACE,
   commentSelection,
   CONTEXT_ID,
   defaultSection,
-  emptyView,
+  detailsOf,
   intentRows,
+  isArranged,
   listedSections,
   notesByHunk,
-  parseReviewView,
   placeOf,
-  reviewViewOf,
+  reviewOf,
   riskSummary,
   sectionViews,
   selectionOf,
@@ -24,75 +26,165 @@ import {
   viewFiles,
 } from "./model";
 
-describe("parseReviewView", () => {
-  it("keeps a served view as it is", () => {
-    expect(parseReviewView(JSON.parse(JSON.stringify(VIEW_1303)))).toEqual(VIEW_1303);
+/** #1303 as the page reads it off the tile route. */
+const REVIEW = parseReviewV2(JSON.parse(JSON.stringify(REVIEW_1303)))!;
+/** A version with nothing beyond its review: no tiles and no overview parts. */
+const BARE: ReviewV2 = {
+  ...REVIEW,
+  summary: { ...REVIEW.summary, verdict: null, risk_why: "" },
+  overview: { screenshots: [], diagram: null, intent: [] },
+  tiles: [],
+};
+
+describe("parseReviewV2", () => {
+  it("reads a served document as it is", () => {
+    expect(REVIEW.sections.map((section) => section.id)).toEqual(
+      REVIEW_1303.sections.map((section) => section.id),
+    );
+    expect(REVIEW.sections[0]).toEqual(REVIEW_1303.sections[0]);
+    expect(REVIEW.tiles.map((tile) => [tile.id, tile.owner, tile.state])).toEqual(
+      REVIEW_1303.tiles.map((tile) => [tile.id, tile.owner, tile.state]),
+    );
+    expect(REVIEW.overview).toEqual(REVIEW_1303.overview);
+    expect(REVIEW.summary.verdict).toEqual(REVIEW_1303.summary.verdict);
+    expect(REVIEW.context).toEqual(REVIEW_1303.context);
   });
 
-  it("is null for anything that is not a view", () => {
-    expect(parseReviewView(undefined)).toBeNull();
-    expect(parseReviewView({ schema: "baum.composition/2" })).toBeNull();
+  it("is null for anything that is not a baum.review/2 document", () => {
+    expect(parseReviewV2(undefined)).toBeNull();
+    expect(parseReviewV2({ ...REVIEW_1303, schema: "baum.review/1" })).toBeNull();
+    expect(parseReviewV2({ ...REVIEW_1303, review: null })).toBeNull();
   });
 
-  it("drops a malformed entry, never the whole view", () => {
-    const view = parseReviewView({
-      schema: "baum.view/1",
+  it("drops a malformed item, never the whole document", () => {
+    const review = parseReviewV2({
+      schema: "baum.review/2",
+      review: REVIEW_1303.review,
+      summary: { verdict: { decision: "maybe", text: "", points: [{ text: 3 }] } },
       overview: {
-        verdict: { text: " ", points: [] },
         screenshots: ["img_1", 4],
         intent: [{ asked: "Make it work", session: "s", prompt: 1 }, { asked: 3 }],
       },
-      sections: [{ id: "sec_a", tiles: ["dg_a", 7] }, { tiles: [] }],
+      context: { area: { text: " ", files: [] } },
+      sections: [
+        {
+          id: "sec_a",
+          title: "A",
+          hunks: ["h_a", 7],
+          steps: [{ id: "s1", text: "Does it.", cites: [{ type: "hunk", id: "h_a" }, 3] }, {}],
+          risks: [{ id: "r1", tier: "odd", text: "May break." }, { id: "r2" }],
+          details: "pending",
+        },
+        { title: "No id" },
+      ],
       tiles: [
-        { id: "dg_a", type: "flow", title: "A", state: "ready", data: {} },
+        { id: "dg_a", type: "flow", title: "A", state: "ready", owner: "sec_a", data: {} },
         { id: "dg_b", type: "flow", state: "drawn" },
         { type: "flow" },
       ],
     });
-    expect(view?.overview.verdict).toBeNull();
-    expect(view?.overview.screenshots).toEqual(["img_1"]);
-    expect(view?.overview.intent).toEqual([
+    expect(review).not.toBeNull();
+    expect(review?.summary.verdict).toBeNull();
+    expect(review?.context).toBeNull();
+    expect(review?.overview.screenshots).toEqual(["img_1"]);
+    expect(review?.overview.intent).toEqual([
       { asked: "Make it work", got: "", session: "s", prompt: 1 },
     ]);
-    expect(view?.sections).toEqual([{ id: "sec_a", tiles: ["dg_a"] }]);
-    // A state the page does not know is drawn as unavailable.
-    expect(view?.tiles.map((tile) => [tile.id, tile.state])).toEqual([
-      ["dg_a", "ready"],
-      ["dg_b", "unavailable"],
+    expect(review?.sections).toHaveLength(1);
+    const [section] = review!.sections;
+    expect(section?.hunks).toEqual(["h_a"]);
+    expect(section?.steps).toEqual([
+      { id: "s1", title: "", text: "Does it.", cites: [{ type: "hunk", id: "h_a" }] },
     ]);
+    // A tier the page does not know reads as low.
+    expect(section?.risks.map((risk) => [risk.id, risk.tier])).toEqual([["r1", "low"]]);
+    expect(detailsOf(section!)).toBe("pending");
+    expect(section?.derived.state).toBe("new");
+    // A state the page does not know is drawn as unavailable.
+    expect(review?.tiles.map((tile) => [tile.id, tile.state, tile.owner])).toEqual([
+      ["dg_a", "ready", "sec_a"],
+      ["dg_b", "unavailable", ""],
+    ]);
+    // The index and stats are filled in where a draft has none yet.
+    expect(review?.index.hunks).toEqual([]);
+    expect(review?.stats.files).toBe(0);
+  });
+
+  it("gives a native tile its caption and citations in its data", () => {
+    const tile = REVIEW.tiles.find((each) => each.id === "dg_encryption")!;
+    expect(tile.data).toMatchObject({
+      caption: "A message that fails to decrypt ends the session.",
+      source: [{ type: "hunk", id: "h_session" }],
+    });
+  });
+
+  it("draws a code tile from the text the host filled, else from the hunk's lines", () => {
+    const filled = REVIEW.tiles.find((each) => each.id === "code_remote_routes")!;
+    expect(filled.data).toEqual({
+      language: "go",
+      content:
+        '\t{"POST", "/api/prs/review"},\n\t{"POST", "/api/prs/resolve-thread"},\n\t{"POST", "/api/prs/refresh"},\n\t{"POST", "/api/agent-requests/{id}/answer"},',
+      source: [{ type: "hunk", id: "h_routes", lines: [61, 64] }],
+    });
+    const read = parseReviewV2({
+      ...REVIEW_1303,
+      tiles: [
+        {
+          id: "code_x",
+          type: "code",
+          owner: "sec_allowlist",
+          title: "X",
+          state: "ready",
+          data: { hunk: "h_routes", lines: [61, 64] },
+        },
+      ],
+    })!.tiles[0]!;
+    expect((read.data as { content: string }).content).toBe(
+      (filled.data as { content: string }).content,
+    );
   });
 });
 
-describe("the view a document carries", () => {
-  it("is the served one, else the empty view with every section listed", () => {
-    expect(reviewViewOf(review1303())).toEqual(VIEW_1303);
-    const bare = reviewViewOf(review1303(null));
-    expect(bare).toEqual(emptyView(REVIEW_1303));
-    expect(bare.sections.map((section) => section.id)).toEqual([
-      CONTEXT_ID,
-      ...REVIEW_1303.sections.map((section) => section.id),
-    ]);
+describe("the document a review carries", () => {
+  it("is the served one, else the review converted on its own", () => {
+    expect(reviewOf(review1303())).toEqual(REVIEW);
+    const bare = reviewOf({ ...chromeOf(REVIEW), schema: "baum.review/1" });
     expect(bare.tiles).toEqual([]);
+    expect(bare.overview).toEqual({ screenshots: [], diagram: null, intent: [] });
+    expect(bare.sections.map((section) => section.id)).toEqual(
+      REVIEW.sections.map((section) => section.id),
+    );
   });
 
-  it("places tiles on their section, never the overview's diagram", () => {
-    expect(tilesOn(VIEW_1303, "sec_allowlist").map((tile) => tile.id)).toEqual([
+  it("places tiles by their owner, never the overview's diagram", () => {
+    expect(tilesOn(REVIEW, "sec_allowlist").map((tile) => tile.id)).toEqual([
       "dg_allowlist",
       "dg_always_allow",
       "lib_api_change",
       "code_remote_routes",
     ]);
-    const placedTwice = {
-      ...VIEW_1303,
-      sections: [{ id: "sec_pairing", tiles: ["dg_shape", "dg_pairing"] }],
-    };
-    expect(tilesOn(placedTwice, "sec_pairing").map((tile) => tile.id)).toEqual(["dg_pairing"]);
+    const diagramOnSection = { ...REVIEW, overview: { ...REVIEW.overview, diagram: "dg_pairing" } };
+    expect(tilesOn(diagramOnSection, "sec_pairing")).toEqual([]);
+  });
+
+  it("is arranged when it has more than the review alone", () => {
+    expect(isArranged(REVIEW)).toBe(true);
+    expect(isArranged(BARE)).toBe(false);
+    expect(isArranged(null)).toBe(false);
+    // A verdict without points is the review's recommendation, not more.
+    expect(
+      isArranged({
+        ...BARE,
+        summary: { ...BARE.summary, verdict: { decision: "approve", text: "Fine", points: [] } },
+      }),
+    ).toBe(false);
+    expect(isArranged({ ...BARE, generation: { map: { status: "ran" } } })).toBe(true);
   });
 });
 
 describe("the sections list", () => {
   it("lists Where this fits first and opens on the first real section", () => {
-    const list = listedSections(REVIEW_1303, VIEW_1303);
+    const list = listedSections(REVIEW);
     expect(list.map((section) => section.id)).toEqual([
       CONTEXT_ID,
       "sec_pairing",
@@ -104,48 +196,40 @@ describe("the sections list", () => {
       "sec_deps",
     ]);
     expect(list[0]).toMatchObject({ title: "Where this fits" });
-    expect(list[1]?.line).toBe(
-      "A pairing code holds a one-time secret that lasts 5 minutes and is never logged.",
+    // A section's line is its gist, else its summary's first sentence.
+    expect(list[1]?.line).toBe("A one-time code pairs up to 16 phones.");
+    expect(list.find((section) => section.id === "sec_deps")?.line).toBe(
+      "Adds the WebSocket and Noise libraries.",
     );
     expect(defaultSection(list)).toBe("sec_pairing");
   });
 
-  it("leaves Where this fits out while context holds no tiles and the review none", () => {
-    const review = { ...REVIEW_1303, summary: { ...REVIEW_1303.summary, context: undefined } };
-    // As the daemon serves it: context listed first, empty.
-    const view = {
-      ...VIEW_1303,
-      sections: [{ id: CONTEXT_ID, tiles: [] }, ...VIEW_1303.sections.slice(1)],
-    };
-    expect(listedSections(review, view)[0]?.id).toBe("sec_pairing");
-    // A tile placed there brings it back.
-    expect(listedSections(review, VIEW_1303)[0]?.id).toBe(CONTEXT_ID);
-  });
-
-  it("leaves Where this fits out of a review with no context and nothing placed on it", () => {
-    const review = { ...REVIEW_1303, summary: { ...REVIEW_1303.summary, context: undefined } };
-    const list = listedSections(review, emptyView(review));
-    expect(list[0]?.id).toBe("sec_pairing");
+  it("leaves Where this fits out while no tile stands on it and the review has no context", () => {
+    const review = { ...REVIEW, context: null };
+    const tiles = review.tiles.filter((tile) => tile.owner !== CONTEXT_ID);
+    expect(listedSections({ ...review, tiles })[0]?.id).toBe("sec_pairing");
+    // A tile it owns brings it back.
+    expect(listedSections(review)[0]?.id).toBe(CONTEXT_ID);
+    expect(listedSections({ ...BARE, context: null })[0]?.id).toBe("sec_pairing");
   });
 
   it("lists sections no longer in the code last", () => {
     const review = {
-      ...REVIEW_1303,
-      sections: REVIEW_1303.sections.map((section) =>
+      ...REVIEW,
+      sections: REVIEW.sections.map((section) =>
         section.id === "sec_pairing"
           ? { ...section, derived: { ...section.derived, state: "stale" as const } }
           : section,
       ),
     };
-    const list = listedSections(review, VIEW_1303);
+    const list = listedSections(review);
     expect(list.at(-1)).toMatchObject({ id: "sec_pairing", obsolete: true });
     expect(defaultSection(list)).toBe("sec_relay");
   });
 });
 
 describe("places", () => {
-  const place = (selection: Parameters<typeof placeOf>[0]) =>
-    placeOf(selection, REVIEW_1303, VIEW_1303);
+  const place = (selection: Parameters<typeof placeOf>[0]) => placeOf(selection, REVIEW);
 
   it("reads the Summary as the Overview and the Changes as the first section", () => {
     expect(place({ kind: "summary" })).toEqual({ tab: "overview" });
@@ -215,7 +299,7 @@ describe("places", () => {
 
 describe("the Code tab", () => {
   it("groups the files, generated ones last", () => {
-    const files = viewFiles(REVIEW_1303);
+    const files = viewFiles(REVIEW);
     expect(files.map((file) => [file.group, file.path])).toEqual([
       ["Code", "oss/internal/uiserver/remote.go"],
       ["Code", "oss/internal/cli/daemon.go"],
@@ -232,14 +316,14 @@ describe("the Code tab", () => {
   });
 
   it("opens on the file asked for, else the first that is not generated", () => {
-    const files = viewFiles(REVIEW_1303);
+    const files = viewFiles(REVIEW);
     expect(shownFile(files, "oss/go.sum")?.path).toBe("oss/go.sum");
     expect(shownFile(files, "missing.go")?.path).toBe("oss/internal/uiserver/remote.go");
     expect(shownFile(files, null)?.path).toBe("oss/internal/uiserver/remote.go");
   });
 
   it("pins each behaviour step and open risk to the hunks it cites", () => {
-    const notes = notesByHunk(REVIEW_1303);
+    const notes = notesByHunk(REVIEW);
     expect(notes.get("h_routes")).toEqual([
       {
         kind: "step",
@@ -262,8 +346,8 @@ describe("the Code tab", () => {
 
   it("leaves a mitigated risk and an obsolete section's notes out", () => {
     const review = {
-      ...REVIEW_1303,
-      sections: REVIEW_1303.sections.map((section) =>
+      ...REVIEW,
+      sections: REVIEW.sections.map((section) =>
         section.id === "sec_allowlist"
           ? {
               ...section,
@@ -281,24 +365,25 @@ describe("the Code tab", () => {
 });
 
 describe("the overview's fallbacks", () => {
-  it("explains the risk with the view's sentences, else the score's first reason", () => {
-    expect(riskSummary(REVIEW_1303, VIEW_1303)).toBe(VIEW_1303.overview.risk_summary);
-    expect(riskSummary(REVIEW_1303, emptyView(REVIEW_1303))).toBe(
+  it("explains the risk with risk_why, else the score's first reason", () => {
+    expect(riskSummary(REVIEW)).toBe(REVIEW_1303.summary.risk_why);
+    expect(riskSummary(BARE)).toBe(
       "Phones can approve pull requests and answer agents through a third-party relay.",
     );
-    const unscored = { ...REVIEW_1303, summary: { ...REVIEW_1303.summary, risk_score: undefined } };
-    expect(riskSummary(unscored, emptyView(unscored))).toBeNull();
+    expect(
+      riskSummary({ ...BARE, summary: { ...BARE.summary, risk_score: undefined } }),
+    ).toBeNull();
   });
 
-  it("says what was asked with the view's rows, else each session's first prompt", () => {
-    expect(intentRows(REVIEW_1303, VIEW_1303)[0]).toEqual({
+  it("says what was asked with the overview's intent, else each session's first prompt", () => {
+    expect(intentRows(REVIEW)[0]).toEqual({
       asked: "Review on the phone",
       got: "Inbox, reviews, approve, comment, request changes and resolve threads.",
       session: "ses_mobile",
       prompt: 1,
       at: "2026-11-14T03:12:00Z",
     });
-    expect(intentRows(REVIEW_1303, emptyView(REVIEW_1303))).toEqual([
+    expect(intentRows(BARE)).toEqual([
       {
         asked: "allows to review on mobile",
         session: "ses_mobile",
@@ -306,14 +391,13 @@ describe("the overview's fallbacks", () => {
         at: "2026-11-14T03:12:00Z",
       },
     ]);
-    const unlinked = { ...REVIEW_1303, index: { ...REVIEW_1303.index, sessions: [] } };
-    expect(intentRows(unlinked, emptyView(unlinked))).toEqual([]);
+    expect(intentRows({ ...BARE, index: { ...BARE.index, sessions: [] } })).toEqual([]);
   });
 });
 
 describe("a section's views", () => {
-  const sectionOf = (id: string) => REVIEW_1303.sections.find((each) => each.id === id)!;
-  const of = (id: string) => sectionViews(REVIEW_1303, VIEW_1303, sectionOf(id));
+  const sectionOf = (id: string) => REVIEW.sections.find((each) => each.id === id)!;
+  const of = (id: string) => sectionViews(REVIEW, sectionOf(id));
 
   it("counts each view's files, or quotes, and leaves the empty ones at 0", () => {
     expect(of("sec_allowlist").counts).toEqual({ code: 1, tests: 1, session: 0, docs: 1 });
@@ -495,15 +579,15 @@ describe("the tests a section's hunks add or change", () => {
 });
 
 describe("the session turns a section cites", () => {
-  const withCites = (section: Section, anchors: Section["risks"][number]["anchors"]) => ({
+  const withCites = (section: V2Section, cites: Anchor[]): V2Section => ({
     ...section,
-    summary: { text: "Summary.", anchors },
+    steps: [...section.steps, { id: "step_x", title: "", text: "Step.", cites }],
   });
-  const relay = REVIEW_1303.sections.find((each) => each.id === "sec_relay")!;
+  const relay = REVIEW.sections.find((each) => each.id === "sec_relay")!;
 
   it("quotes the prompts and events cited, once each, in the order they happened", () => {
     const quotes = sessionQuotes(
-      REVIEW_1303,
+      REVIEW,
       withCites(relay, [
         { type: "session_event", session: "ses_mobile", event: "ev_standin" },
         { type: "prompt", session: "ses_mobile", index: 1 },
@@ -530,22 +614,25 @@ describe("the session turns a section cites", () => {
     const tile = {
       id: "dg_x",
       type: "flow",
+      owner: "sec_relay",
       title: "X",
       state: "ready" as const,
+      cites: [{ type: "session_event", session: "ses_mobile", event: "ev_standin" } as Anchor],
       data: { lanes: [], source: [{ type: "prompt", session: "ses_mobile", index: 1 }] },
     };
-    const bare = { ...relay, blocks: [], risks: [], summary: null };
-    expect(sessionQuotes(REVIEW_1303, bare)).toEqual([]);
-    expect(sessionQuotes(REVIEW_1303, bare, [tile]).map((quote) => quote.text)).toEqual([
-      "allows to review on mobile",
+    const bare = { ...relay, steps: [], risks: [] };
+    expect(sessionQuotes(REVIEW, bare)).toEqual([]);
+    expect(sessionQuotes(REVIEW, bare, [tile]).map((quote) => quote.kind)).toEqual([
+      "prompt",
+      "event",
     ]);
   });
 
   it("leaves out what the index can't resolve to words", () => {
     expect(
       sessionQuotes(
-        REVIEW_1303,
-        withCites({ ...relay, blocks: [], risks: [] }, [
+        REVIEW,
+        withCites({ ...relay, steps: [], risks: [] }, [
           { type: "prompt", session: "ses_mobile", index: 9 },
           { type: "prompt", session: "ses_gone", index: 1, input: "typed elsewhere" },
           { type: "session_event", session: "ses_mobile", event: "ev_gone" },

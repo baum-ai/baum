@@ -25,29 +25,26 @@ import { Badge, Button, CardHeader, LiveDot } from "@baum/viewer/components/ui";
 import {
   contextRefUrl,
   isContextDirectory,
-  sectionDetails,
-  type Anchor,
-  type ReviewContext,
   type ReviewContextRef,
   type ReviewDocument,
-  type Risk,
-  type Section,
 } from "@baum/viewer/review-document";
 import { draftsOn, type DraftCard } from "../tiles/drafts";
 import { useTileHost } from "../tiles/host";
 import { PendingCard } from "../tiles/pending-card";
 import type { TileContext } from "../tiles/types";
+import type { V2Context, V2Risk } from "./document";
 import {
-  behaviourSteps,
   CONTEXT_ID,
+  detailsOf,
   SECTION_VIEWS,
   sectionViews,
   selectionOf,
   shownSectionView,
   tilesOn,
   type ListedSection,
-  type ReviewView,
+  type ReviewV2,
   type SectionView,
+  type V2Section,
   type ViewTile,
 } from "./model";
 import { NavRow } from "./nav-row";
@@ -56,11 +53,12 @@ import { ViewTileCard } from "./view-tile";
 
 /** How it works: the list of sections ("Where this fits" first) beside the
  *  section read, which shows its views (its Overview: its summary, the tiles
- *  placed on it, its behaviour and its risks; its code, tests, the session
- *  turns it cites and its docs). */
+ *  it owns, its steps and its risks; its code, tests, the session turns it
+ *  cites and its docs). It reads the baum.review/2 `review`; `document` is
+ *  what the viewer's parts read. */
 export function SectionsTab({
   document,
-  view,
+  review,
   list,
   section,
   item,
@@ -71,7 +69,7 @@ export function SectionsTab({
   historical,
 }: {
   document: ReviewDocument;
-  view: ReviewView;
+  review: ReviewV2;
   list: ListedSection[];
   section: string;
   item?: string;
@@ -81,13 +79,13 @@ export function SectionsTab({
   context: ReviewPlaceContext;
   historical: boolean;
 }) {
-  const shown = document.sections.find((each) => each.id === section);
+  const shown = review.sections.find((each) => each.id === section);
   // The tiles being made in the session panel stand on their sections, on
   // the latest version only.
   const drafts = historical
     ? []
     : draftsOn(
-        view.drafts ?? [],
+        review.drafts ?? [],
         section,
         list.map((entry) => entry.id),
       );
@@ -104,7 +102,7 @@ export function SectionsTab({
         {section === CONTEXT_ID ? (
           <WhereThisFits
             document={document}
-            view={view}
+            review={review}
             ctx={ctx}
             idPrefix={idPrefix}
             drafts={drafts}
@@ -114,7 +112,7 @@ export function SectionsTab({
           <SectionBody
             key={shown.id}
             document={document}
-            view={view}
+            review={review}
             section={shown}
             asked={sectionView}
             ctx={ctx}
@@ -135,7 +133,7 @@ export function SectionsTab({
 
 function SectionBody({
   document,
-  view,
+  review,
   section,
   asked,
   ctx,
@@ -145,8 +143,8 @@ function SectionBody({
   onRetryDetails,
 }: {
   document: ReviewDocument;
-  view: ReviewView;
-  section: Section;
+  review: ReviewV2;
+  section: V2Section;
   asked?: SectionView;
   ctx: TileContext;
   idPrefix: string;
@@ -154,7 +152,7 @@ function SectionBody({
   context: ReviewPlaceContext;
   onRetryDetails?: (id: string) => void | Promise<unknown>;
 }) {
-  const views = useMemo(() => sectionViews(document, view, section), [document, view, section]);
+  const views = useMemo(() => sectionViews(review, section), [review, section]);
   const shown = shownSectionView(asked, views.counts);
   const tablist = `${idPrefix}section-views`;
   return (
@@ -188,7 +186,7 @@ function SectionBody({
           {value !== shown ? null : value === "overview" ? (
             <SectionOverview
               document={document}
-              view={view}
+              review={review}
               section={section}
               ctx={ctx}
               idPrefix={idPrefix}
@@ -198,6 +196,7 @@ function SectionBody({
           ) : (
             <SectionViewBody
               document={document}
+              review={review}
               section={section.id}
               shown={value}
               views={views}
@@ -214,7 +213,7 @@ function SectionBody({
  *  steps, its risks and the rest of its tiles. */
 function SectionOverview({
   document,
-  view,
+  review,
   section,
   ctx,
   idPrefix,
@@ -222,18 +221,18 @@ function SectionOverview({
   onRetryDetails,
 }: {
   document: ReviewDocument;
-  view: ReviewView;
-  section: Section;
+  review: ReviewV2;
+  section: V2Section;
   ctx: TileContext;
   idPrefix: string;
   drafts: DraftCard[];
   onRetryDetails?: (id: string) => void | Promise<unknown>;
 }) {
-  const details = sectionDetails(section);
-  const steps = behaviourSteps(section);
+  const details = detailsOf(section);
+  const steps = section.steps;
   // The section's first diagram leads, right under its summary; tables,
   // excerpts and library tiles follow what the section does and its risks.
-  const tiles = tilesOn(view, section.id);
+  const tiles = tilesOn(review, section.id);
   const lead = tiles.find((tile) => DIAGRAM_TYPES.has(tile.type));
   const rest = tiles.filter((tile) => tile !== lead);
   const obsolete = section.derived.state === "stale";
@@ -255,12 +254,7 @@ function SectionOverview({
           ) : null}
         </div>
       ) : null}
-      {section.summary ? (
-        <div className="space-y-2">
-          <Markdown className={PROSE}>{section.summary.text}</Markdown>
-          <Cites document={document} anchors={withoutHunks(section.summary.anchors)} />
-        </div>
-      ) : null}
+      {section.summary.trim() ? <Markdown className={PROSE}>{section.summary}</Markdown> : null}
       {lead ? (
         <SectionTiles
           tiles={[lead]}
@@ -284,11 +278,8 @@ function SectionOverview({
                       <InlineMarkdown>{step.title}</InlineMarkdown>
                     </p>
                   ) : null}
-                  <Markdown className="text-primary">{step.after?.trim() || step.text}</Markdown>
-                  {step.before ? (
-                    <p className="text-base text-secondary">Before: {step.before}</p>
-                  ) : null}
-                  <Cites document={document} anchors={step.anchors} />
+                  <Markdown className="text-primary">{step.text}</Markdown>
+                  <Cites document={document} anchors={step.cites} />
                 </div>
               </Item>
             ))}
@@ -458,12 +449,12 @@ function SectionTiles({
   );
 }
 
-function RiskItem({ risk, document, id }: { risk: Risk; document: ReviewDocument; id: string }) {
+function RiskItem({ risk, document, id }: { risk: V2Risk; document: ReviewDocument; id: string }) {
   return (
     <Item id={id} className="space-y-1.5">
       <TierBadge tier={risk.tier} />
       <Markdown className="text-primary">{risk.text}</Markdown>
-      <Cites document={document} anchors={risk.anchors} />
+      <Cites document={document} anchors={risk.cites} />
     </Item>
   );
 }
@@ -490,7 +481,7 @@ function RetryDetails({ onRetry }: { onRetry: () => void | Promise<unknown> }) {
   );
 }
 
-const CONTEXT_PARTS: { key: keyof ReviewContext; label: string }[] = [
+const CONTEXT_PARTS: { key: keyof V2Context; label: string }[] = [
   { key: "area", label: "Area" },
   { key: "reached_by", label: "How it's reached" },
   { key: "contracts", label: "What it relies on" },
@@ -501,21 +492,21 @@ const CONTEXT_PARTS: { key: keyof ReviewContext; label: string }[] = [
  *  on, then the tiles placed on it. */
 function WhereThisFits({
   document,
-  view,
+  review,
   ctx,
   idPrefix,
   drafts,
   pending,
 }: {
   document: ReviewDocument;
-  view: ReviewView;
+  review: ReviewV2;
   ctx: TileContext;
   idPrefix: string;
   drafts: DraftCard[];
   pending: boolean;
 }) {
-  const context = document.summary.context;
-  const tiles = tilesOn(view, CONTEXT_ID);
+  const context = review.context;
+  const tiles = tilesOn(review, CONTEXT_ID);
   return (
     <div className="space-y-7">
       <CardHeader size="pane" title="Where this fits" />
@@ -533,14 +524,11 @@ function WhereThisFits({
               <Part key={key} label={label}>
                 <div data-review-block="" className="space-y-2 rounded-sm outline-none">
                   <Markdown className={PROSE}>{part.text}</Markdown>
-                  {part.refs.length > 0 ? (
+                  {part.files.length > 0 ? (
                     <ul className="flex flex-wrap gap-1.5" aria-label={`${label} files`}>
-                      {part.refs.map((reference, position) => (
-                        <li
-                          key={`${reference.path}-${reference.symbol}-${position}`}
-                          className="max-w-full min-w-0"
-                        >
-                          <ContextChip document={document} reference={reference} />
+                      {part.files.map((path, position) => (
+                        <li key={`${path}-${position}`} className="max-w-full min-w-0">
+                          <ContextChip document={document} reference={{ path, symbol: null }} />
                         </li>
                       ))}
                     </ul>
@@ -625,12 +613,6 @@ function ContextChip({
       <ExternalLinkIcon size={10} className="flex-none text-tertiary" />
     </a>
   );
-}
-
-/** Prose names its code in chips of its own; the code is in the section's
- *  Code view. */
-function withoutHunks(anchors: Anchor[] | undefined): Anchor[] | undefined {
-  return anchors?.filter((anchor) => anchor.type !== "hunk");
 }
 
 /** Brings the item a link names (a risk, a step, a tile) into view and marks

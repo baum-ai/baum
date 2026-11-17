@@ -1,50 +1,15 @@
 import type {
   Anchor,
-  Block,
-  BehaviorStep,
   HunkRole,
   IndexedHunk,
   ReviewDocument,
   RiskTier,
-  Section,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
-import { parseDrafts, type DraftCard } from "../tiles/drafts";
-import type { Tile } from "../tiles/types";
+import type { ReviewV2, V2Section, ViewTile } from "./document";
+import { fromV1 } from "./from-v1";
 
-/** The review page's view (`baum.view/1`), as the daemon serves it beside the
- *  review on the tile route: what the overview shows beyond the review
- *  itself, the tiles placed on each section, and the tiles. */
-export type ReviewView = {
-  schema: "baum.view/1";
-  overview: {
-    risk_summary?: string;
-    verdict?: { text: string; points: { text: string; section?: string }[] } | null;
-    screenshots: string[];
-    diagram?: string | null;
-    intent: { asked: string; got: string; session: string; prompt: number }[];
-  };
-  sections: { id: string; tiles: string[] }[];
-  tiles: ViewTile[];
-  /** Page-only, from the tile route's `drafts`: the tiles being made in the
-   *  session panel, as pending cards on the sections they will stand on. */
-  drafts?: DraftCard[];
-};
-
-export type ViewTileType = "flow" | "columns" | "sequence" | "table" | "code" | "prose" | "custom";
-export type ViewTileState = "ready" | "pending" | "failed" | "unavailable";
-
-export type ViewTile = Tile & {
-  type: ViewTileType | string;
-  state: ViewTileState;
-  /** The person added it (a chat-made tile, or a library type added from the
-   *  session panel): only such a tile can be removed. */
-  added?: true;
-  /** Its data was written for this earlier version. */
-  from?: number;
-  /** Being filled for this version. */
-  filling?: true;
-};
+export type { ReviewV2, V2Section, V2Step, V2Risk, ViewTile } from "./document";
 
 /** A native tile's colour of a step, column or message. */
 export type Tone = "plain" | "new" | "good" | "bad" | "muted" | "missing";
@@ -78,102 +43,17 @@ export const CODE_PLACE = "code";
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const isString = (value: unknown): value is string => typeof value === "string";
-const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter(isString) : []);
 
-const STATES = new Set<string>(["ready", "pending", "failed", "unavailable"]);
-
-/** A light structural check of a served view: what the page reads without
- *  looking twice. A malformed entry is dropped, never the whole view, and a
- *  view that is not one at all is null (the page then builds the empty view
- *  from the review alone). `drafts` are the tile route's pending cards. */
-export function parseReviewView(value: unknown, drafts?: unknown): ReviewView | null {
-  if (!isRecord(value) || value.schema !== "baum.view/1") return null;
-  const overview = isRecord(value.overview) ? value.overview : {};
-  const verdict = isRecord(overview.verdict) ? overview.verdict : null;
-  const points = Array.isArray(verdict?.points)
-    ? verdict.points.flatMap((point) =>
-        isRecord(point) && isString(point.text)
-          ? [{ text: point.text, ...(isString(point.section) ? { section: point.section } : {}) }]
-          : [],
-      )
-    : [];
-  const intent = Array.isArray(overview.intent)
-    ? overview.intent.flatMap((row) =>
-        isRecord(row) &&
-        isString(row.asked) &&
-        isString(row.session) &&
-        typeof row.prompt === "number"
-          ? [
-              {
-                asked: row.asked,
-                got: isString(row.got) ? row.got : "",
-                session: row.session,
-                prompt: row.prompt,
-              },
-            ]
-          : [],
-      )
-    : [];
-  const sections = Array.isArray(value.sections)
-    ? value.sections.flatMap((section) =>
-        isRecord(section) && isString(section.id)
-          ? [{ id: section.id, tiles: strings(section.tiles) }]
-          : [],
-      )
-    : [];
-  const tiles = Array.isArray(value.tiles)
-    ? value.tiles.flatMap((tile): ViewTile[] =>
-        isRecord(tile) && isString(tile.id) && isString(tile.type)
-          ? [
-              {
-                id: tile.id,
-                type: tile.type,
-                title: isString(tile.title) ? tile.title : "",
-                data: tile.data ?? null,
-                state:
-                  isString(tile.state) && STATES.has(tile.state)
-                    ? (tile.state as ViewTileState)
-                    : "unavailable",
-                ...(Array.isArray(tile.covers) ? { covers: strings(tile.covers) } : {}),
-                ...(tile.definition !== undefined ? { definition: tile.definition } : {}),
-                ...(Array.isArray(tile.problems) ? { problems: strings(tile.problems) } : {}),
-                ...(tile.added === true ? { added: true as const } : {}),
-                ...(typeof tile.from === "number" && tile.from > 0 ? { from: tile.from } : {}),
-                ...(tile.filling === true ? { filling: true as const } : {}),
-              },
-            ]
-          : [],
-      )
-    : [];
-  const pending = parseDrafts(drafts);
-  return {
-    schema: "baum.view/1",
-    overview: {
-      ...(isString(overview.risk_summary) && overview.risk_summary.trim()
-        ? { risk_summary: overview.risk_summary }
-        : {}),
-      verdict:
-        verdict && isString(verdict.text) && verdict.text.trim()
-          ? { text: verdict.text, points }
-          : null,
-      screenshots: strings(overview.screenshots),
-      diagram: isString(overview.diagram) ? overview.diagram : null,
-      intent,
-    },
-    sections,
-    tiles,
-    ...(pending.length > 0 ? { drafts: pending } : {}),
-  };
-}
-
-/** Whether a view has more than the review alone: a version whose
- *  composition was generated, or one with tiles on it. */
-export function isArranged(view: ReviewView | null): boolean {
-  if (!view) return false;
-  const { overview } = view;
+/** Whether a version has more than its review alone: tiles, or an overview
+ *  part the model wrote, or it was written by the three levels. */
+export function isArranged(review: ReviewV2 | null): boolean {
+  if (!review) return false;
+  const { overview, summary } = review;
   return (
-    view.tiles.length > 0 ||
-    Boolean(overview.risk_summary || overview.verdict || overview.diagram) ||
+    review.tiles.length > 0 ||
+    review.generation !== undefined ||
+    Boolean(summary.risk_why || overview.diagram) ||
+    (summary.verdict?.points.length ?? 0) > 0 ||
     overview.screenshots.length > 0 ||
     overview.intent.length > 0
   );
@@ -189,55 +69,64 @@ export function addedNote(tile: Pick<ViewTile, "from" | "filling">): string | nu
   return tile.filling ? "Filling for this version" : null;
 }
 
-/** The view of a version without a composition: nothing beyond the review,
- *  every section listed with no tiles, `context` first, as the daemon serves
- *  it. */
-export function emptyView(document: Pick<ReviewDocument, "sections">): ReviewView {
-  return {
-    schema: "baum.view/1",
-    overview: { verdict: null, screenshots: [], diagram: null, intent: [] },
-    sections: [
-      { id: CONTEXT_ID, tiles: [] },
-      ...document.sections.map((section) => ({ id: section.id, tiles: [] })),
-    ],
-    tiles: [],
-  };
-}
+/** Where the review the page's chrome reads carries the baum.review/2
+ *  document the tabs read: an enumerable symbol, kept by the copies the page
+ *  makes and never seen by JSON. */
+export const REVIEW: unique symbol = Symbol.for("baum.review/2");
 
-/** Where a review document carries the view served with it: an enumerable
- *  symbol, kept by the copies the page makes and never seen by JSON. */
-export const VIEW: unique symbol = Symbol.for("baum.view");
+export type ReviewedDocument = ReviewDocument & { [REVIEW]?: ReviewV2 };
 
-export type ViewedDocument = ReviewDocument & { [VIEW]?: ReviewView | null };
-
-export function withReviewView<D extends ReviewDocument>(document: D, view: ReviewView | null): D {
-  (document as ViewedDocument)[VIEW] = view;
+export function withReview<D extends ReviewDocument>(document: D, review: ReviewV2): D {
+  (document as ReviewedDocument)[REVIEW] = review;
   return document;
 }
 
-/** The view a document was served with, or the empty view built from the
- *  review alone (an older daemon, or a version without a composition). */
-export function reviewViewOf(document: ReviewDocument): ReviewView {
-  return (document as ViewedDocument)[VIEW] ?? emptyView(document);
+/** The baum.review/2 document a review was served with, if any. */
+export function servedReview(document: ReviewDocument | null | undefined): ReviewV2 | null {
+  return (document as ReviewedDocument | null | undefined)?.[REVIEW] ?? null;
 }
 
-export function viewTile(view: ReviewView, id: string | null | undefined): ViewTile | undefined {
-  return id ? view.tiles.find((tile) => tile.id === id) : undefined;
+const converted = new WeakMap<ReviewDocument, ReviewV2>();
+
+/** The baum.review/2 document the tabs read for a review: the one it was
+ *  served with, else the review converted on its own (no tiles, no overview
+ *  parts beyond the review). */
+export function reviewOf(document: ReviewDocument): ReviewV2 {
+  const served = servedReview(document);
+  if (served) return served;
+  let review = converted.get(document);
+  if (!review) {
+    review = fromV1(document);
+    converted.set(document, review);
+  }
+  return review;
 }
 
-/** The tiles placed on a section (or on "Where this fits"), in their order;
- *  the overview's diagram is never one of them. */
-export function tilesOn(view: ReviewView, section: string): ViewTile[] {
-  const ids = view.sections.find((entry) => entry.id === section)?.tiles ?? [];
-  return ids.flatMap((id) => {
-    const tile = id === view.overview.diagram ? undefined : viewTile(view, id);
-    return tile ? [tile] : [];
-  });
+export function viewTile(review: ReviewV2, id: string | null | undefined): ViewTile | undefined {
+  return id ? review.tiles.find((tile) => tile.id === id) : undefined;
 }
 
-/** The section a tile is placed on, if any. */
-export function sectionOfTile(view: ReviewView, tile: string): string | undefined {
-  return view.sections.find((entry) => entry.tiles.includes(tile))?.id;
+/** The tiles a section (or "Where this fits") owns, in the document's
+ *  order; the overview's diagram is never one of them. */
+export function tilesOn(review: ReviewV2, owner: string): ViewTile[] {
+  return review.tiles.filter((tile) => tile.owner === owner && tile.id !== review.overview.diagram);
+}
+
+/** The section (or "Where this fits") a tile stands on, if any. */
+export function sectionOfTile(review: ReviewV2, tile: string): string | undefined {
+  const owner = viewTile(review, tile)?.owner;
+  return owner && owner !== OVERVIEW_OWNER && tile !== review.overview.diagram ? owner : undefined;
+}
+
+/** The owner of the overview's main diagram. */
+export const OVERVIEW_OWNER = "overview";
+
+/** A section's details: being written, failed, or written. A section no
+ *  longer in the code is never being written. */
+export function detailsOf(section: V2Section): "complete" | "pending" | "failed" {
+  if (section.details === "pending")
+    return section.derived.state === "stale" ? "failed" : "pending";
+  return section.details === "failed" ? "failed" : "complete";
 }
 
 // ---------- the sections list ----------
@@ -260,32 +149,35 @@ export function firstSentence(text: string): string {
 
 /** How it works lists "Where this fits" first (when the review has a context,
  *  or tiles or pending cards stand on it), then the review's sections in its
- *  order, the ones no longer in the code last. */
-export function listedSections(document: ReviewDocument, view: ReviewView): ListedSection[] {
-  const context: ListedSection[] =
-    document.summary.context ||
-    tilesOn(view, CONTEXT_ID).length > 0 ||
-    view.drafts?.some((draft) => draft.section === CONTEXT_ID)
+ *  order, the ones no longer in the code last. A section's line is its gist
+ *  (else its summary's first sentence). */
+export function listedSections(review: ReviewV2): ListedSection[] {
+  const context = review.context;
+  const contextLine = context
+    ? (context.area ?? context.reached_by ?? context.contracts ?? context.related)?.text
+    : undefined;
+  const listed: ListedSection[] =
+    context ||
+    tilesOn(review, CONTEXT_ID).length > 0 ||
+    review.drafts?.some((draft) => draft.section === CONTEXT_ID)
       ? [
           {
             id: CONTEXT_ID,
             title: "Where this fits",
-            line: document.summary.context
-              ? firstSentence(document.summary.context.area.text)
-              : undefined,
+            line: contextLine ? firstSentence(contextLine) : undefined,
           },
         ]
       : [];
-  const sections = document.sections.map(
+  const sections = review.sections.map(
     (section): ListedSection => ({
       id: section.id,
       title: section.title,
-      line: section.summary?.text ? firstSentence(section.summary.text) : undefined,
+      line: section.gist || (section.summary.trim() ? firstSentence(section.summary) : undefined),
       ...(section.derived.state === "stale" ? { obsolete: true } : {}),
     }),
   );
   return [
-    ...context,
+    ...listed,
     ...sections.filter((section) => !section.obsolete),
     ...sections.filter((section) => section.obsolete),
   ];
@@ -310,12 +202,8 @@ export type ViewPlace =
 /** The page's place for a selection: the Summary is the Overview, a section
  *  or risk is How it works there (the Changes at its first section), the
  *  Code place is the Code tab, and a tile is the section it is placed on. */
-export function placeOf(
-  selection: Selection,
-  document: ReviewDocument,
-  view: ReviewView,
-): ViewPlace {
-  const list = listedSections(document, view);
+export function placeOf(selection: Selection, review: ReviewV2): ViewPlace {
+  const list = listedSections(review);
   const known = (id: string) => list.some((section) => section.id === id);
   const fallback = defaultSection(list);
   switch (selection.kind) {
@@ -339,7 +227,7 @@ export function placeOf(
         : { tab: "overview" };
     case "tile": {
       if (selection.id === CODE_PLACE) return { tab: "code", file: selection.item ?? null };
-      const section = sectionOfTile(view, selection.id);
+      const section = sectionOfTile(review, selection.id);
       return section && known(section)
         ? { tab: "sections", section, item: `tile-${selection.id}` }
         : { tab: "overview" };
@@ -399,7 +287,7 @@ export type ViewFile = {
 /** Every changed file, grouped by what its hunks are (code, tests, docs,
  *  config, generated), each group's files in the order the review indexed
  *  them. */
-export function viewFiles(document: ReviewDocument): ViewFile[] {
+export function viewFiles(document: ReviewV2): ViewFile[] {
   const files = new Map<string, ViewFile>();
   for (const hunk of document.index.hunks) {
     const file = files.get(hunk.path) ?? {
@@ -447,23 +335,17 @@ export type HunkNote = {
 const citedHunks = (anchors: Anchor[] | undefined) =>
   new Set((anchors ?? []).flatMap((anchor) => (anchor.type === "hunk" ? [anchor.id] : [])));
 
-export function behaviourSteps(section: Section): BehaviorStep[] {
-  return section.blocks.flatMap((block) =>
-    block.kind === "behavior" ? ((block as Extract<Block, { kind: "behavior" }>).steps ?? []) : [],
-  );
-}
-
 /** The notes of each hunk: every behaviour step and every open risk of a
  *  current section whose anchors cite it, steps first, in the review's order. */
-export function notesByHunk(document: ReviewDocument): Map<string, HunkNote[]> {
+export function notesByHunk(document: ReviewV2): Map<string, HunkNote[]> {
   const notes = new Map<string, HunkNote[]>();
   const pin = (hunks: Set<string>, note: HunkNote) => {
     for (const hunk of hunks) notes.set(hunk, [...(notes.get(hunk) ?? []), note]);
   };
   const sections = document.sections.filter((section) => section.derived.state !== "stale");
   for (const section of sections)
-    for (const step of behaviourSteps(section))
-      pin(citedHunks(step.anchors), {
+    for (const step of section.steps)
+      pin(citedHunks(step.cites), {
         kind: "step",
         id: step.id,
         section: section.id,
@@ -473,7 +355,7 @@ export function notesByHunk(document: ReviewDocument): Map<string, HunkNote[]> {
   for (const section of sections)
     for (const risk of section.risks) {
       if (risk.state === "mitigated") continue;
-      pin(citedHunks(risk.anchors), {
+      pin(citedHunks(risk.cites), {
         kind: "risk",
         id: risk.id,
         section: section.id,
@@ -487,13 +369,11 @@ export function notesByHunk(document: ReviewDocument): Map<string, HunkNote[]> {
 
 // ---------- the overview ----------
 
-/** Why the risk score is what it is: the view's two sentences, else the
+/** Why the risk score is what it is: the review's `risk_why`, else the
  *  score's strongest reason. */
-export function riskSummary(document: ReviewDocument, view: ReviewView): string | null {
+export function riskSummary(review: ReviewV2): string | null {
   return (
-    view.overview.risk_summary?.trim() ||
-    document.summary.risk_score?.reasons[0]?.text?.trim() ||
-    null
+    review.summary.risk_why.trim() || review.summary.risk_score?.reasons[0]?.text?.trim() || null
   );
 }
 
@@ -506,14 +386,14 @@ export type IntentRow = {
   at?: string;
 };
 
-/** What the person asked in the linked sessions: the view's rows, else each
- *  linked session's first prompt the index carries. */
-export function intentRows(document: ReviewDocument, view: ReviewView): IntentRow[] {
-  const sessions = document.index.sessions;
+/** What the person asked in the linked sessions: the overview's intent, else
+ *  each linked session's first prompt the index carries. */
+export function intentRows(review: ReviewV2): IntentRow[] {
+  const sessions = review.index.sessions;
   const at = (session: string, index: number) =>
     sessions.find((item) => item.id === session)?.prompts?.find((p) => p.index === index)?.at;
-  if (view.overview.intent.length > 0)
-    return view.overview.intent.map((row) => {
+  if (review.overview.intent.length > 0)
+    return review.overview.intent.map((row) => {
       const when = at(row.session, row.prompt);
       return {
         asked: row.asked,
@@ -574,7 +454,7 @@ const GENERATED_ROLES: HunkRole[] = ["generated", "vendored"];
 
 /** A section's hunks of some roles as files, each with only the section's
  *  hunks, in the Code tab's group order and the review's order within it. */
-function sectionFilesOf(document: ReviewDocument, section: Section, roles: HunkRole[]): ViewFile[] {
+function sectionFilesOf(document: ReviewV2, section: V2Section, roles: HunkRole[]): ViewFile[] {
   const ids = new Set(section.hunks);
   const files = new Map<string, ViewFile>();
   for (const hunk of document.index.hunks) {
@@ -604,18 +484,14 @@ export type SectionViews = {
 
 /** Everything a section's views draw, from the review and the tiles placed
  *  on the section. */
-export function sectionViews(
-  document: ReviewDocument,
-  view: ReviewView,
-  section: Section,
-): SectionViews {
+export function sectionViews(document: ReviewV2, section: V2Section): SectionViews {
   const code = {
     files: sectionFilesOf(document, section, VIEW_ROLES.code),
     generated: sectionFilesOf(document, section, GENERATED_ROLES),
   };
   const tests = sectionFilesOf(document, section, VIEW_ROLES.tests);
   const docs = sectionFilesOf(document, section, VIEW_ROLES.docs);
-  const session = sessionQuotes(document, section, tilesOn(view, section.id));
+  const session = sessionQuotes(document, section, tilesOn(document, section.id));
   return {
     code,
     tests: { files: tests },
@@ -776,11 +652,11 @@ export type SessionQuote = {
 
 const isAnchor = (value: unknown): value is Anchor => isRecord(value) && isString(value.type);
 
-/** What a tile's data cites: its `source` (the native tiles and exhibits)
- *  or its `anchors` (prose). */
+/** What a tile cites: its own citations, and its data's `source` (the native
+ *  tiles and exhibits) or `anchors` (prose). */
 function tileAnchors(tile: ViewTile): Anchor[] {
-  if (!isRecord(tile.data)) return [];
-  return [tile.data.source, tile.data.anchors].flatMap((list) =>
+  const data = isRecord(tile.data) ? [tile.data.source, tile.data.anchors] : [];
+  return [tile.cites, ...data].flatMap((list) =>
     Array.isArray(list) ? list.filter(isAnchor) : [],
   );
 }
@@ -789,14 +665,13 @@ function tileAnchors(tile: ViewTile): Anchor[] {
  *  tiles cite, each once, in the order they happened. A citation the index
  *  can't resolve to its words is left out. */
 export function sessionQuotes(
-  document: ReviewDocument,
-  section: Section,
+  document: ReviewV2,
+  section: V2Section,
   tiles: ViewTile[] = [],
 ): SessionQuote[] {
   const anchors = [
-    ...(section.summary?.anchors ?? []),
-    ...behaviourSteps(section).flatMap((step) => step.anchors ?? []),
-    ...section.risks.flatMap((risk) => risk.anchors ?? []),
+    ...section.steps.flatMap((step) => step.cites),
+    ...section.risks.flatMap((risk) => risk.cites),
     ...tiles.flatMap(tileAnchors),
   ];
   const quotes = new Map<string, SessionQuote>();

@@ -1,39 +1,40 @@
 import { describe, expect, it } from "vitest";
 import { commentTarget, pendingSubmission, type PendingComment } from "../pending-review-model";
 import { pageContextOf } from "../page-context";
-import { emptyView, withReviewView, type ReviewView } from "../review-view/model";
+import { fromV1 } from "../review-view/from-v1";
+import { withReview, type ViewTile } from "../review-view/model";
 import { fixtureReview, fixtureTile } from "./fixture-test-helper";
 import { reviewPageOf } from "./view";
 
-/** The fixture's review served with a view of its custom tile, a native
- *  diagram citing a hunk and a prose note citing nothing. */
+/** The fixture's review served with its custom tile, a native diagram
+ *  citing a hunk and a prose note citing nothing. */
 const review = () => {
   const document = fixtureReview();
-  const base = emptyView(document);
-  const view: ReviewView = {
-    ...base,
-    tiles: [
-      fixtureTile("route_changes"),
-      {
-        id: "dg_flow",
-        type: "flow",
-        title: "How a retry runs",
-        state: "ready",
-        data: {
-          lanes: [{ steps: [{ title: "Fail" }, { title: "Wait" }] }],
-          source: [{ type: "hunk", id: "h_000000000001" }],
-        },
+  const tiles: ViewTile[] = [
+    { ...fixtureTile("route_changes"), owner: "sec_retry", cites: [] },
+    {
+      id: "dg_flow",
+      type: "flow",
+      owner: "sec_retry",
+      title: "How a retry runs",
+      state: "ready",
+      cites: [{ type: "hunk", id: "h_000000000001" }],
+      data: {
+        lanes: [{ steps: [{ title: "Fail" }, { title: "Wait" }] }],
+        source: [{ type: "hunk", id: "h_000000000001" }],
       },
-      {
-        id: "notes",
-        type: "prose",
-        title: "Notes",
-        state: "ready",
-        data: { text: "Nothing to cite.", anchors: [] },
-      },
-    ],
-  };
-  return withReviewView(document, view);
+    },
+    {
+      id: "notes",
+      type: "prose",
+      owner: "sec_retry",
+      title: "Notes",
+      state: "ready",
+      cites: [],
+      data: { text: "Nothing to cite.", anchors: [] },
+    },
+  ];
+  return withReview(document, { ...fromV1(document), tiles });
 };
 
 describe("a comment on a tile", () => {
