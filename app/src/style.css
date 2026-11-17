@@ -5704,6 +5704,13 @@ a.upnext-done-text:hover {
   min-width: 0;
   overflow: auto;
 }
+/* A stack's page: its bar, then its overview as the Inbox's panel draws it. */
+.local-stack-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
 .upnext-panel {
   display: flex;
   flex-direction: column;
