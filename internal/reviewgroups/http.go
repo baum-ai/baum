@@ -53,11 +53,14 @@ func (h *API) Close() {
 	}
 }
 
-// View is a group as the API answers it.
+// View is a group as the API answers it. A stack group has no combined
+// review: its Summary reports no versions, with the riskiest member's
+// risk_score, and its Overview says what its page shows.
 type View struct {
 	Group
 	Summary
-	Outdated bool `json:"outdated"`
+	Outdated bool      `json:"outdated"`
+	Overview *Overview `json:"overview,omitempty"`
 }
 
 const maxPatchReads = 4
@@ -132,16 +135,21 @@ func (h *API) changed() {
 	}
 }
 
-// heads are the open pull requests' current heads by repository identity.
-func (h *API) heads(ctx context.Context) map[string]map[int]string {
-	out := map[string]map[int]string{}
+// snapshot is the review index, empty without one or when it cannot be read.
+func (h *API) snapshot(ctx context.Context) reviewindex.Snapshot {
 	if h.Index == nil {
-		return out
+		return reviewindex.Snapshot{}
 	}
 	snapshot, err := h.Index(ctx)
 	if err != nil {
-		return out
+		return reviewindex.Snapshot{}
 	}
+	return snapshot
+}
+
+// heads are the open pull requests' current heads by repository identity.
+func heads(snapshot reviewindex.Snapshot) map[string]map[int]string {
+	out := map[string]map[int]string{}
 	for _, entry := range snapshot.Entries {
 		if entry.Historical || entry.PullRequest.HeadSHA == "" {
 			continue
@@ -155,12 +163,28 @@ func (h *API) heads(ctx context.Context) map[string]map[int]string {
 	return out
 }
 
-func (h *API) view(ctx context.Context, g Group, heads map[string]map[int]string) (View, error) {
+// view answers one group. A stack group's combined review versions, which
+// releases before stack overviews wrote, stay stored but are not reported.
+func (h *API) view(ctx context.Context, g Group, snapshot reviewindex.Snapshot) (View, error) {
+	if g.Stack {
+		summary, err := h.Store.StackSummary(ctx, g.ID)
+		if err != nil {
+			return View{}, err
+		}
+		return stackView(g, snapshot, summary), nil
+	}
 	summary, err := h.Store.Summary(ctx, g.ID)
 	if err != nil {
 		return View{}, err
 	}
-	return View{Group: g, Summary: summary, Outdated: Outdated(g.Members, summary.Reviewed, heads[g.Repository])}, nil
+	return View{Group: g, Summary: summary, Outdated: Outdated(g.Members, summary.Reviewed, heads(snapshot)[g.Repository])}, nil
+}
+
+// stackView is a stack group's view: its overview from the members' saved
+// reviews and its summary, and no combined review.
+func stackView(g Group, snapshot reviewindex.Snapshot, summary *StackSummary) View {
+	o, risk := overview(g, memberReviews(g, snapshot), summary)
+	return View{Group: g, Summary: Summary{Reviewed: []ReviewedMember{}, RiskScore: risk}, Overview: &o}
 }
 
 func (h *API) list(w http.ResponseWriter, r *http.Request) {
@@ -174,14 +198,28 @@ func (h *API) list(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	heads := h.heads(r.Context())
+	stackSummaries, err := h.Store.stackSummaries(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	snapshot := h.snapshot(r.Context())
+	current := heads(snapshot)
 	views := make([]View, 0, len(groups))
 	for _, g := range groups {
+		if g.Stack {
+			var summary *StackSummary
+			if stored, ok := stackSummaries[g.ID]; ok {
+				summary = &stored
+			}
+			views = append(views, stackView(g, snapshot, summary))
+			continue
+		}
 		summary, ok := summaries[g.ID]
 		if !ok {
 			summary = Summary{Reviewed: []ReviewedMember{}}
 		}
-		views = append(views, View{Group: g, Summary: summary, Outdated: Outdated(g.Members, summary.Reviewed, heads[g.Repository])})
+		views = append(views, View{Group: g, Summary: summary, Outdated: Outdated(g.Members, summary.Reviewed, current[g.Repository])})
 	}
 	respond(w, http.StatusOK, map[string]any{"available": true, "groups": views})
 }
@@ -192,7 +230,7 @@ func (h *API) get(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	v, err := h.view(r.Context(), g, h.heads(r.Context()))
+	v, err := h.view(r.Context(), g, h.snapshot(r.Context()))
 	if err != nil {
 		fail(w, err)
 		return
@@ -249,7 +287,7 @@ func (h *API) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.changed()
-	v, err := h.view(r.Context(), g, h.heads(r.Context()))
+	v, err := h.view(r.Context(), g, h.snapshot(r.Context()))
 	if err != nil {
 		fail(w, err)
 		return
@@ -270,7 +308,7 @@ func (h *API) update(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	v, err := h.view(r.Context(), g, h.heads(r.Context()))
+	v, err := h.view(r.Context(), g, h.snapshot(r.Context()))
 	if err != nil {
 		fail(w, err)
 		return
@@ -300,8 +338,15 @@ func (h *API) remove(w http.ResponseWriter, r *http.Request) {
 
 func (h *API) versions(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := h.Store.Get(r.Context(), id); err != nil {
+	g, err := h.Store.Get(r.Context(), id)
+	if err != nil {
 		fail(w, err)
+		return
+	}
+	if g.Stack {
+		// A stack has no combined review; one an earlier release wrote
+		// stays stored, unlisted.
+		respond(w, http.StatusOK, []store.Metadata{})
 		return
 	}
 	versions, err := h.Store.Versions(r.Context(), id)
@@ -313,10 +358,13 @@ func (h *API) versions(w http.ResponseWriter, r *http.Request) {
 }
 
 // version loads the version the request names (?version=, the latest when
-// absent) of a group that exists.
+// absent) of a group that exists. A stack group has none to read.
 func (h *API) version(w http.ResponseWriter, r *http.Request) (Group, store.Version, bool) {
 	id := r.PathValue("id")
 	g, err := h.Store.Get(r.Context(), id)
+	if err == nil && g.Stack {
+		err = ErrStackOverview
+	}
 	if err != nil {
 		fail(w, err)
 		return Group{}, store.Version{}, false

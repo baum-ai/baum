@@ -65,6 +65,9 @@ func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.
 	if err != nil {
 		return groupInputs{}, err
 	}
+	if group.Stack {
+		return groupInputs{}, reviewgroups.ErrStackOverview
+	}
 	if !strings.EqualFold(group.Repository, c.Repository) {
 		return groupInputs{}, errors.New("the clone is not of the group's repository")
 	}
