@@ -418,9 +418,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			// APIError is the class of an assistant message Claude Code
 			// wrote for a request it could not send or the provider failed,
 			// such as authentication_failed when it is not signed in.
-			APIError string `json:"error"`
+			APIError string        `json:"error"`
 			Message  streamMessage `json:"message"`
-			Event struct {
+			Event    struct {
 				Type    string
 				Message struct {
 					ID, Model string

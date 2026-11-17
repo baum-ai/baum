@@ -32,8 +32,8 @@ func TestV2Metrics(t *testing.T) {
 	g := &replay.V2Generator{}
 	level := 2
 	doc, _ := json.Marshal(reviewv2.Document{Schema: reviewv2.Name,
-		Sections: []reviewv2.Section{{ID: "sec_a", Kind: "logical", Level: &level, Steps: []reviewv2.Step{{}, {}}}, {ID: "sec_b", Kind: "logical", Details: "failed"}},
-		Tiles:    []reviewv2.Tile{{ID: "tl_a", Type: "flow", State: reviewv2.TileReady}, {ID: "tl_b", Type: "table", State: reviewv2.TileFailed}},
+		Sections:   []reviewv2.Section{{ID: "sec_a", Kind: "logical", Level: &level, Steps: []reviewv2.Step{{}, {}}}, {ID: "sec_b", Kind: "logical", Details: "failed"}},
+		Tiles:      []reviewv2.Tile{{ID: "tl_a", Type: "flow", State: reviewv2.TileReady}, {ID: "tl_b", Type: "table", State: reviewv2.TileFailed}},
 		Generation: &reviewv2.Generation{Overview: reviewv2.CallRecord{Status: "failed"}}})
 	m, err := g.DocumentMetrics(doc)
 	if err != nil {
