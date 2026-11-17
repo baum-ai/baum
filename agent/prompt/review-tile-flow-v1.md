@@ -8,4 +8,7 @@ Up to 4 `lanes`, each a row of up to 6 `steps` joined by arrows. A lane's
 two-way exchange, `none` to list steps side by side. An arrow means "then":
 a lane is one path, so an outcome that happens instead of the next step (a
 refusal, a fallback, an error) goes in a lane of its own ("Refused",
-"Fallback") or in the caption, never after it.
+"Fallback") or in the caption, never after it. A lane that lists outcomes
+which do not follow one another (several ways a step can fail, several
+refusals) joins every step after the first with `none`, so no arrow
+suggests one leads to the next.
