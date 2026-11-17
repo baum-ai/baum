@@ -267,17 +267,3 @@ func HunkAnchor(id string, lines []int) Anchor {
 	encoded, _ := json.Marshal(value)
 	return encoded
 }
-
-// citedHunks are the hunks anchors cite, once each, in order.
-func citedHunks(anchors []Anchor) []string {
-	var out []string
-	for _, raw := range anchors {
-		var a anchor
-		if json.Unmarshal(raw, &a) == nil && a.Type == "hunk" {
-			if id := a.id(); id != "" && !slices.Contains(out, id) {
-				out = append(out, id)
-			}
-		}
-	}
-	return out
-}

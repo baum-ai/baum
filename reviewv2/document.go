@@ -215,28 +215,13 @@ type Tile struct {
 }
 
 // CodeData is a code tile's data: the model names the hunk and, optionally,
-// its first and last line on the new side; the host fills Excerpt from the
-// diff (Complete).
+// its first and last line on the new side; the host fills Text, the new
+// side's lines from the diff, and Lines when the model gave none
+// (Complete).
 type CodeData struct {
-	Hunk    string   `json:"hunk"`
-	Lines   []int    `json:"lines,omitempty"`
-	Excerpt *Excerpt `json:"excerpt,omitempty"`
-}
-
-// Excerpt is the code a code tile shows: the file and the hunk's diff
-// lines, as baum.review/1's index records them.
-type Excerpt struct {
-	Path  string        `json:"path"`
-	Lines []ExcerptLine `json:"lines"`
-}
-
-// ExcerptLine is one line of an excerpt: context, add or remove, with its
-// line numbers on each side.
-type ExcerptLine struct {
-	Kind string `json:"kind"`
-	Text string `json:"text"`
-	Old  int    `json:"old_line,omitempty"`
-	New  int    `json:"new_line,omitempty"`
+	Hunk  string `json:"hunk"`
+	Lines []int  `json:"lines,omitempty"`
+	Text  string `json:"text,omitempty"`
 }
 
 // Tile states.

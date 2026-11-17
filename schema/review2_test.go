@@ -66,12 +66,18 @@ func TestValidateReview2(t *testing.T) {
 		"tile owner":              func(doc map[string]any) { tile(doc, 0)["owner"] = "somewhere" },
 		"tile state":              func(doc map[string]any) { tile(doc, 0)["state"] = "done" },
 		"flow shape":              func(doc map[string]any) { tile(doc, 0)["data"] = map[string]any{"lanes": []any{}} },
-		"flow step title":         func(doc map[string]any) { tile(doc, 0)["data"].(map[string]any)["lanes"].([]any)[0].(map[string]any)["steps"].([]any)[0].(map[string]any)["title"] = string(make([]byte, 61)) },
-		"code without hunk":       func(doc map[string]any) { tile(doc, 1)["data"] = map[string]any{"lines": []any{1, 2}} },
-		"verdict decision":        func(doc map[string]any) { doc["summary"].(map[string]any)["verdict"].(map[string]any)["decision"] = "merge" },
-		"header":                  func(doc map[string]any) { doc["review"].(map[string]any)["pull_request"] = "42" },
-		"risk score":              func(doc map[string]any) { doc["summary"].(map[string]any)["risk_score"].(map[string]any)["rubric"] = "v1" },
-		"screenshot":              func(doc map[string]any) { doc["overview"].(map[string]any)["screenshots"] = []any{"shot"} },
+		"flow step title": func(doc map[string]any) {
+			tile(doc, 0)["data"].(map[string]any)["lanes"].([]any)[0].(map[string]any)["steps"].([]any)[0].(map[string]any)["title"] = string(make([]byte, 61))
+		},
+		"code without hunk": func(doc map[string]any) { tile(doc, 1)["data"] = map[string]any{"lines": []any{1, 2}} },
+		"verdict decision": func(doc map[string]any) {
+			doc["summary"].(map[string]any)["verdict"].(map[string]any)["decision"] = "merge"
+		},
+		"header": func(doc map[string]any) { doc["review"].(map[string]any)["pull_request"] = "42" },
+		"risk score": func(doc map[string]any) {
+			doc["summary"].(map[string]any)["risk_score"].(map[string]any)["rubric"] = "v1"
+		},
+		"screenshot": func(doc map[string]any) { doc["overview"].(map[string]any)["screenshots"] = []any{"shot"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			doc := review2Example(t)

@@ -33,7 +33,7 @@ type v1Document struct {
 		RiskScore     json.RawMessage `json:"risk_score"`
 		ReviewMinutes *int            `json:"review_minutes"`
 	} `json:"summary"`
-	Sections []v1Section    `json:"sections"`
+	Sections []v1Section     `json:"sections"`
 	Stats    json.RawMessage `json:"stats"`
 	Index    json.RawMessage `json:"index"`
 }

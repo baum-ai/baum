@@ -379,28 +379,23 @@
       "shows": "The line that doubles the wait.",
       "title": "How the wait doubles",
       "caption": "The wait is the first wait shifted left once per attempt.",
-      "cites": [],
+      "cites": [
+        {
+          "id": "h_a00000000001",
+          "lines": [
+            11,
+            12
+          ],
+          "type": "hunk"
+        }
+      ],
       "data": {
         "hunk": "h_a00000000001",
         "lines": [
           11,
           12
         ],
-        "excerpt": {
-          "path": "internal/delivery/retry.go",
-          "lines": [
-            {
-              "kind": "add",
-              "text": "// Wait is the wait before attempt n: Base doubled n-1 times.",
-              "new_line": 11
-            },
-            {
-              "kind": "add",
-              "text": "func (p Policy) Wait(n int) time.Duration { return p.Base \u003c\u003c (n - 1) }",
-              "new_line": 12
-            }
-          ]
-        }
+        "text": "// Wait is the wait before attempt n: Base doubled n-1 times.\nfunc (p Policy) Wait(n int) time.Duration { return p.Base \u003c\u003c (n - 1) }"
       },
       "state": "ready"
     },

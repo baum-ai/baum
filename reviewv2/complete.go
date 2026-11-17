@@ -125,6 +125,11 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 	for i := range d.Sections {
 		d.Sections[i].Derived = parts.Derived[d.Sections[i].ID]
 	}
+	if d.Generation == nil {
+		// A generated document always says how its levels went; one
+		// converted from baum.review/1 never does.
+		d.Generation = &Generation{}
+	}
 	minutes := ReviewMinutes(d)
 	d.Summary.ReviewMinutes = &minutes
 	normalizeEmpty(&d)
@@ -353,9 +358,9 @@ func liftNative(t *Tile) {
 	}
 }
 
-// fillCode fills a code tile's excerpt with its hunk's lines, those between
-// its first and last line on the new side when it names them (removed lines
-// among them kept).
+// fillCode fills a code tile's text with its hunk's new side: the lines
+// between its first and last line when it names them, else the whole hunk,
+// whose first and last new line become its lines.
 func fillCode(t *Tile, hunks map[string]bundle.Hunk) {
 	var code CodeData
 	if json.Unmarshal(t.Data, &code) != nil || code.Hunk == "" {
@@ -372,38 +377,32 @@ func fillCode(t *Tile, hunks map[string]bundle.Hunk) {
 		t.State, t.Problems = TileUnavailable, []string{"the hunk's text is not available"}
 		return
 	}
-	excerpt := &Excerpt{Path: h.Path, Lines: []ExcerptLine{}}
-	inRange := func(n int) bool {
-		return len(code.Lines) != 2 || n >= code.Lines[0] && n <= code.Lines[1]
-	}
-	for i, l := range lines {
-		keep := l.New > 0 && inRange(l.New)
-		if l.Kind == "remove" {
-			// A removed line shows where the next new line is shown.
-			next := 0
-			for _, after := range lines[i+1:] {
-				if after.New > 0 {
-					next = after.New
-					break
-				}
-			}
-			keep = next == 0 && len(code.Lines) != 2 || next > 0 && inRange(next)
+	var text []string
+	first, last := 0, 0
+	for _, l := range lines {
+		if l.New == 0 || len(code.Lines) == 2 && (l.New < code.Lines[0] || l.New > code.Lines[1]) {
+			continue
 		}
-		if keep {
-			excerpt.Lines = append(excerpt.Lines, ExcerptLine(l))
+		if first == 0 {
+			first = l.New
 		}
+		last = l.New
+		text = append(text, l.Text)
 	}
-	if len(excerpt.Lines) == 0 {
+	if len(text) == 0 {
 		t.State, t.Problems = TileUnavailable, []string{"the lines it names are not in the hunk"}
 		return
 	}
-	code.Excerpt = excerpt
+	if len(code.Lines) != 2 {
+		code.Lines = []int{first, last}
+	}
+	code.Text = strings.Join(text, "\n")
 	encoded, err := json.Marshal(code)
 	if err != nil {
 		return
 	}
 	t.Data = encoded
-	if t.Cites == nil {
+	if len(t.Cites) == 0 {
 		t.Cites = []Anchor{HunkAnchor(code.Hunk, code.Lines)}
 	}
 	if t.State == "" || t.State == TilePending || t.State == TileUnavailable {

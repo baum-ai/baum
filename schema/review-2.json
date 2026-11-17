@@ -344,34 +344,13 @@
     },
     "v2TileData_code": {
       "type": "object",
-      "description": "An excerpt of a hunk: the model names the hunk and, optionally, the first and last lines on the new side; the host fills the excerpt from the diff.",
+      "description": "An excerpt of a hunk: the model names the hunk and, optionally, the first and last lines on the new side; the host fills the text from the diff, and the lines when the model gave none.",
       "additionalProperties": false,
       "required": ["hunk"],
       "properties": {
         "hunk": { "$ref": "#/$defs/hunkId" },
         "lines": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 1 } },
-        "excerpt": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["path", "lines"],
-          "properties": {
-            "path": { "type": "string" },
-            "lines": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["kind", "text"],
-                "properties": {
-                  "kind": { "enum": ["context", "add", "remove"] },
-                  "text": { "type": "string" },
-                  "old_line": { "type": "integer", "minimum": 1 },
-                  "new_line": { "type": "integer", "minimum": 1 }
-                }
-              }
-            }
-          }
-        }
+        "text": { "type": "string", "description": "The new side's lines, filled by the host from the diff." }
       }
     },
     "v2CallRecord": {

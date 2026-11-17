@@ -89,7 +89,7 @@ func TestCompleteExample(t *testing.T) {
 		t.Fatalf("summary = %+v", d.Summary)
 	}
 	var code CodeData
-	if err := json.Unmarshal(d.Tiles[1].Data, &code); err != nil || code.Excerpt == nil || len(code.Excerpt.Lines) != 2 || code.Excerpt.Lines[0].New != 11 || d.Tiles[1].State != TileReady {
+	if err := json.Unmarshal(d.Tiles[1].Data, &code); err != nil || !strings.HasPrefix(code.Text, "// Wait is") || strings.Count(code.Text, "\n") != 1 || d.Tiles[1].State != TileReady {
 		t.Fatalf("code tile = %s (%s)", d.Tiles[1].Data, d.Tiles[1].State)
 	}
 	risk := d.Sections[0].Risks[0]
@@ -189,6 +189,9 @@ func TestFromV1Example(t *testing.T) {
 	}
 	if types["schema_change"] != "schema_change" || types["table_retry_states"] != "v1_table" || types["dg_delivery"] != TypeFlow {
 		t.Fatalf("types = %v", types)
+	}
+	if d.Generation != nil {
+		t.Fatal("a converted document has no generation record")
 	}
 	if d.Summary.Verdict != nil || d.Summary.RiskWhy == "" {
 		t.Fatalf("summary = %+v", d.Summary)
