@@ -1,3 +1,4 @@
+import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { useEffect, useMemo, useState } from "react";
 import pluralize from "pluralize";
 import { CodeDiff, type CodeDiffFile, type CodeDiffHunk } from "@baum/viewer/components/code-diff";
@@ -154,7 +155,7 @@ function FileView({
               <span key={section.id}>
                 {at > 0 ? ", " : ""}
                 <JumpLink onClick={() => context.select({ kind: "section", id: section.id })}>
-                  {section.title}
+                  <InlineMarkdown>{section.title}</InlineMarkdown>
                 </JumpLink>
               </span>
             ))}
@@ -290,7 +291,7 @@ function HunkNotes({ notes, go }: { notes: HunkNote[]; go: (note: HunkNote) => v
               Step
             </span>
           )}
-          <span className="min-w-0 text-primary">{note.text}</span>
+          <InlineMarkdown className="min-w-0 text-primary">{note.text}</InlineMarkdown>
           <JumpLink onClick={() => go(note)}>{note.sectionTitle} →</JumpLink>
         </li>
       ))}

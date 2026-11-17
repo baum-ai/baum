@@ -5,7 +5,7 @@ import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { HunkEvidence } from "@baum/viewer/components/hunk-evidence";
 import { ExternalLinkIcon } from "@baum/viewer/components/icons";
 import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
-import { Markdown } from "@baum/viewer/components/markdown";
+import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { useReviewFiles, useReviewSources } from "@baum/viewer/components/review-contexts";
 import {
   AnchorChips,
@@ -173,7 +173,7 @@ function SectionBody({
             <TierBadge tier={section.derived.risk_tier} risks={section.risks.length} />
           ) : null}
         </div>
-        <CardHeader size="pane" title={section.title} />
+        <CardHeader size="pane" title={<InlineMarkdown>{section.title}</InlineMarkdown>} />
       </div>
       {details === "pending" ? (
         <p role="status" className="flex items-center gap-2 text-base text-secondary">
@@ -210,7 +210,11 @@ function SectionBody({
                   {position + 1}
                 </span>
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  {step.title ? <p className="font-medium text-primary">{step.title}</p> : null}
+                  {step.title ? (
+                    <p className="font-medium text-primary">
+                      <InlineMarkdown>{step.title}</InlineMarkdown>
+                    </p>
+                  ) : null}
                   <Markdown className="text-primary">{step.after?.trim() || step.text}</Markdown>
                   {step.before ? (
                     <p className="text-base text-secondary">Before: {step.before}</p>

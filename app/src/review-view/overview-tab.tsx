@@ -1,6 +1,6 @@
 import { cn } from "@baum/viewer/components/classnames";
 import { formatDateTime } from "@baum/viewer/components/format";
-import { Markdown } from "@baum/viewer/components/markdown";
+import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { JumpLink, Part, PROSE } from "@baum/viewer/components/review-parts";
 import { ReviewImages } from "@baum/viewer/components/review-images";
 import { RiskMeter } from "@baum/viewer/components/review-summary";
@@ -33,9 +33,9 @@ const SCORE_INK: Record<Tone, string> = {
   critical: "text-status-critical",
 };
 
-/** The Overview, always in the same order: the summary, the verdict when
- *  something must happen before merging, the risk, what it looks like, the
- *  main diagram and what was asked. */
+/** The Overview, always in the same order: the summary, the risk (with the
+ *  verdict under it when something must happen before merging), what it
+ *  looks like, the main diagram and what was asked. */
 export function OverviewTab({
   document,
   view,
@@ -51,7 +51,6 @@ export function OverviewTab({
   idPrefix: string;
   go: (place: ViewPlace) => void;
 }) {
-  const verdict = view.overview.verdict;
   const diagram = viewTile(view, view.overview.diagram);
   const attachments = new Set((document.index.attachments ?? []).map((image) => image.id));
   const screenshots = view.overview.screenshots.filter((id) => attachments.has(id));
@@ -62,44 +61,7 @@ export function OverviewTab({
       {document.summary.text ? (
         <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{document.summary.text}</Markdown>
       ) : null}
-      {verdict ? (
-        <section
-          aria-label="Before merging"
-          data-review-block=""
-          className="rounded-md border-l-2 border-status-caution bg-status-caution-bg px-4 py-3 outline-none"
-        >
-          <p className="text-base font-semibold text-primary">{verdict.text}</p>
-          {verdict.points.length > 0 ? (
-            <ul className="mt-2 space-y-1.5">
-              {verdict.points.map((point, at) => {
-                const title = point.section ? titleOf(point.section) : undefined;
-                return (
-                  <li key={at} className="flex gap-2.5 text-base leading-[1.55] text-primary">
-                    <span
-                      aria-hidden
-                      className="mt-[0.6rem] h-1 w-1 flex-none rounded-full bg-(--text-tertiary)"
-                    />
-                    <span className="min-w-0">
-                      {point.text}
-                      {title && point.section ? (
-                        <>
-                          {" "}
-                          <JumpLink
-                            onClick={() => go({ tab: "sections", section: point.section! })}
-                          >
-                            {title} →
-                          </JumpLink>
-                        </>
-                      ) : null}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
-        </section>
-      ) : null}
-      <RiskPart document={document} view={view} />
+      <RiskPart document={document} view={view} titleOf={titleOf} go={go} />
       {screenshots.length > 0 ? (
         <ReviewImages
           document={document}
@@ -119,52 +81,107 @@ export function OverviewTab({
   );
 }
 
-/** The score, what it means and why it is what it is, in two sentences. */
-function RiskPart({ document, view }: { document: ReviewDocument; view: ReviewView }) {
+/** The score, what it means and why it is what it is, in two sentences,
+ *  and below them, when the review asks for something before merging, what
+ *  that is: the verdict belongs to the risk it answers. */
+function RiskPart({
+  document,
+  view,
+  titleOf,
+  go,
+}: {
+  document: ReviewDocument;
+  view: ReviewView;
+  titleOf: (id: string) => string | undefined;
+  go: (place: ViewPlace) => void;
+}) {
   const score = riskScoreView(document);
   const why = riskSummary(document, view);
+  const verdict = view.overview.verdict;
   return (
     <section
       aria-label="Risk"
       data-review-block=""
-      className="grid gap-x-8 gap-y-3 rounded-md outline-none @2xl:grid-cols-[minmax(12rem,auto)_minmax(0,1fr)]"
+      className="overflow-hidden rounded-lg border border-default bg-surface-card outline-none data-[review-block-active]:border-strong"
     >
-      <div className="space-y-1.5">
-        <h3 className="text-xs font-medium tracking-[0.08em] text-tertiary uppercase">Risk</h3>
-        {score.assessed ? (
-          <>
-            <p className="flex items-center gap-3">
-              <span
-                className={cn(
-                  "text-3xl font-medium tabular-nums",
-                  SCORE_INK[riskScoreTone(score.score)],
-                )}
-              >
-                {score.lowerBound ? `≥ ${score.score}` : score.score}
-                <span className="text-base text-tertiary"> of 5</span>
-              </span>
-              <RiskMeter
-                score={score.score}
-                lowerBound={score.lowerBound}
-                tone={riskScoreTone(score.score)}
-              />
-            </p>
-            {score.lowerBound ? null : <p className="text-base text-secondary">{score.meaning}</p>}
-          </>
-        ) : (
-          <p className="text-base font-medium text-primary">Not assessed</p>
-        )}
+      <div className="grid gap-x-8 gap-y-3 p-4 @2xl:grid-cols-[minmax(12rem,auto)_minmax(0,1fr)]">
+        <div className="space-y-1.5">
+          <h3 className="text-xs font-medium tracking-[0.08em] text-tertiary uppercase">Risk</h3>
+          {score.assessed ? (
+            <>
+              <p className="flex items-center gap-3">
+                <span
+                  className={cn(
+                    "text-3xl font-medium tabular-nums",
+                    SCORE_INK[riskScoreTone(score.score)],
+                  )}
+                >
+                  {score.lowerBound ? `≥ ${score.score}` : score.score}
+                  <span className="text-base text-tertiary"> of 5</span>
+                </span>
+                <RiskMeter
+                  score={score.score}
+                  lowerBound={score.lowerBound}
+                  tone={riskScoreTone(score.score)}
+                />
+              </p>
+              {score.lowerBound ? null : (
+                <p className="text-base text-secondary">{score.meaning}</p>
+              )}
+            </>
+          ) : (
+            <p className="text-base font-medium text-primary">Not assessed</p>
+          )}
+        </div>
+        {why ? (
+          <Markdown className="max-w-[72ch] self-center text-base leading-[1.6] text-primary">
+            {why}
+          </Markdown>
+        ) : !score.assessed ? (
+          <p className="self-center text-base text-secondary">
+            {score.legacy
+              ? "This review was generated before risk scores. Regenerate it to assess."
+              : "No current section of this review was rated."}
+          </p>
+        ) : null}
       </div>
-      {why ? (
-        <Markdown className="max-w-[72ch] self-center text-base leading-[1.6] text-primary">
-          {why}
-        </Markdown>
-      ) : !score.assessed ? (
-        <p className="self-center text-base text-secondary">
-          {score.legacy
-            ? "This review was generated before risk scores. Regenerate it to assess."
-            : "No current section of this review was rated."}
-        </p>
+      {verdict ? (
+        <div aria-label="Before merging" className="border-t border-default px-4 py-3">
+          <p className="flex flex-wrap items-baseline gap-x-2 text-base text-primary">
+            <span className="text-xs font-medium tracking-[0.08em] text-status-caution uppercase">
+              Before merging
+            </span>
+            <InlineMarkdown className="font-semibold">{verdict.text}</InlineMarkdown>
+          </p>
+          {verdict.points.length > 0 ? (
+            <ul className="mt-2 space-y-1.5">
+              {verdict.points.map((point, at) => {
+                const title = point.section ? titleOf(point.section) : undefined;
+                return (
+                  <li key={at} className="flex gap-2.5 text-base leading-[1.55] text-primary">
+                    <span
+                      aria-hidden
+                      className="mt-[0.6rem] h-1 w-1 flex-none rounded-full bg-(--text-tertiary)"
+                    />
+                    <span className="min-w-0">
+                      <InlineMarkdown>{point.text}</InlineMarkdown>
+                      {title && point.section ? (
+                        <>
+                          {" "}
+                          <JumpLink
+                            onClick={() => go({ tab: "sections", section: point.section! })}
+                          >
+                            <InlineMarkdown>{title}</InlineMarkdown> →
+                          </JumpLink>
+                        </>
+                      ) : null}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
     </section>
   );
@@ -194,7 +211,9 @@ function AskedPart({ document, rows }: { document: ReviewDocument; rows: IntentR
               )}
             >
               <div className="min-w-0 space-y-0.5">
-                <p className="text-base text-primary [overflow-wrap:anywhere]">{row.asked}</p>
+                <p className="text-base text-primary [overflow-wrap:anywhere]">
+                  <InlineMarkdown>{row.asked}</InlineMarkdown>
+                </p>
                 <ViewerLink href={`?${next}`} className="text-xs text-link hover:underline">
                   {[
                     vendor ? harnessName(vendor) : "Session",
@@ -207,7 +226,7 @@ function AskedPart({ document, rows }: { document: ReviewDocument; rows: IntentR
               </div>
               {row.got ? (
                 <p className="min-w-0 text-base text-secondary [overflow-wrap:anywhere]">
-                  {row.got}
+                  <InlineMarkdown>{row.got}</InlineMarkdown>
                 </p>
               ) : null}
             </li>

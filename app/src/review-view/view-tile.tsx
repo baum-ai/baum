@@ -152,7 +152,9 @@ export function ViewTileCard({
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 space-y-0.5">
-          <Heading className="text-base font-semibold text-primary">{title}</Heading>
+          <Heading className="text-base font-semibold text-primary">
+            <InlineMarkdown>{title}</InlineMarkdown>
+          </Heading>
           {note ? (
             <p data-added-note="" className="text-xs text-tertiary">
               {note}

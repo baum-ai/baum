@@ -230,7 +230,7 @@ describe("Markdown output", () => {
         </InlineMarkdown>,
       ),
     ).toMatchInlineSnapshot(`
-      "<span class="x"><strong>b</strong> <code class="rounded-sm bg-code-fill px-1 py-0.5">c</code> l &lt;i&gt;t&lt;/i&gt; 
+      "<span class="x"><strong>b</strong> <code class="rounded-sm bg-code-fill px-1 py-0.5">c</code> l &lt;i&gt;t&lt;/i&gt;
       h</span>"
     `);
   });

@@ -59,7 +59,7 @@ export function NavRow({
           active && !mono && "font-medium",
         )}
       >
-        {title}
+        {mono ? title : <InlineMarkdown>{title}</InlineMarkdown>}
       </span>
       {aside ? <span className="row-span-2 flex-none text-xs text-tertiary">{aside}</span> : null}
       {line ? (

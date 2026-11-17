@@ -433,7 +433,14 @@ const INLINE_ELEMENTS = ["p", "strong", "em", "del", "code", "a", "br"];
 const INLINE_COMPONENTS: Components = {
   // Paragraphs run together as one line of text: the inline form sits inside
   // a heading, a button or a sentence, where a block would not belong.
-  p: ({ children }) => <>{children} </>,
+  // A space joins a paragraph to the one before it, so the line never ends
+  // in one.
+  p: ({ children, node }) => (
+    <>
+      {node?.position?.start.offset ? " " : null}
+      {children}
+    </>
+  ),
   // Text only: inside a button or a link a nested link is invalid, and the
   // row it sits in already leads somewhere.
   a: ({ children }) => <>{children}</>,

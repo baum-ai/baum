@@ -137,15 +137,17 @@ describe("the Overview", () => {
     const text = view.textContent ?? "";
     const order = [
       "A paired phone can now reach the daemon",
-      "Approve into the mobile branch once you've decided on Always allow.",
       "Risk",
       "This adds a network entry point to the daemon",
+      "Approve into the mobile branch once you've decided on Always allow.",
       "How a phone reaches the daemon",
       "What was asked",
     ].map((part) => text.indexOf(part));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect(order).toEqual(order.toSorted((a, b) => a - b));
     expect(view.querySelector('[aria-label="Risk"]')?.textContent).toContain("4 of 5");
+    // The verdict is part of the risk card, under the score and its reason.
+    expect(view.querySelector('[aria-label="Risk"] [aria-label="Before merging"]')).not.toBeNull();
     // No check callouts and no line counts.
     for (const gone of ["Verify", "Fixed later", "Follow-up", "lines"])
       expect(text).not.toContain(gone);

@@ -131,7 +131,9 @@ export function FlowDiagram({ data }: { data: FlowData }) {
             labelled && "@lg:grid-cols-[7rem_minmax(0,1fr)] @lg:items-center @lg:gap-3",
           )}
         >
-          {labelled ? <span className={LANE_LABEL}>{lane.label ?? ""}</span> : null}
+          {labelled ? (
+            <InlineMarkdown className={LANE_LABEL}>{lane.label ?? ""}</InlineMarkdown>
+          ) : null}
           <ol
             aria-label={lane.label || undefined}
             className={cn(
@@ -196,7 +198,9 @@ export function ColumnsDiagram({ data }: { data: ColumnsData }) {
             aria-label={column.label}
             className="grid min-w-0 content-start gap-1.5"
           >
-            <h4 className={cn(LANE_LABEL, LABEL_INK[tone])}>{column.label}</h4>
+            <h4 className={cn(LANE_LABEL, LABEL_INK[tone])}>
+              <InlineMarkdown>{column.label}</InlineMarkdown>
+            </h4>
             <ul className="grid gap-1.5">
               {column.items.map((item, position) => (
                 <li key={position} className="min-w-0">
@@ -285,9 +289,9 @@ export function SequenceDiagram({ data }: { data: SequenceData }) {
       <div className="hidden min-w-0 @xl:block">
         <div style={columns} className="grid gap-x-2 border-b border-default pb-1.5">
           {data.actors.map((actor, at) => (
-            <span key={at} className="text-center text-base font-semibold text-primary">
+            <InlineMarkdown key={at} className="text-center text-base font-semibold text-primary">
               {actor}
-            </span>
+            </InlineMarkdown>
           ))}
         </div>
         <ol style={columns} className="mt-2 grid gap-x-2 gap-y-2">
@@ -305,8 +309,11 @@ export function SequenceDiagram({ data }: { data: SequenceData }) {
           return (
             <li key={at} className={cn("min-w-0 rounded-md border px-3 py-2 text-base", BOX[tone])}>
               <span className="font-medium text-primary">
-                {data.actors[step.from]}
-                {step.from === step.to ? "" : ` → ${data.actors[step.to]}`}
+                <InlineMarkdown>
+                  {step.from === step.to
+                    ? (data.actors[step.from] ?? "")
+                    : `${data.actors[step.from] ?? ""} → ${data.actors[step.to] ?? ""}`}
+                </InlineMarkdown>
               </span>
               <InlineMarkdown className={cn("block leading-snug", INK[tone])}>
                 {step.text}
@@ -334,7 +341,7 @@ type Row = { key: string; cells: string[] };
 export function TableDiagram({ data }: { data: TableData }) {
   const columns: Column<Row>[] = data.columns.map((column, position) => ({
     key: `${position}-${column}`,
-    header: column,
+    header: <InlineMarkdown>{column}</InlineMarkdown>,
     cell: (row) => <InlineMarkdown>{row.cells[position] ?? ""}</InlineMarkdown>,
   }));
   return (
