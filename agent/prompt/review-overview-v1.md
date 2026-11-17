@@ -10,7 +10,7 @@ reply's schema is `schema-overview.json` in the run directory.
 
 - The map you wrote (when this is not the map's own session, it is in the
   input).
-- Each section's result: its title, gist, level, summary, steps and risks,
+- Each section's result: its title, gist, level, body and risks,
   or that it failed.
 - The tiles: each one's id, type, owner, title and state.
 - The attachments with their alt text and heading, and the linked sessions

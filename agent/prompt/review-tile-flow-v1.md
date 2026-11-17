@@ -4,7 +4,9 @@ Up to 4 `lanes`, each a row of up to 6 `steps` joined by arrows. A lane's
 `label` names who or what it follows ("Phone", "Desktop", "Once",
 "Always"); one lane without a label is a plain flow. A step has a `title`
 (at most 60 characters, ideally under 30), an optional `note` (at most 80,
-ideally one short clause), a `tone` and a `join`, the connector before it:
+ideally one short clause), an optional `more` (at most 300 characters:
+the detail the page shows under the flow when the step is clicked), a
+`tone` and a `join`, the connector before it:
 `arrow` (the default), `both` for a two-way exchange, `none` to list steps
 side by side. Steps are drawn as equal boxes in a row, so keep titles and
 notes about the same length; a long note makes every box in its row tall.

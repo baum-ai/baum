@@ -13,8 +13,8 @@ Several calls write it, each with its own instructions after these:
 - **The map**, first: groups the hunks into sections by behaviour, gives
   each a title, a one-line gist and a risk level, and plans the tiles.
 - **One section agent per section**, at the same time as each other: the
-  section's summary, its steps and its risks, and what each of its tiles
-  shows.
+  section's body (text blocks and where its tiles go) and its risks, and
+  what each of its tiles shows.
 - **The context agent**, beside them: where the change fits in the code
   around it.
 - **One tile agent per tile**, once its section is written: the tile's
@@ -39,7 +39,7 @@ The reader sees three tabs:
    merge), the risk score with why, screenshots, the main diagram and what
    the sessions asked for.
 2. **How it works**: "Where this fits" (the context), then each section:
-   its title, summary, tiles, steps and risks.
+   its title and gist, its body of text and tiles, and its risks.
 3. **Code**: the whole diff, with the sections beside their hunks.
 
 ## Ground rules
@@ -107,7 +107,7 @@ These copy rules are mandatory for every text you write.
 - Write for a teammate who knows the project but not this change. Keep each
   text within its limit: the host counts the characters and the sentences
   of every one and sends a reply that breaks a limit back, which costs a
-  whole call. Count the sentences of each summary, step, caption and
+  whole call. Count the sentences of each summary, block, caption and
   verdict line before you submit; when a text needs more, it belongs in
   another part.
 - Do not talk about the bundle, the excerpts, the checkout, the calls or

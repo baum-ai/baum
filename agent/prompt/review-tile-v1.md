@@ -10,7 +10,7 @@ run directory.
 - After these instructions: the tile's type and its rules, the pull
   request's basics, the diff index and the tile's brief: what it shows
   (`shows`) and the hunks it rests on.
-- What the tile stands beside: its section's summary, steps and risks, or,
+- What the tile stands beside: its section's body and risks, or,
   for the overview's main diagram, the map of the whole change.
 - Your tools, for the patches of its hunks and the code around them.
 

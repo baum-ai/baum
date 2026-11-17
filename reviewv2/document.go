@@ -137,11 +137,15 @@ type Section struct {
 	Scope        string        `json:"scope,omitempty"`
 	Level        *int          `json:"level"`
 	LevelReasons []LevelReason `json:"level_reasons"`
-	// Summary (up to three sentences), Steps (two to five) and Risks:
-	// section agent.
-	Summary string `json:"summary"`
-	Steps   []Step `json:"steps"`
-	Risks   []Risk `json:"risks"`
+	// Body (the blocks the page draws between the gist and the risks, in
+	// order) and Risks: section agent. The page owns the frame around the
+	// body (title, gist, views, risks); the body is the model's to compose.
+	Body  []Block `json:"body"`
+	Risks []Risk  `json:"risks"`
+	// Summary and Steps are what documents written before Body carried;
+	// a section without a body is read as one (BodyOf). Never written now.
+	Summary string `json:"summary,omitempty"`
+	Steps   []Step `json:"steps,omitempty"`
 	// Details is "pending" while the section agent writes, "failed" when it
 	// did not finish, "" once written. Host.
 	Details string `json:"details,omitempty"`
@@ -156,7 +160,48 @@ type LevelReason struct {
 	Cites []Anchor `json:"cites"`
 }
 
+// The block types of a section's body. A tile block places one of the
+// document's tiles (Tile, by ID): a diagram, a table, an excerpt, a library
+// tile; the others are text.
+const (
+	BlockProse  = "prose"
+	BlockPoints = "points"
+	BlockNote   = "note"
+	BlockTile   = "tile"
+)
+
+// Limits of the text blocks, in characters. The host cuts what runs over.
+const (
+	MaxBlocks      = 6
+	MaxBlockTitle  = 60
+	MaxProse       = 450
+	MaxNote        = 240
+	MaxPoints      = 8
+	MaxPoint       = 180
+	MaxPointDetail = 450
+)
+
+// Block is one block of a section's body. Text (prose, note) and the
+// points' text are inline markdown: bold and code only. Title is an
+// optional label above the block; a tile block's title is the tile's own.
+type Block struct {
+	Type  string  `json:"type"`
+	Title string  `json:"title,omitempty"`
+	Text  string  `json:"text,omitempty"`
+	Items []Point `json:"items,omitempty"`
+	Tile  string  `json:"tile,omitempty"`
+}
+
+// Point is one line of a points block: Text on the page, More (optional)
+// behind a click with the files it cites.
+type Point struct {
+	Text  string   `json:"text"`
+	More  string   `json:"more,omitempty"`
+	Cites []Anchor `json:"cites"`
+}
+
 // Step is one thing the section does, one sentence, with what it rests on.
+// Only documents written before Body carry steps.
 type Step struct {
 	ID    string   `json:"id"`
 	Title string   `json:"title"`
