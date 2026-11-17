@@ -1,5 +1,6 @@
 import {
   Component,
+  type ErrorInfo,
   type ReactNode,
   useCallback,
   useEffect,
@@ -1498,16 +1499,23 @@ function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
   };
 }
 
-class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  override state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
+class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean; why: string }> {
+  override state = { failed: false, why: "" };
+  static getDerivedStateFromError(error: unknown) {
+    // The first line of what threw, so the notice says more than that
+    // something did; the whole error, with its stack, goes to the console.
+    const why = error instanceof Error ? error.message : String(error);
+    return { failed: true, why: why.split("\n")[0]?.slice(0, 200) ?? "" };
+  }
+  override componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("The review page could not be drawn:", error, info.componentStack);
   }
   override render() {
     return this.state.failed ? (
       <Alert>
         The stored document could not be rendered.{" "}
-        <Button onClick={() => this.setState({ failed: false })}>Retry rendering</Button>
+        {this.state.why ? <span className="text-secondary">({this.state.why})</span> : null}{" "}
+        <Button onClick={() => this.setState({ failed: false, why: "" })}>Retry rendering</Button>
       </Alert>
     ) : (
       this.props.children
