@@ -7,7 +7,7 @@ import {
   type ReviewV2,
   type V2Risk,
   type V2Section,
-  type V2Step,
+  sectionBody,
 } from "./document";
 import { HUNKS } from "./fixture-1303-hunks";
 import { withReview } from "./model";
@@ -20,7 +20,8 @@ const base = example as unknown as ReviewDocument;
 const hunk = (id: string, lines?: [number, number]): Anchor =>
   lines ? { type: "hunk", id, lines } : { type: "hunk", id };
 
-const step = (id: string, title: string, text: string, cites: Anchor[]): V2Step => ({
+type Step = { id: string; title: string; text: string; cites: Anchor[] };
+const step = (id: string, title: string, text: string, cites: Anchor[]): Step => ({
   id,
   title,
   text,
@@ -41,7 +42,7 @@ function section(
   gist: string,
   summary: string,
   hunks: string[],
-  steps: V2Step[],
+  steps: Step[],
   risks: V2Risk[],
   extra: Partial<Section["derived"]> = {},
 ): V2Section {
@@ -54,8 +55,7 @@ function section(
     gist,
     level: extra.review_score ?? null,
     level_reasons: [],
-    summary,
-    steps,
+    body: sectionBody({ summary, steps }, []),
     risks,
     derived: {
       risk_tier: risks[0]?.tier ?? "unrated",
@@ -238,7 +238,7 @@ const SECTIONS: V2Section[] = [
 
 const flow = (lanes: { label?: string; steps: Record<string, string>[] }[]) => ({ lanes });
 
-export const REVIEW_1303: ReviewV2 = {
+const BARE: ReviewV2 = {
   schema: REVIEW_V2,
   review: {
     ...base.review,
@@ -573,6 +573,26 @@ export const REVIEW_1303: ReviewV2 = {
       },
     ],
   },
+};
+
+/** Each section's tiles stand after its text, as a document without bodies
+ *  reads. */
+export const REVIEW_1303: ReviewV2 = {
+  ...BARE,
+  sections: BARE.sections.map((section) => ({
+    ...section,
+    // As served: a point has no ID of its own.
+    body: [
+      ...section.body.map((block) =>
+        block.type === "points"
+          ? { ...block, items: block.items.map(({ id: _id, ...point }) => point) }
+          : block,
+      ),
+      ...BARE.tiles
+        .filter((tile) => tile.owner === section.id)
+        .map((tile) => ({ type: "tile" as const, tile: tile.id })),
+    ],
+  })),
 };
 
 /** The review as the page reads it from the tile route: the review the

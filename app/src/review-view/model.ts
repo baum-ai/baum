@@ -6,10 +6,10 @@ import type {
   RiskTier,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
-import type { ReviewV2, V2Section, ViewTile } from "./document";
+import { leadProse, pointId, type ReviewV2, type V2Section, type ViewTile } from "./document";
 import { fromV1 } from "./from-v1";
 
-export type { ReviewV2, V2Section, V2Step, V2Risk, ViewTile } from "./document";
+export type { ReviewV2, V2Block, V2Point, V2Section, V2Risk, ViewTile } from "./document";
 
 /** A native tile's colour of a step, column or message. */
 export type Tone = "plain" | "new" | "good" | "bad" | "muted" | "missing";
@@ -19,6 +19,9 @@ type Captioned = { caption?: string; source: Anchor[] };
 export type FlowStep = {
   title: string;
   note?: string;
+  /** Behind a click on the step: its detail and the files it cites. */
+  more?: string;
+  cites?: Anchor[];
   tone?: Tone;
   join?: "arrow" | "both" | "none";
 };
@@ -33,7 +36,10 @@ export type SequenceData = Captioned & {
   actors: string[];
   steps: { from: number; to: number; text: string; tone?: Tone }[];
 };
-export type TableData = Captioned & { columns: string[]; rows: string[][] };
+/** A table cell: its text, or what it is now with what it was before the
+ *  change (`was`, drawn struck through). */
+export type TableCell = string | { text: string; was?: string };
+export type TableData = Captioned & { columns: string[]; rows: TableCell[][] };
 
 /** "Where this fits": the review's context, listed before its sections. */
 export const CONTEXT_ID = "context";
@@ -143,6 +149,11 @@ export type ListedSection = {
   obsolete?: boolean;
 };
 
+/** Inline markdown as plain text: the marks of bold and code dropped. */
+export function plainText(text: string): string {
+  return text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
+}
+
 /** The first sentence of a text, for a list's quiet line. */
 export function firstSentence(text: string): string {
   const plain = text.replace(/\s+/g, " ").trim();
@@ -175,7 +186,8 @@ export function listedSections(review: ReviewV2): ListedSection[] {
     (section): ListedSection => ({
       id: section.id,
       title: section.title,
-      line: section.gist || (section.summary.trim() ? firstSentence(section.summary) : undefined),
+      line:
+        section.gist || (leadProse(section).trim() ? firstSentence(leadProse(section)) : undefined),
       ...(section.derived.state === "stale" ? { obsolete: true } : {}),
     }),
   );
@@ -347,14 +359,16 @@ export function notesByHunk(document: ReviewV2): Map<string, HunkNote[]> {
   };
   const sections = document.sections.filter((section) => section.derived.state !== "stale");
   for (const section of sections)
-    for (const step of section.steps)
-      pin(citedHunks(step.cites), {
-        kind: "step",
-        id: step.id,
-        section: section.id,
-        sectionTitle: section.title,
-        text: step.title?.trim() || firstSentence(step.text),
-      });
+    for (const [at, block] of section.body.entries())
+      if (block.type === "points")
+        for (const [position, point] of block.items.entries())
+          pin(citedHunks(point.cites), {
+            kind: "step",
+            id: pointId(section.id, at, position, point),
+            section: section.id,
+            sectionTitle: section.title,
+            text: firstSentence(plainText(point.text)),
+          });
   for (const section of sections)
     for (const risk of section.risks) {
       if (risk.state === "mitigated") continue;
@@ -673,7 +687,9 @@ export function sessionQuotes(
   tiles: ViewTile[] = [],
 ): SessionQuote[] {
   const anchors = [
-    ...section.steps.flatMap((step) => step.cites),
+    ...section.body.flatMap((block) =>
+      block.type === "points" ? block.items.flatMap((point) => point.cites) : [],
+    ),
     ...section.risks.flatMap((risk) => risk.cites),
     ...tiles.flatMap(tileAnchors),
   ];

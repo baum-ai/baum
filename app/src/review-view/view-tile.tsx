@@ -13,6 +13,10 @@ import type { TileContext } from "../tiles/types";
 import { NATIVE } from "./native-tiles";
 import { addedNote, type ViewTile } from "./model";
 
+/** The small uppercase label above a block of a section's body (a tile's
+ *  title in the bare variant too). */
+export const BLOCK_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
+
 /** The tile's place on the page, which links and the keys reach. */
 export const tileElementId = (prefix: string, tile: string) => `${prefix}tile-${tile}`;
 
@@ -70,13 +74,19 @@ export function ViewTileCard({
   ctx,
   idPrefix = "",
   heading = "h3",
+  variant = "card",
 }: {
   tile: ViewTile;
   review: ReviewDocument;
   ctx: TileContext;
   idPrefix?: string;
   heading?: "h2" | "h3";
+  /** `card`: in its own bordered card. `bare`: in the body of a section, no
+   *  border, background or padding, under its title as a small uppercase
+   *  label. */
+  variant?: "card" | "bare";
 }) {
+  const bare = variant === "bare";
   const Heading = heading;
   const tile = drawnAs(given);
   const native = NATIVE[tile.type];
@@ -162,13 +172,15 @@ export function ViewTileCard({
       aria-label={title}
       onContextMenu={items.length > 0 ? (event) => menu.open(event, items, title) : undefined}
       className={cn(
-        "view-tile min-w-0 scroll-mt-4 space-y-3 rounded-lg border border-default bg-surface-card p-4 outline-none",
-        "data-[review-block-active]:border-strong",
+        "view-tile min-w-0 scroll-mt-4 outline-none",
+        bare
+          ? "space-y-2 rounded-md data-[review-block-active]:bg-surface-wash"
+          : "space-y-3 rounded-lg border border-default bg-surface-card p-4 data-[review-block-active]:border-strong",
       )}
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 space-y-0.5">
-          <Heading className="text-base font-semibold text-primary">
+          <Heading className={bare ? BLOCK_LABEL : "text-base font-semibold text-primary"}>
             <InlineMarkdown>{title}</InlineMarkdown>
           </Heading>
           {note ? (

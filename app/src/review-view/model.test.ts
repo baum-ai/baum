@@ -93,8 +93,14 @@ describe("parseReviewV2", () => {
     expect(review?.sections).toHaveLength(1);
     const [section] = review!.sections;
     expect(section?.hunks).toEqual(["h_a"]);
-    expect(section?.steps).toEqual([
-      { id: "s1", title: "", text: "Does it.", cites: [{ type: "hunk", id: "h_a" }] },
+    // A section with steps and no body reads them as a points block.
+    expect(section?.body).toEqual([
+      {
+        type: "points",
+        items: [{ id: "s1", text: "Does it.", cites: [{ type: "hunk", id: "h_a" }] }],
+      },
+      // The section's tile, which no body placed.
+      { type: "tile", tile: "dg_a" },
     ]);
     // A tier the page does not know reads as low.
     expect(section?.risks.map((risk) => [risk.id, risk.tier])).toEqual([["r1", "low"]]);
@@ -327,10 +333,10 @@ describe("the Code tab", () => {
     expect(notes.get("h_routes")).toEqual([
       {
         kind: "step",
-        id: "bhv_deny_default",
+        id: "sec_allowlist-b1-p0",
         section: "sec_allowlist",
         sectionTitle: "What a phone can do",
-        text: "Deny by default",
+        text: "Deny by default.",
       },
       {
         kind: "risk",
@@ -581,7 +587,7 @@ describe("the tests a section's hunks add or change", () => {
 describe("the session turns a section cites", () => {
   const withCites = (section: V2Section, cites: Anchor[]): V2Section => ({
     ...section,
-    steps: [...section.steps, { id: "step_x", title: "", text: "Step.", cites }],
+    body: [...section.body, { type: "points", items: [{ text: "Step.", cites }] }],
   });
   const relay = REVIEW.sections.find((each) => each.id === "sec_relay")!;
 
@@ -620,7 +626,7 @@ describe("the session turns a section cites", () => {
       cites: [{ type: "session_event", session: "ses_mobile", event: "ev_standin" } as Anchor],
       data: { lanes: [], source: [{ type: "prompt", session: "ses_mobile", index: 1 }] },
     };
-    const bare = { ...relay, steps: [], risks: [] };
+    const bare = { ...relay, body: [], risks: [] };
     expect(sessionQuotes(REVIEW, bare)).toEqual([]);
     expect(sessionQuotes(REVIEW, bare, [tile]).map((quote) => quote.kind)).toEqual([
       "prompt",
@@ -632,12 +638,169 @@ describe("the session turns a section cites", () => {
     expect(
       sessionQuotes(
         REVIEW,
-        withCites({ ...relay, steps: [], risks: [] }, [
+        withCites({ ...relay, body: [], risks: [] }, [
           { type: "prompt", session: "ses_mobile", index: 9 },
           { type: "prompt", session: "ses_gone", index: 1, input: "typed elsewhere" },
           { type: "session_event", session: "ses_mobile", event: "ev_gone" },
         ]),
       ).map((quote) => [quote.text, quote.vendor]),
     ).toEqual([["typed elsewhere", undefined]]);
+  });
+});
+
+describe("a section's body", () => {
+  const tile = (id: string, owner: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    type: "flow",
+    title: id,
+    state: "ready",
+    owner,
+    data: {},
+    ...extra,
+  });
+  const read = (section: Record<string, unknown>, tiles: unknown[] = []) =>
+    parseReviewV2({
+      schema: "baum.review/2",
+      review: REVIEW_1303.review,
+      sections: [{ id: "sec_a", title: "A", hunks: [], risks: [], ...section }],
+      tiles,
+    })!.sections[0]!;
+
+  it("reads the blocks served, in order", () => {
+    const section = read(
+      {
+        body: [
+          { type: "prose", text: "It **does** it." },
+          {
+            type: "points",
+            title: "Choices",
+            items: [
+              { text: "One", more: "Why.", cites: [{ type: "hunk", id: "h_a" }] },
+              { text: "Two" },
+            ],
+          },
+          { type: "tile", tile: "dg_a" },
+          { type: "note", text: "Aside." },
+        ],
+        // Written beside a body, they are ignored.
+        summary: "Old summary.",
+        steps: [{ id: "s1", text: "Old step." }],
+      },
+      [tile("dg_a", "sec_a")],
+    );
+    expect(section.body).toEqual([
+      { type: "prose", text: "It **does** it." },
+      {
+        type: "points",
+        title: "Choices",
+        items: [
+          { text: "One", more: "Why.", cites: [{ type: "hunk", id: "h_a" }] },
+          { text: "Two", cites: [] },
+        ],
+      },
+      { type: "tile", tile: "dg_a" },
+      { type: "note", text: "Aside." },
+    ]);
+  });
+
+  it("drops a malformed block or point", () => {
+    const section = read({
+      body: [
+        { type: "prose", text: "  " },
+        { type: "points", items: [{ text: "" }, { more: "no text" }] },
+        { type: "chart", text: "unknown" },
+        { type: "points", items: [{ text: "Kept" }, 3] },
+        "nonsense",
+      ],
+    });
+    expect(section.body).toEqual([{ type: "points", items: [{ text: "Kept", cites: [] }] }]);
+  });
+
+  it("reads a section with no body from its summary, steps and tiles", () => {
+    const old = {
+      summary: "What it does.",
+      steps: [
+        { id: "s1", title: "Reads", text: "It reads.", cites: [{ type: "hunk", id: "h_a" }] },
+        { id: "s2", title: "", text: "It writes." },
+      ],
+    };
+    const tiles = [tile("dg_a", "sec_a"), tile("dg_b", "sec_b"), tile("dg_c", "sec_a")];
+    for (const written of [old, { ...old, body: [] }]) {
+      expect(read(written, tiles).body).toEqual([
+        { type: "prose", text: "What it does." },
+        {
+          type: "points",
+          items: [
+            { id: "s1", text: "**Reads.** It reads.", cites: [{ type: "hunk", id: "h_a" }] },
+            { id: "s2", text: "It writes.", cites: [] },
+          ],
+        },
+        { type: "tile", tile: "dg_a" },
+        { type: "tile", tile: "dg_c" },
+      ]);
+    }
+  });
+
+  it("ignores a tile block naming a missing tile or another section's, and a repeat", () => {
+    const section = read(
+      {
+        body: [
+          { type: "tile", tile: "dg_gone" },
+          { type: "tile", tile: "dg_other" },
+          { type: "tile", tile: "dg_a" },
+          { type: "tile", tile: "dg_a" },
+        ],
+      },
+      [tile("dg_a", "sec_a"), tile("dg_other", "sec_b")],
+    );
+    expect(section.body).toEqual([{ type: "tile", tile: "dg_a" }]);
+  });
+
+  it("appends the section's tiles the body doesn't place, a person's own included", () => {
+    const section = read(
+      {
+        body: [
+          { type: "tile", tile: "dg_b" },
+          { type: "prose", text: "Text." },
+        ],
+      },
+      [tile("dg_a", "sec_a"), tile("dg_b", "sec_a"), tile("dg_c", "sec_a", { added: true })],
+    );
+    expect(section.body.map((block) => (block.type === "tile" ? block.tile : block.type))).toEqual([
+      "dg_b",
+      "prose",
+      "dg_a",
+      "dg_c",
+    ]);
+  });
+
+  it("reads the points as the steps the chrome, notes and comments use", () => {
+    const section: V2Section = {
+      ...REVIEW.sections[0]!,
+      id: "sec_a",
+      gist: "",
+      body: [
+        { type: "prose", text: "Lead prose." },
+        {
+          type: "points",
+          items: [
+            { text: "**Does** a thing. More.", cites: [{ type: "hunk", id: "h_routes" }] },
+            { id: "step_old", text: "Kept id.", cites: [] },
+          ],
+        },
+      ],
+    };
+    const review: ReviewV2 = { ...REVIEW, sections: [section] };
+    const chrome = chromeOf(review);
+    expect(chrome.sections[0]?.summary?.text).toBe("Lead prose.");
+    expect(
+      chrome.sections[0]?.blocks.flatMap((block) =>
+        "steps" in block ? (block.steps as { id: string }[]).map((step) => step.id) : [],
+      ),
+    ).toEqual(["sec_a-b1-p0", "step_old"]);
+    expect(notesByHunk(review).get("h_routes")).toMatchObject([
+      { kind: "step", id: "sec_a-b1-p0", text: "Does a thing." },
+    ]);
+    expect(listedSections(review).find((entry) => entry.id === "sec_a")?.line).toBe("Lead prose.");
   });
 });

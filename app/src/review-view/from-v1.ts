@@ -16,6 +16,7 @@ import { parseDrafts } from "../tiles/drafts";
 import {
   NATIVE_TYPES,
   REVIEW_V2,
+  sectionBody,
   type ReviewV2,
   type V2Context,
   type V2ContextPart,
@@ -51,7 +52,7 @@ function contextPart(
     : null;
 }
 
-function sectionOf(section: Section): V2Section {
+function sectionOf(section: Section, owned: ViewTile[]): V2Section {
   const details = section.details ?? (section.summary ? undefined : ("failed" as const));
   return {
     id: section.id,
@@ -64,13 +65,20 @@ function sectionOf(section: Section): V2Section {
       text: reason.text,
       cites: reason.anchors ?? [],
     })),
-    summary: section.summary?.text ?? "",
-    steps: behaviourSteps(section).map((step) => ({
-      id: step.id,
-      title: step.title ?? "",
-      text: step.after?.trim() || step.text,
-      cites: step.anchors ?? [],
-    })),
+    // The section's summary and behaviour steps read as its body, as a
+    // document written before bodies does.
+    body: sectionBody(
+      {
+        summary: section.summary?.text ?? "",
+        steps: behaviourSteps(section).map((step) => ({
+          id: step.id,
+          title: step.title ?? "",
+          text: step.after?.trim() || step.text,
+          cites: step.anchors ?? [],
+        })),
+      },
+      owned,
+    ),
     risks: section.risks.map((risk) => ({
       id: risk.id,
       tier: risk.tier,
@@ -122,6 +130,7 @@ export function fromV1(document: ReviewDocument, view?: unknown, drafts?: unknow
       }
     : null;
   const pending = parseDrafts(drafts);
+  const tiles = shown ? viewTiles(shown, diagram) : [];
   return {
     schema: REVIEW_V2,
     review: document.review,
@@ -157,8 +166,13 @@ export function fromV1(document: ReviewDocument, view?: unknown, drafts?: unknow
       ),
     },
     context: v2Context && Object.values(v2Context).some(Boolean) ? v2Context : null,
-    sections: document.sections.map(sectionOf),
-    tiles: shown ? viewTiles(shown, diagram) : [],
+    sections: document.sections.map((section) =>
+      sectionOf(
+        section,
+        tiles.filter((tile) => tile.owner === section.id),
+      ),
+    ),
+    tiles,
     stats: document.stats,
     index: document.index,
     ...(pending.length > 0 ? { drafts: pending } : {}),
