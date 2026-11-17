@@ -23,7 +23,7 @@ reply's schema is `schema-overview.json` in the run directory.
   risk_why, screenshots, diagram, intent: [ { session, prompt, asked, got } ] }
 ```
 
-- `summary`: two or three sentences, at most 600 characters: what the pull
+- `summary`: two or three sentences, at most 450 characters: what the pull
   request does and why, leading with what matters most. If no reason is
   given anywhere, say what it does and that the reason is not given. The
   page shows it first, under the title.
@@ -40,7 +40,7 @@ reply's schema is `schema-overview.json` in the run directory.
   only when there are points; the decision and text always show beside the
   score. Judge the code and the decisions in it, never checks or review
   progress: the page shows those live.
-- `risk_why`: at most two sentences, at most 240 characters: why the score
+- `risk_why`: one or two sentences, at most 260 characters: why the score
   is what it is, what could go wrong and what limits it. The page shows it
   under the risk score, which the host computes from the levels.
 - `screenshots`: up to three attachment ids that show what the change looks

@@ -94,7 +94,7 @@ These copy rules are mandatory for every text you write.
   again"), not what it is called.
 - Titles name a subject: "How a phone reaches the daemon", "Pairing a
   phone", "What a phone can reach". Never two things joined by a comma and
-  "and" ("Pairing, and revoking").
+  "and" ("Pairing, and revoking"): a title has no comma.
 - State things plainly. No sentence that turns on a comma ("Approve into
   mobile, after one decision."), and no dramatic colon ("A new entry point:
   phones reach it through a relay."). Write "Phones reach the daemon through

@@ -130,45 +130,33 @@ func (o *orchestration) dropTile(id string) {
 }
 
 // reuse keeps the previous version's text and tiles of each section whose
-// hunks are unchanged and whose text was complete. The map's tiles of a
-// reused section are dropped for the previous ones.
+// hunks are unchanged and whose text was complete (reviewv2.
+// ReusableSections). The map's tiles of a reused section give way to the
+// previous ones.
 func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 	reused := map[string]bool{}
-	prev := o.run.Previous
-	if prev == nil || o.run.NoReuse {
+	if len(o.run.Previous) == 0 || o.run.NoReuse {
 		return reused
 	}
-	before := map[string]reviewv2.Section{}
-	for _, s := range prev.Sections {
-		before[s.ID] = s
-	}
+	var withHunks []reviewv2.Section
 	for _, s := range sections {
-		old, ok := before[s.ID]
-		if !ok || old.Details != "" || len(s.Hunks) == 0 || !sameSet(old.Hunks, s.Hunks) || (s.Kind == "logical" && old.Summary == "") {
+		if len(s.Hunks) > 0 && s.Kind == reviewv2.KindLogical {
+			withHunks = append(withHunks, s)
+		}
+	}
+	for id, r := range reviewv2.ReusableSections(o.run.Previous, withHunks) {
+		if r.Section.Summary == "" {
 			continue
 		}
-		reused[s.ID] = true
-		o.setSection(s.ID, func(sec *reviewv2.Section) {
-			sec.Summary, sec.Steps, sec.Details = old.Summary, slices.Clone(old.Steps), ""
-			sec.Risks = nil
-			for _, r := range old.Risks {
-				if r.State == "mitigated" {
-					continue
-				}
-				r.State, r.IntroducedVersion, r.MitigatedVersion = "", nil, nil
-				sec.Risks = append(sec.Risks, r)
-			}
-			if sec.Risks == nil {
-				sec.Risks = []reviewv2.Risk{}
-			}
+		reused[id] = true
+		o.setSection(id, func(sec *reviewv2.Section) {
+			sec.Summary, sec.Steps, sec.Risks, sec.Details = r.Section.Summary, r.Section.Steps, r.Section.Risks, ""
 		})
-		o.record(LevelSections, s.ID, StatusReused, "")
-	}
-	o.mu.Lock()
-	o.tiles = slices.DeleteFunc(o.tiles, func(t reviewv2.Tile) bool { return reused[t.Owner] })
-	o.mu.Unlock()
-	for _, t := range prev.Tiles {
-		if reused[t.Owner] && t.State == reviewv2.TileReady {
+		o.record(LevelSections, id, StatusReused, "")
+		o.mu.Lock()
+		o.tiles = slices.DeleteFunc(o.tiles, func(t reviewv2.Tile) bool { return t.Owner == id })
+		o.mu.Unlock()
+		for _, t := range r.Tiles {
 			o.setTile(t)
 			o.record(LevelTiles, t.ID, StatusReused, "")
 		}
@@ -177,13 +165,6 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 		o.publish()
 	}
 	return reused
-}
-
-func sameSet(a, b []string) bool {
-	a, b = slices.Clone(a), slices.Clone(b)
-	slices.Sort(a)
-	slices.Sort(b)
-	return slices.Equal(a, b)
 }
 
 // mechanical writes the mechanical section's one-sentence summary from its
@@ -358,9 +339,9 @@ func (o *orchestration) codeTile(t reviewv2.Tile) {
 		o.record(LevelTiles, t.ID, StatusFailed, "a code tile needs a hunk")
 		return
 	}
-	data := map[string]any{"hunk": hunk, "lines": nil}
+	data := reviewv2.CodeData{Hunk: hunk}
 	if len(lines) == 2 {
-		data["lines"] = lines
+		data.Lines = lines
 	}
 	t.Data, _ = json.Marshal(data)
 	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), MaxTileTitle)
@@ -475,20 +456,11 @@ func (o *orchestration) overviewLevel(ctx context.Context) {
 	tiles := slices.Clone(o.tiles)
 	session := o.mapSession
 	o.mu.Unlock()
-	ids, ready := map[string]bool{}, map[string]bool{}
-	for _, s := range sections {
-		ids[s.ID] = true
-	}
-	for _, t := range tiles {
-		if t.State == reviewv2.TileReady {
-			ready[t.ID] = true
-		}
-	}
 	results := overviewInput(sections, tiles, o.run.Bundle)
 	o.budget.expect(3, 1)
 	var accepted overviewResult
 	check := func(reply []byte, lenient bool) string {
-		r, findings := checkOverview(reply, o.facts, ids, ready, lenient)
+		r, findings := checkOverview(reply, o.facts, sections, tiles, lenient)
 		if findings == "" {
 			accepted = r
 		}

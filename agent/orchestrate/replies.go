@@ -164,7 +164,7 @@ func checkMap(reply []byte, f *facts, r *Registry, lenient bool) (plan, string) 
 		section.Title = c.title(at+"/title", s.Title, MaxSectionTitle, MaxTitleWords)
 		section.Gist = c.text(at+"/gist", s.Gist, MaxGist, 2, true)
 		if s.Scope != nil {
-			section.Scope = c.text(at+"/scope", *s.Scope, MaxScope, 2, false)
+			section.Scope = c.text(at+"/scope", *s.Scope, MaxScope, 1, false)
 		}
 		for _, h := range s.Hunks {
 			if _, ok := f.hunks[h]; !ok {
@@ -191,7 +191,7 @@ func checkMap(reply []byte, f *facts, r *Registry, lenient bool) (plan, string) 
 					c.add(at+"/level_reasons", "a logical section with hunks needs one to three reasons for its level")
 				}
 				for j, reason := range s.LevelReasons {
-					text := c.text(fmt.Sprintf("%s/level_reasons/%d/text", at, j), reason.Text, MaxLevelReason, 2, true)
+					text := c.text(fmt.Sprintf("%s/level_reasons/%d/text", at, j), reason.Text, MaxLevelReason, 1, true)
 					kept, _ := f.cites(reason.Cites)
 					section.LevelReasons = append(section.LevelReasons, reviewv2.LevelReason{Text: text, Cites: kept})
 				}
@@ -213,6 +213,7 @@ func checkMap(reply []byte, f *facts, r *Registry, lenient bool) (plan, string) 
 		c.add("/sections", "these hunks are in no section; put each in the section of the behaviour it serves: %s", strings.Join(shown, ", "))
 	}
 	p.Tiles, p.Hunks = checkPlannedTiles(c, m.Tiles, ids, f, r)
+	c.merge(reviewv2.CheckMap(p.ChangeKind, p.Sections, p.Tiles, f.refsFor(r)))
 	if len(c.findings) > 0 {
 		return p, c.String()
 	}
@@ -251,7 +252,7 @@ func checkPlannedTiles(c *checker, planned []plannedTile, sections map[string]bo
 		if sections[t.Owner] && owned[t.Owner] == MaxSectionTiles+1 {
 			c.add(at+"/owner", "%s has more than %d tiles; keep the ones that explain most", t.Owner, MaxSectionTiles)
 		}
-		shows := c.text(at+"/shows", t.Shows, MaxShows, 3, true)
+		shows := c.text(at+"/shows", t.Shows, MaxShows, 2, true)
 		var rests []string
 		for _, h := range t.Hunks {
 			if _, ok := f.hunks[h]; ok && !slices.Contains(rests, h) {
@@ -294,10 +295,10 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 	slug := strings.TrimPrefix(section.ID, "sec_")
 	for i, step := range s.Steps {
 		at := fmt.Sprintf("/steps/%d", i)
-		title := c.title(at+"/title", step.Title, MaxStepTitle, MaxStepWords)
+		title := c.title(at+"/title", step.Title, MaxStepTitle, MaxTitleWords)
 		body := c.text(at+"/text", step.Text, MaxStepText, 1, true)
 		kept, _ := f.cites(step.Cites)
-		out.Steps = append(out.Steps, reviewv2.Step{ID: fmt.Sprintf("stp_%s_%d", slug, i+1), Title: title, Text: body, Cites: kept})
+		out.Steps = append(out.Steps, reviewv2.Step{ID: fmt.Sprintf("st_%s_%d", slug, i+1), Title: title, Text: body, Cites: kept})
 	}
 	ids := map[string]bool{}
 	for i, risk := range s.Risks {
@@ -309,7 +310,7 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 		if !slices.Contains(Tiers, risk.Tier) {
 			c.add(at+"/tier", "must be one of %s", strings.Join(Tiers, ", "))
 		}
-		body := c.text(at+"/text", risk.Text, MaxRiskText, 3, true)
+		body := c.text(at+"/text", risk.Text, MaxRiskText, 2, true)
 		kept, _ := f.cites(risk.Cites)
 		if len(hunkCites(kept)) == 0 {
 			c.add(at+"/cites", "a risk cites at least one hunk of the pull request at the lines responsible")
@@ -337,7 +338,7 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 		if t.Type == TypeCode {
 			brief.Shows = c.title(at+"/shows", brief.Shows, MaxTileTitle, MaxTitleWords)
 		} else {
-			brief.Shows = c.text(at+"/shows", brief.Shows, MaxShows, 3, true)
+			brief.Shows = c.text(at+"/shows", brief.Shows, MaxShows, 2, true)
 		}
 		brief.Cites, _ = f.cites(brief.Cites)
 		out.Briefs[brief.ID] = brief
@@ -347,7 +348,7 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 		if !ok {
 			c.add("/propose/type", "%s is not an offered type", p.Type)
 		} else {
-			shows := c.text("/propose/shows", p.Shows, MaxShows, 3, true)
+			shows := c.text("/propose/shows", p.Shows, MaxShows, 2, true)
 			kept, _ := f.cites(p.Cites)
 			if len(hunkCites(kept)) == 0 {
 				c.add("/propose/cites", "a proposed tile cites at least one hunk")
@@ -355,6 +356,7 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 			out.Propose = &reviewv2.Tile{ID: "tl_" + slug + "_more", Type: t.Name, Owner: section.ID, Shows: shows, Cites: kept, State: reviewv2.TilePending}
 		}
 	}
+	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: section.ID, Kind: section.Kind, Summary: out.Summary, Steps: out.Steps, Risks: out.Risks}, f.refs))
 	if len(c.findings) > 0 {
 		return out, c.String()
 	}
@@ -386,6 +388,7 @@ func checkContext(reply []byte, f *facts, lenient bool) (*reviewv2.Context, stri
 		Area: part("area", x.Area, true), ReachedBy: part("reached_by", x.ReachedBy, false),
 		Contracts: part("contracts", x.Contracts, false), Related: part("related", x.Related, false),
 	}
+	c.merge(reviewv2.CheckContext(*out, f.refs))
 	if len(c.findings) > 0 {
 		return out, c.String()
 	}
@@ -412,6 +415,10 @@ func checkNative(reply []byte, kind string, f *facts, lenient bool) (reviewv2.Ti
 		out.Caption = c.text("/caption", *d.Caption, MaxCaption, 2, false)
 	}
 	c.dataStrings("/", data)
+	// The data's source anchors are hunk IDs, which reviewv2.CheckTile reads
+	// as text naming a hunk: it checks the data without them (the tile's
+	// cites carry them).
+	c.merge(reviewv2.CheckTile(reviewv2.Tile{ID: "tl_tile", Type: kind, Title: out.Title, Caption: out.Caption, Data: withoutSource(data), State: reviewv2.TileReady}, f.refs))
 	var source struct {
 		Source []view.Anchor `json:"source"`
 	}
@@ -427,6 +434,20 @@ func checkNative(reply []byte, kind string, f *facts, lenient bool) (reviewv2.Ti
 	return out, ""
 }
 
+// withoutSource is a native tile's data without its source anchors.
+func withoutSource(data json.RawMessage) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return data
+	}
+	fields["source"] = json.RawMessage(`[]`)
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return data
+	}
+	return out
+}
+
 // overviewResult is an accepted overview.
 type overviewResult struct {
 	Text     string
@@ -437,7 +458,16 @@ type overviewResult struct {
 
 // checkOverview checks the overview's reply; ids it names that do not
 // exist are dropped (the diagram falls back to the host's choice).
-func checkOverview(reply []byte, f *facts, sections map[string]bool, ready map[string]bool, lenient bool) (overviewResult, string) {
+func checkOverview(reply []byte, f *facts, docSections []reviewv2.Section, tiles []reviewv2.Tile, lenient bool) (overviewResult, string) {
+	sections, ready := map[string]bool{}, map[string]bool{}
+	for _, s := range docSections {
+		sections[s.ID] = true
+	}
+	for _, t := range tiles {
+		if t.State == reviewv2.TileReady {
+			ready[t.ID] = true
+		}
+	}
 	var o overviewReply
 	if problem := decode(reply, &o); problem != "" {
 		return overviewResult{}, problem
@@ -458,7 +488,7 @@ func checkOverview(reply []byte, f *facts, sections map[string]bool, ready map[s
 		verdict.Points = append(verdict.Points, point)
 	}
 	out.Verdict = verdict
-	out.RiskWhy = c.text("/risk_why", o.RiskWhy, MaxRiskWhy, 2, false)
+	out.RiskWhy = c.text("/risk_why", o.RiskWhy, MaxRiskWhy, 2, true)
 	for _, id := range o.Screenshots {
 		if f.images[id] && !slices.Contains(out.Overview.Screenshots, id) {
 			out.Overview.Screenshots = append(out.Overview.Screenshots, id)
@@ -476,6 +506,7 @@ func checkOverview(reply []byte, f *facts, sections map[string]bool, ready map[s
 		out.Overview.Intent = append(out.Overview.Intent, reviewv2.Intent{Session: in.Session, Prompt: in.Prompt,
 			Asked: c.text(at+"/asked", in.Asked, MaxIntentText, 1, true), Got: c.text(at+"/got", in.Got, MaxIntentText, 2, true)})
 	}
+	c.merge(reviewv2.CheckOverview(reviewv2.Summary{Text: out.Text, Verdict: out.Verdict, RiskWhy: out.RiskWhy}, out.Overview, docSections, tiles, f.refs))
 	if len(c.findings) > 0 {
 		return out, c.String()
 	}

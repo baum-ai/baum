@@ -63,14 +63,14 @@ refactor.
 - Most pull requests need one to five logical sections. A one-purpose
   change is one section. Do not split for the sake of it.
 - `id`: `sec_` and a short slug.
-- `title`: a plain subject of two to five words, at most 60 characters
-  ("Retry failed jobs", "Who may requeue"). The page shows it as the
+- `title`: a plain subject of two to five words, at most 60 characters,
+  with no comma ("Retry failed jobs", "Who may requeue"). The page shows it as the
   section's heading and in the section list.
 - `gist`: one line, at most 120 characters: what the reader should come
   away with ("Failed jobs now retry with a growing wait, then land in a
   dead-letter table."). The page shows it in the section list, and the
   overview falls back to the gists when it cannot be written.
-- `scope`: one line, at most 160 characters, only when the section shares
+- `scope`: one sentence, at most 200 characters, only when the section shares
   hunks with another; null otherwise.
 - `level` (logical sections; null on the mechanical one): the inherent risk
   of the change, judged on potential impact, breadth and reversibility,
@@ -79,7 +79,7 @@ refactor.
   compatibility impact; 4 sensitive or broad impact, or hard to roll back; 5
   critical impact. A correct permission change can still be a 4.
 - `level_reasons` (logical sections; empty on the mechanical one): one to
-  three, each one sentence of at most 200 characters with the hunks or files
+  three, each one sentence of at most 220 characters with the hunks or files
   it rests on in `cites`. The host scores the pull request from the levels
   and shows the reasons under the score.
 - **A new version.** When a previous map is given, keep each previous

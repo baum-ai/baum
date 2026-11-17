@@ -122,9 +122,11 @@ type Run struct {
 	MCP *agent.MCPServer
 	// Shell lets the calls run commands that read (agent.Request.Shell).
 	Shell bool
-	// Previous is the previous version's baum.review/2 document, whose
-	// unchanged sections are reused; nil reuses nothing.
-	Previous *reviewv2.Document
+	// Previous is the previous version's stored document, of either schema:
+	// the map keeps its sections' ids and titles, and a baum.review/2 one's
+	// unchanged sections are reused (reviewv2.ReusableSections). Nil has
+	// none.
+	Previous []byte
 	NoReuse  bool
 	// Concurrency bounds the calls at once; zero is DefaultConcurrency.
 	Concurrency int
@@ -343,9 +345,9 @@ type call struct {
 	input            string
 	schema           []byte
 	// check returns the findings of a reply; lenient is its last pass.
-	check            func(reply []byte, lenient bool) string
-	resume           string
-	persist          bool
+	check   func(reply []byte, lenient bool) string
+	resume  string
+	persist bool
 }
 
 // runCall runs a call through the generator, in a concurrency slot, with a
@@ -528,7 +530,13 @@ func (o *orchestration) mapLevel(ctx context.Context) error {
 	o.step("Mapping the pull request")
 	b := o.run.Bundle
 	input := basics(b, o.run.Worktree) + "\n" + diffIndex(b) + "\nThe tile types you may plan:\n" + o.registry.Offer()
-	if prev := previousMap(o.run.Previous, b); prev != "" {
+	var previous *reviewv2.Document
+	if len(o.run.Previous) > 0 {
+		if doc, err := reviewv2.Read(o.run.Previous); err == nil {
+			previous = &doc
+		}
+	}
+	if prev := previousMap(previous, b); prev != "" {
 		input += "\n" + prev
 	}
 	var accepted plan

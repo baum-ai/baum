@@ -35,28 +35,29 @@ func (m *fakeMCP) Mint(repository string, pr int) (string, string, func(), bool)
 func v2Replies(t *testing.T) func(context.Context, agent.Request, int) (agent.Result, error) {
 	return func(_ context.Context, r agent.Request, _ int) (agent.Result, error) {
 		var reply string
+		raw, err := os.ReadFile(filepath.Join(r.Directory, "bundle.json"))
+		if err != nil {
+			return agent.Result{}, err
+		}
+		var b struct {
+			Diff []struct {
+				ID string `json:"id"`
+			} `json:"diff"`
+		}
+		if err := json.Unmarshal(raw, &b); err != nil {
+			return agent.Result{}, err
+		}
+		var ids []string
+		for _, h := range b.Diff {
+			ids = append(ids, `"`+h.ID+`"`)
+		}
+		cite := `[{"type":"hunk","id":` + ids[len(ids)-1] + `,"lines":null}]`
 		switch r.Stage {
 		case "map":
-			raw, err := os.ReadFile(filepath.Join(r.Directory, "bundle.json"))
-			if err != nil {
-				return agent.Result{}, err
-			}
-			var b struct {
-				Diff []struct {
-					ID string `json:"id"`
-				} `json:"diff"`
-			}
-			if err := json.Unmarshal(raw, &b); err != nil {
-				return agent.Result{}, err
-			}
-			var ids []string
-			for _, h := range b.Diff {
-				ids = append(ids, `"`+h.ID+`"`)
-			}
 			reply = `{"change_kind":"feature","sections":[{"id":"sec_all","title":"The whole change","kind":"logical","hunks":[` + strings.Join(ids, ",") +
 				`],"gist":"It changes everything at once.","scope":null,"level":2,"level_reasons":[{"text":"It is small.","cites":[]}]}],"tiles":[]}`
 		case "section-sec-all":
-			reply = `{"summary":"It changes the code.","steps":[{"title":"First","text":"It does one thing.","cites":[]},{"title":"Then","text":"It does another.","cites":[]}],"risks":[],"tiles":[],"propose":null}`
+			reply = `{"summary":"It changes the code.","steps":[{"title":"First","text":"It does one thing.","cites":` + cite + `},{"title":"Then","text":"It does another.","cites":` + cite + `}],"risks":[],"tiles":[],"propose":null}`
 		case "context":
 			reply = `{"area":{"text":"The code.","files":[]},"reached_by":{"text":"","files":[]},"contracts":{"text":"","files":[]},"related":{"text":"","files":[]}}`
 		case "overview":
@@ -91,7 +92,7 @@ func TestV2RunWritesLevelsInAWorktree(t *testing.T) {
 		t.Fatalf("document: %v %q %q", err, doc.Schema, result.Metadata.Schema)
 	}
 	if len(doc.Sections) != 1 || doc.Sections[0].Summary != "It changes the code." || doc.Summary.Text == "" || doc.Context == nil {
-		t.Fatalf("document: %+v", doc)
+		t.Fatalf("section %+v, lede %q, context %v", doc.Sections, doc.Summary.Text, doc.Context != nil)
 	}
 	if result.Metadata.Version != 1 || result.Metadata.PromptVersion == "" || result.V2 == nil || result.V2.Levels["map"].Calls != 1 {
 		t.Errorf("metadata %+v, outcome %+v", result.Metadata, result.V2)

@@ -104,13 +104,6 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 	if b.Previous != nil {
 		version = b.Previous.Version + 1
 	}
-	var previous *reviewv2.Document
-	if len(v.Previous) > 0 {
-		var doc reviewv2.Document
-		if json.Unmarshal(v.Previous, &doc) == nil && doc.Schema == reviewv2.Name {
-			previous = &doc
-		}
-	}
 	model := o.Model
 	if model == "" {
 		model = o.Backend.Name()
@@ -120,7 +113,7 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 			"backend": o.Backend.Name(), "generated_at": now().UTC().Format(time.RFC3339)})
 		return encoded
 	}
-	completeInput := reviewv2.CompleteInput{Bundle: assembled.JSON, Previous: v.Previous, Version: version, Generator: generator(model)}
+	completeInput := reviewv2.CompleteInput{Bundle: assembled.JSON, Previous: v.Previous, Version: version, Generator: generator(model), Now: now()}
 
 	backend := o.Backend
 	if o.PassTimeout > 0 {
@@ -129,7 +122,7 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 	g := &agent.Generator{Backend: backend, Redactor: redactor}
 	run := orchestrate.Run{
 		Generator: g, Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, Budgets: o.Budgets,
-		Prompts: prompts, FillPrompts: fills, Registry: orchestrate.NewRegistry(entries), Previous: previous, NoReuse: v.NoReuse || o.NoReuse,
+		Prompts: prompts, FillPrompts: fills, Registry: orchestrate.NewRegistry(entries), Previous: v.Previous, NoReuse: v.NoReuse || o.NoReuse,
 		Concurrency: v.Concurrency, Complete: v.Complete, CompleteInput: completeInput, Record: v.Record,
 		Step: func(text string) {
 			progress("%s", text)

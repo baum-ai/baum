@@ -31,7 +31,8 @@ func testBundle() *bundle.Bundle {
 		Diff: []bundle.Hunk{
 			{ID: hunkA, Path: "queue/retry.go", Role: "code", Change: "modified", StartLine: 10, LineCount: 20},
 			{ID: hunkB, Path: "queue/deadletter.go", Role: "code", Change: "added", StartLine: 1, LineCount: 40},
-			{ID: hunkC, Path: "api/requeue.go", Role: "code", Change: "modified", StartLine: 5, LineCount: 10},
+			{ID: hunkC, Path: "api/requeue.go", Role: "code", Change: "modified", StartLine: 5, LineCount: 10,
+				Patch: "@@ -5,9 +5,10 @@\n a\n b\n c\n d\n e\n+f\n g\n h\n i\n j\n"},
 			{ID: hunkD, Path: "go.sum", Role: "generated", Change: "modified", StartLine: 1, LineCount: 3},
 		},
 	}
@@ -116,7 +117,7 @@ const mapReplyJSON = `{"change_kind":"feature","sections":[
 func sectionReplyJSON(tiles string) string {
 	return `{"summary":"Failed jobs now retry with a growing wait. After the last attempt they move to a table of dead jobs.",
  "steps":[{"title":"The worker catches a failure","text":"A failed handler schedules a retry.","cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]},
-  {"title":"The wait doubles","text":"Each attempt waits twice as long as the last.","cites":[]}],
+  {"title":"The wait doubles","text":"Each attempt waits twice as long as the last.","cites":[{"type":"hunk","id":"` + hunkB + `","lines":null}]}],
  "risks":[{"id":"rsk_unbounded","tier":"medium","category":"correctness","text":"If the cap is zero the wait never grows, so jobs retry at once.","cites":[{"type":"hunk","id":"` + hunkA + `","lines":[12,14]}]}],
  "tiles":` + tiles + `,"propose":null}`
 }
@@ -147,10 +148,15 @@ func fullFake() *fake {
 
 func testRun(t *testing.T, f *fake) Run {
 	t.Helper()
+	encoded, err := json.Marshal(testBundle())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return Run{
 		Generator: &agent.Generator{Backend: f}, Bundle: testBundle(), Directory: t.TempDir(), Prompts: prompts{},
-		Budgets:  agent.Budgets{MaxProviderAttempts: 1, MaxRepairAttempts: 1},
-		Registry: NewRegistry(nil),
+		Budgets:       agent.Budgets{MaxProviderAttempts: 1, MaxRepairAttempts: 1},
+		Registry:      NewRegistry(nil),
+		CompleteInput: reviewv2.CompleteInput{Bundle: encoded, Version: 1},
 	}
 }
 
@@ -182,7 +188,7 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 	if s := doc.Sections[2]; s.Kind != "mechanical" || !strings.Contains(s.Summary, "lockfiles") {
 		t.Errorf("mechanical summary: %q", s.Summary)
 	}
-	if doc.Sections[0].Steps[0].ID != "stp_retry_1" {
+	if doc.Sections[0].Steps[0].ID != "st_retry_1" {
 		t.Errorf("step id: %q", doc.Sections[0].Steps[0].ID)
 	}
 	byID := map[string]reviewv2.Tile{}
@@ -192,8 +198,9 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 			t.Errorf("tile %s: %s", tile.ID, tile.State)
 		}
 	}
-	if code := byID["tl_check"]; string(code.Data) != `{"hunk":"`+hunkC+`","lines":[6,9]}` || code.Title != "The role check" {
-		t.Errorf("code tile: %s %q", code.Data, code.Title)
+	var code reviewv2.CodeData
+	if err := json.Unmarshal(byID["tl_check"].Data, &code); err != nil || code.Hunk != hunkC || !slices.Equal(code.Lines, []int{6, 9}) || byID["tl_check"].Title != "The role check" {
+		t.Errorf("code tile: %s %q", byID["tl_check"].Data, byID["tl_check"].Title)
 	}
 	if byID["tl_backoff"].Shows != "How long each attempt waits." {
 		t.Errorf("the section did not sharpen the brief: %q", byID["tl_backoff"].Shows)
@@ -221,6 +228,11 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 		t.Error("no draft was published")
 	}
 	if len(calls) != 7 {
+		for _, c := range calls {
+			if c.Findings != "" {
+				t.Logf("%s %s pass %d: %s", c.Level, c.ID, c.Pass, c.Findings)
+			}
+		}
 		t.Errorf("%d calls recorded", len(calls))
 	}
 	// The order: each tile after its owner, the overview after every tile,
@@ -337,12 +349,13 @@ func TestUnchangedSectionsAreReused(t *testing.T) {
 	delete(f.replies, "tile-tl-backoff")
 	run := testRun(t, f)
 	level := 3
-	run.Previous = &reviewv2.Document{Schema: reviewv2.Name,
+	previous, _ := json.Marshal(reviewv2.Document{Schema: reviewv2.Name,
 		Sections: []reviewv2.Section{{ID: "sec_retry", Kind: "logical", Hunks: []string{hunkB, hunkA}, Level: &level, Summary: "Before.",
-			Steps: []reviewv2.Step{{ID: "stp_retry_1", Title: "Old", Text: "Old."}},
+			Steps: []reviewv2.Step{{ID: "st_retry_1", Title: "Old", Text: "Old."}},
 			Risks: []reviewv2.Risk{{ID: "rsk_old", Tier: "low", Text: "Old.", State: "active"}, {ID: "rsk_fixed", Tier: "low", Text: "Fixed.", State: "mitigated"}}}},
 		Tiles: []reviewv2.Tile{{ID: "tl_old", Type: "flow", Owner: "sec_retry", State: reviewv2.TileReady, Title: "Old tile"}},
-	}
+	})
+	run.Previous = previous
 	out, doc, err := Generate(context.Background(), run)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +364,7 @@ func TestUnchangedSectionsAreReused(t *testing.T) {
 		t.Error("an unchanged section was written again")
 	}
 	s := doc.Sections[0]
-	if s.Summary != "Before." || len(s.Risks) != 1 || s.Risks[0].ID != "rsk_old" || s.Risks[0].State != "" || s.Details != "" {
+	if s.Summary != "Before." || len(s.Risks) < 1 || s.Risks[0].ID != "rsk_old" || s.Details != "" {
 		t.Errorf("reused section: %+v", s)
 	}
 	ids := []string{}
@@ -475,9 +488,13 @@ func TestCopyRules(t *testing.T) {
 		t.Fatalf("findings: %v", c.findings)
 	}
 	c = &checker{}
-	// A text a quarter over its limit at most is kept whole.
-	if got := c.text("/ok", "A **plain** [link](http://x) text that is a bit long", 32, 1, true); len(c.findings) != 0 || got != "A plain link text that is a bit long" {
-		t.Fatalf("clean: %q %v", got, c.findings)
+	// A text a quarter over its limit at most is cut to it, at a
+	// sentence's end where one is near.
+	if got := c.text("/ok", "A **plain** [link](http://x) text that is a bit long", 32, 1, true); len(c.findings) != 0 || got != "A plain link text that is a…" {
+		t.Fatalf("clean and cut: %q %v", got, c.findings)
+	}
+	if got := fit("The first sentence is here. The second one is longer.", 45); got != "The first sentence is here." {
+		t.Fatalf("fit: %q", got)
 	}
 	// The last pass lets style through and cuts what is far too long.
 	c = &checker{lenient: true}

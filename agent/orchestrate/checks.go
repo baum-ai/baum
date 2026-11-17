@@ -6,40 +6,43 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/reviewv2"
 )
 
-// The limits of the texts the levels write, in characters, words and
-// sentences. A text over its character limit by at most a fifth is cut; one
-// further over, or over its words or sentences, is sent back for a repair.
+// The limits of the texts the levels write are the document layer's
+// (reviewv2.Max*), which its checks hold every level to. A text over its
+// character limit by at most a quarter is cut, at a sentence's end where
+// one is near; one further over, or over its words or sentences, is sent
+// back for a repair.
 const (
-	MaxTitleWords    = 5
-	MaxSectionTitle  = 60
-	MaxGist          = 140
-	MaxScope         = 160
-	MaxLevelReason   = 200
-	MaxSummary       = 480
-	MaxStepTitle     = 60
-	MaxStepWords     = 8
-	MaxStepText      = 220
-	MaxRiskText      = 480
-	MaxShows         = 240
-	MaxContextText   = 300
-	MaxContextFiles  = 8
-	MaxLede          = 600
-	MaxVerdictText   = 120
-	MaxPointText     = 200
-	MaxRiskWhy       = 240
-	MaxIntentText    = 160
-	MaxTiles         = 8
+	MaxTitleWords    = reviewv2.MaxTitleWords
+	MaxSectionTitle  = reviewv2.MaxTitle
+	MaxGist          = reviewv2.MaxGist
+	MaxScope         = reviewv2.MaxScope
+	MaxLevelReason   = reviewv2.MaxLevelReason
+	MaxSummary       = reviewv2.MaxSummary
+	MaxStepTitle     = reviewv2.MaxStepTitle
+	MaxStepText      = reviewv2.MaxStepText
+	MaxRiskText      = reviewv2.MaxRiskText
+	MaxShows         = reviewv2.MaxShows
+	MaxContextText   = reviewv2.MaxContextPart
+	MaxContextFiles  = reviewv2.MaxContextFiles
+	MaxLede          = reviewv2.MaxSummary
+	MaxVerdictText   = reviewv2.MaxVerdictText
+	MaxPointText     = reviewv2.MaxPointText
+	MaxRiskWhy       = reviewv2.MaxRiskWhy
+	MaxIntentText    = reviewv2.MaxIntentText
+	MaxTiles         = reviewv2.MaxTiles
+	MaxCites         = reviewv2.MaxCites
+	MaxTileTitle     = reviewv2.MaxTileTitle
+	MaxCaption       = reviewv2.MaxCaption
 	MaxSectionTiles  = 2
-	MaxCites         = 8
-	MaxTileTitle     = 80
-	MaxCaption       = 200
 	MaxReasonText    = 200
 	maxFindingsShown = 24
 )
@@ -49,9 +52,8 @@ var (
 	barePR       = regexp.MustCompile(`(?i)(?:^|[^\w&])#\d+\b|\b(?:PR|pull request)\s+#?\d+\b`)
 	hunkMention  = regexp.MustCompile(`\bh_[0-9a-f]{12}\b`)
 	lineCount    = regexp.MustCompile(`(?i)\b\d+\s+(?:new\s+|changed\s+)?(?:lines?|files?)\b`)
-	twoThings    = regexp.MustCompile(`(?i),\s+(?:and|then)\s`)
 	mdLink       = regexp.MustCompile(`\[([^\]\n]+)\]\([^)\s]+\)`)
-	sentenceEnd  = regexp.MustCompile(`[.!?]+["')\]]?(?:\s+|$)`)
+	sentenceStop = regexp.MustCompile(`[.!?]["')\]]*\s`)
 )
 
 // checker collects the findings of one reply, each with the path of the
@@ -75,6 +77,30 @@ func (c *checker) style(path, format string, args ...any) {
 	if !c.lenient {
 		c.add(path, format, args...)
 	}
+}
+
+// merge adds the document layer's findings of a part (reviewv2.Check*).
+// The last pass lets through those about a text's wording or length.
+func (c *checker) merge(found []string) {
+	for _, f := range found {
+		if c.lenient && styleFinding(f) {
+			continue
+		}
+		if !slices.Contains(c.findings, f) {
+			c.findings = append(c.findings, f)
+		}
+	}
+}
+
+// styleFinding reports whether a document layer finding is about a text's
+// wording or length, not its structure.
+func styleFinding(f string) bool {
+	for _, s := range []string{"characters; write at most", "sentences; write at most", "words; a title", `the word "evidence"`, "names a hunk by its ID", "joins two things", "spans lines", "over their limits"} {
+		if strings.Contains(f, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // String is the findings as a repair reads them.
@@ -116,13 +142,24 @@ func cut(s string, limit int) string {
 	return strings.TrimRight(out, " ,;:.-") + "…"
 }
 
-// sentences counts a text's sentences.
-func sentences(s string) int {
-	n := len(sentenceEnd.FindAllStringIndex(s, -1))
-	if n == 0 && strings.TrimSpace(s) != "" {
-		return 1
+// sentences counts a text's sentences as the document layer does.
+func sentences(s string) int { return reviewv2.Sentences(s) }
+
+// fit cuts a text to its limit: at the end of its last sentence that fits,
+// when that keeps most of it, else at a word.
+func fit(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
+		return s
 	}
-	return n
+	prefix := string([]rune(s)[:limit])
+	ends := sentenceStop.FindAllStringIndex(prefix+" ", -1)
+	if len(ends) > 0 {
+		at := ends[len(ends)-1][1]
+		if kept := strings.TrimSpace(prefix[:min(at, len(prefix))]); utf8.RuneCountInString(kept) >= limit*3/5 {
+			return kept
+		}
+	}
+	return cut(s, limit)
 }
 
 func words(s string) int { return len(strings.Fields(s)) }
@@ -155,17 +192,15 @@ func (c *checker) text(path, s string, limit, maxSentences int, required bool) s
 	if maxSentences > 0 && sentences(s) > maxSentences {
 		c.style(path, "has %d sentences; write at most %d", sentences(s), maxSentences)
 	}
-	// A text a quarter over its limit at most is kept whole: a cut leaves
-	// half a sentence. Further over, it is sent back, or cut on the last
-	// pass.
+	// A text a quarter over its limit at most is cut to it, at a sentence's
+	// end where one is near; further over, it is sent back, or cut on the
+	// last pass.
 	n := utf8.RuneCountInString(s)
-	if n > limit+limit/4 {
-		if c.lenient {
-			return cut(s, limit+limit/4)
-		}
+	if n > limit+limit/4 && !c.lenient {
 		c.add(path, "is %d characters; keep it to %d", n, limit)
+		return s
 	}
-	return s
+	return fit(s, limit)
 }
 
 // title checks a title: a plain subject of a few words, never two things
@@ -175,11 +210,11 @@ func (c *checker) title(path, s string, limit, maxWords int) string {
 	if s == "" {
 		return s
 	}
-	if w := words(s); w > maxWords+1 {
-		c.style(path, "is %d words; a title is a plain subject of two to %d words", w, maxWords)
+	if w := words(s); w > maxWords {
+		c.style(path, "is %d words; a title is a plain subject of two to five words", w)
 	}
-	if twoThings.MatchString(s) {
-		c.style(path, `joins two things with a comma ("X, and Y"); name one subject`)
+	if strings.ContainsAny(s, ",;") {
+		c.style(path, `joins two things; a title is one subject without a comma`)
 	}
 	return strings.TrimRight(s, ".")
 }
@@ -229,12 +264,14 @@ type facts struct {
 	sessions  map[string]bool
 	hasBody   bool
 	pathCache map[string]bool
+	// refs are what the document layer's checks resolve cites against.
+	refs *reviewv2.Refs
 }
 
 func newFacts(b *bundle.Bundle, roots []string) *facts {
 	f := &facts{b: b, roots: roots, hunks: map[string]bundle.Hunk{}, checks: map[string]bool{}, threads: map[string]bool{}, comments: map[string]bool{},
 		images: map[string]bool{}, prompts: map[string]map[int]bool{}, events: map[string]map[string]bool{}, sessions: map[string]bool{},
-		hasBody: strings.TrimSpace(b.PullRequest.Body) != "", pathCache: map[string]bool{}}
+		hasBody: strings.TrimSpace(b.PullRequest.Body) != "", pathCache: map[string]bool{}, refs: reviewv2.RefsOf(b)}
 	for _, h := range b.Diff {
 		f.hunks[h.ID] = h
 		f.order = append(f.order, h.ID)
@@ -403,4 +440,15 @@ func hunkAnchors(ids []string) []json.RawMessage {
 		out = append(out, encoded)
 	}
 	return out
+}
+
+// refsFor are the refs with the registry's types, which a planned tile may
+// have.
+func (f *facts) refsFor(r *Registry) *reviewv2.Refs {
+	refs := *f.refs
+	refs.TileTypes = map[string]bool{}
+	for _, name := range r.names() {
+		refs.TileTypes[name] = true
+	}
+	return &refs
 }
