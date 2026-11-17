@@ -1,0 +1,239 @@
+// Package reviewv2 is the baum.review/2 document: the desktop app's review,
+// shaped like its page (an overview, the sections with their steps, risks
+// and tiles, and where the change fits). The model writes only judgement:
+// explanations, groupings, risks, diagrams and choices. The host fills
+// everything it can fetch or compute: the review header, the index of hunks,
+// sessions, prompts, attachments and checks, the stats, the risk score, the
+// reading time and each section's state across versions.
+//
+// A document is written in three levels (see oss/agent/orchestrate): the top
+// level maps the pull request into sections and plans the tiles, then, once
+// the sections and tiles are written, writes the overview; one section agent
+// per section writes its summary, steps and risks; one tile agent per planned
+// tile fills it. Fields say which level writes them.
+//
+// The hosted app keeps baum.review/1. A stored baum.review/1 version is
+// converted to this shape when it is served to the desktop app (FromV1).
+package reviewv2
+
+import "encoding/json"
+
+// Name is the value of a document's "schema" field.
+const Name = "baum.review/2"
+
+// Document is a baum.review/2 document.
+type Document struct {
+	Schema string `json:"schema"`
+	// Review is the host's header, the same object as baum.review/1's
+	// "review" (repository, pull request, head, base, merge base, version,
+	// generation state, generator, sources, relations).
+	Review json.RawMessage `json:"review"`
+	// Summary keeps the paths the summaries table and the lists read
+	// (summary.title, summary.risk_score, summary.review_minutes).
+	Summary  Summary   `json:"summary"`
+	Overview Overview  `json:"overview"`
+	Context  *Context  `json:"context"`
+	Sections []Section `json:"sections"`
+	// Tiles are every tile of the document, placed by their owner: the
+	// overview's main diagram, a section, or the context.
+	Tiles []Tile `json:"tiles"`
+	// Stats and Index are the host's, the same objects as baum.review/1's.
+	Stats json.RawMessage `json:"stats"`
+	Index json.RawMessage `json:"index"`
+	// Generation records how the levels went, for the page's states and for
+	// replay: which calls ran, failed or were skipped. Host-written.
+	Generation *Generation `json:"generation,omitempty"`
+}
+
+// Summary is the document's standing facts.
+type Summary struct {
+	// Title is the pull request's title. Host.
+	Title string `json:"title"`
+	// Text is the overview's lede, two or three plain sentences. Top level,
+	// overview call.
+	Text string `json:"text"`
+	// ChangeKind is the kind of change (feature, fix, refactor, …), the same
+	// values as baum.review/1. Top level, map call.
+	ChangeKind string `json:"change_kind"`
+	// Verdict replaces baum.review/1's recommendation. Top level, overview
+	// call. The page shows a banner only when Points is not empty.
+	Verdict *Verdict `json:"verdict"`
+	// RiskWhy justifies the score in at most two sentences. Top level,
+	// overview call.
+	RiskWhy string `json:"risk_why"`
+	// RiskScore is the host's, computed with rubric risk-v1 from the
+	// sections' levels and the risks' tiers; the same object as
+	// baum.review/1's summary.risk_score.
+	RiskScore json.RawMessage `json:"risk_score"`
+	// ReviewMinutes is the host's reading-time estimate.
+	ReviewMinutes *int `json:"review_minutes"`
+}
+
+// Verdict is what the review recommends.
+type Verdict struct {
+	// Decision is approve, look_first or request_changes.
+	Decision string `json:"decision"`
+	// Text is one line saying what to do.
+	Text string `json:"text"`
+	// Points are what must happen before merging, each one plain sentence,
+	// at most 3; empty for most reviews.
+	Points []VerdictPoint `json:"points"`
+}
+
+// VerdictPoint is one thing that blocks the merge.
+type VerdictPoint struct {
+	Text    string `json:"text"`
+	Section string `json:"section,omitempty"`
+}
+
+// Overview is the overview tab's model-chosen parts. Top level, overview
+// call, except Diagram's tile, which a tile agent fills.
+type Overview struct {
+	// Screenshots are attachment ids from the index, at most 3.
+	Screenshots []string `json:"screenshots"`
+	// Diagram is the id of the main diagram tile (owner "overview"), or
+	// null.
+	Diagram *string `json:"diagram"`
+	// Intent is what the linked sessions asked for that this pull request
+	// set out to do, at most 3.
+	Intent []Intent `json:"intent"`
+}
+
+// Intent is one ask from a linked session and what the pull request does
+// about it.
+type Intent struct {
+	Session string `json:"session"`
+	Prompt  int    `json:"prompt"`
+	Asked   string `json:"asked"`
+	Got     string `json:"got"`
+}
+
+// Context is "Where this fits". A context agent (section level) writes it.
+type Context struct {
+	Area      ContextPart `json:"area"`
+	ReachedBy ContextPart `json:"reached_by"`
+	Contracts ContextPart `json:"contracts"`
+	Related   ContextPart `json:"related"`
+}
+
+// ContextPart is one or two plain sentences and the files they rest on.
+type ContextPart struct {
+	Text  string   `json:"text"`
+	Files []string `json:"files"`
+}
+
+// Section is one part of the change a reviewer can understand and approve
+// on its own.
+type Section struct {
+	// ID (sec_…), Title (two to five words, a subject), Kind (logical or
+	// mechanical), Hunks, Gist (one line: what the reader should come away
+	// with), Scope (where it ends when it shares hunks; optional), Level
+	// (1-5) and LevelReasons: top level, map call.
+	ID           string        `json:"id"`
+	Title        string        `json:"title"`
+	Kind         string        `json:"kind"`
+	Hunks        []string      `json:"hunks"`
+	Gist         string        `json:"gist"`
+	Scope        string        `json:"scope,omitempty"`
+	Level        *int          `json:"level"`
+	LevelReasons []LevelReason `json:"level_reasons"`
+	// Summary (up to three sentences), Steps (two to five) and Risks:
+	// section agent.
+	Summary string `json:"summary"`
+	Steps   []Step `json:"steps"`
+	Risks   []Risk `json:"risks"`
+	// Details is "pending" while the section agent writes, "failed" when it
+	// did not finish, "" once written. Host.
+	Details string `json:"details,omitempty"`
+	// Derived is the host's: state across versions, review score and the
+	// rest, the same object as baum.review/1's section derived.
+	Derived json.RawMessage `json:"derived,omitempty"`
+}
+
+// LevelReason says why a section has its level, citing what it rests on.
+type LevelReason struct {
+	Text  string   `json:"text"`
+	Cites []Anchor `json:"cites"`
+}
+
+// Step is one thing the section does, one sentence, with what it rests on.
+type Step struct {
+	ID    string   `json:"id"`
+	Title string   `json:"title"`
+	Text  string   `json:"text"`
+	Cites []Anchor `json:"cites"`
+}
+
+// Risk is what could go wrong in a section. Tier and category take
+// baum.review/1's values. State, IntroducedVersion and MitigatedVersion are
+// the host's, across versions.
+type Risk struct {
+	ID                string   `json:"id"`
+	Tier              string   `json:"tier"`
+	Category          string   `json:"category"`
+	Text              string   `json:"text"`
+	Cites             []Anchor `json:"cites"`
+	State             string   `json:"state,omitempty"`
+	IntroducedVersion *int     `json:"introduced_version,omitempty"`
+	MitigatedVersion  *int     `json:"mitigated_version,omitempty"`
+}
+
+// Anchor is a citation, the same object as baum.review/1's anchor (hunk,
+// file, prompt, session_event, attachment, …).
+type Anchor = json.RawMessage
+
+// Tile is one tile of the document.
+type Tile struct {
+	// ID (tl_…), Type, Owner ("overview", "context" or a section id) and
+	// Shows (what the tile is to show, the brief its tile agent fills): top
+	// level, map call; a section agent may sharpen Shows and Cites before
+	// the tile is filled.
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Owner string `json:"owner"`
+	Shows string `json:"shows"`
+	// Title, Caption and Data (the type's data shape): tile agent. Cites
+	// are what the tile rests on.
+	Title   string          `json:"title"`
+	Caption string          `json:"caption,omitempty"`
+	Cites   []Anchor        `json:"cites"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	// State is pending, ready, failed or unavailable. Host.
+	State string `json:"state"`
+	// Definition is the embedded definition of a library or saved type,
+	// drawn in a sandboxed frame; absent for a native type. Host.
+	Definition json.RawMessage `json:"definition,omitempty"`
+	Problems   []string        `json:"problems,omitempty"`
+}
+
+// Tile states.
+const (
+	TilePending     = "pending"
+	TileReady       = "ready"
+	TileFailed      = "failed"
+	TileUnavailable = "unavailable"
+)
+
+// Owners other than a section.
+const (
+	OwnerOverview = "overview"
+	OwnerContext  = "context"
+)
+
+// Generation records the levels' calls. Host.
+type Generation struct {
+	// Map, Overview and Context are the top-level and context calls; each
+	// section and tile has its own entry by id.
+	Map      CallRecord            `json:"map"`
+	Overview CallRecord            `json:"overview"`
+	Context  CallRecord            `json:"context"`
+	Sections map[string]CallRecord `json:"sections,omitempty"`
+	Tiles    map[string]CallRecord `json:"tiles,omitempty"`
+}
+
+// CallRecord is how one call went: ran, failed, skipped (no budget left or
+// nothing to do) or reused (unchanged since the previous version).
+type CallRecord struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
