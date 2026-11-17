@@ -2,7 +2,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
-import { capture, inspect, settle, steady, type Issue } from "./review-screens";
+import { capture, inspect, settle, type Issue } from "./review-screens";
 
 // Pictures of real saved reviews, taken only on request
 // (REAL_REVIEW_SCREENSHOTS=1) against the real-reviews fixture daemon
@@ -12,9 +12,8 @@ import { capture, inspect, settle, steady, type Issue } from "./review-screens";
 //
 // Per review, size and theme it opens the review page and takes each of STATES,
 // as a viewport picture and a full-page one. Settings, all optional:
-//   REAL_REVIEW_VIEW     the review page: full (default) or tiles
-//   REAL_REVIEW_TILE     a selector for the tiles of the tiles page; the
-//                        "detail" state opens the first one
+//   REAL_REVIEW_VIEW     the review page: full (default) or tiles (the
+//                        overview tabs)
 //   REAL_REVIEW_ONLY     only the reviews whose repo#number contains this text
 //   REAL_REVIEW_MINUTES  the time one review may take before it is left and
 //                        recorded as a problem (default 8)
@@ -22,7 +21,6 @@ import { capture, inspect, settle, steady, type Issue } from "./review-screens";
 test.skip(!process.env.REAL_REVIEW_SCREENSHOTS, "screenshots are taken on request");
 
 const VIEW = process.env.REAL_REVIEW_VIEW || "full";
-const TILE = process.env.REAL_REVIEW_TILE || "[data-tile]";
 const OUT = "test-results/real-reviews";
 const BUDGET_MS = Number(process.env.REAL_REVIEW_MINUTES || 8) * 60_000;
 const FULL_PAGE = process.env.REAL_REVIEW_FULL !== "0";
@@ -66,51 +64,30 @@ type State = {
 };
 
 export const STATES: State[] = [
+  // The full review's summary, or the Overview tab.
   { name: "landing", open: async () => true },
   {
-    // The first section; with the tiles page, the first tile.
+    // The first section: on the overview tabs, How it works opened on it.
     name: "detail",
     open: async ({ page, address, firstSection }) => {
-      if (VIEW === "tiles") {
-        const tile = page.locator(TILE).first();
-        if ((await tile.count()) === 0) return false;
-        await tile.click();
-        // The pointer would otherwise rest on whatever the page drew under
-        // it, such as a rail row, and the picture show that row hovered. The
-        // page's title is a neutral place: the window's corner would open the
-        // folded app sidebar over a phone's page.
-        const title = await page.locator("main h1").first().boundingBox();
-        if (title) await page.mouse.move(title.x + 8, title.y + title.height / 2);
-      } else {
-        if (!firstSection) return false;
-        await page.goto(address({ pane: "section", section: firstSection }));
-      }
+      if (!firstSection) return false;
+      await page.goto(address({ pane: "section", section: firstSection }));
     },
   },
   {
-    // The tiles page with every tile and every group shown, where the
-    // landing page holds some back.
-    name: "more",
+    // "Where this fits", the review's context.
+    name: "context",
     views: ["tiles"],
     open: async ({ page, address }) => {
-      await page.goto(address());
-      await steady(page, "more", VIEW === "tiles");
-      if ((await page.getByRole("button", { name: /^Show \d+ more / }).count()) === 0) return false;
-      await page.goto(address({ more: "1", expand: "changes,obsolete" }));
+      await page.goto(address({ pane: "section", section: "context" }));
     },
   },
   {
-    name: "risks",
+    // The Code tab on its first file.
+    name: "code",
     views: ["tiles"],
     open: async ({ page, address }) => {
-      await page.goto(address({ pane: "tile", tile: "risks" }));
-    },
-  },
-  {
-    name: "everything-else",
-    views: ["tiles"],
-    open: async ({ page, address }) => {
-      await page.goto(address({ pane: "tile", tile: "everything_else" }));
+      await page.goto(address({ pane: "tile", tile: "code" }));
     },
   },
   {

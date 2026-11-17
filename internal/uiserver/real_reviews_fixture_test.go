@@ -57,10 +57,13 @@ import (
 // The dataset is read only: stores and the app database are copied, and each
 // repository is cloned from its mirror with shared objects.
 const (
-	realReviewsEnv    = "BAUM_APP_REAL_REVIEWS"
-	realDefaultCount  = 14
-	realFixturePort   = 4169
-	realPicksFileName = "picks.json"
+	realReviewsEnv = "BAUM_APP_REAL_REVIEWS"
+	// realCompositionsEnv names a directory of compositions to serve in
+	// place of the saved ones (overrideCompositions).
+	realCompositionsEnv = "BAUM_APP_REAL_COMPOSITIONS"
+	realDefaultCount    = 14
+	realFixturePort     = 4169
+	realPicksFileName   = "picks.json"
 )
 
 // realPick is one review the fixture serves, written to picks.json for the
@@ -176,12 +179,71 @@ func (d *realDataset) storeAt(name string) *store.Store {
 			d.t.Fatal(err)
 		}
 	}
+	d.overrideCompositions(filepath.Join(dir, "versions.sqlite"))
 	s, err := store.Open("", dir, false)
 	if err != nil {
 		d.t.Fatal(err)
 	}
 	d.stores[name] = s
 	return s
+}
+
+// overrideCompositions writes the compositions of BAUM_APP_REAL_COMPOSITIONS
+// into a copied store, so a presentation made elsewhere (a replay run's
+// composition.json) is served with its saved review. Each file is named
+// <number>@<version>.json; <number>@<version>.document.json replaces that
+// version's review too (a replay run's review). A store without that version
+// is left alone.
+func (d *realDataset) overrideCompositions(path string) {
+	d.t.Helper()
+	dir := os.Getenv(realCompositionsEnv)
+	if dir == "" {
+		return
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*@*.json"))
+	if err != nil || len(files) == 0 {
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		return // the dataset has no such store
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		d.t.Fatal(err)
+	}
+	defer db.Close()
+	// A store saved before compositions has no column for them.
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('versions') WHERE name='composition'`).Scan(&has); err != nil {
+		d.t.Fatal(err)
+	}
+	if has == 0 {
+		if _, err := db.Exec(`ALTER TABLE versions ADD COLUMN composition TEXT`); err != nil {
+			d.t.Fatal(err)
+		}
+	}
+	for _, file := range files {
+		var number, version int
+		column := "composition"
+		name := filepath.Base(file)
+		if base, ok := strings.CutSuffix(name, ".document.json"); ok {
+			column, name = "document", base+".json"
+		}
+		if _, err := fmt.Sscanf(name, "%d@%d.json", &number, &version); err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			d.t.Fatal(err)
+		}
+		value := any(string(raw))
+		if column == "document" {
+			value = raw
+		}
+		if _, err := db.Exec(`UPDATE versions SET `+column+`=? WHERE pr=? AND version=?`, value, number, version); err != nil {
+			d.t.Fatal(err)
+		}
+	}
 }
 
 // bestMachine is the machine that kept the most versions of a pull request.

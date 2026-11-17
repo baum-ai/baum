@@ -2372,9 +2372,13 @@ that was skipped for want of a document, and a review left unfinished after
 `REAL_REVIEW_MINUTES` (8 by default). Expected 404, 502 and 503 console errors
 from the refusing backends stay in `console-errors.txt` and out of the sheet's
 error count. States are the `STATES` list at the top of the
-spec: the page as it opens (`landing`), a detail (the first section, or with
-`view=tiles` the first element matching `REAL_REVIEW_TILE`) and its first hunk
-excerpt opened.
+spec: the page as it opens (`landing`, the Overview tab with `view=tiles`), a
+detail (the first section) and its first hunk excerpt opened, and with
+`view=tiles` "Where this fits" (`context`) and the Code tab (`code`).
+`BAUM_APP_REAL_COMPOSITIONS` names a directory of presentations to serve in
+place of the saved ones, each `<number>@<version>.json` (a replay run's
+`composition.json`), with `<number>@<version>.document.json` replacing that
+version's review too, so a replay run can be seen on the page.
 A new page adds a state by adding an entry with the steps that open it.
 `REAL_REVIEW_ONLY` limits the run to reviews whose `repo#number` contains the
 text, and `REAL_REVIEW_FULL=0` skips the full-page pictures. The pictures hold
