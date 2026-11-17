@@ -13,13 +13,7 @@ import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Cites } from "./cites";
 import { AnchorChips } from "@baum/viewer/components/review-parts";
 import { useReviewFiles, useReviewSources } from "@baum/viewer/components/review-contexts";
-import {
-  Item,
-  Part,
-  PROSE,
-  ReviewScoreBadge,
-  TierBadge,
-} from "@baum/viewer/components/review-parts";
+import { Part, PROSE, ReviewScoreBadge, TierBadge } from "@baum/viewer/components/review-parts";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { tabPanelProps } from "@baum/viewer/components/tabs";
 import { Badge, Button, CardHeader, LiveDot } from "@baum/viewer/components/ui";
@@ -548,13 +542,33 @@ function SectionTiles({
   );
 }
 
+/** A risk's tier in its own colour, the label in front of its row. */
+const TIER_INK: Record<string, string> = {
+  critical: "text-status-critical",
+  high: "text-status-critical",
+  medium: "text-status-caution",
+  low: "text-tertiary",
+};
+
+/** One risk as a row: its tier in front, then its text and what it cites,
+ *  under the section's Risks label. */
 function RiskItem({ risk, document, id }: { risk: V2Risk; document: ReviewDocument; id: string }) {
+  const tier = risk.tier ?? "low";
   return (
-    <Item id={id} className="space-y-1.5">
-      <TierBadge tier={risk.tier} />
-      <Markdown className="text-primary">{risk.text}</Markdown>
-      <Cites document={document} anchors={risk.cites} />
-    </Item>
+    <li
+      id={id}
+      data-review-block=""
+      className="grid scroll-mt-4 grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3 rounded-sm py-1 outline-none target:bg-surface-wash data-[review-block-active]:bg-surface-wash"
+    >
+      <span className={cn("pt-px text-xs font-medium", TIER_INK[tier] ?? "text-tertiary")}>
+        {tier[0]!.toUpperCase()}
+        {tier.slice(1)}
+      </span>
+      <div className="min-w-0 space-y-1">
+        <Markdown className="text-secondary">{risk.text}</Markdown>
+        <Cites document={document} anchors={risk.cites} />
+      </div>
+    </li>
   );
 }
 

@@ -239,7 +239,7 @@ describe("How it works", () => {
     expect(parts).not.toContain("Code");
     expect(body.querySelector('[aria-label="Code changes"]')).toBeNull();
     expect(body.querySelector('[data-block="points"]')?.textContent).toContain("Deny by default");
-    expect(body.querySelector('[aria-label="Risks"]')?.textContent).toContain("High risk");
+    expect(body.querySelector('[aria-label="Risks"]')?.textContent).toContain("High");
     expect(body.textContent).not.toContain("Decide");
   });
 
@@ -537,7 +537,7 @@ describe("the native tiles", () => {
     const data = table.data as { columns: string[]; rows: string[][] };
     const rows = Array.from({ length: 12 }, (_, at) => [`run ${at}`, "relay", "ok"]);
     const container = await card({ ...table, data: { ...data, rows } });
-    expect(container.querySelectorAll("tbody tr")).toHaveLength(6);
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
     await click(button(container, "Show all 12 rows"));
     expect(container.querySelectorAll("tbody tr")).toHaveLength(12);
   });

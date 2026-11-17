@@ -436,7 +436,7 @@ type Row = { key: string; cells: TableCell[] };
 
 /** The rows a long table shows until it is opened: enough to read what it
  *  compares without it outweighing the section around it. */
-export const TABLE_ROWS_SHOWN = 6;
+export const TABLE_ROWS_SHOWN = 8;
 
 /** A table cell: its text, or what it is now (emphasised) after what it was
  *  before the change (struck through). */
@@ -475,6 +475,7 @@ export function TableDiagram({ data }: { data: TableData }) {
         rows={rows.map((cells, position) => ({ key: String(position), cells }))}
         rowKey={(row) => row.key}
         density="compact"
+        framed={false}
         minWidth={360}
       />
       {folds ? (
