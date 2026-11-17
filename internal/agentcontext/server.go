@@ -125,7 +125,8 @@ func New(opts Options) *Server {
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
 	proposing, adding, tileTypes, making := proposeTools(), s.addTools(), s.tileTypeTools(), s.tileMakingTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, adding, tileTypes, making) {
+	reviewReads := s.reviewReadTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing, adding, tileTypes, making, reviewReads) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -164,7 +165,10 @@ func New(opts Options) *Server {
 	// commits, decisions, what the app offers about the branch and checks,
 	// and the person's draft review. A group's page reads its patches and
 	// files.
-	pullPage := slices.Concat(names(pull), names(reviews), names(extras))
+	if err := checkReviewTools(s.tools); err != nil {
+		panic(err)
+	}
+	pullPage := slices.Concat(names(pull), names(reviews), names(extras), names(reviewReads))
 	groupExtras := byName(extras, "group_patch", "group_file")
 	// It lists add_tile too, which adds a library tile to the person's own
 	// page at once.
@@ -587,7 +591,11 @@ func (s *Server) call(ctx context.Context, consumer Consumer, t Tool, args json.
 	if consumer.Kind == Action {
 		bound = consumer.Repository
 	}
-	c := CallContext{Consumer: consumer, Reader: s.reader.forTool(t, bound, consumer.PullRequest), proposals: s.Proposals}
+	reader := s.reader.forTool(t, bound, consumer.PullRequest)
+	if consumer.Kind == Review {
+		reader.deny = reviewUnreadable
+	}
+	c := CallContext{Consumer: consumer, Reader: reader, proposals: s.Proposals}
 	c.Page, c.HasPage = s.Registry.Page(consumer.ID)
 	c.Turn, c.HasTurn = s.Registry.TurnPage(consumer.ID)
 	out, callErr := t.Call(ctx, c, args)
