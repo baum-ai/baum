@@ -1063,7 +1063,10 @@ right of its baum title, after Help, folds it to a rail of glyphs (56px) so
 the page gets the width, and pins it open again (`Sidebar` in
 `src/shell.tsx`). Folded, resting the mouse on the rail for a moment opens it
 over the page, which does not move, and it folds again shortly after the
-pointer leaves or when a link in it is chosen; keyboard focus in the rail
+pointer leaves or when a link in it is chosen. It folds at once when the
+pointer leaves the window or the window loses focus, since a pointer that
+leaves straight off the rail at the window's edge may never send the rail
+its own leave event; keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it

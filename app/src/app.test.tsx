@@ -2785,6 +2785,42 @@ it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
 });
+it("folds the sidebar opened under the mouse when the pointer or focus leaves the window", async () => {
+  entries = [entry(1)];
+  // A narrow window always folds the sidebar.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(width < 64rem)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  await act(async () => root.render(<App />));
+  const lane = node.querySelector<HTMLElement>(".local-rail-lane")!;
+  const rail = () => lane.getAttribute("data-rail");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const hover = async () => {
+      const event = new MouseEvent("pointermove", { bubbles: true });
+      Object.defineProperty(event, "pointerType", { value: "mouse" });
+      await act(async () => {
+        lane.dispatchEvent(event);
+        vi.advanceTimersByTime(200);
+      });
+    };
+    await hover();
+    expect(rail()).toBe("open");
+    // Off the left edge of the window: no leave reaches the sidebar itself.
+    await act(async () =>
+      document.dispatchEvent(new MouseEvent("mouseout", { relatedTarget: null })),
+    );
+    expect(rail()).toBe("folded");
+    await hover();
+    expect(rail()).toBe("open");
+    await act(async () => window.dispatchEvent(new FocusEvent("blur")));
+    expect(rail()).toBe("folded");
+  } finally {
+    vi.useRealTimers();
+  }
+});
 it("offers the shortcuts, a problem report and the docs from Help beside the baum title", async () => {
   entries = [entry(1)];
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {

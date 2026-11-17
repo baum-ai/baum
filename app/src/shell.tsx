@@ -106,6 +106,31 @@ function usePeek(folded: boolean) {
     }, delay);
   };
   useEffect(() => () => clearTimeout(timer.current), []);
+  // A pointer that leaves the window straight off the sidebar (it sits at the
+  // window's left edge), or an app that loses focus to another window, may
+  // never send the sidebar a leave event, so it would stay open over the page.
+  // Leaving the document or the window counts as leaving the sidebar, which
+  // also drops an open still waiting on its delay.
+  useEffect(() => {
+    const away = () => {
+      inside.current = false;
+      held.current = false;
+      clearTimeout(timer.current);
+      timer.current = undefined;
+      setPeeking(false);
+    };
+    const onMouseOut = (event: MouseEvent) => {
+      if (event.relatedTarget === null) away();
+    };
+    window.addEventListener("blur", away);
+    document.addEventListener("mouseout", onMouseOut);
+    document.addEventListener("visibilitychange", away);
+    return () => {
+      window.removeEventListener("blur", away);
+      document.removeEventListener("mouseout", onMouseOut);
+      document.removeEventListener("visibilitychange", away);
+    };
+  }, []);
   // A mouse only: a touch has no hover to leave, so a tap would open the
   // sidebar over the page and leave it there. Movement opens it as well as
   // entering: a pointer already resting on it when the app loads entered
