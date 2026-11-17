@@ -59,9 +59,10 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 
 | Package | Owns |
 | --- | --- |
-| `schema` | the canonical `baum.review/1` JSON Schema and its validator |
+| `schema` | the canonical `baum.review/1` JSON Schema and its validator, and the `baum.tiles/1` tile document schema, which reuses its definitions |
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
 | `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction |
+| `tiles` | the `baum.tiles/1` tile document: its types, validator and built-in tile types, and the lossless conversion from and to a stored `baum.review/1` document |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that the reference viewer host embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
@@ -614,6 +615,162 @@ Known limits of the identifier pass:
 - Matching is by whole words, so a key glued without a separator to letters
   or digits in another identifier or in free text (`xakia…`) is not matched
   there.
+
+### Tile documents
+
+A tile document (`baum.tiles/1`, `schema/tiles-1.json`, package `tiles`)
+presents a review as tiles: small panels a page lays out on a grid, each
+showing one part of the review. It has three parts.
+
+- **The substrate**, in the same shapes as `baum.review/1`, so scoring,
+  refresh, staged details and history work on the same fields: the review
+  header, `facts` (the pull request's title, author, authorship, review
+  exchange and reading time), `stack`, `stats`, `index`, `agent_reviews`,
+  `unassigned_hunks`, `recommendation` and `risk_score`, then `changes` (each
+  section's outline: ID, title, kind, hunks, assessment, member pull
+  requests, details state and derived fields), and every section's `risks`
+  and `evidence`, each item naming its `change`.
+- **Tiles**, each `{id, type, title, headline, data, covers, state,
+  problems}`. A tile's `data` has the shape of the schema's
+  `$defs/tileData_<type>`; `covers` lists the hunks it shows; `state` is
+  `ready`, `pending`, `failed` or `unavailable`. The built-in types are
+  `overview`, `change`, `risks`, `evidence`, `intent`, `decisions`,
+  `context`, `media`, `everything_else`, `prose`, `table`, `diagram` and
+  `code` (`tiles.Builtins` gives each a title, a use-when line, whether a
+  document has at most one, and its default size). A single tile's ID is its
+  type, and a change tile's ID is its change's, which is its section's, so
+  comments, chat tools, recommendation and risk score references, agent
+  findings and details retries that name a section name its tile. `custom`
+  is reserved for a tile that embeds its own type definition; this version
+  accepts the shape and always shows it as unavailable.
+- **The layout**: entries in reading order, each a tile, a size (`full`,
+  `half` or `third` of a 6-unit grid), an optional group and an optional
+  pin; groups of contiguous entries, which may show only their first
+  `collapse_after` members; and `landing`. One rule governs the landing
+  page. A group member past `collapse_after` is hidden wherever it stands
+  (`tiles.Hidden`): it takes no space, and its group's own "Show N more"
+  reveals it, counting all of the group's hidden members. `landing`
+  (`tiles.Landing`) is the index after the last entry the landing page
+  places: the entries that are not hidden fill rows of 6 units in order, an
+  entry that does not fit the rest of its row starts the next, and the first
+  that does not fit in three rows ends the landing page. The landing page
+  shows the entries before `landing` that are not hidden (`tiles.Visible`);
+  "Show N more tiles" reveals the rest that are not hidden (`tiles.More`).
+  `tiles.Arrange` orders a layout and sets `landing`: pinned entries move to
+  the front, and the risks tile, when it ranks an active critical or high
+  risk and would otherwise miss the landing page, moves ahead of them; both
+  moves are stable and move an entry with its whole group. A narrow
+  window stacks the same order into fewer columns, so the landing page does
+  not depend on the viewport.
+
+Who writes what: the host writes the substrate's header, facts, statistics,
+index, agent reviews, derived fields, risk lifecycle fields and risk score,
+and each tile's `covers`, `headline`, `state` and `problems` and the
+layout's `landing`. The review's author (today a `baum.review/1` generation,
+converted) writes the outline, the risks' and evidence's text, the
+recommendation, and each tile's type, title and data.
+
+The schema refers to `review-1.json`'s definitions by name, and to the parts
+of it that are not definitions (the review header, summary, statistics,
+index, agent reviews, stack, and the risk, evidence, decision and block
+shapes) under fixed names; `schema.MergedTiles` merges them in before
+resolving, and a name both files define is an error. `tiles.Validator`
+fails a document for its envelope and substrate shapes, a change, risk,
+evidence, tile or group ID that is not unique, a risk or evidence item naming
+a change the document lacks, a current change's hunk the index lacks, a
+layout that does not place every tile exactly once in known, contiguous
+groups, a landing past the entries, or a second tile of a single type. A
+tile is only marked `unavailable`, with its problems, and the rest of the
+document is shown, when it is a single tile under another ID than its type,
+its data does not have its type's shape (only a draft's pending context
+tile may have empty data), its references do not resolve (a change tile's
+change, which everything else must not show too, the ranked risks, the
+changes of moved items), a decision ID repeats among the decisions tile's
+items, or its type is unknown or `custom`. `CheckTiles` runs just those
+tile checks, for a host serving a document it converted.
+
+**Conversion.** `tiles.FromReview` converts a stored `baum.review/1`
+document after the stored-document rules, and `tiles.ToReview` converts
+back. `review.NormalizeStored` applies those rules and returns the bytes a
+reader works on, the input itself when no rule applies. It is stricter than
+the raw stored document: it labels blank section titles, shortens long
+identifiers and drops retired tiles it cannot keep, and when a rule applies
+it re-encodes the document through float64 numbers, which would change only
+an integer above 2^53, a size no field of the schema reaches. A host that
+serves a review document beside its tile document serves this normalised
+document, so the two views agree. The conversion is deterministic, and the
+round trip returns the normalised document exactly (compared as JSON
+values), except the retired per-section and per-risk tiles, which it drops.
+It takes about a millisecond for a typical stored review. It fails, and a
+host can fall back to the full review, only for a document it cannot split:
+another schema, a field the review schema does not define (the stored schema
+is closed, and a field the converter does not know would be lost), a key of
+a decoded object written in another case than the schema writes it, or a
+repeated section ID.
+
+- The overview tile holds the summary's text, change kind, release note,
+  breaking change and attention; its title is the pull request's.
+- Each current logical section becomes a change tile holding its summary,
+  attention and blocks, except its intent, decisions, images and media
+  blocks, which move to the intent, decisions and media tiles; each moved
+  block or decision carries an `origin` (its change, the block's position and
+  the item's), from which `ToReview` puts it back. A section whose details are
+  pending or failed gives a pending or failed tile, and an obsolete section
+  still marked pending a failed one.
+- The current mechanical section, with its summary, attention and remaining
+  blocks, and the unassigned hunks make the `everything_else` tile. The
+  schema allows one mechanical section, but a stored review can hold more;
+  any after the first become change tiles.
+- Obsolete sections become change tiles in a collapsed "Obsolete changes"
+  group; their blocks do not move, and they cover no hunks.
+- The risks tile ranks the active risks of current changes by tier, then by
+  their change's place in review order, then in document order. The evidence
+  tile shows all evidence. The intent tile (the summary's `implements` and the
+  moved intent blocks), the context tile, the decisions tile and the media
+  tile appear only when they have something to show; with `Options.Draft` a
+  missing context is a pending context tile.
+- The default layout is the overview and risks tiles (half each), the
+  change tiles in review order (a third each, in a "Changes" group showing
+  four), then media, evidence, intent, context, decisions and everything
+  else (a third each), then the obsolete changes. Review order is the
+  viewer's: by review score, highest first, a section with attention first
+  within a score, otherwise document order; a document without scores keeps
+  its order.
+- A risk, evidence or decision ID need only be unique within its section in
+  `baum.review/1`. In a tile document, risk and evidence IDs are unique
+  across the document, and decision IDs among the decisions tile's items:
+  an obsolete section keeps its blocks, so its decisions keep their IDs. The
+  first occurrence keeps its ID; each later one becomes its ID, an
+  underscore and its section's ID without `sec_` (`ShortenIdentifier`
+  applied, and a numeric suffix when that name is taken or occurs in any
+  string of the document), with `origin` recording its section and original
+  ID. Within that section only, prose and structured references (attention
+  refs, behaviour step evidence) to the original ID are rewritten, as whole
+  tokens, to the section's own item: the first one with that ID. Inline code
+  spans, URLs, paths and verbatim quotes (a decision's rejected alternative
+  and evidence, a prompt anchor's input) are left as written. The risk score
+  and the changes' derived fields stay as they were: `risk_score.reasons[].risk`
+  and `changes[].derived.review_reason.risk` name a risk by its change and
+  original ID, which `Document.RiskIn` resolves. The full review still
+  resolves a repeated ID to its first occurrence, so the two pages can differ
+  on such an ID.
+
+The test-support package `tiles/tilestest`, which uses only the public API,
+checks conversions. `CheckConversion` asserts the invariants of one: the
+tiles cover exactly the current hunks, which are the index's; every risk
+and evidence item is presented exactly once, and each section's blocks,
+rebuilt from its own tile and the moved items' origins, are the review's in
+order, with the same decisions and images; the risks tile ranks exactly the
+active risks of current changes; the recommendation and risk score are
+unchanged, present exactly when they were, and every risk they name
+resolves; every active critical or high risk is ranked and the risks and
+overview tiles are on the landing page; every tile is placed once and passes
+the tile checks; and the round trip holds. `CheckStability` checks that a
+change two consecutive versions share keeps its tile's ID and type, and that
+the tiles they share are change and single tiles.
+The goldens in `tiles/testdata` cover each shape the conversion handles, and
+`internal/tilescorpus` runs every check over a directory of real review
+stores when `BAUM_TILES_CORPUS` names one, logging only counts.
 
 ## `agent`
 

@@ -201,6 +201,36 @@ func TestShortenStoredIdentifiersKeepsValidDocumentBytes(t *testing.T) {
 	}
 }
 
+// NormalizeStored returns a document no rule applies to as it is, and applies
+// the rules to one they repair.
+func TestNormalizeStored(t *testing.T) {
+	encoded, err := json.Marshal(storedExample(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, encoded, "", "  "); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NormalizeStored(indented.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, indented.Bytes()) {
+		t.Fatal("a document no rule applies to was re-encoded")
+	}
+	long, want := preBoundDocument(t)
+	if got, err = NormalizeStored(long); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decodedJSON(t, got), decodedJSON(t, want)) {
+		t.Fatal("the stored-document rules were not applied")
+	}
+	if _, err := NormalizeStored([]byte(`["not an object"]`)); err == nil {
+		t.Fatal("a document that is not an object was accepted")
+	}
+}
+
 // A stored document from before identifiers were bounded, with 131-character
 // and longer finding, risk and evidence identifiers and their references,
 // refreshes, and the result is the refresh of the document with shortened

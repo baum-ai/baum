@@ -182,6 +182,16 @@ func decodeStored(data []byte, name string) (map[string]any, []byte, error) {
 	return value, data, nil
 }
 
+// NormalizeStored applies the stored-document rules to an encoded stored
+// document, as every reader of one does first, and returns the encoding the
+// reader works on: data itself when no rule applied. A host that serves a
+// stored document and a view converted from it (the tile document) passes
+// both the same bytes, so the views agree.
+func NormalizeStored(data []byte) ([]byte, error) {
+	_, normalized, err := decodeStored(data, "stored review")
+	return normalized, err
+}
+
 // storedSchema is the full review schema as a decoded tree, which the
 // schema-driven rules walk alongside a document.
 var storedSchema = sync.OnceValues(func() (map[string]any, error) {
