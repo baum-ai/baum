@@ -80,19 +80,17 @@ func tileLibrary(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"types": tileview.Library()})
 }
 
-// tilesHandler serves GET /api/tiles: the review document and its review
-// page's view (tileview.BuildWith), built with the version's stored
-// composition, if any, and the tiles the person added to the pull request
-// (LocalAPI.Added), with the selectors, errors and no-store ETag of
-// GET /api/document. Answers are kept under the version's store revision,
-// which changes with every write to its row, composition included, the
-// added tiles' key (with their fills), which changes with every add, remove
-// and fill, and the pending cards of tiles being made in the session panel
-// (drafts, on the latest version only), which change as the tile is
-// checked. Its
-// document is the normalised review (review.NormalizeStored), which differs
-// from the stored one on the plain route only where a stored-document rule
-// applies.
+// tilesHandler serves GET /api/tiles: the version as a baum.review/2
+// document (tileview.Serve: a baum.review/2 version as stored, a
+// baum.review/1 version converted with its stored composition, if any),
+// with the tiles the person added to the pull request (LocalAPI.Added)
+// merged into its tiles, as {"document", "problem"?, "drafts"?}, with the
+// selectors, errors and no-store ETag of GET /api/document. Answers are kept
+// under the version's store revision, which changes with every write to its
+// row, composition included, the added tiles' key (with their fills), which
+// changes with every add, remove and fill, and the pending cards of tiles
+// being made in the session panel (drafts, on the latest version only),
+// which change as the tile is checked.
 func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !acquire(r.Context(), slots) {
@@ -137,8 +135,8 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 			}
 			held := a.addedFor(r.Context(), read.clone, read.key.Number, version, latest, added, fills)
 			var err error
-			response := tileview.BuildWith(version.Document, version.Composition, held, tiles.Options{})
-			if response.View != nil {
+			response := tileview.Serve(version.Document, version.Composition, held, tiles.Options{})
+			if response.Problem == "" {
 				response.Drafts = drafts
 			}
 			if answer, err = tileview.Encode(response); err != nil {

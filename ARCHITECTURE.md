@@ -59,9 +59,10 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 
 | Package | Owns |
 | --- | --- |
-| `schema` | the canonical `baum.review/1` JSON Schema and its validator, and the `baum.tiles/1` tile document schema, which reuses its definitions |
+| `schema` | the canonical `baum.review/1` JSON Schema and its validator, the `baum.tiles/1` tile document schema, which reuses its definitions, and the `baum.review/2` schema (`review-2.json`), which reuses its header, index, stats, risk score and derived facts |
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
 | `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction |
+| `reviewv2` | the desktop app's `baum.review/2` document: its types, the model-facing checks per level, completion from the bundle, conversion from a stored `baum.review/1` version, reuse across versions; see "`reviewv2`" |
 | `tiles` | the `baum.tiles/1` tile document: its types, validator and built-in tile types, and the lossless conversion from and to a stored `baum.review/1` document |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that the reference viewer host embeds |
@@ -996,31 +997,34 @@ statements name their columns: it reads every document, writes `NULL`
 compositions for the versions it generates and refreshes the document in
 place.
 
-**Serving.** The desktop daemon builds a review's page view each time it
-answers for one (`tileview.BuildWith`); neither the view nor the tile
-document is stored. Both tile routes answer `{"document": <baum.review/1>,
-"view"?: <baum.view/1>, "problem"?: string, "drafts"?: [...]}`. `view` is
-built from exactly the bytes `document` holds (see "Review view" for its
-shape): the review, the version's stored review view composition, and the
-tiles the person added to the pull request (below). Its library and
-authored tiles, and the added tiles, are checked against the tile document
-converted from the review (`tiles.ExtraTiles`), so a tile that fails a
-check is `unavailable` in a view that is still served. An added tile whose
-type the composition already fills is served once, as the composition has
-it. A composition that is not a `baum.composition/2` gives the view of a
-version without one, and one that cannot be used, or makes building the
-view panic, is counted (`tileview.views_ignored` in the daemon's work
-statistics) and gives the view without it; no composition or added tile
-ever fails the answer. `document` is the normalised review (the
-stored-document rules, `review.NormalizeStored`, then the derived hunk
-URLs). The plain routes serve the stored bytes (with hunk URLs), so the two
-differ where a rule applies: an identifier longer than 128 characters is
-shortened and a blank section title is labelled on the tile routes only. A
-draft comment or a URL made on one page for such an item therefore does not
-carry to the other until the version is refreshed; the review page reads
-only the tile routes while it shows a version's view. A review that cannot
-be read or converted gives no `view` and a short `problem` that never quotes
-the document, and the page shows the full review.
+**Serving.** Both tile routes answer `{"document": <baum.review/2>,
+"problem"?: string, "drafts"?: [...]}` (`tileview.Serve`), whatever schema
+the version was stored in; there is no separate `view` object. A
+`baum.review/2` version is served as stored, its hunks' GitHub links derived
+(`review.DeriveHunkURLs`). A `baum.review/1` version is converted
+(`reviewv2.FromV1`, see "`reviewv2`") through the review page's view of it
+(`tileview.BuildWith`, `baum.view/1`, see "Review view"): the stored-document
+rules and derived hunk URLs first (`review.NormalizeStored`), then the
+version's stored review view composition, its library and authored tiles
+checked against the tile document converted from the review
+(`tiles.ExtraTiles`), so a tile that fails a check is `unavailable` in a
+document that is still served, and placed as that view places them; each
+placement becomes the tile's `owner` (`reviewv2.TilesOfView`). The tiles the
+person added to the pull request (below) are merged into `tiles` in both
+cases: checked against the document (`reviewv2.Substrate` for a
+`baum.review/2` one), owned by the section they were added on when the
+version has it, else by the section whose hunks they cite most, else by
+`context`, and marked `added: true`, with `from` (the earlier version their
+data was written for) and `filling` (being filled for this version) when
+they apply. An added tile whose type the version already has is served
+once, as the version has it. A composition that is not a
+`baum.composition/2`, or that cannot be used or makes building the view
+panic, is counted (`tileview.views_ignored` in the daemon's work statistics)
+and the version is served without it; no composition or added tile ever
+fails the answer. A review that cannot be read or converted gives a short
+`problem` that never quotes the document, and the page shows the full
+review. Replay still reads the `baum.view/1` view itself
+(`tileview.Build`).
 
 **Added tiles.** The tiles a person added to a pull request's review page,
 a library type from the session panel (`add_tile`) or a tile made in chat
@@ -1176,7 +1180,8 @@ whatever its size.
   another composition, and an answer is kept under the added tiles' key too,
   so an add, a removal or a fill is never answered from an older one.
 - `GET /api/jobs/{id}/draft?tiles=1` answers the running review's draft in
-  that shape, plus the draft's `draft` count, converted with `Options.Draft`.
+  that shape (a `baum.review/2` draft as it is, a `baum.review/1` one
+  converted with `Options.Draft`), plus the draft's `draft` count.
   Only the exact value `1` selects tiles; without it, or with any other value
   (`true`, empty), the answer is the draft alone, as before. The answer is
   kept per job by the draft's count, the digest of its composition
@@ -1204,8 +1209,8 @@ version, an older one or a draft; a tile's data never enters the document.
   (`tileview.FrameRegistry`). Only the daemon's render check or the
   authenticated app may mark a digest hung, never a message from a frame:
   otherwise a tile could switch other tiles off.
-- **Registration.** `tileview.BuildWith`, which both tile routes use,
-  registers the type of every custom tile of the view the checks left
+- **Registration.** `tileview.Serve`, which both tile routes use,
+  registers the type of every tile with a definition the checks left
   `ready`. A ready
   tile whose document cannot be composed (its HTML is within the format's
   262144 characters but over the kit's 256 KiB in UTF-8) is marked
@@ -1955,6 +1960,91 @@ types its composition holds a ready (not pending) library tile of
 becomes now and `used_in` names the repository at now, keeping the 50 most
 recent repositories. The library page shows them, and offering ranks by
 them.
+
+## `reviewv2`
+
+`baum.review/2` is the desktop app's review document, shaped like its page:
+the overview (summary text, verdict, why the risk is what it is,
+screenshots, the main diagram, intent), the sections (outline, level and its
+reasons, summary, steps, risks), where the change fits (`context`) and the
+tiles, each owned by `overview`, `context` or a section. Its Go types are
+`reviewv2.Document` (`oss/reviewv2/document.go`); every field says which
+level of the generation writes it (the orchestration is
+`oss/agent/orchestrate`). The hosted app keeps `baum.review/1`.
+
+**Schema.** `schema/review-2.json` is closed. It reuses `review-1.json`'s
+review header, index, stats, risk score, section derived facts, anchors and
+IDs, merged into its `$defs` (`schema.MergedReview2`, `CompileReview2`,
+`ValidateReview2`); its revision is `$defs/v2SchemaRevision/const`
+(`Review2Revision`), recorded in `review.generator.schema_revision`. Native
+tile types have their data shape: `flow`, `columns`, `sequence` and `table`
+are `tiles/view`'s shapes without `caption` and `source`, which a tile
+carries beside its data as `caption` and `cites` (a test keeps the two
+equal), and `code` is `{hunk, lines?, text?}`. Any other type (a library,
+saved or dedicated type drawn in a frame from `definition`, or a converted
+`v1_table`, `v1_code` or `v1_prose` exhibit) has an open object. The schema
+holds no text limits: converted `baum.review/1` versions carry longer text.
+
+**Validation.** The limits are the model-facing checks, one per level, each
+returning findings to repair with (`reviewv2.Findings` joins them):
+`CheckMap` (change kind; section IDs `sec_`, titles of a few words within 60
+characters and never two subjects joined by a comma, gists within 140,
+levels 1 to 5 with reasons for a logical section, every hunk of the pull
+request in a section, at most one mechanical section; planned tiles `tl_`,
+at most 8, owners that exist, at most one for the overview),
+`CheckSection` (summary within three sentences and 450 characters, two to
+five steps `st_` of one sentence within 220 for a logical section, risks
+`rsk_` within 300 characters), `CheckContext` (four parts of at most two
+sentences and 320 characters, the area required), `CheckTile` (title within
+80, caption within 200, native data within `tiles/view`'s limits through
+`view.CheckNative`, a code tile's hunk and lines on its new side) and
+`CheckOverview` (summary text, verdict line within 120 and at most three
+points within 200, `risk_why` within two sentences and 260 characters,
+screenshots and intent that the pull request has, a main diagram that is a
+tile). Every model text is refused the word "evidence" and hunk IDs, and
+every citation must resolve (`Refs`: the bundle's hunks with their lines,
+files, linked sessions' prompts and events, attachments, checks and
+threads; `RefsOf` a bundle, `RefsOfIndex` a document's index).
+`CheckDocument` runs the schema and every level.
+
+**Completion.** `reviewv2.Complete` turns what the levels wrote into the
+stored document without a model: the header, index and stats from the
+bundle and the risk score (rubric `risk-v1`: the highest section level,
+mechanical sections 1, floors of 4 and 5 for active high and critical risks,
+a lower bound when a section's details failed) and each section's derived
+facts (state against the previous version's section of the same ID by hunk
+hashes, line counts, reviewers, review score) through
+`review.HostParts`, which runs `baum.review/1`'s completion code; the
+reading time (`ReviewMinutes`: the prose's words at 400 a minute,
+`review.MinutesForWords`); the risks' history as `baum.review/1`'s (a risk
+keeps the version it was introduced in, a previous risk a section no longer
+names is mitigated in this version unless the section's details are pending
+or failed); a code tile's `text` (the new side of its hunk between its
+lines) from the diff; and every tile's state. A previous version of either
+schema is read through `reviewv2.Read`. A completed document always has a
+`generation` record; a converted one never does.
+
+**Conversion.** `reviewv2.FromV1` converts a stored `baum.review/1`
+version and its view composition: the header, stats, index, risk score and
+reading time are kept, the recommendation becomes the verdict without
+points, context parts become the context (their references the files),
+each current section keeps its text and risks, its assessment becomes its
+level and reasons, its behaviour steps its steps and the first sentence of
+its summary its gist; the composition's overview parts and tiles become the
+overview and the tiles, owned where the review page placed them.
+
+**Reuse.** `reviewv2.ReusableSections` gives the previous version's
+sections a new map keeps with the same hunks, their summary, steps and
+active risks and their ready tiles, so the orchestration writes them
+without a call. `reviewv2.Substrate` is the tile document a
+`baum.review/2` document's library and added tiles are checked against.
+
+**Storage and serving.** A version's document is either schema; the store's
+summaries read the same paths of both, and a `baum.review/2` version carries
+no composition (see "Tile documents"). The tile routes serve every version
+as `baum.review/2` (see "Serving"), and the session panel's review tools read
+it there (see the review tools' table). The background refresh does not
+refresh a `baum.review/2` version's live facts yet.
 
 ## `agent`
 
@@ -3006,9 +3096,10 @@ pending, the hunks the outline chose for it, so it keeps its section; the
 last draft carries the stored composition. A details retry's drafts carry
 the version's stored composition.
 
-**Served view.** The tile routes' answer (`GET /api/tiles`, and the draft
-route with `?tiles=1`; see "Serving" under "Tile documents") carries `view`
-(`baum.view/1`, `view.Build`, built in `tileview.BuildWith`): `overview` (as stored, with
+**Served view.** The review page's view of a `baum.review/1` version
+(`baum.view/1`, `view.Build`, built in `tileview.BuildWith`), which the tile
+routes convert to a `baum.review/2` document's tiles and overview (see
+"Serving" under "Tile documents") and replay reads as it is: `overview` (as stored, with
 `screenshots` and `intent` always arrays and `verdict`/`diagram` null when
 absent), `sections` (context, then every section of the review in order,
 each with its placed tile IDs, possibly none) and `tiles`: the native tiles
@@ -5723,8 +5814,7 @@ With the `review_page` preference set to `tiles`, or `?view=tiles` in the
 address, or with tile reviews on and a version whose view has more than the
 review alone, a pull request's page reads every version, and a running job's
 draft, from the tile routes (see "Serving" under "Tile documents"), which
-answer the `baum.review/1` document with its view (`baum.view/1`, see
-"Review view"). A group's or a stack's page always shows the full review.
+answer a `baum.review/2` document (see "`reviewv2`"). A group's or a stack's page always shows the full review.
 `api.ts` hangs the view on the review document under an enumerable symbol
 (`VIEW`, `src/review-view/model.ts`), so the copies the page makes of a
 document (a draft, a retry marking failed sections pending, live threads)
@@ -7529,10 +7619,10 @@ bound, like the documents.
 | Tool | Reads |
 | --- | --- |
 | `facts` | `/api/facts` at the head the index shows (the facts, which exist before any review) |
-| `review_outline` | `/api/document` (or the group's): the overview and each section's id, title, kind, hunks, files, assessment and `details` state (`pending`, `failed` or absent), by `review.ReadOutline`, the projection the staged outline stage writes (`review.OutlineOf` without its fallback to the document), never a section's details |
-| `review_section` | one section by `id`: all it holds (summary, risks, evidence, citations), or for a `failed` or `pending` section its outline and that state in words |
-| `review_context` | `summary.context`, or that it is absent, or failed (from the job's `context_failed`) |
-| `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft` (drafts are never stored): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
+| `review_outline` | `/api/tiles` (the version as a `baum.review/2` document) or the group's document (`baum.review/1`, converted with `reviewv2.Read`): the overview (title, text, change kind, verdict, `risk_why`, risk score, reading time, screenshots, main diagram, intent) and each section's id, title, kind, gist, scope, level, hunks, files, the ids of the tiles it owns and its `details` state (`pending`, `failed` or absent), never a section's summary, steps or risks |
+| `review_section` | one section by `id`: its outline, level reasons, summary, steps and risks with their citations, and its tiles (id, type, title, caption, state, never their data), or for a `failed` or `pending` section its outline and that state in words |
+| `review_context` | the document's `context`, or that it is absent, or failed (from the job's `context_failed`) |
+| `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft?tiles=1` (drafts are never stored; a `baum.review/2` document): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
 | `review_versions` | `/api/versions` or the group's versions: version, heads, `generated_at`, backend, model and recorded cost, never the session, accounting, digests or policy |
 | `review_conversations` | `/api/prs/chat`: a list (id, version, times, turn count, the first question cut at 200 characters), or with an `id` that conversation's turns (question, focus, answer, citations, state, reason, note), never cost or job ids |
 

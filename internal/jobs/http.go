@@ -207,9 +207,10 @@ func (q *Queue) Handler() http.Handler {
 	// draft serves a running staged review's latest draft: masked and
 	// completed like a version, with the sections still being written
 	// pending, and never a version. A job without one, or ended, is 404.
-	// Only the exact value tiles=1 answers as GET /api/tiles does, plus the
-	// draft number; any other value, or none, is the plain draft. The tile view
-	// is converted once per draft and kept until the job ends, since the app
+	// Only the exact value tiles=1 answers as GET /api/tiles does (the draft
+	// as a baum.review/2 document with the added tiles), plus the draft
+	// number; any other value, or none, is the plain draft. The tile answer
+	// is built once per draft and kept until the job ends, since the app
 	// polls it while a review generates.
 	mux.HandleFunc("GET /api/jobs/{id}/draft", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -304,10 +305,10 @@ func (d *draftTiles) get(id string, revision int, draft, composition []byte, add
 		kept.frames.Register()
 		return kept.body, nil
 	}
-	built := tileview.BuildWith(draft, composition, added, tiles.Options{Draft: true})
+	built := tileview.Serve(draft, composition, added, tiles.Options{Draft: true})
 	full, err := json.Marshal(struct {
 		Draft int `json:"draft"`
-		tileview.Response
+		tileview.Served
 	}{revision, built})
 	if err != nil {
 		return nil, err

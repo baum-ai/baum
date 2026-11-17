@@ -16,10 +16,10 @@ import (
 
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/tilestest"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
 // frameMetadata is what a browser sends when the app's page loads a frame.
@@ -308,15 +308,20 @@ func TestCustomTileFromTheTilesRouteLoadsItsFrame(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+s.launch)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
-	body := decodeTiles(t, w)
+	var body struct {
+		Document reviewv2.Document `json:"document"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
 	if bytes.Contains(w.Body.Bytes(), []byte("baum.tile(")) {
 		t.Fatal("the tile route sent a tile's HTML")
 	}
 	for _, id := range tileviewtest.CustomTileIDs {
-		var tile *view.Tile
-		for i := range body.View.Tiles {
-			if body.View.Tiles[i].ID == id {
-				tile = &body.View.Tiles[i]
+		var tile *reviewv2.Tile
+		for i := range body.Document.Tiles {
+			if body.Document.Tiles[i].ID == id {
+				tile = &body.Document.Tiles[i]
 			}
 		}
 		if tile == nil {

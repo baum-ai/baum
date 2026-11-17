@@ -11,7 +11,10 @@
 // is presented as tiles, which reuses the tile schema's (CompileComposition).
 // composition-2.json is baum.composition/2, which replaces it for new
 // versions: how a generated review is presented on its review page
-// (CompileViewComposition).
+// (CompileViewComposition). review-2.json is baum.review/2, the desktop
+// app's review document (oss/reviewv2), which reuses review-1.json's header,
+// index, stats, risk score, derived facts and anchors (CompileReview2). Its
+// revision is at $defs/v2SchemaRevision/const (Review2Revision).
 package schema
 
 import (

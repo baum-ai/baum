@@ -63,14 +63,13 @@ func TestPullRequestExtraToolsReturnWhatTheRoutesReturn(t *testing.T) {
 				t.Fatalf("commit of the facts: %s", text)
 			}
 			sameJSON(t, "facts commit", json.RawMessage(text), f.route(t, "/api/facts/commit?clone="+f.clone.ID+"&pr=7&head="+pullHead+"&oid="+linked))
-			// The review's file: the fixture's saved document has a context the
-			// file route cannot parse, so it cites no file and the route answers
-			// not found, which the tool reports (a cited file is read in
-			// agentcontext's tests, against a fake route).
-			if code := f.rawRoute("/api/file?clone=" + f.clone.ID + "&pr=8&path=main.go"); code != 404 {
+			// A file the review does not cite: the route answers not found,
+			// which the tool reports (a cited file is read in agentcontext's
+			// tests, against a fake route).
+			if code := f.rawRoute("/api/file?clone=" + f.clone.ID + "&pr=8&path=uncited.go"); code != 404 {
 				t.Fatalf("the route's own answer for an uncited file: %d", code)
 			}
-			if text, failed := f.callTool(t, token, "file", map[string]any{"pr": 8, "path": "main.go"}); !failed || !strings.Contains(text, "cites") {
+			if text, failed := f.callTool(t, token, "file", map[string]any{"pr": 8, "path": "uncited.go"}); !failed || !strings.Contains(text, "cites") {
 				t.Errorf("file: %v %s", failed, text)
 			}
 			for tool, args := range map[string]map[string]any{

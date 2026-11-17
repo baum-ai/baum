@@ -12,9 +12,10 @@ import (
 	"testing"
 )
 
-// bigReview is a realistic stored review: forty sections, each with its own
-// canary in its details, a canary in the overview and one in the context. A
-// part of it must never carry another part's canary.
+// bigReview is a realistic review as the tile route serves it
+// (baum.review/2): forty sections, each with its own canary in its summary,
+// steps and risks, a canary in the overview and one in the context. A part
+// of it must never carry another part's canary.
 func bigReview(head string) string {
 	var sections, hunks []string
 	for i := 1; i <= 40; i++ {
@@ -22,26 +23,38 @@ func bigReview(head string) string {
 		hunkID := fmt.Sprintf("h_%d", i)
 		hunks = append(hunks, fmt.Sprintf(`{"id":%q,"path":"pkg/file%d.go","change":"modified","additions":3,"deletions":1}`, hunkID, i))
 		state := ""
-		details := fmt.Sprintf(`"summary":{"text":"CANARY-DETAILS-%s %s"},"attention":null,"risks":[{"id":"r1","text":"CANARY-RISK-%s"}],"evidence":[{"id":"e1","claim":"CANARY-EVIDENCE-%s"}],"blocks":[],"derived":{"state":"fresh"}`, id, strings.Repeat("padding ", 400), id, id)
+		details := fmt.Sprintf(`"summary":"CANARY-DETAILS-%s %s","steps":[{"id":"st_1","title":"Step","text":"CANARY-STEP-%s","cites":[]}],"risks":[{"id":"rsk_1","tier":"low","category":"c","text":"CANARY-RISK-%s","cites":[]}],"derived":{"state":"new"}`, id, strings.Repeat("padding ", 400), id, id)
 		switch i {
 		case 3:
 			state = `"details":"failed",`
-			details = `"summary":null,"attention":null,"risks":[],"evidence":[],"blocks":[],"derived":{"state":"fresh"}`
+			details = `"summary":"","steps":[],"risks":[],"derived":{"state":"new"}`
 		case 4:
 			state = `"details":"pending",`
-			details = `"summary":null,"attention":null,"risks":[],"evidence":[],"blocks":[],"derived":{"state":"fresh"}`
+			details = `"summary":"","steps":[],"risks":[],"derived":{"state":"new"}`
 		}
-		sections = append(sections, fmt.Sprintf(`{"id":%q,"title":"Section %d title","kind":"logic","hunks":[%q],"assessment":"Assessment %d",%s%s}`, id, i, hunkID, i, state, details))
+		sections = append(sections, fmt.Sprintf(`{"id":%q,"title":"Section %d title","kind":"logical","hunks":[%q],"gist":"Gist %d","level":2,"level_reasons":[],%s%s}`, id, i, hunkID, i, state, details))
 	}
-	return fmt.Sprintf(`{"schema":"baum.review/1","review":{"repository":"acme/web","pull_request":13,"version":2,"head":%q,"base":"b13","generated_at":"2026-11-01T10:00:00Z","relations":[]},
- "summary":{"title":"T","text":"CANARY-OVERVIEW","context":{"text":"CANARY-CONTEXT"},"change_kind":"feature","review_exchange":{},"implements":[],"release_note":null,"breaking_change":null,"attention":null,"authorship":{},"review_minutes":9},
- "sections":[%s],"relations":[],"index":{"hunks":[%s]}}`, head, strings.Join(sections, ","), strings.Join(hunks, ","))
+	return fmt.Sprintf(`{"schema":"baum.review/2","review":{"repository":"acme/web","pull_request":13,"version":2,"head":%q,"base":"b13","generated_at":"2026-11-01T10:00:00Z","relations":[]},
+ "summary":{"title":"T","text":"CANARY-OVERVIEW","change_kind":"feature","verdict":null,"risk_why":"","risk_score":null,"review_minutes":9},
+ "overview":{"screenshots":[],"diagram":null,"intent":[]},
+ "context":{"area":{"text":"CANARY-CONTEXT","files":[]},"reached_by":{"text":"","files":[]},"contracts":{"text":"","files":[]},"related":{"text":"","files":[]}},
+ "sections":[%s],"tiles":[{"id":"tl_7","type":"flow","owner":"sec_7","shows":"s","title":"Tile of seven","cites":[],"data":{"lanes":[{"steps":[{"title":"CANARY-TILE-DATA"}]}]},"state":"ready"}],"stats":{},"index":{"hunks":[%s]}}`, head, strings.Join(sections, ","), strings.Join(hunks, ","))
 }
 
-const reviewDraftDocument = `{"schema":"baum.review/1","review":{"version":3,"head":"h12","base":"b12"},
- "summary":{"text":"DRAFT-OVERVIEW","change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},
- "sections":[{"id":"sec_1","title":"First","kind":"logic","hunks":["h_1"],"assessment":"a","details":"pending","summary":null,"risks":[]},
-  {"id":"sec_2","title":"Second","kind":"logic","hunks":["h_2"],"assessment":"b","summary":{"text":"DRAFT-DETAILS-2"},"risks":[]}],"relations":[],"index":{"hunks":[{"id":"h_1","path":"a.go"},{"id":"h_2","path":"b.go"}]}}`
+// noContext is a review whose context could not be written.
+const noContext = `"context":null,`
+
+func withoutContext(doc string) string {
+	start := strings.Index(doc, `"context":{`)
+	end := strings.Index(doc, `"sections":`)
+	return doc[:start] + noContext + "\n " + doc[end:]
+}
+
+const reviewDraftDocument = `{"schema":"baum.review/2","review":{"version":3,"head":"h12","base":"b12"},
+ "summary":{"title":"","text":"DRAFT-OVERVIEW","change_kind":"feature","verdict":null,"risk_why":"","risk_score":null,"review_minutes":null},
+ "overview":{"screenshots":[],"diagram":null,"intent":[]},"context":null,
+ "sections":[{"id":"sec_1","title":"First","kind":"logical","hunks":["h_1"],"gist":"a","level":2,"level_reasons":[],"details":"pending","summary":"","steps":[],"risks":[]},
+  {"id":"sec_2","title":"Second","kind":"logical","hunks":["h_2"],"gist":"b","level":2,"level_reasons":[],"summary":"DRAFT-DETAILS-2","steps":[],"risks":[]}],"tiles":[],"stats":{},"index":{"hunks":[{"id":"h_1","path":"a.go"},{"id":"h_2","path":"b.go"}]}}`
 
 // reviewDaemon answers the routes the review tools read.
 type reviewDaemon struct {
@@ -86,10 +99,13 @@ func (d *reviewDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 		}
 	case p == "/api/tiles":
-		if q.Get("clone") == "c-evil" {
-			reply(`{"document":{"summary":{"text":"FOREIGN-OVERVIEW"}},"tiles":null}`)
-		} else {
-			reply(`{"document":{"review":{"head":"h13"}},"tiles":null,"problem":"p"}`)
+		switch {
+		case q.Get("clone") == "c-evil":
+			reply(`{"document":{"summary":{"text":"FOREIGN-OVERVIEW"}}}`)
+		case q.Get("pr") == "13" && q.Get("clone") == "c-web":
+			reply(`{"document":%s}`, bigReview("h13"))
+		default:
+			http.NotFound(w, r)
 		}
 	case p == "/api/versions":
 		reply(`[{"version":2,"head":"h13","base":"b13","merge_base":"m13","generated_at":"2026-11-01T10:00:00Z","backend":"claude","model":"opus","recorded_cost_usd":0.5,"session":{"id":"SECRET-SESSION"},"accounting":{"usage":1},"bundle_digest":"DIGEST","prompt_digest":"PD","policy":"POLICY"},{"version":1,"head":"h13a","base":"b13","model":"sonnet","recorded_cost_usd":null}]`)
@@ -144,7 +160,7 @@ func (d *reviewDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if version == "" {
 				version = "1"
 			}
-			reply(`{"review":{"version":%s,"head":"gh","base":"gb"},"summary":{"text":"GROUP-OVERVIEW","context":{"text":"GROUP-CONTEXT"}},"sections":[{"id":"gsec_1","title":"Group one","kind":"logic","hunks":[],"assessment":"x","summary":{"text":"GROUP-DETAILS"},"risks":[]}],"relations":[],"index":{"hunks":[]}}`, version)
+			reply(`{"schema":"baum.review/1","review":{"version":%s,"head":"gh","base":"gb"},"summary":{"title":"G","text":"GROUP-OVERVIEW","change_kind":"feature","context":{"area":{"text":"GROUP-CONTEXT","refs":[]}}},"sections":[{"id":"gsec_1","title":"Group one","kind":"logical","hunks":["h_1"],"summary":{"text":"GROUP-DETAILS"},"risks":[],"blocks":[],"derived":{"state":"new"}}],"index":{"hunks":[{"id":"h_1","path":"a.go"}]}}`, version)
 		case rest == "tiles" && id == "g-web":
 			reply(`{"document":{"review":{"head":"gh"}},"tiles":null,"problem":"p"}`)
 		case rest == "tiles":
@@ -216,7 +232,7 @@ func TestReviewToolsReturnOnePartPerCall(t *testing.T) {
 		t.Errorf("outline lacks its part: %.400s", outline)
 	}
 	// No details, no context: the outline is the outline stage's projection.
-	absent(t, "the outline", outline, "CANARY-DETAILS", "CANARY-RISK", "CANARY-EVIDENCE", "CANARY-CONTEXT", "padding", `"derived"`, `"risks"`, `"summary":{"text":"CANARY`)
+	absent(t, "the outline", outline, "CANARY-DETAILS", "CANARY-RISK", "CANARY-STEP", "CANARY-CONTEXT", "CANARY-TILE-DATA", "padding", `"derived"`, `"risks"`, `"steps"`)
 	var o struct {
 		Sections []struct {
 			ID      string
@@ -231,10 +247,10 @@ func TestReviewToolsReturnOnePartPerCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(section, "CANARY-DETAILS-sec_7") || !strings.Contains(section, "CANARY-RISK-sec_7") || !strings.Contains(section, "CANARY-EVIDENCE-sec_7") {
+	if !strings.Contains(section, "CANARY-DETAILS-sec_7") || !strings.Contains(section, "CANARY-RISK-sec_7") || !strings.Contains(section, "CANARY-STEP-sec_7") || !strings.Contains(section, `"title":"Tile of seven"`) {
 		t.Errorf("section lacks its details: %.400s", section)
 	}
-	absent(t, "a section", section, "CANARY-DETAILS-sec_6", "CANARY-DETAILS-sec_8", "sec_8", "CANARY-OVERVIEW", "CANARY-CONTEXT", "Section 8 title")
+	absent(t, "a section", section, "CANARY-DETAILS-sec_6", "CANARY-DETAILS-sec_8", "sec_8", "CANARY-OVERVIEW", "CANARY-CONTEXT", "Section 8 title", "CANARY-TILE-DATA")
 
 	context, err := direct(t, s, "review_context", pr)
 	if err != nil {
@@ -295,7 +311,7 @@ func TestReviewToolsSayWhenAPartIsFailedPendingOrAbsent(t *testing.T) {
 		t.Errorf("an unknown section: %v", err)
 	}
 	// The job of that head published without its context.
-	failed := strings.Replace(bigReview("h13"), `"context":{"text":"CANARY-CONTEXT"},`, "", 1)
+	failed := withoutContext(bigReview("h13"))
 	s2 := New(Options{API: documentOverride(&reviewDaemon{}, failed)})
 	text, err := direct(t, s2, "review_context", map[string]any{"repository": "acme/web", "pr": 13})
 	if err != nil || !strings.Contains(text, `"state":"failed"`) || !strings.Contains(text, "could not be written") {
@@ -317,12 +333,13 @@ func TestReviewToolsSayWhenAPartIsFailedPendingOrAbsent(t *testing.T) {
 	}
 }
 
-// documentOverride serves doc for pull request 13's document.
+// documentOverride serves doc as pull request 13's document on the tile
+// route.
 func documentOverride(next http.Handler, doc string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/document" && r.URL.Query().Get("pr") == "13" {
+		if r.URL.Path == "/api/tiles" && r.URL.Query().Get("pr") == "13" {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(doc))
+			_, _ = w.Write([]byte(`{"document":` + doc + `}`))
 			return
 		}
 		next.ServeHTTP(w, r)

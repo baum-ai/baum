@@ -1,5 +1,8 @@
-// Package tileview builds the answer of the daemon's tile routes: a review
-// document and the review page's view of it (baum.view/1), in one JSON body.
+// Package tileview builds the answer of the daemon's tile routes: a version
+// of a review as a baum.review/2 document, with the tiles the person added
+// (Serve). A baum.review/1 version is converted through the review page's
+// view of it (baum.view/1, Build and BuildWith), which checks and places its
+// composition's tiles; replay still reads that view on its own.
 package tileview
 
 import (
@@ -445,10 +448,4 @@ func raw(document []byte) json.RawMessage {
 type Answer struct {
 	Body   etagjson.Body
 	Frames Frames
-}
-
-// Encode returns the encoded response with its ETag.
-func Encode(r Response) (Answer, error) {
-	body, err := etagjson.Encode(r)
-	return Answer{Body: body, Frames: r.Frames}, err
 }
