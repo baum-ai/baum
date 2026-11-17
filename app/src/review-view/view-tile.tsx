@@ -44,13 +44,28 @@ function Note({ children, alert = false }: { children: string; alert?: boolean }
   );
 }
 
+/** The tile as the page draws it. baum.review/2 names a library or saved
+ *  type by its own name (`schema_change`) and carries its definition: any
+ *  tile with a definition draws in its frame, as a custom tile. Exhibits
+ *  converted from baum.review/1 (`v1_table`, `v1_code`, `v1_prose`) draw as
+ *  the table, code and prose tiles do. */
+export function drawnAs(tile: ViewTile): ViewTile {
+  if (tile.type.startsWith("v1_")) {
+    const type = tile.type.slice(3);
+    if (type === "table" || type === "code" || type === "prose") return { ...tile, type };
+  }
+  if (tile.definition && !NATIVE[tile.type] && tile.type !== "custom")
+    return { ...tile, type: "custom" };
+  return tile;
+}
+
 /** One tile on the page, always under its title: a native diagram or table
  *  drawn here, an exhibit as the generic tiles draw it, and a library or
  *  chat-made tile in its sandboxed frame. A tile being written, one that
  *  failed and one that cannot be drawn say so in its place; the rest of the
  *  page is unaffected. `ctx` is what the generic and custom tiles read. */
 export function ViewTileCard({
-  tile,
+  tile: given,
   review,
   ctx,
   idPrefix = "",
@@ -63,6 +78,7 @@ export function ViewTileCard({
   heading?: "h2" | "h3";
 }) {
   const Heading = heading;
+  const tile = drawnAs(given);
   const native = NATIVE[tile.type];
   const title = tile.title.trim() || "Untitled diagram";
   const host = useTileHost();

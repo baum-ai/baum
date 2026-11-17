@@ -12,7 +12,7 @@ import type { ReviewV2 } from "./document";
 import { legacyAnswer1303, REVIEW_1303, review1303 } from "./fixture-1303";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
-import { ViewTileCard } from "./view-tile";
+import { drawnAs, ViewTileCard } from "./view-tile";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -518,6 +518,18 @@ describe("the native tiles", () => {
     expect(container.textContent).not.toContain("oss/internal/uiserver/remote.go");
     await click(cites);
     expect(container.textContent).toContain("remote.go");
+  });
+
+  it("draws a library tile named by its own type in its frame, and old exhibits as their kind", () => {
+    const library = {
+      ...tileOf("lib_api_change"),
+      type: "api_change" as ViewTile["type"],
+      definition: { name: "api_change" },
+    };
+    expect(drawnAs(library).type).toBe("custom");
+    const exhibit = { ...tileOf("dg_relay_runs"), type: "v1_table" as ViewTile["type"] };
+    expect(drawnAs(exhibit).type).toBe("table");
+    expect(drawnAs(tileOf("dg_shape")).type).toBe("flow");
   });
 
   it("says when a tile is being written, failed or can't be read, under its title", async () => {
