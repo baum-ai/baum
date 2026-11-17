@@ -2,7 +2,9 @@
  *  overview, one section or risk, the changed files (all folded, or one
  *  opened), the linked sessions
  *  (all of them, or one opened), the pull request's commits (all, or one
- *  named by its sha), or the decisions its sessions made. Kept in the URL rather than component
+ *  named by its sha), the decisions its sessions made, or a host's own tile
+ *  (and an item within it). A tile exists only where the host supplies
+ *  places; elsewhere it reads as the Summary. Kept in the URL rather than component
  *  state, the same way the pull request itself already is, so a section or
  *  risk can be reloaded, linked to someone else, and reached with Back. */
 export type Selection =
@@ -17,7 +19,8 @@ export type Selection =
   | { kind: "session"; id: string }
   | { kind: "commits" }
   | { kind: "commit"; id: string }
-  | { kind: "decisions" };
+  | { kind: "decisions" }
+  | { kind: "tile"; id: string; item?: string };
 
 const PARAM = {
   pane: "pane",
@@ -28,6 +31,8 @@ const PARAM = {
   file: "file",
   session: "session",
   commit: "commit",
+  tile: "tile",
+  tileItem: "tile_item",
   // A host's own place within the selection, such as the prompt of a session
   // a link opens at. Readers of it take it from the URL themselves; it is
   // cleared with the selection so it never applies to the next one.
@@ -61,6 +66,13 @@ export function readSelection(search: URLSearchParams): Selection {
   if (pane === "session") {
     const id = search.get(PARAM.session);
     if (id) return { kind: "session", id };
+  }
+  if (pane === "tile") {
+    const id = search.get(PARAM.tile);
+    if (id) {
+      const item = search.get(PARAM.tileItem);
+      return { kind: "tile", id, ...(item ? { item } : {}) };
+    }
   }
   if (pane === "commits") return { kind: "commits" };
   if (pane === "decisions") return { kind: "decisions" };
@@ -107,6 +119,10 @@ export function withSelection(search: URLSearchParams, selection: Selection): UR
   } else if (selection.kind === "session") {
     next.set(PARAM.pane, "session");
     next.set(PARAM.session, selection.id);
+  } else if (selection.kind === "tile") {
+    next.set(PARAM.pane, "tile");
+    next.set(PARAM.tile, selection.id);
+    if (selection.item) next.set(PARAM.tileItem, selection.item);
   } else if (selection.kind === "commit") {
     next.set(PARAM.pane, "commit");
     next.set(PARAM.commit, selection.id);
