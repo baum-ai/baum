@@ -87,7 +87,9 @@ const page = (initial = "", document = review1303()) =>
 
 const pane = (container: HTMLElement) => container.querySelector<HTMLElement>("#review-section")!;
 const tabs = (container: HTMLElement) => [
-  ...pane(container).querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+  ...pane(container).querySelectorAll<HTMLButtonElement>(
+    '[role="tablist"][aria-label="Review"] [role="tab"]',
+  ),
 ];
 const tab = (container: HTMLElement, name: string) =>
   tabs(container).find((each) => each.textContent === name)!;
@@ -209,7 +211,8 @@ describe("How it works", () => {
     const body = view.querySelector<HTMLElement>("article")!;
     expect(body.querySelector("h2")?.textContent).toBe("What a phone can do");
     expect(body.textContent).toContain("lists 37 routes by method and exact path");
-    // Its tiles, each titled, then its behaviour, its risks and its code.
+    // Its tiles, each titled, then its behaviour and its risks; its code is
+    // in its Code view, not under them.
     expect(
       [...body.querySelectorAll('[role="figure"] h3')].map((each) => each.textContent),
     ).toEqual([
@@ -221,13 +224,13 @@ describe("How it works", () => {
     const parts = [...body.querySelectorAll("section[aria-label]")].map((each) =>
       each.getAttribute("aria-label"),
     );
-    expect(parts).toEqual(expect.arrayContaining(["What it does", "Risks", "Code"]));
+    expect(parts).toEqual(expect.arrayContaining(["What it does", "Risks"]));
+    expect(parts).not.toContain("Code");
+    expect(body.querySelector('[aria-label="Code changes"]')).toBeNull();
     expect(body.querySelector('[aria-label="What it does"]')?.textContent).toContain(
       "Deny by default",
     );
     expect(body.querySelector('[aria-label="Risks"]')?.textContent).toContain("High risk");
-    // The code is folded.
-    expect(body.querySelector('[aria-label="Code"] details')?.hasAttribute("open")).toBe(false);
     expect(body.textContent).not.toContain("Decide");
   });
 
@@ -249,6 +252,123 @@ describe("How it works", () => {
     const body = panel(container).querySelector<HTMLElement>("article")!;
     expect(body.querySelector("h2")?.textContent).toBe("What a phone can do");
     expect(body.querySelector("#sec_allowlist-rsk_always_allow")).not.toBeNull();
+  });
+});
+
+const views = (container: HTMLElement) => [
+  ...pane(container).querySelectorAll<HTMLButtonElement>(
+    '[role="tablist"][aria-label="Section views"] [role="tab"]',
+  ),
+];
+const viewTab = (container: HTMLElement, label: string) =>
+  views(container).find((each) => each.textContent?.startsWith(label))!;
+const viewPanel = (container: HTMLElement) =>
+  pane(container).querySelector<HTMLElement>(
+    'article [role="tabpanel"][id^="section-views-panel"]:not([hidden])',
+  )!;
+
+describe("a section's views", () => {
+  it("shows every view with its count, disabled when the section has none", async () => {
+    const container = await page("pane=section&section=sec_allowlist");
+    expect(
+      views(container).map((each) => [
+        each.textContent,
+        each.disabled,
+        each.getAttribute("aria-selected"),
+      ]),
+    ).toEqual([
+      ["Overview", false, "true"],
+      ["Code 1", false, "false"],
+      ["Tests 1", false, "false"],
+      ["Session 0", true, "false"],
+      ["Docs 1", false, "false"],
+    ]);
+    // Where this fits has no views.
+    await click(button(pane(container), "Where this fits"));
+    expect(views(container)).toEqual([]);
+  });
+
+  it("keeps the view in the address, and opens another section on its Overview", async () => {
+    const container = await page("pane=section&section=sec_allowlist");
+    await click(viewTab(container, "Tests"));
+    expect(search.get("section_view")).toBe("tests");
+    expect(viewTab(container, "Tests").getAttribute("aria-selected")).toBe("true");
+    expect(
+      viewPanel(container).querySelector('[aria-label$=" diff"]')?.getAttribute("aria-label"),
+    ).toBe("oss/internal/uiserver/remote_test.go diff");
+    await click(button(pane(container), "Relay connection"));
+    expect(search.get("section")).toBe("sec_relay");
+    expect(search.has("section_view")).toBe(false);
+    expect(viewTab(container, "Overview").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("opens on the view the address names, and on the Overview when it has nothing", async () => {
+    const container = await page("pane=section&section=sec_allowlist&section_view=docs");
+    expect(viewTab(container, "Docs").getAttribute("aria-selected")).toBe("true");
+    expect(
+      viewPanel(container).querySelector('[aria-label$=" diff"]')?.getAttribute("aria-label"),
+    ).toBe("oss/SECURITY.md diff");
+    act(() => root?.unmount());
+    const empty = await page("pane=section&section=sec_allowlist&section_view=session");
+    expect(viewTab(empty, "Overview").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("draws the section's code with its own notes, generated files folded at the end", async () => {
+    const container = await page("pane=section&section=sec_allowlist&section_view=code");
+    const code = viewPanel(container);
+    expect(
+      [...code.querySelectorAll('[aria-label$=" diff"]')].map((each) =>
+        each.getAttribute("aria-label"),
+      ),
+    ).toEqual(["oss/internal/uiserver/remote.go diff"]);
+    const notes = [...code.querySelectorAll<HTMLElement>('ul[aria-label="Notes"] li')];
+    expect(notes.map((note) => note.dataset.note)).toEqual(["step", "risk", "step"]);
+    // A note leads back to the section's Overview, at the risk it names.
+    await click(button(notes[1]!, "In Overview"));
+    expect([search.get("pane"), search.get("risk_id")]).toEqual(["risk", "rsk_always_allow"]);
+    act(() => root?.unmount());
+    const deps = await page("pane=section&section=sec_deps&section_view=code");
+    const generated = viewPanel(deps);
+    // Generated files open when they are all the section's code.
+    expect(button(generated, "Generated").getAttribute("aria-expanded")).toBe("true");
+    expect(generated.querySelector('[aria-label="oss/go.sum diff"]')).not.toBeNull();
+  });
+
+  it("names the tests the section's test hunks add, above their diffs", async () => {
+    const document = review1303();
+    const hunk = document.index.hunks.find((each) => each.id === "h_remote_test")!;
+    hunk.diff!.lines = [
+      ...hunk.diff!.lines,
+      { kind: "add", text: "func TestRemoteRoutesCoverLocalAPI(t *testing.T) {", new_line: 21 },
+      { kind: "add", text: "}", new_line: 22 },
+    ];
+    const container = await page("pane=section&section=sec_allowlist&section_view=tests", document);
+    const names = viewPanel(container).querySelector('[aria-label="Tests added or changed"]');
+    expect(names?.textContent).toContain("TestRemoteRoutesCoverLocalAPI");
+    // The fixture's own hunk adds no test, so it lists none.
+    act(() => root?.unmount());
+    const plain = await page("pane=section&section=sec_allowlist&section_view=tests");
+    expect(viewPanel(plain).querySelector('[aria-label="Tests added or changed"]')).toBeNull();
+    expect(viewPanel(plain).querySelector('[aria-label$=" diff"]')).not.toBeNull();
+  });
+
+  it("quotes the prompts and events the section cites, linking to their turns", async () => {
+    const container = await page("pane=section&section=sec_relay");
+    expect(viewTab(container, "Session").textContent).toBe("Session 2");
+    await click(viewTab(container, "Session"));
+    expect(search.get("section_view")).toBe("session");
+    const quotes = [...viewPanel(container).querySelectorAll<HTMLElement>("[data-quote]")];
+    expect(quotes.map((quote) => quote.dataset.quote)).toEqual(["prompt", "event"]);
+    expect(quotes[0]?.querySelector("blockquote")?.textContent).toBe(
+      "use an encrypted relay that we run",
+    );
+    expect(quotes[0]?.textContent).toContain("Person");
+    expect(quotes[1]?.textContent).toContain("Claude");
+    const links = quotes.map((quote) => new URLSearchParams(quote.querySelector("a")!.search));
+    expect(links.map((link) => [link.get("session"), link.get("turn")])).toEqual([
+      ["ses_mobile", "2"],
+      ["ses_mobile", "2"],
+    ]);
   });
 });
 

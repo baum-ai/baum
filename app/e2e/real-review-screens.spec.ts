@@ -83,6 +83,34 @@ export const STATES: State[] = [
     },
   },
   {
+    // The first section's Code view, and then its Tests view when it has
+    // tests: the section's own hunks with their notes.
+    name: "section-code",
+    views: ["tiles"],
+    open: async ({ page, address, firstSection }) => {
+      if (!firstSection) return false;
+      await page.goto(address({ pane: "section", section: firstSection, section_view: "code" }));
+    },
+  },
+  {
+    name: "section-tests",
+    views: ["tiles"],
+    open: async ({ page, address, firstSection }) => {
+      if (!firstSection) return false;
+      await page.goto(address({ pane: "section", section: firstSection, section_view: "tests" }));
+      const tests = page
+        .getByRole("tablist", { name: "Section views" })
+        .getByRole("tab", { name: /^Tests/ });
+      if (
+        !(await tests.waitFor().then(
+          () => tests.isEnabled(),
+          () => false,
+        ))
+      )
+        return false;
+    },
+  },
+  {
     // The Code tab on its first file.
     name: "code",
     views: ["tiles"],

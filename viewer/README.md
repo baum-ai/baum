@@ -275,7 +275,8 @@ and `generation`, the document's generation state as the head shows it. A pane
 offers a retry and says a context is being written only for the current
 version. The seam's types, including `ReviewStep` and `IconProps`, are all
 exported from `components/review-viewer`. Moving between items of one tile
-(`tile_item`) keeps the pane, its scroll and its state. `RecommendationPart` and `RiskScorePart`, exported from
+(`tile_item`), or between a host's views of a section (`{ kind: "section", id,
+view }`, kept as `section_view`), keeps the pane, its scroll and its state. `RecommendationPart` and `RiskScorePart`, exported from
 `components/review-summary`, draw the recommendation and the risk score for a
 host that composes its own strip from them.
 

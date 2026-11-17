@@ -1,8 +1,7 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import pluralize from "pluralize";
 import { chipLinkClass } from "@baum/viewer/components/chip-classes";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
-import { HunkEvidence } from "@baum/viewer/components/hunk-evidence";
 import { ExternalLinkIcon } from "@baum/viewer/components/icons";
 import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
@@ -16,6 +15,7 @@ import {
   TierBadge,
 } from "@baum/viewer/components/review-parts";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
+import { tabPanelProps } from "@baum/viewer/components/tabs";
 import { Badge, Button, CardHeader, LiveDot } from "@baum/viewer/components/ui";
 import {
   contextRefUrl,
@@ -35,23 +35,31 @@ import type { TileContext } from "../tiles/types";
 import {
   behaviourSteps,
   CONTEXT_ID,
+  SECTION_VIEWS,
+  sectionViews,
+  selectionOf,
+  shownSectionView,
   tilesOn,
   type ListedSection,
   type ReviewView,
+  type SectionView,
   type ViewTile,
 } from "./model";
 import { NavRow } from "./nav-row";
+import { SectionViewBody, SectionViewTabs } from "./section-views";
 import { ViewTileCard } from "./view-tile";
 
 /** How it works: the list of sections ("Where this fits" first) beside the
- *  section read, which shows its summary, the tiles placed on it, its
- *  behaviour, its risks and its code, folded. */
+ *  section read, which shows its views (its Overview: its summary, the tiles
+ *  placed on it, its behaviour and its risks; its code, tests, the session
+ *  turns it cites and its docs). */
 export function SectionsTab({
   document,
   view,
   list,
   section,
   item,
+  sectionView,
   ctx,
   idPrefix,
   context,
@@ -62,6 +70,7 @@ export function SectionsTab({
   list: ListedSection[];
   section: string;
   item?: string;
+  sectionView?: SectionView;
   ctx: TileContext;
   idPrefix: string;
   context: ReviewPlaceContext;
@@ -118,9 +127,11 @@ export function SectionsTab({
             document={document}
             view={view}
             section={shown}
+            asked={sectionView}
             ctx={ctx}
             idPrefix={idPrefix}
             drafts={drafts}
+            context={context}
             onRetryDetails={historical ? undefined : context.onRetryDetails}
           />
         ) : (
@@ -134,6 +145,85 @@ export function SectionsTab({
 }
 
 function SectionBody({
+  document,
+  view,
+  section,
+  asked,
+  ctx,
+  idPrefix,
+  drafts,
+  context,
+  onRetryDetails,
+}: {
+  document: ReviewDocument;
+  view: ReviewView;
+  section: Section;
+  asked?: SectionView;
+  ctx: TileContext;
+  idPrefix: string;
+  drafts: DraftCard[];
+  context: ReviewPlaceContext;
+  onRetryDetails?: (id: string) => void | Promise<unknown>;
+}) {
+  const views = useMemo(() => sectionViews(document, view, section), [document, view, section]);
+  const shown = shownSectionView(asked, views.counts);
+  const tablist = `${idPrefix}section-views`;
+  return (
+    <div className="space-y-5">
+      <div>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          {section.derived.review_score !== undefined ? (
+            <ReviewScoreBadge score={section.derived.review_score} withMeaning />
+          ) : null}
+          {/* The risks show their own tiers below: beside the review score
+              a second level reads as a contradiction, so the tier stands
+              only where the section has no score. */}
+          {section.derived.state === "stale" ? (
+            <Badge tone="neutral">No longer in the code</Badge>
+          ) : section.derived.review_score === undefined ? (
+            <TierBadge tier={section.derived.risk_tier} risks={section.risks.length} />
+          ) : null}
+        </div>
+        <CardHeader size="pane" title={<InlineMarkdown>{section.title}</InlineMarkdown>} />
+      </div>
+      <SectionViewTabs
+        tablist={tablist}
+        value={shown}
+        counts={views.counts}
+        onChange={(next) =>
+          context.select(selectionOf({ tab: "sections", section: section.id, view: next }))
+        }
+      />
+      {SECTION_VIEWS.map(({ value }) => (
+        <div key={value} {...tabPanelProps(tablist, value, value === shown)} className="min-w-0">
+          {value !== shown ? null : value === "overview" ? (
+            <SectionOverview
+              document={document}
+              view={view}
+              section={section}
+              ctx={ctx}
+              idPrefix={idPrefix}
+              drafts={drafts}
+              onRetryDetails={onRetryDetails}
+            />
+          ) : (
+            <SectionViewBody
+              document={document}
+              section={section.id}
+              shown={value}
+              views={views}
+              context={context}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** A section's Overview: what it does, in its summary, its lead diagram, its
+ *  steps, its risks and the rest of its tiles. */
+function SectionOverview({
   document,
   view,
   section,
@@ -163,22 +253,6 @@ function SectionBody({
   const itemId = (ref: string) => `${idPrefix}${section.id}-${ref}`;
   return (
     <div className="space-y-7">
-      <div>
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          {section.derived.review_score !== undefined ? (
-            <ReviewScoreBadge score={section.derived.review_score} withMeaning />
-          ) : null}
-          {/* The risks show their own tiers below: beside the review score
-              a second level reads as a contradiction, so the tier stands
-              only where the section has no score. */}
-          {obsolete ? (
-            <Badge tone="neutral">No longer in the code</Badge>
-          ) : section.derived.review_score === undefined ? (
-            <TierBadge tier={section.derived.risk_tier} risks={section.risks.length} />
-          ) : null}
-        </div>
-        <CardHeader size="pane" title={<InlineMarkdown>{section.title}</InlineMarkdown>} />
-      </div>
       {details === "pending" ? (
         <p role="status" className="flex items-center gap-2 text-base text-secondary">
           <LiveDot />
@@ -262,14 +336,6 @@ function SectionBody({
         ctx={ctx}
         idPrefix={idPrefix}
       />
-      {section.hunks.length > 0 ? (
-        <Part label="Code">
-          <HunkEvidence
-            document={document}
-            anchors={section.hunks.map((id) => ({ type: "hunk" as const, id }))}
-          />
-        </Part>
-      ) : null}
     </div>
   );
 }
@@ -475,7 +541,8 @@ function ContextChip({
   );
 }
 
-/** Prose names its code in chips of its own; the code is under the section. */
+/** Prose names its code in chips of its own; the code is in the section's
+ *  Code view. */
 function withoutHunks(anchors: Anchor[] | undefined): Anchor[] | undefined {
   return anchors?.filter((anchor) => anchor.type !== "hunk");
 }

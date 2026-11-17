@@ -117,6 +117,7 @@ export function ViewPane({
                 list={list}
                 section={place.section}
                 item={place.item}
+                sectionView={place.view}
                 ctx={ctx}
                 idPrefix={prefix}
                 context={context}

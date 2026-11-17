@@ -48,6 +48,8 @@ const PLACES = [
   ["sections", "&pane=section&section=sec_allowlist"],
   ["context", "&pane=section&section=context"],
   ["encryption", "&pane=section&section=sec_encryption"],
+  ["section-code", "&pane=section&section=sec_allowlist&section_view=code"],
+  ["section-session", "&pane=section&section=sec_relay&section_view=session"],
   ["code", "&pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go"],
 ] as const;
 
@@ -74,6 +76,50 @@ test("the tabs switch, keep their place in the address and survive a reload", as
   expect(errors).toEqual([]);
 });
 
+test("a section's views switch, keep their place in the address and reset per section", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const views = page.getByRole("tablist", { name: "Section views" });
+  await expect(views.getByRole("tab")).toHaveText([
+    "Overview",
+    "Code 1",
+    "Tests 1",
+    "Session 0",
+    "Docs 1",
+  ]);
+  await expect(views.getByRole("tab", { name: "Session" })).toBeDisabled();
+  await views.getByRole("tab", { name: "Code" }).click();
+  await expect(page).toHaveURL(/section_view=code/);
+  await expect(
+    page.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" }),
+  ).toBeVisible();
+  // The arrows pass over the disabled Session.
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL(/section_view=tests/);
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL(/section_view=docs/);
+  await expect(page.getByRole("article", { name: "oss/SECURITY.md diff" })).toBeVisible();
+  await page.reload();
+  await expect(views.getByRole("tab", { name: "Docs" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Relay connection" }).first().click();
+  await expect(page).toHaveURL(/section=sec_relay/);
+  await expect(page).not.toHaveURL(/section_view/);
+  await expect(views.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await views.getByRole("tab", { name: "Session" }).click();
+  await expect(page.getByRole("blockquote").first()).toHaveText(
+    "use an encrypted relay that we run",
+  );
+  await page.goBack();
+  await expect(page).not.toHaveURL(/section_view/);
+  expect(errors).toEqual([]);
+});
+
 for (const width of [390, 900, 1440]) {
   test(`at ${width}px no tab scrolls the page sideways`, async ({ page }) => {
     // A picture shows more of the page than the check needs.
@@ -82,7 +128,9 @@ for (const width of [390, 900, 1440]) {
     for (const [name, place] of PLACES) {
       await open(page, `${PR7}${place}`);
       await expect(page.getByRole("tablist", { name: "Review" })).toBeVisible();
-      await expect(page.locator('#review-section [role="tabpanel"]:not([hidden])')).toBeVisible();
+      await expect(
+        page.locator('#review-section [role="tabpanel"]:not([hidden])').first(),
+      ).toBeVisible();
       expect(await overflows(page), `${name} at ${width}px`).toBe(false);
       if (!SHOTS) continue;
       mkdirSync(SHOTS, { recursive: true });

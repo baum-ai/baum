@@ -57,22 +57,12 @@ export function CodeTab({
           return (
             <div key={group} className="min-w-0">
               {group === "Generated" ? (
-                <button
-                  type="button"
-                  aria-expanded={!folded}
-                  onClick={() => setGeneratedOpen((value) => !value)}
-                  className={cn(
-                    CARD_LABEL,
-                    "flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2.5 pb-1.5 text-left hover:text-secondary",
-                    FOCUS_RING,
-                  )}
-                >
-                  <ChevronDownIcon
-                    size={12}
-                    className={cn("transition-transform", folded && "-rotate-90")}
-                  />
-                  {group} · {pluralize("file", members.length, true)}
-                </button>
+                <GeneratedToggle
+                  open={!folded}
+                  files={members.length}
+                  onToggle={() => setGeneratedOpen((value) => !value)}
+                  className="px-2.5 pb-1.5"
+                />
               ) : (
                 <p className={cn(CARD_LABEL, "px-2.5 pb-1.5")}>{group}</p>
               )}
@@ -115,6 +105,36 @@ export function CodeTab({
         />
       ) : null}
     </div>
+  );
+}
+
+/** The folded group of generated files: "Generated · 2 files". */
+export function GeneratedToggle({
+  open,
+  files,
+  onToggle,
+  className,
+}: {
+  open: boolean;
+  files: number;
+  onToggle: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      onClick={onToggle}
+      className={cn(
+        CARD_LABEL,
+        "flex w-full cursor-pointer items-center gap-1.5 rounded-sm text-left hover:text-secondary",
+        FOCUS_RING,
+        className,
+      )}
+    >
+      <ChevronDownIcon size={12} className={cn("transition-transform", !open && "-rotate-90")} />
+      Generated · {pluralize("file", files, true)}
+    </button>
   );
 }
 
@@ -190,17 +210,20 @@ const asDiffHunk = (diff: NonNullable<IndexedHunk["diff"]>): CodeDiffHunk => ({
 
 /** The file's hunks as the review indexed them, with their notes. A hunk
  *  whose code the review left out is read from the compared version's patch
- *  (not while two versions are compared). */
-function FileDiff({
+ *  (not while two versions are compared). A note links to the section that
+ *  explains it, or says `noteLink` where the reader already is. */
+export function FileDiff({
   document,
   file,
   notes,
   context,
+  noteLink = (note) => `${note.sectionTitle} →`,
 }: {
   document: ReviewDocument;
   file: ViewFile;
   notes: Map<string, HunkNote[]>;
   context: ReviewPlaceContext;
+  noteLink?: (note: HunkNote) => string;
 }) {
   const missing = file.hunks.filter((hunk) => !hunk.diff);
   const source = context.hunkPatches;
@@ -257,7 +280,7 @@ function FileDiff({
           className="mt-0"
           afterHunk={(_file, index) => {
             const pinned = notes.get(drawn[index]?.hunk.id ?? "");
-            return pinned?.length ? <HunkNotes notes={pinned} go={go} /> : null;
+            return pinned?.length ? <HunkNotes notes={pinned} go={go} link={noteLink} /> : null;
           }}
         />
       ) : null}
@@ -275,7 +298,15 @@ function FileDiff({
   );
 }
 
-function HunkNotes({ notes, go }: { notes: HunkNote[]; go: (note: HunkNote) => void }) {
+function HunkNotes({
+  notes,
+  go,
+  link,
+}: {
+  notes: HunkNote[];
+  go: (note: HunkNote) => void;
+  link: (note: HunkNote) => string;
+}) {
   return (
     <ul aria-label="Notes" className="space-y-1">
       {notes.map((note) => (
@@ -292,7 +323,7 @@ function HunkNotes({ notes, go }: { notes: HunkNote[]; go: (note: HunkNote) => v
             </span>
           )}
           <InlineMarkdown className="min-w-0 text-primary">{note.text}</InlineMarkdown>
-          <JumpLink onClick={() => go(note)}>{note.sectionTitle} →</JumpLink>
+          <JumpLink onClick={() => go(note)}>{link(note)}</JumpLink>
         </li>
       ))}
     </ul>

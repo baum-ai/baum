@@ -2654,9 +2654,21 @@ has more than the review alone (tiles, or an overview part the model wrote:
   linking to the prompt in its session.
 - **How it works** lists "Where this fits" first (the review's context, its
   files as chips, and the tiles placed on `context`) and opens on the first
-  real section. A section shows its title, summary, the tiles placed on it, its
-  behaviour steps, its risks and its code, folded. The full review's check
-  callouts and line counts are not shown.
+  real section. A section shows its title, then a row of views, each with its
+  count and disabled (never hidden) when the section has nothing for it:
+  **Overview** (its summary, its first diagram, its behaviour steps, its risks
+  and the rest of the tiles placed on it), **Code** (its code, config and
+  migration hunks, file by file, drawn as the Code tab draws them with the
+  section's own steps and risks pinned to the hunks they cite, and its
+  generated or vendored files folded at the end), **Tests** (its test hunks,
+  under the names of the tests they add or change where those can be read
+  from the lines, once the hunks the review left out are loaded: Go's
+  `func TestX(`, JavaScript's `it("…"` and `test("…"`, else no list), **Session** (the prompts and session events its
+  summary, steps, risks and tiles cite, quoted with when and who, each linking
+  to its turn of the transcript) and **Docs** (its docs hunks). Code, Tests and
+  Docs count files, Session quotes. The view is `section_view=<view>` beside
+  `section=`, and opening another section opens its Overview. The full
+  review's check callouts and line counts are not shown.
 - **Code** lists every changed file grouped as code, tests, docs, config and
   generated (folded, and a generated file's diff waits for Show the diff), and
   shows the open file's hunks with the behaviour steps and open risks that cite
@@ -2668,8 +2680,8 @@ has more than the review alone (tiles, or an overview part the model wrote:
   sequence becomes a list. Exhibits draw as the generic tiles do, and library
   and chat-made tiles in their sandboxed frames. A tile being written, one that
   failed and one that cannot be read say so in its place.
-- **Comments and keys.** `c` comments on the section read, the file open in
-  Code, or the pull request on the Overview; on a tile the keys are on
+- **Comments and keys.** `c` comments on the section read (in any of its
+  views), the file open in Code, or the pull request on the Overview; on a tile the keys are on
   (`j`/`k`), on that tile, placed on the code it cites. `a` asks the session
   panel about the tile the keys are on, else the pull request. `←`/`→` step
   through the rail, and Escape and `u` leave the pull request as on the full

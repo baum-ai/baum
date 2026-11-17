@@ -1240,13 +1240,16 @@ function ReviewWorkspace<F extends ReviewFile>({
   // What the pane's arrival is keyed on: the place, not the data behind it.
   const selectionKey = JSON.stringify(selection);
   // Every file shares one pane, which scrolls its own cards into view.
-  // An item of a tile is an anchor inside its pane, so moving between items
-  // keeps the pane, its scroll and its state.
+  // An item of a tile is an anchor inside its pane, and a host's view of a
+  // section is a tab inside it, so moving between items or views keeps the
+  // pane, its scroll, its state and the keys.
   const paneKey = filesSelected
     ? "files"
     : selection.kind === "tile"
       ? JSON.stringify({ kind: "tile", id: selection.id })
-      : selectionKey;
+      : selection.kind === "section"
+        ? JSON.stringify({ ...selection, view: undefined })
+        : selectionKey;
   // A new place starts at its top. The pane shares the page's scroll, so
   // one read far down would otherwise open the next part way through; the
   // page only moves when the pane's top has gone under the bar. Where the

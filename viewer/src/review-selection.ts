@@ -10,7 +10,7 @@
 export type Selection =
   | { kind: "summary" }
   | { kind: "changes" }
-  | { kind: "section"; id: string; decision?: string }
+  | { kind: "section"; id: string; decision?: string; view?: string }
   | { kind: "risks" }
   | { kind: "risk"; section: string; id: string }
   | { kind: "files" }
@@ -26,6 +26,9 @@ const PARAM = {
   pane: "pane",
   section: "section",
   decision: "decision",
+  // A host's view of the section (its code, its tests, …); the section's
+  // default view has none.
+  sectionView: "section_view",
   riskSection: "risk_section",
   riskId: "risk_id",
   file: "file",
@@ -49,7 +52,13 @@ export function readSelection(search: URLSearchParams): Selection {
     const id = search.get(PARAM.section);
     if (id) {
       const decision = search.get(PARAM.decision);
-      return { kind: "section", id, ...(decision ? { decision } : {}) };
+      const view = search.get(PARAM.sectionView);
+      return {
+        kind: "section",
+        id,
+        ...(decision ? { decision } : {}),
+        ...(view ? { view } : {}),
+      };
     }
   }
   if (pane === "risk") {
@@ -109,6 +118,7 @@ export function withSelection(search: URLSearchParams, selection: Selection): UR
     next.set(PARAM.pane, "section");
     next.set(PARAM.section, selection.id);
     if (selection.decision) next.set(PARAM.decision, selection.decision);
+    if (selection.view) next.set(PARAM.sectionView, selection.view);
   } else if (selection.kind === "risk") {
     next.set(PARAM.pane, "risk");
     next.set(PARAM.riskSection, selection.section);

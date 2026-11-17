@@ -304,7 +304,7 @@ export type ViewTab = "overview" | "sections" | "code";
 /** Where the reader is on the page, read off the viewer's selection. */
 export type ViewPlace =
   | { tab: "overview" }
-  | { tab: "sections"; section: string; item?: string }
+  | { tab: "sections"; section: string; item?: string; view?: SectionView }
   | { tab: "code"; file: string | null };
 
 /** The page's place for a selection: the Summary is the Overview, a section
@@ -323,7 +323,13 @@ export function placeOf(
       return fallback ? { tab: "sections", section: fallback } : { tab: "overview" };
     case "section":
       return known(selection.id)
-        ? { tab: "sections", section: selection.id }
+        ? {
+            tab: "sections",
+            section: selection.id,
+            ...(isSectionView(selection.view) && selection.view !== "overview"
+              ? { view: selection.view }
+              : {}),
+          }
         : fallback
           ? { tab: "sections", section: fallback }
           : { tab: "overview" };
@@ -349,7 +355,11 @@ export function selectionOf(place: ViewPlace): Selection {
     case "overview":
       return { kind: "summary" };
     case "sections":
-      return { kind: "section", id: place.section };
+      return {
+        kind: "section",
+        id: place.section,
+        ...(place.view && place.view !== "overview" ? { view: place.view } : {}),
+      };
     case "code":
       return { kind: "tile", id: CODE_PLACE, ...(place.file ? { item: place.file } : {}) };
   }
@@ -532,4 +542,318 @@ export function intentRows(document: ReviewDocument, view: ReviewView): IntentRo
 
 function clip(text: string, length: number) {
   return text.length <= length ? text : `${text.slice(0, length - 1).trimEnd()}…`;
+}
+
+// ---------- a section's views ----------
+
+/** The ways of reading a section of How it works: what it does (its
+ *  summary, diagram, steps, risks and tiles), its code, its tests, the
+ *  session turns it cites and its docs. */
+export type SectionView = "overview" | "code" | "tests" | "session" | "docs";
+
+export const SECTION_VIEWS: { value: SectionView; label: string }[] = [
+  { value: "overview", label: "Overview" },
+  { value: "code", label: "Code" },
+  { value: "tests", label: "Tests" },
+  { value: "session", label: "Session" },
+  { value: "docs", label: "Docs" },
+];
+
+export function isSectionView(value: unknown): value is SectionView {
+  return SECTION_VIEWS.some((view) => view.value === value);
+}
+
+/** The roles each code view draws; generated and vendored hunks are folded
+ *  at the end of Code. */
+const VIEW_ROLES: Record<"code" | "tests" | "docs", HunkRole[]> = {
+  code: ["code", "migration", "config"],
+  tests: ["test"],
+  docs: ["docs"],
+};
+const GENERATED_ROLES: HunkRole[] = ["generated", "vendored"];
+
+/** A section's hunks of some roles as files, each with only the section's
+ *  hunks, in the Code tab's group order and the review's order within it. */
+function sectionFilesOf(document: ReviewDocument, section: Section, roles: HunkRole[]): ViewFile[] {
+  const ids = new Set(section.hunks);
+  const files = new Map<string, ViewFile>();
+  for (const hunk of document.index.hunks) {
+    if (!ids.has(hunk.id) || !roles.includes(hunk.role)) continue;
+    const file = files.get(hunk.path) ?? {
+      path: hunk.path,
+      group: GROUP_OF_ROLE[hunk.role] ?? "Code",
+      hunks: [],
+      sections: [section.id],
+    };
+    file.hunks.push(hunk);
+    files.set(hunk.path, file);
+  }
+  const all = [...files.values()];
+  return FILE_GROUPS.flatMap((group) => all.filter((file) => file.group === group));
+}
+
+export type SectionViews = {
+  code: { files: ViewFile[]; generated: ViewFile[] };
+  tests: { files: ViewFile[] };
+  docs: { files: ViewFile[] };
+  session: SessionQuote[];
+  /** What each view has, as its tab counts it (files, or quotes); 0 leaves
+   *  the view disabled. The Overview has no count. */
+  counts: Record<Exclude<SectionView, "overview">, number>;
+};
+
+/** Everything a section's views draw, from the review and the tiles placed
+ *  on the section. */
+export function sectionViews(
+  document: ReviewDocument,
+  view: ReviewView,
+  section: Section,
+): SectionViews {
+  const code = {
+    files: sectionFilesOf(document, section, VIEW_ROLES.code),
+    generated: sectionFilesOf(document, section, GENERATED_ROLES),
+  };
+  const tests = sectionFilesOf(document, section, VIEW_ROLES.tests);
+  const docs = sectionFilesOf(document, section, VIEW_ROLES.docs);
+  const session = sessionQuotes(document, section, tilesOn(view, section.id));
+  return {
+    code,
+    tests: { files: tests },
+    docs: { files: docs },
+    session,
+    counts: {
+      code: code.files.length + code.generated.length,
+      tests: tests.length,
+      session: session.length,
+      docs: docs.length,
+    },
+  };
+}
+
+/** The view a section shows: the one asked for while it has something,
+ *  else the Overview. */
+export function shownSectionView(
+  asked: SectionView | undefined,
+  counts: SectionViews["counts"],
+): SectionView {
+  return asked && asked !== "overview" && counts[asked] > 0 ? asked : "overview";
+}
+
+/** The notes of a section's own steps and risks, by the hunk they cite. */
+export function sectionNotes(
+  notes: Map<string, HunkNote[]>,
+  section: string,
+): Map<string, HunkNote[]> {
+  const own = new Map<string, HunkNote[]>();
+  for (const [hunk, pinned] of notes) {
+    const mine = pinned.filter((note) => note.section === section);
+    if (mine.length > 0) own.set(hunk, mine);
+  }
+  return own;
+}
+
+// ---------- the tests a section's hunks add or change ----------
+
+type Language = "go" | "js";
+
+/** The languages whose tests can be named from a diff; a test file in
+ *  another programming language leaves the names unread. Data files (golden
+ *  output, fixtures) declare no tests. */
+function languageOf(path: string): Language | "other" | null {
+  if (path.endsWith(".go")) return "go";
+  if (/\.[cm]?[jt]sx?$/.test(path)) return "js";
+  if (/\.(py|rs|java|kts?|rb|swift|cs|php|c|cc|cpp|h|hpp|scala|exs?|zig|dart|lua|sh)$/.test(path))
+    return "other";
+  return null;
+}
+
+type Declaration = { test: boolean; name: string | null; indent: number; closed?: boolean };
+
+const GO_FUNC = /^func\s+(\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[[(]/;
+const GO_BLOCK = /^(type|var|const|import)\b/;
+const JS_TEST =
+  /^(\s*)(?:it|test)(\.(?:only|skip|concurrent|todo|fails|each|for)\b[^(]*)?\(\s*(?:(["'`])((?:\\.|(?!\3).)*)\3)?/;
+const JS_GROUP = /^\s*(?:describe|suite|test\.describe)(?:\.\w+)*\s*\(/;
+
+/** A test or another declaration a line opens, if any. */
+function declaration(language: Language, text: string): Declaration | null {
+  const indent = text.length - text.trimStart().length;
+  if (language === "go") {
+    const func = GO_FUNC.exec(text);
+    if (func) {
+      const name = func[2]!;
+      const test = !func[1] && /^(Test|Benchmark|Fuzz|Example)/.test(name);
+      return { test, name, indent: 0 };
+    }
+    return GO_BLOCK.test(text) ? { test: false, name: null, indent: 0 } : null;
+  }
+  if (JS_GROUP.test(text)) return { test: false, name: null, indent };
+  const call = JS_TEST.exec(text);
+  if (!call) return null;
+  const [, , modifier = "", quote, name = ""] = call;
+  // A name built at run time (`each`, a template) can't be read.
+  if (/^\.(each|for)\b/.test(modifier)) return { test: true, name: null, indent };
+  // `test.skip(condition, reason)` and the like name no test.
+  if (!quote) return modifier ? null : { test: true, name: null, indent };
+  const readable = !(quote === "`" && name.includes("${"));
+  // A test written on one line ends on it.
+  const closed = /\)\s*;?\s*$/.test(text) && !/[{(]\s*$/.test(text);
+  return { test: true, name: readable ? name : null, indent, closed };
+}
+
+/** The tests the hunks add or change, in their order, read from their
+ *  lines: Go's `func TestX(` (and benchmarks, fuzz tests and examples),
+ *  JavaScript's and TypeScript's `it("…"` and `test("…"`. Null when a hunk
+ *  can't be read with confidence: its code is not in the review, it is in
+ *  another language, a test's name is built at run time, or a change sits
+ *  inside a block whose start is above the hunk. An empty list means the
+ *  hunks change no test. */
+export function testNames(hunks: IndexedHunk[]): string[] | null {
+  const names: string[] = [];
+  const add = (name: string) => {
+    if (!names.includes(name)) names.push(name);
+  };
+  for (const hunk of hunks) {
+    const language = languageOf(hunk.path);
+    if (language === null) continue;
+    if (language === "other" || !hunk.diff) return null;
+    // Where the hunk starts: inside the declaration its header names, when
+    // the header names a test (or, in Go, any declaration), else unknown.
+    const context = hunk.diff.header.replace(/^@@[^@]*@@\s?/, "");
+    const named = context ? declaration(language, context) : null;
+    let current: Declaration | "top" | "unknown" =
+      named && (named.test || language === "go") && named.indent === 0 ? named : "unknown";
+    for (const line of hunk.diff.lines) {
+      const text = line.text;
+      const changed = line.kind !== "context";
+      if (!text.trim()) continue;
+      const opened = declaration(language, text);
+      if (opened) {
+        if (opened.test) {
+          if (opened.name === null) return null;
+          if (line.kind === "add") add(opened.name);
+        }
+        current = opened.closed ? "top" : opened;
+        continue;
+      }
+      const indent = text.length - text.trimStart().length;
+      const closes = /^\s*[})]/.test(text);
+      if (typeof current === "object") {
+        // Go's bodies are indented: a line at the margin that closes nothing
+        // (a comment above the next function) is outside the one before.
+        if (language === "go" && indent === 0 && !closes) {
+          current = "top";
+          continue;
+        }
+        if (changed && current.test && current.name) add(current.name);
+        if (closes && indent <= current.indent) current = "top";
+        continue;
+      }
+      // Outside any declaration the hunk shows: a line at the margin is top
+      // level; an indented change may be inside a test opened above.
+      if (indent === 0) current = "top";
+      else if (changed && (current === "unknown" || language === "go")) return null;
+    }
+  }
+  return names;
+}
+
+// ---------- the session turns a section cites ----------
+
+export type SessionQuote = {
+  key: string;
+  kind: "prompt" | "event";
+  /** A person typed it (a prompt), or the agent did it (an event). */
+  who: "person" | "agent";
+  session: string;
+  vendor?: string;
+  at?: string;
+  text: string;
+  /** The transcript's turn to open at: the prompt, or the last prompt
+   *  before the event. */
+  turn?: number;
+};
+
+const isAnchor = (value: unknown): value is Anchor => isRecord(value) && isString(value.type);
+
+/** What a tile's data cites: its `source` (the native tiles and exhibits)
+ *  or its `anchors` (prose). */
+function tileAnchors(tile: ViewTile): Anchor[] {
+  if (!isRecord(tile.data)) return [];
+  return [tile.data.source, tile.data.anchors].flatMap((list) =>
+    Array.isArray(list) ? list.filter(isAnchor) : [],
+  );
+}
+
+/** The prompts and session events a section's summary, steps, risks and
+ *  tiles cite, each once, in the order they happened. A citation the index
+ *  can't resolve to its words is left out. */
+export function sessionQuotes(
+  document: ReviewDocument,
+  section: Section,
+  tiles: ViewTile[] = [],
+): SessionQuote[] {
+  const anchors = [
+    ...(section.summary?.anchors ?? []),
+    ...behaviourSteps(section).flatMap((step) => step.anchors ?? []),
+    ...section.risks.flatMap((risk) => risk.anchors ?? []),
+    ...tiles.flatMap(tileAnchors),
+  ];
+  const quotes = new Map<string, SessionQuote>();
+  for (const anchor of anchors) {
+    if (anchor.type !== "prompt" && anchor.type !== "session_event") continue;
+    const session = document.index.sessions.find((each) => each.id === anchor.session);
+    const vendor = session ? { vendor: session.vendor } : {};
+    if (anchor.type === "prompt") {
+      const key = `prompt:${anchor.session}:${anchor.index}`;
+      if (quotes.has(key)) continue;
+      const prompt = session?.prompts?.find((each) => each.index === anchor.index);
+      const text = (prompt?.text || anchor.input || "").trim();
+      if (!text) continue;
+      quotes.set(key, {
+        key,
+        kind: "prompt",
+        who: "person",
+        session: anchor.session,
+        ...vendor,
+        ...(prompt?.at ? { at: prompt.at } : {}),
+        text: clip(text, 600),
+        turn: anchor.index,
+      });
+    } else {
+      const key = `event:${anchor.session}:${anchor.event}`;
+      if (quotes.has(key)) continue;
+      const event = session?.events?.find((each) => each.id === anchor.event);
+      if (!event?.summary.trim()) continue;
+      const turn = turnAt(session?.prompts ?? [], event.at);
+      quotes.set(key, {
+        key,
+        kind: "event",
+        who: "agent",
+        session: anchor.session,
+        ...vendor,
+        at: event.at,
+        text: clip(event.summary.trim(), 600),
+        ...(turn !== undefined ? { turn } : {}),
+      });
+    }
+  }
+  const time = (quote: SessionQuote) => {
+    const at = quote.at ? Date.parse(quote.at) : Number.NaN;
+    return Number.isNaN(at) ? Number.POSITIVE_INFINITY : at;
+  };
+  return [...quotes.values()].toSorted((a, b) => time(a) - time(b));
+}
+
+/** The prompt an event happened after: the last one typed before it. */
+function turnAt(prompts: { index: number; at: string }[], at: string): number | undefined {
+  const when = Date.parse(at);
+  if (Number.isNaN(when)) return undefined;
+  let turn: { index: number; at: number } | undefined;
+  for (const prompt of prompts) {
+    const typed = Date.parse(prompt.at);
+    if (Number.isNaN(typed) || typed > when) continue;
+    if (!turn || typed >= turn.at) turn = { index: prompt.index, at: typed };
+  }
+  return turn?.index;
 }

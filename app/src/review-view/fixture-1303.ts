@@ -108,7 +108,7 @@ const SECTIONS: Section[] = [
         "bhv_relay_wanted",
         "Connected only while a phone needs it",
         "`wanted` is true only while a phone is paired or a code is live.",
-        [hunk("h_relay")],
+        [hunk("h_relay"), { type: "prompt", session: "ses_mobile", index: 2 }],
       ),
       step(
         "bhv_no_redirect",
@@ -123,7 +123,7 @@ const SECTIONS: Section[] = [
         "medium",
         "testing",
         "Every test uses an in-process stand-in relay written from the same README. Nothing has run against a deployed relay or on Windows.",
-        [hunk("h_relay")],
+        [hunk("h_relay"), { type: "session_event", session: "ses_mobile", event: "ev_standin" }],
       ),
     ],
     { review_score: 3 },
@@ -290,6 +290,15 @@ export const REVIEW_1303: ReviewDocument = {
             id: "p2",
             at: "2026-11-14T03:19:00Z",
             text: "use an encrypted relay that we run",
+          },
+        ],
+        events: [
+          {
+            id: "ev_standin",
+            at: "2026-11-14T04:26:00Z",
+            verb: "tested",
+            summary:
+              "Ran the relay tests against an in-process stand-in written from the relay's README; no deployed relay was available.",
           },
         ],
       },

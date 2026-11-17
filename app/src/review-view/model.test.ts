@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { IndexedHunk, IndexedHunkLine, Section } from "@baum/viewer/review-document";
 import { REVIEW_1303, review1303, VIEW_1303 } from "./fixture-1303";
 import {
   CODE_PLACE,
@@ -13,7 +14,11 @@ import {
   placeOf,
   reviewViewOf,
   riskSummary,
+  sectionViews,
   selectionOf,
+  sessionQuotes,
+  shownSectionView,
+  testNames,
   shownFile,
   tilesOn,
   viewFiles,
@@ -181,6 +186,20 @@ describe("places", () => {
     expect(selectionOf({ tab: "overview" })).toEqual({ kind: "summary" });
   });
 
+  it("keeps a section's view, but not its Overview or a view it doesn't know", () => {
+    const tests = selectionOf({ tab: "sections", section: "sec_allowlist", view: "tests" });
+    expect(tests).toEqual({ kind: "section", id: "sec_allowlist", view: "tests" });
+    expect(place(tests)).toEqual({ tab: "sections", section: "sec_allowlist", view: "tests" });
+    expect(selectionOf({ tab: "sections", section: "sec_allowlist", view: "overview" })).toEqual({
+      kind: "section",
+      id: "sec_allowlist",
+    });
+    expect(place({ kind: "section", id: "sec_allowlist", view: "later" })).toEqual({
+      tab: "sections",
+      section: "sec_allowlist",
+    });
+  });
+
   it("comments on the file open in Code", () => {
     expect(commentSelection({ kind: "tile", id: CODE_PLACE, item: "a.go" })).toEqual({
       kind: "file",
@@ -289,5 +308,249 @@ describe("the overview's fallbacks", () => {
     ]);
     const unlinked = { ...REVIEW_1303, index: { ...REVIEW_1303.index, sessions: [] } };
     expect(intentRows(unlinked, emptyView(unlinked))).toEqual([]);
+  });
+});
+
+describe("a section's views", () => {
+  const sectionOf = (id: string) => REVIEW_1303.sections.find((each) => each.id === id)!;
+  const of = (id: string) => sectionViews(REVIEW_1303, VIEW_1303, sectionOf(id));
+
+  it("counts each view's files, or quotes, and leaves the empty ones at 0", () => {
+    expect(of("sec_allowlist").counts).toEqual({ code: 1, tests: 1, session: 0, docs: 1 });
+    expect(of("sec_relay").counts).toEqual({ code: 1, tests: 0, session: 2, docs: 0 });
+    // Generated files count as the section's code.
+    expect(of("sec_deps").counts).toEqual({ code: 1, tests: 0, session: 0, docs: 0 });
+  });
+
+  it("groups the section's own hunks by their role, file by file", () => {
+    const views = of("sec_allowlist");
+    expect(views.code.files.map((file) => [file.path, file.hunks.map((hunk) => hunk.id)])).toEqual([
+      ["oss/internal/uiserver/remote.go", ["h_routes", "h_refusals"]],
+    ]);
+    expect(views.code.generated).toEqual([]);
+    expect(views.tests.files.map((file) => file.path)).toEqual([
+      "oss/internal/uiserver/remote_test.go",
+    ]);
+    expect(views.docs.files.map((file) => file.path)).toEqual(["oss/SECURITY.md"]);
+    const deps = of("sec_deps");
+    expect(deps.code.files).toEqual([]);
+    expect(deps.code.generated.map((file) => [file.path, file.group])).toEqual([
+      ["oss/go.sum", "Generated"],
+    ]);
+    // Another section's hunks of the same file stay out.
+    expect(of("sec_lifecycle").code.files[0]?.hunks.map((hunk) => hunk.id)).toEqual([
+      "h_daemon",
+      "h_shutdown",
+    ]);
+  });
+
+  it("shows the view asked for while it has something, else the Overview", () => {
+    const counts = of("sec_allowlist").counts;
+    expect(shownSectionView("tests", counts)).toBe("tests");
+    expect(shownSectionView("session", counts)).toBe("overview");
+    expect(shownSectionView(undefined, counts)).toBe("overview");
+  });
+});
+
+const testHunk = (
+  path: string,
+  lines: [kind: "add" | "remove" | "context", text: string][],
+  header = "@@ -1,1 +1,1 @@",
+): IndexedHunk => ({
+  id: `h_${path}`,
+  path,
+  new_range: [1, lines.length],
+  additions: lines.filter(([kind]) => kind === "add").length,
+  deletions: lines.filter(([kind]) => kind === "remove").length,
+  change: "modified",
+  role: "test",
+  diff: {
+    header,
+    lines: lines.map(([kind, text], at) => ({
+      kind,
+      text,
+      ...(kind !== "add" ? { old_line: at + 1 } : {}),
+      ...(kind !== "remove" ? { new_line: at + 1 } : {}),
+    })) as IndexedHunkLine[],
+  },
+});
+
+describe("the tests a section's hunks add or change", () => {
+  it("names Go tests added, and those whose body changes", () => {
+    expect(
+      testNames([
+        testHunk("a/x_test.go", [
+          ["context", "func TestOld(t *testing.T) {"],
+          ["context", "\tif got := f(); got != 1 {"],
+          ["remove", "\t\tt.Fatal(got)"],
+          ["add", '\t\tt.Fatalf("got %d", got)'],
+          ["context", "\t}"],
+          ["context", "}"],
+          ["context", ""],
+          ["context", "func TestUntouched(t *testing.T) {"],
+          ["context", "}"],
+          ["add", ""],
+          ["add", "// TestNew checks the new path."],
+          ["add", "func TestNew(t *testing.T) {"],
+          ["add", "\tt.Parallel()"],
+          ["add", "}"],
+          ["add", "func BenchmarkNew(b *testing.B) {}"],
+          ["add", "func (s *suite) TestMethod() {}"],
+        ]),
+      ]),
+    ).toEqual(["TestOld", "TestNew", "BenchmarkNew"]);
+  });
+
+  it("reads a Go hunk inside a test from its header", () => {
+    expect(
+      testNames([
+        testHunk(
+          "a/x_test.go",
+          [
+            ["context", "\twant := 2"],
+            ["add", "\tcheck(t, want)"],
+          ],
+          "@@ -10,2 +10,3 @@ func TestHeader(t *testing.T) {",
+        ),
+      ]),
+    ).toEqual(["TestHeader"]);
+  });
+
+  it("names it and test calls in JavaScript and TypeScript", () => {
+    expect(
+      testNames([
+        testHunk("app/x.test.tsx", [
+          ["context", 'describe("the page", () => {'],
+          ["add", '  it("draws the row", () => {'],
+          ["add", "    expect(1).toBe(1);"],
+          ["add", "  });"],
+          ["context", "  it('keeps its place', async () => {"],
+          ["remove", "    await old();"],
+          ["add", "    await next();"],
+          ["context", "  });"],
+          ["context", '  it("is left alone", () => {});'],
+          ["add", '  test.skip("is skipped for now", () => {});'],
+          ["context", "});"],
+        ]),
+        testHunk("e2e/x.spec.ts", [
+          ["add", 'test.skip(!process.env.SHOTS, "pictures on request");'],
+          ["add", 'test("a picture", async ({ page }) => {'],
+          ["add", "  await page.goto('/');"],
+          ["add", "});"],
+        ]),
+      ]),
+    ).toEqual(["draws the row", "keeps its place", "is skipped for now", "a picture"]);
+  });
+
+  it("is empty when the hunks change no test, and ignores data files", () => {
+    expect(
+      testNames([
+        testHunk("a/x_test.go", [
+          ["add", "package a"],
+          ["add", "import ("],
+          ["add", '\t"testing"'],
+          ["add", ")"],
+          ["add", "func helper() int {"],
+          ["add", "\treturn 1"],
+          ["add", "}"],
+        ]),
+        testHunk("a/testdata/golden.json", [["add", '  "it": "test(\\"x\\", ...)"']]),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("gives up rather than guess", () => {
+    // A change inside a block that opens above the hunk.
+    expect(
+      testNames([
+        testHunk("a/x_test.go", [
+          ["context", "\twant := 2"],
+          ["add", "\tcheck(t, want)"],
+        ]),
+      ]),
+    ).toBeNull();
+    expect(
+      testNames([
+        testHunk(
+          "app/x.test.ts",
+          [
+            ["context", "    const row = draw();"],
+            ["add", "    expect(row).toBeTruthy();"],
+          ],
+          '@@ -4,2 +4,3 @@ describe("rows", () => {',
+        ),
+      ]),
+    ).toBeNull();
+    // Names built at run time.
+    expect(
+      testNames([testHunk("app/x.test.ts", [["add", 'it.each(cases)("reads %s", (c) => {']])]),
+    ).toBeNull();
+    expect(
+      testNames([testHunk("app/x.test.ts", [["add", "test(`reads ${kind}`, () => {"]])]),
+    ).toBeNull();
+    // Another language, or a hunk whose code isn't in the review.
+    expect(testNames([testHunk("tests/test_x.py", [["add", "def test_x():"]])])).toBeNull();
+    expect(testNames([{ ...testHunk("a/x_test.go", []), diff: undefined }])).toBeNull();
+  });
+});
+
+describe("the session turns a section cites", () => {
+  const withCites = (section: Section, anchors: Section["risks"][number]["anchors"]) => ({
+    ...section,
+    summary: { text: "Summary.", anchors },
+  });
+  const relay = REVIEW_1303.sections.find((each) => each.id === "sec_relay")!;
+
+  it("quotes the prompts and events cited, once each, in the order they happened", () => {
+    const quotes = sessionQuotes(
+      REVIEW_1303,
+      withCites(relay, [
+        { type: "session_event", session: "ses_mobile", event: "ev_standin" },
+        { type: "prompt", session: "ses_mobile", index: 1 },
+      ]),
+    );
+    expect(quotes.map((quote) => [quote.kind, quote.who, quote.text, quote.turn])).toEqual([
+      ["prompt", "person", "allows to review on mobile", 1],
+      ["prompt", "person", "use an encrypted relay that we run", 2],
+      [
+        "event",
+        "agent",
+        "Ran the relay tests against an in-process stand-in written from the relay's README; no deployed relay was available.",
+        2,
+      ],
+    ]);
+    expect(quotes[0]).toMatchObject({
+      session: "ses_mobile",
+      vendor: "claude",
+      at: "2026-11-14T03:12:00Z",
+    });
+  });
+
+  it("reads the citations of the section's tiles", () => {
+    const tile = {
+      id: "dg_x",
+      type: "flow",
+      title: "X",
+      state: "ready" as const,
+      data: { lanes: [], source: [{ type: "prompt", session: "ses_mobile", index: 1 }] },
+    };
+    const bare = { ...relay, blocks: [], risks: [], summary: null };
+    expect(sessionQuotes(REVIEW_1303, bare)).toEqual([]);
+    expect(sessionQuotes(REVIEW_1303, bare, [tile]).map((quote) => quote.text)).toEqual([
+      "allows to review on mobile",
+    ]);
+  });
+
+  it("leaves out what the index can't resolve to words", () => {
+    expect(
+      sessionQuotes(
+        REVIEW_1303,
+        withCites({ ...relay, blocks: [], risks: [] }, [
+          { type: "prompt", session: "ses_mobile", index: 9 },
+          { type: "prompt", session: "ses_gone", index: 1, input: "typed elsewhere" },
+          { type: "session_event", session: "ses_mobile", event: "ev_gone" },
+        ]),
+      ).map((quote) => [quote.text, quote.vendor]),
+    ).toEqual([["typed elsewhere", undefined]]);
   });
 });
