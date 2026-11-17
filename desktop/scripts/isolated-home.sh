@@ -68,6 +68,20 @@ app() {
   export XDG_RUNTIME_DIR=/tmp/runtime
   mkdir -p "$HOME/.local/share/keyrings"
   mkdir -m 700 "$XDG_RUNTIME_DIR"
+  if [ "${BAUM_ISOLATED_HEADLESS:-}" = 1 ]; then
+    # No display of the host's: a headless compositor of its own, which
+    # renders in software. --debug allows weston-screenshooter.
+    weston --backend=headless --renderer=pixman --socket=wayland-0 --debug \
+      --width="${BAUM_ISOLATED_WIDTH:-1440}" --height="${BAUM_ISOLATED_HEIGHT:-900}" \
+      --log="$XDG_RUNTIME_DIR/weston.log" &
+    export WAYLAND_DISPLAY=wayland-0
+    tries=0
+    until [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; do
+      tries=$((tries + 1))
+      [ "$tries" -le 100 ] || { echo "isolated: weston did not start" >&2; cat "$XDG_RUNTIME_DIR/weston.log" >&2; exit 1; }
+      sleep 0.1
+    done
+  fi
   # shellcheck disable=SC2016 # expanded by the inner shell
   exec dbus-run-session -- sh -c '
     printf baum-dev | gnome-keyring-daemon --unlock --components=secrets >/dev/null

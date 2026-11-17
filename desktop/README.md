@@ -1035,6 +1035,7 @@ branches can be tried at once on Linux with Wayland:
 ```sh
 just desktop::isolated mobile --copy-data --workspace ~/workspace
 just desktop::isolated-shell mobile   # a login shell in it, e.g. to run claude
+just desktop::isolated agent --headless   # no window: for agents and profiling
 BAUM_RELAY_URL=https://… just desktop::isolated mobile
 ```
 
@@ -1057,6 +1058,25 @@ in the instance's `review-stores/`, mounted over it; `--copy-data` fills new
 copies with a snapshot of the repository's reviews, and without it they start
 empty. `BAUM_RELAY_URL` is written to the home's `.profile`,
 which the daemon's environment comes from.
+
+`--headless` runs the instance without a display of yours: the container
+starts its own headless Weston (`BAUM_ISOLATED_WIDTH` × `BAUM_ISOLATED_HEIGHT`,
+1440 × 900 by default) and the app draws there, so agents can run the real
+WebKitGTK app with no window on your screen and no Wayland session at all.
+`just desktop::isolated-screenshot <name> [out.png]` saves what it shows.
+Weston's headless backend renders with Pixman, in software, and has no input
+seat (GDK logs `gdk_seat_get_keyboard` assertions, which are harmless here),
+so JavaScript, layout and React costs are realistic and painting and
+compositing costs are not.
+
+`BAUM_FRONTEND_MODE=profile` before any recipe that builds the frontend
+(`isolated`, `run`, `build`) builds the profiling build
+([local app](../app/README.md)) instead, and the sidecar embeds it, so the
+daemon's pages expose `window.__baumPerf`:
+
+```sh
+BAUM_FRONTEND_MODE=profile just desktop::isolated perf --copy-data --headless
+```
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
