@@ -20,7 +20,7 @@ func TestParseReviewV2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Sections) != 3 || r.Sections[0].ID != "sec_retry_policy" || len(r.Sections[0].Steps) != 2 || len(r.Sections[0].Risks) != 1 || r.Sections[0].Risks[0].Hunks[0] != "h_a00000000001" {
+	if len(r.Sections) != 3 || r.Sections[0].ID != "sec_retry_policy" || len(r.Sections[0].Steps) != 2 || r.Sections[0].Summary == "" || r.Sections[0].Steps[0].Title != "The policy keeps how many attempts to make and the first wait." || len(r.Sections[0].Steps[1].Hunks) != 2 || r.Sections[1].Steps[0].Title != "Retryable errors wait" || len(r.Sections[0].Risks) != 1 || r.Sections[0].Risks[0].Hunks[0] != "h_a00000000001" {
 		t.Fatalf("sections = %+v", r.Sections)
 	}
 	if !r.HasHunk("h_a00000000004") || len(r.Sessions) != 1 || len(r.Attachments) != 1 || r.Recommendation == nil || r.Recommendation.Decision != "look_first" {

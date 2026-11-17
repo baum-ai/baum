@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Review is what the view reads of a baum.review/1 document: the parts the
@@ -227,6 +228,17 @@ type rawReviewV2 struct {
 		Derived struct {
 			State string `json:"state"`
 		} `json:"derived"`
+		// Body is what a section carries now; Summary and Steps are what a
+		// document written before bodies carries.
+		Body []struct {
+			Type  string `json:"type"`
+			Text  string `json:"text"`
+			Items []struct {
+				Text  string      `json:"text"`
+				More  string      `json:"more"`
+				Cites []rawAnchor `json:"cites"`
+			} `json:"items"`
+		} `json:"body"`
 		Steps []struct {
 			Step
 			Cites []rawAnchor `json:"cites"`
@@ -271,6 +283,24 @@ func parseReviewV2(document []byte) (*Review, error) {
 		for _, step := range s.Steps {
 			step.Hunks = hunksOf(step.Cites)
 			section.Steps = append(section.Steps, step.Step)
+		}
+		// A body is read as a summary (its first prose) and steps (its points).
+		for _, block := range s.Body {
+			switch block.Type {
+			case "prose":
+				if section.Summary == "" {
+					section.Summary = block.Text
+				}
+			case "points":
+				for _, p := range block.Items {
+					step := Step{Title: p.Text, Text: p.More, Hunks: hunksOf(p.Cites)}
+					if lead, rest, ok := strings.Cut(strings.TrimPrefix(p.Text, "**"), "**"); ok && strings.HasPrefix(p.Text, "**") {
+						step.Title, step.Text = strings.TrimRight(lead, "."), strings.TrimSpace(rest)
+					}
+					step.Title = strings.NewReplacer("**", "").Replace(step.Title)
+					section.Steps = append(section.Steps, step)
+				}
+			}
 		}
 		for _, risk := range s.Risks {
 			risk.Hunks = hunksOf(risk.Cites)

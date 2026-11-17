@@ -53,14 +53,14 @@ func (s *Server) reviewTools() []Tool {
 		Call:        callFacts,
 	}, {
 		Name:        "review_outline",
-		Description: "The overview of a saved review (summary, verdict, why the risk is what it is, risk score, reading time, screenshots, main diagram, intent) and an outline of each section: id, title, kind, gist, level, the hunks and files it covers, the ids of the tiles on it, and whether its details are pending or failed. Never a section's summary, steps or risks: read those with review_section.",
+		Description: "The overview of a saved review (summary, verdict, why the risk is what it is, risk score, reading time, screenshots, main diagram, intent) and an outline of each section: id, title, kind, gist, level, the hunks and files it covers, the ids of the tiles on it, and whether its details are pending or failed. Never a section's body or risks: read those with review_section.",
 		InputSchema: reviewSchema(""),
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/tiles", "/api/groups"},
 		Call:        callReviewOutline,
 	}, {
 		Name:        "review_section",
-		Description: "One section of a saved review by its id: its outline, the reasons for its level, its summary, steps and risks with their citations, and the tiles on it (id, type, title, caption, state; never their data). Says when its details failed or are still being written.",
+		Description: "One section of a saved review by its id: its outline, the reasons for its level, its body (blocks of prose, points with their detail and citations, notes, and the tiles it places by id) and risks with their citations, and the tiles on it (id, type, title, caption, state; never their data). Says when its details failed or are still being written.",
 		InputSchema: reviewSchema(`"id":{"type":"string","description":"The section's id, from review_outline."}`, "id"),
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/tiles", "/api/groups"},
@@ -276,7 +276,7 @@ func sectionOutline(d reviewv2.Document, s reviewv2.Section) map[string]any {
 // outlineView is the outline of a review: its overview (the summary, the
 // verdict, why the risk is what it is, the risk score, the reading time,
 // the screenshots, main diagram and intent) and each section's outline,
-// never a section's summary, steps or risks.
+// never a section's body or risks.
 func outlineView(doc []byte) (map[string]any, error) {
 	d, header, err := readReview(doc)
 	if err != nil {
@@ -313,8 +313,8 @@ func tileSummary(t reviewv2.Tile) map[string]any {
 	return out
 }
 
-// sectionView is one section of a review by id: its outline, summary,
-// steps, risks and the tiles on it, or, for a section whose details are
+// sectionView is one section of a review by id: its outline, body,
+// risks and the tiles on it, or, for a section whose details are
 // failed or pending, only its outline and that state, said in words.
 func sectionView(doc []byte, id string) (map[string]any, error) {
 	d, header, err := readReview(doc)
@@ -336,13 +336,13 @@ func sectionView(doc []byte, id string) (map[string]any, error) {
 			}
 			out["level_reasons"] = s.LevelReasons
 			if s.Details == reviewv2.DetailsFailed {
-				out["note"] = "The details of this section could not be written, so it has no summary, steps or risks. Read the diff of its hunks instead."
+				out["note"] = "The details of this section could not be written, so it has no body or risks. Read the diff of its hunks instead."
 			} else {
 				out["note"] = "The details of this section are still being written."
 			}
 		default:
 			section := sectionOutline(d, s)
-			section["level_reasons"], section["summary"], section["steps"], section["risks"] = s.LevelReasons, s.Summary, s.Steps, s.Risks
+			section["level_reasons"], section["body"], section["risks"] = s.LevelReasons, reviewv2.BodyOf(s, d.Tiles), s.Risks
 			var tiles []map[string]any
 			for _, t := range d.Tiles {
 				if t.Owner == s.ID {

@@ -93,7 +93,7 @@ func (c *checker) merge(found []string) {
 // styleFinding reports whether a document layer finding is about a text's
 // wording or length, not its structure.
 func styleFinding(f string) bool {
-	for _, s := range []string{"characters; write at most", "sentences; write at most", "words; a title", `the word "evidence"`, "names a hunk by its ID", "joins two things", "spans lines", "over their limits"} {
+	for _, s := range []string{"characters; write at most", "sentences; write at most", "words; a title", `the word "evidence"`, "names a hunk by its ID", "joins two things", "spans lines", "over their limits", "in a block"} {
 		if strings.Contains(f, s) {
 			return true
 		}
@@ -189,6 +189,34 @@ func (c *checker) text(path, s string, limit, maxSentences int, required bool) s
 		return s
 	}
 	return fit(s, limit)
+}
+
+// inline checks one text of a section's body: whitespace folded, bold and
+// code kept, the copy rules, its length as text checks it. Empty is "".
+func (c *checker) inline(path, s string, limit int, required bool) string {
+	s = reviewv2.CleanInline(s)
+	if s == "" {
+		if required {
+			c.add(path, "is empty; write it")
+		}
+		return ""
+	}
+	c.copyRules(path, s)
+	if n := utf8.RuneCountInString(s); n > limit+limit/4 && !c.lenient {
+		return s
+	}
+	return balanced(fit(s, limit))
+}
+
+// balanced closes a bold or code span a cut left open.
+func balanced(s string) string {
+	if strings.Count(s, "**")%2 == 1 {
+		s += "**"
+	}
+	if strings.Count(s, "`")%2 == 1 {
+		s += "`"
+	}
+	return s
 }
 
 // title checks a title: a plain subject of a few words, never two things

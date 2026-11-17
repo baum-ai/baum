@@ -54,7 +54,7 @@ type ReplyDiagram struct {
 	Columns json.RawMessage `json:"columns,omitempty"`
 	Actors  []string        `json:"actors,omitempty"`
 	Steps   []replySeqStep  `json:"steps,omitempty"`
-	Rows    [][]string      `json:"rows,omitempty"`
+	Rows    [][]Cell        `json:"rows,omitempty"`
 }
 
 type replyLane struct {
@@ -66,6 +66,7 @@ type replyLane struct {
 type replyFlowStep struct {
 	Title string  `json:"title"`
 	Note  *string `json:"note"`
+	More  *string `json:"more"`
 	Tone  *string `json:"tone"`
 	Join  *string `json:"join"`
 }
@@ -198,6 +199,12 @@ func diagramSchema(kind string, withID bool) string {
           }
         }`, idRequired, required, id, kind, text(MaxTitle), nullable(MaxCaption), source, props)
 	}
+	// A flow step's detail (more) is the tile agent's; the composition's
+	// view call, which carries ids, does not write it.
+	moreRequired, moreProperty := "", ""
+	if !withID {
+		moreRequired, moreProperty = `, "more"`, fmt.Sprintf(`, "more": %s`, nullable(MaxMore))
+	}
 	switch kind {
 	case TypeFlow:
 		return diagram(fmt.Sprintf(`"lanes": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
@@ -206,11 +213,11 @@ func diagramSchema(kind string, withID bool) string {
                 "label": %s,
                 "from": {"type": ["integer", "null"], "minimum": 1, "maximum": %d},
                 "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-                  "type": "object", "additionalProperties": false, "required": ["title", "note", "tone", "join"],
-                  "properties": {"title": %s, "note": %s, "tone": %s, "join": {"type": ["string", "null"], "enum": ["arrow", "both", "none", null]}}
+                  "type": "object", "additionalProperties": false, "required": ["title", "note"%s, "tone", "join"],
+                  "properties": {"title": %s, "note": %s%s, "tone": %s, "join": {"type": ["string", "null"], "enum": ["arrow", "both", "none", null]}}
                 }}
               }
-            }}`, MaxLanes, nullable(MaxLaneLabel), MaxLaneSteps, MaxLaneSteps, text(MaxStepTitle), nullable(MaxNote), tone), `"lanes"`)
+            }}`, MaxLanes, nullable(MaxLaneLabel), MaxLaneSteps, MaxLaneSteps, moreRequired, text(MaxStepTitle), nullable(MaxNote), moreProperty, tone), `"lanes"`)
 	case TypeColumns:
 		return diagram(fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": {
               "type": "object", "additionalProperties": false, "required": ["label", "tone", "items"],
@@ -230,8 +237,11 @@ func diagramSchema(kind string, withID bool) string {
             }}`, MinActors, MaxActors, text(MaxActor), MaxSequence, MaxActors-1, MaxActors-1, text(MaxSequenceText), tone), `"actors", "steps"`)
 	case TypeTable:
 		return diagram(fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
-            "rows": {"type": "array", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"type": "string", "maxLength": %d}}}`,
-			MinTableColumns, MaxTableColumns, text(MaxTableHeading), MaxTableRows, MinTableColumns, MaxTableColumns, MaxCell), `"columns", "rows"`)
+            "rows": {"type": "array", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"anyOf": [{"type": "string", "maxLength": %d}, {
+              "type": "object", "additionalProperties": false, "required": ["text", "was"],
+              "properties": {"text": {"type": "string", "maxLength": %d}, "was": %s}
+            }]}}}`,
+			MinTableColumns, MaxTableColumns, text(MaxTableHeading), MaxTableRows, MinTableColumns, MaxTableColumns, MaxCell, MaxCell, nullable(MaxCell)), `"columns", "rows"`)
 	}
 	return ""
 }
@@ -327,7 +337,7 @@ func diagramData(d ReplyDiagram) (any, bool) {
 				lane.From = *l.From
 			}
 			for _, s := range l.Steps {
-				lane.Steps = append(lane.Steps, FlowStep{Title: s.Title, Note: str(s.Note), Tone: str(s.Tone), Join: str(s.Join)})
+				lane.Steps = append(lane.Steps, FlowStep{Title: s.Title, Note: str(s.Note), More: str(s.More), Tone: str(s.Tone), Join: str(s.Join)})
 			}
 			out.Lanes = append(out.Lanes, lane)
 		}

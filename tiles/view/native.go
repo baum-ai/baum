@@ -67,8 +67,10 @@ type Lane struct {
 type FlowStep struct {
 	Title string `json:"title"`
 	Note  string `json:"note,omitempty"`
-	Tone  string `json:"tone,omitempty"`
-	Join  string `json:"join,omitempty"`
+	// More is the detail the page shows when the step is opened.
+	More string `json:"more,omitempty"`
+	Tone string `json:"tone,omitempty"`
+	Join string `json:"join,omitempty"`
 }
 
 // ColumnsData is two or three labelled lists side by side (before and
@@ -111,10 +113,48 @@ type SequenceStep struct {
 
 // TableData is a table; every row is as long as Columns.
 type TableData struct {
-	Caption string     `json:"caption,omitempty"`
-	Source  []Anchor   `json:"source"`
-	Columns []string   `json:"columns"`
-	Rows    [][]string `json:"rows"`
+	Caption string   `json:"caption,omitempty"`
+	Source  []Anchor `json:"source"`
+	Columns []string `json:"columns"`
+	Rows    [][]Cell `json:"rows"`
+}
+
+// Cell is one cell of a table: its text and, optionally, what the value was
+// before the change. A cell encodes as a plain string when it has no Was,
+// and decodes from either that string or {"text": ..., "was": ...}.
+type Cell struct {
+	Text string
+	Was  string
+}
+
+// MarshalJSON encodes a cell without a Was as its text.
+func (c Cell) MarshalJSON() ([]byte, error) {
+	if c.Was == "" {
+		return json.Marshal(c.Text)
+	}
+	return json.Marshal(struct {
+		Text string `json:"text"`
+		Was  string `json:"was"`
+	}{c.Text, c.Was})
+}
+
+// UnmarshalJSON decodes a cell from a string or from {text, was}; was may be
+// null.
+func (c *Cell) UnmarshalJSON(raw []byte) error {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		*c = Cell{Text: text}
+		return nil
+	}
+	var object struct {
+		Text *string `json:"text"`
+		Was  *string `json:"was"`
+	}
+	if err := json.Unmarshal(raw, &object); err != nil || object.Text == nil {
+		return fmt.Errorf("a table cell is a string or {text, was}")
+	}
+	*c = Cell{Text: *object.Text, Was: str(object.Was)}
+	return nil
 }
 
 // The limits of the native tiles.
@@ -124,6 +164,7 @@ const (
 	MaxLaneLabel    = 24
 	MaxStepTitle    = 60
 	MaxNote         = 80
+	MaxMore         = 300
 	MinColumns      = 2
 	MaxColumns      = 3
 	MaxColumnItems  = 8
@@ -270,6 +311,7 @@ func (n *nativeCheck) flow(raw json.RawMessage) any {
 			step := &lane.Steps[j]
 			step.Title = n.text(step.Title, MaxStepTitle, true, "a step's title")
 			step.Note = n.text(step.Note, MaxNote, false, "a step's note")
+			step.More = n.text(step.More, MaxMore, false, "a step's more")
 			step.Tone, step.Join = oneOf(step.Tone, Tones), oneOf(step.Join, Joins)
 			if j == 0 {
 				step.Join = ""
@@ -334,14 +376,14 @@ func (n *nativeCheck) table(raw json.RawMessage) any {
 	for i := range d.Columns {
 		d.Columns[i] = n.text(d.Columns[i], MaxTableHeading, true, "a column heading")
 	}
-	rows := [][]string{}
+	rows := [][]Cell{}
 	for _, row := range d.Rows {
 		if len(row) != len(d.Columns) {
 			n.report.fix(FixNativeItem, "a table row is not as long as its columns")
 			continue
 		}
 		for j := range row {
-			row[j] = n.text(row[j], MaxCell, false, "a cell")
+			row[j] = Cell{Text: n.text(row[j].Text, MaxCell, false, "a cell"), Was: n.text(row[j].Was, MaxCell, false, "a cell's was")}
 		}
 		rows = append(rows, row)
 	}
@@ -429,3 +471,7 @@ func CheckNative(typ string, data json.RawMessage, hasHunk func(string) bool) (j
 // and zero-width characters removed, whitespace folded and markdown other
 // than `code` spans taken out.
 func Clean(s string) string { return clean(s) }
+
+// Cut shortens text to at most limit characters at a word boundary, with an
+// ellipsis.
+func Cut(s string, limit int) string { return cut(s, limit) }

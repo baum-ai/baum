@@ -220,7 +220,8 @@ const (
 	MetricV2TilesFailed    = "v2_tiles_failed"
 	MetricV2ContextMissing = "v2_context_missing"
 	MetricV2OverviewFailed = "v2_overview_failed"
-	MetricV2Steps          = "v2_steps"
+	MetricV2Blocks         = "v2_blocks"
+	MetricV2Points         = "v2_points"
 	MetricV2Risks          = "v2_risks"
 	MetricV2Repairs        = "v2_repairs"
 )
@@ -240,7 +241,11 @@ func (g *V2Generator) DocumentMetrics(document []byte) (map[string]float64, erro
 		if s.Details == "failed" {
 			m[MetricV2SectionsFailed]++
 		}
-		m[MetricV2Steps] += float64(len(s.Steps))
+		body := reviewv2.BodyOf(s, doc.Tiles)
+		m[MetricV2Blocks] += float64(len(body))
+		for _, b := range body {
+			m[MetricV2Points] += float64(len(b.Items))
+		}
 		m[MetricV2Risks] += float64(len(s.Risks))
 	}
 	for _, t := range doc.Tiles {
@@ -297,7 +302,7 @@ func (g *V2Generator) Definitions() map[string]string {
 		MetricV2Sections: "sections of the document", MetricV2Logical: "logical sections", MetricV2SectionsFailed: "sections whose agent failed",
 		MetricV2Tiles: "tiles of the document", MetricV2TilesReady: "tiles ready", MetricV2TilesFailed: "tiles that failed",
 		MetricV2ContextMissing: "1 when the document has no context", MetricV2OverviewFailed: "1 when the overview fell back",
-		MetricV2Steps: "steps over every section", MetricV2Risks: "risks over every section", MetricV2Repairs: "validation repairs over every call",
+		MetricV2Blocks: "body blocks over every section", MetricV2Points: "points over every section's points blocks", MetricV2Risks: "risks over every section", MetricV2Repairs: "validation repairs over every call",
 	}
 	for _, name := range orchestrate.Levels {
 		d["v2_"+name+"_calls"] = "model calls of the " + name + " level"

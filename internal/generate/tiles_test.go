@@ -62,8 +62,8 @@ func keepTemplate(t *testing.T, lead string, _ any) func(context.Context, agent.
 			reply["sections"] = []any{map[string]any{"id": s.ID, "tiles": []any{"dg_lead"}}}
 			reply["diagrams"] = []any{map[string]any{"id": "dg_lead", "type": "flow", "title": "How it runs", "caption": nil, "source": []any{s.Hunks[0].ID},
 				"lanes": []any{map[string]any{"label": nil, "steps": []any{
-					map[string]any{"title": "Before", "note": nil, "tone": nil, "join": nil},
-					map[string]any{"title": "After", "note": nil, "tone": "new", "join": "arrow"}}}}}}
+					map[string]any{"title": "Before", "note": nil, "more": nil, "tone": nil, "join": nil},
+					map[string]any{"title": "After", "note": nil, "more": nil, "tone": "new", "join": "arrow"}}}}}}
 		}
 		raw, err := json.Marshal(reply)
 		return agent.Completion{Document: raw, Model: "stub-composer", Usage: agent.Usage{Input: 3000, Output: 400}}, err

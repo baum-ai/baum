@@ -145,12 +145,12 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 		}
 	}
 	for id, r := range reviewv2.ReusableSections(o.run.Previous, withHunks) {
-		if r.Section.Summary == "" {
+		if len(r.Section.Body) == 0 {
 			continue
 		}
 		reused[id] = true
 		o.setSection(id, func(sec *reviewv2.Section) {
-			sec.Summary, sec.Steps, sec.Risks, sec.Details = r.Section.Summary, r.Section.Steps, r.Section.Risks, ""
+			sec.Body, sec.Risks, sec.Details = r.Section.Body, r.Section.Risks, ""
 		})
 		o.record(LevelSections, id, StatusReused, "")
 		o.mu.Lock()
@@ -167,8 +167,8 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 	return reused
 }
 
-// mechanical writes the mechanical section's one-sentence summary from its
-// hunks' roles: no call, no steps, no risks.
+// mechanical writes the mechanical section's one prose block from its
+// hunks' roles: no call, no risks.
 func (o *orchestration) mechanical(s reviewv2.Section) {
 	roles := map[string]bool{}
 	locks := false
@@ -195,7 +195,7 @@ func (o *orchestration) mechanical(s reviewv2.Section) {
 	}
 	summary := "This part " + joinWords(parts) + "."
 	o.setSection(s.ID, func(sec *reviewv2.Section) {
-		sec.Summary, sec.Details, sec.Steps, sec.Risks = summary, "", []reviewv2.Step{}, []reviewv2.Risk{}
+		sec.Body, sec.Details, sec.Risks = []reviewv2.Block{{Type: reviewv2.BlockProse, Text: summary}}, "", []reviewv2.Risk{}
 	})
 	o.record(LevelSections, s.ID, StatusSkipped, "the host summarised the mechanical section")
 	o.publish()
@@ -222,7 +222,7 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 	c := call{level: LevelSections, id: s.ID, label: label("section", s.ID), input: input, schema: SectionSchema(o.registry.names()),
 		instructions: o.prompt.Section + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("section", s.ID)) + "`.\n"}
 	c.check = func(reply []byte, lenient bool) string {
-		r, findings := checkSection(reply, s, planned, o.facts, o.registry, lenient)
+		r, findings := checkSection(reply, s, planned, o.tileIDs(), o.facts, o.registry, lenient)
 		if findings == "" {
 			result = r
 		}
@@ -237,8 +237,9 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 		o.publish()
 		return planned
 	}
+	o.uniqueProposal(&result)
 	o.setSection(s.ID, func(sec *reviewv2.Section) {
-		sec.Summary, sec.Steps, sec.Risks, sec.Details = result.Summary, result.Steps, result.Risks, ""
+		sec.Body, sec.Risks, sec.Details = result.Body, result.Risks, ""
 	})
 	o.record(LevelSections, s.ID, StatusRan, "")
 	var out []reviewv2.Tile
@@ -265,6 +266,43 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 	}
 	o.publish()
 	return out
+}
+
+// tileIDs are the IDs of every tile the map planned or a section proposed.
+func (o *orchestration) tileIDs() map[string]bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	ids := map[string]bool{}
+	for _, t := range o.plan.Tiles {
+		ids[t.ID] = true
+	}
+	for _, t := range o.tiles {
+		ids[t.ID] = true
+	}
+	return ids
+}
+
+// uniqueProposal gives a section's proposed tile an ID no tile has now (a
+// section written at the same time may have taken the one it checked), and
+// the body's tile blocks that place it the new ID.
+func (o *orchestration) uniqueProposal(result *sectionResult) {
+	extra := result.Propose
+	if extra == nil {
+		return
+	}
+	taken := o.tileIDs()
+	id := extra.ID
+	for n := 2; taken[extra.ID]; n++ {
+		extra.ID = fmt.Sprintf("%s_%d", id, n)
+	}
+	if extra.ID == id {
+		return
+	}
+	for i := range result.Body {
+		if result.Body[i].Type == reviewv2.BlockTile && result.Body[i].Tile == id {
+			result.Body[i].Tile = extra.ID
+		}
+	}
 }
 
 func (o *orchestration) tileCount() int {
@@ -526,8 +564,8 @@ func (o *orchestration) document(final bool) reviewv2.Document {
 	}
 	for i := range doc.Sections {
 		s := &doc.Sections[i]
-		if s.Steps == nil {
-			s.Steps = []reviewv2.Step{}
+		if s.Body == nil {
+			s.Body = []reviewv2.Block{}
 		}
 		if s.Risks == nil {
 			s.Risks = []reviewv2.Risk{}

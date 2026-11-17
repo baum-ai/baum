@@ -59,6 +59,9 @@ func (r *Report) fix(kind tiles.FixKind, problem string) {
 	}
 }
 
+// Fix counts one fix of a kind, with the reason in the host's words (or "").
+func (r *Report) Fix(kind tiles.FixKind, problem string) { r.fix(kind, problem) }
+
 func (r *Report) add(counts map[tiles.FixKind]int) {
 	for kind, n := range counts {
 		if r.counts == nil {

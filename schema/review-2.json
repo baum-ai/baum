@@ -133,7 +133,7 @@
     "v2Section": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "title", "kind", "hunks", "gist", "level", "level_reasons", "summary", "steps", "risks"],
+      "required": ["id", "title", "kind", "hunks", "gist", "level", "level_reasons", "body", "risks"],
       "properties": {
         "id": { "$ref": "#/$defs/sectionId" },
         "title": { "type": "string" },
@@ -154,9 +154,16 @@
             }
           }
         },
-        "summary": { "type": "string" },
+        "body": {
+          "type": "array",
+          "maxItems": 24,
+          "description": "The blocks the page draws between the section's gist and its risks, in order: the section agent composes them (prose, points, note), and a tile block places one of the document's tiles that the section owns. The host leaves every section with one, and a tile the section owns but the body does not place is placed at the end.",
+          "items": { "$ref": "#/$defs/v2Block" }
+        },
+        "summary": { "type": "string", "description": "Only in a document written before bodies: read as a prose block of the body. Never written now." },
         "steps": {
           "type": "array",
+          "description": "Only in a document written before bodies: read as a points block of the body. Never written now.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -190,6 +197,38 @@
         "details": { "enum": ["pending", "failed"] },
         "derived": { "$ref": "#/$defs/reviewDerived" }
       }
+    },
+    "v2Block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["prose", "points", "note", "tile"] },
+        "title": { "type": "string", "maxLength": 160, "description": "An optional label above the block, at most 60 characters written; a tile block's title is the tile's own." },
+        "text": { "type": "string", "maxLength": 1500, "description": "Prose (at most 450 characters written) and note (240): inline markdown, bold and code only." },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "description": "A points block's lines, at most 8 written.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "cites"],
+            "properties": {
+              "text": { "type": "string", "minLength": 1, "maxLength": 600, "description": "One line, at most 180 characters written, inline markdown." },
+              "more": { "type": "string", "maxLength": 1500, "description": "The detail the page shows when the line is opened, at most 450 characters written." },
+              "cites": { "type": "array", "items": { "$ref": "#/$defs/anchor" } }
+            }
+          }
+        },
+        "tile": { "$ref": "#/$defs/v2TileId", "description": "A tile block's tile, by ID: a tile of the document that the section owns." }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "tile" } } }, "then": { "required": ["tile"] } },
+        { "if": { "properties": { "type": { "const": "points" } } }, "then": { "required": ["items"] } },
+        { "if": { "properties": { "type": { "enum": ["prose", "note"] } } }, "then": { "required": ["text"] } }
+      ]
     },
     "v2TileId": {
       "type": "string",
@@ -262,6 +301,7 @@
                   "properties": {
                     "title": { "type": "string", "minLength": 1, "maxLength": 60 },
                     "note": { "type": "string", "maxLength": 80 },
+                    "more": { "type": "string", "maxLength": 300, "description": "The detail the page shows when the step is opened." },
                     "tone": { "$ref": "#/$defs/v2Tone" },
                     "join": { "enum": ["arrow", "both", "none"] }
                   }
@@ -344,7 +384,22 @@
           "type": "array",
           "minItems": 1,
           "maxItems": 12,
-          "items": { "type": "array", "minItems": 2, "maxItems": 5, "items": { "type": "string", "maxLength": 120 } }
+          "items": { "type": "array", "minItems": 2, "maxItems": 5, "items": {
+              "description": "A table cell: its text, or the text and what the value was before the change.",
+              "oneOf": [
+                { "type": "string", "maxLength": 120 },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["text"],
+                  "properties": {
+                    "text": { "type": "string", "maxLength": 120 },
+                    "was": { "type": "string", "maxLength": 120 }
+                  }
+                }
+              ]
+            }
+          }
         }
       }
     },

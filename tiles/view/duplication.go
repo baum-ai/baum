@@ -191,9 +191,9 @@ func DuplicatesTile(doc *tiles.Document, extra []tiles.Tile, tile tiles.Authored
 // 80% or more of its cells or non-blank lines are in the block.
 func blockRepeats(kind string, data, block json.RawMessage) bool {
 	var a, b struct {
-		Kind    string     `json:"kind"`
-		Rows    [][]string `json:"rows"`
-		Content string     `json:"content"`
+		Kind    string   `json:"kind"`
+		Rows    [][]Cell `json:"rows"`
+		Content string   `json:"content"`
 	}
 	if json.Unmarshal(data, &a) != nil || json.Unmarshal(block, &b) != nil || b.Kind != kind {
 		return false
@@ -203,11 +203,13 @@ func blockRepeats(kind string, data, block json.RawMessage) bool {
 	switch kind {
 	case tiles.TypeTable:
 		for _, row := range a.Rows {
-			mine = append(mine, row...)
+			for _, cell := range row {
+				mine = append(mine, cell.Text)
+			}
 		}
 		for _, row := range b.Rows {
 			for _, cell := range row {
-				theirs[strings.TrimSpace(cell)] = true
+				theirs[strings.TrimSpace(cell.Text)] = true
 			}
 		}
 	case tiles.TypeCode:

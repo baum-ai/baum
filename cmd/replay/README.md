@@ -261,7 +261,7 @@ The case's `document.json` is the completed document. Beside it:
 Validation checks the schema and that every hunk is in a section.
 `replay metrics` reports, from the document, `v2_sections`,
 `v2_logical_sections`, `v2_sections_failed`, `v2_tiles`, `v2_tiles_ready`,
-`v2_tiles_failed`, `v2_tiles_type_<type>`, `v2_steps`, `v2_risks`,
+`v2_tiles_failed`, `v2_tiles_type_<type>`, `v2_blocks`, `v2_points`, `v2_risks`,
 `v2_context_missing` and `v2_overview_failed`; from `levels.json`
 `v2_repairs` and per level `v2_<level>_calls`, `_tokens`, `_seconds`,
 `_failed` and `_cost_usd`. Chains are not replayed.

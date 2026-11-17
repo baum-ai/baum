@@ -42,7 +42,8 @@ type Served struct {
 //     with its problems when it fails, and owned by the section it was added
 //     on when the document has that section, else by the section whose hunks
 //     it cites most, else by context; a type the document already has is not
-//     served twice;
+//     served twice; a section without a body (written before bodies) is
+//     served with the one it reads as (reviewv2.EnsureBodies);
 //   - a baum.review/1 document is converted (reviewv2.FromV1), its tiles
 //     those of the review page's view of it (BuildWith: the composition's
 //     native diagrams, library and authored tiles and the added tiles,
@@ -68,6 +69,7 @@ func Serve(document, composition []byte, added []AddedTile, opts tiles.Options) 
 		d.Tiles = reviewv2.TilesOfView(*built.View)
 		d.Overview = reviewv2.OverviewOfView(*built.View)
 		d.Summary.RiskWhy = built.View.Overview.RiskSummary
+		reviewv2.EnsureBodies(&d)
 	}
 	return encodeServed(&d, built.Frames, built.Problem)
 }
@@ -94,6 +96,9 @@ func serveV2(document []byte, added []AddedTile) Served {
 		d.Tiles = []reviewv2.Tile{}
 	}
 	d.Tiles = append(d.Tiles, addedTiles(d, added)...)
+	// A document written before sections had a body is served with one, and
+	// every tile a section owns, an added one too, is placed in its body.
+	reviewv2.EnsureBodies(&d)
 	frames := registerTileFrames(d.Tiles)
 	return encodeServed(&d, frames, "")
 }

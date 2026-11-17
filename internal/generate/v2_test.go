@@ -57,7 +57,7 @@ func v2Replies(t *testing.T) func(context.Context, agent.Request, int) (agent.Re
 			reply = `{"change_kind":"feature","sections":[{"id":"sec_all","title":"The whole change","kind":"logical","hunks":[` + strings.Join(ids, ",") +
 				`],"gist":"It changes everything at once.","scope":null,"level":2,"level_reasons":[{"text":"It is small.","cites":[]}]}],"tiles":[]}`
 		case "section-sec-all":
-			reply = `{"summary":"It changes the code.","steps":[{"title":"First","text":"It does one thing.","cites":` + cite + `},{"title":"Then","text":"It does another.","cites":` + cite + `}],"risks":[],"tiles":[],"propose":null}`
+			reply = `{"body":[{"type":"prose","title":null,"text":"It changes the code.","items":null,"tile":null},{"type":"points","title":null,"text":null,"items":[{"text":"It does **one** thing.","more":null,"cites":` + cite + `},{"text":"It does another.","more":"With a detail.","cites":` + cite + `}],"tile":null}],"risks":[],"tiles":[],"propose":null}`
 		case "context":
 			reply = `{"area":{"text":"The code.","files":[]},"reached_by":{"text":"","files":[]},"contracts":{"text":"","files":[]},"related":{"text":"","files":[]}}`
 		case "overview":
@@ -91,7 +91,7 @@ func TestV2RunWritesLevelsInAWorktree(t *testing.T) {
 	if err := json.Unmarshal(result.Document, &doc); err != nil || doc.Schema != reviewv2.Name || result.Metadata.Schema != reviewv2.Name {
 		t.Fatalf("document: %v %q %q", err, doc.Schema, result.Metadata.Schema)
 	}
-	if len(doc.Sections) != 1 || doc.Sections[0].Summary != "It changes the code." || doc.Summary.Text == "" || doc.Context == nil {
+	if len(doc.Sections) != 1 || len(doc.Sections[0].Body) != 2 || doc.Sections[0].Body[0].Text != "It changes the code." || doc.Sections[0].Body[1].Items[1].More != "With a detail." || doc.Summary.Text == "" || doc.Context == nil {
 		t.Fatalf("section %+v, lede %q, context %v", doc.Sections, doc.Summary.Text, doc.Context != nil)
 	}
 	if result.Metadata.Version != 1 || result.Metadata.PromptVersion == "" || result.V2 == nil || result.V2.Levels["map"].Calls != 1 {

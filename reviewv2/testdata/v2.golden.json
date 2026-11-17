@@ -123,41 +123,55 @@
           ]
         }
       ],
-      "summary": "A policy holds the number of attempts and the first wait. The wait doubles with every attempt.",
-      "steps": [
+      "body": [
         {
-          "id": "st_policy",
-          "title": "Policy holds the budget",
-          "text": "The policy keeps how many attempts to make and the first wait.",
-          "cites": [
+          "type": "prose",
+          "text": "A policy holds the number of attempts and the first wait. The wait doubles with every attempt."
+        },
+        {
+          "type": "points",
+          "title": "What the policy decides",
+          "items": [
             {
-              "type": "hunk",
-              "id": "h_a00000000001",
-              "lines": [
-                6,
-                9
+              "text": "The policy keeps **how many attempts** to make and the first wait.",
+              "cites": [
+                {
+                  "type": "hunk",
+                  "id": "h_a00000000001",
+                  "lines": [
+                    6,
+                    9
+                  ]
+                }
+              ]
+            },
+            {
+              "text": "Each attempt waits **twice** as long as the one before.",
+              "more": "The doubling stops at the largest wait the policy allows.",
+              "cites": [
+                {
+                  "type": "hunk",
+                  "id": "h_a00000000001",
+                  "lines": [
+                    11,
+                    12
+                  ]
+                },
+                {
+                  "type": "hunk",
+                  "id": "h_a00000000003"
+                }
               ]
             }
           ]
         },
         {
-          "id": "st_wait",
-          "title": "Wait doubles",
-          "text": "Each attempt waits twice as long as the one before.",
-          "cites": [
-            {
-              "type": "hunk",
-              "id": "h_a00000000001",
-              "lines": [
-                11,
-                12
-              ]
-            },
-            {
-              "type": "hunk",
-              "id": "h_a00000000003"
-            }
-          ]
+          "type": "tile",
+          "tile": "tl_wait_code"
+        },
+        {
+          "type": "note",
+          "text": "Deliveries already queued keep the wait they had."
         }
       ],
       "risks": [
@@ -224,42 +238,50 @@
           ]
         }
       ],
-      "summary": "A retryable error now schedules a retry. Any other error is returned as before.",
-      "steps": [
+      "body": [
         {
-          "id": "st_schedule",
-          "title": "Retryable errors wait",
-          "text": "A retryable error schedules the delivery again under the policy.",
-          "cites": [
+          "type": "prose",
+          "text": "A retryable error now schedules a retry. Any other error is returned as before."
+        },
+        {
+          "type": "points",
+          "items": [
             {
-              "type": "hunk",
-              "id": "h_a00000000002",
-              "lines": [
-                40,
-                42
+              "text": "**Retryable errors wait.** A retryable error schedules the delivery again under the policy.",
+              "cites": [
+                {
+                  "type": "hunk",
+                  "id": "h_a00000000002",
+                  "lines": [
+                    40,
+                    42
+                  ]
+                }
+              ]
+            },
+            {
+              "text": "**Other errors return.** Any other error is returned to the caller at once.",
+              "cites": [
+                {
+                  "type": "hunk",
+                  "id": "h_a00000000002",
+                  "lines": [
+                    43,
+                    44
+                  ]
+                },
+                {
+                  "type": "session_event",
+                  "session": "11111111-2222-3333-4444-555555555555",
+                  "event": "ev_tests"
+                }
               ]
             }
           ]
         },
         {
-          "id": "st_return",
-          "title": "Other errors return",
-          "text": "Any other error is returned to the caller at once.",
-          "cites": [
-            {
-              "type": "hunk",
-              "id": "h_a00000000002",
-              "lines": [
-                43,
-                44
-              ]
-            },
-            {
-              "type": "session_event",
-              "session": "11111111-2222-3333-4444-555555555555",
-              "event": "ev_tests"
-            }
-          ]
+          "type": "tile",
+          "tile": "tl_error_paths"
         }
       ],
       "risks": [],
@@ -296,8 +318,12 @@
       "gist": "A dependency moves to its next minor version.",
       "level": null,
       "level_reasons": [],
-      "summary": "The lock file records the new version of one dependency.",
-      "steps": [],
+      "body": [
+        {
+          "type": "prose",
+          "text": "The lock file records the new version of one dependency."
+        }
+      ],
       "risks": [],
       "derived": {
         "state": "new",

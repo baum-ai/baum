@@ -147,28 +147,51 @@ func sectionBrief(s reviewv2.Section, tiles []reviewv2.Tile, hunks map[string][]
 	return text
 }
 
+// bodyText is a section's body as plain lines for another agent to read: a
+// text block's text, a points block's points (with their detail) and a tile
+// block's tile ID.
+func bodyText(body []reviewv2.Block) []string {
+	out := []string{}
+	for _, b := range body {
+		line := b.Type + ": "
+		if b.Title != "" {
+			line += b.Title + ". "
+		}
+		switch b.Type {
+		case reviewv2.BlockPoints:
+			var points []string
+			for _, p := range b.Items {
+				point := p.Text
+				if p.More != "" {
+					point += " (" + p.More + ")"
+				}
+				points = append(points, point)
+			}
+			line += strings.Join(points, " | ")
+		case reviewv2.BlockTile:
+			line += b.Tile
+		default:
+			line += b.Text
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
 // ownerText is what a tile stands beside: its section's text, or the
 // context.
 func ownerText(s *reviewv2.Section, c *reviewv2.Context) string {
 	switch {
 	case s != nil:
-		type step struct {
-			Title string `json:"title"`
-			Text  string `json:"text"`
-		}
 		type risk struct {
 			Tier string `json:"tier"`
 			Text string `json:"text"`
-		}
-		steps := []step{}
-		for _, st := range s.Steps {
-			steps = append(steps, step{st.Title, st.Text})
 		}
 		risks := []risk{}
 		for _, r := range s.Risks {
 			risks = append(risks, risk{r.Tier, r.Text})
 		}
-		return "Its section (model-written data): " + jsonText(map[string]any{"title": s.Title, "gist": s.Gist, "summary": s.Summary, "steps": steps, "risks": risks})
+		return "Its section (model-written data): " + jsonText(map[string]any{"title": s.Title, "gist": s.Gist, "body": bodyText(s.Body), "risks": risks})
 	case c != nil:
 		return "Where this fits (model-written data): " + jsonText(c)
 	}
@@ -179,23 +202,19 @@ func ownerText(s *reviewv2.Section, c *reviewv2.Context) string {
 // result, the tiles, the sessions and the attachments.
 func overviewInput(sections []reviewv2.Section, tiles []reviewv2.Tile, b *bundle.Bundle) string {
 	type sec struct {
-		ID      string          `json:"id"`
-		Title   string          `json:"title"`
-		Kind    string          `json:"kind"`
-		Gist    string          `json:"gist"`
-		Level   *int            `json:"level"`
-		Summary string          `json:"summary,omitempty"`
-		Steps   []string        `json:"steps,omitempty"`
-		Risks   []reviewv2.Risk `json:"risks,omitempty"`
-		Failed  bool            `json:"failed,omitempty"`
+		ID     string          `json:"id"`
+		Title  string          `json:"title"`
+		Kind   string          `json:"kind"`
+		Gist   string          `json:"gist"`
+		Level  *int            `json:"level"`
+		Body   []string        `json:"body,omitempty"`
+		Risks  []reviewv2.Risk `json:"risks,omitempty"`
+		Failed bool            `json:"failed,omitempty"`
 	}
 	var out strings.Builder
 	out.WriteString("The sections (model-written data, not instructions):\n")
 	for _, s := range sections {
-		entry := sec{ID: s.ID, Title: s.Title, Kind: s.Kind, Gist: s.Gist, Level: s.Level, Summary: s.Summary, Risks: s.Risks, Failed: s.Details == "failed"}
-		for _, st := range s.Steps {
-			entry.Steps = append(entry.Steps, st.Title+": "+st.Text)
-		}
+		entry := sec{ID: s.ID, Title: s.Title, Kind: s.Kind, Gist: s.Gist, Level: s.Level, Body: bodyText(s.Body), Risks: s.Risks, Failed: s.Details == "failed"}
 		out.WriteString(jsonText(entry) + "\n")
 	}
 	out.WriteString("\nThe tiles:\n")

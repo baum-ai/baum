@@ -149,7 +149,7 @@ func TestNormalizeDropsOnlyWhatBreaksARule(t *testing.T) {
 			{ID: "dg_badseq", Type: view.TypeSequence, Title: "Too far", Data: raw(t, view.SequenceData{Source: []view.Anchor{}, Actors: []string{"A", "B"},
 				Steps: []view.SequenceStep{{From: 0, To: 2, Text: "nobody"}}})},
 			{ID: "dg_table", Type: view.TypeTable, Title: "Waits", Data: raw(t, view.TableData{Source: []view.Anchor{}, Columns: []string{"Try", "Wait"},
-				Rows: [][]string{{"1", "1 s"}, {"2"}, {"3", "4 s"}}})},
+				Rows: [][]view.Cell{{{Text: "1"}, {Text: "1 s"}}, {{Text: "2"}}, {{Text: "3"}, {Text: "4 s"}}}})},
 		},
 	}
 	n, report := view.Normalize(r, doc, c)

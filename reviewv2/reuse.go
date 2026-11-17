@@ -5,7 +5,7 @@ import (
 )
 
 // Reused is a previous version's section a new version keeps without
-// writing it again: its summary, steps and active risks (without their
+// writing it again: its body and active risks (without their
 // lifecycle fields, which Complete gives them again) and its ready tiles.
 type Reused struct {
 	Section Section
@@ -17,7 +17,7 @@ type Reused struct {
 // the same ID and the same hunks (hunk IDs hash their content, so the same
 // set is the same code, as baum.review/1's ReusableSectionDetails reads
 // them). A previous section whose details are pending or failed is not
-// reusable. Only the section agent's fields are taken (summary, steps,
+// reusable. Only the section agent's fields are taken (body,
 // risks); the map's fields (title, gist, level) are the new map's. A
 // reusable section's tiles are its ready tiles in the previous version.
 //
@@ -42,8 +42,8 @@ func ReusableSections(previous []byte, sections []Section) map[string]Reused {
 			continue
 		}
 		reused := s
-		reused.Summary = old.Summary
-		reused.Steps = slices.Clone(old.Steps)
+		reused.Body = slices.Clone(BodyOf(old, prior.Tiles))
+		reused.Summary, reused.Steps = "", nil
 		reused.Risks = []Risk{}
 		for _, r := range old.Risks {
 			if r.State == "mitigated" {

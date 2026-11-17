@@ -108,33 +108,53 @@
           ]
         }
       ],
-      "summary": "Deliver retries a failed request up to five times. The delay doubles each time.",
-      "steps": [
+      "body": [
         {
-          "id": "st_first_failure",
-          "title": "A delivery fails",
-          "text": "The worker schedules a retry after one second.",
-          "cites": [
+          "type": "prose",
+          "text": "Deliver retries a failed request up to five times. The delay doubles each time."
+        },
+        {
+          "type": "points",
+          "items": [
             {
-              "id": "h_000000000001",
-              "type": "hunk"
+              "text": "**A delivery fails.** The worker schedules a retry after one second.",
+              "cites": [
+                {
+                  "id": "h_000000000001",
+                  "type": "hunk"
+                }
+              ]
+            },
+            {
+              "text": "After the fifth failure the delivery is dropped.",
+              "cites": [
+                {
+                  "id": "h_000000000001",
+                  "lines": [
+                    40,
+                    44
+                  ],
+                  "type": "hunk"
+                }
+              ]
             }
           ]
         },
         {
-          "id": "st_give_up",
-          "title": "",
-          "text": "After the fifth failure the delivery is dropped.",
-          "cites": [
-            {
-              "id": "h_000000000001",
-              "lines": [
-                40,
-                44
-              ],
-              "type": "hunk"
-            }
-          ]
+          "type": "tile",
+          "tile": "schema_change"
+        },
+        {
+          "type": "tile",
+          "tile": "api_change"
+        },
+        {
+          "type": "tile",
+          "tile": "table_retry_states"
+        },
+        {
+          "type": "tile",
+          "tile": "code_sync_backoff"
         }
       ],
       "risks": [
@@ -211,18 +231,28 @@
           ]
         }
       ],
-      "summary": "A new setting, retries_enabled, defaults to true.",
-      "steps": [
+      "body": [
         {
-          "id": "st_flag_off",
-          "title": "",
-          "text": "With retries_enabled false, a failure drops the delivery at once.",
-          "cites": [
+          "type": "prose",
+          "text": "A new setting, retries_enabled, defaults to true."
+        },
+        {
+          "type": "points",
+          "items": [
             {
-              "id": "h_000000000003",
-              "type": "hunk"
+              "text": "With retries_enabled false, a failure drops the delivery at once.",
+              "cites": [
+                {
+                  "id": "h_000000000003",
+                  "type": "hunk"
+                }
+              ]
             }
           ]
+        },
+        {
+          "type": "tile",
+          "tile": "dg_flag"
         }
       ],
       "risks": [
@@ -273,8 +303,12 @@
       "gist": "The client is regenerated from the updated spec.",
       "level": null,
       "level_reasons": [],
-      "summary": "The client is regenerated from the updated spec.",
-      "steps": [],
+      "body": [
+        {
+          "type": "prose",
+          "text": "The client is regenerated from the updated spec."
+        }
+      ],
       "risks": [
         {
           "id": "rsk_generated_drift",

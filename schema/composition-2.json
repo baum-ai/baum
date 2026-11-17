@@ -425,6 +425,11 @@
                       "type": "string",
                       "maxLength": 80
                     },
+                    "more": {
+                      "type": "string",
+                      "maxLength": 300,
+                      "description": "The detail the page shows when the step is opened."
+                    },
                     "tone": {
                       "$ref": "#/$defs/nativeTone"
                     },
@@ -623,8 +628,30 @@
             "minItems": 2,
             "maxItems": 5,
             "items": {
-              "type": "string",
-              "maxLength": 120
+              "description": "A table cell: its text, or the text and what the value was before the change.",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 120
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "maxLength": 120
+                    },
+                    "was": {
+                      "type": "string",
+                      "maxLength": 120
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "text"
+                  ]
+                }
+              ]
             }
           }
         }

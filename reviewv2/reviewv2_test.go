@@ -147,7 +147,7 @@ func TestCompleteHistory(t *testing.T) {
 
 	// A section whose details failed keeps its previous risks as they were.
 	failed := authored(t)
-	failed.Sections[0].Details, failed.Sections[0].Risks, failed.Sections[0].Summary, failed.Sections[0].Steps = DetailsFailed, nil, "", nil
+	failed.Sections[0].Details, failed.Sections[0].Risks, failed.Sections[0].Body = DetailsFailed, nil, nil
 	d = completeFixture(t, failed, 2, first)
 	if r := d.Sections[0].Risks; len(r) != 1 || r[0].State != "active" || *r[0].IntroducedVersion != 1 {
 		t.Fatalf("retained risks = %+v", r)
@@ -219,10 +219,8 @@ func TestFromV1Example(t *testing.T) {
 		if s.Gist == "" || len([]rune(s.Gist)) > MaxGist {
 			t.Errorf("section %s gist = %q", s.ID, s.Gist)
 		}
-		for _, step := range s.Steps {
-			if !strings.HasPrefix(step.ID, "st_") {
-				t.Errorf("step id %q", step.ID)
-			}
+		if len(s.Body) == 0 || s.Summary != "" || len(s.Steps) != 0 {
+			t.Errorf("section %s has no body, or still its older summary and steps: %+v", s.ID, s)
 		}
 	}
 
@@ -247,7 +245,7 @@ func TestReusableSections(t *testing.T) {
 		t.Fatalf("reused = %v", reused)
 	}
 	r, ok := reused["sec_dependencies"]
-	if !ok || r.Section.Title != "Lock file" || r.Section.Summary == "" || r.Section.Derived != nil {
+	if !ok || r.Section.Title != "Lock file" || len(r.Section.Body) == 0 || r.Section.Summary != "" || r.Section.Derived != nil {
 		t.Fatalf("reused = %+v", r)
 	}
 	all := ReusableSections(first, authored(t).Sections)
@@ -288,7 +286,7 @@ func TestChecks(t *testing.T) {
 		want  string
 	}{
 		{"evidence word", func(d Document) []string {
-			d.Sections[0].Summary = "The evidence says so."
+			d.Sections[0].Body[0].Text = "The evidence says so."
 			return CheckSection(d.Sections[0], refs)
 		}, `the word "evidence"`},
 		{"long title", func(d Document) []string {
@@ -316,11 +314,11 @@ func TestChecks(t *testing.T) {
 			return CheckMap(d.Summary.ChangeKind, d.Sections, d.Tiles, refs)
 		}, "not tl_"},
 		{"unknown hunk", func(d Document) []string {
-			d.Sections[0].Steps[0].Cites = []Anchor{HunkAnchor("h_ffffffffffff", nil)}
+			d.Sections[0].Body[1].Items[0].Cites = []Anchor{HunkAnchor("h_ffffffffffff", nil)}
 			return CheckSection(d.Sections[0], refs)
 		}, "does not have"},
 		{"lines outside hunk", func(d Document) []string {
-			d.Sections[0].Steps[0].Cites = []Anchor{HunkAnchor("h_a00000000002", []int{1, 2})}
+			d.Sections[0].Body[1].Items[0].Cites = []Anchor{HunkAnchor("h_a00000000002", []int{1, 2})}
 			return CheckSection(d.Sections[0], refs)
 		}, "outside the hunk's lines 39 to 44"},
 		{"unknown prompt", func(d Document) []string {
@@ -328,17 +326,54 @@ func TestChecks(t *testing.T) {
 			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
 		}, "prompt 9"},
 		{"one step", func(d Document) []string {
-			d.Sections[0].Steps = d.Sections[0].Steps[:1]
-			return CheckSection(d.Sections[0], refs)
+			// Section 1 is written as before bodies were: a summary and steps.
+			d.Sections[1].Steps = d.Sections[1].Steps[:1]
+			return CheckSection(d.Sections[1], refs)
 		}, "write 2 to 5"},
 		{"step two sentences", func(d Document) []string {
-			d.Sections[0].Steps[0].Text = "One. Two."
-			return CheckSection(d.Sections[0], refs)
+			d.Sections[1].Steps[0].Text = "One. Two."
+			return CheckSection(d.Sections[1], refs)
 		}, "2 sentences"},
 		{"summary four sentences", func(d Document) []string {
-			d.Sections[0].Summary = "A. B. C. D."
+			d.Sections[1].Summary = "A. B. C. D."
+			return CheckSection(d.Sections[1], refs)
+		}, "4 sentences"},
+		{"prose four sentences", func(d Document) []string {
+			d.Sections[0].Body[0].Text = "A. B. C. D."
 			return CheckSection(d.Sections[0], refs)
 		}, "4 sentences"},
+		{"note three sentences", func(d Document) []string {
+			d.Sections[0].Body[3].Text = "A. B. C."
+			return CheckSection(d.Sections[0], refs)
+		}, "3 sentences; write at most 2"},
+		{"text over its limit", func(d Document) []string {
+			d.Sections[0].Body[0].Text = strings.Repeat("word ", 100)
+			return CheckSection(d.Sections[0], refs)
+		}, "over their limits"},
+		{"point over its limit", func(d Document) []string {
+			d.Sections[0].Body[1].Items[0].Text = strings.Repeat("x", MaxPoint+1)
+			return CheckSection(d.Sections[0], refs)
+		}, "over their limits"},
+		{"no blocks", func(d Document) []string {
+			d.Sections[0].Body = nil
+			return CheckSection(d.Sections[0], refs)
+		}, "it has no blocks"},
+		{"too many blocks", func(d Document) []string {
+			b := d.Sections[0].Body[0]
+			d.Sections[0].Body = []Block{b, b, b, b, b, b, b}
+			return CheckSection(d.Sections[0], refs)
+		}, "more than 6 blocks"},
+		{"empty block", func(d Document) []string {
+			d.Sections[0].Body = append(d.Sections[0].Body, Block{Type: BlockProse, Text: " "})
+			return CheckSection(d.Sections[0], refs)
+		}, "empty or of a type"},
+		{"hunk named in a point", func(d Document) []string {
+			d.Sections[0].Body[1].Items[0].More = "See h_a00000000001."
+			return CheckSection(d.Sections[0], refs)
+		}, "names a hunk by its ID"},
+		{"tile block of another section", func(d Document) []string {
+			return CheckDocument(d, refs)
+		}, `tile "tl_missing" is not a tile of this section`},
 		{"native text over limit", func(d Document) []string {
 			d.Tiles[0].Data = json.RawMessage(`{"lanes": [{"steps": [{"title": "` + strings.Repeat("y", 70) + `"}]}]}`)
 			return CheckTile(d.Tiles[0], refs)

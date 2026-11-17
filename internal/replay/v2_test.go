@@ -32,7 +32,7 @@ func TestV2Metrics(t *testing.T) {
 	g := &replay.V2Generator{}
 	level := 2
 	doc, _ := json.Marshal(reviewv2.Document{Schema: reviewv2.Name,
-		Sections:   []reviewv2.Section{{ID: "sec_a", Kind: "logical", Level: &level, Steps: []reviewv2.Step{{}, {}}}, {ID: "sec_b", Kind: "logical", Details: "failed"}},
+		Sections:   []reviewv2.Section{{ID: "sec_a", Kind: "logical", Level: &level, Body: []reviewv2.Block{{Type: reviewv2.BlockProse, Text: "a"}, {Type: reviewv2.BlockPoints, Items: []reviewv2.Point{{Text: "b"}, {Text: "c"}}}}}, {ID: "sec_b", Kind: "logical", Details: "failed"}},
 		Tiles:      []reviewv2.Tile{{ID: "tl_a", Type: "flow", State: reviewv2.TileReady}, {ID: "tl_b", Type: "table", State: reviewv2.TileFailed}},
 		Generation: &reviewv2.Generation{Overview: reviewv2.CallRecord{Status: "failed"}}})
 	m, err := g.DocumentMetrics(doc)
@@ -40,7 +40,7 @@ func TestV2Metrics(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]float64{replay.MetricV2Sections: 2, replay.MetricV2Logical: 2, replay.MetricV2SectionsFailed: 1, replay.MetricV2Tiles: 2,
-		replay.MetricV2TilesReady: 1, replay.MetricV2TilesFailed: 1, "v2_tiles_type_flow": 1, replay.MetricV2Steps: 2, replay.MetricV2ContextMissing: 1, replay.MetricV2OverviewFailed: 1}
+		replay.MetricV2TilesReady: 1, replay.MetricV2TilesFailed: 1, "v2_tiles_type_flow": 1, replay.MetricV2Blocks: 2, replay.MetricV2Points: 2, replay.MetricV2ContextMissing: 1, replay.MetricV2OverviewFailed: 1}
 	for k, v := range want {
 		if m[k] != v {
 			t.Errorf("%s = %v, want %v", k, m[k], v)

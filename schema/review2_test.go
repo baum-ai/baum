@@ -55,17 +55,33 @@ func TestValidateReview2(t *testing.T) {
 	}
 	tile := func(doc map[string]any, i int) map[string]any { return doc["tiles"].([]any)[i].(map[string]any) }
 	section := func(doc map[string]any, i int) map[string]any { return doc["sections"].([]any)[i].(map[string]any) }
+	block := func(doc map[string]any, s, b int) map[string]any {
+		return section(doc, s)["body"].([]any)[b].(map[string]any)
+	}
 	for name, mutate := range map[string]func(doc map[string]any){
 		"wrong schema name":       func(doc map[string]any) { doc["schema"] = Name },
 		"unknown top-level field": func(doc map[string]any) { doc["view"] = map[string]any{} },
 		"missing context":         func(doc map[string]any) { delete(doc, "context") },
 		"section id":              func(doc map[string]any) { section(doc, 0)["id"] = "retry" },
-		"step id":                 func(doc map[string]any) { section(doc, 0)["steps"].([]any)[0].(map[string]any)["id"] = "beh_x" },
-		"risk tier":               func(doc map[string]any) { section(doc, 0)["risks"].([]any)[0].(map[string]any)["tier"] = "severe" },
-		"level":                   func(doc map[string]any) { section(doc, 0)["level"] = 6 },
-		"tile owner":              func(doc map[string]any) { tile(doc, 0)["owner"] = "somewhere" },
-		"tile state":              func(doc map[string]any) { tile(doc, 0)["state"] = "done" },
-		"flow shape":              func(doc map[string]any) { tile(doc, 0)["data"] = map[string]any{"lanes": []any{}} },
+		"missing body":            func(doc map[string]any) { delete(section(doc, 0), "body") },
+		"block type":              func(doc map[string]any) { block(doc, 0, 0)["type"] = "chart" },
+		"prose without text":      func(doc map[string]any) { delete(block(doc, 0, 0), "text") },
+		"points without items":    func(doc map[string]any) { delete(block(doc, 0, 1), "items") },
+		"point without cites":     func(doc map[string]any) { delete(block(doc, 0, 1)["items"].([]any)[0].(map[string]any), "cites") },
+		"tile block without tile": func(doc map[string]any) { delete(block(doc, 0, 2), "tile") },
+		"tile block id":           func(doc map[string]any) { block(doc, 0, 2)["tile"] = "Wait Code" },
+		"unknown block field":     func(doc map[string]any) { block(doc, 0, 0)["html"] = "<b>x</b>" },
+		"step id in an older section": func(doc map[string]any) {
+			section(doc, 0)["steps"] = []any{map[string]any{"id": "beh_x", "title": "t", "text": "x", "cites": []any{}}}
+		},
+		"flow step more too long": func(doc map[string]any) {
+			tile(doc, 0)["data"].(map[string]any)["lanes"].([]any)[0].(map[string]any)["steps"].([]any)[0].(map[string]any)["more"] = string(make([]byte, 301))
+		},
+		"risk tier":  func(doc map[string]any) { section(doc, 0)["risks"].([]any)[0].(map[string]any)["tier"] = "severe" },
+		"level":      func(doc map[string]any) { section(doc, 0)["level"] = 6 },
+		"tile owner": func(doc map[string]any) { tile(doc, 0)["owner"] = "somewhere" },
+		"tile state": func(doc map[string]any) { tile(doc, 0)["state"] = "done" },
+		"flow shape": func(doc map[string]any) { tile(doc, 0)["data"] = map[string]any{"lanes": []any{}} },
 		"flow step title": func(doc map[string]any) {
 			tile(doc, 0)["data"].(map[string]any)["lanes"].([]any)[0].(map[string]any)["steps"].([]any)[0].(map[string]any)["title"] = string(make([]byte, 61))
 		},
@@ -90,6 +106,28 @@ func TestValidateReview2(t *testing.T) {
 				t.Fatal("document must not validate")
 			}
 		})
+	}
+	// A flow step may carry a detail; a table cell is a string or {text, was}.
+	doc = review2Example(t)
+	tile(doc, 0)["data"].(map[string]any)["lanes"].([]any)[0].(map[string]any)["steps"].([]any)[0].(map[string]any)["more"] = "What happens when it is opened."
+	tile(doc, 2)["type"], tile(doc, 2)["data"] = "table", map[string]any{"columns": []any{"Case", "Wait"},
+		"rows": []any{[]any{"First", map[string]any{"text": "1 s", "was": "none"}}, []any{"Next", "2 s"}}}
+	encoded, _ = json.Marshal(doc)
+	if err := ValidateReview2(encoded); err != nil {
+		t.Fatalf("a flow step's more and a cell with was must validate: %v", err)
+	}
+	tile(doc, 2)["data"].(map[string]any)["rows"] = []any{[]any{"First", map[string]any{"was": "none"}}}
+	encoded, _ = json.Marshal(doc)
+	if ValidateReview2(encoded) == nil {
+		t.Error("a cell object without text validated")
+	}
+	// A document written before bodies still validates when it has one too;
+	// summary and steps are optional.
+	doc = review2Example(t)
+	section(doc, 0)["summary"], section(doc, 0)["steps"] = "Older text.", []any{}
+	encoded, _ = json.Marshal(doc)
+	if err := ValidateReview2(encoded); err != nil {
+		t.Fatalf("an older section's summary and steps must still be allowed: %v", err)
 	}
 	// A frame tile's data is its own type's: any object.
 	doc = review2Example(t)

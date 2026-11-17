@@ -69,9 +69,6 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 		if s.Hunks == nil {
 			s.Hunks = []string{}
 		}
-		if s.Steps == nil {
-			s.Steps = []Step{}
-		}
 		if s.LevelReasons == nil {
 			s.LevelReasons = []LevelReason{}
 		}
@@ -79,6 +76,7 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 		s.Risks = reconcileRisks(old.Risks, s.Risks, found, prior.version, in.Version, s.Details != "" || len(s.Hunks) == 0)
 	}
 	completeTiles(&d, &b)
+	EnsureBodies(&d)
 
 	var generator struct {
 		Model         string `json:"model"`
@@ -178,6 +176,13 @@ func normalizeEmpty(d *Document) {
 		s := &d.Sections[i]
 		if s.Risks == nil {
 			s.Risks = []Risk{}
+		}
+		for j := range s.Body {
+			for k := range s.Body[j].Items {
+				if s.Body[j].Items[k].Cites == nil {
+					s.Body[j].Items[k].Cites = []Anchor{}
+				}
+			}
 		}
 		for j := range s.Steps {
 			if s.Steps[j].Cites == nil {
@@ -412,7 +417,7 @@ func fillCode(t *Tile, hunks map[string]bundle.Hunk) {
 
 // ReviewMinutes is the document's reading time: the words of its prose (the
 // summary's text, the verdict, why the risk is what it is, the intent, the
-// context, each section's title, gist, summary, steps and risks, and each
+// context, each section's title, gist, body (or the summary and steps of an older one) and risks, and each
 // tile's title and caption), at baum.review/1's reading speed
 // (review.MinutesForWords).
 func ReviewMinutes(d Document) int {
@@ -440,6 +445,7 @@ func ReviewMinutes(d Document) int {
 		for _, step := range s.Steps {
 			count(step.Title, step.Text)
 		}
+		count(bodyWords(s.Body)...)
 		for _, r := range s.Risks {
 			if r.State != "mitigated" {
 				count(r.Text)
@@ -469,6 +475,7 @@ func Read(document []byte) (Document, error) {
 		if err := json.Unmarshal(document, &d); err != nil {
 			return Document{}, err
 		}
+		EnsureBodies(&d)
 		return d, nil
 	case schema.Name:
 		return FromV1(document, nil)

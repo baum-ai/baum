@@ -1966,7 +1966,7 @@ them.
 `baum.review/2` is the desktop app's review document, shaped like its page:
 the overview (summary text, verdict, why the risk is what it is,
 screenshots, the main diagram, intent), the sections (outline, level and its
-reasons, summary, steps, risks), where the change fits (`context`) and the
+reasons, body, risks), where the change fits (`context`) and the
 tiles, each owned by `overview`, `context` or a section. Its Go types are
 `reviewv2.Document` (`oss/reviewv2/document.go`); every field says which
 level of the generation writes it (the orchestration is
@@ -1983,7 +1983,35 @@ carries beside its data as `caption` and `cites` (a test keeps the two
 equal), and `code` is `{hunk, lines?, text?}`. Any other type (a library,
 saved or dedicated type drawn in a frame from `definition`, or a converted
 `v1_table`, `v1_code` or `v1_prose` exhibit) has an open object. The schema
-holds no text limits: converted `baum.review/1` versions carry longer text.
+holds no text limits beyond generous bounds: converted `baum.review/1` versions
+carry longer text.
+
+**Section body.** The page owns the frame of a section (title, gist, the
+Code, Tests, Session and Docs views, risks); between the gist and the risks it
+draws the section's `body`, an ordered list of blocks the section agent
+composes (`reviewv2.Block`): `prose` (`text`, at most three sentences and 450
+characters), `points` (1 to 8 `items`, each a line of at most 180 characters
+with `cites` and an optional `more` of at most 450 characters shown when the
+line is opened), `note` (`text`, at most 240 characters) and `tile`, which
+places one of the document's tiles that the section owns (`tile`, by ID).
+A body has at most 6 blocks (`MaxBlocks`) and a block an optional `title` of
+at most 60 characters; text is inline markdown, bold and code only. A
+document written before bodies has `summary` and `steps` on its sections
+instead: `reviewv2.BodyOf` reads them as a body (a prose block from the
+summary, a points block from the steps, each point `**Title.** Text` with the
+step's cites, then a tile block for each tile the section owns), and
+`reviewv2.EnsureBodies` gives every section a body, without a tile block that
+names a tile that does not exist, belongs to another section or repeats an
+earlier one, and with a tile block at the end for each owned tile the body
+does not place; it clears `summary` and `steps` so they are never written
+again. `Complete`, `Read`, `FromV1` and the tile routes (`/api/tiles`, for a
+version stored before bodies) all apply it.
+
+A flow step has an optional `more` (at most 300 characters: the detail shown
+when the step is opened) and a table cell is either a string or
+`{"text", "was"}` (each at most 120 characters; `was` is the value before the
+change). `view.Cell` encodes as a plain string when it has no `was`, so data
+stored before is unchanged.
 
 **Validation.** The limits are the model-facing checks, one per level, each
 returning findings to repair with (`reviewv2.Findings` joins them):
@@ -1992,9 +2020,14 @@ characters and never two subjects joined by a comma, gists within 140,
 levels 1 to 5 with reasons for a logical section, every hunk of the pull
 request in a section, at most one mechanical section; planned tiles `tl_`,
 at most 8, owners that exist, at most one for the overview),
-`CheckSection` (summary within three sentences and 450 characters, two to
-five steps `st_` of one sentence within 220 for a logical section, risks
-`rsk_` within 300 characters), `CheckContext` (four parts of at most two
+`CheckSection` (a body of one to six blocks, each within its limits and its
+points' citations resolving, found by `CheckBody`, which also returns the body
+fixed: texts cleaned and cut to their limits, blocks and points without text
+dropped, blocks capped at 6 and points at 8, with a `view.Report` of the
+fixes, the way `view.CheckNative` reports its own; a section from before
+bodies is checked as it was, a summary within three sentences and 450
+characters and two to five steps `st_` of one sentence within 220; risks `rsk_`
+within 300 characters), `CheckContext` (four parts of at most two
 sentences and 320 characters, the area required), `CheckTile` (title within
 80, caption within 200, native data within `tiles/view`'s limits through
 `view.CheckNative`, a code tile's hunk and lines on its new side) and
@@ -2028,13 +2061,13 @@ schema is read through `reviewv2.Read`. A completed document always has a
 version and its view composition: the header, stats, index, risk score and
 reading time are kept, the recommendation becomes the verdict without
 points, context parts become the context (their references the files),
-each current section keeps its text and risks, its assessment becomes its
-level and reasons, its behaviour steps its steps and the first sentence of
-its summary its gist; the composition's overview parts and tiles become the
+each current section keeps its risks, its assessment becomes its level and
+reasons, its summary and behaviour steps its body (`BodyOf`, with a tile block
+for each tile it owns) and the first sentence of its summary its gist; the composition's overview parts and tiles become the
 overview and the tiles, owned where the review page placed them.
 
 **Reuse.** `reviewv2.ReusableSections` gives the previous version's
-sections a new map keeps with the same hunks, their summary, steps and
+sections a new map keeps with the same hunks, their body and
 active risks and their ready tiles, so the orchestration writes them
 without a call. `reviewv2.Substrate` is the tile document a
 `baum.review/2` document's library and added tiles are checked against.
@@ -7668,8 +7701,8 @@ bound, like the documents.
 | Tool | Reads |
 | --- | --- |
 | `facts` | `/api/facts` at the head the index shows (the facts, which exist before any review) |
-| `review_outline` | `/api/tiles` (the version as a `baum.review/2` document) or the group's document (`baum.review/1`, converted with `reviewv2.Read`): the overview (title, text, change kind, verdict, `risk_why`, risk score, reading time, screenshots, main diagram, intent) and each section's id, title, kind, gist, scope, level, hunks, files, the ids of the tiles it owns and its `details` state (`pending`, `failed` or absent), never a section's summary, steps or risks |
-| `review_section` | one section by `id`: its outline, level reasons, summary, steps and risks with their citations, and its tiles (id, type, title, caption, state, never their data), or for a `failed` or `pending` section its outline and that state in words |
+| `review_outline` | `/api/tiles` (the version as a `baum.review/2` document) or the group's document (`baum.review/1`, converted with `reviewv2.Read`): the overview (title, text, change kind, verdict, `risk_why`, risk score, reading time, screenshots, main diagram, intent) and each section's id, title, kind, gist, scope, level, hunks, files, the ids of the tiles it owns and its `details` state (`pending`, `failed` or absent), never a section's body or risks |
+| `review_section` | one section by `id`: its outline, level reasons, body (prose, points with their detail and citations, notes, and the tiles it places by id) and risks with their citations, and its tiles (id, type, title, caption, state, never their data), or for a `failed` or `pending` section its outline and that state in words |
 | `review_context` | the document's `context`, or that it is absent, or failed (from the job's `context_failed`) |
 | `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft?tiles=1` (drafts are never stored; a `baum.review/2` document): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
 | `review_versions` | `/api/versions` or the group's versions: version, heads, `generated_at`, backend, model and recorded cost, never the session, accounting, digests or policy |

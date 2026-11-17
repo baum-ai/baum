@@ -320,10 +320,15 @@ func (f *findings) tileType(where, typ string, refs *Refs) {
 	}
 }
 
-// CheckSection checks what a section agent wrote of a section: its summary,
-// steps and risks. A logical section has two to five steps, each citing what
-// it rests on; a mechanical one may have none. A section whose details are
-// pending or failed has nothing to check.
+// CheckSection checks what a section agent wrote of a section: its body and
+// risks. A logical section has a body of one to MaxBlocks blocks, each
+// within its limits (CheckBody: a text over its limit, a block without text
+// or past the limits and a point's citation that does not resolve are
+// reported as what the host would fix); a mechanical one may have a body
+// of prose only. A section from before bodies, one without a body but with a
+// summary and steps, is checked as it was: a summary and two to five steps,
+// each citing what it rests on. A section whose details are pending or
+// failed has nothing to check.
 func CheckSection(s Section, refs *Refs) []string {
 	f := &findings{}
 	if s.Details != "" {
@@ -333,26 +338,10 @@ func CheckSection(s Section, refs *Refs) []string {
 	if s.ID != "" {
 		where = "section " + s.ID
 	}
-	f.text(where+".summary", s.Summary, textRule{limit: MaxSummary, sentences: MaxSummarySentences, required: true})
-	switch {
-	case s.Kind == KindMechanical && len(s.Steps) > MaxSteps:
-		f.add(where+".steps", "there are %d; write at most %d", len(s.Steps), MaxSteps)
-	case s.Kind != KindMechanical && (len(s.Steps) < MinSteps || len(s.Steps) > MaxSteps):
-		f.add(where+".steps", "there are %d; write %d to %d", len(s.Steps), MinSteps, MaxSteps)
-	}
-	ids := map[string]bool{}
-	for i, step := range s.Steps {
-		at := fmt.Sprintf("%s.steps[%d]", where, i)
-		switch {
-		case !stepID.MatchString(step.ID) || len(step.ID) > 128:
-			f.add(at, "its id is not st_ and a lower-case slug")
-		case ids[step.ID]:
-			f.add(at, "its id repeats another step's")
-		}
-		ids[step.ID] = true
-		f.title(at+".title", step.Title, MaxStepTitle)
-		f.text(at+".text", step.Text, textRule{limit: MaxStepText, sentences: 1, required: true, line: true})
-		f.cites(at+".cites", step.Cites, 1, refs)
+	if len(s.Body) > 0 || (s.Summary == "" && len(s.Steps) == 0) {
+		f.body(where+".body", s.Body, refs)
+	} else {
+		f.legacyText(where, s, refs)
 	}
 	risks := map[string]bool{}
 	for i, r := range s.Risks {
@@ -374,6 +363,74 @@ func CheckSection(s Section, refs *Refs) []string {
 		f.cites(at+".cites", r.Cites, 1, refs)
 	}
 	return f.list
+}
+
+// body checks a section's body.
+func (f *findings) body(where string, body []Block, refs *Refs) {
+	fixed, report := CheckBody(body, refs)
+	counts := report.Counts()
+	if n := counts[view.FixCut]; n > 0 {
+		f.add(where, "%d of its texts are over their limits (prose %d, notes %d, a point %d and its detail %d, titles %d characters)", n, MaxProse, MaxNote, MaxPoint, MaxPointDetail, MaxBlockTitle)
+	}
+	if n := counts[view.FixLimit]; n > 0 {
+		f.add(where, "it has more than %d blocks or %d points in a block", MaxBlocks, MaxPoints)
+	}
+	if n := counts[view.FixNativeItem]; n > 0 {
+		f.add(where, "%d of its blocks or points are empty or of a type the body does not have", n)
+	}
+	// A point's citations are checked as a step's were: each must resolve.
+	for i, b := range body {
+		for j, p := range b.Items {
+			f.cites(fmt.Sprintf("%s[%d].items[%d].cites", where, i, j), p.Cites, 0, refs)
+		}
+	}
+	if len(fixed) == 0 {
+		f.add(where, "it has no blocks; write 1 to %d", MaxBlocks)
+		return
+	}
+	for i, b := range fixed {
+		at := fmt.Sprintf("%s[%d]", where, i)
+		if n, limit := Sentences(b.Text), map[string]int{BlockProse: 3, BlockNote: 2}[b.Type]; limit > 0 && n > limit {
+			f.add(at+".text", "it has %d sentences; write at most %d", n, limit)
+		}
+		f.plainIf(at+".title", b.Title)
+		f.plainIf(at+".text", b.Text)
+		for j, p := range b.Items {
+			f.plainIf(fmt.Sprintf("%s.items[%d].text", at, j), p.Text)
+			f.plainIf(fmt.Sprintf("%s.items[%d].more", at, j), p.More)
+		}
+	}
+}
+
+func (f *findings) plainIf(where, s string) {
+	if s != "" {
+		f.plain(where, s)
+	}
+}
+
+// legacyText checks the summary and steps of a section from before bodies.
+func (f *findings) legacyText(where string, s Section, refs *Refs) {
+	f.text(where+".summary", s.Summary, textRule{limit: MaxSummary, sentences: MaxSummarySentences, required: true})
+	switch {
+	case s.Kind == KindMechanical && len(s.Steps) > MaxSteps:
+		f.add(where+".steps", "there are %d; write at most %d", len(s.Steps), MaxSteps)
+	case s.Kind != KindMechanical && (len(s.Steps) < MinSteps || len(s.Steps) > MaxSteps):
+		f.add(where+".steps", "there are %d; write %d to %d", len(s.Steps), MinSteps, MaxSteps)
+	}
+	ids := map[string]bool{}
+	for i, step := range s.Steps {
+		at := fmt.Sprintf("%s.steps[%d]", where, i)
+		switch {
+		case !stepID.MatchString(step.ID) || len(step.ID) > 128:
+			f.add(at, "its id is not st_ and a lower-case slug")
+		case ids[step.ID]:
+			f.add(at, "its id repeats another step's")
+		}
+		ids[step.ID] = true
+		f.title(at+".title", step.Title, MaxStepTitle)
+		f.text(at+".text", step.Text, textRule{limit: MaxStepText, sentences: 1, required: true, line: true})
+		f.cites(at+".cites", step.Cites, 1, refs)
+	}
 }
 
 // CheckContext checks what the context agent wrote: where the change fits,
@@ -587,8 +644,17 @@ func CheckDocument(d Document, refs *Refs) []string {
 		}
 	}
 	out = append(out, CheckMap(d.Summary.ChangeKind, d.Sections, planned, refs)...)
+	owner := map[string]string{}
+	for _, t := range d.Tiles {
+		owner[t.ID] = t.Owner
+	}
 	for _, s := range d.Sections {
 		out = append(out, CheckSection(s, refs)...)
+		for _, b := range s.Body {
+			if b.Type == BlockTile && owner[b.Tile] != s.ID {
+				out = append(out, fmt.Sprintf("section %s.body: tile %q is not a tile of this section", s.ID, b.Tile))
+			}
+		}
 	}
 	if d.Context != nil {
 		out = append(out, CheckContext(*d.Context, refs)...)

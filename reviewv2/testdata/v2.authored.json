@@ -40,10 +40,16 @@
       "level_reasons": [
         {"text": "Every failed delivery now waits on this policy.", "cites": [{"type": "hunk", "id": "h_a00000000001"}]}
       ],
-      "summary": "A policy holds the number of attempts and the first wait. The wait doubles with every attempt.",
-      "steps": [
-        {"id": "st_policy", "title": "Policy holds the budget", "text": "The policy keeps how many attempts to make and the first wait.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [6, 9]}]},
-        {"id": "st_wait", "title": "Wait doubles", "text": "Each attempt waits twice as long as the one before.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [11, 12]}, {"type": "hunk", "id": "h_a00000000003"}]}
+      "body": [
+        {"type": "prose", "text": "A policy holds the number of attempts and the first wait. The wait doubles with every attempt."},
+        {"type": "points", "title": "What the policy decides", "items": [
+          {"text": "The policy keeps **how many attempts** to make and the first wait.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [6, 9]}]},
+          {"text": "Each attempt waits **twice** as long as the one before.", "more": "The doubling stops at the largest wait the policy allows.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [11, 12]}, {"type": "hunk", "id": "h_a00000000003"}]}
+        ]},
+        {"type": "tile", "tile": "tl_wait_code"},
+        {"type": "note", "text": "Deliveries already queued keep the wait they had."},
+        {"type": "tile", "tile": "tl_error_paths"},
+        {"type": "tile", "tile": "tl_missing"}
       ],
       "risks": [
         {"id": "rsk_unbounded_retries", "tier": "medium", "category": "reliability", "text": "Nothing reads the number of attempts, so a remote that stays down is retried forever.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [6, 9]}]}
@@ -74,8 +80,7 @@
       "gist": "A dependency moves to its next minor version.",
       "level": null,
       "level_reasons": [],
-      "summary": "The lock file records the new version of one dependency.",
-      "steps": [],
+      "body": [{"type": "prose", "text": "The lock file records the new version of one dependency."}],
       "risks": []
     }
   ],

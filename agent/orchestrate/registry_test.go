@@ -74,7 +74,11 @@ func validates(t *testing.T, name string, schema []byte, reply string) {
 func TestReplySchemas(t *testing.T) {
 	types := NewRegistry(nil).names()
 	validates(t, "map", MapSchema(types), mapReplyJSON)
+	// The sample body has every block type (prose, points with a detail, a
+	// tile and a note); a proposal carries its id.
 	validates(t, "section", SectionSchema(types), sectionReplyJSON(`[]`))
+	validates(t, "section with a proposal", SectionSchema(types), strings.Replace(sectionReplyJSON(`[]`), `"propose":null`,
+		`"propose":{"id":"tl_more_cases","type":"table","shows":"The cases.","cites":[]}`, 1))
 	validates(t, "context", ContextSchema(), contextReplyJSON)
 	validates(t, "overview", OverviewSchema(), overviewReplyJSON)
 	r := NewRegistry(nil)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -114,19 +115,31 @@ const mapReplyJSON = `{"change_kind":"feature","sections":[
  {"id":"tl_backoff","type":"table","owner":"sec_retry","shows":"How long a job waits.","hunks":["` + hunkA + `"]},
  {"id":"tl_check","type":"code","owner":"sec_api","shows":"The role check.","hunks":["` + hunkC + `"]}]}`
 
+// sectionReplyJSON is a section's reply: prose, points (one with detail), a
+// note and a tile block for the first tile of tiles, then a tile block that
+// names no tile of the section, which the host drops.
 func sectionReplyJSON(tiles string) string {
-	return `{"summary":"Failed jobs now retry with a growing wait. After the last attempt they move to a table of dead jobs.",
- "steps":[{"title":"The worker catches a failure","text":"A failed handler schedules a retry.","cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]},
-  {"title":"The wait doubles","text":"Each attempt waits twice as long as the last.","cites":[{"type":"hunk","id":"` + hunkB + `","lines":null}]}],
+	placed := "tl_unplanned"
+	if m := regexp.MustCompile(`"id":"(tl_[a-z_]+)"`).FindStringSubmatch(tiles); m != nil {
+		placed = m[1]
+	}
+	return `{"body":[
+  {"type":"prose","title":null,"text":"Failed jobs now retry with a growing wait. After the last attempt they move to a table of dead jobs.","items":null,"tile":null},
+  {"type":"points","title":"What changes","text":null,"items":[
+   {"text":"A failed handler schedules a **retry**.","more":null,"cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]},
+   {"text":"Each attempt waits **twice** as long as the last.","more":"The wait is capped, so it stops growing.","cites":[{"type":"hunk","id":"` + hunkB + `","lines":null}]}],"tile":null},
+  {"type":"tile","title":null,"text":null,"items":null,"tile":"` + placed + `"},
+  {"type":"note","title":null,"text":"Jobs already waiting keep their old schedule.","items":null,"tile":null},
+  {"type":"tile","title":null,"text":null,"items":null,"tile":"tl_nowhere"}],
  "risks":[{"id":"rsk_unbounded","tier":"medium","category":"correctness","text":"If the cap is zero the wait never grows, so jobs retry at once.","cites":[{"type":"hunk","id":"` + hunkA + `","lines":[12,14]}]}],
  "tiles":` + tiles + `,"propose":null}`
 }
 
 const flowReply = `{"type":"flow","title":"What happens to a failed job","caption":null,"source":["` + hunkA + `"],
- "lanes":[{"label":null,"from":null,"steps":[{"title":"Worker runs the job","note":null,"tone":null,"join":null},{"title":"Wait and retry","note":null,"tone":"new","join":"arrow"}]}]}`
+ "lanes":[{"label":null,"from":null,"steps":[{"title":"Worker runs the job","note":null,"more":null,"tone":null,"join":null},{"title":"Wait and retry","note":null,"more":"The wait doubles each time, up to a cap.","tone":"new","join":"arrow"}]}]}`
 
 const tableReply = `{"type":"table","title":"How long a job waits","caption":"The wait doubles.","source":["` + hunkA + `"],
- "columns":["Attempt","Wait"],"rows":[["1","Base"],["2","Twice the base"]]}`
+ "columns":["Attempt","Wait"],"rows":[["1","Base"],["2",{"text":"Twice the base","was":"Base"}]]}`
 
 const contextReplyJSON = `{"area":{"text":"The job queue runs background work.","files":["queue/retry.go"]},"reached_by":{"text":"","files":[]},"contracts":{"text":"","files":[]},"related":{"text":"","files":[]}}`
 
@@ -181,15 +194,21 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 		t.Fatalf("sections: %d", len(doc.Sections))
 	}
 	for _, s := range doc.Sections {
-		if s.Details != "" || s.Summary == "" {
-			t.Errorf("section %s: details %q summary %q", s.ID, s.Details, s.Summary)
+		if s.Details != "" || len(s.Body) == 0 || s.Summary != "" || len(s.Steps) != 0 {
+			t.Errorf("section %s: details %q body %+v", s.ID, s.Details, s.Body)
 		}
 	}
-	if s := doc.Sections[2]; s.Kind != "mechanical" || !strings.Contains(s.Summary, "lockfiles") {
-		t.Errorf("mechanical summary: %q", s.Summary)
+	if s := doc.Sections[2]; s.Kind != "mechanical" || len(s.Body) != 1 || !strings.Contains(s.Body[0].Text, "lockfiles") {
+		t.Errorf("mechanical body: %+v", s.Body)
 	}
-	if doc.Sections[0].Steps[0].ID != "st_retry_1" {
-		t.Errorf("step id: %q", doc.Sections[0].Steps[0].ID)
+	// The retry section's body: prose, points with a detail (bold kept), its
+	// tile where the agent put it, a note; the block naming no tile is gone.
+	retry := doc.Sections[0].Body
+	if len(retry) != 4 || retry[0].Type != "prose" || retry[1].Type != "points" || len(retry[1].Items) != 2 || retry[2].Type != "tile" || retry[2].Tile != "tl_backoff" || retry[3].Type != "note" {
+		t.Fatalf("retry body: %+v", retry)
+	}
+	if p := retry[1].Items[1]; p.Text != "Each attempt waits **twice** as long as the last." || p.More == "" || len(p.Cites) != 1 {
+		t.Errorf("point: %+v", p)
 	}
 	byID := map[string]reviewv2.Tile{}
 	for _, tile := range doc.Tiles {
@@ -350,8 +369,8 @@ func TestUnchangedSectionsAreReused(t *testing.T) {
 	run := testRun(t, f)
 	level := 3
 	previous, _ := json.Marshal(reviewv2.Document{Schema: reviewv2.Name,
-		Sections: []reviewv2.Section{{ID: "sec_retry", Kind: "logical", Hunks: []string{hunkB, hunkA}, Level: &level, Summary: "Before.",
-			Steps: []reviewv2.Step{{ID: "st_retry_1", Title: "Old", Text: "Old."}},
+		Sections: []reviewv2.Section{{ID: "sec_retry", Kind: "logical", Hunks: []string{hunkB, hunkA}, Level: &level,
+			Body:  []reviewv2.Block{{Type: reviewv2.BlockProse, Text: "Before."}, {Type: reviewv2.BlockTile, Tile: "tl_old"}, {Type: reviewv2.BlockTile, Tile: "tl_gone"}},
 			Risks: []reviewv2.Risk{{ID: "rsk_old", Tier: "low", Text: "Old.", State: "active"}, {ID: "rsk_fixed", Tier: "low", Text: "Fixed.", State: "mitigated"}}}},
 		Tiles: []reviewv2.Tile{{ID: "tl_old", Type: "flow", Owner: "sec_retry", State: reviewv2.TileReady, Title: "Old tile"}},
 	})
@@ -364,7 +383,7 @@ func TestUnchangedSectionsAreReused(t *testing.T) {
 		t.Error("an unchanged section was written again")
 	}
 	s := doc.Sections[0]
-	if s.Summary != "Before." || len(s.Risks) < 1 || s.Risks[0].ID != "rsk_old" || s.Details != "" {
+	if len(s.Body) != 2 || s.Body[0].Text != "Before." || s.Body[1].Tile != "tl_old" || len(s.Risks) < 1 || s.Risks[0].ID != "rsk_old" || s.Details != "" {
 		t.Errorf("reused section: %+v", s)
 	}
 	ids := []string{}
@@ -382,7 +401,7 @@ func TestUnchangedSectionsAreReused(t *testing.T) {
 func TestDroppedAndProposedTiles(t *testing.T) {
 	f := fullFake()
 	f.reply("section-sec-retry", strings.Replace(sectionReplyJSON(`[{"id":"tl_backoff","shows":"x","cites":[],"drop":true,"reason":"It restates the steps."}]`),
-		`"propose":null`, `"propose":{"type":"columns","shows":"Before and after the retry.","cites":[{"type":"hunk","id":"`+hunkB+`","lines":null}]}`, 1))
+		`"propose":null`, `"propose":{"id":"tl_retry_more","type":"columns","shows":"Before and after the retry.","cites":[{"type":"hunk","id":"`+hunkB+`","lines":null}]}`, 1))
 	f.reply("tile-tl-retry-more", `{"type":"columns","title":"Before and after","caption":null,"source":["`+hunkB+`"],"columns":[{"label":"Before","tone":null,"items":[{"title":"Dropped","note":null}]},{"label":"After","tone":"new","items":[{"title":"Retried","note":null}]}]}`)
 	out, doc, err := Generate(context.Background(), testRun(t, f))
 	if err != nil {
@@ -397,6 +416,17 @@ func TestDroppedAndProposedTiles(t *testing.T) {
 	}
 	if r := out.Generation.Tiles["tl_backoff"]; r.Status != StatusSkipped || !strings.Contains(r.Reason, "restates") {
 		t.Errorf("dropped tile record: %+v", r)
+	}
+	// The block naming the dropped tile is gone; the proposed tile, which the
+	// body does not place, goes after the section's blocks.
+	var placed []string
+	for _, b := range doc.Sections[0].Body {
+		if b.Type == reviewv2.BlockTile {
+			placed = append(placed, b.Tile)
+		}
+	}
+	if !slices.Equal(placed, []string{"tl_retry_more"}) {
+		t.Errorf("tile blocks: %v", placed)
 	}
 }
 
@@ -487,8 +517,8 @@ func TestCopyRules(t *testing.T) {
 	}
 	// The document layer's checks report the rest, once.
 	c = &checker{}
-	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: "sec_a", Kind: "logical", Summary: "The evidence. Cites h_0123456789ab. Three. Four."}, nil))
-	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: "sec_a", Kind: "logical", Summary: "The evidence. Cites h_0123456789ab. Three. Four."}, nil))
+	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: "sec_a", Kind: "logical", Body: []reviewv2.Block{{Type: reviewv2.BlockProse, Text: "The evidence. Cites h_0123456789ab. Three. Four."}}}, nil))
+	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: "sec_a", Kind: "logical", Body: []reviewv2.Block{{Type: reviewv2.BlockProse, Text: "The evidence. Cites h_0123456789ab. Three. Four."}}}, nil))
 	if n := len(c.findings); n < 3 || strings.Count(c.String(), "evidence") != 1 {
 		t.Fatalf("merged: %v", c.findings)
 	}

@@ -45,8 +45,8 @@ func viewCompletion(r agent.CompleteRequest) (agent.Completion, error) {
 		s := in.Sections[0]
 		reply["sections"] = []any{map[string]any{"id": s.ID, "tiles": []any{"dg_first"}}}
 		reply["diagrams"] = []any{map[string]any{"id": "dg_first", "type": "flow", "title": "How it runs", "caption": nil, "source": []any{s.Hunks[0].ID},
-			"lanes": []any{map[string]any{"label": nil, "steps": []any{map[string]any{"title": "Before", "note": nil, "tone": nil, "join": nil},
-				map[string]any{"title": "After", "note": nil, "tone": "new", "join": "arrow"}}}}}}
+			"lanes": []any{map[string]any{"label": nil, "steps": []any{map[string]any{"title": "Before", "note": nil, "more": nil, "tone": nil, "join": nil},
+				map[string]any{"title": "After", "note": nil, "more": nil, "tone": "new", "join": "arrow"}}}}}}
 	}
 	raw, err := json.Marshal(reply)
 	return agent.Completion{Document: raw, Model: "claude-opus-5-5", Usage: agent.Usage{Input: 5000, Output: 500}}, err

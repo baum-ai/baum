@@ -44,16 +44,25 @@ type plannedTile struct {
 }
 
 type sectionReply struct {
-	Summary string      `json:"summary"`
-	Steps   []stepReply `json:"steps"`
-	Risks   []riskReply `json:"risks"`
-	Tiles   []tileBrief `json:"tiles"`
-	Propose *proposal   `json:"propose"`
+	Body    []blockReply `json:"body"`
+	Risks   []riskReply  `json:"risks"`
+	Tiles   []tileBrief  `json:"tiles"`
+	Propose *proposal    `json:"propose"`
 }
 
-type stepReply struct {
-	Title string            `json:"title"`
+// blockReply is one block of a section's body as the model writes it: the
+// fields its type does not use are null.
+type blockReply struct {
+	Type  string       `json:"type"`
+	Title *string      `json:"title"`
+	Text  *string      `json:"text"`
+	Items []pointReply `json:"items"`
+	Tile  *string      `json:"tile"`
+}
+
+type pointReply struct {
 	Text  string            `json:"text"`
+	More  *string           `json:"more"`
 	Cites []json.RawMessage `json:"cites"`
 }
 
@@ -74,6 +83,7 @@ type tileBrief struct {
 }
 
 type proposal struct {
+	ID    string            `json:"id"`
 	Type  string            `json:"type"`
 	Shows string            `json:"shows"`
 	Cites []json.RawMessage `json:"cites"`
@@ -160,7 +170,7 @@ func checkMap(reply []byte, f *facts, r *Registry, lenient bool) (plan, string) 
 			c.add(at+"/id", "%s is another section's id", s.ID)
 		}
 		ids[s.ID] = true
-		section := reviewv2.Section{ID: s.ID, Kind: s.Kind, Hunks: []string{}, LevelReasons: []reviewv2.LevelReason{}, Steps: []reviewv2.Step{}, Risks: []reviewv2.Risk{}}
+		section := reviewv2.Section{ID: s.ID, Kind: s.Kind, Hunks: []string{}, LevelReasons: []reviewv2.LevelReason{}, Body: []reviewv2.Block{}, Risks: []reviewv2.Risk{}}
 		section.Title = c.title(at+"/title", s.Title, MaxSectionTitle, MaxTitleWords)
 		section.Gist = c.text(at+"/gist", s.Gist, MaxGist, 2, true)
 		if s.Scope != nil {
@@ -268,11 +278,10 @@ func checkPlannedTiles(c *checker, planned []plannedTile, sections map[string]bo
 	return out, hunks
 }
 
-// sectionResult is a written section: its text and what it asks of its
-// tiles.
+// sectionResult is a written section: its body and risks and what it asks
+// of its tiles.
 type sectionResult struct {
-	Summary  string
-	Steps    []reviewv2.Step
+	Body     []reviewv2.Block
 	Risks    []reviewv2.Risk
 	Briefs   map[string]tileBrief
 	Propose  *reviewv2.Tile
@@ -280,26 +289,22 @@ type sectionResult struct {
 	Proposed []string
 }
 
-// checkSection checks a section agent's reply.
-func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Tile, f *facts, r *Registry, lenient bool) (sectionResult, string) {
+// checkSection checks a section agent's reply. taken are the IDs of the
+// tiles the document already has, which a proposed tile's ID may not repeat
+// (it is made unique).
+//
+// A tile block must name a tile of this section that is kept: planned and
+// not dropped by this reply, or the tile it proposes. One that names
+// anything else is dropped, and a tile the body places twice is placed
+// where it first is.
+func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
 	var s sectionReply
 	if problem := decode(reply, &s); problem != "" {
 		return sectionResult{}, problem
 	}
 	c := &checker{lenient: lenient}
-	out := sectionResult{Briefs: map[string]tileBrief{}, Dropped: map[string]string{}, Steps: []reviewv2.Step{}, Risks: []reviewv2.Risk{}}
-	out.Summary = c.text("/summary", s.Summary, MaxSummary, 3, true)
-	if len(s.Steps) < 2 || len(s.Steps) > 5 {
-		c.add("/steps", "has %d steps; write two to five", len(s.Steps))
-	}
+	out := sectionResult{Briefs: map[string]tileBrief{}, Dropped: map[string]string{}, Body: []reviewv2.Block{}, Risks: []reviewv2.Risk{}}
 	slug := strings.TrimPrefix(section.ID, "sec_")
-	for i, step := range s.Steps {
-		at := fmt.Sprintf("/steps/%d", i)
-		title := c.title(at+"/title", step.Title, MaxStepTitle, MaxTitleWords)
-		body := c.text(at+"/text", step.Text, MaxStepText, 1, true)
-		kept, _ := f.cites(step.Cites)
-		out.Steps = append(out.Steps, reviewv2.Step{ID: fmt.Sprintf("st_%s_%d", slug, i+1), Title: title, Text: body, Cites: kept})
-	}
 	ids := map[string]bool{}
 	for i, risk := range s.Risks {
 		at := fmt.Sprintf("/risks/%d", i)
@@ -343,6 +348,14 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 		brief.Cites, _ = f.cites(brief.Cites)
 		out.Briefs[brief.ID] = brief
 	}
+	// placeable are the tiles a tile block may name, by the ID the model
+	// wrote: the section's planned tiles it did not drop, and its proposal.
+	placeable := map[string]string{}
+	for _, t := range planned {
+		if _, dropped := out.Dropped[t.ID]; !dropped {
+			placeable[t.ID] = t.ID
+		}
+	}
 	if p := s.Propose; p != nil {
 		t, ok := r.Get(p.Type)
 		if !ok {
@@ -353,14 +366,78 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 			if len(hunkCites(kept)) == 0 {
 				c.add("/propose/cites", "a proposed tile cites at least one hunk")
 			}
-			out.Propose = &reviewv2.Tile{ID: "tl_" + slug + "_more", Type: t.Name, Owner: section.ID, Shows: shows, Cites: kept, State: reviewv2.TilePending}
+			id := p.ID
+			if !tileID.MatchString(id) {
+				id = "tl_" + slug + "_more"
+			}
+			final := id
+			for n := 2; taken[final] || plannedIDs[final].ID != ""; n++ {
+				final = fmt.Sprintf("%s_%d", id, n)
+			}
+			// A body that names the ID the model gave places the proposal,
+			// unless that ID is one of the section's planned tiles.
+			if _, isPlanned := plannedIDs[p.ID]; !isPlanned {
+				placeable[p.ID] = final
+			}
+			out.Propose = &reviewv2.Tile{ID: final, Type: t.Name, Owner: section.ID, Shows: shows, Cites: kept, State: reviewv2.TilePending}
 		}
 	}
-	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: section.ID, Kind: section.Kind, Summary: out.Summary, Steps: out.Steps, Risks: out.Risks}, f.refs))
+	placed := map[string]bool{}
+	for i, block := range s.Body {
+		at := fmt.Sprintf("/body/%d", i)
+		b := reviewv2.Block{Type: block.Type}
+		switch block.Type {
+		case reviewv2.BlockProse, reviewv2.BlockNote:
+			limit := reviewv2.MaxProse
+			if block.Type == reviewv2.BlockNote {
+				limit = reviewv2.MaxNote
+			}
+			b.Text = c.inline(at+"/text", deref(block.Text), limit, false)
+			if b.Text == "" {
+				continue
+			}
+			b.Title = c.inline(at+"/title", deref(block.Title), reviewv2.MaxBlockTitle, false)
+		case reviewv2.BlockPoints:
+			b.Title = c.inline(at+"/title", deref(block.Title), reviewv2.MaxBlockTitle, false)
+			for j, item := range block.Items {
+				pat := fmt.Sprintf("%s/items/%d", at, j)
+				point := reviewv2.Point{Text: c.inline(pat+"/text", item.Text, reviewv2.MaxPoint, false), More: c.inline(pat+"/more", deref(item.More), reviewv2.MaxPointDetail, false)}
+				if point.Text == "" {
+					continue
+				}
+				point.Cites, _ = f.cites(item.Cites)
+				b.Items = append(b.Items, point)
+			}
+			if len(b.Items) == 0 {
+				continue
+			}
+		case reviewv2.BlockTile:
+			id, ok := placeable[deref(block.Tile)]
+			if !ok || placed[id] {
+				continue
+			}
+			placed[id] = true
+			b.Tile = id
+		default:
+			continue
+		}
+		out.Body = append(out.Body, b)
+	}
+	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: section.ID, Kind: section.Kind, Body: out.Body, Risks: out.Risks}, f.refs))
 	if len(c.findings) > 0 {
 		return out, c.String()
 	}
+	// What the checks let through is capped: blocks at MaxBlocks, points at
+	// MaxPoints.
+	out.Body, _ = reviewv2.CheckBody(out.Body, f.refs)
 	return out, ""
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // checkContext checks the context agent's reply: area written, every part

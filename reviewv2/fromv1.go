@@ -127,8 +127,9 @@ type v1Behavior struct {
 //     files they name;
 //   - each current section keeps its ID, title, kind, hunks, summary text,
 //     risks (anchors as cites), details state and derived facts; its level
-//     and level reasons are its assessment's; its behaviour steps become its
-//     steps (beh_ IDs as st_); its gist is the summary's first sentence, made
+//     and level reasons are its assessment's; its summary becomes a prose block
+//     of its body, its behaviour steps a points block (each point "**Title.**
+//     Text", its anchors cites) and its tiles tile blocks (EnsureBodies); its gist is the summary's first sentence, made
 //     plain and cut to MaxGist. A stale section, whose code is gone, is left
 //     out;
 //   - the composition's overview gives the screenshots, main diagram and
@@ -185,11 +186,12 @@ func FromV1(document, composition []byte) (Document, error) {
 	d.Tiles = TilesOfView(v)
 	d.Overview = OverviewOfView(v)
 	d.Summary.RiskWhy = v.Overview.RiskSummary
+	EnsureBodies(&d)
 	return d, nil
 }
 
 func sectionFromV1(s v1Section) Section {
-	out := Section{ID: s.ID, Title: s.Title, Kind: s.Kind, Hunks: s.Hunks, Details: s.Details, Derived: s.Derived, Steps: []Step{}, Risks: []Risk{}, LevelReasons: []LevelReason{}}
+	out := Section{ID: s.ID, Title: s.Title, Kind: s.Kind, Hunks: s.Hunks, Details: s.Details, Derived: s.Derived, Body: []Block{}, Risks: []Risk{}, LevelReasons: []LevelReason{}}
 	if out.Hunks == nil {
 		out.Hunks = []string{}
 	}
