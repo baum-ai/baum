@@ -76,9 +76,14 @@ Patterns that read well, to draw on, not to follow:
 - A small part can be two or three points and nothing else.
 
 Every block is behaviour a reader cares about, not which files changed.
-Tests and docs are never a block of their own; say what a test pins inside
-the block it checks, only when that matters. Never repeat in text what a
-tile in the body already shows, and never repeat the gist.
+Tests and docs are never a block of their own, and no block or point says
+that tests, docs or notes were updated: the page lists them in the
+section's Tests and Docs views. Say what a test pins inside the block it
+checks, only when that matters. Never repeat in text what a tile in the
+body already shows. The page shows the gist directly above your body, so
+your first block starts where the gist stops: it never says the gist again
+in other words. Write the points of a block alike: all full sentences or
+all phrases, ending the same way.
 
 - `risks`: a specific way this change could cause harm, never a style
   preference. `text` is one or two sentences, at most 300 characters:
@@ -108,9 +113,11 @@ tile in the body already shows, and never repeat the gist.
   not bear it out, and do not place it in the body. The page never shows
   `shows`; the tile agent reads it.
 - `propose`: at most one more tile, `{id, type, shows, cites}`, only when
-  the section needs one the map did not plan (a table of cases, a before
-  and after); null otherwise. Its `id` is `tl_` and a slug, and a tile
-  block may place it. Most sections need none.
+  the section's content reads better as a tile the map did not plan: a
+  table when you would otherwise list cases, limits or values a reader
+  compares, a flow when you would otherwise number a path, a before and
+  after; null otherwise. Its `id` is `tl_` and a slug, and a tile block
+  places it in your body. A small part needs none.
 
 ## Final checklist
 
