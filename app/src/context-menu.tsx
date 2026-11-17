@@ -9,7 +9,15 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { cn } from "@baum/viewer/components/classnames";
 import { CheckIcon, MoreIcon } from "@baum/viewer/components/icons";
+import { Menu, MenuItem as MenuItemButton, MenuSeparator } from "@baum/viewer/components/menu";
+import {
+  MENU_ITEM_CHECK,
+  MENU_ITEM_KEY,
+  MENU_ITEM_LABEL,
+  MENU_ITEM_NOTE,
+} from "@baum/viewer/components/primitive-classes";
 
 /** One choice of a menu; `hint` is the key that does the same, `danger`
  *  draws one that stops or removes something in the critical tone, set apart
@@ -323,12 +331,15 @@ function ContextMenu({
   // With an on-or-off choice among them, every choice keeps the tick's column.
   const ticks = items.some((item) => item.checked !== undefined);
   return (
-    <div
+    // `context-menu` and the `context-menu-*` names below carry no style: the
+    // rail and the tests find the menu and its parts by them.
+    // `w-max` keeps the width measured before the menu is placed under its
+    // button once it is there.
+    <Menu
       ref={ref}
       id={id}
-      role="menu"
       aria-label={label ? `Actions for ${label}` : "Actions"}
-      className="context-menu"
+      className="context-menu fixed z-50 w-max max-w-[320px] min-w-[200px]"
       style={{ left: at.left, top: at.top }}
       onKeyDown={keys}
       onContextMenu={(event) => event.preventDefault()}
@@ -348,7 +359,7 @@ function ContextMenu({
           }}
         />
       ))}
-    </div>
+    </Menu>
   );
 }
 
@@ -367,27 +378,32 @@ function MenuChoice({
   const checkbox = item.checked !== undefined;
   return (
     <>
-      {separated ? <div role="separator" className="context-menu-separator" /> : null}
-      <button
-        type="button"
+      {separated ? <MenuSeparator /> : null}
+      <MenuItemButton
         tabIndex={-1}
         role={checkbox ? "menuitemcheckbox" : "menuitem"}
         aria-checked={checkbox ? item.checked : undefined}
-        className={item.danger ? "danger" : undefined}
+        tone={item.danger ? "danger" : "default"}
         disabled={item.disabled}
         onClick={select}
       >
         {ticks ? (
-          <span className="context-menu-check" aria-hidden="true">
+          <span className={cn("context-menu-check", MENU_ITEM_CHECK)} aria-hidden="true">
             {item.checked ? <CheckIcon size={14} /> : null}
           </span>
         ) : null}
-        <span className="context-menu-label">
+        <span className={cn("context-menu-label", MENU_ITEM_LABEL)}>
           {item.label}
-          {item.note ? <span className="context-menu-note">{item.note}</span> : null}
+          {item.note ? (
+            <span className={cn("context-menu-note", MENU_ITEM_NOTE)}>{item.note}</span>
+          ) : null}
         </span>
-        {item.hint ? <kbd aria-hidden="true">{item.hint}</kbd> : null}
-      </button>
+        {item.hint ? (
+          <kbd aria-hidden="true" className={MENU_ITEM_KEY}>
+            {item.hint}
+          </kbd>
+        ) : null}
+      </MenuItemButton>
     </>
   );
 }

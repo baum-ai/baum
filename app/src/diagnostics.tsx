@@ -6,6 +6,7 @@ import {
   CircleDashedIcon,
   WarningIcon,
 } from "@baum/viewer/components/icons";
+import { SectionLabel } from "@baum/viewer/components/section-label";
 import { Alert, Badge, type BadgeTone, Button } from "@baum/viewer/components/ui";
 import {
   request,
@@ -298,10 +299,10 @@ export function DiagnosticsSection({
         const list = checks.filter(group.has);
         if (list.length === 0) return null;
         return (
-          <div key={group.title} className="space-y-2">
-            <h3 className="diagnostics-group-title">
+          <div key={group.title}>
+            <SectionLabel>
               {group.title} <span className="font-normal">· {list.length}</span>
-            </h3>
+            </SectionLabel>
             <ul className="m-0 list-none divide-y divide-subtle overflow-hidden rounded-lg border border-subtle bg-surface-card p-0">
               {list.map((check) => (
                 <CheckRow key={check.id} check={check} home={home} />
