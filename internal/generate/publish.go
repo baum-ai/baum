@@ -39,6 +39,16 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	}
 	if err == nil {
 		o.Request.Previous, err = review.PreviousVersionOf(latest.Document, latest.Metadata.Version)
+		if o.V2 != nil {
+			// A baum.review/2 run reads its previous version itself; the
+			// bundle carries a baum.review/1 one's sections when it can.
+			v := *o.V2
+			v.Previous, v.PreviousVersion = latest.Document, latest.Metadata.Version
+			o.V2 = &v
+			if err != nil {
+				o.Request.Previous, err = nil, nil
+			}
+		}
 		if err != nil {
 			return result, err
 		}

@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/orchestrate"
 	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/assemble"
@@ -175,6 +176,13 @@ type Options struct {
 	// pull requests it names instead of the one Request names; Prompts then
 	// defaults to the public group prompt.
 	Group *Group
+	// V2, for a new review of a single pull request (no Group, no
+	// Continue), writes it as a baum.review/2 document in the levels of
+	// agent/orchestrate instead of the staged review and its page view (see
+	// V2). Tiles, when set too, supplies the dedicated tile types (its
+	// library and saved types) and their fill texts. Groups, stacks and
+	// continued versions keep baum.review/1.
+	V2 *V2
 }
 
 // Result is a finished run.
@@ -204,6 +212,9 @@ type Result struct {
 	Composition          json.RawMessage
 	CompositionGenerator *tiles.Generator
 	Compose              *ComposeReport
+	// V2, for a baum.review/2 run (Options.V2), is what its levels did; its
+	// Outcome is Outcome before masking.
+	V2 *orchestrate.Outcome
 }
 
 // Draft is a staged run's review so far (Options.OnDraft).
@@ -373,6 +384,9 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		runCtx, cancel = context.WithTimeout(ctx, o.Budgets.WallClock)
 	}
 	defer cancel()
+	if o.V2 != nil && o.Group == nil && o.Continue == nil {
+		return v2Run(ctx, runCtx, o, assembled, captured, runDir, redactor, fail, progress, started, now)
+	}
 	// With Tiles, the analysis runs exactly as without it, with the whole
 	// wall clock and budgets; the composition follows it (composeTiles).
 	composing := staged && o.Tiles != nil && o.Continue == nil
@@ -728,6 +742,9 @@ func (p passBounded) Run(ctx context.Context, request agent.Request) (agent.Resu
 
 // ConcurrentCalls forwards the bounded backend's agent.ConcurrentCaller.
 func (p passBounded) ConcurrentCalls() bool { return ConcurrentCalls(p.Backend) }
+
+// KeepsSessions forwards the bounded backend's agent.SessionKeeper.
+func (p passBounded) KeepsSessions() bool { return agent.KeepsSessions(p.Backend) }
 
 // ConcurrentCalls reports whether backend may run several calls over one run
 // directory at once (agent.ConcurrentCaller). A host's wrapper of a backend

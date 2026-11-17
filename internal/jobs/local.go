@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -59,6 +60,10 @@ type Local struct {
 	// pinned to its repository and offers others whose paths its diff
 	// matches (tilelibrary.Offer). Nil offers only the built-in types.
 	TileLibrary *tilelibrary.Store
+	// ReviewMCP gives a tile review's agents baum's MCP server, with a read
+	// token scoped to the pull request (generate.V2.MCP); nil runs them
+	// without it.
+	ReviewMCP generate.ReviewMCP
 }
 
 type identityVersions struct {
@@ -445,6 +450,9 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		// The library types the person added to the pull request's review
 		// are filled, or their last data reused, in the new version.
 		options.Tiles = l.tilesFor(ctx, versions, key)
+		// It is written as a baum.review/2 document, in levels, in a git
+		// worktree of the clone at the head.
+		options.V2 = &generate.V2{Clone: c.Path, MCP: l.ReviewMCP, Step: backend.step}
 	}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
@@ -583,17 +591,23 @@ type trackedBackend struct {
 	// "call" entry; marked counts them.
 	transcript func(agent.TranscriptEntry)
 	marked     int
+	// level is a tile review's level in words, the phase of its calls.
+	level string
 }
 
 // ConcurrentCalls forwards the backend's agent.ConcurrentCaller, so a staged
 // review runs its details and context at once where the backend allows it.
 func (b *trackedBackend) ConcurrentCalls() bool { return generate.ConcurrentCalls(b.Backend) }
 
+// KeepsSessions forwards the backend's agent.SessionKeeper, so a tile
+// review's overview resumes its map's session where the backend allows.
+func (b *trackedBackend) KeepsSessions() bool { return agent.KeepsSessions(b.Backend) }
+
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	b.mu.Lock()
 	b.runs++
 	run := b.runs
-	b.report("generating", nil)
+	b.report(cmp.Or(b.level, "generating"), nil)
 	id := ""
 	if b.transcript != nil && r.Transcript == nil {
 		b.marked++
@@ -694,6 +708,16 @@ func (b *trackedBackend) repaired(repairs int) {
 }
 
 // draft is generate.Options.OnDraft: the draft goes with the counts so far.
+// step is the level a tile review is at, in words ("Mapping the pull
+// request"): the job's phase until the next level, which the app shows as
+// it is.
+func (b *trackedBackend) step(text string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.level = text
+	b.report(text, nil)
+}
+
 func (b *trackedBackend) draft(d generate.Draft) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -943,6 +967,10 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 	if o.Tiles != nil {
 		o.Tiles.Prompts = prompt.TilesPrompts{Overrides: overrides}
 		ids = append(ids, prompt.IDReviewView)
+	}
+	if o.V2 != nil {
+		o.V2.Prompts = prompt.V2Prompts{Overrides: overrides}
+		ids = prompt.V2ReviewIDs()
 	}
 	o.PromptSource = promptSourceOf(ids, overrides, sources)
 	return nil
