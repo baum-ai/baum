@@ -95,7 +95,7 @@ Anywhere:
 
 Lists (Inbox, Pull requests, Sessions, Jobs, Repositories, Timeline):
 
-- `j`, `↓`: next row. `k`, `↑`: previous row.
+- `j`, `↓`: next row. `k`, `↑`: previous row. `g`, `Home`: first row. `G`, `End`: last row.
 - `Enter`, `o`: open the row (the Inbox's Up next takes `Enter` only).
 - `Escape`: clear the row focus.
 

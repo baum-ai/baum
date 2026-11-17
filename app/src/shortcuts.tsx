@@ -9,6 +9,8 @@ import { openExternal } from "./api";
 export type InboxAction =
   | "next"
   | "previous"
+  | "first"
+  | "last"
   | "open"
   | "select"
   | "peek"
@@ -29,6 +31,8 @@ const TRANSCRIPT_LABEL = "Watch the fix agent, or read its last transcript";
 export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
   { keys: ["j", "ArrowDown"], action: "next", label: "Next row", short: "move" },
   { keys: ["k", "ArrowUp"], action: "previous", label: "Previous row", short: "move" },
+  { keys: ["g", "Home"], action: "first", label: "First row" },
+  { keys: ["G", "End"], action: "last", label: "Last row" },
   { keys: ["Enter", "o"], action: "open", label: "Open the pull request or group", short: "open" },
   { keys: ["x"], action: "select", label: "Select or deselect", short: "select" },
   {
@@ -48,6 +52,8 @@ export const VIEW_KEYS = { previous: ["h", "ArrowLeft"], next: ["l", "ArrowRight
 const UP_NEXT_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next pull request", short: "move" },
   { keys: ["k", "ArrowUp"], label: "Previous pull request", short: "move" },
+  { keys: ["g", "Home"], label: "First pull request" },
+  { keys: ["G", "End"], label: "Last pull request" },
   { keys: ["Enter"], label: "Open the pull request or group", short: "act" },
   { keys: [" "], label: "Show or hide a group's pull requests" },
   { keys: ["m"], label: "Merge, where offered", short: "merge" },
@@ -71,6 +77,8 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
 const LIST_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next row", short: "move" },
   { keys: ["k", "ArrowUp"], label: "Previous row", short: "move" },
+  { keys: ["g", "Home"], label: "First row" },
+  { keys: ["G", "End"], label: "Last row" },
   { keys: ["Enter", "o"], label: "Open the row", short: "open" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
@@ -324,10 +332,26 @@ export function inboxAction(event: Pick<KeyboardEvent, "key">): InboxAction | nu
   return INBOX_SHORTCUTS.find((s) => s.keys.includes(event.key))?.action ?? null;
 }
 
-/** The id one step from `current` through `ids`, stopping at either end. From
- *  nothing, forward starts at the first and back at the last. */
-export function moveFocus(ids: string[], current: string | null, step: 1 | -1): string | null {
+/** A move through a list: a row on or back, or to its first or last row. */
+export type ListStep = 1 | -1 | "first" | "last";
+
+/** The move a list key asks for: j/↓ and k/↑ a row on or back, g/Home and
+ *  G/End (Shift+G) the first and last row, as a pager has them. */
+export function listStep(key: string): ListStep | null {
+  if (key === "j" || key === "ArrowDown") return 1;
+  if (key === "k" || key === "ArrowUp") return -1;
+  if (key === "g" || key === "Home") return "first";
+  if (key === "G" || key === "End") return "last";
+  return null;
+}
+
+/** The id one step from `current` through `ids`, stopping at either end, or
+ *  the first or last id. From nothing, forward starts at the first and back at
+ *  the last. */
+export function moveFocus(ids: string[], current: string | null, step: ListStep): string | null {
   if (ids.length === 0) return null;
+  if (step === "first") return ids[0]!;
+  if (step === "last") return ids[ids.length - 1]!;
   const index = current === null ? -1 : ids.indexOf(current);
   if (index < 0) return step === 1 ? ids[0]! : ids[ids.length - 1]!;
   return ids[Math.min(ids.length - 1, Math.max(0, index + step))]!;
@@ -546,7 +570,7 @@ export function useRowFocus<List extends HTMLElement = HTMLElement>(
     focused,
     setFocused,
     rowLink,
-    move: (step: 1 | -1) => setFocused(moveFocus(ids, focused, step)),
+    move: (step: ListStep) => setFocused(moveFocus(ids, focused, step)),
     clear: () => {
       setFocused(null);
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -555,16 +579,18 @@ export function useRowFocus<List extends HTMLElement = HTMLElement>(
 }
 
 /** The keys every list shares (`LIST_SHORTCUTS`): j/↓ and k/↑ move the row
- *  focus, Enter or o opens the focused row's link and Escape clears it.
+ *  focus, g/Home and G/End take it to the first and last row, Enter or o
+ *  opens the focused row's link and Escape clears it.
  *  Returns whether it took the key; a page's own keys go after. */
 export function listKeys(
   event: KeyboardEvent,
   rows: Pick<ReturnType<typeof useRowFocus>, "focused" | "move" | "clear" | "rowLink">,
 ) {
   const key = event.key;
-  if (key === "j" || key === "ArrowDown" || key === "k" || key === "ArrowUp") {
+  const step = listStep(key);
+  if (step !== null) {
     event.preventDefault();
-    rows.move(key === "j" || key === "ArrowDown" ? 1 : -1);
+    rows.move(step);
     return true;
   }
   if (key === "Escape") {

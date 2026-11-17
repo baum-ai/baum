@@ -98,6 +98,7 @@ import { LoadingStatus, NineDots } from "./nine-dots";
 import {
   GITHUB_KEY_LABEL,
   KeyBar,
+  listStep,
   onBody,
   useGitHubKey,
   useLastRow,
@@ -1432,11 +1433,17 @@ export function UpNextPage({
     if (key === "Escape" && menu) {
       event.preventDefault();
       setMenu(false);
-    } else if (key === "j" || key === "ArrowDown" || key === "k" || key === "ArrowUp") {
+    } else if (listStep(key) !== null) {
       if (rows.length === 0) return;
       event.preventDefault();
-      const step = key === "j" || key === "ArrowDown" ? 1 : -1;
-      select(rows[Math.min(rows.length - 1, Math.max(0, index + step))]!.key);
+      const step = listStep(key)!;
+      const to =
+        step === "first"
+          ? 0
+          : step === "last"
+            ? rows.length - 1
+            : Math.min(rows.length - 1, Math.max(0, index + step));
+      select(rows[to]!.key);
     } else if (key === " ") {
       // Space on a link or button presses it, except on a row, where it opens
       // or closes the row's group: from a member, back to its group, which

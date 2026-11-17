@@ -693,7 +693,7 @@ opened on the page itself goes to its list.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
-are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
+are skipped), `g`/`Home` and `G`/`End` move it to the first and last row, `Enter` or `o` opens the focused pull request or group, `x` toggles
 its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
@@ -717,7 +717,8 @@ risk's details, a decision; `toggleActiveBlock`), and still presses a focused
 button or link. `Enter` opens the marked block where it opens somewhere (its
 `data-block-open` control, as a commit row's subject; `openActiveBlock`). The
 arrows then no longer scroll the review. Sessions, Jobs, Repositories and the Timeline share the list keys
-(`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
+(`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `g`/`Home` and
+`G`/`End` go to the first and last row, `Enter` or `o` opens
 the row (a session's transcript, a job's page, a repository's
 settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
