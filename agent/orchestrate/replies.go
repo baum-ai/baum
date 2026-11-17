@@ -138,12 +138,12 @@ type plan struct {
 // checkMap checks a map against the pull request and the registry: every
 // hunk in a section, ids and owners that exist, the limits of every text.
 // It returns the plan, and the findings that send it back.
-func checkMap(reply []byte, f *facts, r *Registry) (plan, string) {
+func checkMap(reply []byte, f *facts, r *Registry, lenient bool) (plan, string) {
 	var m mapReply
 	if problem := decode(reply, &m); problem != "" {
 		return plan{}, problem
 	}
-	c := &checker{}
+	c := &checker{lenient: lenient}
 	p := plan{ChangeKind: m.ChangeKind, Hunks: map[string][]string{}}
 	if !slices.Contains(ChangeKinds, m.ChangeKind) {
 		c.add("/change_kind", "must be one of %s", strings.Join(ChangeKinds, ", "))
@@ -280,12 +280,12 @@ type sectionResult struct {
 }
 
 // checkSection checks a section agent's reply.
-func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Tile, f *facts, r *Registry) (sectionResult, string) {
+func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Tile, f *facts, r *Registry, lenient bool) (sectionResult, string) {
 	var s sectionReply
 	if problem := decode(reply, &s); problem != "" {
 		return sectionResult{}, problem
 	}
-	c := &checker{}
+	c := &checker{lenient: lenient}
 	out := sectionResult{Briefs: map[string]tileBrief{}, Dropped: map[string]string{}, Steps: []reviewv2.Step{}, Risks: []reviewv2.Risk{}}
 	out.Summary = c.text("/summary", s.Summary, MaxSummary, 3, true)
 	if len(s.Steps) < 2 || len(s.Steps) > 5 {
@@ -363,12 +363,12 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 
 // checkContext checks the context agent's reply: area written, every part
 // within its limits and its files in the checkout (others are dropped).
-func checkContext(reply []byte, f *facts) (*reviewv2.Context, string) {
+func checkContext(reply []byte, f *facts, lenient bool) (*reviewv2.Context, string) {
 	var x contextReply
 	if problem := decode(reply, &x); problem != "" {
 		return nil, problem
 	}
-	c := &checker{}
+	c := &checker{lenient: lenient}
 	part := func(name string, p contextPart, required bool) reviewv2.ContextPart {
 		out := reviewv2.ContextPart{Text: c.text("/"+name+"/text", p.Text, MaxContextText, 2, required), Files: []string{}}
 		for _, path := range p.Files {
@@ -394,13 +394,13 @@ func checkContext(reply []byte, f *facts) (*reviewv2.Context, string) {
 
 // checkNative checks a native tile agent's reply (view.CheckDiagram): its
 // title and caption, its data, and every text in it for the copy rules.
-func checkNative(reply []byte, kind string, f *facts) (reviewv2.Tile, string) {
+func checkNative(reply []byte, kind string, f *facts, lenient bool) (reviewv2.Tile, string) {
 	var d view.ReplyDiagram
 	if problem := decode(reply, &d); problem != "" {
 		return reviewv2.Tile{}, problem
 	}
 	d.Type = kind
-	c := &checker{}
+	c := &checker{lenient: lenient}
 	title, data, _, problem := view.CheckDiagram(d, func(id string) bool { _, ok := f.hunks[id]; return ok })
 	if problem != "" {
 		c.add("/", "the tile is not drawable: %s", problem)
@@ -437,12 +437,12 @@ type overviewResult struct {
 
 // checkOverview checks the overview's reply; ids it names that do not
 // exist are dropped (the diagram falls back to the host's choice).
-func checkOverview(reply []byte, f *facts, sections map[string]bool, ready map[string]bool) (overviewResult, string) {
+func checkOverview(reply []byte, f *facts, sections map[string]bool, ready map[string]bool, lenient bool) (overviewResult, string) {
 	var o overviewReply
 	if problem := decode(reply, &o); problem != "" {
 		return overviewResult{}, problem
 	}
-	c := &checker{}
+	c := &checker{lenient: lenient}
 	out := overviewResult{Overview: reviewv2.Overview{Screenshots: []string{}, Intent: []reviewv2.Intent{}}}
 	out.Text = c.text("/summary", o.Summary, MaxLede, 3, true)
 	if !slices.Contains(Decisions, o.Verdict.Decision) {

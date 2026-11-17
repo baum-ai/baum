@@ -342,7 +342,8 @@ type call struct {
 	instructions     string
 	input            string
 	schema           []byte
-	check            func(reply []byte) string
+	// check returns the findings of a reply; lenient is its last pass.
+	check            func(reply []byte, lenient bool) string
 	resume           string
 	persist          bool
 }
@@ -361,6 +362,10 @@ func (o *orchestration) runCall(ctx context.Context, c call) ([]byte, agent.Outc
 	budgets := o.budget.take(level)
 	started := time.Now()
 	prompt := o.prompt.Shared + "\n\n" + c.instructions + "\n\n" + o.tools
+	if c.resume != "" {
+		// A resumed session already holds the shared text and the tools.
+		prompt = c.instructions
+	}
 	input := "\n# Input\n\n" + c.input
 	_, ending := agent.RepairText(o.run.Generator.Backend.Name())
 	var accepted []byte
@@ -383,7 +388,7 @@ func (o *orchestration) runCall(ctx context.Context, c call) ([]byte, agent.Outc
 		if err != nil {
 			return agent.Verdict{}, err
 		}
-		findings := c.check(masked)
+		findings := c.check(masked, pass.Number > pass.Repairs)
 		if o.run.Record != nil {
 			o.mu.Lock()
 			o.run.Record(Call{Level: c.level, ID: c.id, Pass: pass.Number, Prompt: prompt, Input: input, Reply: masked, Findings: findings})
@@ -529,8 +534,8 @@ func (o *orchestration) mapLevel(ctx context.Context) error {
 	var accepted plan
 	c := call{level: LevelMap, id: "map", label: "map", instructions: o.prompt.Map, input: input,
 		schema: MapSchema(o.registry.names()), persist: agent.KeepsSessions(o.run.Generator.Backend)}
-	c.check = func(reply []byte) string {
-		p, findings := checkMap(reply, o.facts, o.registry)
+	c.check = func(reply []byte, lenient bool) string {
+		p, findings := checkMap(reply, o.facts, o.registry, lenient)
 		if findings == "" {
 			accepted = p
 		}

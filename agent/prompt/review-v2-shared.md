@@ -105,7 +105,10 @@ These copy rules are mandatory for every text you write.
   `cites` or `source` only), and no bare pull request numbers: say what the
   other pull request did ("the relay pull request fixes the close codes").
 - Write for a teammate who knows the project but not this change. Keep each
-  text within its limit: the host checks every one and sends a reply that
-  breaks a limit back.
+  text within its limit: the host counts the characters and the sentences
+  of every one and sends a reply that breaks a limit back, which costs a
+  whole call. Count the sentences of each summary, step, caption and
+  verdict line before you submit; when a text needs more, it belongs in
+  another part.
 - Do not talk about the bundle, the excerpts, the checkout, the calls or
   yourself.

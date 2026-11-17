@@ -58,10 +58,23 @@ var (
 // value it is about, in the host's words.
 type checker struct {
 	findings []string
+	// lenient is the check of a call's last pass: what is wrong with a
+	// text's style or length is fixed (cut) or let through rather than
+	// sent back, so a section or a tile is not lost over its wording. What
+	// is wrong with its structure still rejects it.
+	lenient bool
 }
 
 func (c *checker) add(path, format string, args ...any) {
 	c.findings = append(c.findings, path+": "+fmt.Sprintf(format, args...))
+}
+
+// style adds a finding about a text's wording or length, unless the check
+// is lenient.
+func (c *checker) style(path, format string, args ...any) {
+	if !c.lenient {
+		c.add(path, format, args...)
+	}
 }
 
 // String is the findings as a repair reads them.
@@ -118,13 +131,13 @@ func words(s string) int { return len(strings.Fields(s)) }
 func (c *checker) copyRules(path, s string) {
 	switch {
 	case evidenceWord.MatchString(s):
-		c.add(path, `never use the word "evidence"; say what it is (tests, a log, the code, a run)`)
+		c.style(path, `never use the word "evidence"; say what it is (tests, a log, the code, a run)`)
 	case hunkMention.MatchString(s):
-		c.add(path, "names a hunk by its ID; cite hunks in cites or source only")
+		c.style(path, "names a hunk by its ID; cite hunks in cites or source only")
 	case barePR.MatchString(s):
-		c.add(path, "names a pull request or issue by number; say what the other pull request did")
+		c.style(path, "names a pull request or issue by number; say what the other pull request did")
 	case lineCount.MatchString(s):
-		c.add(path, "counts lines or files; say what changed instead")
+		c.style(path, "counts lines or files; say what changed instead")
 	}
 }
 
@@ -140,14 +153,17 @@ func (c *checker) text(path, s string, limit, maxSentences int, required bool) s
 	}
 	c.copyRules(path, s)
 	if maxSentences > 0 && sentences(s) > maxSentences {
-		c.add(path, "has %d sentences; write at most %d", sentences(s), maxSentences)
+		c.style(path, "has %d sentences; write at most %d", sentences(s), maxSentences)
 	}
+	// A text a quarter over its limit at most is kept whole: a cut leaves
+	// half a sentence. Further over, it is sent back, or cut on the last
+	// pass.
 	n := utf8.RuneCountInString(s)
-	switch {
-	case n > limit+limit/5:
+	if n > limit+limit/4 {
+		if c.lenient {
+			return cut(s, limit+limit/4)
+		}
 		c.add(path, "is %d characters; keep it to %d", n, limit)
-	case n > limit:
-		s = cut(s, limit)
 	}
 	return s
 }
@@ -160,10 +176,10 @@ func (c *checker) title(path, s string, limit, maxWords int) string {
 		return s
 	}
 	if w := words(s); w > maxWords+1 {
-		c.add(path, "is %d words; a title is a plain subject of two to %d words", w, maxWords)
+		c.style(path, "is %d words; a title is a plain subject of two to %d words", w, maxWords)
 	}
 	if twoThings.MatchString(s) {
-		c.add(path, `joins two things with a comma ("X, and Y"); name one subject`)
+		c.style(path, `joins two things with a comma ("X, and Y"); name one subject`)
 	}
 	return strings.TrimRight(s, ".")
 }

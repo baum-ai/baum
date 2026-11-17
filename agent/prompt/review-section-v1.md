@@ -46,8 +46,11 @@ named in the input; it is in the run directory.
 - `steps`: two to five, in the order the code runs or the reader should
   follow. Each `title` is at most eight words; each `text` is one sentence
   of at most 220 characters; `cites` are the hunks (with `lines` only when
-  you are sure) or files it rests on. The page shows them as the section's
-  "how it works" list, beside the code.
+  you are sure) or files it rests on. A step is behaviour: what happens,
+  not which files changed. Tests and docs are never a step of their own
+  ("Update tests and docs"); say what a test covers inside the step it
+  checks, only when that matters. The page shows the steps as the
+  section's "how it works" list, beside the code.
 - `risks`: a specific way this change could cause harm, never a style
   preference. `text` is one to three sentences, at most 480 characters:
   the input or state that fails, what goes wrong and the consequence. "If

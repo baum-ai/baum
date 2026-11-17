@@ -113,7 +113,7 @@ func TestReplySchemas(t *testing.T) {
 func TestMapChecks(t *testing.T) {
 	f := newFacts(testBundle(), nil)
 	r := NewRegistry(nil)
-	p, findings := checkMap([]byte(mapReplyJSON), f, r)
+	p, findings := checkMap([]byte(mapReplyJSON), f, r, false)
 	if findings != "" {
 		t.Fatalf("a valid map: %s", findings)
 	}
@@ -122,14 +122,14 @@ func TestMapChecks(t *testing.T) {
 	}
 	bad := strings.NewReplacer(`"kind":"mechanical"`, `"kind":"logical"`, `"level":null`, `"level":null`,
 		`"owner":"sec_api"`, `"owner":"sec_nope"`, `"title":"Retry failed jobs"`, `"title":"Retry, and requeue"`).Replace(mapReplyJSON)
-	_, findings = checkMap([]byte(bad), f, r)
+	_, findings = checkMap([]byte(bad), f, r, false)
 	for _, want := range []string{"/sections/2/level", "/tiles/2/owner", "/sections/0/title"} {
 		if !strings.Contains(findings, want) {
 			t.Errorf("findings lack %s:\n%s", want, findings)
 		}
 	}
 	missing := strings.Replace(mapReplyJSON, `"hunks":["`+hunkD+`"]`, `"hunks":[]`, 1)
-	if _, findings = checkMap([]byte(missing), f, r); !strings.Contains(findings, hunkD) {
+	if _, findings = checkMap([]byte(missing), f, r, false); !strings.Contains(findings, hunkD) {
 		t.Errorf("an uncovered hunk is not reported: %s", findings)
 	}
 }

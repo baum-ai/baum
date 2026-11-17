@@ -240,8 +240,8 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 	var result sectionResult
 	c := call{level: LevelSections, id: s.ID, label: label("section", s.ID), input: input, schema: SectionSchema(o.registry.names()),
 		instructions: o.prompt.Section + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("section", s.ID)) + "`.\n"}
-	c.check = func(reply []byte) string {
-		r, findings := checkSection(reply, s, planned, o.facts, o.registry)
+	c.check = func(reply []byte, lenient bool) string {
+		r, findings := checkSection(reply, s, planned, o.facts, o.registry, lenient)
 		if findings == "" {
 			result = r
 		}
@@ -300,8 +300,8 @@ func (o *orchestration) contextLevel(ctx context.Context) {
 	var accepted *reviewv2.Context
 	c := call{level: LevelContext, id: "context", label: "context", instructions: o.prompt.Context, schema: ContextSchema(),
 		input: basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p)}
-	c.check = func(reply []byte) string {
-		x, findings := checkContext(reply, o.facts)
+	c.check = func(reply []byte, lenient bool) string {
+		x, findings := checkContext(reply, o.facts, lenient)
 		if findings == "" {
 			accepted = x
 		}
@@ -394,8 +394,8 @@ func (o *orchestration) nativeTile(ctx context.Context, t reviewv2.Tile, kind Ti
 	instructions := o.prompt.Tile + "\n" + kind.Fill(o.prompt) + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("tile", t.ID)) + "`.\n"
 	var drawn reviewv2.Tile
 	c := call{level: LevelTiles, id: t.ID, label: label("tile", t.ID), instructions: instructions, input: input, schema: kind.Schema}
-	c.check = func(reply []byte) string {
-		x, findings := checkNative(reply, kind.Name, o.facts)
+	c.check = func(reply []byte, lenient bool) string {
+		x, findings := checkNative(reply, kind.Name, o.facts, lenient)
 		if findings == "" {
 			drawn = x
 		}
@@ -487,8 +487,8 @@ func (o *orchestration) overviewLevel(ctx context.Context) {
 	results := overviewInput(sections, tiles, o.run.Bundle)
 	o.budget.expect(3, 1)
 	var accepted overviewResult
-	check := func(reply []byte) string {
-		r, findings := checkOverview(reply, o.facts, ids, ready)
+	check := func(reply []byte, lenient bool) string {
+		r, findings := checkOverview(reply, o.facts, ids, ready, lenient)
 		if findings == "" {
 			accepted = r
 		}

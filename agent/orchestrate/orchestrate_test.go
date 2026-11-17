@@ -475,8 +475,15 @@ func TestCopyRules(t *testing.T) {
 		t.Fatalf("findings: %v", c.findings)
 	}
 	c = &checker{}
-	if got := c.text("/ok", "A **plain** [link](http://x) text that is a bit long", 32, 1, true); len(c.findings) != 0 || strings.Contains(got, "*") || !strings.HasSuffix(got, "…") {
-		t.Fatalf("clean and cut: %q %v", got, c.findings)
+	// A text a quarter over its limit at most is kept whole.
+	if got := c.text("/ok", "A **plain** [link](http://x) text that is a bit long", 32, 1, true); len(c.findings) != 0 || got != "A plain link text that is a bit long" {
+		t.Fatalf("clean: %q %v", got, c.findings)
+	}
+	// The last pass lets style through and cuts what is far too long.
+	c = &checker{lenient: true}
+	got := c.text("/last", "The evidence. Two. Three. "+strings.Repeat("y", 200), 100, 1, true)
+	if len(c.findings) != 0 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("lenient: %q %v", got, c.findings)
 	}
 }
 
