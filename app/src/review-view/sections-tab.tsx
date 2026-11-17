@@ -164,11 +164,14 @@ function SectionBody({
           {section.derived.review_score !== undefined ? (
             <ReviewScoreBadge score={section.derived.review_score} withMeaning />
           ) : null}
+          {/* The risks show their own tiers below: beside the review score
+              a second level reads as a contradiction, so the tier stands
+              only where the section has no score. */}
           {obsolete ? (
             <Badge tone="neutral">No longer in the code</Badge>
-          ) : (
+          ) : section.derived.review_score === undefined ? (
             <TierBadge tier={section.derived.risk_tier} risks={section.risks.length} />
-          )}
+          ) : null}
         </div>
         <CardHeader size="pane" title={section.title} />
       </div>

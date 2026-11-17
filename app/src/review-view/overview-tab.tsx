@@ -101,16 +101,15 @@ export function OverviewTab({
       ) : null}
       <RiskPart document={document} view={view} />
       {screenshots.length > 0 ? (
-        <Part label="What it looks like">
-          <ReviewImages
-            document={document}
-            block={{
-              kind: "images",
-              items: screenshots.map((attachment) => ({ attachment })),
-              source: [],
-            }}
-          />
-        </Part>
+        <ReviewImages
+          document={document}
+          heading="What it looks like"
+          block={{
+            kind: "images",
+            items: screenshots.map((attachment) => ({ attachment })),
+            source: [],
+          }}
+        />
       ) : null}
       {diagram ? (
         <ViewTileCard tile={diagram} review={document} ctx={ctx} idPrefix={idPrefix} />

@@ -90,7 +90,7 @@ function Join({ join }: { join: FlowStep["join"] }) {
     <span
       aria-hidden
       data-join={join ?? "arrow"}
-      className="flex flex-none items-center justify-center px-1.5 py-0.5 text-base font-semibold text-tertiary"
+      className="flex flex-none items-center justify-center self-center px-1.5 py-0.5 text-base font-semibold text-tertiary"
     >
       <span className="@lg:hidden">{down}</span>
       <span className="hidden @lg:inline">{across}</span>
@@ -112,6 +112,12 @@ export function validFlow(data: unknown): data is FlowData {
   );
 }
 
+/** A lane too long for one row of a section's width breaks into rows of
+ *  three, so a row never ends with one step on its own, and keeps one row
+ *  where the diagram has the room (the overview). A shorter lane keeps one
+ *  row and its steps narrow to fit. */
+const long = (steps: FlowStep[]) => steps.length > 4;
+
 export function FlowDiagram({ data }: { data: FlowData }) {
   const labelled = data.lanes.some((lane) => lane.label);
   return (
@@ -128,15 +134,28 @@ export function FlowDiagram({ data }: { data: FlowData }) {
           {labelled ? <span className={LANE_LABEL}>{lane.label ?? ""}</span> : null}
           <ol
             aria-label={lane.label || undefined}
-            className="flex min-w-0 flex-col @lg:flex-row @lg:flex-wrap @lg:items-center @lg:gap-y-2"
+            className={cn(
+              "flex min-w-0 flex-col @lg:flex-row @lg:items-stretch @lg:gap-y-2",
+              long(lane.steps) && "@lg:flex-wrap @4xl:flex-nowrap",
+            )}
           >
             {lane.steps.map((step, position) => (
               <li
                 key={position}
-                className="flex min-w-0 flex-col items-stretch @lg:max-w-60 @lg:flex-row @lg:items-center"
+                className={cn(
+                  "flex min-w-0 flex-col items-stretch @lg:flex-row",
+                  long(lane.steps)
+                    ? "@lg:basis-1/3 @4xl:flex-1 @4xl:basis-0"
+                    : "@lg:flex-1 @lg:basis-0",
+                )}
               >
                 {position > 0 ? <Join join={step.join} /> : null}
-                <Box title={step.title} note={step.note} tone={toneOf(step.tone)} />
+                <Box
+                  title={step.title}
+                  note={step.note}
+                  tone={toneOf(step.tone)}
+                  className="@lg:flex-1"
+                />
               </li>
             ))}
           </ol>
