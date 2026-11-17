@@ -204,6 +204,39 @@ type Tile struct {
 	// drawn in a sandboxed frame; absent for a native type. Host.
 	Definition json.RawMessage `json:"definition,omitempty"`
 	Problems   []string        `json:"problems,omitempty"`
+	// Added, From and Filling are set only when the tile is served: Added
+	// marks a tile the person added to the pull request (internal/
+	// addedtiles), which they can remove; From is the earlier version its
+	// data was written for, and Filling says it is being filled for this
+	// one. Never stored.
+	Added   bool `json:"added,omitempty"`
+	From    int  `json:"from,omitempty"`
+	Filling bool `json:"filling,omitempty"`
+}
+
+// CodeData is a code tile's data: the model names the hunk and, optionally,
+// its first and last line on the new side; the host fills Excerpt from the
+// diff (Complete).
+type CodeData struct {
+	Hunk    string   `json:"hunk"`
+	Lines   []int    `json:"lines,omitempty"`
+	Excerpt *Excerpt `json:"excerpt,omitempty"`
+}
+
+// Excerpt is the code a code tile shows: the file and the hunk's diff
+// lines, as baum.review/1's index records them.
+type Excerpt struct {
+	Path  string        `json:"path"`
+	Lines []ExcerptLine `json:"lines"`
+}
+
+// ExcerptLine is one line of an excerpt: context, add or remove, with its
+// line numbers on each side.
+type ExcerptLine struct {
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+	Old  int    `json:"old_line,omitempty"`
+	New  int    `json:"new_line,omitempty"`
 }
 
 // Tile states.

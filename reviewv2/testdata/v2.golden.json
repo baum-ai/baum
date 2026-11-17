@@ -1,0 +1,786 @@
+{
+  "schema": "baum.review/2",
+  "review": {
+    "repository": "acme/widgets",
+    "pull_request": 42,
+    "pr_state": "open",
+    "head": "2222222222222222222222222222222222222222",
+    "base": "1111111111111111111111111111111111111111",
+    "merge_base": "1111111111111111111111111111111111111111",
+    "merged_commit": null,
+    "version": 1,
+    "previous_version": null,
+    "generation_state": "current",
+    "generated_at": "2026-11-17T09:00:00Z",
+    "evidence_refreshed_at": "2026-11-17T09:00:00Z",
+    "generator": {
+      "model": "fixture-model",
+      "review_md": null,
+      "review_md_changed": false,
+      "truncated": [],
+      "schema_revision": "2026-11-17.1",
+      "prompt_version": "v2-fixture"
+    },
+    "sources": {
+      "diff": true,
+      "sessions": 1,
+      "checks": 1,
+      "test_reports": 0,
+      "review_threads": true,
+      "agent_reviews": 0,
+      "spec_links": false,
+      "review_md": false
+    },
+    "relations": []
+  },
+  "summary": {
+    "title": "Retry failed webhook deliveries",
+    "text": "Failed webhook deliveries now retry with a wait that doubles each time. The delivery path hands retryable errors to the new policy instead of returning them.",
+    "change_kind": "feature",
+    "verdict": {
+      "decision": "look_first",
+      "text": "Check the retry budget before merging.",
+      "points": [
+        {
+          "text": "Nothing caps the number of attempts, so a remote that stays down is retried forever.",
+          "section": "sec_retry_policy"
+        }
+      ]
+    },
+    "risk_why": "Every failed delivery now takes the retry path. A remote that stays down is retried without a cap.",
+    "risk_score": {
+      "rubric": "risk-v1",
+      "status": "assessed",
+      "score": 3,
+      "reasons": [
+        {
+          "section": "sec_retry_policy",
+          "risk": null,
+          "text": "Every failed delivery now waits on this policy."
+        }
+      ],
+      "limitations": []
+    },
+    "review_minutes": 1
+  },
+  "overview": {
+    "screenshots": [
+      "att_ab12"
+    ],
+    "diagram": "tl_retry_flow",
+    "intent": [
+      {
+        "session": "11111111-2222-3333-4444-555555555555",
+        "prompt": 1,
+        "asked": "Retry failed deliveries with a doubling wait",
+        "got": "Failed deliveries retry with a doubling wait; nothing stops them yet"
+      }
+    ]
+  },
+  "context": {
+    "area": {
+      "text": "The delivery package sends webhook payloads to the URLs customers register.",
+      "files": [
+        "internal/delivery"
+      ]
+    },
+    "reached_by": {
+      "text": "The worker calls the client's deliver function for every queued event.",
+      "files": [
+        "internal/worker/worker.go"
+      ]
+    },
+    "contracts": {
+      "text": "A delivery that returns an error is reported to the customer at once.",
+      "files": [
+        "internal/delivery/deliver.go"
+      ]
+    },
+    "related": {
+      "text": "",
+      "files": []
+    }
+  },
+  "sections": [
+    {
+      "id": "sec_retry_policy",
+      "title": "Retry policy",
+      "kind": "logical",
+      "hunks": [
+        "h_a00000000001",
+        "h_a00000000003"
+      ],
+      "gist": "A new policy says how long to wait before each retry.",
+      "level": 3,
+      "level_reasons": [
+        {
+          "text": "Every failed delivery now waits on this policy.",
+          "cites": [
+            {
+              "type": "hunk",
+              "id": "h_a00000000001"
+            }
+          ]
+        }
+      ],
+      "summary": "A policy holds the number of attempts and the first wait. The wait doubles with every attempt.",
+      "steps": [
+        {
+          "id": "st_policy",
+          "title": "Policy holds the budget",
+          "text": "The policy keeps how many attempts to make and the first wait.",
+          "cites": [
+            {
+              "type": "hunk",
+              "id": "h_a00000000001",
+              "lines": [
+                6,
+                9
+              ]
+            }
+          ]
+        },
+        {
+          "id": "st_wait",
+          "title": "Wait doubles",
+          "text": "Each attempt waits twice as long as the one before.",
+          "cites": [
+            {
+              "type": "hunk",
+              "id": "h_a00000000001",
+              "lines": [
+                11,
+                12
+              ]
+            },
+            {
+              "type": "hunk",
+              "id": "h_a00000000003"
+            }
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "id": "rsk_unbounded_retries",
+          "tier": "medium",
+          "category": "reliability",
+          "text": "Nothing reads the number of attempts, so a remote that stays down is retried forever.",
+          "cites": [
+            {
+              "type": "hunk",
+              "id": "h_a00000000001",
+              "lines": [
+                6,
+                9
+              ]
+            }
+          ],
+          "state": "active",
+          "introduced_version": 1
+        }
+      ],
+      "derived": {
+        "state": "new",
+        "risk_tier": "medium",
+        "additions": 17,
+        "deletions": 0,
+        "role_loc": {
+          "code": 12,
+          "test": 5
+        },
+        "reviewers": [
+          {
+            "login": "hubot",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {},
+        "open_findings": 0,
+        "review_score": 3,
+        "review_reason": {
+          "risk": null,
+          "text": "Every failed delivery now waits on this policy."
+        }
+      }
+    },
+    {
+      "id": "sec_delivery_errors",
+      "title": "Delivery error path",
+      "kind": "logical",
+      "hunks": [
+        "h_a00000000002"
+      ],
+      "gist": "Retryable errors go to the policy instead of the customer.",
+      "level": 2,
+      "level_reasons": [
+        {
+          "text": "Only errors marked retryable change their path.",
+          "cites": [
+            {
+              "type": "hunk",
+              "id": "h_a00000000002"
+            }
+          ]
+        }
+      ],
+      "summary": "A retryable error now schedules a retry. Any other error is returned as before.",
+      "steps": [
+        {
+          "id": "st_schedule",
+          "title": "Retryable errors wait",
+          "text": "A retryable error schedules the delivery again under the policy.",
+          "cites": [
+            {
+              "type": "hunk",
+              "id": "h_a00000000002",
+              "lines": [
+                40,
+                42
+              ]
+            }
+          ]
+        },
+        {
+          "id": "st_return",
+          "title": "Other errors return",
+          "text": "Any other error is returned to the caller at once.",
+          "cites": [
+            {
+              "type": "hunk",
+              "id": "h_a00000000002",
+              "lines": [
+                43,
+                44
+              ]
+            },
+            {
+              "type": "session_event",
+              "session": "11111111-2222-3333-4444-555555555555",
+              "event": "ev_tests"
+            }
+          ]
+        }
+      ],
+      "risks": [],
+      "derived": {
+        "state": "new",
+        "risk_tier": "unrated",
+        "additions": 4,
+        "deletions": 1,
+        "role_loc": {
+          "code": 5
+        },
+        "reviewers": [
+          {
+            "login": "hubot",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {},
+        "open_findings": 0,
+        "review_score": 2,
+        "review_reason": {
+          "risk": null,
+          "text": "Only errors marked retryable change their path."
+        }
+      }
+    },
+    {
+      "id": "sec_dependencies",
+      "title": "Dependency update",
+      "kind": "mechanical",
+      "hunks": [
+        "h_a00000000004"
+      ],
+      "gist": "A dependency moves to its next minor version.",
+      "level": null,
+      "level_reasons": [],
+      "summary": "The lock file records the new version of one dependency.",
+      "steps": [],
+      "risks": [],
+      "derived": {
+        "state": "new",
+        "risk_tier": "mechanical",
+        "additions": 2,
+        "deletions": 2,
+        "role_loc": {
+          "generated": 4
+        },
+        "reviewers": [
+          {
+            "login": "hubot",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {},
+        "open_findings": 0,
+        "review_score": 1
+      }
+    }
+  ],
+  "tiles": [
+    {
+      "id": "tl_retry_flow",
+      "type": "flow",
+      "owner": "overview",
+      "shows": "What happens to a failed delivery, with and without a retryable error.",
+      "title": "What happens to a failed delivery",
+      "caption": "Only retryable errors take the retry lane.",
+      "cites": [
+        {
+          "type": "hunk",
+          "id": "h_a00000000002"
+        }
+      ],
+      "data": {
+        "lanes": [
+          {
+            "label": "Retryable",
+            "steps": [
+              {
+                "title": "Deliver"
+              },
+              {
+                "title": "Remote fails",
+                "tone": "bad"
+              },
+              {
+                "title": "Wait and retry",
+                "note": "the wait doubles",
+                "tone": "new"
+              }
+            ]
+          },
+          {
+            "label": "Other errors",
+            "steps": [
+              {
+                "title": "Deliver"
+              },
+              {
+                "title": "Remote fails",
+                "tone": "bad"
+              },
+              {
+                "title": "Returned at once",
+                "tone": "muted"
+              }
+            ]
+          }
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "tl_wait_code",
+      "type": "code",
+      "owner": "sec_retry_policy",
+      "shows": "The line that doubles the wait.",
+      "title": "How the wait doubles",
+      "caption": "The wait is the first wait shifted left once per attempt.",
+      "cites": [],
+      "data": {
+        "hunk": "h_a00000000001",
+        "lines": [
+          11,
+          12
+        ],
+        "excerpt": {
+          "path": "internal/delivery/retry.go",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "// Wait is the wait before attempt n: Base doubled n-1 times.",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "func (p Policy) Wait(n int) time.Duration { return p.Base \u003c\u003c (n - 1) }",
+              "new_line": 12
+            }
+          ]
+        }
+      },
+      "state": "ready"
+    },
+    {
+      "id": "tl_error_paths",
+      "type": "columns",
+      "owner": "sec_delivery_errors",
+      "shows": "Which errors retry and which return.",
+      "title": "Which errors retry",
+      "cites": [
+        {
+          "type": "hunk",
+          "id": "h_a00000000002"
+        }
+      ],
+      "data": {
+        "columns": [
+          {
+            "label": "Retry",
+            "tone": "new",
+            "items": [
+              {
+                "title": "Errors marked retryable"
+              }
+            ]
+          },
+          {
+            "label": "Return",
+            "tone": "muted",
+            "items": [
+              {
+                "title": "Every other error"
+              }
+            ]
+          }
+        ]
+      },
+      "state": "ready"
+    }
+  ],
+  "stats": {
+    "sections": 3,
+    "files": 4,
+    "hunks": 4,
+    "additions": 23,
+    "deletions": 3,
+    "risk_loc": {
+      "critical": 0,
+      "high": 0,
+      "low": 0,
+      "mechanical": 4,
+      "medium": 12,
+      "unrated": 10
+    },
+    "role_loc": {
+      "code": 17,
+      "generated": 4,
+      "test": 5
+    },
+    "checks": {
+      "required_failed": 0,
+      "optional_failed": 0,
+      "pending": 0,
+      "skipped": 0
+    },
+    "agent_findings": {
+      "open": 0,
+      "resolved": 0,
+      "dismissed": 0
+    }
+  },
+  "index": {
+    "hunks": [
+      {
+        "id": "h_a00000000001",
+        "path": "internal/delivery/retry.go",
+        "change": "added",
+        "role": "code",
+        "new_range": [
+          1,
+          12
+        ],
+        "additions": 12,
+        "deletions": 0,
+        "github_url": "https://github.com/acme/widgets/pull/42/files#diff-1",
+        "diff": {
+          "header": "@@ -0,0 +1,12 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package delivery",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "import \"time\"",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "// Policy says how often a failed delivery is retried.",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "type Policy struct {",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": "\tAttempts int",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "\tBase     time.Duration",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "// Wait is the wait before attempt n: Base doubled n-1 times.",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "func (p Policy) Wait(n int) time.Duration { return p.Base \u003c\u003c (n - 1) }",
+              "new_line": 12
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_a00000000002",
+        "path": "internal/delivery/deliver.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          39,
+          6
+        ],
+        "additions": 4,
+        "deletions": 1,
+        "github_url": "https://github.com/acme/widgets/pull/42/files#diff-2",
+        "diff": {
+          "header": "@@ -39,3 +39,6 @@",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "\tresp, err := c.post(ctx, d)",
+              "old_line": 39,
+              "new_line": 39
+            },
+            {
+              "kind": "remove",
+              "text": "\tif err != nil {",
+              "old_line": 40
+            },
+            {
+              "kind": "add",
+              "text": "\tif err != nil \u0026\u0026 retryable(err) {",
+              "new_line": 40
+            },
+            {
+              "kind": "add",
+              "text": "\t\treturn c.retry.Schedule(ctx, d, err)",
+              "new_line": 41
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 42
+            },
+            {
+              "kind": "add",
+              "text": "\tif err != nil {",
+              "new_line": 43
+            },
+            {
+              "kind": "context",
+              "text": "\t\treturn err",
+              "old_line": 41,
+              "new_line": 44
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_a00000000003",
+        "path": "internal/delivery/retry_test.go",
+        "change": "added",
+        "role": "test",
+        "new_range": [
+          1,
+          5
+        ],
+        "additions": 5,
+        "deletions": 0,
+        "github_url": "https://github.com/acme/widgets/pull/42/files#diff-3",
+        "diff": {
+          "header": "@@ -0,0 +1,5 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package delivery",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "func TestWaitDoubles(t *testing.T) {",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "\tif (Policy{Base: 1}).Wait(3) != 4 { t.Fatal(\"no doubling\") }",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 5
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_a00000000004",
+        "path": "go.sum",
+        "change": "modified",
+        "role": "generated",
+        "new_range": [
+          10,
+          2
+        ],
+        "additions": 2,
+        "deletions": 2,
+        "github_url": "https://github.com/acme/widgets/pull/42/files#diff-4",
+        "diff": {
+          "header": "@@ -10,2 +10,2 @@",
+          "lines": [
+            {
+              "kind": "remove",
+              "text": "example.com/a v1.0.0 h1:x",
+              "old_line": 10
+            },
+            {
+              "kind": "remove",
+              "text": "example.com/a v1.0.0/go.mod h1:y",
+              "old_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "example.com/a v1.1.0 h1:z",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "example.com/a v1.1.0/go.mod h1:w",
+              "new_line": 11
+            }
+          ]
+        }
+      }
+    ],
+    "checks": [
+      {
+        "id": "ci",
+        "kind": "check_run",
+        "name": "CI",
+        "conclusion": "success",
+        "required": true,
+        "head": "2222222222222222222222222222222222222222",
+        "started_at": null,
+        "completed_at": null,
+        "url": "https://github.com/acme/widgets/actions/runs/1"
+      }
+    ],
+    "reports": [],
+    "comments": [],
+    "threads": [],
+    "sessions": [
+      {
+        "id": "11111111-2222-3333-4444-555555555555",
+        "vendor": "claude",
+        "models": [
+          "acme-model-1"
+        ],
+        "title": "Retry deliveries",
+        "git_branch": "",
+        "started_at": "2026-11-10T09:00:00Z",
+        "ended_at": "2026-11-10T10:00:00Z",
+        "outcome": "committed",
+        "prompt_count": 1,
+        "tool_calls": 1,
+        "restricted": false,
+        "prompts": [
+          {
+            "index": 1,
+            "id": "prompt-1",
+            "at": "2026-11-10T09:00:00Z",
+            "text": "Retry failed webhook deliveries with a doubling wait, and stop after a few attempts."
+          }
+        ],
+        "events": [
+          {
+            "id": "ev_tests",
+            "at": "2026-11-10T09:40:00Z",
+            "verb": "execute",
+            "summary": "go test ./internal/delivery/..."
+          }
+        ]
+      }
+    ],
+    "prs": [],
+    "attachments": [
+      {
+        "id": "att_ab12",
+        "alt": "The delivery log with a retry",
+        "position": 1,
+        "content_type": "image/png",
+        "width": 800,
+        "height": 600
+      }
+    ]
+  },
+  "generation": {
+    "map": {
+      "status": "ran"
+    },
+    "overview": {
+      "status": "ran"
+    },
+    "context": {
+      "status": "ran"
+    },
+    "sections": {
+      "sec_delivery_errors": {
+        "status": "ran"
+      },
+      "sec_dependencies": {
+        "status": "ran"
+      },
+      "sec_retry_policy": {
+        "status": "ran"
+      }
+    },
+    "tiles": {
+      "tl_error_paths": {
+        "status": "ran"
+      },
+      "tl_retry_flow": {
+        "status": "ran"
+      },
+      "tl_wait_code": {
+        "status": "ran"
+      }
+    }
+  }
+}
