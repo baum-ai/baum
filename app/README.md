@@ -2658,10 +2658,14 @@ The page reads each version from `GET api/tiles` (a draft's from
 `baum.review/2` document (`oss/reviewv2/document.go`; `review-view/document.ts`
 has its types): the summary with its `verdict` and `risk_why`, the
 `overview` (`screenshots`, `diagram`, `intent`), the `context`, the sections
-with their `gist`, `summary`, `steps`, `risks` and `details`, and every tile
+with their `gist`, `body` (blocks: `prose`, `points`, `note`, or a `tile` naming a tile the section owns), `risks` and `details`, and every tile
 placed by its `owner` (`overview`, `context` or a section). `parseReviewV2`
 reads it, dropping a malformed item (a section, step, risk, tile or intent row)
-rather than the page. The tabs read only this document. The review viewer
+rather than the page. A section without a `body` (a document written before
+bodies, with a `summary` and `steps`) reads as one, as the daemon's `BodyOf`
+does: a prose block, a points block, then its tiles; tiles the body does not
+place (a person's own among them) follow it, and a tile block naming a missing
+or another section's tile is ignored. The tabs read only this document. The review viewer
 around them (the head, history, side pane, comments, selection and keys) and
 the viewer's parts they draw (citation chips, images, diffs) read a
 `baum.review/1` review, which `chromeOf` makes from the document: what
@@ -2692,8 +2696,12 @@ points, or a record of the three levels' calls: `isArranged`).
   files as chips, and the tiles `context` owns) and opens on the first real
   section; each section's line in the list is its `gist`. A section shows its
   title, then a row of views, each with its count and disabled (never hidden)
-  when the section has nothing for it: **Overview** (its summary, its first
-  diagram, its steps, its risks and the rest of the tiles it owns; "Writing
+  when the section has nothing for it: **Overview** (its gist, then its body block by
+  block, then its risks: prose at reading width, points as hairline lines that
+  open to a detail and the files they cite, a note with a left rule, and tile
+  blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
+  label; a table cell `{text, was}` strikes the old value, and a flow whose
+  steps have `more` makes them buttons that show the step's detail below; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
   migration hunks, file by file, drawn as the Code tab draws them with the
   section's own steps and risks pinned to the hunks they cite, and its

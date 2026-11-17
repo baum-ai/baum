@@ -1,9 +1,17 @@
 import { type CSSProperties, type ReactNode, useState } from "react";
 import "./flow.css";
-import { cn } from "@baum/viewer/components/classnames";
+import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { type Column, Table } from "@baum/viewer/components/table";
-import type { ColumnsData, FlowData, FlowStep, SequenceData, TableData, Tone } from "./model";
+import type {
+  ColumnsData,
+  FlowData,
+  FlowStep,
+  SequenceData,
+  TableCell,
+  TableData,
+  Tone,
+} from "./model";
 
 /** The diagrams and tables the view call writes, drawn by the page itself:
  *  a flow of steps in lanes, columns of items, a sequence of messages
@@ -57,18 +65,34 @@ function Box({
   note,
   tone,
   className,
+  pressed,
+  onPress,
 }: {
   title: string;
   note?: string;
   tone: Tone;
   className?: string;
+  /** Set when the box opens something: it is then a button, `pressed` while
+   *  what it opens is shown. */
+  pressed?: boolean;
+  onPress?: () => void;
 }) {
+  const Element = onPress ? "button" : "div";
   return (
-    <div
+    <Element
+      {...(onPress
+        ? { type: "button" as const, "aria-pressed": pressed ?? false, onClick: onPress }
+        : {})}
       className={cn(
         "grid min-w-0 content-start gap-0.5 rounded-md border px-3 py-2 [overflow-wrap:anywhere]",
         BOX[tone],
         tone === "muted" && "opacity-80",
+        onPress &&
+          cn(
+            "cursor-pointer text-left hover:bg-surface-hover",
+            FOCUS_RING,
+            pressed && "border-strong ring-1 ring-(--border-strong)",
+          ),
         className,
       )}
     >
@@ -78,7 +102,7 @@ function Box({
       {note ? (
         <InlineMarkdown className="text-xs leading-snug text-secondary">{note}</InlineMarkdown>
       ) : null}
-    </div>
+    </Element>
   );
 }
 
@@ -106,7 +130,12 @@ export function validFlow(data: unknown): data is FlowData {
       (lane) =>
         isRecord(lane) &&
         Array.isArray(lane.steps) &&
-        lane.steps.every((step) => isRecord(step) && isString(step.title)),
+        lane.steps.every(
+          (step) =>
+            isRecord(step) &&
+            isString(step.title) &&
+            (step.more === undefined || isString(step.more)),
+        ),
     )
   );
 }
@@ -127,6 +156,10 @@ const branchOf = (data: FlowData, at: number) => {
 };
 
 export function FlowDiagram({ data }: { data: FlowData }) {
+  // The step whose detail shows under the flow, as [lane, step].
+  const [picked, setPicked] = useState<[number, number] | null>(null);
+  const opened = picked ? data.lanes[picked[0]]?.steps[picked[1]] : undefined;
+  const clickable = data.lanes.some((lane) => lane.steps.some((step) => step.more?.trim()));
   const labelled = data.lanes.some((lane) => lane.label);
   const branches = data.lanes.map((_, at) => branchOf(data, at));
   // As many columns as the longest lane that is not a branch; a branch
@@ -140,7 +173,7 @@ export function FlowDiagram({ data }: { data: FlowData }) {
     const steps = data.lanes[at]?.steps.length ?? 1;
     return from ? Math.max(1, Math.min(from + 1, columns - steps + 1)) : 1;
   };
-  return (
+  const grid = (
     <div
       className="flow"
       data-wide={widthFor(columns * 8.5) ?? WIDTHS[WIDTHS.length - 1]}
@@ -180,13 +213,48 @@ export function FlowDiagram({ data }: { data: FlowData }) {
                   }
                 >
                   {position > 0 ? <Join join={step.join} /> : from ? <Join join="branch" /> : null}
-                  <Box title={step.title} note={step.note} tone={toneOf(step.tone)} />
+                  <Box
+                    title={step.title}
+                    note={step.note}
+                    tone={toneOf(step.tone)}
+                    {...(step.more?.trim()
+                      ? {
+                          pressed: picked?.[0] === at && picked[1] === position,
+                          onPress: () =>
+                            setPicked((now) =>
+                              now?.[0] === at && now[1] === position ? null : [at, position],
+                            ),
+                        }
+                      : {})}
+                  />
                 </li>
               ))}
             </ol>
           </div>
         );
       })}
+    </div>
+  );
+  if (!clickable) return grid;
+  return (
+    <div className="grid min-w-0 gap-2.5">
+      {grid}
+      <div
+        aria-live="polite"
+        data-flow-more=""
+        className="max-w-[72ch] space-y-1.5 text-base text-secondary"
+      >
+        {opened?.more ? (
+          <div className="space-y-1.5 border-t border-subtle pt-2.5">
+            <InlineMarkdown className="block font-semibold text-primary">
+              {opened.title}
+            </InlineMarkdown>
+            <InlineMarkdown className="block">{opened.more}</InlineMarkdown>
+          </div>
+        ) : (
+          <p className="text-xs text-tertiary">Click a step for its detail.</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -350,28 +418,51 @@ export function SequenceDiagram({ data }: { data: SequenceData }) {
   );
 }
 
+const validCell = (cell: unknown): cell is TableCell =>
+  isString(cell) ||
+  (isRecord(cell) && isString(cell.text) && (cell.was === undefined || isString(cell.was)));
+
 export function validTable(data: unknown): data is TableData {
   return (
     isRecord(data) &&
     Array.isArray(data.columns) &&
     data.columns.every(isString) &&
     Array.isArray(data.rows) &&
-    data.rows.every((row) => Array.isArray(row) && row.every(isString))
+    data.rows.every((row) => Array.isArray(row) && row.every(validCell))
   );
 }
 
-type Row = { key: string; cells: string[] };
+type Row = { key: string; cells: TableCell[] };
 
 /** The rows a long table shows until it is opened: enough to read what it
  *  compares without it outweighing the section around it. */
 export const TABLE_ROWS_SHOWN = 6;
+
+/** A table cell: its text, or what it is now (emphasised) after what it was
+ *  before the change (struck through). */
+function Cell({ cell }: { cell: TableCell }) {
+  if (typeof cell === "string") return <InlineMarkdown>{cell}</InlineMarkdown>;
+  if (!cell.was) return <InlineMarkdown>{cell.text}</InlineMarkdown>;
+  return (
+    <span data-changed="">
+      <del className="mr-1.5 font-normal text-tertiary">
+        <span className="sr-only">Was </span>
+        <InlineMarkdown>{cell.was}</InlineMarkdown>
+      </del>
+      <strong className="font-semibold text-primary">
+        <span className="sr-only">now </span>
+        <InlineMarkdown>{cell.text}</InlineMarkdown>
+      </strong>
+    </span>
+  );
+}
 
 export function TableDiagram({ data }: { data: TableData }) {
   const [all, setAll] = useState(false);
   const columns: Column<Row>[] = data.columns.map((column, position) => ({
     key: `${position}-${column}`,
     header: <InlineMarkdown>{column}</InlineMarkdown>,
-    cell: (row) => <InlineMarkdown>{row.cells[position] ?? ""}</InlineMarkdown>,
+    cell: (row) => <Cell cell={row.cells[position] ?? ""} />,
   }));
   // Folding one or two rows saves nothing: a table folds only when it
   // hides at least three.

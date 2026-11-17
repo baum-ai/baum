@@ -1,10 +1,11 @@
 import type {
   Anchor,
+  Block,
   ReviewContextPart,
   ReviewDocument,
   Section,
 } from "@baum/viewer/review-document";
-import type { ReviewV2, V2ContextPart } from "./document";
+import { leadProse, pointId, type ReviewV2, type V2ContextPart, type V2Section } from "./document";
 
 /** The review the page's chrome reads, made from a baum.review/2 document:
  *  the review viewer around the tabs (its head, version menu, history, side
@@ -71,7 +72,7 @@ export function chromeOf(review: ReviewV2): ReviewDocument {
         kind: section.kind,
         hunks: section.hunks,
         ...(section.details ? { details: section.details } : {}),
-        summary: section.details ? null : { text: section.summary, anchors: [] },
+        summary: section.details ? null : { text: leadProse(section) || section.gist, anchors: [] },
         attention: null,
         risks: section.risks.map((risk) => ({
           id: risk.id,
@@ -85,21 +86,7 @@ export function chromeOf(review: ReviewV2): ReviewDocument {
           ...(risk.mitigated_version ? { mitigated_version: risk.mitigated_version } : {}),
         })),
         evidence: [],
-        blocks:
-          section.steps.length > 0
-            ? [
-                {
-                  kind: "behavior",
-                  steps: section.steps.map((step) => ({
-                    id: step.id,
-                    ...(step.title ? { title: step.title } : {}),
-                    text: step.text,
-                    anchors: step.cites,
-                    evidence: [],
-                  })),
-                },
-              ]
-            : [],
+        blocks: behaviourBlocks(section),
         ...(section.level
           ? {
               assessment: {
@@ -119,6 +106,22 @@ export function chromeOf(review: ReviewV2): ReviewDocument {
     unassigned_hunks: review.index.hunks.flatMap((hunk) => (listed.has(hunk.id) ? [] : [hunk.id])),
     index: review.index,
   };
+}
+
+/** The points of a section's body as the behaviour steps the side pane,
+ *  selection and comments read. */
+function behaviourBlocks(section: V2Section): Block[] {
+  const steps = section.body.flatMap((block, at) =>
+    block.type === "points"
+      ? block.items.map((point, position) => ({
+          id: pointId(section.id, at, position, point),
+          text: point.text,
+          anchors: point.cites,
+          evidence: [],
+        }))
+      : [],
+  );
+  return steps.length > 0 ? [{ kind: "behavior", steps }] : [];
 }
 
 function contextPart(part: V2ContextPart | null): ReviewContextPart | undefined {

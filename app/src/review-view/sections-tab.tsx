@@ -11,6 +11,7 @@ import {
 import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Cites } from "./cites";
+import { AnchorChips } from "@baum/viewer/components/review-parts";
 import { useReviewFiles, useReviewSources } from "@baum/viewer/components/review-contexts";
 import {
   Item,
@@ -32,7 +33,7 @@ import { draftsOn, type DraftCard } from "../tiles/drafts";
 import { useTileHost } from "../tiles/host";
 import { PendingCard } from "../tiles/pending-card";
 import type { TileContext } from "../tiles/types";
-import type { V2Context, V2Risk } from "./document";
+import { pointId, type V2Block, type V2Context, type V2Point, type V2Risk } from "./document";
 import {
   CONTEXT_ID,
   detailsOf,
@@ -41,6 +42,7 @@ import {
   selectionOf,
   shownSectionView,
   tilesOn,
+  viewTile,
   type ListedSection,
   type ReviewV2,
   type SectionView,
@@ -49,7 +51,7 @@ import {
 } from "./model";
 import { NavRow } from "./nav-row";
 import { SectionViewBody, SectionViewTabs } from "./section-views";
-import { ViewTileCard } from "./view-tile";
+import { BLOCK_LABEL, ViewTileCard } from "./view-tile";
 
 /** How it works: the list of sections ("Where this fits" first) beside the
  *  section read, which shows its views (its Overview: its summary, the tiles
@@ -209,8 +211,9 @@ function SectionBody({
   );
 }
 
-/** A section's Overview: what it does, in its summary, its lead diagram, its
- *  steps, its risks and the rest of its tiles. */
+/** A section's Overview: its frame (the gist, then its risks last) around the
+ *  body its agent composed, drawn block by block in order: prose, points,
+ *  notes and the section's tiles. */
 function SectionOverview({
   document,
   review,
@@ -228,17 +231,19 @@ function SectionOverview({
   drafts: DraftCard[];
   onRetryDetails?: (id: string) => void | Promise<unknown>;
 }) {
+  const host = useTileHost();
   const details = detailsOf(section);
-  const steps = section.steps;
-  // The section's first diagram leads, right under its summary; tables,
-  // excerpts and library tiles follow what the section does and its risks.
-  const tiles = tilesOn(review, section.id);
-  const lead = tiles.find((tile) => DIAGRAM_TYPES.has(tile.type));
-  const rest = tiles.filter((tile) => tile !== lead);
   const obsolete = section.derived.state === "stale";
   const open = section.risks.filter((risk) => risk.state !== "mitigated" || obsolete);
   const mitigated = obsolete ? [] : section.risks.filter((risk) => risk.state === "mitigated");
   const itemId = (ref: string) => `${idPrefix}${section.id}-${ref}`;
+  // The list's line, shown as the section's own once, unless its first
+  // prose already opens with it (a section read from an older document).
+  const lead = section.body.find((block) => block.type === "prose");
+  const gist =
+    section.gist && !(lead?.type === "prose" && lead.text.trim().startsWith(section.gist))
+      ? section.gist
+      : "";
   return (
     <div className="space-y-7">
       {details === "pending" ? (
@@ -254,37 +259,30 @@ function SectionOverview({
           ) : null}
         </div>
       ) : null}
-      {section.summary.trim() ? <Markdown className={PROSE}>{section.summary}</Markdown> : null}
-      {lead ? (
-        <SectionTiles
-          tiles={[lead]}
-          drafts={[]}
-          document={document}
-          ctx={ctx}
-          idPrefix={idPrefix}
-        />
+      {gist ? (
+        <p data-section-gist="" className="max-w-[72ch] text-base leading-[1.6] text-secondary">
+          <InlineMarkdown>{gist}</InlineMarkdown>
+        </p>
       ) : null}
-      {steps.length > 0 ? (
-        <Part label="What it does">
-          <ol className="space-y-2">
-            {steps.map((step, position) => (
-              <Item key={step.id} id={itemId(step.id)} className="flex gap-3">
-                <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-tertiary">
-                  {position + 1}
-                </span>
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  {step.title ? (
-                    <p className="font-medium text-primary">
-                      <InlineMarkdown>{step.title}</InlineMarkdown>
-                    </p>
-                  ) : null}
-                  <Markdown className="text-primary">{step.text}</Markdown>
-                  <Cites document={document} anchors={step.cites} />
-                </div>
-              </Item>
-            ))}
-          </ol>
-        </Part>
+      {section.body.length > 0 || drafts.length > 0 ? (
+        <div data-section-body="" className="min-w-0 space-y-6">
+          {section.body.map((block, at) => (
+            <BodyBlock
+              key={block.type === "tile" ? `tile-${block.tile}` : `${block.type}-${at}`}
+              block={block}
+              at={at}
+              section={section.id}
+              document={document}
+              review={review}
+              ctx={ctx}
+              idPrefix={idPrefix}
+              itemId={itemId}
+            />
+          ))}
+          {drafts.map((draft) => (
+            <PendingCard key={draft.tile} draft={draft} remove={host.removeDraft} />
+          ))}
+        </div>
       ) : null}
       {open.length + mitigated.length > 0 ? (
         <Part label="Risks">
@@ -309,14 +307,118 @@ function SectionOverview({
           ) : null}
         </Part>
       ) : null}
-      <SectionTiles
-        tiles={rest}
-        drafts={drafts}
-        document={document}
-        ctx={ctx}
-        idPrefix={idPrefix}
-      />
     </div>
+  );
+}
+
+/** What the keys (j and k) move between and fill while it is the one. */
+const BLOCK =
+  "min-w-0 scroll-mt-4 rounded-md outline-none data-[review-block-active]:bg-surface-wash";
+
+/** One block of a section's body, by its type. A tile block is the tile
+ *  bare, under its title as the block's label; a text block's optional title
+ *  is the same label. */
+function BodyBlock({
+  block,
+  at,
+  section,
+  document,
+  review,
+  ctx,
+  idPrefix,
+  itemId,
+}: {
+  block: V2Block;
+  at: number;
+  section: string;
+  document: ReviewDocument;
+  review: ReviewV2;
+  ctx: TileContext;
+  idPrefix: string;
+  itemId: (ref: string) => string;
+}) {
+  if (block.type === "tile") {
+    const tile = viewTile(review, block.tile);
+    return tile ? (
+      <ViewTileCard tile={tile} review={document} ctx={ctx} idPrefix={idPrefix} variant="bare" />
+    ) : null;
+  }
+  return (
+    <div data-review-block="" data-block={block.type} className={cn(BLOCK, "space-y-2")}>
+      {block.title ? <h3 className={BLOCK_LABEL}>{block.title}</h3> : null}
+      {block.type === "prose" ? (
+        <p className="max-w-[72ch] text-base leading-[1.7] text-primary">
+          <InlineMarkdown>{block.text}</InlineMarkdown>
+        </p>
+      ) : block.type === "points" ? (
+        <ul className="border-t border-subtle">
+          {block.items.map((point, position) => (
+            <PointRow
+              key={position}
+              id={itemId(pointId(section, at, position, point))}
+              point={point}
+              document={document}
+            />
+          ))}
+        </ul>
+      ) : (
+        <p className="max-w-[72ch] border-l-2 border-default py-0.5 pl-3 text-base text-secondary">
+          <InlineMarkdown>{block.text}</InlineMarkdown>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** One line of a points block. With a detail or cited files it is a button:
+ *  it opens (the caret turns) to show the detail and the files it rests on. */
+function PointRow({
+  id,
+  point,
+  document,
+}: {
+  id: string;
+  point: V2Point;
+  document: ReviewDocument;
+}) {
+  const [open, setOpen] = useState(false);
+  const openable = Boolean(point.more) || point.cites.length > 0;
+  const panel = `${id}-more`;
+  return (
+    <li id={id} data-point="" className="scroll-mt-4 border-b border-subtle target:bg-surface-wash">
+      {openable ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panel}
+          onClick={() => setOpen((shown) => !shown)}
+          className={cn(
+            "grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-baseline gap-3 rounded-sm px-1 py-2.5 text-left text-base text-primary hover:bg-surface-hover",
+            FOCUS_RING,
+          )}
+        >
+          <InlineMarkdown>{point.text}</InlineMarkdown>
+          <ChevronRightIcon
+            aria-hidden
+            className={cn("size-3.5 flex-none self-center text-tertiary", open && "rotate-90")}
+          />
+        </button>
+      ) : (
+        <p className="px-1 py-2.5 text-base text-primary">
+          <InlineMarkdown>{point.text}</InlineMarkdown>
+        </p>
+      )}
+      {openable && open ? (
+        <div id={panel} className="max-w-[72ch] space-y-2 px-1 pb-3 text-base text-secondary">
+          {point.more ? (
+            <p>
+              <InlineMarkdown>{point.more}</InlineMarkdown>
+            </p>
+          ) : null}
+          <AnchorChips document={document} anchors={point.cites} />
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -416,9 +518,6 @@ function SectionList({
     </nav>
   );
 }
-
-/** The native diagram types: one of them leads a section. */
-const DIAGRAM_TYPES = new Set(["flow", "columns", "sequence"]);
 
 /** The tiles placed on a section, and the pending cards of those being made
  *  for it in the session panel. */

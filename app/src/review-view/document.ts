@@ -64,7 +64,26 @@ export type V2Context = {
   related: V2ContextPart | null;
 };
 
-export type V2Step = { id: string; title: string; text: string; cites: Anchor[] };
+/** One line of a points block: `text` (inline markdown) on the page, `more`
+ *  and the cited files behind its click. `id` is set for a point made from an
+ *  older document's step, which keeps the step's ID (comments rest on it). */
+export type V2Point = { id?: string; text: string; more?: string; cites: Anchor[] };
+
+/** One block of a section's body. A tile block places one of the section's
+ *  tiles (by ID); the others are text. `title` is the optional label above. */
+export type V2Block =
+  | { type: "prose" | "note"; title?: string; text: string }
+  | { type: "points"; title?: string; items: V2Point[] }
+  | { type: "tile"; tile: string };
+
+/** The in-page ID of a section's point: its step's ID where it came from one,
+ *  else its place in the body. */
+export const pointId = (section: string, block: number, item: number, point: V2Point): string =>
+  point.id ?? `${section}-b${block}-p${item}`;
+
+/** The text of a section's lead prose block, if it has one. */
+export const leadProse = (section: Pick<V2Section, "body">): string =>
+  section.body.flatMap((block) => (block.type === "prose" ? [block.text] : []))[0] ?? "";
 
 export type V2Risk = {
   id: string;
@@ -87,9 +106,10 @@ export type V2Section = {
   scope?: string;
   level: RiskScoreLevel | null;
   level_reasons: { text: string; cites: Anchor[] }[];
-  /** Empty while the details are pending or when they failed. */
-  summary: string;
-  steps: V2Step[];
+  /** What the page draws between the gist and the risks, in order: text
+   *  blocks the section agent wrote and the section's tiles. Empty while the
+   *  details are pending or when they failed, and no tile yet. */
+  body: V2Block[];
   risks: V2Risk[];
   /** Absent once written. */
   details?: SectionDetailsState;
@@ -151,12 +171,12 @@ export function parseReviewV2(value: unknown, drafts?: unknown): ReviewV2 | null
   const index = parseIndex(value.index);
   const summary = isRecord(value.summary) ? value.summary : {};
   const overview = isRecord(value.overview) ? value.overview : {};
-  const sections = records(value.sections).flatMap((section) => {
-    const parsed = parseSection(section, index.hunks);
-    return parsed ? [parsed] : [];
-  });
   const tiles = records(value.tiles).flatMap((tile) => {
     const parsed = parseTile(tile, index.hunks);
+    return parsed ? [parsed] : [];
+  });
+  const sections = records(value.sections).flatMap((section) => {
+    const parsed = parseSection(section, index.hunks, tiles);
     return parsed ? [parsed] : [];
   });
   const pending = parseDrafts(drafts);
@@ -294,7 +314,11 @@ function parseRisk(value: Record<string, unknown>): V2Risk | null {
   };
 }
 
-function parseSection(value: Record<string, unknown>, hunks: IndexedHunk[]): V2Section | null {
+function parseSection(
+  value: Record<string, unknown>,
+  hunks: IndexedHunk[],
+  tiles: ViewTile[],
+): V2Section | null {
   if (!isString(value.id) || !value.id || !isString(value.title)) return null;
   const own = strings(value.hunks);
   const risks = records(value.risks).flatMap((risk) => {
@@ -318,23 +342,72 @@ function parseSection(value: Record<string, unknown>, hunks: IndexedHunk[]): V2S
     level_reasons: records(value.level_reasons).flatMap((reason) =>
       isString(reason.text) ? [{ text: reason.text, cites: anchors(reason.cites) }] : [],
     ),
-    summary: text(value.summary),
-    steps: records(value.steps).flatMap((step, at) =>
-      isString(step.text) && step.text.trim()
-        ? [
-            {
-              id: isString(step.id) && step.id ? step.id : `step_${at + 1}`,
-              title: text(step.title),
-              text: step.text,
-              cites: anchors(step.cites),
-            },
-          ]
-        : [],
+    body: sectionBody(
+      value,
+      tiles.filter((tile) => tile.owner === value.id),
     ),
     risks,
     ...(details ? { details } : {}),
     derived: derivedOf(value.derived, own, risks, hunks),
   };
+}
+
+function parsePoint(value: Record<string, unknown>): V2Point | null {
+  if (!isString(value.text) || !value.text.trim()) return null;
+  return {
+    text: value.text,
+    ...(isString(value.more) && value.more.trim() ? { more: value.more } : {}),
+    cites: anchors(value.cites),
+  };
+}
+
+/** A section's body: its blocks as served, a malformed one dropped, a tile
+ *  block kept only for a tile the section owns (and placed once), then any
+ *  owned tile the body does not place (a tile the person added, or one made
+ *  after the body) at the end. A section with no usable body reads as one
+ *  made from its `summary` (a prose block), its `steps` (a points block) and
+ *  its tiles, as the daemon's `BodyOf` does for documents written before. */
+export function sectionBody(value: Record<string, unknown>, owned: ViewTile[]): V2Block[] {
+  const placed = new Set<string>();
+  const body = records(value.body).flatMap((block): V2Block[] => {
+    const title = isString(block.title) && block.title.trim() ? { title: block.title.trim() } : {};
+    if ((block.type === "prose" || block.type === "note") && isString(block.text))
+      return block.text.trim() ? [{ type: block.type, ...title, text: block.text }] : [];
+    if (block.type === "points") {
+      const items = records(block.items).flatMap((item) => {
+        const point = parsePoint(item);
+        return point ? [point] : [];
+      });
+      return items.length > 0 ? [{ type: "points", ...title, items }] : [];
+    }
+    if (block.type === "tile" && isString(block.tile)) {
+      const id = block.tile;
+      if (placed.has(id) || !owned.some((tile) => tile.id === id)) return [];
+      placed.add(id);
+      return [{ type: "tile", tile: id }];
+    }
+    return [];
+  });
+  if (body.length === 0) {
+    const summary = text(value.summary).trim();
+    const items = records(value.steps).flatMap((step, at): V2Point[] => {
+      if (!isString(step.text) || !step.text.trim()) return [];
+      const title = text(step.title).trim();
+      return [
+        {
+          id: isString(step.id) && step.id ? step.id : `step_${at + 1}`,
+          text: title
+            ? `**${/[.!?]$/.test(title) ? title : `${title}.`}** ${step.text}`
+            : step.text,
+          cites: anchors(step.cites),
+        },
+      ];
+    });
+    if (summary) body.push({ type: "prose", text: summary });
+    if (items.length > 0) body.push({ type: "points", items });
+  }
+  for (const tile of owned) if (!placed.has(tile.id)) body.push({ type: "tile", tile: tile.id });
+  return body;
 }
 
 /** The host's facts of a section, as served, over what the page can work out

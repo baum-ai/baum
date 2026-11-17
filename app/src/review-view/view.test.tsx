@@ -234,12 +234,11 @@ describe("How it works", () => {
     const parts = [...body.querySelectorAll("section[aria-label]")].map((each) =>
       each.getAttribute("aria-label"),
     );
-    expect(parts).toEqual(expect.arrayContaining(["What it does", "Risks"]));
+    expect(parts).toContain("Risks");
+    expect(parts).not.toContain("What it does");
     expect(parts).not.toContain("Code");
     expect(body.querySelector('[aria-label="Code changes"]')).toBeNull();
-    expect(body.querySelector('[aria-label="What it does"]')?.textContent).toContain(
-      "Deny by default",
-    );
+    expect(body.querySelector('[data-block="points"]')?.textContent).toContain("Deny by default");
     expect(body.querySelector('[aria-label="Risks"]')?.textContent).toContain("High risk");
     expect(body.textContent).not.toContain("Decide");
   });
@@ -702,5 +701,167 @@ describe("a baum.review/1 answer with its view", () => {
         (each) => each.dataset.tile,
       ),
     ).toEqual(["dg_allowlist", "dg_always_allow", "lib_api_change", "code_remote_routes"]);
+  });
+});
+
+// ---------- a section's body ----------
+
+const withBody = (): ReviewDocument => {
+  const review: ReviewV2 = {
+    ...REVIEW_1303,
+    sections: REVIEW_1303.sections.map((section) =>
+      section.id === "sec_pairing"
+        ? {
+            ...section,
+            gist: "A one-time code pairs up to 16 phones.",
+            body: [
+              { type: "prose", text: "Pairing is **short-lived**, a `NewOffer` per phone." },
+              {
+                type: "points",
+                title: "Choices to agree with",
+                items: [
+                  {
+                    text: "A code lasts **5 minutes**.",
+                    more: "The secret expires, and at most 4 are live.",
+                    cites: [{ type: "hunk", id: "h_pairing" }],
+                  },
+                  { text: "A plain line with nothing behind it.", cites: [] },
+                ],
+              },
+              { type: "tile", tile: "dg_pairing" },
+              { type: "note", text: "Aside about *nothing* else." },
+              { type: "points", items: [{ text: "Untitled point.", cites: [] }] },
+            ],
+          }
+        : section,
+    ),
+  };
+  return review1303(review);
+};
+
+describe("a section's body", () => {
+  const bodyOf = async () => {
+    const container = await page("pane=section&section=sec_pairing", withBody());
+    return panel(container).querySelector<HTMLElement>("[data-section-body]")!;
+  };
+
+  it("draws the blocks in order between the gist and the risks", async () => {
+    const container = await page("pane=section&section=sec_pairing", withBody());
+    const article = panel(container).querySelector<HTMLElement>("article")!;
+    const body = article.querySelector<HTMLElement>("[data-section-body]")!;
+    const blocks = [...body.children].map(
+      (each) => (each as HTMLElement).dataset.block ?? (each as HTMLElement).dataset.tile,
+    );
+    expect(blocks).toEqual(["prose", "points", "dg_pairing", "note", "points"]);
+    const text = article.textContent ?? "";
+    const order = [
+      "A one-time code pairs up to 16 phones.",
+      "Pairing is short-lived",
+      "Choices to agree with",
+      "Aside about",
+      "Risks",
+    ].map((part) => text.indexOf(part));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect(order).toEqual(order.toSorted((a, b) => a - b));
+    // Each block is one the keys move between.
+    expect(body.querySelectorAll("[data-review-block]")).toHaveLength(5);
+  });
+
+  it("draws prose and a note as inline markdown", async () => {
+    const body = await bodyOf();
+    expect(body.querySelector('[data-block="prose"] strong')?.textContent).toBe("short-lived");
+    expect(body.querySelector('[data-block="prose"] code')?.textContent).toBe("NewOffer");
+    expect(body.querySelector('[data-block="note"]')?.textContent).toBe(
+      "Aside about nothing else.",
+    );
+  });
+
+  it("labels a titled block and a tile bare, and leaves an untitled one without a label", async () => {
+    const body = await bodyOf();
+    const [titled, untitled] = [...body.querySelectorAll<HTMLElement>('[data-block="points"]')];
+    expect(titled?.querySelector("h3")?.textContent).toBe("Choices to agree with");
+    expect(untitled?.querySelector("h3")).toBeNull();
+    const tile = body.querySelector<HTMLElement>('[role="figure"]')!;
+    expect(tile.querySelector("h3")?.textContent).toBe("How a phone is paired");
+    // No card: no border, background or padding of its own.
+    expect(tile.className).not.toMatch(/\bborder\b|\bbg-surface-card\b|\bp-4\b/);
+  });
+
+  it("opens a point to its detail and the files it cites", async () => {
+    const body = await bodyOf();
+    const rows = [...body.querySelectorAll<HTMLElement>("[data-point]")];
+    expect(rows).toHaveLength(3);
+    const toggle = rows[0]!.querySelector("button")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(rows[0]!.textContent).not.toContain("The secret expires");
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(rows[0]!.textContent).toContain("The secret expires, and at most 4 are live.");
+    expect(rows[0]!.textContent).toContain("pairing");
+    await click(toggle);
+    expect(rows[0]!.textContent).not.toContain("The secret expires");
+    // A point with nothing behind it is not a button.
+    expect(rows[1]!.querySelector("button")).toBeNull();
+  });
+
+  it("reads an older document's summary and steps as the same blocks", async () => {
+    const container = await page("pane=section&section=sec_allowlist");
+    const body = panel(container).querySelector<HTMLElement>("[data-section-body]")!;
+    expect(
+      [...body.querySelectorAll<HTMLElement>("[data-block]")].map((each) => each.dataset.block),
+    ).toEqual(["prose", "points"]);
+    expect(body.querySelector('[data-block="points"] strong')?.textContent).toBe(
+      "Deny by default.",
+    );
+  });
+
+  it("shows a table cell's old value struck through before the new one", async () => {
+    const table = tileOf("dg_relay_runs");
+    const data = table.data as { columns: string[]; rows: unknown[][] };
+    const container = await card({
+      ...table,
+      data: {
+        ...data,
+        rows: [["run 1", { text: "5 minutes", was: "10 minutes" }, { text: "plain" }]],
+      },
+    });
+    const cell = container.querySelector("tbody td [data-changed]")!;
+    expect(cell.querySelector("del")?.textContent).toContain("10 minutes");
+    expect(cell.querySelector("strong")?.textContent).toContain("5 minutes");
+    expect(container.querySelectorAll("tbody td")[2]?.querySelector("del")).toBeNull();
+  });
+
+  it("makes a flow's steps with a detail clickable and shows the clicked step's detail", async () => {
+    const flow = tileOf("dg_pairing");
+    const container = await card({
+      ...flow,
+      data: {
+        lanes: [
+          {
+            steps: [
+              { title: "Offer", more: "A secret is made." },
+              { title: "Scan" },
+              { title: "Pair", more: "The phone is stored by its key." },
+            ],
+          },
+        ],
+        source: [],
+      },
+    });
+    const boxes = [...container.querySelectorAll<HTMLButtonElement>(".flow button")];
+    expect(boxes.map((each) => each.textContent)).toEqual(["Offer", "Pair"]);
+    expect(container.querySelectorAll(".flow li")[1]?.querySelector("button")).toBeNull();
+    expect(boxes.map((each) => each.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
+    const more = container.querySelector<HTMLElement>("[data-flow-more]")!;
+    expect(more.textContent).toContain("Click a step");
+    await click(boxes[1]!);
+    expect(boxes[1]!.getAttribute("aria-pressed")).toBe("true");
+    expect(more.textContent).toContain("Pair");
+    expect(more.textContent).toContain("The phone is stored by its key.");
+    await click(boxes[0]!);
+    expect(boxes.map((each) => each.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
+    expect(more.textContent).toContain("A secret is made.");
+    await click(boxes[0]!);
+    expect(more.textContent).not.toContain("A secret is made.");
   });
 });
