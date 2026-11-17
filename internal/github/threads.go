@@ -76,6 +76,8 @@ type ReviewThread struct {
 	// a comment on the whole file.
 	Line     int
 	Outdated bool
+	// Resolved is set only on the threads AllThreads reads.
+	Resolved bool
 	// CanReply and CanResolve are the signed-in account's.
 	CanReply, CanResolve bool
 	// URL is the thread's first submitted comment on GitHub.
@@ -93,6 +95,9 @@ type ReviewThreads struct {
 	ViewerDidAuthor bool
 	// Unresolved are the unresolved threads in GitHub's order.
 	Unresolved []ReviewThread
+	// All are every thread, resolved or not, in GitHub's order; AllThreads
+	// fills it and UnresolvedThreads does not.
+	All []ReviewThread
 	// Capped: the pull request has more threads than baum read.
 	Capped bool
 }
@@ -126,6 +131,16 @@ func errorType(kind string) string {
 // the first comments of each, from up to four pages of 50 threads. A
 // pending comment (the signed-in account's unsubmitted review) is left out.
 func (c *Client) UnresolvedThreads(ctx context.Context, repository Repository, number int) (ReviewThreads, error) {
+	return c.readThreads(ctx, repository, number, false)
+}
+
+// AllThreads reads the pull request's review threads, resolved ones too, as
+// UnresolvedThreads does; they are in All.
+func (c *Client) AllThreads(ctx context.Context, repository Repository, number int) (ReviewThreads, error) {
+	return c.readThreads(ctx, repository, number, true)
+}
+
+func (c *Client) readThreads(ctx context.Context, repository Repository, number int, keepResolved bool) (ReviewThreads, error) {
 	var out ReviewThreads
 	var cursor *string
 	for page := range threadPages {
@@ -174,13 +189,13 @@ func (c *Client) UnresolvedThreads(ctx context.Context, repository Repository, n
 			return ReviewThreads{}, ErrHeadMoved
 		}
 		for _, node := range pr.ReviewThreads.Nodes {
-			if node.IsResolved {
+			if node.IsResolved && !keepResolved {
 				continue
 			}
 			if node.ID == "" {
 				return ReviewThreads{}, errors.New("github returned a review thread without its id")
 			}
-			thread := ReviewThread{ID: node.ID, Path: node.Path, Outdated: node.IsOutdated, CanReply: node.ViewerCanReply, CanResolve: node.ViewerCanResolve, Total: node.Comments.TotalCount}
+			thread := ReviewThread{ID: node.ID, Path: node.Path, Outdated: node.IsOutdated, Resolved: node.IsResolved, CanReply: node.ViewerCanReply, CanResolve: node.ViewerCanResolve, Total: node.Comments.TotalCount}
 			if node.Line != nil {
 				thread.Line = *node.Line
 			} else if node.OriginalLine != nil {
@@ -201,7 +216,11 @@ func (c *Client) UnresolvedThreads(ctx context.Context, repository Repository, n
 				thread.Comments = append(thread.Comments, entry)
 			}
 			if len(thread.Comments) > 0 {
-				out.Unresolved = append(out.Unresolved, thread)
+				if keepResolved {
+					out.All = append(out.All, thread)
+				} else {
+					out.Unresolved = append(out.Unresolved, thread)
+				}
 			}
 		}
 		info := pr.ReviewThreads.PageInfo

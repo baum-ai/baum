@@ -7283,7 +7283,9 @@ tools and a `--print` run cannot ask permission. Codex adds
 environment, after `agent_env`, so the token is in no argument or
 configuration. Only the Claude `User` and Codex `Local` profiles accept it;
 the others return an error. With no `MCP` the arguments are what they always
-were. No job sets it yet; the session panel's conversations do, through
+were. Review generation gets a server from `jobs.Local.ReviewMCP`, which the
+daemon wires to `agentcontext.ReviewMCP.Attach` (a `review` token, below); the
+session panel's conversations set it too, through
 `agent.Converser`, which adds `baum` beside the person's own servers instead
 of in place of them (see "Session panel conversations").
 
@@ -7324,6 +7326,53 @@ Repositories page without a repository, is refused, by the same check `link`
 builds a section's address with (`checkSection`).
 An action's page is its pull request and does not change. Callers hold the
 id, not the token, to set the page.
+
+A `review` consumer is the agent generating a pull request's review, on the
+person's own computer with their own agent login, so it may read whatever the
+app can show and change nothing. `Registry.MintReview(repository, number)
+(token, revoke, err)` mints one; `ReviewMCP` (`reviewaccess.go`) is what
+generation holds: the daemon builds it before the job executor, `Serve`
+gives it the registry and the MCP URL (`<origin>/api/mcp`, read per run, as
+the console reads it) once the server is built, and `Attach(repository,
+number) (*agent.MCPServer, revoke, error)` mints a token per run (a nil
+server, before the app server listens, runs the review without one). Like an
+action, a review's page is its pull request and its tools default to it; any
+repository and pull request may be named. Which tools it sees is decided per
+tool, not by scope: only the tools `reviewReadTools` names, and never one
+with `Proposes` or `Edits` (`New` panics on such a listing). Every read tool
+is there, the global ones (search, the lists, the Timeline, transcripts,
+analytics, Settings as shown) included, except `chatOnlyReadTools`: the
+person's draft review (`pending_review`), their conversations with a
+review's agent (`review_conversations`), `focus` and the tile-making reads. A
+test makes every tool be one of a review's reads, a chat-only read or a
+write, so a new tool is hidden from reviews until it is classified. A
+review's reader is unbound like a chat's, with `reviewUnreadable`
+(`/api/ui-state/review`, `/api/prs/chat`) refused whatever a tool declares;
+proposals and operations refuse any consumer but a chat.
+
+Review-oriented reads, for every consumer (`reviewreadtools.go`):
+`review_threads` takes `state` (unresolved, resolved, all; resolved and all
+read `GET /api/prs/threads`), `session_transcript` pages by turn
+(`from_turn`, `limit`; without either the whole transcript as before) and
+`transcript_search` finds turns holding every word, `pull_request_timeline`
+reads `GET /api/prs/timeline`, `issue` reads `GET /api/issue` (GitHub
+issues only; there is no Linear integration), `review_version_diff` compares
+two saved baum.review/1 documents (sections added, removed and renamed, hunks
+moved, risks added, mitigated and removed, recommendation and risk score),
+`related_pull_requests` reads the index's branches, stack groups, the
+timeline's cross-references and the clone (`/api/clone/changed` for open pull
+requests, `/api/clone/log` of the base for merged ones, mapped by `(#N)` and
+`Merge pull request #N` subjects), `git_log` and `git_blame` read
+`/api/clone/log` and `/api/clone/blame` at the head, the merge base or a
+commit, and `validation_runs` projects the document's `index.validation`,
+`stats.validation` and each session's gaps. `file` reads a cited file as
+before, else any file through `/api/clone/file`. The GitHub routes are
+`uiserver.GitHubReadsHandler` over `githubreads.Service`, which caches each
+answer per GitHub identity (a minute, issues five) and reads through the
+client's GraphQL path; the clone routes are `LocalAPI.cloneRoutes` over
+`gitlocal.Repo.Log`, `Blame` and `ChangedSince`, which never fetch (a commit
+the clone lacks is 422 `commit_missing`, and the tools then try the review's
+head). Actions read them bound to their repository (`actionRoutes`).
 
 Tools are registered with a name, description, JSON Schema, a scope, the
 route prefixes they read (`Reads`) and a call that gets a `CallContext`:

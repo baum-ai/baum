@@ -22,12 +22,12 @@ import (
 func (s *Server) pullExtraTools() []Tool {
 	return []Tool{{
 		Name: "file",
-		Description: "A file of the repository at the head of the pull request's saved review, as the app's file view opens it from a context chip: the text (at most 512 KiB, cut with truncated set), or no content for a directory, a binary file or a path the head lacks. " +
-			"Only a file the review cites can be read, and only a pull request with a saved review has one.",
-		InputSchema: targetSchema(`"path":{"type":"string","minLength":1,"maxLength":1000,"description":"The file's path in the repository, as the review cites it."}`, "path"),
+		Description: "A file of the repository: the text (at most 512 KiB, cut with truncated set), or no content for a directory, a binary file or a path the commit lacks. " +
+			"A file the pull request's saved review cites is read at the review's head, as the app's file view opens it from a context chip; any other file, or one asked for at a rev, is read from the clone at the pull request's head (default), its merge base (rev base) or a commit id.",
+		InputSchema: fileSchema,
 		Scope:       ScopeRepository,
-		Reads:       []string{"/api/index", "/api/file"},
-		Call:        callFile,
+		Reads:       []string{"/api/index", "/api/file", "/api/document", "/api/facts", "/api/clone/file"},
+		Call:        callFileAnyRev,
 	}, {
 		Name:        "commit",
 		Description: "One of the pull request's commits as the app's commit view shows it: the message body and the files it changed (path, old path, status, lines added and deleted). Read from the saved review when there is one, else the facts. The commit must be one commits lists.",

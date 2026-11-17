@@ -93,10 +93,14 @@ type CallContext struct {
 }
 
 // Target resolves the repository and pull request a tool reads: the ones
-// asked for, else the action's own, else those of the page the user has open.
-// An action is refused any other repository.
+// asked for, else the action's or review's own, else those of the page the
+// user has open. An action is refused any other repository.
 func (c CallContext) Target(repository string, number int) (string, int, error) {
 	repository = strings.TrimSpace(repository)
+	if c.Consumer.Kind == Review {
+		repository, number = c.reviewTarget(repository, number)
+		return repository, number, nil
+	}
 	if c.Consumer.Kind == Action {
 		if repository != "" && !strings.EqualFold(repository, c.Consumer.Repository) {
 			return "", 0, errOtherRepository
@@ -201,9 +205,17 @@ func (t *Tool) arguments(args json.RawMessage) (json.RawMessage, error) {
 	return args, nil
 }
 
-// visible reports whether consumer may list and call t.
+// visible reports whether consumer may list and call t: a chat every tool,
+// an action the repository's tools, a review the tools listed as its reads
+// (reviewaccess.go).
 func (t Tool) visible(consumer Consumer) bool {
-	return consumer.Kind != Action || t.Scope == ScopeRepository
+	switch consumer.Kind {
+	case Action:
+		return t.Scope == ScopeRepository
+	case Review:
+		return t.reviewReadable()
+	}
+	return true
 }
 
 // builtinTools are the tools every consumer has, whatever its page.
