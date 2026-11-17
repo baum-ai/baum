@@ -1,19 +1,48 @@
-//! Where the window may go. It shows only the bundled connecting screen and
-//! the daemon's loopback origin; web links open in the default browser and
-//! everything else is refused.
+//! Where the window may go. It shows only the bundled screens and the
+//! daemon's loopback origin and refuses every other navigation. Web links
+//! open in the default browser only through a request for a new window
+//! (`target="_blank"`, `window.open`), never through a navigation.
+
+use std::time::{Duration, Instant};
 
 use url::{Origin, Url};
 
+/// What a navigation gets: it loads, or nothing happens.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decision {
     Allow,
+    Deny,
+}
+
+/// What a request for a new window gets. No window ever opens.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NewWindow {
     OpenInBrowser,
     Deny,
 }
 
-/// Decides a navigation of the main window. `daemon` is the origin of the
+/// Decides a navigation in the main window. `daemon` is the origin of the
 /// daemon the window is attached to, if any.
+///
+/// On macOS and Linux the webview asks this for a navigation in any frame,
+/// not only the page itself, and says only where it goes (on Windows it asks
+/// only for the page's own navigations, and the page's `frame-src` alone
+/// governs its frames). A frame inside the app's page (an embedded document,
+/// a sandboxed frame, injected content) can navigate itself. The page's
+/// `frame-src` stops that before this is asked on WebKitGTK, but not on a page
+/// without that policy (the Vite development server's), nor on an engine that
+/// asks first. So no answer here may act outside the window: a navigation to
+/// another site is refused, never handed to the browser, or any frame could
+/// open the browser at an address carrying data it read, as often as it
+/// liked. The app opens its links to other sites as new windows
+/// (`decide_new_window`), which a sandboxed frame without `allow-popups`
+/// cannot request.
 pub fn decide(url: &Url, daemon: Option<&Origin>, setup_open: bool) -> Decision {
+    // Nothing the app loads has a user name or password in its URL, and one
+    // can make an address read as another (`http://127.0.0.1:4100@host/`).
+    if has_userinfo(url) {
+        return Decision::Deny;
+    }
     if is_bundled(url) {
         return if bundled_page_allowed(url.path(), setup_open) {
             Decision::Allow
@@ -21,12 +50,27 @@ pub fn decide(url: &Url, daemon: Option<&Origin>, setup_open: bool) -> Decision 
             Decision::Deny
         };
     }
-    if daemon.is_some_and(|d| &url.origin() == d) {
+    // The daemon's pages, and frames of its own documents. A `blob:` URL has
+    // its creator's origin, so it is excluded by scheme: the app navigates to
+    // none, and a document built from a script's data has no reason to load.
+    let http = matches!(url.scheme(), "http" | "https");
+    if http && daemon.is_some_and(|d| &url.origin() == d) {
         return Decision::Allow;
     }
-    match url.scheme() {
-        "http" | "https" if url.host().is_some() && !is_loopback(url) => Decision::OpenInBrowser,
-        _ => Decision::Deny,
+    // Everything else: other sites, other local servers (a stale daemon
+    // address), `about:`, `data:`, `blob:`, `javascript:`, `file:` and other
+    // schemes. WebKitGTK asks about a new frame's `about:blank` and a
+    // `srcdoc` frame's `about:srcdoc` too: refusing them keeps the empty
+    // document a new frame starts with, and loads no `srcdoc`.
+    Decision::Deny
+}
+
+/// A URL as debug builds log it: its scheme and host only,
+/// since a path or query can carry a credential or data a page read.
+pub fn scheme_and_host(url: &Url) -> String {
+    match url.host_str() {
+        Some(host) => format!("{}://{host}", url.scheme()),
+        None => format!("{}:", url.scheme()),
     }
 }
 
@@ -44,11 +88,45 @@ fn bundled_page_allowed(path: &str, setup_open: bool) -> bool {
 }
 
 /// Requests for a new window (`target="_blank"`, `window.open`) never open
-/// one: web links go to the browser.
-pub fn decide_new_window(url: &Url) -> Decision {
-    match decide(url, None, false) {
-        Decision::OpenInBrowser => Decision::OpenInBrowser,
-        _ => Decision::Deny,
+/// one: links to other web sites go to the browser, and anything else is
+/// refused. This is how every link of the app to another site opens. A
+/// sandboxed frame can ask only with `allow-popups`. Whether a page may ask
+/// without a click depends on the platform (WebKitGTK blocks it, WKWebView
+/// and WebView2 as wry configures them do not), so `OpenLimit` bounds how
+/// often a request opens the browser.
+pub fn decide_new_window(url: &Url) -> NewWindow {
+    match url.scheme() {
+        "http" | "https" if url.host().is_some() && !is_loopback(url) && !has_userinfo(url) => {
+            NewWindow::OpenInBrowser
+        }
+        // Loopback servers, the daemon's included, and other schemes.
+        _ => NewWindow::Deny,
+    }
+}
+
+/// How often a page may open the browser. A person clicking links never
+/// clicks two within this; a script asking for new windows in a loop opens
+/// the browser once.
+pub const OPEN_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Counts the browser opens of new-window requests: one per `OPEN_INTERVAL`,
+/// and the rest are dropped.
+#[derive(Default)]
+pub struct OpenLimit {
+    last: Option<Instant>,
+}
+
+impl OpenLimit {
+    /// Whether a request at `now` may open the browser, which then counts.
+    pub fn allow(&mut self, now: Instant) -> bool {
+        if self
+            .last
+            .is_some_and(|last| now.saturating_duration_since(last) < OPEN_INTERVAL)
+        {
+            return false;
+        }
+        self.last = Some(now);
+        true
     }
 }
 
@@ -60,13 +138,20 @@ pub fn is_tray_panel(url: &Url) -> bool {
 }
 
 /// The bundled screen's own origin: `tauri://localhost` on macOS and Linux,
-/// `http://tauri.localhost` on Windows.
+/// `http://tauri.localhost` on Windows, exactly: no port and no user name.
 fn is_bundled(url: &Url) -> bool {
+    if url.port().is_some() || has_userinfo(url) {
+        return false;
+    }
     match url.scheme() {
         "tauri" => url.host_str() == Some("localhost"),
         "http" if cfg!(windows) => url.host_str() == Some("tauri.localhost"),
         _ => false,
     }
+}
+
+fn has_userinfo(url: &Url) -> bool {
+    !url.username().is_empty() || url.password().is_some()
 }
 
 /// Another local server, such as a stale daemon address, is never opened:
@@ -138,18 +223,19 @@ mod tests {
         }
     }
 
+    /// A navigation never opens the browser, whichever frame it comes from:
+    /// links to other sites are refused in place.
     #[test]
-    fn sends_web_links_to_the_browser() {
+    fn refuses_navigations_to_other_sites() {
         let daemon = url("http://127.0.0.1:4100/").origin();
         for u in [
             "https://github.com/acme/widgets/pull/7",
             "http://example.com/",
+            "https://attacker.example/?d=secret",
+            "https://github.com/login/device",
         ] {
-            assert_eq!(
-                decide(&url(u), Some(&daemon), false),
-                Decision::OpenInBrowser,
-                "{u}"
-            );
+            assert_eq!(decide(&url(u), Some(&daemon), false), Decision::Deny, "{u}");
+            assert_eq!(decide(&url(u), None, true), Decision::Deny, "{u}");
         }
     }
 
@@ -157,6 +243,11 @@ mod tests {
     fn refuses_other_local_servers_and_schemes() {
         let daemon = url("http://127.0.0.1:4100/").origin();
         for u in [
+            "about:blank",
+            "about:srcdoc",
+            "blob:http://127.0.0.1:4100/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+            "blob:null/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+            "tel:+15555550100",
             "http://127.0.0.1:4200/",
             "https://127.0.0.1:4100/",
             "http://localhost:4100/",
@@ -213,15 +304,151 @@ mod tests {
     }
 
     #[test]
-    fn new_windows_never_open() {
+    fn refuses_addresses_with_a_user_name_or_password() {
+        let daemon = url("http://127.0.0.1:4100/").origin();
+        for u in [
+            "http://127.0.0.1:4100@evil.example/",
+            "http://evil@127.0.0.1:4100/",
+            "http://user:pass@127.0.0.1:4100/s/abc/",
+            "tauri://user@localhost/index.html",
+        ] {
+            assert_eq!(decide(&url(u), Some(&daemon), true), Decision::Deny, "{u}");
+            assert_eq!(decide_new_window(&url(u)), NewWindow::Deny, "{u}");
+        }
         assert_eq!(
-            decide_new_window(&url("https://github.com/")),
-            Decision::OpenInBrowser
+            decide_new_window(&url("https://user@github.com/")),
+            NewWindow::Deny
         );
-        assert_eq!(decide_new_window(&bundled_screen()), Decision::Deny);
+    }
+
+    /// Other spellings of 127.0.0.1 parse to it, as the webview reads them,
+    /// so they are the daemon's own origin. An IPv4-mapped IPv6 address is
+    /// another host.
+    #[test]
+    fn spellings_of_the_daemon_address_are_its_origin() {
+        let daemon = url("http://127.0.0.1:4100/").origin();
+        for u in [
+            "http://2130706433:4100/",
+            "http://0x7f000001:4100/",
+            "http://0177.0.0.1:4100/",
+            "http://127.1:4100/",
+        ] {
+            assert_eq!(url(u).host_str(), Some("127.0.0.1"), "{u}");
+            assert_eq!(
+                decide(&url(u), Some(&daemon), false),
+                Decision::Allow,
+                "{u}"
+            );
+        }
         assert_eq!(
-            decide_new_window(&url("http://127.0.0.1:4100/")),
+            decide(
+                &url("http://[::ffff:127.0.0.1]:4100/"),
+                Some(&daemon),
+                false
+            ),
             Decision::Deny
         );
+    }
+
+    /// The bundled origin exactly, with the parsed path: dot-segments resolve
+    /// before the check, and a query or fragment does not change the page.
+    #[test]
+    fn bundled_pages_by_origin_and_resolved_path() {
+        let base = bundled_screen();
+        let at = |rest: &str| {
+            url(&format!(
+                "{}://{}{rest}",
+                base.scheme(),
+                base.host_str().unwrap()
+            ))
+        };
+        assert_eq!(
+            decide(&at("/a/../index.html"), None, false),
+            Decision::Allow
+        );
+        assert_eq!(decide(&at("/a/../setup.html"), None, false), Decision::Deny);
+        assert_eq!(decide(&at("/a/../setup.html"), None, true), Decision::Allow);
+        assert_eq!(
+            decide(&at("/index.html?x=1#y"), None, false),
+            Decision::Allow
+        );
+        assert_eq!(
+            decide(&at("/screen.js?x=/index.html"), None, false),
+            Decision::Deny
+        );
+        for u in [
+            "tauri://localhost:1234/index.html",
+            "tauri://user@localhost/index.html",
+            "tauri://localhost.evil/index.html",
+        ] {
+            assert_eq!(decide(&url(u), None, true), Decision::Deny, "{u}");
+        }
+    }
+
+    #[test]
+    fn opens_the_browser_at_most_once_a_second() {
+        let start = Instant::now();
+        let mut limit = OpenLimit::default();
+        assert!(limit.allow(start));
+        assert!(!limit.allow(start));
+        assert!(!limit.allow(start + Duration::from_millis(999)));
+        assert!(limit.allow(start + OPEN_INTERVAL));
+        assert!(!limit.allow(start + OPEN_INTERVAL + Duration::from_millis(500)));
+        assert!(limit.allow(start + Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn a_refused_navigation_is_logged_without_path_or_query() {
+        for (u, logged) in [
+            (
+                "https://attacker.example/s/ns/?d=secret#x",
+                "https://attacker.example",
+            ),
+            ("http://127.0.0.1:4200/s/ns/?token=x", "http://127.0.0.1"),
+            ("about:blank", "about:"),
+            ("data:text/html,secret", "data:"),
+            ("mailto:a@example.com?body=secret", "mailto:"),
+        ] {
+            assert_eq!(scheme_and_host(&url(u)), logged, "{u}");
+        }
+    }
+
+    /// The app's links to other sites ask for a new window, which opens the
+    /// browser; no window ever opens, and nothing else leaves the app.
+    #[test]
+    fn new_windows_never_open() {
+        for u in [
+            "https://github.com/",
+            "https://github.com/acme/widgets/pull/7#discussion_r1",
+            "http://example.com/",
+            "https://docs.usebaum.com/",
+        ] {
+            assert_eq!(decide_new_window(&url(u)), NewWindow::OpenInBrowser, "{u}");
+        }
+        assert_eq!(decide_new_window(&bundled_screen()), NewWindow::Deny);
+        for u in [
+            "http://127.0.0.1:4100/",
+            "http://localhost:4100/",
+            "http://[::1]:4100/",
+            "about:blank",
+            "about:srcdoc",
+            "data:text/html,hi",
+            "blob:http://127.0.0.1:4100/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "mailto:someone@example.com",
+            "tel:+15555550100",
+            "tauri://localhost/setup.html",
+            "http://2130706433/",
+            "http://127.1/",
+            "http://0x7f000001/",
+            "http://LOCALHOST./",
+            "http://foo.localhost./",
+            "http://[::ffff:127.0.0.1]/",
+            "http://0.0.0.0/",
+            "http://[::]/",
+        ] {
+            assert_eq!(decide_new_window(&url(u)), NewWindow::Deny, "{u}");
+        }
     }
 }

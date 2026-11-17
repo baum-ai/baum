@@ -46,12 +46,12 @@ test *args:
 lint:
     golangci-lint run ./...
 
-# Build the viewer bundle, the local app and the precompiled tile validators
+# Build the viewer bundle and the local app
 viewer-build:
     sh scripts/viewer-build.sh
 
-# Build, then fail when the committed validators (and, on a release commit,
-# the built apps) differ from the fresh build
+# Build, then fail when a release commit's built apps differ from the fresh
+# build
 viewer-fresh:
     sh scripts/viewer-fresh.sh
 

@@ -191,6 +191,8 @@ const (
 	PanelModeWorkspace   = "workspace"
 	PanelBottom          = "bottom"
 	PanelTop             = "top"
+	PanelLeft            = "left"
+	PanelRight           = "right"
 )
 
 // Panel is the session panel's defaults in force; AgentSource and

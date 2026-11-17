@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,16 @@ const (
 	sentinelToken = "ghp_aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6"
 	sentinelEnv   = "SENTINEL_ENV_VALUE"
 )
+
+// cloneHome is sentinelHome as an absolute path on this system: a folder is
+// written from home only when home is absolute, which needs a drive on
+// Windows.
+var cloneHome = func() string {
+	if runtime.GOOS == "windows" {
+		return "C:" + sentinelHome
+	}
+	return sentinelHome
+}()
 
 func (d *sentinelDaemon) requests() []string {
 	d.mu.Lock()
@@ -75,7 +86,7 @@ func (d *sentinelDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/github/repositories":
 		reply(`{"fetched_at":"2026-11-12T09:00:00Z","total_count":2,"repositories":[{"repository":"acme/web","private":true,"top":true,"fork":false,"pushed_at":"2026-11-10T00:00:00Z","description":"The web app","picked":true,"clone":"c1"},{"repository":"acme/lib","private":false,"fork":true,"picked":false,"clone":""}],"organization_access":{"organizations":["%s"]},"search_error":%q,"query":%q}`, sentinelEnv, sentinelToken, q.Get("query"))
 	case p == "/api/repositories/acme/web/clone-target":
-		reply(`{"dir":%q}`, sentinelHome+"/src/web")
+		reply(`{"dir":%q}`, cloneHome+"/src/web")
 	case p == "/api/repositories/acme/outside/clone-target":
 		reply(`{"dir":"/srv/elsewhere/outside"}`)
 	case p == "/api/diagnostics":
@@ -191,7 +202,7 @@ func TestRepositoryToolsCarryNoPathTokenOrEnvironment(t *testing.T) {
 
 	// The folder is written from home: ~/src/web, never the home itself.
 	was := homeDirectory
-	homeDirectory = func() (string, error) { return sentinelHome, nil }
+	homeDirectory = func() (string, error) { return cloneHome, nil }
 	t.Cleanup(func() { homeDirectory = was })
 	text, failed = data(t, s, token, "clone_target", map[string]any{"repository": "acme/web"})
 	if failed || !strings.Contains(text, `"folder":"~/src/web"`) {

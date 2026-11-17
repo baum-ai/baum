@@ -1495,7 +1495,9 @@ it("places a stack by its first shown open member and opens to its members", asy
   await press("j");
   await press("j");
   expect(shown()).toBe("Payments stack");
-  expect(panel().textContent).toContain("There is no group review yet");
+  // A stack's panel is its overview: no combined review to ask for.
+  expect(panel().textContent).not.toContain("group review");
+  expect(panel().textContent).toContain("Open the stack");
   expect(
     Array.from(panel().querySelectorAll('[aria-label="Pull requests"] li')).map(
       (li) => li.textContent,

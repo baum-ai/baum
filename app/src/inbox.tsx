@@ -281,12 +281,14 @@ export function Inbox({
     switch (action) {
       case "next":
       case "previous":
+      case "first":
+      case "last":
         event.preventDefault();
         setFocusedId(
           moveFocus(
             items.map((item) => item.id),
             focusedKey,
-            action === "next" ? 1 : -1,
+            action === "next" ? 1 : action === "previous" ? -1 : action,
           ),
         );
         return;
@@ -973,7 +975,7 @@ function GroupRow({
               <NineDots size={14} />
               Generating group review
             </span>
-          ) : group.outdated ? (
+          ) : group.stack ? null : group.outdated ? (
             <span className="inbox-activity">Group review outdated</span>
           ) : group.version_count === 0 ? (
             <span className="inbox-activity">No group review yet</span>

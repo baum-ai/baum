@@ -74,7 +74,6 @@ export type Anchor =
   | { type: "attachment"; url?: string; id?: string };
 
 export type Risk = {
-  tiles?: unknown[];
   id: string;
   tier: RiskTier;
   category: string;
@@ -256,7 +255,6 @@ export type RiskScore = {
 export type SectionDetailsState = "pending" | "failed";
 
 export type Section = {
-  tiles?: unknown[];
   id: string;
   title: string;
   kind: "logical" | "mechanical";

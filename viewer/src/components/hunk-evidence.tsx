@@ -12,7 +12,7 @@ import type {
 } from "../review-document";
 import { hunkLine, hunkUrl, pullRequestUrl } from "../review-document";
 import { CodeFileLink } from "./code-file-link";
-import { CodeDiff, type CodeDiffHunk, type CodeDiffLine } from "./review-tiles/code-diff";
+import { CodeDiff, type CodeDiffHunk, type CodeDiffLine } from "./code-diff";
 import { cn, FOCUS_RING } from "./classnames";
 import { ChevronDownIcon } from "./icons";
 

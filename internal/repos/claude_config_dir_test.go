@@ -76,7 +76,7 @@ func TestPreferencesClaudeConfigDirectory(t *testing.T) {
 // Claude Code, once each.
 func TestPreferencesClaudeConfigDirsAreThoseClaudeCodeRunsWith(t *testing.T) {
 	claude, codex := config.BackendClaude, config.BackendCodex
-	personal, work := "/home/dev/.claude.personal", "/home/dev/.claude-work"
+	personal, work := filepath.Join(t.TempDir(), ".claude.personal"), filepath.Join(t.TempDir(), ".claude-work")
 	global := config.Config{Backend: config.BackendAuto}
 	for name, c := range map[string]struct {
 		prefs Preferences
@@ -101,7 +101,7 @@ func TestPreferencesClaudeConfigDirsAreThoseClaudeCodeRunsWith(t *testing.T) {
 // extraction is on.
 func TestPreferencesExtractionClaudeConfigDirectory(t *testing.T) {
 	claude := config.BackendClaude
-	personal, work := "/home/dev/.claude.personal", "/home/dev/.claude-work"
+	personal, work := filepath.Join(t.TempDir(), ".claude.personal"), filepath.Join(t.TempDir(), ".claude-work")
 	off := false
 	global := config.Config{Backend: config.BackendClaude}
 	follows := Preferences{ClaudeConfigDir: &personal}
