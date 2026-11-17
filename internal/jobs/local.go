@@ -60,10 +60,12 @@ type Local struct {
 	// pinned to its repository and offers others whose paths its diff
 	// matches (tilelibrary.Offer). Nil offers only the built-in types.
 	TileLibrary *tilelibrary.Store
-	// ReviewMCP gives a tile review's agents baum's MCP server, with a read
-	// token scoped to the pull request (generate.V2.MCP); nil runs them
-	// without it.
-	ReviewMCP generate.ReviewMCP
+	// ReviewMCP gives a review's agent baum's MCP server, read-only and
+	// defaulting to the pull request reviewed (agentcontext.ReviewMCP.Attach):
+	// the server for agent.Request.MCP and the function that revokes its
+	// token once the run ends. A nil server, or a nil ReviewMCP, runs the
+	// review without one.
+	ReviewMCP func(repository string, number int) (*agent.MCPServer, func(), error)
 }
 
 type identityVersions struct {

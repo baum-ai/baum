@@ -23,11 +23,11 @@ type fakeMCP struct {
 	revoked int
 }
 
-func (m *fakeMCP) Mint(repository string, pr int) (string, string, func(), bool) {
+func (m *fakeMCP) Attach(repository string, pr int) (*agent.MCPServer, func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.minted = append(m.minted, fmt.Sprintf("%s#%d", repository, pr))
-	return "http://127.0.0.1:4242/api/mcp", "token", func() { m.mu.Lock(); m.revoked++; m.mu.Unlock() }, true
+	return &agent.MCPServer{URL: "http://127.0.0.1:4242/api/mcp", Token: "token"}, func() { m.mu.Lock(); m.revoked++; m.mu.Unlock() }, nil
 }
 
 // v2Replies answers each level's call: one logical section with every hunk
@@ -81,7 +81,7 @@ func TestV2RunWritesLevelsInAWorktree(t *testing.T) {
 	var steps []string
 	var drafts [][]byte
 	var mu sync.Mutex
-	o.V2 = &generate.V2{Clone: f.repo.Dir, MCP: mcp, Step: func(s string) { steps = append(steps, s) }}
+	o.V2 = &generate.V2{Clone: f.repo.Dir, MCP: mcp.Attach, Step: func(s string) { steps = append(steps, s) }}
 	o.OnDraft = func(d generate.Draft) { mu.Lock(); drafts = append(drafts, d.Document); mu.Unlock() }
 	result, err := generate.Run(context.Background(), o)
 	if err != nil {

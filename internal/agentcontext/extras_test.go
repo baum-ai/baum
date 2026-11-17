@@ -89,7 +89,8 @@ func TestPullRequestExtraToolsReadThePageRoutes(t *testing.T) {
 	}{
 		// A file needs a saved review (pull request 13 has one).
 		{tool: "file", args: map[string]any{"pr": 13, "path": "main.go"}, want: []string{`"path":"main.go"`, `"content":"file of c-web 13"`}},
-		{tool: "file", args: map[string]any{"path": "main.go"}, failed: "no saved review"},
+		// Without a saved review a file is read from the clone.
+		{tool: "file", args: map[string]any{"path": "main.go"}, failed: "clone is not available"},
 		// A commit and its patch: the facts' before a review, the review's after.
 		{tool: "commit", args: map[string]any{"oid": "abcdef1"}, want: []string{`commit via /api/facts/commit of c-web 12`, `"path":"a.go"`}},
 		{tool: "commit", args: map[string]any{"pr": 13, "oid": "abcdef1"}, want: []string{`commit via /api/commit of c-web 13`}},
@@ -323,7 +324,7 @@ func TestActionRoutesOfTheExtraTools(t *testing.T) {
 func TestExtraToolsDeclareTheirRoutes(t *testing.T) {
 	s, _ := extrasServer(t)
 	want := map[string][]string{
-		"file":                   {"/api/index", "/api/file"},
+		"file":                   {"/api/index", "/api/file", "/api/document", "/api/facts", "/api/clone/file"},
 		"commit":                 {"/api/index", "/api/facts", "/api/commit"},
 		"commit_patch":           {"/api/index", "/api/facts", "/api/commit-patch"},
 		"pull_request_decisions": {"/api/decisions"},

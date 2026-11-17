@@ -65,6 +65,9 @@ type LocalAPI struct {
 	// failed workflow runs. With merging, submitting a review and a
 	// fix's push, they are the GitHub writes the app makes.
 	Update http.Handler
+	// GitHubReads serves /api/prs/threads, /api/prs/timeline and /api/issue:
+	// read-only GitHub answers for baum's MCP tools.
+	GitHubReads http.Handler
 	// Groups serves /api/groups: review groups and their combined reviews
 	// (internal/reviewgroups).
 	Groups http.Handler
@@ -242,6 +245,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/prs/rerun-checks-options", update)
 	mux.Handle("POST /api/prs/rerun-checks", update)
 	mux.Handle("GET /api/prs/review-threads", update)
+	reads := provider(a.GitHubReads, "github_reads_unavailable")
+	mux.Handle("GET /api/prs/threads", reads)
+	mux.Handle("GET /api/prs/timeline", reads)
+	mux.Handle("GET /api/issue", reads)
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
 	mux.Handle("GET /api/prs/checks", update)
@@ -597,6 +604,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/commit-patch", document)
 	mux.HandleFunc("GET /api/file", document)
 	a.factsRoutes(mux, cache)
+	a.cloneRoutes(mux)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)
 		if !ok {

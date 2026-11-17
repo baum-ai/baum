@@ -52,11 +52,11 @@ func (s *Server) pullTools() []Tool {
 		Call:        callChecks,
 	}, {
 		Name:        "review_threads",
-		Description: "The pull request's unresolved review threads with their comments.",
-		InputSchema: targetSchema(""),
+		Description: "The pull request's review threads with their comments and replies: the unresolved ones (default), the resolved ones, or all, each saying whether it is resolved or outdated.",
+		InputSchema: reviewThreadsSchema,
 		Scope:       ScopeRepository,
-		Reads:       []string{index, "/api/prs/review-threads"},
-		Call:        callReviewThreads,
+		Reads:       []string{index, "/api/prs/review-threads", "/api/prs/threads"},
+		Call:        callReviewThreadsState,
 	}, {
 		Name:        "merge_state",
 		Description: "What the app offers to do about the pull request's state: the merge methods and whether it can merge, whether the branch is behind or conflicting and can be updated, the files a conflict is in, and the failed workflow runs that can be re-run. Nothing is changed.",
@@ -87,11 +87,11 @@ func (s *Server) pullTools() []Tool {
 		Call:        callSessions,
 	}, {
 		Name:        "session_transcript",
-		Description: "The redacted transcript of one session linked to the pull request, as the app shows it.",
-		InputSchema: targetSchema(`"id":{"type":"string","description":"The session's id, from sessions."}`, "id"),
+		Description: "The redacted transcript of one session linked to the pull request, as the app shows it: whole, or with from_turn or limit its prompts limit at a time (default 20, at most 100) from turn from_turn, the result naming the next turn. Find turns with transcript_search.",
+		InputSchema: sessionTranscriptSchema,
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/facts", "/api/sessions"},
-		Call:        callSessionTranscript,
+		Call:        callSessionTranscriptPaged,
 	}, {
 		Name:        "focus",
 		Description: "The part of the open page the user picked: a section, a tile or the overview and the anchors, as the page describes it; on the tiles page, also the view and the tile and item open. \"none\" when nothing is picked.",

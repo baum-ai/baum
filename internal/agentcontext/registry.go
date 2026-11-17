@@ -26,6 +26,11 @@ const (
 	// Action is an agent working on one pull request: it only reads, and only
 	// that pull request's repository.
 	Action Kind = "action"
+	// Review is the agent generating a pull request's review: it reads
+	// whatever the app can show (any repository and pull request, the
+	// global lists, Timeline, transcripts) and changes nothing. Its pull
+	// request is where its tools look when a call names none (reviewaccess.go).
+	Review Kind = "review"
 )
 
 // Consumer is the holder of one MCP token.
@@ -33,7 +38,8 @@ type Consumer struct {
 	// ID names the consumer without being its token; Mint sets it.
 	ID   string `json:"-"`
 	Kind Kind   `json:"kind"`
-	// Repository ("owner/name") and PullRequest bind an Action.
+	// Repository ("owner/name") and PullRequest bind an Action, and are a
+	// Review's own pull request.
 	Repository  string `json:"repository,omitempty"`
 	PullRequest int    `json:"pull_request,omitempty"`
 	// Session is the agent session a chat runs in, as "agent:id" (the
@@ -136,7 +142,7 @@ var (
 	// ErrUnknownConsumer is a consumer id or token that names no live
 	// consumer: never minted, or revoked.
 	ErrUnknownConsumer = errors.New("unknown or revoked MCP consumer")
-	errActionPage      = errors.New("an action's page is its pull request")
+	errActionPage      = errors.New("an action's or review's page is its pull request")
 )
 
 // Registry holds the MCP tokens of the running daemon. Tokens live only in
@@ -200,12 +206,12 @@ func (c Consumer) validate() error {
 				return fmt.Errorf(`a chat's session is "agent:id", the agent one of %s`, strings.Join(sessionAgents, ", "))
 			}
 		}
-	case Action:
+	case Action, Review:
 		if !validRepository(c.Repository) || c.PullRequest <= 0 {
-			return errors.New("an action needs an owner/name repository and a pull request number")
+			return fmt.Errorf("a %s needs an owner/name repository and a pull request number", c.Kind)
 		}
 		if c.Session != "" {
-			return errors.New("an action names no session: it proposes nothing")
+			return fmt.Errorf("a %s names no session: it proposes nothing", c.Kind)
 		}
 	default:
 		return fmt.Errorf("unknown consumer kind %q", c.Kind)
@@ -214,9 +220,9 @@ func (c Consumer) validate() error {
 }
 
 // Mint returns a new token for c, the consumer's id, and the function that
-// revokes the token. c must be a chat, or an action bound to a repository
-// and pull request. An action starts on its pull request's page and stays
-// there.
+// revokes the token. c must be a chat, or an action or review bound to a
+// repository and pull request. An action or review starts on its pull
+// request's page and stays there.
 func (r *Registry) Mint(c Consumer) (token, id string, revoke func(), err error) {
 	if err := c.validate(); err != nil {
 		return "", "", nil, err
@@ -224,7 +230,7 @@ func (r *Registry) Mint(c Consumer) (token, id string, revoke func(), err error)
 	token, id = random(), random()
 	c.ID = id
 	h := &holder{hash: sha256.Sum256([]byte(token)), consumer: c}
-	if c.Kind == Action {
+	if c.Kind == Action || c.Kind == Review {
 		h.page = &PageContext{Page: PagePullRequest, Repository: c.Repository, PullRequest: c.PullRequest}
 	}
 	r.mu.Lock()
@@ -342,7 +348,7 @@ func (r *Registry) SetSession(id, session string) error {
 }
 
 // SetPage records the page the consumer with this id has open. An action's
-// page cannot change.
+// or review's page cannot change.
 func (r *Registry) SetPage(id string, p PageContext) error {
 	// The repository is trimmed first, so the section is checked against the
 	// value kept and a blank one is no repository everywhere.
@@ -356,7 +362,7 @@ func (r *Registry) SetPage(id string, p PageContext) error {
 	switch {
 	case !ok:
 		return ErrUnknownConsumer
-	case h.consumer.Kind == Action:
+	case h.consumer.Kind == Action || h.consumer.Kind == Review:
 		return errActionPage
 	}
 	p = p.clone()
@@ -378,7 +384,7 @@ func (r *Registry) SetTurnPage(id string, p PageContext) error {
 	switch {
 	case !ok:
 		return ErrUnknownConsumer
-	case h.consumer.Kind == Action:
+	case h.consumer.Kind == Action || h.consumer.Kind == Review:
 		return errActionPage
 	}
 	p = p.clone()

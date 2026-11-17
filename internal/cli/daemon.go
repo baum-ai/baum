@@ -52,6 +52,7 @@ import (
 	"github.com/baum-ai/baum/internal/githooks"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
+	"github.com/baum-ai/baum/internal/githubreads"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
@@ -500,7 +501,11 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		if err := added.Sweep(ctx); err != nil {
 			log.Warn("the added tiles were not swept", "error", err)
 		}
-		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary}
+		// A review's agent reads baum's MCP server with a read-only review
+		// token; the server is built after the executor, which reviewMCP
+		// learns once it is (Serve, below).
+		reviewMCP := &agentcontext.ReviewMCP{}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary, ReviewMCP: reviewMCP.Attach}
 		// The tiles a person added that a version has no data for are
 		// filled beside the queue.
 		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Added: added, Log: log}
@@ -817,7 +822,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 			}
 			return cached
-		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), GitHubReads: uiserver.GitHubReadsHandler(registry, &githubreads.Service{Client: githubClient}), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
 			Inboxes:   inboxesAPI.Handler(),
 			Groups:    groupsAPI.Handler(),
@@ -885,6 +890,15 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			return "", errors.New("unknown clone")
 		}})
+		// The app server listens after Start returns, so its origin is read
+		// whenever an agent run starts.
+		mcpURL := func() string {
+			if origin := server.Origin(); origin != "" {
+				return origin + "/api/mcp"
+			}
+			return ""
+		}
+		reviewMCP.Serve(mcp.Registry, mcpURL)
 		// The session panel's conversations run the person's own agent CLI
 		// with baum's MCP server; each holds a chat token of this server.
 		// A store that does not open leaves the panel off, not the daemon.
@@ -892,14 +906,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			// Before each turn a stale SSH agent socket is replaced, as
 			// before a fetch.
 			SSHAgent: daemonSSHAgent().Socket,
-			// The app server listens after Start returns, so its origin is
-			// read at each turn.
-			MCPURL: func() string {
-				if origin := server.Origin(); origin != "" {
-					return origin + "/api/mcp"
-				}
-				return ""
-			},
+			MCPURL:   mcpURL,
 			Defaults: func(ctx context.Context) (console.Defaults, error) {
 				prefs, err := registry.Preferences(ctx)
 				if err != nil {

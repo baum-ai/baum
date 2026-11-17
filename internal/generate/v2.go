@@ -22,13 +22,11 @@ import (
 	"github.com/baum-ai/baum/tiles/library"
 )
 
-// ReviewMCP gives a run baum's MCP server: Mint returns the server's URL and
-// a read token scoped to one pull request, with the function that revokes
-// it; ok is false when the server is not available now. The daemon
-// implements it; a nil ReviewMCP runs without the server.
-type ReviewMCP interface {
-	Mint(repository string, pr int) (url, token string, revoke func(), ok bool)
-}
+// ReviewMCP gives a run baum's MCP server (agentcontext.ReviewMCP.Attach):
+// the server, with a read token for the pull request reviewed, and the
+// function that revokes it. A nil server with no error means the app
+// server is not listening yet: the run goes on without it.
+type ReviewMCP func(repository string, number int) (*agent.MCPServer, func(), error)
 
 // V2 writes a single pull request's review as a baum.review/2 document, in
 // the levels of agent/orchestrate, instead of the staged review and its
@@ -154,11 +152,17 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 		}
 	}
 	if v.MCP != nil {
-		if url, token, revoke, ok := v.MCP.Mint(b.Repository, b.PullRequest.Number); ok {
+		server, revoke, err := v.MCP(b.Repository, b.PullRequest.Number)
+		if revoke != nil {
 			defer revoke()
-			run.MCP = &agent.MCPServer{URL: url, Token: token}
-		} else {
-			progress("the review's agents read without baum's MCP server: it is not available")
+		}
+		switch {
+		case err != nil:
+			progress("the review's agents read without baum's MCP server: %v", err)
+		case server == nil:
+			progress("the review's agents read without baum's MCP server: it is not listening yet")
+		default:
+			run.MCP = server
 		}
 	}
 	if o.OnDraft != nil {
