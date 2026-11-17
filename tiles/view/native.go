@@ -388,3 +388,36 @@ func cut(s string, limit int) string {
 	}
 	return strings.TrimRight(out, " ,;:.-") + "…"
 }
+
+// CheckNative checks a native tile's data of type typ (flow, columns,
+// sequence or table) as Normalize checks a diagram: it returns the data
+// cleaned (text made plain and cut to its limits, anchors kept to the hunks
+// hasHunk knows, rows of the wrong length dropped), the reason the tile
+// cannot be shown ("" when it can) and what the check fixed (Report.Counts:
+// FixCut for each text cut, FixAnchor and FixNativeItem for each anchor or
+// row dropped). A baum.review/2 tile carries its caption and citations
+// beside its data; data without them checks the same.
+func CheckNative(typ string, data json.RawMessage, hasHunk func(string) bool) (json.RawMessage, string, Report) {
+	hunks := map[string]bool{}
+	var anchors struct {
+		Source []Anchor `json:"source"`
+	}
+	_ = json.Unmarshal(data, &anchors)
+	for _, a := range anchors.Source {
+		if hasHunk != nil && hasHunk(a.ID) {
+			hunks[a.ID] = true
+		}
+	}
+	report := &Report{}
+	check := &nativeCheck{review: &Review{hunks: hunks}, report: report}
+	out, ok := check.check(NativeTile{ID: "dg_check", Type: typ, Title: "check", Data: data})
+	if !ok {
+		return nil, check.problem, *report
+	}
+	return out.Data, "", *report
+}
+
+// Clean makes text one plain line as the native tiles' checks do: control
+// and zero-width characters removed, whitespace folded and markdown other
+// than `code` spans taken out.
+func Clean(s string) string { return clean(s) }
