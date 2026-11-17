@@ -51,6 +51,7 @@ import {
   type TilesAnswer,
   type ChatFocus,
   type Entry,
+  type PR,
   type Job,
   isActiveJob,
   automaticLabel,
@@ -1067,6 +1068,10 @@ export function LocalReview({
                     repository: pr.repository,
                     url: pr.url,
                     state: pr.state.toLowerCase(),
+                    ...(pr.head_ref && pr.base_ref
+                      ? { branches: { head: pr.head_ref, base: pr.base_ref } }
+                      : {}),
+                    ...pullRequestLines(pr, doc),
                   },
                   back: { href: back.href, label: back.label },
                   generation: { state: generationState, rewriting: generating && Boolean(doc) },
@@ -1485,6 +1490,20 @@ export function LocalReview({
       </AttachmentUrlProvider>
     </ReviewBoundary>
   );
+}
+
+/** The size the head shows: GitHub's count of the pull request's lines, or,
+ *  from an older daemon that has none, the size of the diff the review
+ *  read. */
+function pullRequestLines(
+  pr: PR,
+  doc: ReviewDocument | null | undefined,
+): { lines?: { additions: number; deletions: number } } {
+  if ((pr.additions ?? 0) > 0 || (pr.deletions ?? 0) > 0)
+    return { lines: { additions: pr.additions ?? 0, deletions: pr.deletions ?? 0 } };
+  if (doc && (doc.stats.additions > 0 || doc.stats.deletions > 0))
+    return { lines: { additions: doc.stats.additions, deletions: doc.stats.deletions } };
+  return {};
 }
 
 /** The document with its failed sections marked as being written while a
