@@ -504,10 +504,10 @@ func TestStoredDocumentsKeepNoHunkEvidence(t *testing.T) {
 	const hunk = `{"id":"h_000000000001","path":"a.go","change":"modified","role":"code","new_range":[3,2],"additions":1,"deletions":0`
 	const evidence = `,"github_url":"diff-aaR3","diff":{"header":"@@ -3,1 +3,2 @@","lines":[{"kind":"context","text":"x","old_line":3,"new_line":3},{"kind":"add","text":"y","new_line":4}]}`
 	withEvidence := func(details string) []byte {
-		return []byte(`{` + header + `,"details":"` + details + `","sections":[{"id":"sec_a","hunks":["h_000000000001"],"tiles":[{"kind":"code"}]}],"index":{"hunks":[` + hunk + evidence + `}],"checks":[]}}`)
+		return []byte(`{` + header + `,"details":"` + details + `","sections":[{"id":"sec_a","hunks":["h_000000000001"],"blocks":[{"kind":"code"}]}],"index":{"hunks":[` + hunk + evidence + `}],"checks":[]}}`)
 	}
 	stripped := func(details string) string {
-		return `{` + header + `,"details":"` + details + `","sections":[{"id":"sec_a","hunks":["h_000000000001"],"tiles":[{"kind":"code"}]}],"index":{"hunks":[` + hunk + `}],"checks":[]}}`
+		return `{` + header + `,"details":"` + details + `","sections":[{"id":"sec_a","hunks":["h_000000000001"],"blocks":[{"kind":"code"}]}],"index":{"hunks":[` + hunk + `}],"checks":[]}}`
 	}
 	saved := version(key, 1)
 	saved.Document = withEvidence("failed")

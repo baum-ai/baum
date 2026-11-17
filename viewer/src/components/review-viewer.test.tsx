@@ -986,7 +986,6 @@ function withoutDetails(details: "pending" | "failed"): ReviewDocument {
   section.risks = [];
   section.evidence = [];
   section.blocks = [];
-  delete section.tiles;
   return document;
 }
 
