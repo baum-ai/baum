@@ -112,7 +112,10 @@ needs no entry.
   otherwise, which is most reviews. It must make sense with no other
   context: `text` is one line saying what to do; then one `point` per thing,
   one plain sentence saying what the problem is and what to do about it,
-  with the `section` that covers it when one does. At most 3 points.
+  with the `section` that covers it when one does. At most 3 points. A
+  point is only something that blocks the merge: a suggestion, a later
+  improvement or a nice-to-have is never a point, and a verdict whose only
+  points are suggestions is null.
 - `screenshots`: up to 3 attachment ids that show what the change looks like
   to a person (a screen, a page, terminal output). Never a diagram the
   author drew when your own diagram shows the same. Empty when none does.
@@ -121,18 +124,24 @@ needs no entry.
   whatever section comes last: judge an image by its alt text and by what
   the change does. When a change alters a screen and the description has
   pictures of it, show them.
-- `intent`: up to 3 things a person asked for in the linked sessions, each
-  with the `session` id and the `prompt` index it comes from: `asked` in a
-  few words of their own, and `got`, what the pull request does about it,
-  in one plain sentence ("Yes: ...", "Partly: ...", "No: ..."). Empty when
-  no session is linked.
+- `intent`: up to 3 things a person asked for in the linked sessions that
+  this pull request set out to do, each with the `session` id and the
+  `prompt` index it comes from: `asked` in a few words of their own, and
+  `got`, what the pull request does about it, in one plain sentence ("Yes:
+  ...", "Partly: ..."). A session often covers other work too: leave out
+  every ask the pull request does not attempt, so never write a `got` that
+  says the pull request does not touch it. Empty when no session is linked
+  or none of its asks is about this pull request.
 
 ## How to write
 
 These rules are mandatory for every text you write.
 
 - Plain text: no markdown, no bold, no headings, no links. `code` spans are
-  allowed for identifiers in the overview's texts, never in a diagram.
+  allowed in the overview's texts only for a name the reader must search
+  for, at most one per sentence, and never in a diagram. Say what the code
+  does ("the build archives the saved candidate only after checking it
+  again"), not what it is called.
 - A diagram is in plain words: no code, function, type, file, table or
   column names. Name a part by what it does ("the build loop", "the
   checkpoint", "the session check"); the section's text and code name the
