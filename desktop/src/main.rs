@@ -12,6 +12,7 @@
 mod autostart;
 mod client;
 mod daemon;
+mod declaration;
 mod development;
 mod events;
 mod install;
@@ -36,7 +37,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
-use navigation::Decision;
+use navigation::{Decision, NewWindow};
 
 pub const MAIN: &str = "main";
 /// How often the attached daemon is checked, and how many failed checks in a
@@ -362,6 +363,7 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
+            let limit = Mutex::new(navigation::OpenLimit::default());
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
             zoom::install(app.handle())?;
@@ -385,6 +387,8 @@ fn main() {
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(720.0, 480.0)
                 .visible(!hidden)
+                // What this shell can host, for the page to read (see `declaration`).
+                .initialization_script(declaration::script(declaration::TILE_FRAMES))
                 .initialization_script(zoom::SCRIPT)
                 .on_page_load(|webview, payload| {
                     if payload.event() == tauri::webview::PageLoadEvent::Started {
@@ -397,18 +401,31 @@ fn main() {
                     if setup && development::is_setup_page(url) {
                         return true;
                     }
-                    match navigation::decide(url, daemon.as_ref(), setup) {
-                        Decision::Allow => true,
-                        Decision::OpenInBrowser => {
-                            open_externally(&handle, url);
-                            false
-                        }
-                        Decision::Deny => false,
+                    // Never opens anything: frames ask here too (see `decide`).
+                    let allowed =
+                        navigation::decide(url, daemon.as_ref(), setup) == Decision::Allow;
+                    if !allowed && cfg!(debug_assertions) {
+                        eprintln!(
+                            "baum desktop: refused a navigation to {}",
+                            navigation::scheme_and_host(url)
+                        );
                     }
+                    allowed
                 })
                 .on_new_window(move |url, _| {
-                    if navigation::decide_new_window(&url) == Decision::OpenInBrowser {
-                        open_externally(&opener, &url);
+                    if navigation::decide_new_window(&url) == NewWindow::OpenInBrowser {
+                        let allowed = limit
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .allow(std::time::Instant::now());
+                        if allowed {
+                            open_externally(&opener, &url);
+                        } else if cfg!(debug_assertions) {
+                            eprintln!(
+                                "baum desktop: dropped a second link to {} within a second",
+                                navigation::scheme_and_host(&url)
+                            );
+                        }
                     }
                     tauri::webview::NewWindowResponse::Deny
                 })
