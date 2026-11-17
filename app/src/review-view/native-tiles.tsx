@@ -1,4 +1,5 @@
-import { type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
+import "./flow.css";
 import { cn } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { type Column, Table } from "@baum/viewer/components/table";
@@ -17,7 +18,7 @@ const isString = (value: unknown): value is string => typeof value === "string";
 /** A step's, item's or message's box by its tone. */
 const BOX: Record<Tone, string> = {
   plain: "border-default bg-surface-card",
-  new: "border-status-info bg-status-info-bg",
+  new: "border-status-info bg-surface-card",
   good: "border-transparent bg-status-positive-bg",
   bad: "border-transparent bg-status-critical-bg",
   muted: "border-subtle bg-surface-wash",
@@ -65,13 +66,13 @@ function Box({
   return (
     <div
       className={cn(
-        "grid min-w-0 gap-0.5 rounded-md border px-3 py-2 [overflow-wrap:anywhere]",
+        "grid min-w-0 content-start gap-0.5 rounded-md border px-3 py-2 [overflow-wrap:anywhere]",
         BOX[tone],
         tone === "muted" && "opacity-80",
         className,
       )}
     >
-      <InlineMarkdown className={cn("text-base font-medium leading-snug", INK[tone])}>
+      <InlineMarkdown className={cn("text-sm font-medium leading-snug", INK[tone])}>
         {title}
       </InlineMarkdown>
       {note ? (
@@ -81,19 +82,17 @@ function Box({
   );
 }
 
-/** The connector drawn before a step: across while the lane is a row, down
- *  once it stacks. */
-function Join({ join }: { join: FlowStep["join"] }) {
-  if (join === "none") return <span aria-hidden className="h-2 w-2 flex-none" />;
-  const [across, down] = join === "both" ? ["⇄", "⇅"] : ["→", "↓"];
+/** The connector drawn before a step: across while the lanes are rows of
+ *  the grid, down while each lane is a list. A branch's first step has the
+ *  turn only in the grid, where it sits under the steps after the one it
+ *  leaves; the list says which one in words. */
+function Join({ join }: { join: FlowStep["join"] | "branch" }) {
+  if (join === "none") return <span aria-hidden className="flow-join flow-gap" />;
+  const [across, down] = join === "both" ? ["⇄", "⇅"] : join === "branch" ? ["↳", ""] : ["→", "↓"];
   return (
-    <span
-      aria-hidden
-      data-join={join ?? "arrow"}
-      className="flex flex-none items-center justify-center self-center px-1.5 py-0.5 text-base font-semibold text-tertiary"
-    >
-      <span className="@lg:hidden">{down}</span>
-      <span className="hidden @lg:inline">{across}</span>
+    <span aria-hidden data-join={join ?? "arrow"} className="flow-join">
+      <span className="flow-down">{down}</span>
+      <span className="flow-across">{across}</span>
     </span>
   );
 }
@@ -112,57 +111,82 @@ export function validFlow(data: unknown): data is FlowData {
   );
 }
 
-/** A lane too long for one row of a section's width breaks into rows of
- *  three, so a row never ends with one step on its own, and keeps one row
- *  where the diagram has the room (the overview). A shorter lane keeps one
- *  row and its steps narrow to fit. */
-const long = (steps: FlowStep[]) => steps.length > 4;
+/** The container widths (rem) flow.css has rules for: from `wide`, the
+ *  lanes are rows of one grid under their labels (about 8.5rem a column);
+ *  from `wider`, the labels have a column of their own. Narrower, each lane
+ *  is a list going down. */
+const WIDTHS = [28, 32, 36, 40, 44, 48, 52, 56, 64, 72];
+const widthFor = (rem: number) => WIDTHS.find((width) => width >= rem);
+
+/** The step of the first lane a later lane branches off (from 1), or 0 for
+ *  a lane of its own. */
+const branchOf = (data: FlowData, at: number) => {
+  const from = data.lanes[at]?.from;
+  const first = data.lanes[0]?.steps.length ?? 0;
+  return at > 0 && typeof from === "number" && from >= 1 && from <= first ? from : 0;
+};
 
 export function FlowDiagram({ data }: { data: FlowData }) {
   const labelled = data.lanes.some((lane) => lane.label);
+  const branches = data.lanes.map((_, at) => branchOf(data, at));
+  // As many columns as the longest lane that is not a branch; a branch
+  // starts after its step and moves left if it would run past the end.
+  const columns = Math.max(
+    1,
+    ...data.lanes.map((lane, at) => (branches[at] ? 0 : lane.steps.length)),
+  );
+  const startOf = (at: number) => {
+    const from = branches[at] ?? 0;
+    const steps = data.lanes[at]?.steps.length ?? 1;
+    return from ? Math.max(1, Math.min(from + 1, columns - steps + 1)) : 1;
+  };
   return (
-    <div className="space-y-3">
-      {data.lanes.map((lane, at) => (
-        <div
-          key={at}
-          data-lane=""
-          className={cn(
-            "grid min-w-0 gap-1.5",
-            labelled && "@lg:grid-cols-[7rem_minmax(0,1fr)] @lg:items-center @lg:gap-3",
-          )}
-        >
-          {labelled ? (
-            <InlineMarkdown className={LANE_LABEL}>{lane.label ?? ""}</InlineMarkdown>
-          ) : null}
-          <ol
-            aria-label={lane.label || undefined}
-            className={cn(
-              "flex min-w-0 flex-col @lg:flex-row @lg:items-stretch @lg:gap-y-2",
-              long(lane.steps) && "@lg:flex-wrap @4xl:flex-nowrap",
-            )}
+    <div
+      className="flow"
+      data-wide={widthFor(columns * 8.5) ?? WIDTHS[WIDTHS.length - 1]}
+      data-wider={labelled ? widthFor(columns * 9 + 6) : undefined}
+      style={{ "--flow-columns": columns } as CSSProperties}
+    >
+      {data.lanes.map((lane, at) => {
+        const from = branches[at] ?? 0;
+        const after = from ? data.lanes[0]?.steps[from - 1]?.title : undefined;
+        return (
+          <div
+            key={at}
+            data-lane=""
+            data-branch={from || undefined}
+            className="flow-lane"
+            style={{ "--flow-row": at + 1, "--flow-start": startOf(at) } as CSSProperties}
           >
-            {lane.steps.map((step, position) => (
-              <li
-                key={position}
-                className={cn(
-                  "flex min-w-0 flex-col items-stretch @lg:flex-row",
-                  long(lane.steps)
-                    ? "@lg:basis-1/3 @4xl:flex-1 @4xl:basis-0"
-                    : "@lg:flex-1 @lg:basis-0",
-                )}
-              >
-                {position > 0 ? <Join join={step.join} /> : null}
-                <Box
-                  title={step.title}
-                  note={step.note}
-                  tone={toneOf(step.tone)}
-                  className="@lg:flex-1"
-                />
-              </li>
-            ))}
-          </ol>
-        </div>
-      ))}
+            {labelled ? (
+              <InlineMarkdown className={cn("flow-label", LANE_LABEL)}>
+                {lane.label ?? ""}
+              </InlineMarkdown>
+            ) : null}
+            {after ? (
+              <p className="flow-after text-xs text-tertiary">
+                After <InlineMarkdown>{after}</InlineMarkdown>
+              </p>
+            ) : null}
+            <ol aria-label={lane.label || undefined} className="flow-steps">
+              {lane.steps.map((step, position) => (
+                <li
+                  key={position}
+                  className="flow-step"
+                  style={
+                    {
+                      "--flow-column": Math.min(startOf(at) + position, columns),
+                    } as CSSProperties
+                  }
+                >
+                  {position > 0 ? <Join join={step.join} /> : from ? <Join join="branch" /> : null}
+                  <Box title={step.title} note={step.note} tone={toneOf(step.tone)} />
+                </li>
+              ))}
+            </ol>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -22,7 +22,10 @@ export type FlowStep = {
   tone?: Tone;
   join?: "arrow" | "both" | "none";
 };
-export type FlowData = Captioned & { lanes: { label?: string; steps: FlowStep[] }[] };
+export type FlowData = Captioned & {
+  /** `from`: the step of the first lane (from 1) a later lane branches off. */
+  lanes: { label?: string; from?: number; steps: FlowStep[] }[];
+};
 export type ColumnsData = Captioned & {
   columns: { label: string; tone?: Tone; items: { title: string; note?: string }[] }[];
 };

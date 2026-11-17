@@ -52,9 +52,13 @@ type FlowData struct {
 	Lanes   []Lane   `json:"lanes"`
 }
 
-// Lane is a row of a flow.
+// Lane is a row of a flow. From, on a lane after the first, is the step of
+// the first lane (from 1) it branches off: an outcome that happens instead
+// of what follows that step. The page draws the lane under the steps after
+// it. 0 is a lane of its own.
 type Lane struct {
 	Label string     `json:"label,omitempty"`
+	From  int        `json:"from,omitempty"`
 	Steps []FlowStep `json:"steps"`
 }
 
@@ -257,6 +261,10 @@ func (n *nativeCheck) flow(raw json.RawMessage) any {
 	for i := range d.Lanes {
 		lane := &d.Lanes[i]
 		lane.Label = n.text(lane.Label, MaxLaneLabel, false, "a lane's label")
+		// A branch names a step of the first lane; any other is dropped.
+		if i == 0 || lane.From < 1 || lane.From > len(d.Lanes[0].Steps) {
+			lane.From = 0
+		}
 		n.count(len(lane.Steps), 1, MaxLaneSteps, "steps in a lane")
 		for j := range lane.Steps {
 			step := &lane.Steps[j]

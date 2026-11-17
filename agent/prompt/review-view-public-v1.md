@@ -72,8 +72,10 @@ notice) and a `source`: the hunk ids it rests on, from the sections'
   `tone` and a `join`, the connector before it: `arrow` (the default),
   `both` for a two-way exchange, `none` to list steps side by side. An
   arrow means "then": a lane is one path, so an outcome that happens
-  instead of the next step (a refusal, a fallback, an error) goes in a lane
-  of its own ("Refused", "Fallback") or in the caption, never after it.
+  instead of the next step (a refusal, a fallback, an error) is a branch: a
+  lane of its own ("Refused", "Fallback") of one or two steps, with `from`
+  set to the number (from 1) of the first lane's step it leaves after, or
+  it goes in the caption, never after it. Other lanes have `from` null.
 - `columns`: 2 or 3 labelled lists side by side, up to 8 items each: before
   and after, can and can't, kept and removed. An item has a `title` and an
   optional `note`.
@@ -187,7 +189,7 @@ is `look_first` because the requeue endpoint trusts a client-set role):
  "diagrams": [
    {"id": "dg_job_path", "type": "flow", "title": "What happens to a failed job", "caption": null,
     "source": ["h_141757b19901", "h_113c5f55c94f"],
-    "lanes": [{"label": null, "steps": [
+    "lanes": [{"label": null, "from": null, "steps": [
       {"title": "Worker runs the job", "note": null, "tone": null, "join": null},
       {"title": "Handler fails", "note": null, "tone": "bad", "join": "arrow"},
       {"title": "Wait and retry", "note": "the wait doubles, up to a cap", "tone": "new", "join": "arrow"},

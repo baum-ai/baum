@@ -245,6 +245,12 @@
             "required": ["steps"],
             "properties": {
               "label": { "type": "string", "maxLength": 24 },
+              "from": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 6,
+                "description": "On a lane after the first: the step of the first lane (from 1) it branches off."
+              },
               "steps": {
                 "type": "array",
                 "minItems": 1,

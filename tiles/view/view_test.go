@@ -342,7 +342,7 @@ const sampleReply = `{"overview": {"risk_summary": "Retries can pile up.", "verd
  "sections": [{"id": "sec_retry_policy", "tiles": ["dg_cols", "dg_seq", "dg_table", "dg_extra"]}],
  "diagrams": [
   {"id": "dg_path", "type": "flow", "title": "What happens to a failed delivery", "caption": null, "source": ["h_000000000001"],
-   "lanes": [{"label": null, "steps": [{"title": "Deliver", "note": null, "tone": null, "join": null}, {"title": "Retry", "note": "with a backoff", "tone": "new", "join": "arrow"}]}]},
+   "lanes": [{"label": null, "from": null, "steps": [{"title": "Deliver", "note": null, "tone": null, "join": null}, {"title": "Retry", "note": "with a backoff", "tone": "new", "join": "arrow"}]}]},
   {"id": "dg_cols", "type": "columns", "title": "Before and after", "caption": null, "source": [],
    "columns": [{"label": "Before", "tone": "muted", "items": [{"title": "One try", "note": null}]}, {"label": "After", "tone": null, "items": [{"title": "Up to five tries", "note": null}]}]},
   {"id": "dg_seq", "type": "sequence", "title": "A delivery", "caption": "The remote answers 503.", "source": ["h_000000000002"],

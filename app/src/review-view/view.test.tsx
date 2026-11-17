@@ -467,6 +467,38 @@ describe("the native tiles", () => {
     expect(container.querySelector("[data-lane] > span")).toBeNull();
   });
 
+  it("lines a flow's steps up in columns and draws a branch under the steps after its own", async () => {
+    const steps = ["Read", "Choose", "Export", "Run", "Save"].map((title) => ({ title }));
+    const container = await card({
+      ...tileOf("dg_pairing"),
+      data: {
+        source: [],
+        lanes: [
+          { label: "Capture", steps },
+          { label: "No source", from: 2, steps: [{ title: "No clone" }, { title: "Skipped" }] },
+          { label: "Late", from: 5, steps: [{ title: "Too late" }, { title: "Dropped" }] },
+          { label: "Lost", from: 9, steps: [{ title: "Nowhere" }] },
+        ],
+      },
+    });
+    const flow = container.querySelector<HTMLElement>(".flow")!;
+    expect(flow.style.getPropertyValue("--flow-columns")).toBe("5");
+    // 5 columns of 8.5rem, then of 9rem beside the labels (6rem).
+    expect([flow.dataset.wide, flow.dataset.wider]).toEqual(["44", "52"]);
+    const columns = (lane: Element) =>
+      [...lane.querySelectorAll<HTMLElement>("li")].map((li) =>
+        li.style.getPropertyValue("--flow-column"),
+      );
+    const lanes = [...container.querySelectorAll("[data-lane]")];
+    // The first lane from 1, a branch after step 2 from 3, a branch after the
+    // last step moved back to fit, a branch from a step that is not there as
+    // a lane of its own.
+    expect(lanes.map(columns)).toEqual([["1", "2", "3", "4", "5"], ["3", "4"], ["4", "5"], ["1"]]);
+    expect(lanes[1]?.textContent).toContain("After Choose");
+    expect(lanes[1]?.querySelector('[data-join="branch"]')).not.toBeNull();
+    expect(lanes[3]?.querySelector('[data-join="branch"]')).toBeNull();
+  });
+
   it("draws columns under their labels", async () => {
     const container = await card(tileOf("dg_allowlist"));
     const columns = [...container.querySelectorAll<HTMLElement>("section[aria-label]")];

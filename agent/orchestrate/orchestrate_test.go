@@ -123,7 +123,7 @@ func sectionReplyJSON(tiles string) string {
 }
 
 const flowReply = `{"type":"flow","title":"What happens to a failed job","caption":null,"source":["` + hunkA + `"],
- "lanes":[{"label":null,"steps":[{"title":"Worker runs the job","note":null,"tone":null,"join":null},{"title":"Wait and retry","note":null,"tone":"new","join":"arrow"}]}]}`
+ "lanes":[{"label":null,"from":null,"steps":[{"title":"Worker runs the job","note":null,"tone":null,"join":null},{"title":"Wait and retry","note":null,"tone":"new","join":"arrow"}]}]}`
 
 const tableReply = `{"type":"table","title":"How long a job waits","caption":"The wait doubles.","source":["` + hunkA + `"],
  "columns":["Attempt","Wait"],"rows":[["1","Base"],["2","Twice the base"]]}`

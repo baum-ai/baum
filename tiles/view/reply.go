@@ -59,6 +59,7 @@ type ReplyDiagram struct {
 
 type replyLane struct {
 	Label *string         `json:"label"`
+	From  *int            `json:"from"`
 	Steps []replyFlowStep `json:"steps"`
 }
 
@@ -200,15 +201,16 @@ func diagramSchema(kind string, withID bool) string {
 	switch kind {
 	case TypeFlow:
 		return diagram(fmt.Sprintf(`"lanes": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-              "type": "object", "additionalProperties": false, "required": ["label", "steps"],
+              "type": "object", "additionalProperties": false, "required": ["label", "from", "steps"],
               "properties": {
                 "label": %s,
+                "from": {"type": ["integer", "null"], "minimum": 1, "maximum": %d},
                 "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
                   "type": "object", "additionalProperties": false, "required": ["title", "note", "tone", "join"],
                   "properties": {"title": %s, "note": %s, "tone": %s, "join": {"type": ["string", "null"], "enum": ["arrow", "both", "none", null]}}
                 }}
               }
-            }}`, MaxLanes, nullable(MaxLaneLabel), MaxLaneSteps, text(MaxStepTitle), nullable(MaxNote), tone), `"lanes"`)
+            }}`, MaxLanes, nullable(MaxLaneLabel), MaxLaneSteps, MaxLaneSteps, text(MaxStepTitle), nullable(MaxNote), tone), `"lanes"`)
 	case TypeColumns:
 		return diagram(fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": {
               "type": "object", "additionalProperties": false, "required": ["label", "tone", "items"],
@@ -321,6 +323,9 @@ func diagramData(d ReplyDiagram) (any, bool) {
 		out := FlowData{Caption: caption, Source: source}
 		for _, l := range d.Lanes {
 			lane := Lane{Label: str(l.Label), Steps: []FlowStep{}}
+			if l.From != nil {
+				lane.From = *l.From
+			}
 			for _, s := range l.Steps {
 				lane.Steps = append(lane.Steps, FlowStep{Title: s.Title, Note: str(s.Note), Tone: str(s.Tone), Join: str(s.Join)})
 			}
