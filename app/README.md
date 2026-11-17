@@ -37,7 +37,7 @@ visible on large screens, and it follows the form on tall windows. It is static,
 fades into the page and leaves the step controls in place.
 
 Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
-walkthrough, sessions, settings and charts reuse its semantic tokens, in
+sessions, settings and charts reuse its semantic tokens, in
 markup through the palette utilities in `../viewer/src/palette-utilities.css`
 (`text-secondary`, `bg-surface-card`, `border-subtle`). Stumpy's
 fixed illustration colors live with the component in
@@ -113,7 +113,7 @@ change passed a test. Images are copied into the saved review version, so
 history keeps them after a native transcript is removed. Entire checkpoint
 images and image paths or URLs merely mentioned in a transcript are excluded.
 The full review's Images part opens each copy at full size and retains its
-provenance; the walkthrough's Full review action opens that view.
+provenance.
 
 Setup and the app's Add repositories use the same repository picker and daemon
 search. They first fetch eight top repositories, matching the visible rows, then
@@ -251,7 +251,7 @@ opens it, its short id, author and time, and the session linked to it (which
 opens in Sessions), how it was matched and how confident; `j`/`k` move a row
 mark through them. A commit opened alone lists its changed files as blocks
 `j`/`k` move through, `Space` opening a file's diff. Hosted discussion and approvals are absent. Merging, updating a branch, re-running checks,
-submitting a review from the walkthrough, a fix the person starts (with its
+submitting a review, a fix the person starts (with its
 replies on the review threads it addressed), and resolving a review thread the
 person chose are the app's only GitHub writes (see below).
 
@@ -278,24 +278,12 @@ and patches come from `api/facts/sessions`, `api/facts/commits`,
 `api/facts/commit`, `api/facts/commit-patch` and `api/facts/patch`, read
 against the facts the page was shown (each names their head, and a newer build
 answers 404). Facts are no
-version: they are never in the version menu and there is no walkthrough for
-them (**Ask** is about the pull request, so it stays). A rate limit or a failed read says so above the page,
+version: they are never in the version menu (**Ask** is about the pull
+request, so it stays). A rate limit or a failed read says so above the page,
 with **Retry**; a daemon that serves no facts shows the page as before. Once a
 review is saved the page shows it instead, as before.
 
-A pull request opens on the full review. The PR page has no **Walk through**
-button for now, while the walkthrough is unfinished; its overview still opens
-from its address (`src/walkthrough.tsx`, `?…&walk=landing`): what matters
-about it on one page, with no list beside it. It shows only what says something: the GitHub states that ask for something
-(as the inbox draws them, plus failing checks behind a conflict), unresolved
-threads, lines and files changed, the review time, the summary, the review's
-attention and breaking change, the risk with its reasons, and the chapters with
-their lines. Its actions are **Start the review**, the page's own fix, merge,
-update and re-run (and regenerate when the review is outdated), **Full review**
-(v) and GitHub; agents on the branch, a regeneration and a review that could not
-be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
-(or the retired `walk=all`), so a reload stays there. **Full review** (v)
-clears `walk`; the retired `walk=full` also opens the full review.
+A pull request opens on the full review.
 
 Up next's list shows a review group or stack (`api/groups`) with a shown member
 as one row (`withGroups` in `src/up-next.tsx`). A stack takes the section and
@@ -450,45 +438,6 @@ it. Comment chips and the group page's chips still go to GitHub. The route is
 registered in `LocalAPI` next to the other `api/prs/` reads, and
 `TestLocalAPIRoutesPullRequestDetailsToUpdate` covers it.
 
-The walkthrough's overview is `?…&walk=landing` (`src/walkthrough.tsx`), and
-`walk=tour` (`walk=all`) the tour, so a reload stays there; **Full review**
-returns to the viewer. The PR page offers no button for it for now.
-`buildTour` (`src/walkthrough-model.ts`) turns the document into chapters, the
-logical sections with hunks in `sectionsInReviewOrder` (mechanical and obsolete
-sections are left out), and behaviours, one per behaviour step: its `title` (schema revision 2026-10-27.1), its
-`text`, the evidence it cites and its `question`, offered as the comment box's
-prompt. A review written before titles takes the text's first sentence, cut at
-the first semicolon; a section without steps is one behaviour, its summary. A
-chapter carries its section's summary, its `intent` block (what the pull request
-and its sessions say the change is for), its risk reason and its open risks. A behaviour's code is the viewer's
-`HunkEvidence` for the step's hunk anchors, reading omitted excerpts through the
-page's patch source. The walkthrough and inbox use the shared palette (`src/walkthrough.css`). It is one guided tour, a
-page per chapter, in the overview's column: a row of steps under the header
-leads back to the overview, names each chapter (shortened to fit, with a dot per
-behaviour: looked at, commented or not yet) and ends at the wrap-up. A
-chapter's page states its summary, intent and risk once, then lists its
-behaviours as the full review does (title, statement, evidence badges, code);
-one is picked, and only the picked one offers Something looks off. The
-wrap-up lists the behaviours not looked at and sends the review. j and k move
-the pick behaviour by behaviour, across chapters; → and ← move a chapter.
-Moving the pick off a behaviour, leaving its chapter or commenting on it marks it
-looked at; seen marks and
-drafts are kept by the daemon in `app.sqlite` per repository, pull
-request and review version, the 40 most recently saved. They survive browser
-storage clearing, a fresh window and a daemon restart. The app loads saved
-progress before writing; queued changes preserve unrelated concurrent edits.
-A failed read or save leaves drafts in the window and shows a retry action.
-Submitting posts
-`POST api/prs/review` with `{repository, pr, head_sha, event, body, comments}`:
-`head_sha` is the reviewed head, each comment `{path, line, side, start_line?,
-body}` sits on the step's anchored lines (or the hunk's first added line), and
-a behaviour without a place goes into the body under the overall comment. The
-daemon sends it once and maps refusals to `{code, message}` (`forbidden` 403,
-`not_found` 404, `own_pull_request` and `invalid_line` 422, `failed` 502); on
-`invalid_line` the panel offers to resend with every comment in the body. A
-sent review clears the drafts and links to it on GitHub. The tour's keys (j/k,
-→/←, o, c) are listed in the shortcuts sheet.
-
 A pull request with a merge conflict (`merge` is `conflict`), failing checks
 (`checks` is `failing`) or, on the person's own pull request
 (`authored_by_me`), unresolved review threads (`unresolved` above 0) offers a
@@ -612,13 +561,11 @@ the review's head on GitHub. A turn that was not answered says why in words
 pull request there.
 
 **Ask** is the session panel's (see [Session panel](#session-panel)): the
-boxed **Ask** button in the PR page's header and in the walkthrough's header,
-and the key `a` (ignored while typing in a text field) call
-`sessionPanel.ask` with the pull request; **Ask about this** on a walkthrough
-stop adds the stop as its focus (`stopFocus`; `sectionFocus` builds a
-section's, the hunks turned into at most 20 `{path, start_line, end_line}`
-anchors). The key `a` is in the shortcuts sheet for the pull request page and
-the walkthrough.
+boxed **Ask** button in the PR page's header and the key `a` (ignored while
+typing in a text field) call `sessionPanel.ask` with the pull request;
+`sectionFocus` builds the focus of one section, the hunks turned into at most
+20 `{path, start_line, end_line}` anchors. The key `a` is in the shortcuts
+sheet for the pull request page.
 `t` opens a pull request's fix transcript wherever the pull request is in hand:
 the PR page, the focused row in Pull requests, the selected one in Up next and
 the focused job in Jobs. It opens the running fix's transcript (Watch), else
@@ -652,8 +599,8 @@ in the background and the lists reload again when that read lands.
 
 Refreshing a page: the Inbox, Pull requests, Timeline, Sessions, Analytics,
 Repositories, Jobs, and a pull request's or review group's page end their bar
-(the Inbox its list's head; a pull request its walkthrough's head, or the full
-review's title row through the viewer's `actions` header slot) with a
+(the Inbox its list's head; a pull request the review's title row through the
+viewer's `actions` header slot) with a
 circular-arrow button (`RefreshButton` in `src/shell.tsx`). It reads what the
 page shows again: the pages of pull requests (the Inbox, Pull requests, a pull
 request or group) ask GitHub at once for their repositories' pull requests
@@ -673,12 +620,11 @@ from GitHub drops every other one under way (on any page, as one that never
 answers holds the queue and the lists' loader) and goes first, and the daemon
 read starts afresh, so a read that never answers can always be retried. The
 app keeps the page's refresh above the page (`usePageRefresh`, keyed by the
-page shown), so a refresh under way survives a pull request switching between
-its walkthrough and full review, and each page's refresh runs and shows on its
+page shown), so a refresh under way survives the page redrawing its button, and each page's refresh runs and shows on its
 own: leaving a page and coming back while its refresh runs shows it running. A
 page registers its refresh also where it draws no button
-(`usePageRefreshAction`), as a pull request or group while its review loads,
-or a walkthrough with nothing to walk through; the key and the button press
+(`usePageRefreshAction`), as a pull request or group while its review loads;
+the key and the button press
 the latest registered, so the open Repositories picker's refresh takes the
 page's. `⌘R` (Ctrl+R elsewhere) is one of the app-wide keys and presses it, in
 text fields too; under a dialog it does nothing. It never reloads the app: a
@@ -740,8 +686,8 @@ rows, tabs, menus, dialogs and Settings keep a click's focus, being where the
 keys act. Rings show only for the keyboard (`:focus-visible`). `Esc` in a text
 field gives it up, as before. On a pull request, a group, a job's
 transcript or a session, `Esc` and `u` go back to the page it was opened from
-(an inbox, Pull requests, a group), past moves within it (a
-walkthrough step, the earlier questions): each history entry the app adds records its
+(an inbox, Pull requests, a group), past moves within it (the earlier
+questions): each history entry the app adds records its
 place and the entry it was opened from (`writeHistory`, `backToOpener`). A window
 opened on the page itself goes to its list.
 
@@ -1851,17 +1797,14 @@ relevance have their own status text, distinct from no relevant decisions.
 The page sends its current head with the read, so cached decisions from an
 older head are withheld. Live session disclosures on a PR reuse this filtered
 answer, with no additional full-session decision requests. Session-only views
-and Timeline retain the full history. The walkthrough reuses the page's read;
-stack panes union the member PRs' relevant decisions by ID and keep their
+and Timeline retain the full history. Stack panes union the member PRs' relevant decisions by ID and keep their
 filtering status counts.
 Each decision is one row to scan: its title, its
 category as a pill and the time it was made, with its summary cut to a line
 under it; the row opens to the whole summary, **Why** (its rationale) and its
 files as code chips, code spans rendered as code. Who decided is the group it
 is under; the alternative it rejected is not shown. The row is not drawn while no session has
-decisions, a capture state or a capture in flight. The walkthrough, which has
-no rail, keeps them above it behind a closed "Decisions from sessions"
-disclosure. Both read again on the `decisions`
+decisions, a capture state or a capture in flight. It reads again on the `decisions`
 event, which carries no data (events within 250 ms make one read), and when
 the event stream opens or resets or the automatic switch changes. Settings' **Data extraction** section, in
 Reviews, holds the switch for decision capture and the feature log, the agent
@@ -2248,7 +2191,7 @@ Before the browser suite build its Linux test helper in `oss-test`:
 The suite keeps browser/daemon integration for credential bootstrap in a fresh
 window, namespaced requests, saved review versions, automatic generation after
 a head push and its persisted settings, a live redacted transcript without a
-reload, merging a ready pull request, a walkthrough comment surviving reload and
+reload, merging a ready pull request, a review comment surviving reload and
 submission, agent questions with citations and saved answers, inbox edits and
 Undo through the real store, and a local feature's source transcript. Shared
 viewer behavior is covered by the standalone viewer and hosted UI suites;
@@ -2438,11 +2381,10 @@ for the pending review (`propose_review_comment`, a `…:review_comment` change,
 which replaces the earlier Ask's Add as comment) reads the pull request's
 pending review again once saved, so it shows in the review at once.
 
-**Ask** on a pull request's page is the panel's: the PR page's and the
-walkthrough's **Ask** buttons and the key `a` call `sessionPanel.ask` with the
-pull request, and a walkthrough stop's **Ask about this** adds the stop as the
-focus (`{kind: "stop", id, title, anchors}`, `stopFocus` in `src/chat.tsx`).
-The panel's host then opens the panel on that pull request's conversation
+**Ask** on a pull request's page is the panel's: the PR page's
+**Ask** button and the key `a` call `sessionPanel.ask` with the pull request,
+and an Ask about part of the review adds it as the focus (`{kind, id, title,
+anchors}`, `sectionFocus` in `src/chat.tsx`). The panel's host then opens the panel on that pull request's conversation
 (`conversationFor`, once the conversations are read): the one it shows when it
 is that pull request's and not closed, else the pull request's most recent
 open one, else a new session, which the first message starts on the pull
@@ -2452,7 +2394,7 @@ pull request working in its checkout, with what its agent already read, as the
 earlier Ask opened the review's latest conversation. Nothing is typed into the
 composer, which takes the keys. The Ask stays in the panel's state (not kept
 across reloads) while the pull request's page is open, and `withPicked` adds
-its focus to the page context's (beside the address's `walk` and `anchor`), so
+its focus to the page context's (beside the address's `anchor`), so
 the page reported and each message carry it; the agent reads it with the MCP
 server's `focus` tool. Above the composer, "About <title>" names it with
 **Remove** (`sessionPanel.clearFocus`); leaving the page forgets the Ask.
@@ -2465,7 +2407,7 @@ agent always knows the current page. The page context (`src/page-context.ts`,
 `agentcontext.PageContext`: the sidebar's lists with their filters (the
 address's other parameters, as the MCP server's links take them), a pull
 request (repository and whole number, from its clone when the address names
-one, with its walkthrough stop or anchor as the focus), a group, a session, a
+one, with its anchor as the focus), a group, a session, a
 job, a feature, Settings with its section and a repository's page with its
 section (an unknown one is General, or Reviews, as the pages open it). A
 subject longer than the MCP server takes (1 KiB) is left out. `hrefOf` is its
@@ -2495,7 +2437,7 @@ transcript.
 
 ## Your review
 
-Without the walkthrough, a reader reviews from the PR page and Up next
+A reader reviews from the PR page and Up next
 (`src/pending-review.tsx`, `src/pending-review-model.ts`). **Approve** is one
 button with an arrow, as Snooze is (`ReviewButton`; `v` presses it): it opens
 a menu of Approve, Comment and Request changes, and each opens `ReviewDialog`
@@ -2527,19 +2469,25 @@ pull request's current head: a comment goes on its line only when it was
 placed on that head; the others, and general comments, go in the body under
 the summary with their item's title and place.
 
+Sending posts `POST api/prs/review` with `{repository, pr, head_sha, event,
+body, comments}`: `head_sha` is the head the review is sent on and each comment
+`{path, line, side, start_line?, body}` sits on its line. The daemon sends it
+once and maps refusals to `{code, message}` (`forbidden` 403, `not_found` 404,
+`own_pull_request` and `invalid_line` 422, `failed` 502); on `invalid_line` the
+dialog offers to resend with every comment in the body. A sent review clears
+the draft and links to it on GitHub.
+
 ## Durable reading state
 
 `GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared
 record, time snoozes and head-based snoozes. `GET` and
-`PUT api/ui-state/walkthrough?key=<repository>#<PR>@v<version>` store seen stops,
-per-stop draft comments and the overall comment, and
-`api/ui-state/review?key=<repository>#<PR>` the comments and summary of the
-reader's review until it is sent. The key is URL encoded;
+`PUT api/ui-state/review?key=<repository>#<PR>` store the comments and summary
+of the reader's review until it is sent. The key is URL encoded;
 `src/api.ts` keeps these routes under the authenticated session namespace.
 The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
 
 Each record has its own revision. The window shares a hydrated record across
-the walkthrough's views, queues changes while a read or save is in flight, and
+its views, queues changes while a read or save is in flight, and
 rebases semantic changes on a conflict. A stable client/sequence mutation ID
 makes a retry safe even when a save committed but its response was lost. A
 comment the session panel's agent proposes for the pending review is added by

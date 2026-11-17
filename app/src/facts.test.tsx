@@ -198,7 +198,7 @@ async function settle() {
 async function render(current: Entry, revision = 0) {
   await act(async () =>
     root.render(
-      <UrlStateProvider value={{ search: new URLSearchParams("walk=full"), update: () => {} }}>
+      <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
         <LocalReview
           entry={current}
           clone="selected-clone"

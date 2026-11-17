@@ -3,7 +3,7 @@ import { UIState } from "./ui-state";
 
 type Value = { seen: string[]; notes: Record<string, string>; note: string };
 const empty = (): Value => ({ seen: [], notes: {}, note: "" });
-const path = "api/ui-state/walkthrough?key=acme%2Fdemo%237%40v1";
+const path = "api/ui-state/review?key=acme%2Fdemo%237";
 function deferred() {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {

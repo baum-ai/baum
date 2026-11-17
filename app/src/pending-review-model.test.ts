@@ -4,6 +4,7 @@ import example from "../../schema/review-example.json" with { type: "json" };
 import {
   afterSent,
   commentTarget,
+  firstSentence,
   KEEP_SENT,
   needsSummary,
   pendingReviewKey,
@@ -13,9 +14,9 @@ import {
   reviewState,
   standingVerdict,
   type PendingComment,
+  type ReviewEvent,
   type PendingReview,
 } from "./pending-review-model";
-import type { ReviewEvent } from "./walkthrough-model";
 
 const doc = example as unknown as ReviewDocument;
 const pr = {
@@ -210,4 +211,10 @@ it("says what the button shows of the reader's own review", () => {
   // Changes requested stands through new commits and later comments.
   expect(kind(record("REQUEST_CHANGES", 1, "0ld"), record("COMMENT", 2))).toBe("changes_requested");
   expect(kind(record("REQUEST_CHANGES", 1), record("APPROVE", 2))).toBe("approved");
+});
+
+it("takes a step's first sentence as its title", () => {
+  expect(firstSentence("Retries back off. Then they stop.")).toBe("Retries back off");
+  expect(firstSentence("No full stop")).toBe("No full stop");
+  expect(firstSentence("A hook waits; the daemon answers. Later.")).toBe("A hook waits");
 });

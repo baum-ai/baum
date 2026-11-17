@@ -1,14 +1,65 @@
-import type { ReviewDocument } from "@baum/viewer/review-document";
+import {
+  hunkLine,
+  type Anchor,
+  type IndexedHunk,
+  type ReviewDocument,
+} from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
 import type { PR } from "./api";
 import { uiState } from "./ui-state";
-import {
-  firstSentence,
-  placeOf,
-  type CommentPlace,
-  type ReviewEvent,
-  type ReviewSubmission,
-} from "./walkthrough-model";
+
+/** Where a comment lands on GitHub: a line of the reviewed diff, or a range
+ *  ending on it. */
+export type CommentPlace = {
+  path: string;
+  line: number;
+  side: "RIGHT" | "LEFT";
+  start_line?: number;
+};
+
+export type ReviewEvent = "APPROVE" | "COMMENT" | "REQUEST_CHANGES";
+
+export type ReviewSubmission = {
+  repository: string;
+  pr: number;
+  head_sha: string;
+  event: ReviewEvent;
+  body: string;
+  comments: (CommentPlace & { body: string })[];
+};
+
+/** A headline taken from a longer text: its first sentence, cut at its
+ *  first clause when the sentence strings several together with semicolons. */
+export function firstSentence(value: string): string {
+  const match = /^(.+?[.!?])(\s|$)/.exec(value);
+  const sentence = (match ? match[1]! : value).replace(/[.!?]$/, "");
+  const clause = sentence.indexOf("; ");
+  return clause > 0 ? sentence.slice(0, clause) : sentence;
+}
+
+/** Where a comment on code cited by `anchors` lands: the first hunk it can
+ *  place, on its cited lines or else its first changed line. */
+export function placeOf(anchors: Anchor[], hunks: Map<string, IndexedHunk>): CommentPlace | null {
+  for (const anchor of anchors) {
+    if (anchor.type !== "hunk") continue;
+    const hunk = hunks.get(anchor.id);
+    if (!hunk) continue;
+    const [start, end] = Array.isArray(anchor.lines) ? anchor.lines : [];
+    if (typeof start === "number" && typeof end === "number" && start > 0 && end >= start)
+      return start < end
+        ? { path: hunk.path, line: end, side: "RIGHT", start_line: start }
+        : { path: hunk.path, line: end, side: "RIGHT" };
+    const added = hunk.diff?.lines.find((line) => line.kind === "add");
+    if (added && added.kind === "add")
+      return { path: hunk.path, line: added.new_line, side: "RIGHT" };
+    const line = hunkLine(hunk);
+    if (line) return { path: hunk.path, line, side: "RIGHT" };
+    const removed = hunk.diff?.lines.find((line) => line.kind === "remove");
+    if (removed && removed.kind === "remove")
+      return { path: hunk.path, line: removed.old_line, side: "LEFT" };
+  }
+  return null;
+}
 
 /** What a comment is about: the item being read when it was written. */
 export type CommentTarget = {

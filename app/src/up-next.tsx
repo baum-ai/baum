@@ -112,8 +112,7 @@ import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
 import { useToast } from "./toast";
 import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
-import { reviewable } from "./pending-review-model";
-import type { ReviewEvent } from "./walkthrough-model";
+import { reviewable, type ReviewEvent } from "./pending-review-model";
 import { cn } from "@baum/viewer/components/classnames";
 
 /** What the person does next about a pull request: read a review they were

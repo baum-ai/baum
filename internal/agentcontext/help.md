@@ -36,7 +36,7 @@ Settings has six sections: General (appearance and keyboard), Reviews (the revie
 
 ## pull_request
 
-The pull request page shows one pull request: its description, checks, conflicts and review threads, and baum's review of it, a saved version per head commit. The review has a walkthrough (chapters of behaviours) and a full review (sections of risks and files). The person can comment, ask an agent about it in the session panel (a, or Ask), merge, fix, and send a GitHub review (approve, comment or request changes). The agent uses propose_review_comment for a comment in the person's pending review. Nothing changes until the person clicks Save in the panel; the comment then joins their draft, without sending anything to GitHub. Questions asked of the review's agent before the session panel are listed read-only under Earlier questions.
+The pull request page shows one pull request: its description, checks, conflicts and review threads, and baum's review of it, a saved version per head commit. The review is laid out as sections of risks, tiles and files. The person can comment, ask an agent about it in the session panel (a, or Ask), merge, fix, and send a GitHub review (approve, comment or request changes). The agent uses propose_review_comment for a comment in the person's pending review. Nothing changes until the person clicks Save in the panel; the comment then joins their draft, without sending anything to GitHub. Questions asked of the review's agent before the session panel are listed read-only under Earlier questions.
 
 ## group
 
@@ -112,11 +112,6 @@ A pull request or group:
 - `c`: comment. `v`: send your review. `a`: ask an agent in the session panel.
 - `]`: toggle the right-hand sidebar; `h`, `l`: Details, Activity and Comments in it.
 - `u`, `Escape`: back to the list.
-
-The walkthrough:
-
-- `j`, `k`: next and previous behaviour. `→`, `←`: next and previous chapter.
-- `o`: show the behaviour's code. `c`: comment. `v`: full review. `a`: ask an agent in the session panel.
 
 Sessions and transcripts:
 

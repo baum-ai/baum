@@ -13,7 +13,7 @@ import {
   type AgentRequests,
   type LiveSession,
 } from "./api";
-import { forgetFoldedSections, LiveSessions, needsYou, SessionsPage } from "./sessions";
+import { forgetFoldedSections, LiveSessionCard, needsYou, SessionsPage } from "./sessions";
 import { resetSessionPanel, useSessionPanel } from "./session-panel-state";
 import { ToastProvider } from "./toast";
 import { useActionsKey } from "./context-menu";
@@ -1566,13 +1566,12 @@ it("tags a panel session in a pull request's sessions and opens it in the panel"
     root.render(
       <>
         <Watch />
-        <LiveSessions
-          sessions={[
-            session({ session_id: "p1", origin: "panel", conversation: "conv1" }),
-            session({ session_id: "s2" }),
-          ]}
-          Link={Link}
-        />
+        {[
+          session({ session_id: "p1", origin: "panel", conversation: "conv1" }),
+          session({ session_id: "s2" }),
+        ].map((s) => (
+          <LiveSessionCard key={s.session_id} session={s} Link={Link} />
+        ))}
       </>,
     ),
   );

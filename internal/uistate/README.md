@@ -1,6 +1,6 @@
 # Durable desktop reading state
 
-`uistate` owns the Inbox's bookkeeping, review walkthrough drafts, each page's
+`uistate` owns the Inbox's bookkeeping, review drafts, each page's
 filter and saved Pull requests tabs, and whether the first-run tour was seen
 in the shared private application database
 (`internal/appdb`). It imports no legacy
@@ -12,7 +12,6 @@ reviews are outside this store.
 | `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes; archives (`archived`, optional) |
 | `ui/filters` | each page's filter query and the saved Pull requests tabs (`{pages: {<page>: query}, tabs: [{id, name, view, query}]}`) |
 | `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
-| `ui/walkthrough` | per repository/PR/review-version seen stops, draft comments per stop, and overall comment |
 | `ui/review` | per repository/PR, the comments and summary of the reader's own review until it is sent, and the reviews sent from the app |
 
 A filter page is `inbox`, `inbox:<inbox id>` or `pulls`, at most 64 of them,
@@ -22,10 +21,8 @@ never parses it. A tab has a 32-hex `id` (unique), a trimmed `name` of 1 to 40
 characters, a `view` (`open` or `history`, Closed) and a query; at most 20 tabs. A stored filters document in another shape
 reads as none (at its revision), and the next save replaces it.
 
-A walkthrough key is `owner/repository#number@vversion` (optionally prefixed
-with an Enterprise host). The latest 40 saved review versions are retained.
-A review key is `owner/repository#number`, and the latest 200 pull requests'
-reviews are retained. A review is `{comments, note}`: at most 100 comments,
+A review key is `owner/repository#number` (optionally prefixed with an
+Enterprise host), and the latest 200 pull requests' reviews are retained. A review is `{comments, note}`: at most 100 comments,
 each `{id, target: {kind, id, title}, body, place, head, created}` with a
 unique `id` (1–64 of `A-Za-z0-9_-`), `kind` `general`, `section`, `risk` or
 `file` (all but `general` with an `id`), a non-blank body, `place` null or
@@ -59,8 +56,6 @@ JSON-content checks. These routes grant no filesystem access.
 - `PUT /api/ui-state/filters`
 - `GET /api/ui-state/tour`
 - `PUT /api/ui-state/tour`
-- `GET /api/ui-state/walkthrough?key=<URL-encoded review key>`
-- `PUT /api/ui-state/walkthrough?key=<URL-encoded review key>`
 - `GET /api/ui-state/review?key=<URL-encoded pull request key>`
 - `PUT /api/ui-state/review?key=<URL-encoded pull request key>`
 
@@ -68,7 +63,7 @@ Reads return `{revision, value}`; an absent record is `{revision: 0, value:
 null}`. Reads never create a database. Writes require `{revision, mutation_id,
 value}` and return the saved record. A stale revision is 409
 `stale_ui_state` with the current revision/value. Revisions are per record,
-so editing another review cannot stale this one. All walkthrough and review
+so editing another review cannot stale this one. All review
 retention and revision changes commit atomically through `appdb.Update`.
 
 Each window's record client has a random identifier and increasing batch
@@ -84,7 +79,7 @@ Requests are limited to 512 KiB; values to 384 KiB, with bounded collection,
 key and note sizes. Invalid keys/types/values are 400. An unreadable stored
 record or database is 500 with a fixed message; it is never overwritten with
 defaults. Required fields and string/map values reject null and missing
-values. Every retained walkthrough or review record is validated before reading, writing or pruning;
+values. Every retained review record is validated before reading, writing or pruning;
 a corrupt sibling fails the operation and leaves original bytes untouched.
 Callback errors and stale writes leave prior bytes untouched.
 

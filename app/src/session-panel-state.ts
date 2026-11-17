@@ -31,7 +31,7 @@ export type PanelState = {
 };
 
 /** An Ask on a pull request's page: the pull request, the part of its review
- *  picked (a section, a stop or the overview), which the page context's
+ *  picked (a section or the overview), which the page context's
  *  focus carries to the agent, and a count, so asking twice is two asks. */
 export type PanelAsk = {
   repository: string;

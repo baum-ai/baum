@@ -47,6 +47,6 @@ it("names the page as the panel's bar does, and links back to it", () => {
     const href = new URL(hrefOf(context), "http://app.test");
     expect(of(href.search.slice(1))).toEqual(context);
   }
-  expect(samePage(pr, { ...pr, repository: "ACME/demo", focus: { walk: "x" } })).toBe(true);
+  expect(samePage(pr, { ...pr, repository: "ACME/demo", focus: { anchor: "x" } })).toBe(true);
   expect(samePage(pr, { ...pr, pull_request: 8 })).toBe(false);
 });

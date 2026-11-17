@@ -51,7 +51,6 @@ const RESERVED = new Set([
   "section",
   "inbox",
   "peek",
-  "walk",
 ]);
 /** A filter's key as the MCP server's links take it. */
 const FILTER_KEY = /^[a-z][a-z0-9_]{0,31}$/;
@@ -103,8 +102,6 @@ export function pageContextOf(
   const repository = subject("repository") ?? (clone ? cloneRepository(clone) : undefined);
   if ((requested === "inbox" || requested === "pulls") && number > 0 && repository) {
     const focus: Record<string, string> = {};
-    const walk = subject("walk");
-    if (walk) focus.walk = walk;
     const anchor = hash.replace(/^#/, "");
     if (anchor) focus.anchor = anchor.slice(0, 512);
     return {
@@ -254,8 +251,8 @@ export function onPull(
 }
 
 /** The page context with the part of the review an Ask picked (`kind`
- *  section, stop or overview, its `id`, `title` and `anchors`) added to its
- *  focus, beside the address's `walk` and `anchor`, while that pull
+ *  section or overview, its `id`, `title` and `anchors`) added to its
+ *  focus, beside the address's `anchor`, while that pull
  *  request's page is open: the agent reads it with the MCP server's `focus`
  *  tool. */
 export function withPicked(

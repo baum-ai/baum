@@ -65,19 +65,6 @@ export function sectionFocus(document: ReviewDocument, id: string): ChatFocus | 
   };
 }
 
-/** An Ask about one stop of the walkthrough. */
-export function stopFocus(
-  document: ReviewDocument,
-  stop: { id: string; title: string; anchors: Anchor[] },
-): ChatFocus {
-  return {
-    kind: "stop",
-    id: stop.id,
-    title: stop.title,
-    anchors: focusAnchors(document, stop.anchors),
-  };
-}
-
 const chatReasons: Record<string, string> = {
   needs_clone: "The repository had no local clone, which the agent needed to read the code.",
   budget: "The agent reached its time or size limit before it could answer.",

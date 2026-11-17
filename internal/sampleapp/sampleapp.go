@@ -80,8 +80,8 @@ func (w *Workspace) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		w.Own.ServeHTTP(rw, r)
 		return
 	}
-	// The sample keeps its own view state (what the Inbox folds, a
-	// walkthrough's place), which changes nothing that matters.
+	// The sample keeps its own view state (what the Inbox folds, a draft
+	// review), which changes nothing that matters.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/api/ui-state/") {
 		rw.Header().Set("X-Baum-Sample", Refused)
 		rw.Header().Set("Content-Type", "application/json")
