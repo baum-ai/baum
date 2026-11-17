@@ -8,7 +8,7 @@ set -eu
 
 usage() {
   cat <<'EOF'
-usage: isolated.sh [name] [--copy-data] [--workspace DIR]...
+usage: isolated.sh [name] [--copy-data] [--workspace DIR]... [--headless]
 
   name             the instance, letters, digits and dashes (default: default)
   --copy-data      first copy this machine's baum data into the instance's
@@ -19,6 +19,9 @@ usage: isolated.sh [name] [--copy-data] [--workspace DIR]...
                    the app knows from the copied data are there; repeatable.
                    Their review stores get writable copies of the instance's,
                    which --copy-data fills from the repositories' own
+  --headless       run on a headless compositor inside the container instead
+                   of this Wayland display, so no window shows: for agents
+                   and profiling. Rendering is in software
 
 BAUM_RELAY_URL, when set, is passed to the instance's daemon.
 EOF
@@ -28,10 +31,12 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo=$(CDPATH='' cd -- "$here/../../.." && pwd)
 name=default
 copy=0
+headless=0
 workspaces=
 while [ "$#" -gt 0 ]; do
   case $1 in
     --copy-data) copy=1 ;;
+    --headless) headless=1 ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; workspaces="$workspaces
 $2"; shift ;;
     --workspace=*) workspaces="$workspaces
@@ -46,8 +51,10 @@ case $name in
   ''|*[!a-z0-9-]*) echo "isolated: the name may only hold lowercase letters, digits and dashes: $name" >&2; exit 2 ;;
 esac
 
-: "${WAYLAND_DISPLAY:?isolated: needs a Wayland session (WAYLAND_DISPLAY is not set)}"
-: "${XDG_RUNTIME_DIR:?isolated: XDG_RUNTIME_DIR is not set}"
+if [ "$headless" = 0 ]; then
+  : "${WAYLAND_DISPLAY:?isolated: needs a Wayland session (WAYLAND_DISPLAY is not set); --headless runs without one}"
+  : "${XDG_RUNTIME_DIR:?isolated: XDG_RUNTIME_DIR is not set}"
+fi
 container=baum-desktop-$name
 if [ -n "$(docker ps -q --filter "name=^$container\$")" ]; then
   echo "isolated: $name is already running; stop it with: docker stop $container" >&2
@@ -96,7 +103,11 @@ if [ "$copy" = 1 ]; then
   [ "$#" -gt 0 ] && compose "$@" desktop-isolated sh scripts/isolated-home.sh seed
 fi
 
-set -- -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0"
+if [ "$headless" = 1 ]; then
+  set -- -e BAUM_ISOLATED_HEADLESS=1 -e BAUM_ISOLATED_WIDTH -e BAUM_ISOLATED_HEIGHT
+else
+  set -- -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" -e WAYLAND_DISPLAY=/tmp/wayland-0
+fi
 [ -f "$HOME/.gitconfig" ] && set -- "$@" -v "$HOME/.gitconfig:/seed/gitconfig:ro"
 [ -n "${BAUM_RELAY_URL:-}" ] && set -- "$@" -e BAUM_RELAY_URL
 IFS=$nl
@@ -111,5 +122,5 @@ done
 IFS=$old_ifs
 echo "isolated: $name, home $home"
 compose --name "$container" "$@" \
-  -e WAYLAND_DISPLAY=/tmp/wayland-0 -e GDK_BACKEND=wayland -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+  -e GDK_BACKEND=wayland -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
   desktop-isolated sh scripts/isolated-home.sh app cargo run --locked

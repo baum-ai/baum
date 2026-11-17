@@ -13,4 +13,5 @@ RUN apt-get update \
         libsecret-tools \
         openssh-client \
         sqlite3 \
+        weston \
     && rm -rf /var/lib/apt/lists/*
