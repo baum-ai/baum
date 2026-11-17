@@ -115,7 +115,7 @@ func TestSummaryWaitsForTwoReviewsThenFollowsThem(t *testing.T) {
 	}
 	summary, err := f.store.StackSummary(ctx, f.group.ID)
 	if err != nil || summary == nil || summary.Text != "The stack moves the queue to the new store. It starts with #1." || summary.Model != "claude-haiku-5-5" ||
-		!slices.Equal(summary.Members, []SummarizedMember{{1, 1}, {2, 4}}) || summary.Prompt != StackSummaryPrompt {
+		!slices.Equal(summary.Members, []SummarizedMember{{1, 1, "c1"}, {2, 4, "c1"}}) || summary.Prompt != StackSummaryPrompt {
 		t.Fatalf("summary %+v %v", summary, err)
 	}
 	// Nothing changed: no call.

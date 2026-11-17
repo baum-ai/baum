@@ -59,6 +59,9 @@ type StackSummary struct {
 type SummarizedMember struct {
 	Number        int `json:"number"`
 	ReviewVersion int `json:"review_version"`
+	// Clone is the clone whose saved review it read: clones keep separate
+	// histories, so a version number alone does not name one review.
+	Clone string `json:"clone,omitempty"`
 }
 
 // Overview is what a stack group's page shows beside its pull requests,
@@ -219,7 +222,7 @@ func memberReviews(g Group, snapshot reviewindex.Snapshot) map[int]memberReview 
 func summarized(reviews map[int]memberReview) []SummarizedMember {
 	out := make([]SummarizedMember, 0, len(reviews))
 	for number, review := range reviews {
-		out = append(out, SummarizedMember{Number: number, ReviewVersion: review.Version})
+		out = append(out, SummarizedMember{Number: number, ReviewVersion: review.Version, Clone: review.Clone})
 	}
 	slices.SortFunc(out, func(a, b SummarizedMember) int { return a.Number - b.Number })
 	return out
@@ -533,7 +536,7 @@ func (s *Summarizer) summarize(ctx context.Context, g Group, reviews map[int]mem
 			return err
 		}
 		members = append(members, member)
-		read = append(read, SummarizedMember{Number: number, ReviewVersion: version.Metadata.Version})
+		read = append(read, SummarizedMember{Number: number, ReviewVersion: version.Metadata.Version, Clone: review.Clone})
 	}
 	if len(members) < MinMembers {
 		return nil

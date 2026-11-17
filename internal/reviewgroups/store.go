@@ -326,6 +326,12 @@ func (s *Store) UpdateWith(ctx context.Context, id string, edit func(Group) (nam
 		if g.Members, err = cleanMembers(members); err != nil {
 			return Group{}, err
 		}
+	} else if name != nil && g.Stack {
+		// Taking over a stack group keeps its members, which must fit a
+		// person's group, whose combined review reads at most MaxMembers.
+		if g.Members, err = cleanMembers(g.Members); err != nil {
+			return Group{}, err
+		}
 	}
 	if name == nil && members == nil {
 		return g, nil
