@@ -48,9 +48,7 @@ const (
 )
 
 var (
-	evidenceWord = regexp.MustCompile(`(?i)\bevidence\b`)
 	barePR       = regexp.MustCompile(`(?i)(?:^|[^\w&])#\d+\b|\b(?:PR|pull request)\s+#?\d+\b`)
-	hunkMention  = regexp.MustCompile(`\bh_[0-9a-f]{12}\b`)
 	lineCount    = regexp.MustCompile(`(?i)\b\d+\s+(?:new\s+|changed\s+)?(?:lines?|files?)\b`)
 	mdLink       = regexp.MustCompile(`\[([^\]\n]+)\]\([^)\s]+\)`)
 	sentenceStop = regexp.MustCompile(`[.!?]["')\]]*\s`)
@@ -142,9 +140,6 @@ func cut(s string, limit int) string {
 	return strings.TrimRight(out, " ,;:.-") + "…"
 }
 
-// sentences counts a text's sentences as the document layer does.
-func sentences(s string) int { return reviewv2.Sentences(s) }
-
 // fit cuts a text to its limit: at the end of its last sentence that fits,
 // when that keeps most of it, else at a word.
 func fit(s string, limit int) string {
@@ -162,15 +157,11 @@ func fit(s string, limit int) string {
 	return cut(s, limit)
 }
 
-func words(s string) int { return len(strings.Fields(s)) }
-
-// copyRules reports the copy rules a text breaks that the host can see.
+// copyRules reports the copy rules a text breaks that the host can see and
+// the document layer's checks do not (they report the word "evidence",
+// hunk IDs, lengths, sentences and titles).
 func (c *checker) copyRules(path, s string) {
 	switch {
-	case evidenceWord.MatchString(s):
-		c.style(path, `never use the word "evidence"; say what it is (tests, a log, the code, a run)`)
-	case hunkMention.MatchString(s):
-		c.style(path, "names a hunk by its ID; cite hunks in cites or source only")
 	case barePR.MatchString(s):
 		c.style(path, "names a pull request or issue by number; say what the other pull request did")
 	case lineCount.MatchString(s):
@@ -189,15 +180,12 @@ func (c *checker) text(path, s string, limit, maxSentences int, required bool) s
 		return ""
 	}
 	c.copyRules(path, s)
-	if maxSentences > 0 && sentences(s) > maxSentences {
-		c.style(path, "has %d sentences; write at most %d", sentences(s), maxSentences)
-	}
 	// A text a quarter over its limit at most is cut to it, at a sentence's
-	// end where one is near; further over, it is sent back, or cut on the
-	// last pass.
-	n := utf8.RuneCountInString(s)
-	if n > limit+limit/4 && !c.lenient {
-		c.add(path, "is %d characters; keep it to %d", n, limit)
+	// end where one is near; further over, it is left for the document
+	// layer's checks to send back, or cut on the last pass. Its sentences
+	// are theirs to count (maxSentences says what they hold it to).
+	_ = maxSentences
+	if n := utf8.RuneCountInString(s); n > limit+limit/4 && !c.lenient {
 		return s
 	}
 	return fit(s, limit)
@@ -210,12 +198,7 @@ func (c *checker) title(path, s string, limit, maxWords int) string {
 	if s == "" {
 		return s
 	}
-	if w := words(s); w > maxWords {
-		c.style(path, "is %d words; a title is a plain subject of two to five words", w)
-	}
-	if strings.ContainsAny(s, ",;") {
-		c.style(path, `joins two things; a title is one subject without a comma`)
-	}
+	_ = maxWords // the document layer's checks count a title's words
 	return strings.TrimRight(s, ".")
 }
 

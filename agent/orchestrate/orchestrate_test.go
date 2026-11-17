@@ -476,16 +476,21 @@ func TestLabels(t *testing.T) {
 
 func TestCopyRules(t *testing.T) {
 	c := &checker{}
-	c.text("/a", "The evidence shows it works.", 100, 0, true)
 	c.text("/b", "As #123 did before.", 100, 0, true)
 	c.text("/c", "It changes 40 lines.", 100, 0, true)
-	c.text("/d", "Cites h_0123456789ab in text.", 100, 0, true)
-	c.text("/e", "One. Two. Three.", 100, 2, true)
-	c.text("/f", strings.Repeat("x", 200), 100, 0, true)
-	c.title("/g", "Pairing, and revoking", 60, 5)
-	c.title("/h", "A title of far too many plain words here", 60, 5)
-	if len(c.findings) != 8 {
+	c.text("/e", "", 100, 2, true)
+	if got := c.text("/f", strings.Repeat("x ", 100), 100, 0, true); len(got) < 199 {
+		t.Errorf("a text far over its limit was cut: %d", len(got))
+	}
+	if len(c.findings) != 3 {
 		t.Fatalf("findings: %v", c.findings)
+	}
+	// The document layer's checks report the rest, once.
+	c = &checker{}
+	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: "sec_a", Kind: "logical", Summary: "The evidence. Cites h_0123456789ab. Three. Four."}, nil))
+	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: "sec_a", Kind: "logical", Summary: "The evidence. Cites h_0123456789ab. Three. Four."}, nil))
+	if n := len(c.findings); n < 3 || strings.Count(c.String(), "evidence") != 1 {
+		t.Fatalf("merged: %v", c.findings)
 	}
 	c = &checker{}
 	// A text a quarter over its limit at most is cut to it, at a

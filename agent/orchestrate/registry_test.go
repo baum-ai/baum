@@ -123,7 +123,7 @@ func TestMapChecks(t *testing.T) {
 	bad := strings.NewReplacer(`"kind":"mechanical"`, `"kind":"logical"`, `"level":null`, `"level":null`,
 		`"owner":"sec_api"`, `"owner":"sec_nope"`, `"title":"Retry failed jobs"`, `"title":"Retry, and requeue"`).Replace(mapReplyJSON)
 	_, findings = checkMap([]byte(bad), f, r, false)
-	for _, want := range []string{"/sections/2/level", "/tiles/2/owner", "/sections/0/title"} {
+	for _, want := range []string{"/sections/2/level", "/tiles/2/owner", "sections[0] (sec_retry).title"} {
 		if !strings.Contains(findings, want) {
 			t.Errorf("findings lack %s:\n%s", want, findings)
 		}
