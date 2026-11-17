@@ -20,6 +20,10 @@ var sourceDeclaration = regexp.MustCompile(`^(func |type |class |export |def |CR
 // checkout in dir (its head and merge-base trees). It budgets each path equally
 // before selecting lines, so large files cannot hide later changes. Numbered
 // excerpts are evidence, never a substitute for full code.
+// SourceExcerpts are the numbered lines around each hunk of a bundle, from
+// the head and merge-base trees in dir, as a review's prompt carries them.
+func SourceExcerpts(dir string, b *bundle.Bundle) string { return sourceContext(dir, b) }
+
 func sourceContext(dir string, b *bundle.Bundle) string {
 	paths := map[string][]bundle.Hunk{}
 	for _, h := range b.Diff {

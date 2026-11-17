@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -101,51 +102,8 @@ var replySchema = func() string {
 	text := func(limit int) string {
 		return fmt.Sprintf(`{"type": "string", "minLength": 1, "maxLength": %d}`, limit)
 	}
-	tone := `{"type": ["string", "null"], "enum": ["plain", "new", "good", "bad", "muted", "missing", null]}`
-	source := fmt.Sprintf(`{"type": "array", "maxItems": %d, "items": {"type": "string", "pattern": "^h_[0-9a-f]{12}(-[0-9]+)?$"}}`, MaxSource)
-	diagram := func(kind, props, required string) string {
-		return fmt.Sprintf(`{
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["id", "type", "title", "caption", "source", %s],
-          "properties": {
-            "id": {"type": "string", "pattern": "^dg_[a-z0-9_]{1,60}$"},
-            "type": {"type": "string", "enum": [%q]},
-            "title": %s,
-            "caption": %s,
-            "source": %s,
-            %s
-          }
-        }`, required, kind, text(MaxTitle), nullable(MaxCaption), source, props)
-	}
-	flow := diagram(TypeFlow, fmt.Sprintf(`"lanes": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-              "type": "object", "additionalProperties": false, "required": ["label", "steps"],
-              "properties": {
-                "label": %s,
-                "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-                  "type": "object", "additionalProperties": false, "required": ["title", "note", "tone", "join"],
-                  "properties": {"title": %s, "note": %s, "tone": %s, "join": {"type": ["string", "null"], "enum": ["arrow", "both", "none", null]}}
-                }}
-              }
-            }}`, MaxLanes, nullable(MaxLaneLabel), MaxLaneSteps, text(MaxStepTitle), nullable(MaxNote), tone), `"lanes"`)
-	columns := diagram(TypeColumns, fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": {
-              "type": "object", "additionalProperties": false, "required": ["label", "tone", "items"],
-              "properties": {
-                "label": %s, "tone": %s,
-                "items": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-                  "type": "object", "additionalProperties": false, "required": ["title", "note"],
-                  "properties": {"title": %s, "note": %s}
-                }}
-              }
-            }}`, MinColumns, MaxColumns, text(MaxColumnLabel), tone, MaxColumnItems, text(MaxItemTitle), nullable(MaxNote)), `"columns"`)
-	sequence := diagram(TypeSequence, fmt.Sprintf(`"actors": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
-            "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-              "type": "object", "additionalProperties": false, "required": ["from", "to", "text", "tone"],
-              "properties": {"from": {"type": "integer", "minimum": 0, "maximum": %d}, "to": {"type": "integer", "minimum": 0, "maximum": %d}, "text": %s, "tone": %s}
-            }}`, MinActors, MaxActors, text(MaxActor), MaxSequence, MaxActors-1, MaxActors-1, text(MaxSequenceText), tone), `"actors", "steps"`)
-	table := diagram(TypeTable, fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
-            "rows": {"type": "array", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"type": "string", "maxLength": %d}}}`,
-		MinTableColumns, MaxTableColumns, text(MaxTableHeading), MaxTableRows, MinTableColumns, MaxTableColumns, MaxCell), `"columns", "rows"`)
+	flow, columns := diagramSchema(TypeFlow, true), diagramSchema(TypeColumns, true)
+	sequence, table := diagramSchema(TypeSequence, true), diagramSchema(TypeTable, true)
 	schema := fmt.Sprintf(`{
   "type": "object",
   "additionalProperties": false,
@@ -194,6 +152,117 @@ var replySchema = func() string {
 	}
 	return compact.String()
 }()
+
+// DiagramSchema is the JSON Schema of one native tile of a type (flow,
+// columns, sequence or table) as the view call writes it, without its id:
+// its title, caption, source hunk IDs and its type's own fields, every
+// property required and absent values null, so it serves providers' strict
+// structured outputs. Nil for any other type.
+func DiagramSchema(kind string) []byte {
+	if !slices.Contains(NativeTypes, kind) {
+		return nil
+	}
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(diagramSchema(kind, false))); err != nil {
+		panic("view: a diagram schema is not JSON: " + err.Error())
+	}
+	return compact.Bytes()
+}
+
+// diagramSchema is the schema of one reply diagram of a type, with its id
+// or without it.
+func diagramSchema(kind string, withID bool) string {
+	nullable := func(limit int) string { return fmt.Sprintf(`{"type": ["string", "null"], "maxLength": %d}`, limit) }
+	text := func(limit int) string {
+		return fmt.Sprintf(`{"type": "string", "minLength": 1, "maxLength": %d}`, limit)
+	}
+	tone := `{"type": ["string", "null"], "enum": ["plain", "new", "good", "bad", "muted", "missing", null]}`
+	source := fmt.Sprintf(`{"type": "array", "maxItems": %d, "items": {"type": "string", "pattern": "^h_[0-9a-f]{12}(-[0-9]+)?$"}}`, MaxSource)
+	diagram := func(props, required string) string {
+		id, idRequired := "", ""
+		if withID {
+			id, idRequired = `"id": {"type": "string", "pattern": "^dg_[a-z0-9_]{1,60}$"},`, `"id", `
+		}
+		return fmt.Sprintf(`{
+          "type": "object",
+          "additionalProperties": false,
+          "required": [%s"type", "title", "caption", "source", %s],
+          "properties": {
+            %s
+            "type": {"type": "string", "enum": [%q]},
+            "title": %s,
+            "caption": %s,
+            "source": %s,
+            %s
+          }
+        }`, idRequired, required, id, kind, text(MaxTitle), nullable(MaxCaption), source, props)
+	}
+	switch kind {
+	case TypeFlow:
+		return diagram(fmt.Sprintf(`"lanes": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
+              "type": "object", "additionalProperties": false, "required": ["label", "steps"],
+              "properties": {
+                "label": %s,
+                "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
+                  "type": "object", "additionalProperties": false, "required": ["title", "note", "tone", "join"],
+                  "properties": {"title": %s, "note": %s, "tone": %s, "join": {"type": ["string", "null"], "enum": ["arrow", "both", "none", null]}}
+                }}
+              }
+            }}`, MaxLanes, nullable(MaxLaneLabel), MaxLaneSteps, text(MaxStepTitle), nullable(MaxNote), tone), `"lanes"`)
+	case TypeColumns:
+		return diagram(fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": {
+              "type": "object", "additionalProperties": false, "required": ["label", "tone", "items"],
+              "properties": {
+                "label": %s, "tone": %s,
+                "items": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
+                  "type": "object", "additionalProperties": false, "required": ["title", "note"],
+                  "properties": {"title": %s, "note": %s}
+                }}
+              }
+            }}`, MinColumns, MaxColumns, text(MaxColumnLabel), tone, MaxColumnItems, text(MaxItemTitle), nullable(MaxNote)), `"columns"`)
+	case TypeSequence:
+		return diagram(fmt.Sprintf(`"actors": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
+            "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
+              "type": "object", "additionalProperties": false, "required": ["from", "to", "text", "tone"],
+              "properties": {"from": {"type": "integer", "minimum": 0, "maximum": %d}, "to": {"type": "integer", "minimum": 0, "maximum": %d}, "text": %s, "tone": %s}
+            }}`, MinActors, MaxActors, text(MaxActor), MaxSequence, MaxActors-1, MaxActors-1, text(MaxSequenceText), tone), `"actors", "steps"`)
+	case TypeTable:
+		return diagram(fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
+            "rows": {"type": "array", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"type": "string", "maxLength": %d}}}`,
+			MinTableColumns, MaxTableColumns, text(MaxTableHeading), MaxTableRows, MinTableColumns, MaxTableColumns, MaxCell), `"columns", "rows"`)
+	}
+	return ""
+}
+
+// CheckDiagram checks one native tile as the view call would write it (a
+// ReplyDiagram, its ID ignored) against the hunks of the pull request, as
+// Normalize checks a composition's diagrams: it returns the tile's title and
+// its data in its type's stored shape (FlowData, ColumnsData, SequenceData
+// or TableData), cleaned and cut, with its anchors kept to hunks hasHunk
+// knows, and the fixes made; or the problem that drops it, in the host's
+// words.
+func CheckDiagram(d ReplyDiagram, hasHunk func(string) bool) (title string, data json.RawMessage, report Report, problem string) {
+	encoded, ok := diagramData(d)
+	if !ok {
+		return "", nil, report, "it does not have the properties of its type"
+	}
+	raw, err := json.Marshal(encoded)
+	if err != nil || encoded == nil {
+		return "", nil, report, fmt.Sprintf("its type is not one of %s", strings.Join(NativeTypes, ", "))
+	}
+	hunks := map[string]bool{}
+	for _, id := range d.Source {
+		if hasHunk != nil && hasHunk(id) {
+			hunks[id] = true
+		}
+	}
+	check := &nativeCheck{review: &Review{hunks: hunks}, report: &report}
+	checked, ok := check.check(NativeTile{ID: "dg_tile", Type: d.Type, Title: d.Title, Data: raw})
+	if !ok {
+		return "", nil, report, check.problem
+	}
+	return checked.Title, checked.Data, report, ""
+}
 
 // maxReplyProblems bounds the problems ParseReply reports.
 const maxReplyProblems = 5

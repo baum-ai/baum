@@ -54,6 +54,26 @@ func concurrentCalls(backend Backend) bool {
 	return ok && caller.ConcurrentCalls()
 }
 
+// ConcurrentCalls reports whether a backend says it may run calls over one
+// run directory at once (ConcurrentCaller).
+func ConcurrentCalls(backend Backend) bool { return concurrentCalls(backend) }
+
+// SessionKeeper is a Backend that reports whether its review and task calls
+// may keep their session (Request.PersistSession) and resume one
+// (Request.ResumeSession). A Backend that does not implement it, or reports
+// false, is never asked to: a host that wants to continue a call writes a
+// fresh one instead.
+type SessionKeeper interface {
+	KeepsSessions() bool
+}
+
+// KeepsSessions reports whether a backend says its calls may keep and resume
+// sessions (SessionKeeper).
+func KeepsSessions(backend Backend) bool {
+	keeper, ok := backend.(SessionKeeper)
+	return ok && keeper.KeepsSessions()
+}
+
 // Endpoint is a complete provider base URL and the key or token that
 // authenticates to it.
 type Endpoint struct {
@@ -124,6 +144,16 @@ type Request struct {
 	// resumed Claude Code session keeps the system prompt it recorded, so put
 	// per-turn framing in the user prompt.
 	ResumeSession string
+	// Shell, for a review or task, lets the agent run commands that read:
+	// Claude Code gets its Bash tool inside its sandbox, which allows no
+	// write outside the working directory and no network, where the
+	// platform can enforce it (claude.SandboxAvailable), and ignores it
+	// elsewhere; Codex runs commands in its read-only sandbox anyway.
+	Shell bool
+	// ReadDirs are more directories a review or task may read besides
+	// Directory, such as the shared Git directory of a worktree the run
+	// works in.
+	ReadDirs []string
 	// MCP, when set, gives the run exactly one MCP server: baum's own, the
 	// daemon's /api/mcp route, which the agent CLI reaches over HTTP. Nil
 	// leaves the run with none, as every run has been. Only a local (User or

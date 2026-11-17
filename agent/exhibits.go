@@ -510,6 +510,14 @@ func (s *stagedReview) focusedPrefix(ids []string) string {
 	return focusedPrefix(s.run.Bundle, s.run.Directory, ids)
 }
 
+// FocusedPrefix is the start of a call about some hunks of a pull request:
+// its header, the hunks named (ids) with their patches, the diff's other
+// hunks without them, the named hunks' source excerpts, and where the
+// checkout is. Everything in it is untrusted data, and it says so.
+func FocusedPrefix(b *bundle.Bundle, directory string, ids []string) string {
+	return focusedPrefix(b, directory, ids)
+}
+
 // focusedPrefix is stagedReview.focusedPrefix for a bundle and its run
 // directory.
 func focusedPrefix(b *bundle.Bundle, directory string, ids []string) string {

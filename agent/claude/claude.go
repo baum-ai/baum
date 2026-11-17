@@ -79,6 +79,10 @@ func (*Backend) Name() string { return agent.BackendClaude }
 // under the run directory between its calls, so it runs them one at a time.
 func (c *Backend) ConcurrentCalls() bool { return c.Profile == User }
 
+// KeepsSessions reports whether a review or task call may keep or resume a
+// session (agent.SessionKeeper): only the User profile's may.
+func (c *Backend) KeepsSessions() bool { return c.Profile == User }
+
 // runKind is what a run is for, which decides what its result must hold.
 type runKind int
 
@@ -415,25 +419,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			// wrote for a request it could not send or the provider failed,
 			// such as authentication_failed when it is not signed in.
 			APIError string `json:"error"`
-			Message  struct {
-				ID, Model string
-				Content   []struct {
-					Type, ID, Name string
-					Text, Thinking string
-					ToolUseID      string `json:"tool_use_id"`
-					IsError        bool   `json:"is_error"`
-					Content        json.RawMessage
-					Input          struct {
-						FilePath      string `json:"file_path"`
-						Path          string
-						Pattern       string
-						Command       string
-						Offset, Limit int
-					}
-				}
-				StopReason string `json:"stop_reason"`
-				Usage      usage
-			} `json:"message"`
+			Message  streamMessage `json:"message"`
 			Event struct {
 				Type    string
 				Message struct {
@@ -745,4 +731,38 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		_, _ = b.Buffer.Write(p[:min(len(p), 65536-b.Len())])
 	}
 	return n, nil
+}
+
+// streamMessage is a stream event's message: an assistant or user message
+// with its content and usage. Some events (a system notice, such as the
+// sandbox's) carry a plain string there instead, which reads as an empty
+// message rather than ending the run.
+type streamMessage struct {
+	ID, Model string
+	Content   []struct {
+		Type, ID, Name string
+		Text, Thinking string
+		ToolUseID      string `json:"tool_use_id"`
+		IsError        bool   `json:"is_error"`
+		Content        json.RawMessage
+		Input          struct {
+			FilePath      string `json:"file_path"`
+			Path          string
+			Pattern       string
+			Command       string
+			Offset, Limit int
+		}
+	}
+	StopReason string `json:"stop_reason"`
+	Usage      claudeUsage
+}
+
+func (m *streamMessage) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		*m = streamMessage{}
+		return nil
+	}
+	type plain streamMessage
+	return json.Unmarshal(data, (*plain)(m))
 }

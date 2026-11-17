@@ -87,6 +87,10 @@ func (*Backend) Name() string { return agent.BackendCodex }
 // them one at a time.
 func (c *Backend) ConcurrentCalls() bool { return c.Profile == Local }
 
+// KeepsSessions reports whether a review or task call may keep or resume a
+// session (agent.SessionKeeper): only the Local profile's may.
+func (c *Backend) KeepsSessions() bool { return c.Profile == Local }
+
 // runKind is what a run is for, which decides its arguments and what its
 // result must hold.
 type runKind int
