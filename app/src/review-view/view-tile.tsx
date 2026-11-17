@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { cn } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
-import { AnchorChips } from "@baum/viewer/components/review-parts";
+import { Cites } from "./cites";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import { MenuButton, useContextMenu, type MenuItem } from "../context-menu";
@@ -115,7 +115,7 @@ export function ViewTileCard({
               {caption}
             </InlineMarkdown>
           ) : null}
-          {anchors.length > 0 ? <AnchorChips document={review} anchors={anchors} /> : null}
+          <Cites document={review} anchors={anchors} />
         </>
       );
     }

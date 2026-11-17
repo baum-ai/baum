@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { type Column, Table } from "@baum/viewer/components/table";
@@ -338,20 +338,41 @@ export function validTable(data: unknown): data is TableData {
 
 type Row = { key: string; cells: string[] };
 
+/** The rows a long table shows until it is opened: enough to read what it
+ *  compares without it outweighing the section around it. */
+export const TABLE_ROWS_SHOWN = 6;
+
 export function TableDiagram({ data }: { data: TableData }) {
+  const [all, setAll] = useState(false);
   const columns: Column<Row>[] = data.columns.map((column, position) => ({
     key: `${position}-${column}`,
     header: <InlineMarkdown>{column}</InlineMarkdown>,
     cell: (row) => <InlineMarkdown>{row.cells[position] ?? ""}</InlineMarkdown>,
   }));
+  // Folding one or two rows saves nothing: a table folds only when it
+  // hides at least three.
+  const folds = data.rows.length > TABLE_ROWS_SHOWN + 2;
+  const rows = folds && !all ? data.rows.slice(0, TABLE_ROWS_SHOWN) : data.rows;
   return (
-    <Table
-      columns={columns}
-      rows={data.rows.map((cells, position) => ({ key: String(position), cells }))}
-      rowKey={(row) => row.key}
-      density="compact"
-      minWidth={360}
-    />
+    <div className="space-y-2">
+      <Table
+        columns={columns}
+        rows={rows.map((cells, position) => ({ key: String(position), cells }))}
+        rowKey={(row) => row.key}
+        density="compact"
+        minWidth={360}
+      />
+      {folds ? (
+        <button
+          type="button"
+          aria-expanded={all}
+          onClick={() => setAll((shown) => !shown)}
+          className="text-base text-link hover:underline"
+        >
+          {all ? "Show fewer rows" : `Show all ${data.rows.length} rows`}
+        </button>
+      ) : null}
+    </div>
   );
 }
 

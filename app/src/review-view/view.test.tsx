@@ -367,6 +367,25 @@ describe("the native tiles", () => {
     expect(container.querySelectorAll("tbody tr")).toHaveLength(3);
   });
 
+  it("folds a long table to its first rows until it is opened", async () => {
+    const table = tileOf("dg_relay_runs");
+    const data = table.data as { columns: string[]; rows: string[][] };
+    const rows = Array.from({ length: 12 }, (_, at) => [`run ${at}`, "relay", "ok"]);
+    const container = await card({ ...table, data: { ...data, rows } });
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(6);
+    await click(button(container, "Show all 12 rows"));
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(12);
+  });
+
+  it("folds a tile's citations into one line that opens them", async () => {
+    const container = await card(tileOf("dg_shape"));
+    const cites = button(container, "1 file");
+    expect(cites.getAttribute("aria-expanded")).toBe("false");
+    expect(container.textContent).not.toContain("oss/internal/uiserver/remote.go");
+    await click(cites);
+    expect(container.textContent).toContain("remote.go");
+  });
+
   it("says when a tile is being written, failed or can't be read, under its title", async () => {
     const pending = await card(tileOf("lib_api_change"));
     expect(pending.querySelector("h3")?.textContent).toBe("Interface changes");

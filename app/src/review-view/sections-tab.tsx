@@ -6,9 +6,9 @@ import { HunkEvidence } from "@baum/viewer/components/hunk-evidence";
 import { ExternalLinkIcon } from "@baum/viewer/components/icons";
 import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
+import { Cites } from "./cites";
 import { useReviewFiles, useReviewSources } from "@baum/viewer/components/review-contexts";
 import {
-  AnchorChips,
   Item,
   Part,
   PROSE,
@@ -152,7 +152,11 @@ function SectionBody({
 }) {
   const details = sectionDetails(section);
   const steps = behaviourSteps(section);
+  // The section's first diagram leads, right under its summary; tables,
+  // excerpts and library tiles follow what the section does and its risks.
   const tiles = tilesOn(view, section.id);
+  const lead = tiles.find((tile) => DIAGRAM_TYPES.has(tile.type));
+  const rest = tiles.filter((tile) => tile !== lead);
   const obsolete = section.derived.state === "stale";
   const open = section.risks.filter((risk) => risk.state !== "mitigated" || obsolete);
   const mitigated = obsolete ? [] : section.risks.filter((risk) => risk.state === "mitigated");
@@ -191,16 +195,18 @@ function SectionBody({
       {section.summary ? (
         <div className="space-y-2">
           <Markdown className={PROSE}>{section.summary.text}</Markdown>
-          <AnchorChips document={document} anchors={withoutHunks(section.summary.anchors)} />
+          <Cites document={document} anchors={withoutHunks(section.summary.anchors)} />
         </div>
       ) : null}
-      <SectionTiles
-        tiles={tiles}
-        drafts={drafts}
-        document={document}
-        ctx={ctx}
-        idPrefix={idPrefix}
-      />
+      {lead ? (
+        <SectionTiles
+          tiles={[lead]}
+          drafts={[]}
+          document={document}
+          ctx={ctx}
+          idPrefix={idPrefix}
+        />
+      ) : null}
       {steps.length > 0 ? (
         <Part label="What it does">
           <ol className="space-y-2">
@@ -219,7 +225,7 @@ function SectionBody({
                   {step.before ? (
                     <p className="text-base text-secondary">Before: {step.before}</p>
                   ) : null}
-                  <AnchorChips document={document} anchors={step.anchors} />
+                  <Cites document={document} anchors={step.anchors} />
                 </div>
               </Item>
             ))}
@@ -249,6 +255,13 @@ function SectionBody({
           ) : null}
         </Part>
       ) : null}
+      <SectionTiles
+        tiles={rest}
+        drafts={drafts}
+        document={document}
+        ctx={ctx}
+        idPrefix={idPrefix}
+      />
       {section.hunks.length > 0 ? (
         <Part label="Code">
           <HunkEvidence
@@ -260,6 +273,9 @@ function SectionBody({
     </div>
   );
 }
+
+/** The native diagram types: one of them leads a section. */
+const DIAGRAM_TYPES = new Set(["flow", "columns", "sequence"]);
 
 /** The tiles placed on a section, and the pending cards of those being made
  *  for it in the session panel. */
@@ -295,7 +311,7 @@ function RiskItem({ risk, document, id }: { risk: Risk; document: ReviewDocument
     <Item id={id} className="space-y-1.5">
       <TierBadge tier={risk.tier} />
       <Markdown className="text-primary">{risk.text}</Markdown>
-      <AnchorChips document={document} anchors={risk.anchors} />
+      <Cites document={document} anchors={risk.anchors} />
     </Item>
   );
 }

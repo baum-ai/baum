@@ -156,7 +156,12 @@ function RiskPart({
           {verdict.points.length > 0 ? (
             <ul className="mt-2 space-y-1.5">
               {verdict.points.map((point, at) => {
-                const title = point.section ? titleOf(point.section) : undefined;
+                // A section several points name is linked once, after the
+                // last of them.
+                const later = verdict.points
+                  .slice(at + 1)
+                  .some((next) => next.section === point.section);
+                const title = point.section && !later ? titleOf(point.section) : undefined;
                 return (
                   <li key={at} className="flex gap-2.5 text-base leading-[1.55] text-primary">
                     <span
