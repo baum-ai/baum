@@ -184,10 +184,12 @@ it("opens the focused pull request on GitHub with the command key, Shift and G",
   await press("j");
   await press("G", github);
   expect(opened).toHaveLength(1);
-  // Not g or Shift+G alone, nor under a dialog.
-  await press("j");
+  // Not g or Shift+G alone, which go to the first and last row, nor under a
+  // dialog.
   await press("g", { code: "KeyG" });
+  expect(focusedTitle()).toBe("Change 2");
   await press("G", { shiftKey: true, code: "KeyG" });
+  expect(focusedTitle()).not.toBe("Change 2");
   const dialog = document.createElement("dialog");
   dialog.open = true;
   document.body.append(dialog);
@@ -201,7 +203,7 @@ it("opens the focused pull request on GitHub with the command key, Shift and G",
   input.remove();
   expect(opened).toEqual([
     "https://github.com/acme/demo/pull/2",
-    "https://github.com/acme/demo/pull/1",
+    "https://github.com/acme/demo/pull/3",
   ]);
   vi.restoreAllMocks();
 });
@@ -539,6 +541,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "↓",
     "k",
     "↑",
+    "g",
+    "Home",
+    "G",
+    "End",
     "Enter",
     "Space",
     "m",
@@ -560,6 +566,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "↓",
     "k",
     "↑",
+    "g",
+    "Home",
+    "G",
+    "End",
     "Enter",
     "o",
     "x",
@@ -603,7 +613,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Esc",
   ]);
   expect(listed("Walkthrough")).toEqual(["j", "↓", "k", "↑", "→", "←", "o", "c", "v", "a"]);
-  const list = ["j", "↓", "k", "↑", "Enter", "o", "Esc"];
+  const list = ["j", "↓", "k", "↑", "g", "Home", "G", "End", "Enter", "o", "Esc"];
   expect(listed("Sessions")).toEqual([...list, "p", "r", "f", "Space", "1–9"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
   expect(listed("Repositories")).toEqual([...list, "a", "/"]);
@@ -623,6 +633,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "ArrowDown",
     "k",
     "ArrowUp",
+    "g",
+    "Home",
+    "G",
+    "End",
     "Enter",
     "o",
     "x",
@@ -773,6 +787,16 @@ it("moves through a list's rows and opens the focused one", async () => {
   expect(focusedRow()).toBe("c");
   await press("k", {}, document.activeElement!);
   expect(focusedRow()).toBe("b");
+  await press("g", {}, document.activeElement!);
+  expect(focusedRow()).toBe("a");
+  await press("G", { shiftKey: true }, document.activeElement!);
+  expect(focusedRow()).toBe("c");
+  await press("Home", {}, document.activeElement!);
+  expect(focusedRow()).toBe("a");
+  await press("End", {}, document.activeElement!);
+  expect(focusedRow()).toBe("c");
+  await press("k", {}, document.activeElement!);
+  expect(focusedRow()).toBe("b");
   await press("o", {}, document.activeElement!);
   expect(opened).toHaveBeenCalledWith("b");
   // A row that leaves the list takes the focus with it.
@@ -813,6 +837,9 @@ it("moves within a list", () => {
   expect(moveFocus(["a", "b"], "gone", 1)).toBe("a");
   expect(moveFocus(["a", "b"], "b", 1)).toBe("b");
   expect(moveFocus(["a", "b"], "b", -1)).toBe("a");
+  expect(moveFocus(["a", "b", "c"], "b", "first")).toBe("a");
+  expect(moveFocus(["a", "b", "c"], null, "last")).toBe("c");
+  expect(moveFocus([], null, "last")).toBeNull();
 });
 
 it("reads the refresh key with the platform's command key, leaving Shift to the browser", () => {
