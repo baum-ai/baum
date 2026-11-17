@@ -30,6 +30,7 @@ import {
   agentName,
   appURL,
   automaticNotice,
+  homePath,
   isActiveJob,
   navigate,
   sameRepository,
@@ -1165,6 +1166,8 @@ const panelModes: { value: PanelMode; label: string }[] = [
 const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
   { value: "bottom", label: "Bottom" },
   { value: "top", label: "Top" },
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
 ];
 
 /** The session panel's setting: the agent and model a new session opens with
@@ -2927,9 +2930,6 @@ function repositoryActivity(repository: string, entries: Entry[], jobs: Job[]): 
     ).length,
   };
 }
-
-/** A clone's path with the home folder written as `~`. */
-const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
 
 /** One registered repository: what it does at a glance; its name opens its
  *  page. */

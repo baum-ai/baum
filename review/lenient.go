@@ -17,8 +17,7 @@ import (
 // reported by name, optional fields accept null, fields with a canonical empty
 // value or a host-derived value are not required, prefixed identifiers
 // accept any spelling (references keep only their allowed prefixes, in any
-// case), and code sources name their revision by role and an
-// excerpt by its hunk headers. normalizeAuthored maps a document this schema
+// case). normalizeAuthored maps a document this schema
 // accepts onto the strict contract before it is validated.
 func lenientContract(strict map[string]any) (map[string]any, error) {
 	encoded, err := json.Marshal(strict)
@@ -30,7 +29,6 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 		return nil, err
 	}
 	defs, _ := lenient["$defs"].(map[string]any)
-	relaxTileCodeFile(defs)
 	// The review time estimate is rough: normalization rounds and clamps it
 	// (reviewMinutes), so a provider never rejects a reply over its range.
 	// The stored contract lets it be absent, for documents from before the
@@ -205,35 +203,6 @@ func walkSchema(value any, visit func(map[string]any)) {
 	}
 }
 
-// relaxTileCodeFile lets a source name its revision as head or merge_base and
-// an excerpt by hunk headers alone; the host resolves the SHA, sets
-// review_version and fills the excerpt lines from the bundle's comparison.
-func relaxTileCodeFile(defs map[string]any) {
-	file, _ := defs["tileCodeFile"].(map[string]any)
-	if file == nil {
-		return
-	}
-	props := file["properties"].(map[string]any)
-	revision, _ := props["revision"].(map[string]any)
-	props["revision"] = map[string]any{
-		"anyOf":       []any{map[string]any{"type": "string", "enum": []any{tileRevisionHead, tileRevisionMergeBase}}, revision},
-		"description": "head for the pull request head, merge_base for deleted files or the merge-base tree; a full SHA of either is also accepted.",
-	}
-	file["required"] = removeStrings(file["required"], "review_version")
-	if diff, ok := props["diff"].(map[string]any); ok {
-		if hunks, ok := diff["properties"].(map[string]any)["hunks"].(map[string]any); ok {
-			hunk := hunks["items"].(map[string]any)
-			hunk["required"] = removeStrings(hunk["required"], "lines")
-			hunk["description"] = "Name the excerpt by its hunk header, @@ -old,count +new,count @@, within the supplied comparison; the platform fills in the lines. Lines given here are replaced."
-		}
-	}
-}
-
-const (
-	tileRevisionHead      = "head"
-	tileRevisionMergeBase = "merge_base"
-)
-
 func relaxSchema(node map[string]any, defs map[string]any) {
 	for _, key := range []string{"oneOf", "anyOf"} {
 		if branches, ok := node[key].([]any); ok {
@@ -315,21 +284,18 @@ func referenceKindPattern(prefixes []string) string {
 }
 
 // identifierPattern recognizes the patterns normalizeIdentifier can satisfy
-// from any spelling: prefixed IDs, prefixed references, tile-local names and
-// risk categories.
+// from any spelling: prefixed IDs, prefixed references and risk categories.
 var identifierPatterns = struct {
-	prefixed, references, local, category *regexp.Regexp
+	prefixed, references, category *regexp.Regexp
 }{
 	prefixed:   regexp.MustCompile(`^\^([a-z]+)_\[a-z0-9_\]\+\$$`),
 	references: regexp.MustCompile(`^\^\(([a-z|]+)\)_\[a-z0-9_\]\+\$$`),
-	local:      regexp.MustCompile(`^\^\[a-z\]\[a-z0-9_\]\*\$$`),
 	category:   regexp.MustCompile(`^\^\[a-z0-9_\]\+\$$`),
 }
 
 type identifierRule struct {
 	prefix   string
 	prefixes []string
-	letter   bool
 	fallback string
 }
 
@@ -339,8 +305,6 @@ func identifierPattern(pattern string) *identifierRule {
 		return &identifierRule{prefix: identifierPatterns.prefixed.FindStringSubmatch(pattern)[1]}
 	case identifierPatterns.references.MatchString(pattern):
 		return &identifierRule{prefixes: strings.Split(identifierPatterns.references.FindStringSubmatch(pattern)[1], "|")}
-	case identifierPatterns.local.MatchString(pattern):
-		return &identifierRule{letter: true}
 	case identifierPatterns.category.MatchString(pattern):
 		return &identifierRule{fallback: "uncategorized"}
 	}
@@ -367,11 +331,6 @@ func (rule *identifierRule) normalize(value string) string {
 			token = "1"
 		}
 		return rule.prefix + "_" + token
-	case rule.letter:
-		if token == "" || token[0] >= '0' && token[0] <= '9' {
-			token = "n" + token
-		}
-		return token
 	case rule.fallback != "" && token == "":
 		return rule.fallback
 	}

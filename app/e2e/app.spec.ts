@@ -593,7 +593,7 @@ test("Ask opens the session panel on the pull request and lists the earlier ques
   await expect
     .poll(() => reported.at(-1))
     .toMatchObject({ page: "pull_request", repository: "acme/demo", pull_request: 7 });
-  await composer.press("Escape");
+  await composer.press("Control+`");
   await expect(panel).toHaveCount(0);
 
   // The questions asked of the review's agent before the panel stay

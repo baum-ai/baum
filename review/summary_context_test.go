@@ -31,16 +31,14 @@ func withContext(t *testing.T, context any) []byte {
 	} else {
 		summary["context"] = context
 	}
-	return tileJSON(t, doc)
+	return encodeJSON(t, doc)
 }
 
 func TestModelSchemaRequiresSummaryContext(t *testing.T) {
 	v, err := sharedValidator()
 	checkNoError(t, err)
-	encoded, err := v.ModelSchema(nil)
-	checkNoError(t, err)
 	var schema map[string]any
-	checkNoError(t, json.Unmarshal(encoded, &schema))
+	checkNoError(t, json.Unmarshal(v.Schema, &schema))
 	summary := schema["properties"].(map[string]any)["summary"].(map[string]any)
 	if !containsString(stringSlice(summary["required"]), "context") {
 		t.Fatal("the model schema does not require summary.context")
@@ -81,7 +79,7 @@ func TestSummaryContextIsRequiredOfTheModelOnly(t *testing.T) {
 	// A stored document from before the context existed still validates.
 	example := storedExample(t)
 	delete(example["summary"].(map[string]any), "context")
-	if findings := v.ValidateStored(tileJSON(t, example), nil); len(findings) > 0 {
+	if findings := v.ValidateStored(encodeJSON(t, example), nil); len(findings) > 0 {
 		t.Fatalf("a stored document without a context is invalid: %v", findings)
 	}
 }

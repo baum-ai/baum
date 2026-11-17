@@ -15,7 +15,7 @@ import (
 // A staged review is written in parts by separate model calls: the outline
 // (the overview and each section's id, title, kind, hunks and assessment),
 // each section's details, and the summary's codebase context. The schemas a
-// stage replies against are projections of the model schema (ModelSchema),
+// stage replies against are projections of the model schema (Schema),
 // so they cannot drift from it, and each part is validated by merging it into
 // the outline and running the same rules as a whole document, under the
 // staged contract (stagedContract): a section may lack its details, and the
@@ -28,13 +28,13 @@ var (
 	outlineFields        = []string{"schema", "summary", "sections", "relations"}
 	outlineSummaryFields = []string{"text", "review_exchange", "change_kind", "implements", "release_note", "breaking_change", "attention", "recommendation", "authorship"}
 	outlineSectionFields = []string{"id", "title", "kind", "hunks", "assessment"}
-	detailsSectionFields = []string{"id", "summary", "attention", "risks", "evidence", "blocks", "tiles"}
+	detailsSectionFields = []string{"id", "summary", "attention", "risks", "evidence", "blocks"}
 )
 
 // stagedContract is the authored contract of a document assembled from the
 // stages: the strict authored contract, except that a section may carry the
 // stored details state (pending or failed), with a null summary, a null
-// attention and no evidence, blocks or tiles, and that the summary may lack
+// attention and no evidence or blocks, and that the summary may lack
 // its context, which a failed context stage leaves out. The model never
 // writes against it: every stage's schema is a projection of the model
 // schema, which offers neither.
@@ -67,7 +67,6 @@ func stagedContract(contract map[string]any) (map[string]any, error) {
 			"attention": map[string]any{"type": "null"},
 			"evidence":  map[string]any{"maxItems": 0},
 			"blocks":    map[string]any{"maxItems": 0},
-			"tiles":     map[string]any{"maxItems": 0},
 		}},
 	})
 	summary := staged["properties"].(map[string]any)["summary"].(map[string]any)
@@ -76,17 +75,13 @@ func stagedContract(contract map[string]any) (map[string]any, error) {
 	return staged, nil
 }
 
-// OutlineSchema is the schema of the outline stage's reply: the model schema
-// without tiles, keeping only the document's schema, summary (without its
+// OutlineSchema is the schema of the outline stage's reply: the model schema,
+// keeping only the document's schema, summary (without its
 // context and reading time), sections (each with only its id, title, kind,
 // hunks and assessment) and relations.
 func (v *DocumentValidator) OutlineSchema() ([]byte, error) {
-	model, err := v.ModelSchema(nil)
-	if err != nil {
-		return nil, err
-	}
 	var root map[string]any
-	if err := json.Unmarshal(model, &root); err != nil {
+	if err := json.Unmarshal(v.Schema, &root); err != nil {
 		return nil, err
 	}
 	projectSchema(root, outlineFields...)
@@ -99,17 +94,12 @@ func (v *DocumentValidator) OutlineSchema() ([]byte, error) {
 	return json.Marshal(root)
 }
 
-// DetailsSchema is the schema of the section details stage's reply for the
-// offered tile kinds: a list of sections, each with its id and only the
-// fields of its details (summary, attention, risks, evidence, blocks and
-// tiles), as the model schema (ModelSchema(kinds)) defines them.
-func (v *DocumentValidator) DetailsSchema(kinds []string) ([]byte, error) {
-	model, err := v.ModelSchema(kinds)
-	if err != nil {
-		return nil, err
-	}
+// DetailsSchema is the schema of the section details stage's reply: a list
+// of sections, each with its id and only the fields of its details (summary,
+// attention, risks, evidence and blocks), as the model schema defines them.
+func (v *DocumentValidator) DetailsSchema() ([]byte, error) {
 	var source map[string]any
-	if err := json.Unmarshal(model, &source); err != nil {
+	if err := json.Unmarshal(v.Schema, &source); err != nil {
 		return nil, err
 	}
 	defs := source["$defs"].(map[string]any)
@@ -132,12 +122,8 @@ func (v *DocumentValidator) DetailsSchema(kinds []string) ([]byte, error) {
 // ContextSchema is the schema of the context stage's reply: the summary's
 // context, as the model schema defines it, under a context key.
 func (v *DocumentValidator) ContextSchema() ([]byte, error) {
-	model, err := v.ModelSchema(nil)
-	if err != nil {
-		return nil, err
-	}
 	var source map[string]any
-	if err := json.Unmarshal(model, &source); err != nil {
+	if err := json.Unmarshal(v.Schema, &source); err != nil {
 		return nil, err
 	}
 	summary := source["properties"].(map[string]any)["summary"].(map[string]any)
@@ -212,6 +198,36 @@ func dropUnreferencedDefinitions(root map[string]any) {
 			delete(defs, name)
 		}
 	}
+}
+
+// referencedDefinitions names every definition reachable from the schema's
+// root through $ref, following references inside definitions too.
+func referencedDefinitions(root map[string]any, defs map[string]any) map[string]bool {
+	reachable := map[string]bool{}
+	var visit func(node any)
+	visit = func(node any) {
+		switch v := node.(type) {
+		case map[string]any:
+			if ref, ok := v["$ref"].(string); ok {
+				name := strings.TrimPrefix(ref, "#/$defs/")
+				if def, found := defs[name]; found && !reachable[name] {
+					reachable[name] = true
+					visit(def)
+				}
+			}
+			for key, child := range v {
+				if key != "$defs" {
+					visit(child)
+				}
+			}
+		case []any:
+			for _, child := range v {
+				visit(child)
+			}
+		}
+	}
+	visit(root)
+	return reachable
 }
 
 // OutlineSectionFields are the fields of a section the outline keeps, as
@@ -371,7 +387,7 @@ func ReadOutline(document []byte) ([]byte, error) {
 }
 
 // DetailsOf returns a section's details in the shape the details stage
-// writes them: its id, summary, attention, risks, evidence, blocks and tiles.
+// writes them: its id, summary, attention, risks, evidence and blocks.
 // A section that cannot be read is returned as it is.
 func DetailsOf(section []byte) []byte {
 	object, err := decodeObject(section, "section")
@@ -642,8 +658,8 @@ func (v *DocumentValidator) PrepareContext(outline, reply []byte, b *bundlepkg.B
 // version holds for each outline section (PrepareOutline's document) whose
 // hunks are those of the previous version's section with the same ID, when
 // that section's details were complete (it has no details state): its
-// summary, attention, active risks without their lifecycle fields, evidence,
-// blocks and tiles, in the shape the details stage writes. A mitigated risk
+// summary, attention, active risks without their lifecycle fields, evidence
+// and blocks, in the shape the details stage writes. A mitigated risk
 // is left out, so completion keeps it mitigated. A host validates what it
 // reuses (PrepareSectionDetails) and asks the model for any it rejects.
 //

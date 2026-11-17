@@ -266,6 +266,22 @@ function rememberPullsTab(tab: string) {
     // Without storage the page opens on Open.
   }
 }
+const LAST_INBOX_KEY = "baum.inbox.last.v1";
+/** The saved inbox last shown in this window's browser, if any. */
+function lastInbox(): string | null {
+  try {
+    return localStorage.getItem(LAST_INBOX_KEY);
+  } catch {
+    return null;
+  }
+}
+function rememberInbox(id: string) {
+  try {
+    localStorage.setItem(LAST_INBOX_KEY, id);
+  } catch {
+    // Without storage ⌘1 opens the first inbox.
+  }
+}
 function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
   return (
     <a
@@ -940,6 +956,9 @@ function Workspace({ url }: { url: UrlState }) {
     railPage === "inbox"
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
+  useEffect(() => {
+    if (selectedInbox) rememberInbox(selectedInbox.id);
+  }, [selectedInbox?.id]);
   const firstInbox = inboxes.status === "ready" ? (inboxes.inboxes[0] ?? null) : null;
   const queueInbox = page === "inbox" ? (selectedInbox ?? (detailPage ? firstInbox : null)) : null;
   // The root, a legacy link to the whole queue, or an inbox that is gone:
@@ -1458,7 +1477,16 @@ function Workspace({ url }: { url: UrlState }) {
     if (action.kind === "refresh") pageRefresh.press();
     else if (action.kind === "back") history.back();
     else if (action.kind === "forward") history.forward();
-    else navigate(PAGES.find((item) => item.page === action.page)!.href());
+    else if (action.page === "inbox") {
+      // ⌘1 returns to the inbox last seen, while it still exists; otherwise
+      // the root opens the first one.
+      const last = lastInbox();
+      navigate(
+        last && inboxes.inboxes.some((candidate) => candidate.id === last)
+          ? appURL(`?inbox=${encodeURIComponent(last)}`)
+          : PAGES.find((item) => item.page === "inbox")!.href(),
+      );
+    } else navigate(PAGES.find((item) => item.page === action.page)!.href());
   });
   useShortcuts(
     (event) => {

@@ -80,10 +80,7 @@ func BenchmarkOutputRedaction(b *testing.B) {
 			b.ReportAllocs()
 			scanned := 0
 			for range b.N {
-				o, err := NewOutputRedactor(v, redactor, &bundlepkg.Bundle{}, nil)
-				if err != nil {
-					b.Fatal(err)
-				}
+				o := NewOutputRedactor(v, redactor, &bundlepkg.Bundle{}, nil)
 				masked, err := o.Identifiers(context.Background(), c.document)
 				if err != nil {
 					b.Fatal(err)

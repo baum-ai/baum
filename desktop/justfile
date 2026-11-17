@@ -60,6 +60,20 @@ dmg-layout:
 notices:
     {{ heavy }} desktop-test scripts/third-party-notices.sh
 
+# Check in WebKitGTK, under a virtual display in Docker, that no frame of a
+# page can make the app open the browser (tests/navigation). Not run in CI.
+navigation-check:
+    BAUM_OP_RUN=0 {{ dev_compose }} --profile test build desktop-test
+    docker build -q -t baum-desktop-navigation-check \
+        --build-arg DESKTOP_IMAGE="$(BAUM_OP_RUN=0 {{ dev_compose }} --profile test config --images desktop-test)" \
+        {{ source_directory() }}/tests/navigation
+    docker run --rm ${BAUM_DEV_CPUSET:+--cpuset-cpus="$BAUM_DEV_CPUSET"} \
+        --user "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_HOME=/cache/cargo \
+        --add-host attacker.example:127.0.0.1 \
+        -v "{{ source_directory() }}:/oss/desktop" \
+        -v "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/cargo:/cache/cargo" \
+        baum-desktop-navigation-check sh /oss/desktop/tests/navigation/run.sh
+
 # Check that scripts/updater-manifest.sh rejects tampered releases
 updater-test:
     {{ heavy }} desktop-test scripts/updater-manifest-test.sh
@@ -80,3 +94,12 @@ run: frontend sidecar
         -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \
         -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
         desktop-test cargo run --locked
+
+# Run the app with its own home, keyring and daemon beside the installed one,
+# one per name (scripts/isolated.sh; --copy-data copies this machine's data)
+isolated *args: frontend viewer sidecar
+    sh {{ source_directory() }}/scripts/isolated.sh {{ args }}
+
+# A login shell in a running isolated app's container, on its D-Bus session
+isolated-shell name="default":
+    docker exec -it baum-desktop-{{ name }} sh -c 'DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/runtime/bus) XDG_RUNTIME_DIR=/tmp/runtime exec bash -l'

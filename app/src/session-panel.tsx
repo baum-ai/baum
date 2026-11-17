@@ -10,12 +10,12 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { formatRelative, formatUSD } from "@baum/viewer/components/format";
+import { formatRelative } from "@baum/viewer/components/format";
 import { ChevronDownIcon, TerminalIcon } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { Badge, Button, CloseButton, LiveDot, SegmentedControl } from "@baum/viewer/components/ui";
 import { cn } from "@baum/viewer/components/classnames";
-import { agentName, LocalRequestError } from "./api";
+import { agentName, homePath, LocalRequestError } from "./api";
 import {
   closeConversation,
   confirmProposal,
@@ -34,6 +34,7 @@ import {
   type ConversationSummary,
   type OperationSummary,
   type PanelMode,
+  type PanelPosition,
   type PanelSettings,
   type Progress,
   type Proposal,
@@ -47,17 +48,26 @@ import { LoadingStatus, NineDots } from "./nine-dots";
 import { hrefOf, onPull, pageLabel, pickedFocus, samePage, type PageContext } from "./page-context";
 import { pendingReviewState } from "./pending-review-model";
 import { Diff } from "./prompt-editor";
-import { POLL_RUNNING, TranscriptReader, useLiveTranscript } from "./session-transcript";
-import { isPanelKey, PANEL_KEY, PANEL_KEY_LABEL, useShortcuts } from "./shortcuts";
+import { AgentMark } from "./sessions";
+import { MESSAGE, POLL_RUNNING, TranscriptReader, useLiveTranscript } from "./session-transcript";
+import { isPanelKey, KeyBar, PANEL_KEY, PANEL_KEY_LABEL } from "./shortcuts";
 import { useToast } from "./toast";
 import { useVisibleInterval } from "./visible-interval";
-import { MIN_HEIGHT, sessionPanel, useSessionPanel, type PanelState } from "./session-panel-state";
+import {
+  MIN_HEIGHT,
+  MIN_WIDTH,
+  sessionPanel,
+  useSessionPanel,
+  type PanelState,
+} from "./session-panel-state";
 import "./session-panel.css";
 
 export { PANEL_KEY, PANEL_KEY_LABEL } from "./shortcuts";
 export {
   DEFAULT_HEIGHT,
+  DEFAULT_WIDTH,
   MIN_HEIGHT,
+  MIN_WIDTH,
   resetSessionPanel,
   sessionPanel,
   useSessionPanel,
@@ -343,11 +353,21 @@ export function SessionPanelHost({
   const conversations = useConversations();
   const settings = usePanelSettings();
   usePageReport(page, panel.available !== false);
-  useShortcuts((event) => {
-    if (!isPanelKey(event)) return;
-    event.preventDefault();
-    sessionPanel.toggle();
-  });
+  // The panel's key works anywhere, a text field included, so it is not one
+  // of the page's keys (`useShortcuts`): from the composer it hides the
+  // panel, from anywhere else it shows the panel, or puts the keys in the
+  // composer of the one already open. A dialog keeps its keys.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isPanelKey(event)) return;
+      if (document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      if (document.activeElement?.matches(COMPOSER)) sessionPanel.hide();
+      else sessionPanel.show();
+    };
+    addEventListener("keydown", onKeyDown);
+    return () => removeEventListener("keydown", onKeyDown);
+  }, []);
   // An Ask on a pull request's page opens the panel on that pull request's
   // conversation, once the conversations are known; the part of the review it
   // picked rides in the page's focus until the person leaves the page.
@@ -375,6 +395,9 @@ export function SessionPanelHost({
   );
 }
 
+/** The panel's composer, where its key hides the panel. */
+const COMPOSER = ".session-panel-compose textarea";
+
 const MODES: { value: PanelMode; label: string }[] = [
   { value: "auto", label: "Auto" },
   { value: "full", label: "Full access" },
@@ -393,9 +416,10 @@ const modeDetail: Record<PanelMode, string> = {
   workspace: "Edits files in its directory; what it would have to ask for is refused.",
 };
 
-/** What a conversation's agent and model are called in the header. */
-function agentLine(agent: string, model: string) {
-  return `${agentName(agent)} · ${model ? modelName(model) : "default model"}`;
+/** What a conversation's model is called in the header: its name without
+ *  its maker's, which the agent's mark beside it already says. */
+export function shortModelName(model: string) {
+  return model ? modelName(model).replace(/^Claude /, "") : "default model";
 }
 
 /** The overlay, over the page like a drop-down terminal: the bar naming what
@@ -418,7 +442,11 @@ function SessionPanel({
   settings: PanelSettings | null;
   go: (href: string) => void;
 }) {
-  const position = settings?.position ?? "bottom";
+  const sideFits = useSideFits();
+  const chosen = settings?.position ?? "bottom";
+  // A window too narrow for the panel beside the page opens it from the foot.
+  const position = (chosen === "left" || chosen === "right") && !sideFits ? "bottom" : chosen;
+  const side = position === "left" || position === "right";
   const id = panel.conversation;
   const { conversation, error: readError, update } = useConversation(id);
   const { proposals, read: readProposals } = useProposals(id);
@@ -471,7 +499,8 @@ function SessionPanel({
     };
   }, []);
   // The page under it scrolls clear of it: its frame knows how much of it the
-  // panel covers, and from which edge (`--session-panel-inset`).
+  // panel covers, and from which edge (`--session-panel-inset`). From a side,
+  // that is the panel's width, and the page's panel narrows beside it.
   useLayoutEffect(() => {
     const element = root.current;
     const frame = element?.closest<HTMLElement>(".local-frame");
@@ -479,7 +508,12 @@ function SessionPanel({
     const measure = () => {
       const box = element.getBoundingClientRect();
       const edge = frame.getBoundingClientRect();
-      const covered = position === "bottom" ? edge.bottom - box.top : box.bottom - edge.top;
+      const covered =
+        position === "bottom"
+          ? edge.bottom - box.top
+          : position === "top"
+            ? box.bottom - edge.top
+            : box.width;
       frame.style.setProperty("--session-panel-inset", `${Math.max(0, Math.round(covered))}px`);
     };
     frame.dataset.sessionPanel = position;
@@ -596,20 +630,160 @@ function SessionPanel({
       }),
     );
   };
+  // The message the panel's keys are on, marked as the transcript page marks
+  // its own.
+  const marked = useRef<HTMLElement | null>(null);
+  const mark = (target: HTMLElement | null) => {
+    marked.current?.classList.remove("local-message-current");
+    target?.classList.add("local-message-current");
+    marked.current = target;
+  };
+  const panelBody = () => root.current?.querySelector<HTMLElement>(".session-panel-body") ?? null;
+  /** The last message in view, where reading starts. */
+  const latestInView = (body: HTMLElement) => {
+    const foot = body.getBoundingClientRect().bottom;
+    return [...body.querySelectorAll<HTMLElement>(MESSAGE)].findLast(
+      (m) => m.getBoundingClientRect().top < foot - 2,
+    );
+  };
+  /** Gives the keys to the panel, out of its fields, on the latest message
+   *  in view: the reading starts from what is being read. */
+  const read = () => {
+    root.current?.focus({ preventScroll: true });
+    const body = panelBody();
+    if (body && !marked.current?.isConnected) mark(latestInView(body) ?? null);
+  };
+  const write = () => composer.current?.focus({ preventScroll: true });
+  /** The panel's keys while it has them and no field does: j and k go a
+   *  message at a time, g and G to the session's start and end, the arrows
+   *  and Page Up and Down scroll, Space shows all of the marked message or
+   *  less again, a opens its turn's agent activity, i or Enter go back to
+   *  the composer, and q hides the panel. The composer is the session's
+   *  last line: j past the last message, or ↓ at the session's end, goes to
+   *  it, and ↑ at its start goes back to reading. In a field only that ↑ and
+   *  Page Up and Down are taken, so the session scrolls while a message is
+   *  written. True when the key was one
+   *  of them. */
+  const readKey = (event: ReactKeyboardEvent, inField: boolean): boolean => {
+    const body = panelBody();
+    if (!body) return false;
+    const reduced = matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const scroll = (top: number) =>
+      body.scrollTo({ top, behavior: reduced ? "instant" : "smooth" });
+    const view = body.getBoundingClientRect();
+    const { key } = event;
+    if (key === "PageDown" || key === "PageUp") {
+      scroll(body.scrollTop + (key === "PageDown" ? 1 : -1) * body.clientHeight * 0.8);
+      return true;
+    }
+    if (inField) {
+      // ↑ with the caret at the composer's very start, where it has nowhere
+      // to go, leaves it for the session.
+      const field = event.target;
+      if (
+        key !== "ArrowUp" ||
+        event.shiftKey ||
+        field !== composer.current ||
+        composer.current.selectionStart !== 0 ||
+        composer.current.selectionEnd !== 0
+      )
+        return false;
+      read();
+      return true;
+    }
+    if (key === "ArrowDown" || key === "ArrowUp") {
+      const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+      if (key === "ArrowDown" && atEnd) write();
+      else body.scrollTo({ top: body.scrollTop + (key === "ArrowDown" ? 48 : -48) });
+      return true;
+    }
+    if (key === "i" || key === "Enter") {
+      write();
+      return true;
+    }
+    if (key === "q") {
+      sessionPanel.hide();
+      return true;
+    }
+    if (key === "g" || key === "G") {
+      mark(null);
+      scroll(key === "g" ? 0 : body.scrollHeight);
+      return true;
+    }
+    const messages = [...body.querySelectorAll<HTMLElement>(MESSAGE)];
+    const current = marked.current?.isConnected ? marked.current : null;
+    if (key === "j" || key === "k") {
+      const at = current ? messages.indexOf(current) : -1;
+      // From no message, the first or the last of those in view.
+      const target =
+        at >= 0
+          ? messages[at + (key === "j" ? 1 : -1)]
+          : key === "j"
+            ? messages.find((m) => m.getBoundingClientRect().bottom > view.top + 2)
+            : messages.findLast((m) => m.getBoundingClientRect().top < view.bottom - 2);
+      if (target) {
+        mark(target);
+        scroll(body.scrollTop + target.getBoundingClientRect().top - view.top - 12);
+      } else if (key === "j") write();
+      return true;
+    }
+    if (key === " " || key === "a") {
+      const target = current ?? latestInView(body);
+      const toggle =
+        key === " "
+          ? target?.querySelector<HTMLButtonElement>("button[aria-controls][aria-expanded]")
+          : target
+              ?.closest("li")
+              ?.querySelector<HTMLButtonElement>('button[aria-label^="Agent activity"]');
+      if (target && toggle) {
+        mark(target);
+        toggle.click();
+      }
+      return true;
+    }
+    return false;
+  };
   const onKeyDown = (event: ReactKeyboardEvent) => {
-    if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
-    const target = event.target as HTMLElement;
-    event.preventDefault();
-    // A field with something in it gives up the keys to the panel, which the
-    // next Escape hides; the page under it never sees either.
-    if (
-      (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) &&
-      target.value
-    ) {
-      root.current?.focus({ preventScroll: true });
+    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (event.key !== "Escape") {
+      const target = event.target as HTMLElement;
+      // A menu or a dialog of the panel keeps its own keys, as a modified
+      // key stays the app's or the browser's.
+      if (menu.anchor !== null || target.closest("dialog, [role='menu']")) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const inField =
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLSelectElement;
+      // Space and Enter on a button, a link or a fold press it.
+      const presses =
+        (event.key === " " || event.key === "Enter") &&
+        target.closest("button, a[href], summary, [role='radio']") !== null;
+      if (!presses && readKey(event, inField)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      // While the panel has the keys the page's are not the page's: a key
+      // that types a character goes no further, but for the help's.
+      if (!inField && event.key.length === 1 && event.key !== "?") event.stopPropagation();
       return;
     }
-    sessionPanel.hide();
+    const target = event.target as HTMLElement;
+    event.preventDefault();
+    // A field gives up the keys to the panel, and the panel, on the next
+    // Escape, to the page, staying open: to what had them before it took
+    // them, or to the page itself. The page under it never sees either.
+    if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+      read();
+      return;
+    }
+    const back = sessionPanel.takeReturnTo();
+    if (back instanceof HTMLElement && back.isConnected && !root.current?.contains(back))
+      back.focus({ preventScroll: true });
+    // Nothing took them (the page's body had them): they are left to it.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && root.current?.contains(focused)) focused.blur();
   };
   const heading = conversation?.title || (id ? "Session" : "New session");
   // The part of the review an Ask picked, which the agent reads as the page's
@@ -627,8 +801,24 @@ function SessionPanel({
       className="session-panel"
       data-position={position}
       tabIndex={-1}
-      style={{ height: `min(${panel.height}px, calc(100dvh - 4rem))` }}
+      style={
+        side
+          ? {
+              width: `min(${panel.width}px, calc(100vw - var(--rail-width) - ${MIN_PAGE_WIDTH + SIDE_GAPS}px))`,
+            }
+          : { height: `min(${panel.height}px, calc(100dvh - 4rem))` }
+      }
       onKeyDown={onKeyDown}
+      // The message marked is the keys' own: given up once they leave the
+      // panel, or go to one of its fields.
+      onFocus={(event) => {
+        const target = event.target;
+        if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) mark(null);
+      }}
+      onBlur={(event) => {
+        if (!(event.relatedTarget instanceof Node) || !root.current?.contains(event.relatedTarget))
+          mark(null);
+      }}
     >
       {menu.menu}
       {closing ? (
@@ -647,7 +837,9 @@ function SessionPanel({
           stay.
         </ConfirmDialog>
       ) : null}
-      {position === "bottom" ? <Grip position={position} height={panel.height} /> : null}
+      {position !== "top" ? (
+        <Grip position={position} size={side ? panel.width : panel.height} />
+      ) : null}
       <header className="session-panel-head">
         <div className="session-panel-title">
           <TerminalIcon size={16} className="flex-none text-tertiary" />
@@ -662,7 +854,7 @@ function SessionPanel({
           <Button
             ref={picker}
             variant="secondary"
-            size="compact"
+            size="tiny"
             className="gap-1"
             aria-haspopup="menu"
             aria-expanded={menu.anchor !== null && menu.anchor === picker.current}
@@ -671,12 +863,9 @@ function SessionPanel({
             }}
           >
             Sessions
-            <ChevronDownIcon size={14} />
+            <ChevronDownIcon size={12} />
           </Button>
-          <CloseButton
-            label={`Hide the session panel (${PANEL_KEY_LABEL})`}
-            onClick={() => sessionPanel.hide()}
-          />
+          <CloseButton label="Hide the session panel (Esc)" onClick={() => sessionPanel.hide()} />
         </div>
         <dl className="session-panel-facts">
           <div className="session-panel-looking">
@@ -689,7 +878,7 @@ function SessionPanel({
             <dt>Directory</dt>
             <dd title={directory}>
               {directory ? (
-                <code>{directory}</code>
+                <code>{homePath(directory)}</code>
               ) : page.page === "pull_request" ? (
                 `A checkout of ${page.repository} #${page.pull_request}, made when it starts`
               ) : (
@@ -699,7 +888,10 @@ function SessionPanel({
           </div>
           <div>
             <dt>Agent</dt>
-            <dd>{agentLine(agent, model)}</dd>
+            <dd className="session-panel-agent">
+              <AgentMark agent={agent} size={14} />
+              <span>{shortModelName(model)}</span>
+            </dd>
           </div>
           <div>
             <dt>Mode</dt>
@@ -716,15 +908,6 @@ function SessionPanel({
               )}
             </dd>
           </div>
-          {conversation?.cost_usd !== undefined ? (
-            <div>
-              <dt>Cost</dt>
-              <dd>
-                {conversation.cost_partial ? "≥ " : ""}
-                {formatUSD(conversation.cost_usd)}
-              </dd>
-            </div>
-          ) : null}
         </dl>
         {conversation?.directory_note ? (
           <p className="session-panel-note">{conversation.directory_note}</p>
@@ -806,7 +989,7 @@ function SessionPanel({
                 aria-label={`Stop asking about ${picked.title}`}
                 onClick={() => {
                   sessionPanel.clearFocus();
-                  composer.current?.focus({ preventScroll: true });
+                  write();
                 }}
               >
                 Remove
@@ -824,7 +1007,7 @@ function SessionPanel({
                     ? "Reply to the agent…"
                     : "Ask the agent to do something…"
               }
-              rows={2}
+              rows={1}
               value={panel.draft}
               disabled={closed}
               onChange={(event) => sessionPanel.setDraft(event.target.value)}
@@ -861,7 +1044,23 @@ function SessionPanel({
           </div>
         </form>
       ) : null}
-      {position === "top" ? <Grip position={position} height={panel.height} /> : null}
+      {/* Its keys, with the app's hints while Alt is held: the reading ones
+          while the panel has the keys, the composer's while a field does. */}
+      <KeyBar place="panel" className="session-panel-keys session-panel-keys-reading" />
+      <footer aria-hidden="true" className="key-bar key-hint session-panel-keys">
+        <span>
+          <kbd>Esc</kbd>
+          <kbd>↑</kbd> read the session
+        </span>
+        <span>
+          <kbd>PgUp</kbd>
+          <kbd>PgDn</kbd> scroll
+        </span>
+        <span>
+          <kbd>{PANEL_KEY_LABEL}</kbd> hide
+        </span>
+      </footer>
+      {position === "top" ? <Grip position={position} size={panel.height} /> : null}
     </section>
   );
 }
@@ -878,29 +1077,47 @@ function sendErrorText(error: unknown) {
   return error instanceof Error ? error.message : "The message could not be sent.";
 }
 
-/** The edge the panel is resized by: dragged, or ↑ and ↓ while focused. */
-function Grip({ position, height }: { position: "bottom" | "top"; height: number }) {
-  const drag = useRef<{ start: number; height: number } | null>(null);
-  const sign = position === "bottom" ? -1 : 1;
+/** The narrowest the page beside a panel opened from a side is left. */
+const MIN_PAGE_WIDTH = 320;
+
+/** The edge the panel is resized by: dragged, or with the arrow keys across
+ *  it while focused (↑ and ↓ from the top or the foot, ← and → from a side).
+ *  `size` is the panel's height, or its width from a side. */
+function Grip({ position, size }: { position: PanelPosition; size: number }) {
+  const drag = useRef<{ start: number; size: number } | null>(null);
+  const side = position === "left" || position === "right";
+  // Which way along the pointer's axis the panel grows: away from its edge.
+  const sign = position === "bottom" || position === "right" ? -1 : 1;
+  const max = () =>
+    side
+      ? Math.round(window.innerWidth - railWidth() - MIN_PAGE_WIDTH - SIDE_GAPS)
+      : Math.round(window.innerHeight - 64);
+  const min = side ? MIN_WIDTH : MIN_HEIGHT;
+  const set = (next: number) => {
+    const bounded = Math.min(next, max());
+    if (side) sessionPanel.setWidth(bounded);
+    else sessionPanel.setHeight(bounded);
+  };
+  const along = (event: { clientX: number; clientY: number }) =>
+    side ? event.clientX : event.clientY;
   return (
     // biome-ignore lint/a11y/useSemanticElements: a focusable separator is the resize handle's role
     <div
       role="separator"
-      aria-orientation="horizontal"
+      aria-orientation={side ? "vertical" : "horizontal"}
       aria-label="Resize the session panel"
-      aria-valuenow={height}
-      aria-valuemin={MIN_HEIGHT}
-      aria-valuemax={Math.max(MIN_HEIGHT, Math.round(window.innerHeight - 64))}
+      aria-valuenow={size}
+      aria-valuemin={min}
+      aria-valuemax={Math.max(min, max())}
       tabIndex={0}
       className="session-panel-grip"
       onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
         event.currentTarget.setPointerCapture?.(event.pointerId);
-        drag.current = { start: event.clientY, height };
+        drag.current = { start: along(event), size };
       }}
       onPointerMove={(event) => {
         if (!drag.current) return;
-        const next = drag.current.height + sign * (event.clientY - drag.current.start);
-        sessionPanel.setHeight(Math.min(next, window.innerHeight - 64));
+        set(drag.current.size + sign * (along(event) - drag.current.start));
       }}
       onPointerUp={() => {
         drag.current = null;
@@ -909,13 +1126,39 @@ function Grip({ position, height }: { position: "bottom" | "top"; height: number
         drag.current = null;
       }}
       onKeyDown={(event) => {
-        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+        const [less, more] = side ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
+        if (event.key !== less && event.key !== more) return;
         event.preventDefault();
-        const grow = (event.key === "ArrowUp") === (position === "bottom");
-        sessionPanel.setHeight(Math.min(height + (grow ? 40 : -40), window.innerHeight - 64));
+        // The key towards the page grows it.
+        const grow = (event.key === less) === sign < 0;
+        set(size + (grow ? 40 : -40));
       }}
     />
   );
+}
+
+/** The sidebar's room beside the page, in pixels. */
+function railWidth() {
+  return document.querySelector(".local-rail-lane")?.getBoundingClientRect().width ?? 0;
+}
+
+/** The room a side panel takes beyond its own width and the page's: the
+ *  window's edge and the gap between them. */
+const SIDE_GAPS = 24;
+
+/** Whether the window holds the panel at its narrowest beside the page at
+ *  its narrowest, again as the window is resized. */
+function useSideFits() {
+  const fits = () => window.innerWidth - railWidth() >= MIN_WIDTH + MIN_PAGE_WIDTH + SIDE_GAPS;
+  const [value, setValue] = useState(fits);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `fits` reads the window alone
+  useEffect(() => {
+    const measure = () => setValue(fits());
+    measure();
+    addEventListener("resize", measure);
+    return () => removeEventListener("resize", measure);
+  }, []);
+  return value;
 }
 
 /** The panel's scrolling body, which stays at its end while the reader is
@@ -1065,6 +1308,7 @@ function SessionTranscriptView({
           summary={state.summary}
           live={running}
           title={title}
+          openLastReply
         />
       ) : state.kind === "loading" && !turn && !running ? (
         <LoadingStatus block>Reading the session's transcript…</LoadingStatus>

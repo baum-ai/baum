@@ -15,7 +15,6 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/review"
-	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
 const testHunk = "h_0123456789ab"
@@ -142,49 +141,13 @@ func TestGenerateValidFirstPass(t *testing.T) {
 	}
 }
 
-func TestGenerateSendsTheOfferedTilesAfterTheBody(t *testing.T) {
+func TestGenerateSendsTheBodyBeforeTheBundle(t *testing.T) {
 	generator, run, backend := loopFixture(t, nil)
-	run.TileKinds = tilecatalogue.Kinds()
 	if _, _, err := generator.Generate(context.Background(), run); err != nil {
 		t.Fatal(err)
 	}
-	if want := testBody + tilecatalogue.Instructions(run.TileKinds) + "\n\nInput bundle"; !strings.HasPrefix(backend.calls[0].Prompt, want) {
-		t.Fatalf("prompt does not carry the tiles after the body: %.200s", backend.calls[0].Prompt)
-	}
-	run.TileKinds = []string{"no-such-kind"}
-	if _, _, err := generator.Generate(context.Background(), run); err == nil || !strings.Contains(err.Error(), "no-such-kind") {
-		t.Fatalf("an unknown tile kind: %v", err)
-	}
-}
-
-func TestGenerateOffersCandidateTileEntriesInsteadOfTheShippedOnes(t *testing.T) {
-	generator, run, backend := loopFixture(t, nil)
-	run.TileKinds = []string{"database-schema"}
-	candidates, err := tilecatalogue.ParseEntries([]byte(`[{"kind":"database-schema","use_when":"candidate guidance"}]`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if run.TileEntries, err = tilecatalogue.WithCandidates(run.TileKinds, candidates); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := generator.Generate(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
-	prompt := backend.calls[0].Prompt
-	if !strings.Contains(prompt, "candidate guidance") || strings.Contains(prompt, "Explain table, column, index or relationship changes.") {
-		t.Fatalf("prompt does not carry the candidate entry instead of the shipped one: %.400s", prompt)
-	}
-}
-
-func TestGenerateTreatsEmptyTileEntriesAsTheShippedOnes(t *testing.T) {
-	generator, run, backend := loopFixture(t, nil)
-	run.TileKinds = []string{"database-schema"}
-	run.TileEntries = []tilecatalogue.Entry{}
-	if _, _, err := generator.Generate(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
-	if want := testBody + tilecatalogue.Instructions(run.TileKinds) + "\n\nInput bundle"; !strings.HasPrefix(backend.calls[0].Prompt, want) {
-		t.Fatalf("an empty entry list changed the offered tiles: %.300s", backend.calls[0].Prompt)
+	if want := testBody + "\n\nInput bundle"; !strings.HasPrefix(backend.calls[0].Prompt, want) {
+		t.Fatalf("prompt does not start with the body and then the bundle: %.200s", backend.calls[0].Prompt)
 	}
 }
 

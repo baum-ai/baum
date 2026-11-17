@@ -71,6 +71,18 @@ body {
   box-sizing: border-box;
   transition: width 0.15s ease-out;
 }
+/* Unpinned, it opens over the page and over the session panel on it, which
+   starts at the folded sidebar's edge. Folded, with no menu of its own
+   showing, it stays under the page's menus (the filter's), which may hang
+   over its glyphs. */
+.local-rail-lane:not([data-rail="pinned"]) {
+  z-index: calc(var(--z-sheet, 40) + 1);
+}
+.local-rail-lane[data-rail="folded"]:not(
+  :has(:focus-visible:not(.context-menu *), .local-rail-menu, .context-menu)
+) {
+  z-index: 5;
+}
 /* Open over the page, it needs the canvas under it and the lift. */
 .local-rail-lane:not([data-rail="pinned"]) > .local-rail {
   background: var(--surface-canvas);

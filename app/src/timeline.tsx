@@ -42,7 +42,7 @@ import {
   TranscriptCard,
 } from "./session-transcript";
 import { PageBar, RefreshButton, useReread } from "./shell";
-import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
+import { listKeys, listStep, useRowFocus, useShortcuts } from "./shortcuts";
 import { FilterBar, FilterButton } from "./filter-menu";
 import { KeywordSearch } from "@baum/viewer/components/decision-filters";
 import {
@@ -545,7 +545,7 @@ function TimelineLog({
   // a row the list comes back on leaves the panel as the address has it.
   const moved = useRef(false);
   useShortcuts((event) => {
-    moved.current = ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key);
+    moved.current = listStep(event.key) !== null;
     if (listKeys(event, rows)) return;
     if (event.key === "/") {
       event.preventDefault();
