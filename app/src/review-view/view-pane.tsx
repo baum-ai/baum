@@ -11,12 +11,12 @@ import {
   defaultSection,
   listedSections,
   placeOf,
-  reviewViewOf,
+  reviewOf,
   sectionOfTile,
   selectionOf,
   shownFile,
   viewFiles,
-  type ReviewView,
+  type ReviewV2,
   type ViewPlace,
   type ViewTab,
 } from "./model";
@@ -48,13 +48,15 @@ export function ViewPane({
   place: ReviewPlaceContext;
   memory: RefObject<ViewMemory>;
 }) {
-  const view = reviewViewOf(snapshot);
-  const place = placeOf(context.selection, snapshot, view);
+  // The tabs read the baum.review/2 document the review was served with; the
+  // viewer's parts they draw (chips, images, diffs) read the review itself.
+  const review = reviewOf(snapshot);
+  const place = placeOf(context.selection, review);
   const prefix = historical ? `history-v${snapshot.review.version}-` : "";
-  const list = useMemo(() => listedSections(snapshot, view), [snapshot, view]);
-  const files = useMemo(() => viewFiles(snapshot), [snapshot]);
+  const list = useMemo(() => listedSections(review), [review]);
+  const files = useMemo(() => viewFiles(review), [review]);
   const file = place.tab === "code" ? shownFile(files, place.file) : undefined;
-  const ctx = useViewTileContext(snapshot, view, historical, context);
+  const ctx = useViewTileContext(snapshot, review, historical, context);
   const go = (next: ViewPlace) => context.select(selectionOf(next));
   useEffect(() => {
     if (historical) return;
@@ -97,7 +99,7 @@ export function ViewPane({
             {tab.value !== place.tab ? null : place.tab === "overview" ? (
               <OverviewTab
                 document={snapshot}
-                view={view}
+                review={review}
                 list={list}
                 ctx={ctx}
                 idPrefix={prefix}
@@ -106,7 +108,7 @@ export function ViewPane({
             ) : place.tab === "sections" ? (
               <SectionsTab
                 document={snapshot}
-                view={view}
+                review={review}
                 list={list}
                 section={place.section}
                 item={place.item}
@@ -119,6 +121,7 @@ export function ViewPane({
             ) : (
               <CodeTab
                 document={snapshot}
+                review={review}
                 files={files}
                 file={file}
                 list={list}
@@ -154,10 +157,7 @@ export function ViewTabs({
   tablist?: string;
   sidePane?: boolean;
 }) {
-  const list = useMemo(
-    () => (document ? listedSections(document, reviewViewOf(document)) : []),
-    [document],
-  );
+  const list = useMemo(() => (document ? listedSections(reviewOf(document)) : []), [document]);
   const go = (next: ViewPlace) => context.select(selectionOf(next));
   const openTab = (next: ViewTab) => {
     if (next === "overview") return go({ tab: next });
@@ -192,7 +192,7 @@ export function ViewTabs({
  *  page gave them: a tile they cite opens where the page places it. */
 function useViewTileContext(
   snapshot: ReviewDocument,
-  view: ReviewView,
+  review: ReviewV2,
   historical: boolean,
   place: ReviewPlaceContext,
 ): TileContext {
@@ -210,15 +210,15 @@ function useViewTileContext(
   return useMemo(
     () =>
       ({
-        source: tileSourceOf(snapshot, view.tiles),
+        source: tileSourceOf(snapshot, review.tiles),
         review: snapshot,
         open: (tile) =>
           place.select(
-            sectionOfTile(view, tile) ? { kind: "tile", id: tile } : { kind: "summary" },
+            sectionOfTile(review, tile) ? { kind: "tile", id: tile } : { kind: "summary" },
           ),
         openChange: (change, item) =>
           place.select(
-            item && snapshot.sections.some((s) => s.risks.some((risk) => risk.id === item))
+            item && review.sections.some((s) => s.risks.some((risk) => risk.id === item))
               ? { kind: "risk", section: change, id: item }
               : { kind: "section", id: change },
           ),
@@ -227,6 +227,6 @@ function useViewTileContext(
         idPrefix: historical ? `history-v${snapshot.review.version}-` : "",
         labels,
       }) satisfies TileContext,
-    [snapshot, view, historical, place, labels],
+    [snapshot, review, historical, place, labels],
   );
 }

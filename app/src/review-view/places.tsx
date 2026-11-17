@@ -12,7 +12,7 @@ import {
   CONTEXT_ID,
   listedSections,
   placeOf,
-  reviewViewOf,
+  reviewOf,
   selectionOf,
   shownFile,
   viewFiles,
@@ -56,7 +56,7 @@ export function useViewPlaces(): ReviewPlaces {
         if (!document) return null;
         // A chip naming a section, or an item of one, opens it in How it
         // works; a risk there, at the risk.
-        const owner = document.sections.find((each) => each.id === section);
+        const owner = reviewOf(document).sections.find((each) => each.id === section);
         if (owner && item && owner.risks.some((risk) => risk.id === item))
           return { kind: "risk", section, id: item };
         return { kind: "section", id: section };
@@ -86,7 +86,7 @@ function railRows(context: ReviewPlaceContext): ReviewRailRow[] {
     go: go({ tab: "overview" }),
   };
   if (!document) return [overview];
-  const list = listedSections(document, reviewViewOf(document));
+  const list = listedSections(reviewOf(document));
   return [
     overview,
     ...list.map(
@@ -107,10 +107,10 @@ function stepsOf(
   document: ReviewDocument,
   context: ReviewPlaceContext,
 ): ReviewPlaceSteps {
-  const view = reviewViewOf(document);
-  const place = placeOf(selection, document, view);
-  const list = listedSections(document, view);
-  const files = viewFiles(document);
+  const review = reviewOf(document);
+  const place = placeOf(selection, review);
+  const list = listedSections(review);
+  const files = viewFiles(review);
   const stops = [
     { key: "overview", label: TAB_LABEL.overview, place: { tab: "overview" } as ViewPlace },
     ...list.map((section) => ({

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
 )
 
 // The review tools read a review in parts, one per call, so the document is
@@ -53,24 +53,24 @@ func (s *Server) reviewTools() []Tool {
 		Call:        callFacts,
 	}, {
 		Name:        "review_outline",
-		Description: "The overview of a saved review and an outline of each section: id, title, kind, the hunks and files it covers, assessment, and whether its details are pending or failed. Never a section's details: read those with review_section.",
+		Description: "The overview of a saved review (summary, verdict, why the risk is what it is, risk score, reading time, screenshots, main diagram, intent) and an outline of each section: id, title, kind, gist, level, the hunks and files it covers, the ids of the tiles on it, and whether its details are pending or failed. Never a section's summary, steps or risks: read those with review_section.",
 		InputSchema: reviewSchema(""),
 		Scope:       ScopeRepository,
-		Reads:       []string{index, "/api/document", "/api/groups"},
+		Reads:       []string{index, "/api/tiles", "/api/groups"},
 		Call:        callReviewOutline,
 	}, {
 		Name:        "review_section",
-		Description: "One section of a saved review by its id: its summary, risks, behaviours, evidence, citations and whatever else it holds. Says when its details failed or are still being written.",
+		Description: "One section of a saved review by its id: its outline, the reasons for its level, its summary, steps and risks with their citations, and the tiles on it (id, type, title, caption, state; never their data). Says when its details failed or are still being written.",
 		InputSchema: reviewSchema(`"id":{"type":"string","description":"The section's id, from review_outline."}`, "id"),
 		Scope:       ScopeRepository,
-		Reads:       []string{index, "/api/document", "/api/groups"},
+		Reads:       []string{index, "/api/tiles", "/api/groups"},
 		Call:        callReviewSection,
 	}, {
 		Name:        "review_context",
-		Description: "The codebase context of a saved review, or that it has none or could not write it.",
+		Description: "Where the change of a saved review fits in the codebase (area, how it is reached, contracts it relies on, related code, each with its files), or that it has none or could not write it.",
 		InputSchema: reviewSchema(""),
 		Scope:       ScopeRepository,
-		Reads:       []string{index, "/api/document", "/api/groups", "/api/jobs"},
+		Reads:       []string{index, "/api/tiles", "/api/groups", "/api/jobs"},
 		Call:        callReviewContext,
 	}, {
 		Name:        "review_draft",
@@ -135,7 +135,8 @@ type reviewSource struct {
 
 // reviewDocument reads the review a call names: the group's combined review
 // when it names a group (or a chat has a group page open), else the pull
-// request's own, the latest version or the one asked for.
+// request's own, the latest version or the one asked for, as the tile route
+// serves it (a baum.review/2 document, whatever schema it was stored in).
 func (c CallContext) reviewDocument(ctx context.Context, a reviewArgs) (reviewSource, error) {
 	group := a.Group
 	if group == "" && c.Consumer.Kind != Action && c.HasPage && c.Page.Page == PageGroup && a.PR == 0 {
@@ -180,13 +181,21 @@ func (c CallContext) reviewDocument(ctx context.Context, a reviewArgs) (reviewSo
 	for k, v := range query {
 		selector[k] = v
 	}
-	doc, missing, err := c.get(ctx, "/api/document", selector)
+	body, missing, err := c.get(ctx, "/api/tiles", selector)
 	if err != nil {
 		return reviewSource{}, err
 	}
 	if missing {
 		return reviewSource{}, errors.New("the pull request has no such saved review")
 	}
+	// The tile route serves every version as a baum.review/2 document.
+	var served struct {
+		Document json.RawMessage `json:"document"`
+	}
+	if json.Unmarshal(body, &served) != nil || len(served.Document) == 0 {
+		return reviewSource{}, errors.New("the review is not readable")
+	}
+	doc := served.Document
 	return reviewSource{doc: doc, from: map[string]any{"repository": repository, "pull_request": number}, repository: repository, number: number}, nil
 }
 
@@ -203,129 +212,144 @@ type reviewHeader struct {
 	GeneratedAt string `json:"generated_at,omitempty"`
 }
 
-// parsed is the few fields of a review document the projections read.
-type parsed struct {
-	Review  reviewHeader `json:"review"`
-	Summary struct {
-		Context json.RawMessage `json:"context"`
-	} `json:"summary"`
-	Sections []json.RawMessage `json:"sections"`
-	Index    struct {
+// readReview reads a review document as baum.review/2: the tile route's
+// document as it is, a group's baum.review/1 document converted
+// (reviewv2.Read). An unreadable document is an error that quotes nothing of
+// it.
+func readReview(doc []byte) (reviewv2.Document, reviewHeader, error) {
+	d, err := reviewv2.Read(doc)
+	if err != nil {
+		return reviewv2.Document{}, reviewHeader{}, errors.New("the review is not readable")
+	}
+	var h reviewHeader
+	_ = json.Unmarshal(d.Review, &h)
+	return d, h, nil
+}
+
+// sectionFiles are the files a section's hunks are in, once each.
+func sectionFiles(d reviewv2.Document, hunks []string) []string {
+	var index struct {
 		Hunks []struct {
 			ID   string `json:"id"`
 			Path string `json:"path"`
 		} `json:"hunks"`
-	} `json:"index"`
-}
-
-type sectionHead struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Details string `json:"details"`
-}
-
-// outlineView is the outline of a review document: the outline stage's own
-// projection (review.ReadOutline), each section with its details state and
-// the files its hunks are in.
-func outlineView(doc []byte) (map[string]any, error) {
-	outline, err := review.ReadOutline(doc)
-	if err != nil {
-		return nil, errors.New("the review is not readable")
 	}
-	var p parsed
-	if json.Unmarshal(doc, &p) != nil {
-		return nil, errors.New("the review is not readable")
-	}
-	var o struct {
-		Summary   json.RawMessage              `json:"summary"`
-		Sections  []map[string]json.RawMessage `json:"sections"`
-		Relations json.RawMessage              `json:"relations"`
-	}
-	if err := json.Unmarshal(outline, &o); err != nil {
-		return nil, errors.New("the review is not readable")
-	}
-	state := map[string]string{}
-	for _, raw := range p.Sections {
-		var h sectionHead
-		if json.Unmarshal(raw, &h) == nil {
-			state[h.ID] = h.Details
-		}
-	}
+	_ = json.Unmarshal(d.Index, &index)
 	paths := map[string]string{}
-	for _, h := range p.Index.Hunks {
+	for _, h := range index.Hunks {
 		paths[h.ID] = h.Path
 	}
-	sections := make([]map[string]any, 0, len(o.Sections))
-	for _, raw := range o.Sections {
-		section := map[string]any{}
-		for k, v := range raw {
-			section[k] = v
+	files := []string{}
+	for _, h := range hunks {
+		if path := paths[h]; path != "" && !slices.Contains(files, path) {
+			files = append(files, path)
 		}
-		var id string
-		_ = json.Unmarshal(raw["id"], &id)
-		if d := state[id]; d != "" {
-			section["details"] = d
-		}
-		var hunks []string
-		_ = json.Unmarshal(raw["hunks"], &hunks)
-		files := []string{}
-		for _, h := range hunks {
-			if path := paths[h]; path != "" && !slices.Contains(files, path) {
-				files = append(files, path)
-			}
-		}
-		section["files"] = files
-		sections = append(sections, section)
 	}
-	out := map[string]any{"review": p.Review, "overview": o.Summary, "sections": sections}
-	if len(o.Relations) > 0 && string(o.Relations) != "null" {
-		out["relations"] = o.Relations
+	return files
+}
+
+// ownedTiles are the tiles a section, "context" or "overview" owns, by ID.
+func ownedTiles(d reviewv2.Document, owner string) []string {
+	ids := []string{}
+	for _, t := range d.Tiles {
+		if t.Owner == owner {
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids
+}
+
+// sectionOutline is a section's outline: what the map wrote of it, the
+// files its hunks are in, the tiles on it and whether its details are
+// pending or failed.
+func sectionOutline(d reviewv2.Document, s reviewv2.Section) map[string]any {
+	out := map[string]any{"id": s.ID, "title": s.Title, "kind": s.Kind, "gist": s.Gist, "level": s.Level, "hunks": s.Hunks, "files": sectionFiles(d, s.Hunks), "tiles": ownedTiles(d, s.ID)}
+	if s.Scope != "" {
+		out["scope"] = s.Scope
+	}
+	if s.Details != "" {
+		out["details"] = s.Details
+	}
+	return out
+}
+
+// outlineView is the outline of a review: its overview (the summary, the
+// verdict, why the risk is what it is, the risk score, the reading time,
+// the screenshots, main diagram and intent) and each section's outline,
+// never a section's summary, steps or risks.
+func outlineView(doc []byte) (map[string]any, error) {
+	d, header, err := readReview(doc)
+	if err != nil {
+		return nil, err
+	}
+	sections := make([]map[string]any, 0, len(d.Sections))
+	for _, s := range d.Sections {
+		sections = append(sections, sectionOutline(d, s))
+	}
+	overview := map[string]any{"title": d.Summary.Title, "text": d.Summary.Text, "change_kind": d.Summary.ChangeKind, "verdict": d.Summary.Verdict, "risk_why": d.Summary.RiskWhy,
+		"risk_score": d.Summary.RiskScore, "review_minutes": d.Summary.ReviewMinutes, "screenshots": d.Overview.Screenshots, "diagram": d.Overview.Diagram, "intent": d.Overview.Intent}
+	out := map[string]any{"review": header, "overview": overview, "sections": sections}
+	var relations struct {
+		Relations json.RawMessage `json:"relations"`
+	}
+	if json.Unmarshal(d.Review, &relations) == nil && len(relations.Relations) > 0 && string(relations.Relations) != "null" && string(relations.Relations) != "[]" {
+		out["relations"] = relations.Relations
 	}
 	return out, nil
 }
 
-// sectionView is one section of a review document by id: all it holds, or,
-// for a section whose details are failed or pending, only its outline and
-// that state, said in words.
+// tileSummary is what a section part says of a tile on it: never its data.
+func tileSummary(t reviewv2.Tile) map[string]any {
+	out := map[string]any{"id": t.ID, "type": t.Type, "title": t.Title, "state": t.State}
+	if t.Caption != "" {
+		out["caption"] = t.Caption
+	}
+	if t.Shows != "" {
+		out["shows"] = t.Shows
+	}
+	if t.Added {
+		out["added"] = true
+	}
+	return out
+}
+
+// sectionView is one section of a review by id: its outline, summary,
+// steps, risks and the tiles on it, or, for a section whose details are
+// failed or pending, only its outline and that state, said in words.
 func sectionView(doc []byte, id string) (map[string]any, error) {
-	var p parsed
-	if json.Unmarshal(doc, &p) != nil {
-		return nil, errors.New("the review is not readable")
+	d, header, err := readReview(doc)
+	if err != nil {
+		return nil, err
 	}
 	var ids []string
-	for _, raw := range p.Sections {
-		var h sectionHead
-		if json.Unmarshal(raw, &h) != nil {
+	for _, s := range d.Sections {
+		ids = append(ids, s.ID)
+		if s.ID != id {
 			continue
 		}
-		ids = append(ids, h.ID)
-		if h.ID != id {
-			continue
-		}
-		var all map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &all); err != nil {
-			return nil, errors.New("the section is not readable")
-		}
-		out := map[string]any{"review": p.Review}
-		switch h.Details {
-		case "failed", "pending":
-			// Only the outline fields are meaningful; the rest is empty.
-			for _, key := range review.OutlineSectionFields() {
-				if v, ok := all[key]; ok {
-					out[key] = v
-				}
+		out := map[string]any{"review": header}
+		switch s.Details {
+		case reviewv2.DetailsFailed, reviewv2.DetailsPending:
+			// Only the outline is meaningful; the rest is empty.
+			for k, v := range sectionOutline(d, s) {
+				out[k] = v
 			}
-			out["details"] = h.Details
-			if h.Details == "failed" {
-				out["note"] = "The details of this section could not be written, so it has no summary, risks or evidence. Read the diff of its hunks instead."
+			out["level_reasons"] = s.LevelReasons
+			if s.Details == reviewv2.DetailsFailed {
+				out["note"] = "The details of this section could not be written, so it has no summary, steps or risks. Read the diff of its hunks instead."
 			} else {
 				out["note"] = "The details of this section are still being written."
 			}
 		default:
-			section := map[string]any{}
-			for k, v := range all {
-				section[k] = v
+			section := sectionOutline(d, s)
+			section["level_reasons"], section["summary"], section["steps"], section["risks"] = s.LevelReasons, s.Summary, s.Steps, s.Risks
+			var tiles []map[string]any
+			for _, t := range d.Tiles {
+				if t.Owner == s.ID {
+					tiles = append(tiles, tileSummary(t))
+				}
 			}
+			section["tiles"] = tiles
 			out["section"] = section
 		}
 		return out, nil
@@ -333,17 +357,20 @@ func sectionView(doc []byte, id string) (map[string]any, error) {
 	return nil, fmt.Errorf("no section %q in the review; its sections are %s", id, strings.Join(ids, ", "))
 }
 
-// contextView is the summary's codebase context of a review document, or
-// nil when it has none.
+// contextView is where a review's change fits, or nil when it has none.
 func contextView(doc []byte) (json.RawMessage, reviewHeader, error) {
-	var p parsed
-	if json.Unmarshal(doc, &p) != nil {
-		return nil, reviewHeader{}, errors.New("the review is not readable")
+	d, header, err := readReview(doc)
+	if err != nil {
+		return nil, reviewHeader{}, err
 	}
-	if len(p.Summary.Context) == 0 || string(p.Summary.Context) == "null" {
-		return nil, p.Review, nil
+	if d.Context == nil {
+		return nil, header, nil
 	}
-	return p.Summary.Context, p.Review, nil
+	encoded, err := json.Marshal(d.Context)
+	if err != nil {
+		return nil, header, errors.New("the review is not readable")
+	}
+	return encoded, header, nil
 }
 
 func callReviewOutline(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -483,7 +510,7 @@ func callReviewDraft(ctx context.Context, c CallContext, args json.RawMessage) (
 	if drafts == 0 {
 		return "A review of this pull request is running but has not written a draft yet.", nil
 	}
-	body, missing, err := c.get(ctx, "/api/jobs/"+url.PathEscape(job)+"/draft", nil)
+	body, missing, err := c.get(ctx, "/api/jobs/"+url.PathEscape(job)+"/draft", url.Values{"tiles": {"1"}})
 	if err != nil {
 		return "", err
 	}

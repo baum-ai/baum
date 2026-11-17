@@ -12,6 +12,7 @@ import { Button } from "@baum/viewer/components/ui";
 import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import { hunkUrl, type IndexedHunk, type ReviewDocument } from "@baum/viewer/review-document";
 import { LoadingStatus } from "../nine-dots";
+import type { ReviewV2 } from "./document";
 import {
   FILE_GROUPS,
   notesByHunk,
@@ -29,6 +30,7 @@ const folder = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")
  *  linking to the section that explains it. Generated files stay folded. */
 export function CodeTab({
   document,
+  review,
   files,
   file,
   list,
@@ -36,13 +38,14 @@ export function CodeTab({
   context,
 }: {
   document: ReviewDocument;
+  review: ReviewV2;
   files: ViewFile[];
   file: ViewFile | undefined;
   list: ListedSection[];
   idPrefix: string;
   context: ReviewPlaceContext;
 }) {
-  const notes = useMemo(() => notesByHunk(document), [document]);
+  const notes = useMemo(() => notesByHunk(review), [review]);
   const [generatedOpen, setGeneratedOpen] = useState(file?.group === "Generated");
   const open = (path: string) => context.select(selectionOf({ tab: "code", file: path }));
   if (files.length === 0)

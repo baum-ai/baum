@@ -204,6 +204,24 @@ type Tile struct {
 	// drawn in a sandboxed frame; absent for a native type. Host.
 	Definition json.RawMessage `json:"definition,omitempty"`
 	Problems   []string        `json:"problems,omitempty"`
+	// Added, From and Filling are set only when the tile is served: Added
+	// marks a tile the person added to the pull request (internal/
+	// addedtiles), which they can remove; From is the earlier version its
+	// data was written for, and Filling says it is being filled for this
+	// one. Never stored.
+	Added   bool `json:"added,omitempty"`
+	From    int  `json:"from,omitempty"`
+	Filling bool `json:"filling,omitempty"`
+}
+
+// CodeData is a code tile's data: the model names the hunk and, optionally,
+// its first and last line on the new side; the host fills Text, the new
+// side's lines from the diff, and Lines when the model gave none
+// (Complete).
+type CodeData struct {
+	Hunk  string `json:"hunk"`
+	Lines []int  `json:"lines,omitempty"`
+	Text  string `json:"text,omitempty"`
 }
 
 // Tile states.

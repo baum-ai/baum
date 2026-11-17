@@ -18,10 +18,10 @@ import (
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
 // fakeChecker is the render checker without a runner: it records what it is
@@ -209,8 +209,8 @@ func (f *chatTilesFixture) check(args map[string]any) checkAnswer {
 }
 
 type tilesWithDrafts struct {
-	View   view.View          `json:"view"`
-	Drafts []tiledrafts.Draft `json:"drafts"`
+	Document reviewv2.Document  `json:"document"`
+	Drafts   []tiledrafts.Draft `json:"drafts"`
 }
 
 func (f *chatTilesFixture) servedWithDrafts(query string) tilesWithDrafts {
@@ -289,11 +289,11 @@ func TestATileMadeInChat(t *testing.T) {
 	if len(body.Drafts) != 0 {
 		t.Errorf("the card stays after the add: %+v", body.Drafts)
 	}
-	tile := viewTile(body.View, "env_vars")
-	if tile == nil || tile.Type != tiles.TypeCustom || tile.State != tiles.StateReady || !tile.Added || !strings.Contains(string(tile.Data), "RETRY_LIMIT") || strings.Contains(string(tile.Definition), `"builtin":true`) {
+	tile := servedTile(body.Document, "env_vars")
+	if tile == nil || tile.Type != "env_vars" || tile.State != tiles.StateReady || !tile.Added || !strings.Contains(string(tile.Data), "RETRY_LIMIT") || strings.Contains(string(tile.Definition), `"builtin":true`) {
 		t.Fatalf("the tile: %+v", tile)
 	}
-	if at := sectionOf(body.View, "env_vars"); at != "context" {
+	if at := ownerOf(body.Document, "env_vars"); at != "context" {
 		t.Errorf("the tile is on %q", at)
 	}
 	if list, _ := f.api.Added.List(context.Background(), "acme/widgets#42"); len(list) != 1 || list[0].By != "chat" || list[0].Kind != addedtiles.KindCustom {
@@ -304,7 +304,7 @@ func TestATileMadeInChat(t *testing.T) {
 	if err := f.api.Added.Remove(context.Background(), "acme/widgets#42", "env_vars"); err != nil {
 		t.Fatal(err)
 	}
-	if viewTile(f.servedWithDrafts("").View, "env_vars") != nil {
+	if servedTile(f.servedWithDrafts("").Document, "env_vars") != nil {
 		t.Error("the removed tile is still shown")
 	}
 
@@ -354,7 +354,7 @@ func TestATileMadeInChatIsMaskedAndCitesTheReview(t *testing.T) {
 	if err != nil || len(fills) != 1 || fills[0].Origin != addedtiles.OriginChat {
 		t.Fatalf("fills: %+v %v", fills, err)
 	}
-	if strings.Contains(string(fills[0].Data), secret) || strings.Contains(string(viewTile(f.servedWithDrafts("").View, "env_vars").Data), secret) {
+	if strings.Contains(string(fills[0].Data), secret) || strings.Contains(string(servedTile(f.servedWithDrafts("").Document, "env_vars").Data), secret) {
 		t.Errorf("the secret was kept: %s", fills[0].Data)
 	}
 
@@ -484,7 +484,7 @@ func TestATileMadeInChatOnALaterVersion(t *testing.T) {
 			t.Fatal(text)
 		}
 		f.put(t, titled(t, "Second title"))
-		tile := viewTile(f.served(t, ""), "env_vars")
+		tile := servedTile(f.served(t, ""), "env_vars")
 		if tile == nil || tile.State != tiles.StateReady || tile.From != 1 {
 			t.Fatalf("fill %q: %+v", fill, tile)
 		}

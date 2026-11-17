@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { appURL } from "../../api";
-import type { ReviewDocument } from "@baum/viewer/review-document";
-import { parseReviewView } from "../../review-view/model";
+import { appURL, tilesAnswer, type TilesAnswer } from "../../api";
 import { tileSourceOf, type TileSize } from "../types";
 import { setInPageRunner } from "./check-host";
 import {
@@ -383,10 +381,8 @@ async function dataRefs(
     });
     const response = await fetch(appURL(`api/tiles?${query}`), { cache: "no-store" });
     if (!response.ok) return null;
-    const body = (await response.json()) as { document?: ReviewDocument; view?: unknown };
-    const review = body.document;
-    if (!review?.review || !Array.isArray(review.sections) || !review.index) return null;
-    const source = tileSourceOf(review, parseReviewView(body.view)?.tiles ?? []);
+    const { chrome, review } = tilesAnswer((await response.json()) as TilesAnswer);
+    const source = tileSourceOf(chrome, review.tiles);
     const labels = new Map<string, string>();
     return {
       glance: resolveRefs(data, source, "glance", labels).refs,

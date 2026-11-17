@@ -7,8 +7,10 @@ import type { ReviewDocument } from "@baum/viewer/review-document";
 import { fixtureTile } from "../tiles/fixture-test-helper";
 import { TileHostContext, type TileHost } from "../tiles/host";
 import type { TileContext } from "../tiles/types";
-import { REVIEW_1303, review1303, VIEW_1303 } from "./fixture-1303";
-import { emptyView, type ReviewView, type ViewTile } from "./model";
+import { tiledDocument } from "../api";
+import type { ReviewV2 } from "./document";
+import { legacyAnswer1303, REVIEW_1303, review1303 } from "./fixture-1303";
+import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
 import { ViewTileCard } from "./view-tile";
 
@@ -180,8 +182,14 @@ describe("the Overview", () => {
     ]);
   });
 
-  it("falls back to the review alone without a view", async () => {
-    const container = await page("", review1303(null));
+  it("falls back to the review alone without overview parts or tiles", async () => {
+    const bare: ReviewV2 = {
+      ...REVIEW_1303,
+      summary: { ...REVIEW_1303.summary, verdict: null, risk_why: "" },
+      overview: { screenshots: [], diagram: null, intent: [] },
+      tiles: [],
+    };
+    const container = await page("", review1303(bare));
     const view = panel(container);
     expect(view.querySelector('[aria-label="Before merging"]')).toBeNull();
     expect(view.querySelector('[aria-label="Risk"]')?.textContent).toContain(
@@ -244,7 +252,8 @@ describe("How it works", () => {
     expect(body.querySelector('[role="figure"] h3')?.textContent).toBe(
       "Where the transport sits in the daemon",
     );
-    await click(button(body, "RemoteHandler"));
+    // baum.review/2's context names files, not symbols.
+    await click(button(body, "remote.go"));
     expect(search.get("tile")).toBe("code");
     expect(search.get("tile_item")).toBe("oss/internal/uiserver/remote.go");
   });
@@ -424,12 +433,13 @@ describe("Code", () => {
 
 // ---------- the native tiles ----------
 
-const ctx = { review: REVIEW_1303 } as unknown as TileContext;
-const tileOf = (id: string) => VIEW_1303.tiles.find((each) => each.id === id)!;
+const CHROME = review1303();
+const ctx = { review: CHROME } as unknown as TileContext;
+const tileOf = (id: string) => reviewOf(CHROME).tiles.find((each) => each.id === id)!;
 const card = (tile: ViewTile) =>
   render(
     <Host>
-      <ViewTileCard tile={tile} review={REVIEW_1303} ctx={ctx} />
+      <ViewTileCard tile={tile} review={CHROME} ctx={ctx} />
     </Host>,
   );
 
@@ -536,6 +546,8 @@ describe("the native tiles", () => {
     const container = await card({
       id: "ex_note",
       type: "prose",
+      owner: "sec_relay",
+      cites: [],
       title: "Why a relay",
       state: "ready",
       data: { text: "Phones can't reach a laptop behind NAT.", anchors: [] },
@@ -551,6 +563,8 @@ describe("a tile the person added", () => {
   const added: ViewTile = {
     id: "ex_added",
     type: "prose",
+    owner: "sec_relay",
+    cites: [],
     title: "Retry notes",
     state: "ready",
     data: { text: "Retries double their delay.", anchors: [] },
@@ -562,7 +576,7 @@ describe("a tile the person added", () => {
     render(
       <Host>
         <TileHostContext.Provider value={host}>
-          <ViewTileCard tile={tile} review={REVIEW_1303} ctx={ctx} />
+          <ViewTileCard tile={tile} review={CHROME} ctx={ctx} />
         </TileHostContext.Provider>
       </Host>,
     );
@@ -613,7 +627,7 @@ describe("pending cards", () => {
     { tile: "draft_2", title: "Where it runs", phase: "checking" as const, section: "context" },
     { tile: "draft_3", title: "Somewhere", phase: "writing" as const, section: "sec_gone" },
   ];
-  const withDrafts = () => review1303({ ...VIEW_1303, drafts });
+  const withDrafts = () => review1303({ ...REVIEW_1303, drafts });
   const cards = (container: HTMLElement) =>
     [...panel(container).querySelectorAll<HTMLElement>("[data-tile-draft]")].map(
       (each) => each.dataset.tileDraft,
@@ -628,7 +642,21 @@ describe("pending cards", () => {
   });
 });
 
-it("keeps an empty view's sections listed with no tiles", () => {
-  const view: ReviewView = emptyView(REVIEW_1303);
-  expect(view.sections.every((section) => section.tiles.length === 0)).toBe(true);
+// TEMPORARY, with from-v1.ts: until the daemon answers baum.review/2.
+describe("a baum.review/1 answer with its view", () => {
+  it("draws the same page as the baum.review/2 document", async () => {
+    const legacy = tiledDocument(legacyAnswer1303() as Parameters<typeof tiledDocument>[0]);
+    expect(legacy.schema).toBe("baum.review/1");
+    const overview = await page("", legacy);
+    const drawn = panel(overview).textContent;
+    act(() => root?.unmount());
+    expect(panel(await page()).textContent).toBe(drawn);
+    act(() => root?.unmount());
+    const section = await page("pane=section&section=sec_allowlist", legacy);
+    expect(
+      [...panel(section).querySelectorAll<HTMLElement>("[data-tile]")].map(
+        (each) => each.dataset.tile,
+      ),
+    ).toEqual(["dg_allowlist", "dg_always_allow", "lib_api_change", "code_remote_routes"]);
+  });
 });

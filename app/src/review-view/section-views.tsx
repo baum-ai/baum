@@ -10,6 +10,7 @@ import { useUrlState, ViewerLink } from "@baum/viewer/navigation";
 import type { HunkPatchSource } from "@baum/viewer/components/hunk-evidence";
 import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import type { IndexedHunk, ReviewDocument } from "@baum/viewer/review-document";
+import type { ReviewV2 } from "./document";
 import { withSelection } from "@baum/viewer/review-selection";
 import { FileDiff, GeneratedToggle } from "./code-tab";
 import {
@@ -71,18 +72,20 @@ export function SectionViewTabs({
 /** A section's view other than its Overview. */
 export function SectionViewBody({
   document,
+  review,
   section,
   shown,
   views,
   context,
 }: {
   document: ReviewDocument;
+  review: ReviewV2;
   section: string;
   shown: Exclude<SectionView, "overview">;
   views: SectionViews;
   context: ReviewPlaceContext;
 }) {
-  const notes = useMemo(() => sectionNotes(notesByHunk(document), section), [document, section]);
+  const notes = useMemo(() => sectionNotes(notesByHunk(review), section), [review, section]);
   const files = (list: ViewFile[]) => (
     <SectionFiles document={document} files={list} notes={notes} context={context} />
   );

@@ -8,6 +8,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/view"
 )
@@ -19,6 +20,11 @@ import (
 // nullable versions.composition column, written with the version's row and
 // never changed after. A NULL column, a store without the column and a
 // composition no reader can use all mean the same: a version without one.
+// A version's document is a baum.review/1 or a baum.review/2 one, by its
+// schema field; a baum.review/2 document holds its own tiles and overview,
+// so its version never carries a composition. The summaries read the same
+// paths of both (summary.title, summary.risk_score, summary.review_minutes,
+// review.pr_state).
 //
 // The column is added by an ALTER TABLE on a writable open, which is additive
 // and needs no copy. A store that cannot be altered (read-only, held by
@@ -80,7 +86,9 @@ func compositionSelect(has bool) string {
 // store.composition_generators_dropped) and logged without content. One
 // that chooses nothing is stored as none.
 func storableComposition(document, raw []byte, generator *tiles.Generator) []byte {
-	if len(raw) == 0 || string(raw) == "null" {
+	if len(raw) == 0 || string(raw) == "null" || reviewv2.IsV2(document) {
+		// A baum.review/2 document holds its own tiles and overview: it
+		// carries no composition, and one given with it is not stored.
 		return nil
 	}
 	drop := func(reason string) []byte {

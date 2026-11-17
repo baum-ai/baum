@@ -1,12 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { REVIEW_1303, VIEW_1303 } from "../src/review-view/fixture-1303";
+import { legacyAnswer1303, REVIEW_1303 } from "../src/review-view/fixture-1303";
 import { launchURL } from "./inbox-helpers";
 
 // The review page's overview tabs (`?view=tiles`) on the fixture's acme/demo#7,
-// whose tile route answers with the review of #1303 and its view, as the
-// daemon serves them. REVIEW_VIEW_SHOTS=<dir> also writes a picture of each
+// whose tile route answers with #1303's baum.review/2 document, as the daemon
+// serves it. REVIEW_VIEW_SHOTS=<dir> also writes a picture of each
 // tab at each width, light and dark.
 
 const PR7 = "repository=acme%2Fdemo&pr=7&view=tiles";
@@ -15,7 +15,7 @@ const SHOTS = process.env.REVIEW_VIEW_SHOTS ?? "";
 async function open(
   page: Page,
   search: string,
-  answer: Record<string, unknown> = { document: REVIEW_1303, view: VIEW_1303 },
+  answer: Record<string, unknown> = { document: REVIEW_1303 },
 ) {
   await page.route(/\/api\/tiles\?/, (route) => route.fulfill({ json: answer }));
   await signedIn(page, search);
@@ -154,21 +154,15 @@ test("a tile the person added is removed from its menu, and Undo puts it back", 
   const added = {
     id: "lib_retry_notes",
     type: "prose",
+    owner: "sec_allowlist",
     title: "Retry notes",
-    state: "ready",
+    state: "ready" as const,
+    cites: [],
     data: { text: "Retries double their delay.", anchors: [] },
     added: true,
     from: 1,
   };
-  const view = {
-    ...VIEW_1303,
-    tiles: [...VIEW_1303.tiles, added],
-    sections: VIEW_1303.sections.map((section) =>
-      section.id === "sec_allowlist"
-        ? { ...section, tiles: [...section.tiles, added.id] }
-        : section,
-    ),
-  };
+  const document = { ...REVIEW_1303, tiles: [...REVIEW_1303.tiles, added] };
   const sent: { tile?: string; action?: string; pr?: number }[] = [];
   await page.route(/\/api\/tiles\/added$/, async (route) => {
     const body = route.request().postDataJSON();
@@ -176,7 +170,7 @@ test("a tile the person added is removed from its menu, and Undo puts it back", 
     await route.fulfill({ json: { tile: body.tile, action: body.action } });
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, `${PR7}&pane=section&section=sec_allowlist`, { document: REVIEW_1303, view });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`, { document });
   const tile = page.locator('[role="figure"][data-tile="lib_retry_notes"]');
   await expect(tile.getByRole("heading", { name: "Retry notes" })).toBeVisible();
   await expect(tile.locator("[data-added-note]")).toHaveText("From version 1");
@@ -228,7 +222,7 @@ test("tiles being made stand on their sections as pending cards", async ({ page 
     await route.fulfill({ json: {} });
   });
   await page.setViewportSize({ width: 1440, height: 900 });
-  const answer = { document: REVIEW_1303, view: VIEW_1303, drafts };
+  const answer = { document: REVIEW_1303, drafts };
   await open(page, `${PR7}&pane=section&section=sec_allowlist`, answer);
   const first = page.locator('[data-tile-draft="draft_1"]');
   await expect(first).toContainText("Route table");
@@ -388,9 +382,7 @@ test("the Code tab names the open file once, in its diff's header", async ({ pag
 });
 
 test("the setting chooses the review page", async ({ page }) => {
-  await page.route(/\/api\/tiles\?/, (route) =>
-    route.fulfill({ json: { document: REVIEW_1303, view: VIEW_1303 } }),
-  );
+  await page.route(/\/api\/tiles\?/, (route) => route.fulfill({ json: { document: REVIEW_1303 } }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await signedIn(page, "page=settings");
   const select = page.locator("#review-page");
@@ -449,4 +441,19 @@ test("with tile reviews on, an arranged version opens on its tabs", async ({ pag
   } finally {
     expect(await labs(false)).toBe(200);
   }
+});
+
+// TEMPORARY, with src/review-view/from-v1.ts: until the daemon answers
+// baum.review/2 for every version, it answers with a baum.review/1 document
+// and its view, which the page converts.
+test("a baum.review/1 answer with its view draws the same tabs", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7, legacyAnswer1303());
+  await expect(page.getByRole("heading", { name: "How a phone reaches the daemon" })).toBeVisible();
+  await expect(page.getByLabel("Before merging")).toContainText("Decide whether phones keep it.");
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`, legacyAnswer1303());
+  await expect(page.getByRole("heading", { name: "What a phone can reach" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The writes a phone may make" })).toBeVisible();
+  expect(errors).toEqual([]);
 });

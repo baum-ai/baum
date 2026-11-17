@@ -31,15 +31,15 @@ func TestDraftTilesKeepsTheViewPerDraftAndComposition(t *testing.T) {
 		t.Fatalf("composed view: %v, %d builds", err, tileview.Builds.Load()-before)
 	}
 	var body struct {
-		Draft int `json:"draft"`
-		View  struct {
-			Overview struct {
-				RiskSummary string `json:"risk_summary"`
-			} `json:"overview"`
-		} `json:"view"`
+		Draft    int `json:"draft"`
+		Document struct {
+			Summary struct {
+				RiskWhy string `json:"risk_why"`
+			} `json:"summary"`
+		} `json:"document"`
 	}
-	if err := json.Unmarshal(composed, &body); err != nil || body.Draft != 1 || body.View.Overview.RiskSummary != tileviewtest.RiskSummary {
-		t.Fatalf("draft %d, view %+v: %v", body.Draft, body.View, err)
+	if err := json.Unmarshal(composed, &body); err != nil || body.Draft != 1 || body.Document.Summary.RiskWhy != tileviewtest.RiskSummary {
+		t.Fatalf("draft %d, document %+v: %v", body.Draft, body.Document.Summary, err)
 	}
 }
 
@@ -60,17 +60,23 @@ func TestDraftTilesShowTheAddedTiles(t *testing.T) {
 		t.Fatalf("the added tile was not built: %v", err)
 	}
 	var body struct {
-		View struct {
-			Sections []struct {
-				ID    string   `json:"id"`
-				Tiles []string `json:"tiles"`
-			} `json:"sections"`
-		} `json:"view"`
+		Document struct {
+			Tiles []struct {
+				ID    string `json:"id"`
+				Owner string `json:"owner"`
+			} `json:"tiles"`
+		} `json:"document"`
 	}
 	if err := json.Unmarshal(withAdded, &body); err != nil {
 		t.Fatal(err)
 	}
-	if first := body.View.Sections[0]; first.ID != "context" || len(first.Tiles) != 1 || first.Tiles[0] != "api_change" {
-		t.Errorf("the added tile is not on context: %+v", body.View.Sections)
+	onContext := 0
+	for _, tile := range body.Document.Tiles {
+		if tile.ID == "api_change" && tile.Owner == "context" {
+			onContext++
+		}
+	}
+	if onContext != 1 {
+		t.Errorf("the added tile is not on context: %+v", body.Document.Tiles)
 	}
 }

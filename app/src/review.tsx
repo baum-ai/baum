@@ -113,9 +113,9 @@ import { useViewPlaces } from "./review-view/places";
 import {
   commentSelection,
   isArranged,
-  reviewViewOf,
-  VIEW,
-  type ViewedDocument,
+  reviewOf,
+  servedReview,
+  withReview,
 } from "./review-view/model";
 import { activeTile } from "./review-view/view-tile";
 import { TileHostContext, type TileHost } from "./tiles/host";
@@ -445,9 +445,7 @@ export function LocalReview({
     if (event.key === "a") {
       event.preventDefault();
       const card = onView && viewedDocument ? activeTile() : null;
-      const tile = card
-        ? reviewViewOf(viewedDocument!).tiles.find((t) => t.id === card)
-        : undefined;
+      const tile = card ? reviewOf(viewedDocument!).tiles.find((t) => t.id === card) : undefined;
       ask(tile ? { kind: "tile", id: tile.id, title: tile.title } : null);
       return;
     }
@@ -504,7 +502,7 @@ export function LocalReview({
       // A tile under the keys takes the comment, placed on the code it
       // cites; elsewhere it is on what is being read.
       const card = onView && viewedDocument ? activeTile() : null;
-      const tiled = card && reviewViewOf(viewedDocument!).tiles.some((t) => t.id === card);
+      const tiled = card && reviewOf(viewedDocument!).tiles.some((t) => t.id === card);
       setComposer({
         kind: "new",
         ...(tiled ? commentTarget(viewedDocument ?? null, { kind: "tile", id: card }) : commentOn),
@@ -555,7 +553,9 @@ export function LocalReview({
     )
       .then((body) => {
         if (abort.signal.aborted || !Array.isArray(body.document?.sections)) return;
-        setDraft(tilesPage ? tiledDocument(body as TilesAnswer) : body.document!);
+        setDraft(
+          tilesPage ? tiledDocument(body as TilesAnswer) : (body.document as ReviewDocument),
+        );
       })
       .catch(() => {
         /* The draft is gone, or the next one is on its way. */
@@ -589,12 +589,10 @@ export function LocalReview({
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
   // The review page's tabs (the Overview, How it works and Code) draw their
   // places when the page was chosen, or, with tile reviews on, for a version
-  // whose composition was generated. A version served without a view shows
-  // the overview from the review alone.
+  // with more than its review alone (`isArranged` on the baum.review/2
+  // document it was served with).
   const onView =
-    tilesPage &&
-    Boolean(shownDocument) &&
-    (chosenTiles || isArranged((shownDocument as ViewedDocument)[VIEW] ?? null));
+    tilesPage && Boolean(shownDocument) && (chosenTiles || isArranged(servedReview(shownDocument)));
   // What c comments on: the section, risk, file or tile being read; on the
   // review page's Code tab, the file open there.
   const commentOn = commentTarget(
@@ -1509,13 +1507,22 @@ function pullRequestLines(
 /** The document with its failed sections marked as being written while a
  *  retry of their details runs. */
 function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
-  // The copy keeps the view the document carries (an enumerable symbol).
-  return {
+  const copy: ReviewDocument = {
     ...doc,
     sections: doc.sections.map((s) =>
       ids.includes(s.id) ? { ...s, details: "pending" as const } : s,
     ),
   };
+  // The baum.review/2 document the tabs read reads as being written too.
+  const review = servedReview(doc);
+  return review
+    ? withReview(copy, {
+        ...review,
+        sections: review.sections.map((s) =>
+          ids.includes(s.id) ? { ...s, details: "pending" as const } : s,
+        ),
+      })
+    : copy;
 }
 
 class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean; why: string }> {

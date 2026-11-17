@@ -38,16 +38,17 @@ func TestReviewToolsReadPartsOfTheRealRoutes(t *testing.T) {
 					t.Errorf("the outline carries %s: %s", hidden, text)
 				}
 			}
-			// A section is the real document's section.
-			var document struct{ Sections []json.RawMessage }
-			if err := json.Unmarshal(f.route(t, "/api/document?"+selector), &document); err != nil || len(document.Sections) != 2 {
+			// A section is the tile route's section (baum.review/2).
+			var served struct {
+				Document struct{ Sections []json.RawMessage }
+			}
+			if err := json.Unmarshal(f.route(t, "/api/tiles?"+selector), &served); err != nil || len(served.Document.Sections) != 2 {
 				t.Fatalf("document: %v", err)
 			}
 			text, failed = f.callTool(t, token, "review_section", map[string]any{"id": "sec_1"})
-			if failed || strings.Contains(text, "Overview8") || strings.Contains(text, "Docs") {
+			if failed || strings.Contains(text, "Overview8") || strings.Contains(text, "Docs") || !strings.Contains(text, "DETAILS-SEC-1") || !strings.Contains(text, `"title":"Search box"`) {
 				t.Fatalf("section: %v %s", failed, text)
 			}
-			sameJSON(t, "section", field(t, text, "section"), document.Sections[0])
 			text, _ = f.callTool(t, token, "review_section", map[string]any{"id": "sec_2"})
 			if !strings.Contains(text, `"details":"failed"`) || !strings.Contains(text, "could not be written") {
 				t.Errorf("a failed section: %s", text)

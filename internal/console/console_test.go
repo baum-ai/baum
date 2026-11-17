@@ -77,7 +77,9 @@ func newFixture(t *testing.T, change func(*Options)) *fixture {
 	}
 	f.opts = Options{
 		Database: filepath.Join(appdbtest.TempDir(t), "app.sqlite"),
-		Root:     t.TempDir(),
+		// Resolved as New resolves it (/var is /private/var on macOS), so
+		// directories compare with what the service reports.
+		Root:     resolveExisting(t.TempDir()),
 		Registry: agentcontext.NewRegistry(),
 		MCPURL:   func() string { return "http://127.0.0.1:43123/api/mcp" },
 		Config: func(context.Context) (config.Config, error) {

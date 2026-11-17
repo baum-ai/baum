@@ -20,7 +20,7 @@ import {
   viewTile,
   type IntentRow,
   type ListedSection,
-  type ReviewView,
+  type ReviewV2,
   type ViewPlace,
 } from "./model";
 import { ViewTileCard } from "./view-tile";
@@ -35,33 +35,34 @@ const SCORE_INK: Record<Tone, string> = {
 
 /** The Overview, always in the same order: the summary, the risk (with the
  *  verdict under it when something must happen before merging), what it
- *  looks like, the main diagram and what was asked. */
+ *  looks like, the main diagram and what was asked. It reads the
+ *  baum.review/2 `review`; `document` is what the viewer's parts read. */
 export function OverviewTab({
   document,
-  view,
+  review,
   list,
   ctx,
   idPrefix,
   go,
 }: {
   document: ReviewDocument;
-  view: ReviewView;
+  review: ReviewV2;
   list: ListedSection[];
   ctx: TileContext;
   idPrefix: string;
   go: (place: ViewPlace) => void;
 }) {
-  const diagram = viewTile(view, view.overview.diagram);
-  const attachments = new Set((document.index.attachments ?? []).map((image) => image.id));
-  const screenshots = view.overview.screenshots.filter((id) => attachments.has(id));
-  const intent = intentRows(document, view);
+  const diagram = viewTile(review, review.overview.diagram);
+  const attachments = new Set((review.index.attachments ?? []).map((image) => image.id));
+  const screenshots = review.overview.screenshots.filter((id) => attachments.has(id));
+  const intent = intentRows(review);
   const titleOf = (id: string) => list.find((section) => section.id === id)?.title;
   return (
     <div className="mx-auto w-full max-w-5xl space-y-8">
-      {document.summary.text ? (
-        <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{document.summary.text}</Markdown>
+      {review.summary.text ? (
+        <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{review.summary.text}</Markdown>
       ) : null}
-      <RiskPart document={document} view={view} titleOf={titleOf} go={go} />
+      <RiskPart review={review} titleOf={titleOf} go={go} />
       {screenshots.length > 0 ? (
         <ReviewImages
           document={document}
@@ -82,22 +83,24 @@ export function OverviewTab({
 }
 
 /** The score, what it means and why it is what it is, in two sentences,
- *  and below them, when the review asks for something before merging, what
- *  that is: the verdict belongs to the risk it answers. */
+ *  and below them, when the review asks for something before merging (a
+ *  verdict with points), what that is: the verdict belongs to the risk it
+ *  answers. */
 function RiskPart({
-  document,
-  view,
+  review,
   titleOf,
   go,
 }: {
-  document: ReviewDocument;
-  view: ReviewView;
+  review: ReviewV2;
   titleOf: (id: string) => string | undefined;
   go: (place: ViewPlace) => void;
 }) {
-  const score = riskScoreView(document);
-  const why = riskSummary(document, view);
-  const verdict = view.overview.verdict;
+  const score = riskScoreView({
+    summary: { risk_score: review.summary.risk_score },
+    sections: review.sections,
+  } as unknown as Pick<ReviewDocument, "summary" | "sections">);
+  const why = riskSummary(review);
+  const verdict = review.summary.verdict?.points.length ? review.summary.verdict : null;
   return (
     <section
       aria-label="Risk"
@@ -151,10 +154,12 @@ function RiskPart({
             <span className="text-xs font-medium tracking-[0.08em] text-status-caution uppercase">
               Before merging
             </span>
-            <InlineMarkdown className="font-semibold">{verdict.text}</InlineMarkdown>
+            {verdict.text.trim() ? (
+              <InlineMarkdown className="font-semibold">{verdict.text}</InlineMarkdown>
+            ) : null}
           </p>
           {verdict.points.length > 0 ? (
-            <ul className="mt-2 space-y-1.5">
+            <ul className={cn("space-y-1.5", verdict.text.trim() && "mt-2")}>
               {verdict.points.map((point, at) => {
                 // A section several points name is linked once, after the
                 // last of them.

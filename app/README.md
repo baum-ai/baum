@@ -2272,12 +2272,14 @@ Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
 `pnpm test:unit` runs them again against the compacted script the daemon inlines
 (`KIT_SCRIPT=inlined`, `../tiles/kit/testdata/v1.inlined.js`).
 The overview tabs: `e2e/review-view.spec.ts` serves acme/demo#7's tile route
-with the review and view of `src/review-view/fixture-1303.ts` and checks the
-tabs, the address and that no tab scrolls sideways at 390, 900 and 1440px;
-`REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each tab, light and dark.
-It also removes an added tile and undoes it, shows pending cards on their
-sections (both against routes it answers itself), and checks the review page
-setting and an arranged version with tile reviews on.
+with the `baum.review/2` document of `src/review-view/fixture-1303.ts` and
+checks the tabs, the address and that no tab scrolls sideways at 390, 900 and
+1440px; `REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each tab, light and
+dark. It also removes an added tile and undoes it, shows pending cards on
+their sections (both against routes it answers itself), checks the review
+page setting and an arranged version with tile reviews on, and, until the
+daemon answers `baum.review/2`, that a `baum.review/1` answer with its view
+draws the same tabs.
 Custom tiles on the review page: `pnpm test:custom-tiles`
 (`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
@@ -2621,8 +2623,8 @@ transcript.
 ## Overview tabs
 
 With the review page set to **Overview tabs (preview)** (`review_page` `tiles`,
-or `?view=tiles`), or with tile reviews on and a version whose composition was
-generated, a pull request's review opens on three tabs (`src/review-view/`,
+or `?view=tiles`), or with tile reviews on and a version that has more than
+its review alone, a pull request's review opens on three tabs (`src/review-view/`,
 drawn through the viewer's places seam by `useViewPlaces`): **Overview**,
 **How it works** and **Code**. A group's or a stack's page always shows the
 full review. The head, the version menu, history, Compare, the side pane, the
@@ -2651,14 +2653,25 @@ where the panes stack, no navigator bar (the viewer's `noRail`).
   a thread is open; picking an item closes the sheet.
 
 The page reads each version from `GET api/tiles` (a draft's from
-`api/jobs/{id}/draft?tiles=1`), whose `view` (`baum.view/1`: the overview's
-`risk_summary`, `verdict`, `screenshots`, `diagram` and `intent`, the tiles
-placed on each section, and the tiles) `parseReviewView` reads, dropping a
-malformed entry rather than the view. A version served without one shows the
-overview from the review alone, every section with no tiles. With tile
-reviews on and no page chosen, a version opens on the tabs when its view
-has more than the review alone (tiles, or an overview part the model wrote:
-`isArranged`).
+`api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
+`baum.review/2` document (`oss/reviewv2/document.go`; `review-view/document.ts`
+has its types): the summary with its `verdict` and `risk_why`, the
+`overview` (`screenshots`, `diagram`, `intent`), the `context`, the sections
+with their `gist`, `summary`, `steps`, `risks` and `details`, and every tile
+placed by its `owner` (`overview`, `context` or a section). `parseReviewV2`
+reads it, dropping a malformed item (a section, step, risk, tile or intent row)
+rather than the page. The tabs read only this document. The review viewer
+around them (the head, history, side pane, comments, selection and keys) and
+the viewer's parts they draw (citation chips, images, diffs) read a
+`baum.review/1` review, which `chromeOf` makes from the document: what
+`baum.review/2` has no field for (the author, agent reviews, evidence) is
+empty there. Until the daemon converts every version, it may answer with a
+`baum.review/1` document and its `view` (`baum.view/1`) instead; the page
+converts that answer (`review-view/from-v1.ts`, to be removed once the daemon
+answers `baum.review/2`) and keeps the served review for the chrome. With tile
+reviews on and no page chosen, a version opens on the tabs when it has more
+than the review alone (tiles, an overview part the model wrote, a verdict with
+points, or a record of the three levels' calls: `isArranged`).
 
 - **Where the reader is** stays in the address, so a reload, Back and a link
   land there: the Overview is the Summary (no `pane`), How it works is
@@ -2667,18 +2680,20 @@ has more than the review alone (tiles, or an overview part the model wrote:
   section), and Code is `pane=tile&tile=code&tile_item=<path>`. A link to a
   tile opens the section it is placed on. Switching tabs comes back to the
   section and file read last.
-- **Overview**, always in this order: the summary, the verdict when the view
-  has one (each point linking to its section), the risk (score, level and why,
-  the view's `risk_summary` or else the score's first reason), what it looks
-  like (the view's screenshots), the main diagram under its title, and what
-  was asked (the view's rows, else each linked session's first prompt), each
-  linking to the prompt in its session.
+- **Overview**, always in this order: the summary (`summary.text`), the risk
+  (score, level and why: `risk_why`, or else the score's first reason) with
+  the verdict inside its card when it has points (each linking to its
+  section), what it looks like (`overview.screenshots`), the main diagram
+  (`overview.diagram`) under its title, and what was asked (`overview.intent`,
+  else each linked session's first prompt), each linking to the prompt in its
+  session.
 - **How it works** lists "Where this fits" first (the review's context, its
-  files as chips, and the tiles placed on `context`) and opens on the first
-  real section. A section shows its title, then a row of views, each with its
-  count and disabled (never hidden) when the section has nothing for it:
-  **Overview** (its summary, its first diagram, its behaviour steps, its risks
-  and the rest of the tiles placed on it), **Code** (its code, config and
+  files as chips, and the tiles `context` owns) and opens on the first real
+  section; each section's line in the list is its `gist`. A section shows its
+  title, then a row of views, each with its count and disabled (never hidden)
+  when the section has nothing for it: **Overview** (its summary, its first
+  diagram, its steps, its risks and the rest of the tiles it owns; "Writing
+  details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
   migration hunks, file by file, drawn as the Code tab draws them with the
   section's own steps and risks pinned to the hunks they cite, and its
   generated or vendored files folded at the end), **Tests** (its test hunks,
@@ -2692,14 +2707,16 @@ has more than the review alone (tiles, or an overview part the model wrote:
   review's check callouts and line counts are not shown.
 - **Code** lists every changed file grouped as code, tests, docs, config and
   generated (folded, and a generated file's diff waits for Show the diff), and
-  shows the open file's hunks with the behaviour steps and open risks that cite
-  each pinned under it, each linking to its section. A code chip anywhere on
+  shows the open file's hunks with the steps and open risks that cite each
+  pinned under it, each linking to its section. A code chip anywhere on
   the page opens its file here.
 - **Tiles** always show their title. Flows, columns, sequences and tables are
-  drawn by the page (`native-tiles.tsx`) in palette tones, and lay themselves
-  out by the room they have: lanes wrap and then stack, columns stack, and a
-  sequence becomes a list. Exhibits draw as the generic tiles do, and library
-  and chat-made tiles in their sandboxed frames. A tile being written, one that
+  drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
+  caption and citations, and lay themselves out by the room they have: lanes
+  wrap and then stack, columns stack, and a sequence becomes a list. A code
+  tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
+  in that range. Exhibits draw as the generic tiles do, and library and
+  chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that
   failed and one that cannot be read say so in its place.
 - **Comments and keys.** `c` comments on the section read (in any of its
   views), the file open in Code, or the pull request on the Overview; on a tile the keys are on
@@ -2720,7 +2737,7 @@ has more than the review alone (tiles, or an overview part the model wrote:
 
 Tiles are what the model and the person customise on the overview tabs
 (`src/tiles/`, drawn by `ViewTileCard` in `src/review-view/view-tile.tsx`):
-the view's native diagrams and tables, exhibits (code, prose, table and
+the document's native diagrams and tables, exhibits (code, prose, table and
 diagram source, `src/tiles/builtins/generic.tsx`), library tiles and tiles
 made in chat. Each stands on a section of How it works (or on Where this
 fits), or is the Overview's main diagram, and is as wide as its section.
@@ -2735,7 +2752,7 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   reader clicks opens the cited code in the Code tab, a risk or section in
   How it works, or the tile cited where it stands. Citations resolve against
   the shown version's review (its index, its sections, their risks and
-  evidence) and the view's tiles (`tileSourceOf`, `src/tiles/types.ts`),
+  evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),
   never by fetching. Frames follow the app's theme. A frame that doesn't
   start, draw or behave says "This tile couldn't load" with Retry; a tile
   made with a newer kit says so; a desktop shell that has not declared
@@ -2787,8 +2804,8 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   the render check (`check_tile`, drawn by this page's runner or the check
   window) and adds the check that passed (`add_custom_tile`), on the section
   the person is reading. The tile route's `drafts` (`[{tile, title, section,
-  phase, round?, reason?}]`, the latest version only, read with the view by
-  `parseReviewView`) are the pending cards, which `src/tiles/pending-card.tsx`
+  phase, round?, reason?}]`, the latest version only, read with the document
+  by `parseReviewV2`) are the pending cards, which `src/tiles/pending-card.tsx`
   draws after the tiles of their section (`context` is Where this fits, which
   is then listed; a card naming a section the page does not list stands on
   the first listed): the title, the live dot and a line saying how far it got

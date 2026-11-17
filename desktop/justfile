@@ -110,3 +110,12 @@ run: frontend sidecar
         -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \
         -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
         desktop-test cargo run --locked
+
+# Run the app with its own home, keyring and daemon beside the installed one,
+# one per name (scripts/isolated.sh; --copy-data copies this machine's data)
+isolated *args: frontend viewer sidecar
+    sh {{ source_directory() }}/scripts/isolated.sh {{ args }}
+
+# A login shell in a running isolated app's container, on its D-Bus session
+isolated-shell name="default":
+    docker exec -it baum-desktop-{{ name }} sh -c 'DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/runtime/bus) XDG_RUNTIME_DIR=/tmp/runtime exec bash -l'
