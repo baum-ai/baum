@@ -21,6 +21,7 @@ func TestPutChoosesTheClaudeConfigDirectories(t *testing.T) {
 	h := newHarness(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv(agentdirs.Claude.Env, "")
 	personal, work, signedOut := filepath.Join(home, ".claude.personal"), filepath.Join(home, ".claude-work"), filepath.Join(home, ".claude-signed-out")
