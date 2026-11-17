@@ -119,18 +119,18 @@ func TestTileReadsHoldNoTileSource(t *testing.T) {
 			t.Fatalf("%s: %v %d %s", read.name, err, response.Status, response.Body)
 		}
 		var answer struct {
-			View *struct {
+			Document *struct {
 				Tiles []struct {
 					ID         string          `json:"id"`
 					Definition json.RawMessage `json:"definition"`
 				} `json:"tiles"`
-			} `json:"view"`
+			} `json:"document"`
 		}
-		if err := json.Unmarshal(response.Body, &answer); err != nil || answer.View == nil {
+		if err := json.Unmarshal(response.Body, &answer); err != nil || answer.Document == nil {
 			t.Fatalf("%s: %v %.300s", read.name, err, response.Body)
 		}
 		found := 0
-		for _, tile := range answer.View.Tiles {
+		for _, tile := range answer.Document.Tiles {
 			for _, id := range tileviewtest.CustomTileIDs {
 				if tile.ID == id && strings.Contains(string(tile.Definition), tileviewtest.CustomDefinition(id).Digest) {
 					found++

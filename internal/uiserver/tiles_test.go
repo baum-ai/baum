@@ -17,7 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
-	"github.com/baum-ai/baum/tiles/view"
+	"github.com/baum-ai/baum/reviewv2"
 )
 
 // tilesFixture is a registered clone with a saved review of acme/widgets#42.
@@ -116,7 +116,6 @@ func (f *tilesFixture) get(path, query, etag string) *httptest.ResponseRecorder 
 
 type tilesBody struct {
 	Document map[string]any `json:"document"`
-	View     *view.View     `json:"view"`
 	Problem  string         `json:"problem"`
 }
 
@@ -149,7 +148,7 @@ func TestTilesServesTheLatestAndAChosenVersion(t *testing.T) {
 	if latest.Header().Get("Cache-Control") != "no-store" || latest.Header().Get("ETag") == "" || latest.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("headers %v", latest.Header())
 	}
-	if body.View == nil || body.View.Schema != view.Name || body.Problem != "" {
+	if body.Document["schema"] != reviewv2.Name || body.Problem != "" {
 		t.Fatalf("latest: %+v", body)
 	}
 	if got := body.Document["summary"].(map[string]any)["title"]; got != "Second title" {
@@ -157,7 +156,7 @@ func TestTilesServesTheLatestAndAChosenVersion(t *testing.T) {
 	}
 
 	first := decodeTiles(t, f.get("/api/tiles", "&version=1", ""))
-	if first.Document["summary"].(map[string]any)["title"] != "First title" || first.View == nil {
+	if first.Document["summary"].(map[string]any)["title"] != "First title" || first.Document["schema"] != reviewv2.Name {
 		t.Fatalf("version 1: %+v", first.Document["summary"])
 	}
 	if w := f.get("/api/tiles", "&version=2", ""); w.Body.String() != latest.Body.String() {
@@ -165,24 +164,29 @@ func TestTilesServesTheLatestAndAChosenVersion(t *testing.T) {
 	}
 }
 
-// The document of /api/tiles is the document /api/document serves, so the
-// page's chrome and its tiles agree.
+// The document of /api/tiles is the baum.review/2 conversion of the document
+// /api/document serves, so the page's chrome and its tiles agree: the same
+// title and the same section ids.
 func TestTilesDocumentIsTheDocumentRoute(t *testing.T) {
 	f := newTilesFixture(t)
 	f.put(t, titled(t, "Same bytes"))
-	var fromDocument, fromTiles any
-	if err := json.Unmarshal(f.get("/api/document", "", "").Body.Bytes(), &fromDocument); err != nil {
+	var plain map[string]any
+	if err := json.Unmarshal(f.get("/api/document", "", "").Body.Bytes(), &plain); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(f.get("/api/tiles", "", "").Body.Bytes(), &struct {
-		Document *any `json:"document"`
-	}{&fromTiles}); err != nil {
-		t.Fatal(err)
+	served := decodeTiles(t, f.get("/api/tiles", "", "")).Document
+	if served["schema"] != reviewv2.Name {
+		t.Fatalf("schema %v", served["schema"])
 	}
-	a, _ := json.Marshal(fromDocument)
-	b, _ := json.Marshal(fromTiles)
-	if string(a) != string(b) {
-		t.Fatalf("/api/document and /api/tiles disagree:\n%s\n%s", a, b)
+	title := func(d map[string]any) any { return d["summary"].(map[string]any)["title"] }
+	ids := func(d map[string]any) (out []string) {
+		for _, s := range d["sections"].([]any) {
+			out = append(out, s.(map[string]any)["id"].(string))
+		}
+		return out
+	}
+	if title(plain) != title(served) || !slices.Equal(ids(plain), ids(served)) {
+		t.Fatalf("/api/document and /api/tiles disagree: %v %v vs %v %v", title(plain), ids(plain), title(served), ids(served))
 	}
 }
 
@@ -222,8 +226,8 @@ func TestTilesConversionFailureLeavesTheViewOut(t *testing.T) {
 	f.put(t, []byte(document))
 	w := f.get("/api/tiles", "", "")
 	body := decodeTiles(t, w)
-	if body.View != nil || body.Problem == "" || strings.Contains(body.Problem, "PRIVATE_TEXT") {
-		t.Fatalf("view %v, problem %q", body.View != nil, body.Problem)
+	if body.Document["schema"] == reviewv2.Name || body.Problem == "" || strings.Contains(body.Problem, "PRIVATE_TEXT") {
+		t.Fatalf("schema %v, problem %q", body.Document["schema"], body.Problem)
 	}
 	if strings.Contains(w.Body.String(), `"view"`) || body.Document["notes"] != "PRIVATE_TEXT" {
 		t.Fatalf("body %s", w.Body.String())
@@ -308,8 +312,8 @@ func TestTilesDocumentIsNormalisedWhereDocumentIsNot(t *testing.T) {
 			t.Errorf("identifier of %d characters", len(id))
 		}
 	}
-	if body.View == nil || body.Problem != "" {
-		t.Fatalf("view %v, problem %q", body.View != nil, body.Problem)
+	if body.Document["schema"] != reviewv2.Name || body.Problem != "" {
+		t.Fatalf("schema %v, problem %q", body.Document["schema"], body.Problem)
 	}
 }
 
@@ -348,23 +352,30 @@ func TestTilesConvertsAnUnchangedVersionOnce(t *testing.T) {
 // A version's stored composition is applied to the view served for it, the
 // document served beside it is unchanged, and a version without one is
 // served the empty view.
+// riskWhy is the served document's summary.risk_why.
+func riskWhy(b tilesBody) string {
+	summary, _ := b.Document["summary"].(map[string]any)
+	why, _ := summary["risk_why"].(string)
+	return why
+}
+
 func TestTilesServesTheStoredComposition(t *testing.T) {
 	f := newTilesFixture(t)
 	f.put(t, titled(t, "Plain"))
 	plain := decodeTiles(t, f.get("/api/tiles", "", ""))
 	f.putComposed(t, titled(t, "Plain"))
 	composed := decodeTiles(t, f.get("/api/tiles", "", ""))
-	if composed.Problem != "" || composed.View == nil || plain.View == nil {
+	if composed.Problem != "" || plain.Problem != "" {
 		t.Fatalf("problem %q", composed.Problem)
 	}
-	if composed.View.Overview.RiskSummary != tileviewtest.RiskSummary || plain.View.Overview.RiskSummary != "" {
-		t.Fatalf("risk summaries %q and %q", composed.View.Overview.RiskSummary, plain.View.Overview.RiskSummary)
+	if riskWhy(composed) != tileviewtest.RiskSummary || riskWhy(plain) != "" {
+		t.Fatalf("risk summaries %q and %q", riskWhy(composed), riskWhy(plain))
 	}
 	// Version 1 still has no composition; asking for it by number is the
 	// empty view, byte for byte.
 	one := f.get("/api/tiles", "&version=1", "")
 	again := f.get("/api/tiles", "&version=1", "")
-	if one.Code != 200 || one.Body.String() != again.Body.String() || decodeTiles(t, one).View.Overview.RiskSummary != "" {
+	if one.Code != 200 || one.Body.String() != again.Body.String() || riskWhy(decodeTiles(t, one)) != "" {
 		t.Error("version 1 is not served the empty view")
 	}
 	// The same document with and without a composition is answered with

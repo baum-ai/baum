@@ -125,12 +125,12 @@ func TestTileReviewThroughAJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	var served struct {
-		View *struct {
+		Document *struct {
 			Schema string `json:"schema"`
-		} `json:"view"`
+		} `json:"document"`
 	}
-	if err := json.Unmarshal(body, &served); err != nil || served.View == nil || served.View.Schema != "baum.view/1" {
-		t.Errorf("the final draft is served without its view: %v", err)
+	if err := json.Unmarshal(body, &served); err != nil || served.Document == nil || served.Document.Schema != "baum.review/2" {
+		t.Errorf("the final draft is not served as a baum.review/2 document: %v", err)
 	}
 	if tileview.Key(final.DraftComposition) == "" {
 		t.Error("the draft's layout has no cache key")

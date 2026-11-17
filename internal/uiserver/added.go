@@ -23,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
@@ -138,6 +139,19 @@ func (a LocalAPI) latestShown(ctx context.Context, c repos.Clone, number int) (s
 	}
 	if len(version.Document) > viewserver.MaxDocumentBytes {
 		return shownVersion{}, errors.New("The saved review is too large to show")
+	}
+	if reviewv2.IsV2(version.Document) {
+		// A baum.review/2 version: its added tiles are checked against its
+		// substrate, as the tile route serves them.
+		var d reviewv2.Document
+		if err := json.Unmarshal(version.Document, &d); err != nil {
+			return shownVersion{}, errNoTiles
+		}
+		r, err := view.ParseReview(version.Document)
+		if err != nil {
+			return shownVersion{}, errNoTiles
+		}
+		return shownVersion{Version: version.Metadata.Version, Review: r, Document: reviewv2.Substrate(d)}, nil
 	}
 	normalized, err := review.NormalizeStored(version.Document)
 	if err != nil {

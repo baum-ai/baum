@@ -14,9 +14,9 @@ import (
 	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
 // fakeFiller records the fills asked for.
@@ -65,38 +65,36 @@ func (f *addedFixture) eventCount() int {
 	return len(f.events)
 }
 
-// served is the tile route's view of a version ("" the latest).
-func (f *addedFixture) served(t *testing.T, query string) view.View {
+// served is the tile route's document for a version ("" the latest).
+func (f *addedFixture) served(t *testing.T, query string) reviewv2.Document {
 	t.Helper()
 	w := f.get("/api/tiles", query, "")
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body.String())
 	}
 	var body struct {
-		View *view.View `json:"view"`
+		Document *reviewv2.Document `json:"document"`
+		Problem  string             `json:"problem"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.View == nil {
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || body.Document == nil || body.Problem != "" {
 		t.Fatalf("%v: %s", err, w.Body.String())
 	}
-	return *body.View
+	return *body.Document
 }
 
-func viewTile(v view.View, id string) *view.Tile {
-	for i := range v.Tiles {
-		if v.Tiles[i].ID == id {
-			return &v.Tiles[i]
+func servedTile(d reviewv2.Document, id string) *reviewv2.Tile {
+	for i := range d.Tiles {
+		if d.Tiles[i].ID == id {
+			return &d.Tiles[i]
 		}
 	}
 	return nil
 }
 
-func sectionOf(v view.View, id string) string {
-	for _, p := range v.Sections {
-		for _, tile := range p.Tiles {
-			if tile == id {
-				return p.ID
-			}
-		}
+// ownerOf is the section (or "context", "overview") a served tile sits on.
+func ownerOf(d reviewv2.Document, id string) string {
+	if tile := servedTile(d, id); tile != nil {
+		return tile.Owner
 	}
 	return ""
 }
@@ -133,8 +131,8 @@ func TestAnAddedTileIsPendingThenFilledAndRefilled(t *testing.T) {
 		t.Fatalf("add: %+v %v", added, err)
 	}
 	v := f.served(t, "")
-	tile := viewTile(v, "api_change")
-	if tile == nil || tile.State != tiles.StatePending || !tile.Added || !tile.Filling || sectionOf(v, "api_change") != "context" {
+	tile := servedTile(v, "api_change")
+	if tile == nil || tile.State != tiles.StatePending || !tile.Added || !tile.Filling || ownerOf(v, "api_change") != "context" {
 		t.Fatalf("the added tile: %+v", tile)
 	}
 	if !strings.Contains(string(tile.Definition), `"builtin":true`) {
@@ -155,7 +153,7 @@ func TestAnAddedTileIsPendingThenFilledAndRefilled(t *testing.T) {
 		t.Error("a stored fill told the page nothing")
 	}
 	v = f.served(t, "")
-	if tile := viewTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") || tile.Filling || tile.From != 0 {
+	if tile := servedTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") || tile.Filling || tile.From != 0 {
 		t.Fatalf("after the fill: %+v", tile)
 	}
 
@@ -163,7 +161,7 @@ func TestAnAddedTileIsPendingThenFilledAndRefilled(t *testing.T) {
 	f.put(t, titled(t, "Second title"))
 	before := len(filler.asked())
 	v = f.served(t, "")
-	if tile := viewTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") || tile.From != 1 || !tile.Filling {
+	if tile := servedTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !strings.Contains(string(tile.Data), "the client") || tile.From != 1 || !tile.Filling {
 		t.Fatalf("the new version's tile: %+v", tile)
 	}
 	if asked := filler.asked(); len(asked) <= before || asked[len(asked)-1].Version != 2 {
@@ -171,7 +169,7 @@ func TestAnAddedTileIsPendingThenFilledAndRefilled(t *testing.T) {
 	}
 	before = len(filler.asked())
 	v = f.served(t, "&version=1")
-	if tile := viewTile(v, "api_change"); tile == nil || tile.From != 0 || tile.Filling {
+	if tile := servedTile(v, "api_change"); tile == nil || tile.From != 0 || tile.Filling {
 		t.Errorf("the first version: %+v", tile)
 	}
 	if len(filler.asked()) != before {
@@ -201,8 +199,8 @@ func TestAddTileWithTheAgentsData(t *testing.T) {
 		t.Fatalf("add: %+v %v", added, err)
 	}
 	v := f.served(t, "")
-	if tile := viewTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !tile.Added || tile.Filling || sectionOf(v, "api_change") != added.Section {
-		t.Errorf("the tile: %+v on %s", tile, sectionOf(v, "api_change"))
+	if tile := servedTile(v, "api_change"); tile == nil || tile.State != tiles.StateReady || !tile.Added || tile.Filling || ownerOf(v, "api_change") != added.Section {
+		t.Errorf("the tile: %+v on %s", tile, ownerOf(v, "api_change"))
 	}
 	if len(filler.asked()) != 0 {
 		t.Errorf("data the agent wrote started a fill: %+v", filler.asked())
@@ -236,7 +234,7 @@ func TestRemoveAndRestoreAnAddedTile(t *testing.T) {
 	if w := action("remove", "api_change"); w.Code != 200 || !strings.Contains(w.Body.String(), `"action":"remove"`) {
 		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
 	}
-	if viewTile(f.served(t, ""), "api_change") != nil || f.eventCount() != events+1 {
+	if servedTile(f.served(t, ""), "api_change") != nil || f.eventCount() != events+1 {
 		t.Fatal("the removed tile is still served, or the page was not told")
 	}
 	if w := action("remove", "api_change"); w.Code != 404 {
@@ -245,7 +243,7 @@ func TestRemoveAndRestoreAnAddedTile(t *testing.T) {
 	if w := action("restore", "api_change"); w.Code != 200 {
 		t.Fatalf("restore: %d %s", w.Code, w.Body.String())
 	}
-	if v := f.served(t, ""); viewTile(v, "api_change") == nil || sectionOf(v, "api_change") != "context" {
+	if v := f.served(t, ""); servedTile(v, "api_change") == nil || ownerOf(v, "api_change") != "context" {
 		t.Fatal("the restored tile is not back on its section")
 	}
 	for _, body := range []string{`{"clone":"` + f.clone.ID + `","pr":42,"tile":"api_change","action":"hide"}`, `{"clone":"` + f.clone.ID + `","pr":0,"tile":"api_change","action":"remove"}`, `not json`} {
