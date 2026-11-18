@@ -158,6 +158,11 @@ type Preferences struct {
 	FixBackend *config.Backend `json:"fix_backend,omitempty"`
 	FixModel   *string         `json:"fix_model,omitempty"`
 	FixEffort  *string         `json:"fix_effort,omitempty"`
+	// FixNetwork says whether the fix agent's commands get network access
+	// (installing dependencies, fetching what builds and tests need). Nil
+	// means on. Unlike FixModel and FixEffort it applies with or without a
+	// FixBackend.
+	FixNetwork *bool `json:"fix_network,omitempty"`
 	// ClaudeConfigDir and FixClaudeConfigDir are the Claude Code
 	// configuration directories reviews (with data extraction) and fixes run
 	// Claude Code with (config.Config.ClaudeConfigDir), absolute paths; nil
@@ -175,6 +180,10 @@ type Preferences struct {
 	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
 	// for both authored and requested.
 	PullRequests string `json:"pull_requests,omitempty"`
+	// Updates is how automatic reviews follow a pull request after its first
+	// review: UpdatesOnOpen, UpdatesOnChange, or empty (UpdatesAlways) for a
+	// new review of every new head. Off is Automatic.
+	Updates string `json:"updates,omitempty"`
 	// AgentEnv, when it sets any variable, replaces the config file's
 	// agent_env (config.Config.AgentEnv).
 	AgentEnv map[string]string `json:"agent_env,omitempty"`
@@ -302,6 +311,30 @@ const (
 	PullRequestsAll = "all"
 )
 
+// The Updates choices.
+const (
+	// UpdatesAlways reviews every new head; it is stored as empty.
+	UpdatesAlways = "always"
+	// UpdatesOnOpen reviews a pull request once, automatically: a pull
+	// request with a saved review gets no automatic review of a new head.
+	UpdatesOnOpen = "on_open"
+	// UpdatesOnChange reviews a pull request once, then has the review agent
+	// read what each new head changed since the saved review and write a new
+	// review only when the change would make a difference to it.
+	UpdatesOnChange = "on_change"
+)
+
+// ReviewUpdates is Updates with the default spelled out: UpdatesAlways,
+// UpdatesOnOpen or UpdatesOnChange. An unknown value an older or newer baum
+// stored is UpdatesAlways.
+func (p Preferences) ReviewUpdates() string {
+	switch p.Updates {
+	case UpdatesOnOpen, UpdatesOnChange:
+		return p.Updates
+	}
+	return UpdatesAlways
+}
+
 // Covers reports whether automatic reviews cover a pull request the viewer
 // authored or was asked to review, as PullRequests chooses.
 func (p Preferences) Covers(authored, requested bool) bool {
@@ -388,6 +421,11 @@ func (p Preferences) Validate() error {
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
 	}
+	switch p.Updates {
+	case "", UpdatesOnOpen, UpdatesOnChange:
+	default:
+		return fmt.Errorf("unknown review updates choice %q; use %s, %s or leave it empty for %s", p.Updates, UpdatesOnOpen, UpdatesOnChange, UpdatesAlways)
+	}
 	switch p.PullRequests {
 	case "", PullRequestsAuthored, PullRequestsRequested, PullRequestsAll:
 		return nil
@@ -459,6 +497,12 @@ func (p Preferences) ResolveExtraction(cfg config.Config) config.Config {
 		}
 	}
 	return cfg
+}
+
+// FixNetworkAllowed reports whether the fix agent's commands get network
+// access: true unless FixNetwork is set to false.
+func (p Preferences) FixNetworkAllowed() bool {
+	return p.FixNetwork == nil || *p.FixNetwork
 }
 
 // ResolveFix gives the config a fix runs with, from review, the config

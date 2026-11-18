@@ -111,6 +111,11 @@ export type Entry = GitHubState & {
     recorded_cost_usd: number | null;
   } | null;
   risk_score: { score: number | null; status: string } | null;
+  /** A newer head the latest review was found to still cover: with
+   *  automatic reviews set to On change, the agent read what it changed and
+   *  kept the review, which is then current at that head. Absent when there
+   *  is none, and from an older daemon. */
+  kept?: { head: string; reason: string; kept_at: string };
   historical: boolean;
   /** The repository's list is not current (discovery failed, unvalidated or past its next poll). Age is not part of it: see `metadataStale`. */
   stale: boolean;
@@ -347,6 +352,9 @@ export type Automatic = {
   enabled: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
   pull_requests?: "all" | "both" | "authored" | "requested";
+  /** What a push to a reviewed pull request does; absent from older daemons,
+   *  which review every push. */
+  updates?: "always" | "on_open" | "on_change";
   repositories: AutomaticStatus[];
 };
 const jobReasons: Record<string, string> = {
@@ -388,12 +396,16 @@ const jobReasons: Record<string, string> = {
   head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
   no_remote: "The local clone has no remote for this repository to push to.",
   git: "A git command in the temporary checkout failed.",
+  no_significant_change:
+    "The new commits don't change what the review says, so baum kept the existing review.",
   no_changes: "The agent changed nothing, so there was nothing to push.",
   conflicts_remain: "The agent left conflict markers in a file, so nothing was pushed.",
   history_rewritten:
     "The result didn't build on the pull request's commits, so baum refused to push it.",
   workflow_changed:
-    "The agent changed a GitHub workflow or action, which a fix of review comments or a conversation never pushes. Nothing was pushed.",
+    "The agent changed a GitHub workflow or action, which needs workflow access that baum's GitHub connection does not have, so nothing was pushed. Choose Reconnect with workflow access in Settings, then run the fix again.",
+  workflow_scope:
+    "GitHub refused the push because the git credential it used can't change workflows. Give that credential the workflow scope (for the GitHub CLI: gh auth refresh -s workflow), then run the fix again.",
   credential_added:
     "The agent's change adds what looks like a credential, which baum never pushes. Nothing was pushed.",
   nested_repository:
@@ -413,6 +425,13 @@ export function changedNothing(job: Job): boolean {
     job.reason === "no_changes" &&
     (job.state === "completed" || job.state === "failed")
   );
+}
+/** A review that ended by keeping the saved review: the agent read what
+ *  changed since it and found nothing that would make a difference. It is an
+ *  outcome to read, not an error and not a new review; the agent's one line
+ *  is in `summary`. */
+export function keptReview(job: Job): boolean {
+  return !job.kind && job.reason === "no_significant_change" && job.state === "completed";
 }
 /** The first paragraph of what a fix's agent said, which says why when it
  *  changed nothing; empty without a summary. */

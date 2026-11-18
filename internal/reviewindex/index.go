@@ -61,7 +61,10 @@ type Entry struct {
 	FailureReason string          `json:"failure_reason,omitempty"`
 	VersionCount  int             `json:"version_count"`
 	Latest        *store.Metadata `json:"latest"`
-	RiskScore     json.RawMessage `json:"risk_score"`
+	// Kept is the newer head the latest review was found to still cover
+	// (store.Kept): at that head the review is current, not outdated.
+	Kept      *store.Kept     `json:"kept,omitempty"`
+	RiskScore json.RawMessage `json:"risk_score"`
 	// Historical includes saved reviews outside the current discovered inbox.
 	// Their state is UNKNOWN unless the saved document already says closed/merged.
 	Historical        bool   `json:"historical"`
@@ -292,12 +295,12 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 				}
 				pr = discovery.PullRequest{Repository: identity, Number: summary.Key.Number, Title: summary.Title, State: state}
 			}
-			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, RiskScore: summary.RiskScore, ReviewMinutes: summary.ReviewMinutes, Historical: !found, Stale: stale || !found}
+			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, Kept: summary.Kept, RiskScore: summary.RiskScore, ReviewMinutes: summary.ReviewMinutes, Historical: !found, Stale: stale || !found}
 			if summary.Latest != nil {
 				entry.Status = "outdated"
 				if !found || pr.HeadSHA == "" {
 					entry.Status = "unknown"
-				} else if summary.Latest.Head == pr.HeadSHA {
+				} else if covers(summary.Latest, summary.Kept, pr.HeadSHA) {
 					entry.Status = "current"
 				}
 			}
@@ -373,7 +376,7 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 			entry.ObservedAt = entry.MetadataFetchedAt
 			if entry.Latest != nil && (entry.Status == "unknown" || entry.Status == "current" || entry.Status == "outdated") {
 				entry.Status = "outdated"
-				if entry.Latest.Head == value.HeadSHA {
+				if covers(entry.Latest, entry.Kept, value.HeadSHA) {
 					entry.Status = "current"
 				}
 			}
@@ -491,4 +494,10 @@ func handler(body func(ctx context.Context, v variant) (etagjson.Body, error)) h
 		}
 		etagjson.Serve(w, r, b)
 	})
+}
+
+// covers reports whether a saved review is current at head: written for it,
+// or kept for it because the head changed nothing that mattered to it.
+func covers(latest *store.Metadata, kept *store.Kept, head string) bool {
+	return latest != nil && head != "" && (latest.Head == head || (kept != nil && kept.Head == head))
 }

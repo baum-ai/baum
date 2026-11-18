@@ -394,6 +394,7 @@ func (p *Proposers) automaticTarget(fixes bool) (*target, error) {
 	type reviewsChange struct {
 		Enabled      *bool   `json:"enabled,omitempty"`
 		PullRequests *string `json:"pull_requests,omitempty"`
+		Updates      *string `json:"updates,omitempty"`
 		Backend      *string `json:"backend,omitempty"`
 		Model        *string `json:"model,omitempty"`
 		Effort       *string `json:"effort,omitempty"`
@@ -419,13 +420,14 @@ func (p *Proposers) automaticTarget(fixes bool) (*target, error) {
 			return automatic.PreferencesInput{}, err
 		}
 		if in == (reviewsChange{}) {
-			return automatic.PreferencesInput{}, errors.New("propose enabled, pull_requests, backend, model or effort")
+			return automatic.PreferencesInput{}, errors.New("propose enabled, pull_requests, updates, backend, model or effort")
 		}
-		return automatic.PreferencesInput{Enabled: in.Enabled, PullRequests: in.PullRequests, Backend: in.Backend, Model: in.Model, Effort: in.Effort}, nil
+		return automatic.PreferencesInput{Enabled: in.Enabled, PullRequests: in.PullRequests, Updates: in.Updates, Backend: in.Backend, Model: in.Model, Effort: in.Effort}, nil
 	}
 	type reviewsState struct {
 		Automatic    bool
 		PullRequests string
+		Updates      string
 		Backend      *config.Backend
 		Model        *string
 		Effort       *string
@@ -439,7 +441,7 @@ func (p *Proposers) automaticTarget(fixes bool) (*target, error) {
 		if fixes {
 			return fixesState{prefs.FixBackend, prefs.FixModel, prefs.FixEffort}
 		}
-		return reviewsState{prefs.Automatic, prefs.PullRequests, prefs.Backend, prefs.Model, prefs.Effort}
+		return reviewsState{prefs.Automatic, prefs.PullRequests, prefs.Updates, prefs.Backend, prefs.Model, prefs.Effort}
 	}
 	value := func(prefs repos.Preferences) any {
 		if fixes {
@@ -467,10 +469,11 @@ func (p *Proposers) automaticTarget(fixes bool) (*target, error) {
 		return struct {
 			Enabled      bool   `json:"enabled"`
 			PullRequests string `json:"pull_requests"`
+			Updates      string `json:"updates"`
 			Backend      string `json:"backend"`
 			Model        string `json:"model"`
 			Effort       string `json:"effort"`
-		}{prefs.Automatic, pullRequests, string(cfg.Backend), cfg.Model, cfg.Effort}
+		}{prefs.Automatic, pullRequests, prefs.ReviewUpdates(), string(cfg.Backend), cfg.Model, cfg.Effort}
 	}
 	return p.prefsTarget(value, state,
 		func(after json.RawMessage, prefs repos.Preferences) error {

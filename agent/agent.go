@@ -115,9 +115,16 @@ type Request struct {
 	// the backend frames it without pull request review wording.
 	Task bool
 	// Scratch, for a Fixer, is a private directory the agent's commands may
-	// write to besides Directory: their TMPDIR. Empty leaves the backend's
-	// own temporary directory.
+	// write to besides Directory: their TMPDIR (Codex) and their package and
+	// build caches (FixEnvironment). Empty leaves the backend's own temporary
+	// directory.
 	Scratch string
+	// GitDir, for a Fixer, is the agent's own git repository outside
+	// Directory, which its commands may write to as well.
+	GitDir string
+	// Network, for a Fixer, lets the agent's commands reach the network; off,
+	// the sandbox allows no connection.
+	Network bool
 	// Transcript, when set, receives each step of the run as the person
 	// watching sees it (see TranscriptEntry); nil when none is kept.
 	Transcript func(TranscriptEntry)

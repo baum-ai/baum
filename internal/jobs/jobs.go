@@ -202,6 +202,11 @@ type Prepared struct {
 	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft, and
 	// {ReasonClosed} if it reports the pull request merged or closed.
 	RefuseDraft bool `json:"-"`
+	// Triage is set by the queue, never stored, on the inputs of an
+	// automatic review: with automatic reviews set to review
+	// on change, the executor first asks whether the head would change the
+	// saved review, and completes with UnchangedError when it would not.
+	Triage bool `json:"-"`
 	// Fix is what a fix job (KindFix) does.
 	Fix FixInputs `json:"fix,omitzero"`
 	// FixThreads are the review threads a fix addresses (Fix.Threads).
@@ -1496,6 +1501,7 @@ func (q *Queue) worker() {
 			q.notify(j)
 			inputs := j.Prepared
 			inputs.RefuseDraft = j.Automatic
+			inputs.Triage = j.Automatic
 			cost, err := q.executor.Execute(ctx, inputs, func(p Progress) {
 				q.mu.Lock()
 				// Archiving may move the job in the history: find it again.
@@ -1621,6 +1627,7 @@ func (q *Queue) worker() {
 			var stopped *StoppedError
 			var blocked *BlockedError
 			var members *MembersNeedReviewsError
+			var unchanged *UnchangedError
 			switch {
 			case err != nil && errors.As(err, &members):
 				// A member's own review failed or was cancelled while the
@@ -1640,6 +1647,11 @@ func (q *Queue) worker() {
 				current.State = "failed"
 				current.Reason = stopped.Reason
 				current.Detail = stopped.Error()
+			case err != nil && errors.As(err, &unchanged):
+				// The saved review still holds for the new head: an outcome
+				// the person reads in its summary, not a failure.
+				current.Reason = ReasonNoSignificantChange
+				current.Summary = unchanged.Reason
 			case err != nil && errors.As(err, &fixErr) && fixErr.Reason == fix.ReasonNoChanges:
 				// The agent found nothing it should, or could, change: an
 				// outcome the person reads in its summary, not a failure to
