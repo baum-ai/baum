@@ -2913,10 +2913,10 @@ just local_app::diagram-gallery [stores-dir]
 ```
 
 It serves `http://127.0.0.1:5181` from the `ui-test` service.
-`DIAGRAM_GALLERY_PORT` changes the port, `DIAGRAM_GALLERY_HOST` the address the
-server listens on (the recipe listens on all of the container's and publishes
-only to 127.0.0.1), and `DIAGRAM_GALLERY_POLLING=1` watches files by polling,
-for a mount that misses file events. Each diagram shows its title, type,
+`DIAGRAM_GALLERY_PORT` changes the port and `DIAGRAM_GALLERY_POLLING=1` watches files by polling,
+for a mount that misses file events. The recipe publishes the port on
+127.0.0.1 only; `pnpm gallery` run elsewhere listens on `DIAGRAM_GALLERY_HOST`
+(127.0.0.1 by default). Each diagram shows its title, type,
 origin, placement and the page's verdict (`NATIVE[type].valid`), with a
 one-line reason when the page cannot draw it. Controls, kept in the address:
 type, source, the section's width at a 1440 window, a 900 window and a 390

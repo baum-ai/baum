@@ -140,6 +140,19 @@ describe("scanSources", () => {
     ]);
   });
 
+  it("reads a version again when the app rewrites it in place", () => {
+    const database = store("clone/.git/baum/reviews/versions.sqlite", [
+      ["acme/api", 1, 1, review, null],
+    ]);
+    expect(scanSources({ stores: root }).documents[0]?.document).toEqual(review);
+    const written = { ...review, tiles: [table] };
+    database
+      .prepare("UPDATE versions SET document = ? WHERE repository = 'acme/api' AND pr = 1")
+      .run(Buffer.from(JSON.stringify(written)));
+    database.close();
+    expect(scanSources({ stores: root }).documents[0]?.document).toEqual(written);
+  });
+
   it("drops what it keeps for files and stores that are gone", () => {
     write("runs/r1/cases/a/document.json", review);
     write("files/a.json", flow);

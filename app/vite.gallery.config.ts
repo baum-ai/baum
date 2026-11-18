@@ -61,7 +61,8 @@ export default defineConfig({
     host: process.env.DIAGRAM_GALLERY_HOST ?? "127.0.0.1",
     port: Number.parseInt(process.env.DIAGRAM_GALLERY_PORT ?? "5181", 10),
     strictPort: true,
-    fs: { allow: [here("."), here("../viewer")] },
+    // The fixture imports the schema's example review from oss/schema.
+    fs: { allow: [here("."), here("../viewer"), here("../schema")] },
     watch: { usePolling: process.env.DIAGRAM_GALLERY_POLLING === "1" },
   },
 });

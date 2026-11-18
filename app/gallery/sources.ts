@@ -304,8 +304,7 @@ function openStore(path: string): DatabaseSync {
   } catch (error) {
     database?.close();
     const code = record(error)?.errcode;
-    const unopenable = code === 1544 || (typeof code === "number" && (code & 0xff) === 14);
-    if (!unopenable || existsSync(`${path}-wal`) || existsSync(`${path}-journal`)) throw error;
+    if (code !== 1544 || existsSync(`${path}-wal`) || existsSync(`${path}-journal`)) throw error;
     return new DatabaseSync(`${pathToFileURL(path).href}?immutable=1`, { readOnly: true });
   }
 }
@@ -341,9 +340,10 @@ function storeItem(row: Record<string, unknown> | undefined): StoreItem {
   }
 }
 
-/** The latest version of each pull request in a store. Versions are only ever
- *  added, so a version read before is not read again; only the keys are. */
-function readStore(path: string, stamp: string, previous?: StoreState): StoreState {
+/** The latest version of each pull request in a store, read again whenever the
+ *  store changes: the app rewrites the latest version in place while it is
+ *  written (refresh, details), so a version read before can be out of date. */
+function readStore(path: string, stamp: string): StoreState {
   const database = openStore(path);
   try {
     const columns = new Set(
@@ -366,9 +366,7 @@ function readStore(path: string, stamp: string, previous?: StoreState): StoreSta
     const latest = new Map<string, StoreItem>();
     for (const { repository, pr, version } of keys) {
       const name = `${repository}#${pr} v${version}`;
-      const known = previous?.latest.get(name);
-      if (known) latest.set(name, known);
-      else if (body)
+      if (body)
         latest.set(
           name,
           storeItem(body.get(repository, pr, version) as Record<string, unknown> | undefined),
@@ -448,7 +446,7 @@ export function scanSources(directories: SourceDirectories): Scan {
       let state = stores.get(path);
       try {
         if (state?.stamp !== fullStamp) {
-          state = readStore(path, fullStamp, state);
+          state = readStore(path, fullStamp);
           stores.set(path, state);
         }
       } catch (error) {
