@@ -87,19 +87,12 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("every allowlisted token: %v", err)
 	}
 	for name, theme := range map[string]Theme{
-		"base":    {Name: "x", Base: "sepia"},
-		"no base": {Name: "x"},
-		"empty":   {Name: "   ", Base: "light"},
-		"long":    {Name: strings.Repeat("a", 61), Base: "light"},
-		"control": {Name: "a\nb", Base: "light"},
-		"tab":     {Name: "a\tb", Base: "light"},
-		"too many": {Name: "x", Base: "light", Tokens: func() map[string]string {
-			m := map[string]string{}
-			for i := 0; i <= MaxTokens; i++ {
-				m["--t"+string(rune('a'+i%26))+string(rune('a'+i/26))] = "#fff"
-			}
-			return m
-		}()},
+		"base":      {Name: "x", Base: "sepia"},
+		"no base":   {Name: "x"},
+		"empty":     {Name: "   ", Base: "light"},
+		"long":      {Name: strings.Repeat("a", 61), Base: "light"},
+		"control":   {Name: "a\nb", Base: "light"},
+		"tab":       {Name: "a\tb", Base: "light"},
 		"not token": {Name: "x", Base: "light", Tokens: map[string]string{"--font-text": "#fff"}},
 	} {
 		if Validate(theme) == nil {
@@ -209,39 +202,29 @@ func TestContrast(t *testing.T) {
 			t.Errorf("default %s palette: %s on %s is %.2f", base, w.Foreground, w.Background, w.Ratio)
 		}
 	}
-	low := Theme{Name: "washed", Base: "light", Tokens: map[string]string{
-		"--surface-page": "#ffffff", "--text-primary": "#cccccc", "--text-secondary": "#444444",
-	}}
-	got := Contrast(low)
-	if len(got) != 1 || got[0].Foreground != "--text-primary" || got[0].Background != "--surface-page" || got[0].Ratio >= 1.7 {
-		// --text-primary on card and canvas are low too.
-		found := false
-		for _, w := range got {
-			if w.Foreground == "--text-primary" && w.Background == "--surface-page" {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("low contrast not flagged: %v", got)
+	// #ccc on white is 1.6:1. The card and canvas surfaces follow the page, so
+	// all three --text-primary pairs fail; --text-secondary stays readable.
+	washed := Theme{Name: "washed", Base: "light", Tokens: map[string]string{"--text-primary": "#cccccc"}}
+	got := Contrast(washed)
+	if len(got) != 3 {
+		t.Fatalf("washed: %v", got)
+	}
+	for i, bg := range []string{"--surface-page", "--surface-card", "--surface-canvas"} {
+		if got[i].Foreground != "--text-primary" || got[i].Background != bg || got[i].Ratio < 1.2 || got[i].Ratio > 1.7 {
+			t.Errorf("washed[%d] = %v", i, got[i])
 		}
 	}
-	for _, w := range got {
-		if w.Foreground == "--text-secondary" {
-			t.Errorf("readable pair flagged: %v", w)
-		}
+	if math.Abs(got[0].Ratio-1.605) > 0.01 {
+		t.Errorf("ratio %.3f, want 1.605", got[0].Ratio)
 	}
-	// Translucent text is composited over the page: 10% black on white is unreadable.
-	faint := Theme{Name: "faint", Base: "light", Tokens: map[string]string{"--text-primary": "rgba(0, 0, 0, 0.1)"}}
-	if got := Contrast(faint); len(got) == 0 {
-		t.Error("translucent text not flagged")
+	// Translucent text is composited over the page: 10% black on white is 1.5:1 or less.
+	faint := Contrast(Theme{Name: "faint", Base: "light", Tokens: map[string]string{"--text-primary": "rgba(0, 0, 0, 0.1)"}})
+	if len(faint) == 0 || faint[0].Foreground != "--text-primary" || faint[0].Ratio > 1.5 {
+		t.Errorf("translucent text: %v", faint)
 	}
-	// A green action with white text below 4.5.
-	pale := Theme{Name: "pale", Base: "light", Tokens: map[string]string{"--action-primary": "#9be08f"}}
-	flagged := false
-	for _, w := range Contrast(pale) {
-		flagged = flagged || w.Background == "--action-primary"
-	}
-	if !flagged {
-		t.Error("low contrast on the action colour not flagged")
+	// White on a pale green action is under 4.5.
+	pale := Contrast(Theme{Name: "pale", Base: "light", Tokens: map[string]string{"--action-primary": "#9be08f"}})
+	if len(pale) != 1 || pale[0].Foreground != "--text-inverse" || pale[0].Background != "--action-primary" {
+		t.Errorf("pale action: %v", pale)
 	}
 }

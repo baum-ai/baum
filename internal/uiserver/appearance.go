@@ -229,6 +229,13 @@ func addTheme(p repos.Preferences, t repos.CustomTheme, slot string) (repos.Pref
 		return p, themeInvalid("theme id %q is taken", t.ID)
 	}
 	t.Name = trimName(t.Name)
+	// Keep the colours as the validator read them: without surrounding
+	// whitespace.
+	trimmed := make(map[string]string, len(t.Tokens))
+	for token, value := range t.Tokens {
+		trimmed[token] = strings.Trim(value, " \t\n\r\f")
+	}
+	t.Tokens = trimmed
 	p.Appearance.Themes = append(slices.Clone(p.Appearance.Themes), t)
 	switch slot {
 	case "light":

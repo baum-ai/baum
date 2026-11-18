@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -121,21 +122,32 @@ type CustomTheme struct {
 	Tokens map[string]string `json:"tokens,omitempty"`
 }
 
-// validateThemes refuses more than themes.MaxThemes custom themes, an id that
-// is empty, long, repeated or a built-in's, and what themes.Validate refuses.
-func validateThemes(list []CustomTheme) error {
-	if len(list) > themes.MaxThemes {
+// validateThemes checks the custom themes a save adds or changes against
+// prev's: an id that is empty, long, repeated or a built-in's, and what
+// themes.Validate refuses. A theme saved before and unchanged is not checked,
+// so one that no longer validates never blocks saving something else, and the
+// count cap refuses growth past themes.MaxThemes only.
+func validateThemes(prev, list []CustomTheme) error {
+	if len(list) > themes.MaxThemes && len(list) > len(prev) {
 		return fmt.Errorf("at most %d custom themes", themes.MaxThemes)
+	}
+	stored := map[string]CustomTheme{}
+	for _, t := range prev {
+		stored[t.ID] = t
 	}
 	seen := map[string]bool{themes.DefaultLight: true, themes.DefaultDark: true}
 	for _, t := range list {
+		repeated := seen[t.ID]
+		seen[t.ID] = true
+		if old, ok := stored[t.ID]; ok && !repeated && t.Name == old.Name && t.Base == old.Base && maps.Equal(t.Tokens, old.Tokens) {
+			continue
+		}
 		if t.ID == "" || len(t.ID) > 64 {
 			return errors.New("a theme id must be 1 to 64 bytes")
 		}
-		if seen[t.ID] {
+		if repeated {
 			return fmt.Errorf("theme id %q is taken", t.ID)
 		}
-		seen[t.ID] = true
 		if err := themes.Validate(themes.Theme{ID: t.ID, Name: t.Name, Base: t.Base, Tokens: t.Tokens}); err != nil {
 			return err
 		}
@@ -357,6 +369,9 @@ func (p Preferences) ValidateChange(prev Preferences) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
+	if err := validateThemes(prev.Appearance.Themes, p.Appearance.Themes); err != nil {
+		return err
+	}
 	if p.Backend != nil && !p.Backend.Desktop() && (prev.Backend == nil || *prev.Backend != *p.Backend) {
 		return errors.New("reviews run with auto, Claude Code or Codex only")
 	}
@@ -369,9 +384,6 @@ func (p Preferences) ValidateChange(prev Preferences) error {
 // Validate accepts an empty Model, unlike Settings: it means the backend's
 // default even when the config file names a model.
 func (p Preferences) Validate() error {
-	if err := validateThemes(p.Appearance.Themes); err != nil {
-		return err
-	}
 	if p.Backend != nil && !p.Backend.Valid() {
 		return errors.New("invalid backend")
 	}

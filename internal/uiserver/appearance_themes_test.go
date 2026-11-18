@@ -119,6 +119,15 @@ func TestAppearanceThemes(t *testing.T) {
 	call("DELETE", "/themes/default-light", "", 400)
 }
 
+func TestAppearanceThemeStoresTrimmedColours(t *testing.T) {
+	call := themesTestServer(t)
+	got := call("POST", "/themes", `{"name":"Trim","base":"light","tokens":{"--surface-page":" \t#101820\n"}}`, 200)
+	if v := got.Themes[2].Tokens["--surface-page"]; v != "#101820" {
+		t.Fatalf("stored %q", v)
+	}
+	call("POST", "/themes", `{"name":"Nbsp","base":"light","tokens":{"--surface-page":" #101820"}}`, 400)
+}
+
 func TestAppearanceThemeDanglingSlotFallsBack(t *testing.T) {
 	prefs := repos.Preferences{Appearance: repos.AppearancePreferences{LightTheme: "c-gone", DarkTheme: "default-light"}}
 	got := appearanceOf(prefs)

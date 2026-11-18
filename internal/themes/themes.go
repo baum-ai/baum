@@ -6,7 +6,7 @@
 // A theme is a base ("light" or "dark") and colour overrides for a few
 // palette tokens. The package imports no other baum package but the tile kit
 // (for the generated palette), so the registry, the app server and the agent
-// tools can all use it. See "Custom color themes" in oss/viewer/README.md.
+// tools can all use it. See the appearance section of oss/app/README.md.
 package themes
 
 import (
@@ -26,7 +26,6 @@ const (
 // Limits on a theme and on how many a person keeps.
 const (
 	MaxThemes    = 32
-	MaxTokens    = 40
 	MaxNameRunes = 60
 	MaxValue     = 64
 )
@@ -60,7 +59,9 @@ type Theme struct {
 
 // Validate refuses a theme whose name, base or tokens are not acceptable. A
 // token value is a plain colour (see ParseColor), so nothing that could leave
-// a declaration (var(), url(), ";", "}") is accepted.
+// a declaration (var(), url(), ";", "}") is accepted. A theme has no count cap
+// of its own: each token is on the allowlist and a map holds one value per
+// token, so the allowlist bounds it.
 func Validate(t Theme) error {
 	if t.Base != "light" && t.Base != "dark" {
 		return errors.New("theme base must be light or dark")
@@ -73,9 +74,6 @@ func Validate(t Theme) error {
 		if unicode.IsControl(r) {
 			return errors.New("theme name must not contain control characters")
 		}
-	}
-	if len(t.Tokens) > MaxTokens {
-		return fmt.Errorf("a theme sets at most %d tokens", MaxTokens)
 	}
 	for token, value := range t.Tokens {
 		if err := ValidateToken(token, value); err != nil {

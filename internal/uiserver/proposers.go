@@ -326,13 +326,28 @@ func (p *Proposers) appearanceTarget() *target {
 	return p.prefsTarget(
 		func(prefs repos.Preferences) any { return appearanceOf(prefs) },
 		func(prefs repos.Preferences) any { return prefs.Appearance },
-		func(after json.RawMessage, _ repos.Preferences) error { _, err := decode(after); return err },
+		func(after json.RawMessage, prefs repos.Preferences) error {
+			in, err := decode(after)
+			if err != nil {
+				return err
+			}
+			return in.checkThemes(prefs)
+		},
 		func(ctx context.Context, after json.RawMessage, check func(repos.Preferences) error) error {
 			in, err := decode(after)
 			if err != nil {
 				return err
 			}
-			_, err = p.API.updatePreferences(ctx, check, in.edit)
+			// The proposal's own check and the route's: a slot may name only
+			// a theme the preferences hold.
+			_, err = p.API.updatePreferences(ctx, func(prefs repos.Preferences) error {
+				if check != nil {
+					if err := check(prefs); err != nil {
+						return err
+					}
+				}
+				return in.checkThemes(prefs)
+			}, in.edit)
 			return err
 		})
 }

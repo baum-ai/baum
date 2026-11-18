@@ -12,79 +12,6 @@ type RGBA struct{ R, G, B, A float64 }
 
 var errColor = errors.New("not a supported colour")
 
-// ParseColor reads a hex colour (#rgb, #rgba, #rrggbb, #rrggbbaa) or an
-// rgb(), rgba(), hsl(), hsla() or oklch() function and converts it to sRGB.
-// Anything else, keywords, var() and url() included, is refused.
-func ParseColor(s string) (RGBA, error) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if strings.HasPrefix(s, "#") {
-		return parseHex(s[1:])
-	}
-	open := strings.IndexByte(s, '(')
-	if open < 1 || !strings.HasSuffix(s, ")") {
-		return RGBA{}, errColor
-	}
-	name, body := s[:open], s[open+1:len(s)-1]
-	if strings.ContainsAny(body, "()") {
-		return RGBA{}, errColor
-	}
-	fields := strings.Fields(strings.NewReplacer(",", " ", "/", " ").Replace(body))
-	if len(fields) != 3 && len(fields) != 4 {
-		return RGBA{}, errColor
-	}
-	alpha := 1.0
-	if len(fields) == 4 {
-		a, err := number(fields[3], 1)
-		if err != nil {
-			return RGBA{}, err
-		}
-		alpha = clamp(a)
-	}
-	switch name {
-	case "rgb", "rgba":
-		var c [3]float64
-		for i := range c {
-			v, err := number(fields[i], 255)
-			if err != nil {
-				return RGBA{}, err
-			}
-			c[i] = clamp(v / 255)
-		}
-		return RGBA{c[0], c[1], c[2], alpha}, nil
-	case "hsl", "hsla":
-		h, err := hue(fields[0])
-		if err != nil {
-			return RGBA{}, err
-		}
-		sat, err := percent(fields[1])
-		if err != nil {
-			return RGBA{}, err
-		}
-		light, err := percent(fields[2])
-		if err != nil {
-			return RGBA{}, err
-		}
-		r, g, b := hslToRGB(h, clamp(sat), clamp(light))
-		return RGBA{r, g, b, alpha}, nil
-	case "oklch":
-		l, err := number(fields[0], 1)
-		if err != nil {
-			return RGBA{}, err
-		}
-		c, err := number(fields[1], 0.4)
-		if err != nil {
-			return RGBA{}, err
-		}
-		h, err := hue(fields[2])
-		if err != nil {
-			return RGBA{}, err
-		}
-		r, g, b := oklchToRGB(clamp(l), math.Max(c, 0), h)
-		return RGBA{r, g, b, alpha}, nil
-	}
-	return RGBA{}, errColor
-}
-
 func parseHex(h string) (RGBA, error) {
 	switch len(h) {
 	case 3, 4:
@@ -110,48 +37,6 @@ func parseHex(h string) (RGBA, error) {
 	return RGBA{c[0], c[1], c[2], c[3]}, nil
 }
 
-// number reads a number or a percentage; a percentage is a share of full.
-func number(s string, full float64) (float64, error) {
-	if p, ok := strings.CutSuffix(s, "%"); ok {
-		v, err := parseFloat(p)
-		return v / 100 * full, err
-	}
-	return parseFloat(s)
-}
-
-func percent(s string) (float64, error) {
-	p, ok := strings.CutSuffix(s, "%")
-	if !ok {
-		return 0, errColor
-	}
-	v, err := parseFloat(p)
-	return v / 100, err
-}
-
-func hue(s string) (float64, error) {
-	scale := 1.0
-	switch {
-	case strings.HasSuffix(s, "deg"):
-		s = strings.TrimSuffix(s, "deg")
-	case strings.HasSuffix(s, "grad"):
-		s, scale = strings.TrimSuffix(s, "grad"), 0.9
-	case strings.HasSuffix(s, "turn"):
-		s, scale = strings.TrimSuffix(s, "turn"), 360
-	case strings.HasSuffix(s, "rad"):
-		s, scale = strings.TrimSuffix(s, "rad"), 180/math.Pi
-	}
-	v, err := parseFloat(s)
-	return math.Mod(math.Mod(v*scale, 360)+360, 360), err
-}
-
-func parseFloat(s string) (float64, error) {
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
-		return 0, errColor
-	}
-	return v, nil
-}
-
 func clamp(v float64) float64 { return math.Min(1, math.Max(0, v)) }
 
 func hslToRGB(h, s, l float64) (r, g, b float64) {
@@ -163,6 +48,8 @@ func hslToRGB(h, s, l float64) (r, g, b float64) {
 	return f(0), f(8), f(4)
 }
 
+// oklchToRGB clips each channel to the sRGB gamut, which approximates the
+// gamut mapping CSS does for a colour outside it.
 func oklchToRGB(l, c, h float64) (r, g, b float64) {
 	hr := h * math.Pi / 180
 	a, bb := c*math.Cos(hr), c*math.Sin(hr)
