@@ -232,6 +232,10 @@ it("moves through the features with the list keys and opens one", async () => {
   expect(focusedFeature()).toBe("F0");
   await key("k");
   expect(focusedFeature()).toBe("F1");
+  await key("G");
+  expect(focusedFeature()).toBe("F0");
+  await key("g");
+  expect(focusedFeature()).toBe("F1");
   expect(node.querySelector("[data-focused]")?.getAttribute("data-row-id")).toBe("F1");
   await key("o");
   await act(async () => {});

@@ -98,8 +98,8 @@ type Scheduler struct {
 	// Reviewed returns the head of the PR's latest saved review, "" if none.
 	// Nil uses SavedHead.
 	Reviewed func(context.Context, repos.Clone, int) (string, error)
-	// Groups holds the review groups; the reviews of stack groups follow
-	// their members' (see passGroups). Nil generates no group review.
+	// Groups holds the review groups, for the stacks CatchUp takes whole.
+	// Automatic generation never queues a group's combined review.
 	Groups Groups
 	// Hold reports that the daemon is stopping or waiting to restart as a
 	// newer version; nothing is submitted meanwhile, and the new daemon's
@@ -168,7 +168,6 @@ func (s *Scheduler) BeginIdentityChange() func(bool) {
 		for _, repository := range s.load().Repositories {
 			repository.Since = s.resetAt
 			repository.PRs = map[int]*prState{}
-			repository.Groups = map[string]*groupState{}
 			repository.AwaitingBaseline = true
 		}
 		s.observed = map[string]time.Time{}
@@ -207,11 +206,9 @@ type fileState struct {
 // pull requests already open then are not caught up. The paused_until and
 // paused_cap of the daily cap an older baum had are ignored on load.
 type repoState struct {
-	Since time.Time        `json:"since"`
-	PRs   map[int]*prState `json:"prs"`
-	// Groups are the repository's stack groups by ID.
-	Groups map[string]*groupState `json:"groups,omitempty"`
-	Notice string                 `json:"notice,omitempty"`
+	Since  time.Time        `json:"since"`
+	PRs    map[int]*prState `json:"prs"`
+	Notice string           `json:"notice,omitempty"`
 	// AwaitingBaseline: enabled at Since, but no discovery snapshot fetched
 	// since then has been seen yet; older snapshots are not a baseline.
 	AwaitingBaseline bool `json:"awaiting_baseline,omitempty"`
@@ -383,9 +380,6 @@ func (s *Scheduler) load() *fileState {
 		if r.PRs == nil {
 			r.PRs = map[int]*prState{}
 		}
-		if r.Groups == nil {
-			r.Groups = map[string]*groupState{}
-		}
 		if r.Notice == legacyNoticeDailyCap || r.Notice == legacyNoticeCursorAgent {
 			r.Notice = ""
 		}
@@ -440,7 +434,7 @@ func (s *Scheduler) prune(v view) bool {
 // on; its baseline is the first snapshot fetched after this. Called with mu
 // held.
 func (s *Scheduler) enable(name string) *repoState {
-	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, Groups: map[string]*groupState{}, AwaitingBaseline: true}
+	rs := &repoState{Since: s.now().UTC(), PRs: map[int]*prState{}, AwaitingBaseline: true}
 	s.state.Repositories[name] = rs
 	return rs
 }
@@ -568,9 +562,10 @@ const SetupCatchUp = 3
 // polled now, and the poll is its baseline when it has none yet; the chosen
 // pull requests become pending with jobs.TriggerSetup and the next pass
 // submits them like any other, skipping a head already reviewed or queued.
-// A pull request in a stack group counts with its group as one and the
-// group's eligible members are caught up together, so the group review can
-// follow theirs (passGroups).
+// A pull request in a stack group of at most reviewgroups.MaxMembers open
+// pull requests counts with its group as one and the group's eligible
+// members are caught up together, so the stack's page has their reviews to
+// sum up; a larger stack's members count one by one.
 func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 	if s.Discover == nil {
 		return errors.New("no discovery")
@@ -640,7 +635,7 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 			s.log().Warn("setup catch-up reads no stack groups", "error", err)
 		}
 		for _, g := range groups {
-			if g.Stack && len(g.Members) >= reviewgroups.MinMembers {
+			if g.Stack && len(g.Members) >= reviewgroups.MinMembers && len(g.Members) <= reviewgroups.MaxMembers {
 				for _, number := range g.Members {
 					stacks[prKey{g.Repository, number}] = g.Members
 				}
@@ -828,7 +823,6 @@ func (s *Scheduler) Pass(ctx context.Context) {
 			paused[w.name] = true
 		}
 	}
-	s.passGroups(ctx, v, interrupted, refused, paused, now)
 }
 
 type outcome int

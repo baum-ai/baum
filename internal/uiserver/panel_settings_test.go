@@ -83,7 +83,12 @@ func TestPanelSettingsRoundTrip(t *testing.T) {
 	if got := call(server, "PUT", `{"agent":"claude-code"}`, 200); got.Model != "opus" {
 		t.Fatalf("the same agent dropped its model: %#v", got)
 	}
-	for _, invalid := range []string{`{"agent":"cursor"}`, `{"mode":"partial"}`, `{"position":"left"}`, `{"model":"a\nb"}`, `{"extra":1}`, `{} {}`} {
+	for _, side := range []string{"left", "right", "top"} {
+		if got := call(server, "PUT", `{"position":"`+side+`"}`, 200); got.Position != side {
+			t.Fatalf("position %s: %#v", side, got)
+		}
+	}
+	for _, invalid := range []string{`{"agent":"cursor"}`, `{"mode":"partial"}`, `{"position":"middle"}`, `{"model":"a\nb"}`, `{"extra":1}`, `{} {}`} {
 		call(server, "PUT", invalid, 400)
 	}
 	closeFirst()

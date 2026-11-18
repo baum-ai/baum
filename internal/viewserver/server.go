@@ -225,7 +225,7 @@ func New(opts Options) (*Server, error) {
 	}
 	s.review, s.paths = parseDocument(document)
 	s.files = locallink.CitedFiles(document)
-	s.document = WithHunkURLs(document)
+	s.document = Served(document)
 	s.etag = entityTag(s.document)
 	s.patches = &patchCache{jobs: map[string]*patchJob{}}
 	s.commits = &patchCache{jobs: map[string]*patchJob{}}
@@ -495,23 +495,27 @@ func contentType(name string) string {
 	return "application/octet-stream"
 }
 
-// WithHunkURLs is the document as it is served: each indexed hunk without a
-// github_url, as a locally stored document holds none, gets the one its
-// generation would have recorded (review.DeriveHunkURLs). A document whose
-// index cannot be read that way is served as given.
-func WithHunkURLs(document []byte) []byte {
-	derived, err := review.DeriveHunkURLs(document)
-	if err != nil {
-		return document
+// Served is the document as it is served: without the tiles of its sections
+// and risks, which a document stored by an earlier release may hold
+// (review.DropStoredTiles), and with each indexed hunk without a github_url,
+// as a locally stored document holds none, given the one its generation would
+// have recorded (review.DeriveHunkURLs). A document that cannot be read that
+// way is served as given.
+func Served(document []byte) []byte {
+	if dropped, err := review.DropStoredTiles(document); err == nil {
+		document = dropped
 	}
-	return derived
+	if derived, err := review.DeriveHunkURLs(document); err == nil {
+		document = derived
+	}
+	return document
 }
 
 // setDocument swaps the served bytes and tells every open event stream.
 func (s *Server) setDocument(document []byte) {
 	review, paths := parseDocument(document)
 	files := locallink.CitedFiles(document)
-	document = WithHunkURLs(document)
+	document = Served(document)
 	etag := entityTag(document)
 	s.mu.Lock()
 	s.document = document

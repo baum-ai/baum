@@ -737,12 +737,31 @@ it("lists each saved inbox, New inbox and Manage inboxes in Go to, with no Inbox
   await click(node.querySelector('[data-go-to] [role="option"]'));
   expect(search().get("inbox")).toBe("Acme");
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Acme");
-  // ⌘1 opens the first saved inbox.
-  await act(async () => {
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "1", code: "Digit1", ctrlKey: true, bubbles: true }),
-    );
-  });
+});
+
+it("returns to the inbox last seen with ⌘1, and to the first once that one is gone", async () => {
+  const pressOne = () =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "1", code: "Digit1", ctrlKey: true, bubbles: true }),
+      );
+      await settle();
+    });
+  // Nothing seen yet: the first saved inbox.
+  await render("?page=pulls");
+  await pressOne();
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+  // Acme seen, then another page: ⌘1 comes back to Acme, also after a reload.
+  await render("?inbox=Acme");
+  await render("?page=pulls");
+  await pressOne();
+  expect(location.search).toBe("?inbox=Acme");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Acme");
+  // Acme deleted: the first inbox again.
+  daemon = { revision: 2, inboxes: [reviews] };
+  await render("?page=pulls");
+  await pressOne();
   expect(location.search).toBe("?inbox=Reviews");
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
 });

@@ -5,7 +5,7 @@ import { parseFilePatch } from "../patch";
 import { humanize } from "../review-document";
 import { EM_DASH, formatDate, formatSHA, formatTime } from "./format";
 import { Item, JumpLink } from "./review-parts";
-import { CodeDiff, type CodeDiffFile } from "./review-tiles/code-diff";
+import { CodeDiff, type CodeDiffFile } from "./code-diff";
 import type { ReviewViewerActions } from "./review-viewer";
 import { Empty, Failed, Skeleton } from "./states";
 import { Badge, type BadgeTone, Button, CardHeader } from "./ui";

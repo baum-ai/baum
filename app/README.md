@@ -26,6 +26,31 @@ unchanged snapshot sets no new state. Every daemon answer the app polls is
 `no-store`, so none goes through the webview's HTTP cache: WebKitGTK 2.50's
 cache path leaks memory in its network process.
 
+`pnpm build:profile` builds the same pages for profiling: with
+source maps, React's profiling build, and a collector, `window.__baumPerf`
+(`src/perf.ts`, `src/perf-collector.ts`). `__baumPerf.snapshot()` returns, as
+JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
+
+- each navigation, with `content` (the first frame after React committed with
+  no `LoadingStatus` on screen) and `settled` (as content, with no request in
+  flight). Only the latest navigation completes: one left before it settled
+  is marked `superseded`, and a redirect (a replaced history entry) continues
+  the navigation on its way;
+- each key press and click, with `duration` from the input to the frame drawn
+  after it, `delay` before the first listener ran and `processing` until the
+  window's own listeners ran after React's;
+- the gaps between animation frames, bucketed, and those over 50 ms;
+- commits per `<Profiled>` region (`app`, `sidebar`, `main`, `session-panel`),
+  each tagged with the page shown;
+- requests made with `fetch`, to their headers, without the secret namespace;
+- the scenario's own `__baumPerf.mark(name)` markers, the DOM's element count
+  and, where the engine has it, the JS heap size.
+
+It measures by hand rather than with the Event Timing or Long Tasks APIs,
+which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
+things. Every other build leaves it out, and fails if `__baumPerf` reaches a
+chunk.
+
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
@@ -301,9 +326,15 @@ it: it waits, as "Waiting on #N", on the lowest of them, which merges first,
 and stays out of Ready to merge and Merge all. A stack's members stay out of **Merge all**, as a stack merges from its
 base up. The group's panel is laid out as a pull request's: the branch it
 merges into ("Stacked on main"), its members' lines, files and review times
-summed, a line when its review is missing or outdated, **Open the stack** (or group) as the default, the
+summed, a line when a group's review is missing or outdated, **Open the stack** (or group) as the default, the
 same risk card with the group review's main reason, What changed from the group
 review (`api/groups/<id>/document`: its summary and sections), and its members.
+A stack has no group review: its panel is its overview (`StackOverview`, the
+stack's page shows the same), whose risk card names the riskiest pull request
+(`overview.riskiest`, with its review's score and main reason, its title
+linking to its page) and whose What changed is the stack summary
+(`overview.summary`), or "Summary appears once two pull requests are
+reviewed." until two are, with no sections.
 Their list opens and closes from its head, which counts them, landed ones
 included ("7 pull requests"), and those merged (`landed`); it starts open. A
 stack's members run from its base up, its landed ones first, joined by a line,
@@ -638,7 +669,8 @@ the sheet read). Every page is reached from the keyboard. With the command key
 (their modifier can be changed in Settings › General: Command, Control or
 Option on a Mac, Ctrl or Alt elsewhere; the sidebar, its tooltips and the sheet
 show the chosen one, and the other app-wide keys keep the command key)
-(Inbox, which opens the first saved inbox, Sessions, Timeline, Pull requests,
+(Inbox, which opens the saved inbox last shown in this browser while it
+exists, else the first one, Sessions, Timeline, Pull requests,
 Analytics, Repositories, Jobs, Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
 `,` opens Settings, `K` opens **Go to** (`src/go-to.tsx`) and `R` refreshes
@@ -657,8 +689,8 @@ Inbox page to go to, as no page shows the whole queue: every word typed must mat
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes; it also
 offers **Open the session panel**. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
-`aria-keyshortcuts`. The backtick (`` ` ``) shows or hides the session panel
-anywhere but in a text field (see "Session panel").
+`aria-keyshortcuts`. Ctrl with the backtick (`` Ctrl+` ``) shows the session
+panel, or hides it from its composer, anywhere (see "Session panel").
 
 Tab (`useTabStops`) reaches every control without leaving the keys' model
 behind. On a page it moves by place: the sidebar is one stop, on the current
@@ -692,7 +724,7 @@ opened on the page itself goes to its list.
 
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
-are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
+are skipped), `g`/`Home` and `G`/`End` move it to the first and last row, `Enter` or `o` opens the focused pull request or group, `x` toggles
 its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
@@ -716,7 +748,8 @@ risk's details, a decision; `toggleActiveBlock`), and still presses a focused
 button or link. `Enter` opens the marked block where it opens somewhere (its
 `data-block-open` control, as a commit row's subject; `openActiveBlock`). The
 arrows then no longer scroll the review. Sessions, Jobs, Repositories and the Timeline share the list keys
-(`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
+(`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `g`/`Home` and
+`G`/`End` go to the first and last row, `Enter` or `o` opens
 the row (a session's transcript, a job's page, a repository's
 settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
@@ -1007,7 +1040,10 @@ right of its baum title, after Help, folds it to a rail of glyphs (56px) so
 the page gets the width, and pins it open again (`Sidebar` in
 `src/shell.tsx`). Folded, resting the mouse on the rail for a moment opens it
 over the page, which does not move, and it folds again shortly after the
-pointer leaves or when a link in it is chosen; keyboard focus in the rail
+pointer leaves or when a link in it is chosen. It folds at once when the
+pointer leaves the window or the window loses focus, since a pointer that
+leaves straight off the rail at the window's edge may never send the rail
+its own leave event; keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
@@ -1171,7 +1207,7 @@ across windows and restarts; a failed save says so with **Retry**.
 
 Inboxes are made and changed on three pages that sit under Inbox in the sidebar
 but are not sidebar pages of their own, so they have no number key, and ⌘1 opens
-the first saved inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
+the inbox last shown, or the first saved inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
 right click on the Inbox heading in the sidebar offers **New inbox…** and **Manage
 inboxes…**; a right click on an inbox's row, like its ⋯, offers **Edit inbox**
 and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull request in
@@ -1251,6 +1287,10 @@ the page and empty otherwise, the removed rows struck through and fading out
   **Show count in the sidebar**, an on-or-off choice; a save sends the whole
   list in its new order. It has no delete: an inbox is deleted from its row in the
   sidebar or its edit page, neither of which deletes the last one.
+
+Inbox and Pull requests list 30 items per page. A review group or stack counts
+as one item and keeps its members with it. Filters apply before pagination,
+and changing the filter or tab returns to the first page.
 
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
@@ -1413,9 +1453,15 @@ the members of expanded groups. The group row shows the group's risk, its name
 with a "Group of N" badge, "repository · #n, …" and, when it applies,
 "Generating group review", "Group review outdated" or "No group review yet". A
 stack group, which baum made for stacked pull requests, shows the hosted
-list's stack icon and member count before its name instead of the badge, and
-"Stack" instead of "Review group" on its page.
-The group page (`?group=<id>`) is the shared viewer with the group's name as
+list's stack icon and member count before its name instead of the badge, its
+riskiest pull request's risk, and none of the group review lines.
+A stack's page (`?group=<id>` of a stack group) is its overview, under a bar
+with its name, the way back and Refresh: the Stack chip, repository and count,
+"Stacked on", the size and review time summed, Risk, What changed and the
+pull requests, landed ones first, each with its review status and risk and
+linking to its own review page. It has no combined review, Generate, Rename
+or Delete; a stack of any size has one.
+The page of a group a person made (`?group=<id>`) is the shared viewer with the group's name as
 heading, member labels on sections, and, folded to a line under the title ("7
 pull requests · 4 merged", landed members counted), the members (state and
 their own review status, each linking to its page) with Rename, Add pull
@@ -1736,9 +1782,9 @@ The jobs list and the PR page mark an automatic job "Started
 automatically because new commits were pushed" (or "because your review was
 requested", "because the pull request was marked ready for review", or
 "Started automatically again" for the one retry of a run a daemon stop or
-restart interrupted); it is cancelled like any other. A stack group's review,
-which the daemon generates with its members' automatic reviews, carries no
-such note, like a group review generated by hand. Drafts get no automatic
+restart interrupted); it is cancelled like any other. A stack gets no
+automatic group review: its page's summary follows its members' reviews.
+Drafts get no automatic
 review, but Generate works on them as usual. `automatic` SSE events (a notice,
 and every repository's status after a settings change in any window) reread
 the automatic state, settings, clones and pull requests.
@@ -2344,17 +2390,46 @@ The session panel (`src/session-panel.tsx`) is a real Claude Code or Codex
 session the person opens from any page, drawn as a drop-down terminal over the
 page's panel: it slides in from the foot of the window (or its top, in
 Settings), as wide as the page, and is resized by dragging its grip or with
-`↑` and `↓` on it. It stays open across navigation; whether it is open, its
-height and the conversation it shows are kept in this window's storage
+`↑` and `↓` on it. Opened from the left or the right of the window instead
+(also in Settings), it is as tall as the window and sits beside the page's
+panel, which narrows to make room; its grip is its edge towards the page,
+dragged or moved with `←` and `→`, and it never leaves the page less than
+320 px; a window too narrow for both at their narrowest (320 px each) opens it
+from the foot until it is wide enough again. Its width is kept apart from its
+height. It stays open across
+navigation; whether it is open, its height, its width and the conversation it
+shows are kept in this window's storage
 (`baum.session-panel.v1`, `src/session-panel-state.ts`, which any page can
-open it through), as the sidebar's fold is. The sidebar's **Session** button,
-the backtick key (`PANEL_KEY` in `src/shortcuts.tsx`: `` ` ``, or the key in
-its place on a layout where it is a dead key; anywhere but in a text field;
-under Escape, where a drop-down terminal's key is, and taken by nothing else)
-and **Open the session panel** in Go to (⌘K) show or hide it. Escape in it
-hides it; in a field with something typed, the first Escape gives the keys to
-the panel instead and the next hides it, and the page under it never gets
-either (a pull request's page would go back to its list). Opened, its composer
+open it through), as the sidebar's fold is. The sidebar's **Session** button
+and **Open the session panel** in Go to (⌘K) show or hide it. Its key
+(`PANEL_KEY` in `src/shortcuts.tsx`: `` Ctrl+` ``, Ctrl on a Mac too, or Ctrl
+with the key in the backtick's place on a layout where it is a dead key) works
+anywhere, a text field included, but not under a dialog: with the panel
+hidden it shows it, with the panel open and the keys elsewhere it puts them
+in the composer, and from the composer it hides the panel. Escape in a field
+of the panel, the composer included, empty or not, gives the keys to the
+panel, and Escape anywhere else in the panel gives them back to the page (to
+what had them before the panel took them), the panel staying open; the page
+under it never gets either (a pull request's page would go back to its list). While
+the panel has the keys and none of its fields does, which its edge shows in
+the focus colour, the keys read its session and the page under it gets no
+key that types a character, but for `?`: `j` and `k` go a message at a time,
+marking it as the transcript page marks its own, `g` and `G` go to the
+session's start and end, `↑`, `↓`, Page Up and Page Down scroll it, `Space`
+shows all of the marked message or less again, `a` opens or closes its
+turn's agent activity, `i` or `Enter` go back to the composer, and `q` hides
+the panel. Page Up
+and Page Down scroll the session from the composer too. A click in the page
+gives the page its keys back. The sheet lists them under "Session panel",
+and while Alt is held (with the app's other hints) a line at the panel's foot
+names the ones that work where the keys are: the reading keys, or in a field
+`Esc`, Page Up and Down and the panel's key; the page's own key bar gives way
+while the keys are the panel's. The composer reads as the session's last
+line: taking the keys, the panel marks the latest message in view; `↑` with
+the caret at the composer's very start leaves it for the session as `Esc`
+does, and `j` past the last message, or `↓` at the session's end, goes back
+to it.
+Opened, its composer
 takes the keys; hidden, they go back to what had them before. The daemon's
 routes are under `/api/console/` (see "Session panel conversations" in
 `oss/ARCHITECTURE.md`; `src/console-api.ts`).
@@ -2704,7 +2779,7 @@ sidebar order, stopping at the first and the last. Typing fields and dialogs kee
 Ctrl+K always opens Go to.
 Enter is drawn as ↵ in button shortcut hints.
 
-On PR and stack review pages, `]` toggles the right-hand Details/Activity
+On PR and group review pages, `]` toggles the right-hand Details/Activity
 sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
 Opening it with `]` gives it the keys: `h` and `l` then step through Details,
 Activity and Comments, until Esc (or a click in the review) gives them back.

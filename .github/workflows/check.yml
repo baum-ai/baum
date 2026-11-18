@@ -155,8 +155,7 @@ jobs:
         id: install
         run: pnpm install --frozen-lockfile
 
-      # Lint, format, typecheck (with the tile types generated from
-      # ../schema/review-1.json) and unit tests.
+      # Lint, format, typecheck and unit tests.
       - name: Check
         run: pnpm check
 
@@ -201,9 +200,9 @@ jobs:
 
   viewer-dist:
     # Every binary embeds internal/viewer/dist and internal/localapp/dist,
-    # which only a release commit carries. Builds both, fails when the
-    # precompiled tile validators differ from the fresh build, tests the built
-    # apps and hands them to the clean-install jobs.
+    # which only a release commit carries. Builds both, fails when a release
+    # commit's built apps differ from the fresh build, tests the built apps and
+    # hands them to the clean-install jobs.
     name: Viewer bundle is fresh
     runs-on: ubuntu-24.04
     timeout-minutes: 10

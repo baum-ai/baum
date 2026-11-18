@@ -1,5 +1,7 @@
 import { useMemo, type RefObject } from "react";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
+import { HunkPatchProvider } from "@baum/viewer/components/hunk-evidence";
+import { ReviewSection } from "@baum/viewer/components/review-section";
 import { ReviewSummary } from "@baum/viewer/components/review-summary";
 import { reviewRefs, type ReviewDocument } from "@baum/viewer/review-document";
 import { Notice } from "../shell";
@@ -35,10 +37,7 @@ export function TilePane({
         <Notice>
           Review v{snapshot.review.version} can't be shown as tiles. This is its full review.
         </Notice>
-        <ReviewSummary
-          document={snapshot}
-          onSelectSection={(id) => context.select({ kind: "section", id })}
-        />
+        <FullReviewPane snapshot={snapshot} historical={historical} context={context} />
       </>
     );
   const place = placeOf(context.selection, doc);
@@ -60,6 +59,49 @@ export function TilePane({
       back={() => leaveTile(url)}
       onShown={historical ? undefined : () => rememberRead(memory, place.tile.id)}
     />
+  );
+}
+
+/** The full review's pane for a snapshot that can't be shown as tiles: the
+ *  selected section (or the section of the selected risk), else the summary. */
+function FullReviewPane({
+  snapshot,
+  historical,
+  context,
+}: {
+  snapshot: ReviewDocument;
+  historical: boolean;
+  context: ReviewPlaceContext;
+}) {
+  const selectSection = (id: string) => context.select({ kind: "section", id });
+  const { selection } = context;
+  const sectionId =
+    selection.kind === "section"
+      ? selection.id
+      : selection.kind === "risk"
+        ? selection.section
+        : null;
+  if (sectionId === null)
+    return <ReviewSummary document={snapshot} onSelectSection={selectSection} />;
+  const section = snapshot.sections.find((item) => item.id === sectionId);
+  if (!section)
+    return (
+      <p className="text-base text-secondary">
+        This section did not exist in review v{snapshot.review.version}.
+      </p>
+    );
+  return (
+    <HunkPatchProvider source={context.hunkPatches}>
+      <ReviewSection
+        document={snapshot}
+        section={section}
+        onSelectSection={selectSection}
+        loadVersion={context.loadVersion}
+        activeVersions={context.sectionHistory?.active.get(section.id)}
+        idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}
+        onRetryDetails={historical ? undefined : context.onRetryDetails}
+      />
+    </HunkPatchProvider>
   );
 }
 
