@@ -149,6 +149,10 @@ const (
 // the checks fail.
 var failing = map[string]bool{"failure": true, "timed_out": true, "startup_failure": true, "action_required": true, "error": true}
 
+// rerunnable says whether a GitHub Actions run that ended with conclusion can
+// be re-run from the app: a failing one, or one that was cancelled.
+func rerunnable(conclusion string) bool { return failing[conclusion] || conclusion == "cancelled" }
+
 // FailingChecks lists the head commit's failing check runs (their latest
 // attempt) and commit statuses, at most 20, with their output bounded.
 func FailingChecks(ctx context.Context, r Reader, repository github.Repository, sha string) ([]Check, error) {
@@ -293,8 +297,8 @@ func readStatuses(ctx context.Context, r Reader, path string) (statuses []commit
 // maxStatusPages of statuses, so a head with more has more checks than are
 // returned; total is how many GitHub reports (never fewer than returned).
 // The caller sorts and caps the list. A commit status that is pending is
-// in_progress, and any other is completed; JobID is set only for a failing
-// GitHub Actions run, as in FailingChecks.
+// in_progress, and any other is completed; JobID is set only for a failing or
+// cancelled GitHub Actions run, which the app can re-run.
 func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha string) (checks []Check, total int, err error) {
 	workflows := workflowNames{ctx: ctx, r: r, repository: repository, sha: sha}
 	path := repositoryPath(repository) + "/commits/" + url.PathEscape(sha)
@@ -328,7 +332,7 @@ func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha 
 			}
 			if check.Status == "completed" {
 				check.Conclusion = run.Conclusion
-				if actions && failing[run.Conclusion] {
+				if actions && rerunnable(run.Conclusion) {
 					check.JobID = run.ID
 				}
 			}

@@ -584,6 +584,7 @@ func TestAllChecks(t *testing.T) {
 		`{"id":24,"name":"deploy","status":"waiting","conclusion":null,"app":{"slug":"github-actions"},"output":{}}`,
 		`{"id":25,"name":"ci/circle","status":"completed","conclusion":"timed_out","app":{"slug":"circleci"},"output":{}}`,
 		`{"id":26,"name":"docs","status":"completed","conclusion":"skipped","app":{"slug":"github-actions"},"output":{}}`,
+		`{"id":27,"name":"e2e","status":"completed","conclusion":"cancelled","app":{"slug":"github-actions"},"output":{}}`,
 	}, statuses: []string{
 		`{"context":"ci/travis","state":"pending","description":"Waiting","target_url":"https://travis.example/1"}`,
 		`{"context":"ci/jenkins","state":"error","description":"Crashed"}`,
@@ -596,13 +597,14 @@ func TestAllChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := CheckList{HeadSHA: "abc", Total: 9, Checks: []CheckStatus{
+	want := CheckList{HeadSHA: "abc", Total: 10, Checks: []CheckStatus{
 		{Name: "ci/circle", Status: "completed", Conclusion: "timed_out", ID: 25},
 		{Name: "ci/jenkins", Status: "completed", Conclusion: "error", Title: "Crashed"},
 		{Name: "test", Status: "completed", Conclusion: "failure", Title: "2 tests failed", URL: "https://github.com/acme/app/runs/21", JobID: 21, ID: 21, HasLog: true},
 		{Name: "build", Status: "in_progress", ID: 23},
 		{Name: "ci/travis", Status: "in_progress", Title: "Waiting", URL: "https://travis.example/1"},
 		{Name: "deploy", Status: "queued", ID: 24},
+		{Name: "e2e", Status: "completed", Conclusion: "cancelled", JobID: 27, ID: 27, HasLog: true},
 		{Name: "ci/ok", Status: "completed", Conclusion: "success"},
 		{Name: "docs", Status: "completed", Conclusion: "skipped", ID: 26},
 		{Name: "lint", Status: "completed", Conclusion: "success", ID: 22, HasLog: true},
@@ -716,8 +718,10 @@ func TestConflictsNeedsAClone(t *testing.T) {
 }
 
 func TestRerunJob(t *testing.T) {
-	failing := `{"id":21,"name":"test","conclusion":"failure","app":{"slug":"github-actions"},"output":{}}`
-	other := `{"id":23,"name":"ci/circle","conclusion":"failure","app":{"slug":"circleci"},"output":{}}`
+	failing := `{"id":21,"name":"test","status":"completed","conclusion":"failure","app":{"slug":"github-actions"},"output":{}}`
+	cancelled := `{"id":21,"name":"test","status":"completed","conclusion":"cancelled","app":{"slug":"github-actions"},"output":{}}`
+	passed := `{"id":21,"name":"test","status":"completed","conclusion":"success","app":{"slug":"github-actions"},"output":{}}`
+	other := `{"id":23,"name":"ci/circle","status":"completed","conclusion":"failure","app":{"slug":"circleci"},"output":{}}`
 	cases := []struct {
 		name   string
 		fake   fakeGitHub
@@ -728,7 +732,9 @@ func TestRerunJob(t *testing.T) {
 		{"reruns the job", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}}, 21, "", 1},
 		{"head moved", fakeGitHub{head: "new", canPush: true, checks: []string{failing}}, 21, HeadMoved, 0},
 		{"cannot push", fakeGitHub{head: "abc", checks: []string{failing}}, 21, Forbidden, 0},
+		{"reruns a cancelled job", fakeGitHub{head: "abc", canPush: true, checks: []string{cancelled}}, 21, "", 1},
 		{"not a failing job", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}}, 99, NotFound, 0},
+		{"a passing job", fakeGitHub{head: "abc", canPush: true, checks: []string{passed}}, 21, NotFound, 0},
 		{"another app's check", fakeGitHub{head: "abc", canPush: true, checks: []string{other}}, 23, NotFound, 0},
 		{"refused by GitHub", fakeGitHub{head: "abc", canPush: true, checks: []string{failing}, rerunStatus: map[int]int{21: 403}, rerunBody: map[int]string{21: `{"message":"Resource not accessible"}`}}, 21, Forbidden, 1},
 	}
