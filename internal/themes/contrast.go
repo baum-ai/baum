@@ -10,9 +10,7 @@ type Warning struct {
 	Ratio      float64 `json:"ratio"`
 }
 
-// pairs are the foreground and background tokens that must stay readable. The
-// text on --action-primary is --text-inverse, which themes cannot set, so it
-// follows the base's palette.
+// pairs are the foreground and background tokens that must stay readable.
 var pairs = [][2]string{
 	{"--text-primary", "--surface-page"},
 	{"--text-secondary", "--surface-page"},

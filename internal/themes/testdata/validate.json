@@ -39,6 +39,6 @@
   {"token": "color-ink", "value": "#fff", "ok": false},
   {"token": "", "value": "#fff", "ok": false},
   {"token": "--surface-page;}", "value": "#fff", "ok": false},
-  {"token": "--text-inverse", "value": "#fff", "ok": false},
+  {"token": "--text-inverse", "value": "#fff", "ok": true},
   {"token": "--shadow-card", "value": "#fff", "ok": false}
 ]

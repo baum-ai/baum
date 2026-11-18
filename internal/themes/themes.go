@@ -43,7 +43,7 @@ var Tokens = map[string]bool{
 	"--series-caramel": true, "--series-sage": true, "--series-espresso": true,
 
 	"--surface-page": true, "--surface-card": true, "--surface-canvas": true, "--surface-popup": true,
-	"--text-primary": true, "--text-secondary": true,
+	"--text-primary": true, "--text-secondary": true, "--text-inverse": true,
 	"--border-default": true, "--border-focus": true,
 	"--action-primary": true, "--action-primary-hover": true,
 	"--nav-hover": true, "--nav-selected": true,
