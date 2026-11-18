@@ -319,6 +319,21 @@ afterEach(async () => {
 });
 // The agent sessions the daemon says are running.
 let liveList: LiveSession[] = [];
+it("pages a saved inbox at 30 items and selects a row on the next page", async () => {
+  entries = Array.from({ length: 31 }, (_, i) => requested(i + 1));
+  await act(async () => root.render(<App />));
+  const rows = () => node.querySelectorAll(".upnext-list-body [data-row]");
+  const pager = () => node.querySelector('[aria-label="Inbox pagination"]')!;
+  expect(rows()).toHaveLength(30);
+  expect(pager().textContent).toContain("1–30 of 31");
+  await act(async () => pager().querySelectorAll("button")[1]!.click());
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]!.getAttribute("data-focused")).toBe("true");
+  expect(pager().textContent).toContain("31–31 of 31");
+  await act(async () => pager().querySelector("button")!.click());
+  expect(rows()).toHaveLength(30);
+});
+
 const render = async () => {
   await act(async () => root.unmount());
   root = createRoot(node);

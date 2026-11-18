@@ -76,6 +76,7 @@ import {
 } from "./inboxes";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./context-menu";
+import { ListPagination, useListPage } from "./list-pagination";
 import { ListSection, type ListTone } from "./list";
 import { useDeadlineNow } from "./live";
 import { peekHref } from "./sessions";
@@ -1285,7 +1286,38 @@ export function UpNextPage({
       ),
     },
   ];
-  const groups = withGroups(sections, reviewGroups).filter((group) => group.lines.length > 0);
+  const allGroups = withGroups(sections, reviewGroups);
+  const allLines = allGroups.flatMap((group) => group.lines);
+  const activeCount = allLines.length;
+  const snoozedCount = snoozedOpen ? snoozed.length : 0;
+  const pagination = useListPage(
+    JSON.stringify([scope.id, query]),
+    activeCount + snoozedCount + (doneOpen ? cleared.length : 0),
+    allLines.findIndex(
+      (line) =>
+        line.key === chosen || (isGroup(line) && line.members.some((row) => row.key === chosen)),
+    ),
+  );
+  const openHistory = (
+    open: boolean,
+    setOpen: (open: boolean) => void,
+    offset: number,
+    length: number,
+  ) => {
+    setOpen(!open);
+    if (!open && (offset >= pagination.end || offset + length <= pagination.start)) {
+      pagination.reveal(offset);
+      setChosen(null);
+    }
+  };
+  let offset = 0;
+  const groups = allGroups.flatMap((group) => {
+    const lines = pagination.slice(group.lines, offset);
+    offset += group.lines.length;
+    return lines.length ? [{ ...group, lines, allLines: group.lines }] : [];
+  });
+  const snoozedPage = pagination.slice(snoozed, activeCount);
+  const donePage = pagination.slice(cleared, activeCount + snoozedCount);
   // A group shows its members when opened, or while one of them is chosen.
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const groupOpen = (line: GroupRow) =>
@@ -1713,7 +1745,7 @@ export function UpNextPage({
               // members stay out of Merge all.
               const ready =
                 group.id === "merge"
-                  ? group.lines
+                  ? group.allLines
                       .flatMap((line) =>
                         isGroup(line) ? (line.group.stack ? [] : line.members) : [line],
                       )
@@ -1743,7 +1775,7 @@ export function UpNextPage({
                 <ListSection
                   key={group.id}
                   title={group.title}
-                  count={rowsOf(group.lines).length}
+                  count={rowsOf(group.allLines).length}
                   tone={GROUP_TONES[group.id]}
                   action={
                     ready.length > 1 ? (
@@ -1791,10 +1823,10 @@ export function UpNextPage({
                 title="Snoozed"
                 count={snoozed.length}
                 collapsed={!snoozedOpen}
-                toggle={() => setSnoozedOpen((open) => !open)}
+                toggle={() => openHistory(snoozedOpen, setSnoozedOpen, activeCount, snoozed.length)}
                 listClassName="upnext-snoozed"
               >
-                {snoozed.map((item) => (
+                {snoozedPage.map((item) => (
                   <li
                     key={item.key}
                     className="list-row"
@@ -1823,10 +1855,12 @@ export function UpNextPage({
                 count={cleared.length}
                 tone="positive"
                 collapsed={!doneOpen}
-                toggle={() => setDoneOpen((open) => !open)}
+                toggle={() =>
+                  openHistory(doneOpen, setDoneOpen, activeCount + snoozedCount, cleared.length)
+                }
                 listClassName="upnext-done"
               >
-                {cleared.map((item) => (
+                {donePage.map((item) => (
                   <li
                     key={item.key}
                     title={`${item.repository} #${item.number}`}
@@ -1862,6 +1896,15 @@ export function UpNextPage({
               </ListSection>
             ) : null}
           </div>
+          <ListPagination
+            label="Inbox pagination"
+            pagination={pagination}
+            onMove={() => {
+              setChosen(null);
+              last.current = 0;
+              if (list.current) list.current.scrollTop = 0;
+            }}
+          />
           <KeyBar place="inbox" className="upnext-keys" />
         </div>
         <div ref={detail} className="upnext-detail">
