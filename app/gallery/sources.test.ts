@@ -175,23 +175,27 @@ describe("scanSources", () => {
     ).toEqual(["baum/reviews/0a1b2c · acme/api#1 v1"]);
   });
 
-  it("does not read a store as it is while a rollback journal is beside it", () => {
-    const directory = join(root, "clone/.git/baum/reviews");
-    store("clone/.git/baum/reviews/versions.sqlite", [["acme/api", 1, 1, review, null]], {
-      wal: true,
-    }).close();
-    writeFileSync(join(directory, "versions.sqlite-journal"), "");
-    chmodSync(directory, 0o555);
-    try {
-      const scan = scanSources({ stores: root });
-      expect(scan.documents).toEqual([]);
-      expect(scan.problems).toEqual([
-        expect.stringMatching(/^store clone: ERR_SQLITE_ERROR \(.+\)$/),
-      ]);
-    } finally {
-      chmodSync(directory, 0o755);
-    }
-  });
+  // Root ignores the directory's read-only mode, so the plain open succeeds.
+  it.skipIf(process.getuid?.() === 0)(
+    "does not read a store as it is while a rollback journal is beside it",
+    () => {
+      const directory = join(root, "clone/.git/baum/reviews");
+      store("clone/.git/baum/reviews/versions.sqlite", [["acme/api", 1, 1, review, null]], {
+        wal: true,
+      }).close();
+      writeFileSync(join(directory, "versions.sqlite-journal"), "");
+      chmodSync(directory, 0o555);
+      try {
+        const scan = scanSources({ stores: root });
+        expect(scan.documents).toEqual([]);
+        expect(scan.problems).toEqual([
+          expect.stringMatching(/^store clone: ERR_SQLITE_ERROR \(.+\)$/),
+        ]);
+      } finally {
+        chmodSync(directory, 0o755);
+      }
+    },
+  );
 
   it("opens a WAL store on a read-only directory, with and without its -wal file", () => {
     const directory = join(root, "clone/.git/baum/reviews");

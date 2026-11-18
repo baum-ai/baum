@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { type Dirent, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  type Dirent,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
@@ -48,6 +57,22 @@ function stampOf(path: string): string | null {
     return `${mtimeMs}:${size}`;
   } catch {
     return null;
+  }
+}
+
+/** SQLite's file change counter (header bytes 24–27), which every commit
+ *  outside WAL mode bumps: a write can leave a store's size and coarse
+ *  modification time as they were. */
+function changeCounter(path: string): string {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const header = Buffer.alloc(4);
+    return readSync(fd, header, 0, 4, 24) === 4 ? String(header.readUInt32BE(0)) : "";
+  } catch {
+    return "";
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -412,7 +437,12 @@ export function scanSources(directories: SourceDirectories): Scan {
       const label = storeLabel(relative(root, path));
       const stamp = stampOf(path);
       if (!stamp) continue;
-      const fullStamp = [stamp, stampOf(`${path}-wal`), stampOf(`${path}-journal`)].join(":");
+      const fullStamp = [
+        stamp,
+        changeCounter(path),
+        stampOf(`${path}-wal`),
+        stampOf(`${path}-journal`),
+      ].join(":");
       stamps.push(`store:${label}:${fullStamp}`);
       seenStores.add(path);
       let state = stores.get(path);
