@@ -24,7 +24,7 @@ own instructions, and replies with its part alone:
   `relations`, and the sections, each with only its `id`, `title`, `kind`,
   `hunks` and `assessment`.
 - **Section details**, given the accepted outline: each section's `summary`,
-  `attention`, `risks`, `evidence`, `blocks` (images among them) and `tiles`.
+  `attention`, `risks`, `evidence` and `blocks` (images among them).
 - **Context**, given the accepted outline, at the same time as the section
   details: the overview's `context`, how the change fits into the codebase
   around it.

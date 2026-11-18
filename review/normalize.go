@@ -22,14 +22,12 @@ import (
 // identifiers take their prefix and spelling, hunk lists lose unknown hunks
 // and repeats within a section, empty anchors other than a risk's or a
 // behavior step's default to the enclosing section's hunks, attention references are resolved, evidence
-// whose anchors cannot carry its status becomes asserted, and code
-// sources get their SHA, review version and excerpt lines from the bundle,
-// and the summary context loses empty parts and references to files the
+// whose anchors cannot carry its status becomes asserted, and the summary
+// context loses empty parts and references to files the
 // checkout does not hold. What it cannot decide stays for validation to report.
 type authoredNormalizer struct {
 	defs     map[string]any
 	bundle   *bundlepkg.Bundle
-	version  int
 	hunks    map[string]bundlepkg.Hunk
 	findings []string
 	// probes counts the taken suffixes dedupe tried, which tests read to
@@ -47,10 +45,7 @@ func normalizeAuthored(value any, strict map[string]any, bundle *bundlepkg.Bundl
 		return value, nil
 	}
 	defs, _ := strict["$defs"].(map[string]any)
-	n := &authoredNormalizer{defs: defs, bundle: bundle, version: 1, hunks: map[string]bundlepkg.Hunk{}}
-	if bundle.Previous != nil {
-		n.version += bundle.Previous.Version
-	}
+	n := &authoredNormalizer{defs: defs, bundle: bundle, hunks: map[string]bundlepkg.Hunk{}}
 	for _, h := range bundle.Diff {
 		n.hunks[h.ID] = h
 	}
@@ -506,7 +501,6 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 		if !ok {
 			continue
 		}
-		location := "section " + fmt.Sprint(section["id"])
 		// A title of only spaces is left empty, for validation to reject.
 		if title, ok := section["title"].(string); ok {
 			section["title"] = strings.TrimSpace(title)
@@ -549,8 +543,6 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 		// the risk rates in the stored statistics, so they are never guessed.
 		for _, risk := range jsonObjects(section["risks"]) {
 			items[fmt.Sprint(risk["id"])] = true
-			riskAnchors, _ := risk["anchors"].([]any)
-			n.tiles(location+" risk "+fmt.Sprint(risk["id"]), risk["tiles"], riskAnchors)
 		}
 		for _, evidence := range jsonObjects(section["evidence"]) {
 			items[fmt.Sprint(evidence["id"])] = true
@@ -591,7 +583,6 @@ func (n *authoredNormalizer) sections(root map[string]any) {
 				fillAnchors(block, "source", anchors)
 			}
 		}
-		n.tiles(location, section["tiles"], anchors)
 		// References are resolved with or without their prefix; one that names
 		// no item stays, so validation asks for the repair instead of the
 		// attention text being lost.
@@ -731,133 +722,4 @@ func jsonObjects(value any) []map[string]any {
 		}
 	}
 	return result
-}
-
-// tiles resolves each code source: the revision named by role becomes its
-// SHA, a missing review_version becomes this review's, and an excerpt named
-// by hunk headers gets its lines from the bundle's comparison. Inherited
-// sources from earlier reviews are carried unchanged.
-func (n *authoredNormalizer) tiles(location string, value any, fallbackAnchors []any) {
-	for _, tile := range jsonObjects(value) {
-		fillAnchors(tile, "anchors", fallbackAnchors)
-		for i, source := range jsonObjects(tile["code"]) {
-			where := fmt.Sprintf("%s tile %v source %d (%v)", location, tile["id"], i+1, source["path"])
-			switch source["revision"] {
-			case tileRevisionHead:
-				source["revision"] = n.bundle.PullRequest.HeadSHA
-			case tileRevisionMergeBase:
-				source["revision"] = n.bundle.PullRequest.MergeBaseSHA
-			}
-			version, _ := source["review_version"].(float64)
-			if version <= 0 {
-				source["review_version"] = n.version
-				version = float64(n.version)
-			}
-			if int(version) != n.version {
-				continue
-			}
-			path, _ := source["path"].(string)
-			root := ""
-			switch source["revision"] {
-			case n.bundle.PullRequest.HeadSHA:
-				root = "head"
-			case n.bundle.PullRequest.MergeBaseSHA:
-				root = "merge-base"
-			}
-			if root != "" {
-				n.deriveExcerpt(where, source, path, root)
-			}
-		}
-	}
-}
-
-func (n *authoredNormalizer) deriveExcerpt(where string, source map[string]any, path, root string) {
-	diff, _ := source["diff"].(map[string]any)
-	hunks := jsonObjects(diff["hunks"])
-	if len(hunks) == 0 {
-		return
-	}
-	available := comparisonHunks(n.bundle, path, root)
-	// A hunk that cannot be derived is dropped with its finding, so the
-	// strict contract does not report the same excerpt a second time.
-	kept := make([]any, 0, len(hunks))
-	for i, hunk := range hunks {
-		header, _ := hunk["header"].(string)
-		old, oldCount, next, newCount, ok := tileHunkRange(header)
-		if !ok {
-			n.findings = append(n.findings, fmt.Sprintf("%s: hunk %d header %q is not of the form @@ -old,count +new,count @@", where, i+1, header))
-			continue
-		}
-		// An excerpt is a run of adjacent lines from one patch hunk. Removals
-		// are placed by old numbers and additions by new ones, so a selection
-		// touching two hunks, or leaving a hole inside one, would splice lines
-		// the comparison never showed together.
-		var selected []tileLine
-		sources := 0
-		adjacent := true
-		for _, patchHunk := range available {
-			var picked []tileLine
-			first, last := -1, -1
-			for j, line := range patchHunk {
-				inOld := line.Kind != "add" && line.Old >= old && line.Old < old+oldCount
-				inNew := line.Kind != "remove" && line.New >= next && line.New < next+newCount
-				if line.Kind == "context" && inOld && inNew || line.Kind == "remove" && inOld || line.Kind == "add" && inNew {
-					picked = append(picked, line)
-					if first < 0 {
-						first = j
-					}
-					last = j
-				}
-			}
-			if len(picked) > 0 {
-				sources++
-				selected = picked
-				adjacent = last-first+1 == len(picked)
-			}
-		}
-		switch {
-		case sources == 0:
-			n.findings = append(n.findings, fmt.Sprintf("%s: hunk %d header %q selects no line of the supplied comparison for this path; use a header inside one of the bundle's patch hunks", where, i+1, header))
-			continue
-		case sources > 1:
-			n.findings = append(n.findings, fmt.Sprintf("%s: hunk %d header %q selects lines from more than one patch hunk; use one header per patch hunk", where, i+1, header))
-			continue
-		case !adjacent:
-			n.findings = append(n.findings, fmt.Sprintf("%s: hunk %d header %q selects lines that are not adjacent in the comparison; use a header covering one run of lines", where, i+1, header))
-			continue
-		}
-		hunk["header"], hunk["lines"] = excerptFromLines(old, next, selected)
-		kept = append(kept, hunk)
-	}
-	if len(kept) == 0 {
-		delete(source, "diff")
-		return
-	}
-	diff["hunks"] = kept
-}
-
-// excerptFromLines writes the header the selected lines actually cover and the
-// lines in the contract's shape.
-func excerptFromLines(oldStart, newStart int, lines []tileLine) (string, []any) {
-	oldCount, newCount := 0, 0
-	encoded := make([]any, 0, len(lines))
-	for _, line := range lines {
-		item := map[string]any{"kind": line.Kind, "text": line.Text}
-		if line.Kind != "add" {
-			if oldCount == 0 {
-				oldStart = line.Old
-			}
-			oldCount++
-			item["old_line"] = line.Old
-		}
-		if line.Kind != "remove" {
-			if newCount == 0 {
-				newStart = line.New
-			}
-			newCount++
-			item["new_line"] = line.New
-		}
-		encoded = append(encoded, item)
-	}
-	return fmt.Sprintf("@@ -%d,%d +%d,%d @@", oldStart, oldCount, newStart, newCount), encoded
 }

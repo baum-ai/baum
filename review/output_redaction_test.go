@@ -20,15 +20,10 @@ const (
 	leakedDatabaseURL = "postgres://admin:Sup3rS3cretPassw0rd@db.internal.example.com:5432/app"
 	leakedProviderKey = "sk-" + "ant-api03-Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4zAb7dEf0hIj3kLm6nOp9qRs2tUv5wXy8zAb1dEf4hIj7kLm0nOp3qRs6tUv9wXy2zAb5dEf8hIjAA"
 	redactionHeadSHA  = "3f786850e387550fdab836ed7e6dc881de23001b"
-	redactionBaseSHA  = "89e6c98d92887913cadf06b2adb97f26cde4849b"
 	// plantedSecret is a syntactically valid (but fake) GitHub personal access
 	// token.
 	plantedSecret = "ghp" + "_JTeKdNnFRIBXuDL7DxtpYlSXpfKtHF4vUCsM"
 )
-
-// The patch line carries a token, which bundle redaction masks before the
-// agent sees it.
-var redactionPatch = "@@ -1,1 +1,1 @@\n-token := \"" + plantedSecret + "\"\n+token := os.Getenv(\"TOKEN\")"
 
 func testRedactor(t *testing.T) *bundlepkg.Redactor {
 	t.Helper()
@@ -41,18 +36,7 @@ func newTestOutputRedactor(t *testing.T, redactor *bundlepkg.Redactor, bundle *b
 	t.Helper()
 	v, err := sharedValidator()
 	checkNoError(t, err)
-	o, err := NewOutputRedactor(v, redactor, bundle, checkout)
-	checkNoError(t, err)
-	return o
-}
-
-// maskedTokenLine is the removed patch line as the redacted bundle shows it.
-func maskedTokenLine(t *testing.T) string {
-	t.Helper()
-	masked, count, err := testRedactor(t).RedactString(context.Background(), "token := \""+plantedSecret+"\"")
-	checkNoError(t, err)
-	checkEqual(t, 1, count)
-	return masked
+	return NewOutputRedactor(v, redactor, bundle, checkout)
 }
 
 func requireNoLeakedSecret(t *testing.T, where string, body []byte) {
@@ -100,29 +84,6 @@ func keyedAnchors() []any {
 	}
 }
 
-// A document the validator never normalized may carry keys the contract does
-// not name; only the text of an excerpt line the bundle supplies is kept.
-func TestUnknownKeysUnderBundleExcerptAreMasked(t *testing.T) {
-	redactor := testRedactor(t)
-	bundle := &bundlepkg.Bundle{
-		PullRequest: bundlepkg.PullRequest{HeadSHA: redactionHeadSHA, BaseSHA: redactionBaseSHA, MergeBaseSHA: redactionBaseSHA},
-		Diff:        []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Change: "modified", Patch: redactionPatch}},
-	}
-	checkNoError(t, bundlepkg.Redact(context.Background(), bundle, redactor))
-	removed, _ := json.Marshal(maskedTokenLine(t))
-	document := []byte(`{"sections":[{"tiles":[{"kind":"bug-fix","code":[{"path":"main.go","revision":"` + redactionHeadSHA + `","review_version":1,"Diff":"` + leakedDatabaseURL + `","diff":{"note":"` + leakedDatabaseURL + `","hunks":[{"header":"@@ -1,1 +1,1 @@","Header":"` + leakedDatabaseURL + `","lines":[{"kind":"remove","old_line":1,"text":` + string(removed) + `,"note":"` + leakedDatabaseURL + `","Text":"` + leakedDatabaseURL + `"},{"kind":"add","new_line":1,"text":"token := os.Getenv(\"TOKEN\")"}]}]}}]}]}]}`)
-	o := newTestOutputRedactor(t, redactor, bundle, nil)
-	redacted, err := o.Document(context.Background(), document)
-	checkNoError(t, err)
-	requireNoLeakedSecret(t, "document", redacted)
-	checkEqual(t, 5, o.Masked())
-	var doc map[string]any
-	checkNoError(t, json.Unmarshal(redacted, &doc))
-	hunk := doc["sections"].([]any)[0].(map[string]any)["tiles"].([]any)[0].(map[string]any)["code"].([]any)[0].(map[string]any)["diff"].(map[string]any)["hunks"].([]any)[0].(map[string]any)
-	checkEqual(t, "@@ -1,1 +1,1 @@", hunk["header"])
-	checkEqual(t, maskedTokenLine(t), hunk["lines"].([]any)[0].(map[string]any)["text"])
-}
-
 // Formatting and key order outlive redaction when nothing is masked, and a
 // count of spans accumulates over calls.
 func TestOutputRedactorReturnsCleanDocumentsByteForByte(t *testing.T) {
@@ -167,125 +128,76 @@ func TestOutputRedactorMasksWithoutABundle(t *testing.T) {
 
 func TestOutputRedactionJoinsLineArrays(t *testing.T) {
 	redactor := testRedactor(t)
-	// redact runs texts as the lines of a model-authored code source, or of
-	// an array under "lines" the contract does not describe, and returns the
-	// stored texts and the masked-span count.
-	redact := func(t *testing.T, described bool, texts []string) ([]string, int, []byte, []byte) {
+	// redact runs texts as the lines of an array under "lines" the contract
+	// does not describe, and returns the stored texts and the masked-span
+	// count.
+	redact := func(t *testing.T, texts []string) ([]string, int, []byte, []byte) {
 		t.Helper()
 		lines := make([]any, len(texts))
 		for i, text := range texts {
 			lines[i] = map[string]any{"kind": "add", "new_line": i + 1, "text": text}
 		}
-		hunks := []any{map[string]any{"header": fmt.Sprintf("@@ -0,0 +1,%d @@", len(texts)), "lines": lines}}
-		value := map[string]any{"notes": map[string]any{"lines": lines}}
-		if described {
-			value = map[string]any{"sections": []any{map[string]any{"tiles": []any{map[string]any{"kind": "bug-fix", "code": []any{map[string]any{"path": "main.go", "revision": "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff", "review_version": 1, "diff": map[string]any{"hunks": hunks}}}}}}}}
-		}
-		document, err := json.Marshal(value)
+		document, err := json.Marshal(map[string]any{"notes": map[string]any{"lines": lines}})
 		checkNoError(t, err)
 		o := newTestOutputRedactor(t, redactor, &bundlepkg.Bundle{}, nil)
 		redacted, err := o.Document(context.Background(), document)
 		checkNoError(t, err)
 		var doc map[string]any
 		checkNoError(t, json.Unmarshal(redacted, &doc))
-		stored := doc["notes"]
-		if described {
-			stored = doc["sections"].([]any)[0].(map[string]any)["tiles"].([]any)[0].(map[string]any)["code"].([]any)[0].(map[string]any)["diff"].(map[string]any)["hunks"].([]any)[0]
-		}
 		var out []string
-		for _, line := range stored.(map[string]any)["lines"].([]any) {
+		for _, line := range doc["notes"].(map[string]any)["lines"].([]any) {
 			out = append(out, line.(map[string]any)["text"].(string))
 		}
 		return out, o.Masked(), document, redacted
 	}
 
-	for _, described := range []bool{true, false} {
-		t.Run(fmt.Sprintf("described %t", described), func(t *testing.T) {
-			t.Run("private key", func(t *testing.T) {
-				key := syntheticKeyLines()
-				for _, line := range key {
-					if masked, count, err := redactor.RedactString(context.Background(), line); err != nil || count != 0 || masked != line {
-						t.Fatalf("a lone key line is masked, so the case proves nothing: %q %d %v", masked, count, err)
-					}
-				}
-				texts := append([]string{"const key = `"}, key...)
-				texts = append(texts, "`")
-				out, masked, _, redacted := redact(t, described, texts)
-				requireNoKeyLine(t, "document", redacted)
-				checkEqual(t, 1, masked)
-				checkEqual(t, len(texts), len(out))
-				checkEqual(t, "const key = `", out[0])
-				checkEqual(t, "`", out[len(out)-1])
-				for i, line := range out[1 : len(out)-1] {
-					checkEqual(t, len(key[i]), len(line))
-				}
-			})
-
-			t.Run("key header without its footer", func(t *testing.T) {
-				key := syntheticKeyLines()
-				_, masked, _, redacted := redact(t, described, key[:3])
-				requireNoKeyLine(t, "document", redacted)
-				checkEqual(t, 1, masked)
-			})
-
-			t.Run("a secret on each of two lines", func(t *testing.T) {
-				texts := []string{"dsn := \"" + leakedDatabaseURL + "\"", "key := \"" + leakedProviderKey + "\""}
-				out, masked, _, redacted := redact(t, described, texts)
-				requireNoLeakedSecret(t, "document", redacted)
-				checkEqual(t, 2, masked)
-				if !strings.HasPrefix(out[0], "dsn := \"postgres://admin:") || len(out[0]) != len(texts[0]) {
-					t.Fatalf("the first secret is not masked in place: %q", out[0])
-				}
-				checkEqual(t, 2, len(out))
-			})
-
-			t.Run("plain code", func(t *testing.T) {
-				texts := []string{"func main() {", "", "\tfmt.Println(\"hello\")", "}"}
-				out, masked, document, redacted := redact(t, described, texts)
-				checkEqual(t, 0, masked)
-				if !bytes.Equal(document, redacted) {
-					t.Fatalf("plain code changed:\n%s\n%s", document, redacted)
-				}
-				checkEqual(t, strings.Join(texts, "\n"), strings.Join(out, "\n"))
-			})
-		})
-	}
-}
-
-// A line the bundle supplies keeps its text unless a key the model continues
-// in its own lines reaches into it: a lone key header passes bundle
-// redaction, and the body the model quotes after it is found only with it.
-func TestOutputRedactionMasksBundleLinesAKeyReachesInto(t *testing.T) {
-	redactor := testRedactor(t)
-	ctx := context.Background()
-	key := syntheticKeyLines()
-	bundle := &bundlepkg.Bundle{PullRequest: bundlepkg.PullRequest{HeadSHA: redactionHeadSHA, BaseSHA: redactionBaseSHA, MergeBaseSHA: redactionBaseSHA},
-		Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Change: "modified", Patch: "@@ -1,2 +1,2 @@\n-old := 1\n+new := 2\n " + key[0]}}}
-	checkNoError(t, bundlepkg.Redact(ctx, bundle, redactor))
-	if !strings.Contains(bundle.Diff[0].Patch, key[0]) {
-		t.Fatalf("bundle redaction masks a lone key header, so the case proves nothing: %q", bundle.Diff[0].Patch)
-	}
-	lines := []any{
-		map[string]any{"kind": "remove", "old_line": 1, "text": "old := 1"},
-		map[string]any{"kind": "add", "new_line": 1, "text": "new := 2"},
-		map[string]any{"kind": "context", "old_line": 2, "new_line": 2, "text": key[0]},
-	}
-	for i, line := range key[1:] {
-		lines = append(lines, map[string]any{"kind": "add", "new_line": i + 3, "text": line})
-	}
-	source := map[string]any{"path": "main.go", "revision": redactionHeadSHA, "why": "Adds the key", "review_version": 1, "diff": map[string]any{"hunks": []any{map[string]any{"header": "@@ -1,2 +1,8 @@", "lines": lines}}}}
-	document, err := json.Marshal(map[string]any{"sections": []any{map[string]any{"tiles": []any{map[string]any{"kind": "bug-fix", "code": []any{source}}}}}})
-	checkNoError(t, err)
-	o := newTestOutputRedactor(t, redactor, bundle, nil)
-	redacted, err := o.Document(ctx, document)
-	checkNoError(t, err)
-	requireNoKeyLine(t, "document", redacted)
-	checkEqual(t, 1, o.Masked())
-	for _, kept := range []string{`"text":"old := 1"`, `"text":"new := 2"`} {
-		if !bytes.Contains(redacted, []byte(kept)) {
-			t.Fatalf("bundle line %s was masked: %s", kept, redacted)
+	t.Run("private key", func(t *testing.T) {
+		key := syntheticKeyLines()
+		for _, line := range key {
+			if masked, count, err := redactor.RedactString(context.Background(), line); err != nil || count != 0 || masked != line {
+				t.Fatalf("a lone key line is masked, so the case proves nothing: %q %d %v", masked, count, err)
+			}
 		}
-	}
+		texts := append([]string{"const key = `"}, key...)
+		texts = append(texts, "`")
+		out, masked, _, redacted := redact(t, texts)
+		requireNoKeyLine(t, "document", redacted)
+		checkEqual(t, 1, masked)
+		checkEqual(t, len(texts), len(out))
+		checkEqual(t, "const key = `", out[0])
+		checkEqual(t, "`", out[len(out)-1])
+		for i, line := range out[1 : len(out)-1] {
+			checkEqual(t, len(key[i]), len(line))
+		}
+	})
+
+	t.Run("key header without its footer", func(t *testing.T) {
+		key := syntheticKeyLines()
+		_, masked, _, redacted := redact(t, key[:3])
+		requireNoKeyLine(t, "document", redacted)
+		checkEqual(t, 1, masked)
+	})
+
+	t.Run("a secret on each of two lines", func(t *testing.T) {
+		texts := []string{"dsn := \"" + leakedDatabaseURL + "\"", "key := \"" + leakedProviderKey + "\""}
+		out, masked, _, redacted := redact(t, texts)
+		requireNoLeakedSecret(t, "document", redacted)
+		checkEqual(t, 2, masked)
+		if !strings.HasPrefix(out[0], "dsn := \"postgres://admin:") || len(out[0]) != len(texts[0]) {
+			t.Fatalf("the first secret is not masked in place: %q", out[0])
+		}
+		checkEqual(t, 2, len(out))
+	})
+
+	t.Run("plain code", func(t *testing.T) {
+		texts := []string{"func main() {", "", "\tfmt.Println(\"hello\")", "}"}
+		out, masked, document, redacted := redact(t, texts)
+		checkEqual(t, 0, masked)
+		if !bytes.Equal(document, redacted) {
+			t.Fatalf("plain code changed:\n%s\n%s", document, redacted)
+		}
+		checkEqual(t, strings.Join(texts, "\n"), strings.Join(out, "\n"))
+	})
 }
 
 // Undescribed fields and agent findings are part of the joined text too, and
@@ -316,32 +228,11 @@ func TestOutputRedactionJoinsUndescribedText(t *testing.T) {
 	checkEqual(t, len(key[0])+1+len(key[1]), len(doc.Notes[0]))
 }
 
-// A code line holding a newline is masked in place; it does not fail the run.
-func TestOutputRedactionKeepsCodeLinesHoldingNewlines(t *testing.T) {
-	redactor := testRedactor(t)
-	key := syntheticKeyLines()
-	lines := []any{
-		map[string]any{"kind": "add", "new_line": 1, "text": key[0] + "\n" + key[1]},
-		map[string]any{"kind": "add", "new_line": 2, "text": strings.Join(key[2:], "\n")},
-	}
-	source := map[string]any{"path": "main.go", "revision": "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff", "review_version": 1, "diff": map[string]any{"hunks": []any{map[string]any{"header": "@@ -0,0 +1,2 @@", "lines": lines}}}}
-	document, err := json.Marshal(map[string]any{"sections": []any{map[string]any{"tiles": []any{map[string]any{"kind": "bug-fix", "code": []any{source}}}}}})
-	checkNoError(t, err)
-	o := newTestOutputRedactor(t, redactor, &bundlepkg.Bundle{}, nil)
-	redacted, err := o.Document(context.Background(), document)
-	checkNoError(t, err)
-	requireNoKeyLine(t, "document", redacted)
-	checkEqual(t, 1, o.Masked())
-	if !bytes.Contains(redacted, []byte(`\n`)) {
-		t.Fatalf("the newlines inside the lines were lost: %s", redacted)
-	}
-}
-
 // Only a pattern pinning the whole string to a closed alphabet closes it.
 func TestClosedPattern(t *testing.T) {
 	for pattern, closed := range map[string]bool{
 		`^[a-z][a-z0-9_]*$`: true, `^[0-9a-f]{7,64}$`: true, `^h_[0-9a-f]{12}(-[0-9]+)?$`: true, `^SPEC-\d+$`: true,
-		`^[0-9]{4}-[0-9]{2}-[0-9]{2}(\.[0-9]+)?$`: true, `^tile_[a-z0-9_]+$`: true,
+		`^[0-9]{4}-[0-9]{2}-[0-9]{2}(\.[0-9]+)?$`: true, `^sec_[a-z0-9_]+$`: true,
 		`\S`: false, `^\S`: false, `.+`: false, `^.+$`: false, `^[^/\s]+/[^/\s]+$`: false, `^[a-z]+`: false, `^\w+$`: true, `^\W+$`: false, ``: false, `^a|.+$`: false, `^(a|b)$`: true, `^(ev|rsk|dec)_[a-z0-9_]+$`: true,
 		`^(a|.*)$`: false, `^(a|b)_(c|d)$`: false, `^(a|b)|c$`: false, `^(a|b|)$`: false, `^(?:a|b)$`: false,
 	} {
@@ -523,20 +414,19 @@ func TestOutputRedactionMasksSecretsInClosedPatternValues(t *testing.T) {
 	checkNoError(t, err)
 	checkEqual(t, 1, count)
 	checkEqual(t, masked, bare)
-	// document puts values in a section's ID, a risk category and an
-	// architecture edge, with its keys in the order a re-encoding writes them.
-	document := func(id, category, edge string) string {
-		return `{"sections":[{"id":"` + id + `","risks":[{"category":"` + category + `","id":"rsk_a"}],"tiles":[{"data":{"edges":[{"from":"api","to":"` + edge + `"}]},"id":"tile_a","kind":"architecture"}]}]}`
+	// document puts values in a section's ID and a risk category, with its
+	// keys in the order a re-encoding writes them.
+	document := func(id, category string) string {
+		return `{"sections":[{"id":"` + id + `","risks":[{"category":"` + category + `","id":"rsk_a"}]}]}`
 	}
 	for _, c := range []struct {
 		name, document, want string
 		spans                int
 	}{
-		{"after the section prefix", document("sec_"+token, "security", "db"), document("sec_"+masked, "security", "db"), 1},
-		{"after a later underscore", document("sec_auth_"+token, "security", "db"), document("sec_auth_"+masked, "security", "db"), 1},
-		{"in a category", document("sec_a", token, "db"), document("sec_a", masked, "db"), 1},
-		{"in an architecture edge", document("sec_a", "security", token), document("sec_a", "security", masked), 1},
-		{"in several values", document("sec_"+token, token, token), document("sec_"+masked, masked, masked), 3},
+		{"after the section prefix", document("sec_"+token, "security"), document("sec_"+masked, "security"), 1},
+		{"after a later underscore", document("sec_auth_"+token, "security"), document("sec_auth_"+masked, "security"), 1},
+		{"in a category", document("sec_a", token), document("sec_a", masked), 1},
+		{"in several values", document("sec_"+token, token), document("sec_"+masked, masked), 2},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			o := newTestOutputRedactor(t, redactor, &bundlepkg.Bundle{}, nil)
@@ -560,7 +450,6 @@ func TestOutputRedactionKeepsOrdinaryClosedValues(t *testing.T) {
 		`"review":{"head":"` + sha40 + `","base":"` + sha64 + `","generated_at":"2026-10-07T09:30:15.123Z"},` +
 		`"sections":[{"id":"sec_auth_flow","title":"Auth","risks":[{"id":"rsk_token_reuse","category":"data_integrity","tier":"high","source":"model","finding":"fnd_reviewbot_7102"}],` +
 		`"evidence":[{"id":"ev_retry_boundary"}],` +
-		`"tiles":[{"kind":"architecture","id":"tile_session_summary_for_auth_flow","data":{"edges":[{"from":"api","to":"session_store"}]}}],` +
 		`"blocks":[{"kind":"intent","text":"Plain.","anchors":[{"type":"hunk","hunk":"h_4ec3b2a1f9d8-2"}]}]}],` +
 		`"index":{"attachments":[{"id":"att_4ec3b2a1f9d84c7e6b5a3f2e1d0c9b8a"}]}}`
 	// A clean document comes back byte for byte, so any change shows.
@@ -831,7 +720,6 @@ func TestOutputRedactionMasksIdentifierReferencesAlike(t *testing.T) {
 // come back byte for byte and cost no count.
 func TestOutputRedactionKeepsOrdinaryAuthoredIdentifiers(t *testing.T) {
 	document := `{"sections":[{"id":"Auth-Flow", "risks":[{"category":"Retry.Policy","id":"Token Reuse"}],` +
-		`"tiles":[{"data":{"edges":[{"from":"API-Gateway","to":"Session.Store"}]},"id":"Tile-A","kind":"architecture"}],` +
 		`"attention":{"refs":["EV-Retry"],"text":"Look."},"evidence":[{"id":"EV-Retry"}]}]}`
 	o := newTestOutputRedactor(t, testRedactor(t), &bundlepkg.Bundle{}, nil)
 	for _, input := range []string{document, "not json " + leakedProviderKey} {
@@ -849,13 +737,12 @@ func TestAuthoredIdentifiers(t *testing.T) {
 	checkNoError(t, err)
 	var value any
 	checkNoError(t, json.Unmarshal([]byte(`{"sections":[{"id":"Auth-Flow","title":"Title","hunks":["h_4ec3b2a1f9d8"],"risks":[{"category":"Retry.Policy","id":"Token Reuse","finding":"F-1"}],`+
-		`"tiles":[{"data":{"edges":[{"from":"API","to":"DB"}]},"id":"Tile-A","kind":"architecture"}],`+
 		`"attention":{"refs":["EV-Retry"],"text":"Look."},"unknown":"Key"}]}`), &value))
 	var got []string
 	for _, id := range authoredIdentifiers(value, v.strict) {
 		got = append(got, fmt.Sprintf("%s>%s/%d", id.text, id.normalized, id.limit))
 	}
-	checkEqual(t, fmt.Sprint([]string{"API>api/128", "Auth-Flow>sec_auth_flow/128", "DB>db/128", "EV-Retry>ev_retry/128", "F-1>fnd_f_1/128", "Retry.Policy>retry_policy/128", "Tile-A>tile_a/128", "Token Reuse>rsk_token_reuse/128"}), fmt.Sprint(got))
+	checkEqual(t, fmt.Sprint([]string{"Auth-Flow>sec_auth_flow/128", "EV-Retry>ev_retry/128", "F-1>fnd_f_1/128", "Retry.Policy>retry_policy/128", "Token Reuse>rsk_token_reuse/128"}), fmt.Sprint(got))
 }
 
 // A raw identifier is bounded by its respelling: one Prepare respells within

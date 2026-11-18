@@ -246,28 +246,28 @@ func TestNormalizationShapesSectionAssessments(t *testing.T) {
 	checkNoError(t, err)
 	logical := doc["sections"].([]any)[0].(map[string]any)
 	logical["assessment"] = map[string]any{"level": 3, "factors": []any{"public_api", "public_api"}, "reasons": []any{map[string]any{"text": "Changes a shared parser.", "anchors": []any{}}}}
-	mechanical, err := decodeObject(tileJSON(t, logical), "section")
+	mechanical, err := decodeObject(encodeJSON(t, logical), "section")
 	checkNoError(t, err)
 	mechanical["id"], mechanical["kind"] = "sec_fmt", "mechanical"
-	nullAssessment, err := decodeObject(tileJSON(t, logical), "section")
+	nullAssessment, err := decodeObject(encodeJSON(t, logical), "section")
 	checkNoError(t, err)
 	nullAssessment["id"], nullAssessment["assessment"] = "sec_null", nil
 	// A disappeared section has no hunks to anchor reasons to and takes no
 	// part in the score, so its assessment must not cost a repair.
-	disappeared, err := decodeObject(tileJSON(t, logical), "section")
+	disappeared, err := decodeObject(encodeJSON(t, logical), "section")
 	checkNoError(t, err)
 	disappeared["id"], disappeared["hunks"] = "sec_gone", []any{}
 	disappeared["summary"] = map[string]any{"text": "Removed.", "anchors": []any{map[string]any{"type": "file", "path": "main.go"}}}
-	bundle.Previous = &bundlepkg.PreviousVersion{Version: 1, Sections: []bundlepkg.PreviousSection{{ID: "sec_gone", Kind: "logical", Content: tileJSON(t, disappeared)}}}
+	bundle.Previous = &bundlepkg.PreviousVersion{Version: 1, Sections: []bundlepkg.PreviousSection{{ID: "sec_gone", Kind: "logical", Content: encodeJSON(t, disappeared)}}}
 	doc["sections"] = []any{disappeared, logical, mechanical, nullAssessment}
-	prepared, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir())
+	prepared, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir())
 	if findings != "" {
 		t.Fatal(findings)
 	}
 	var result map[string]any
 	checkNoError(t, json.Unmarshal(prepared, &result))
 	sections := result["sections"].([]any)
-	assertSameDocumentJSON(t, []byte(`{"level":3,"factors":["public_api"],"reasons":[{"text":"Changes a shared parser.","anchors":[{"type":"hunk","id":"h_0123456789ab"}]}]}`), tileJSON(t, sections[1].(map[string]any)["assessment"]))
+	assertSameDocumentJSON(t, []byte(`{"level":3,"factors":["public_api"],"reasons":[{"text":"Changes a shared parser.","anchors":[{"type":"hunk","id":"h_0123456789ab"}]}]}`), encodeJSON(t, sections[1].(map[string]any)["assessment"]))
 	for _, i := range []int{0, 2, 3} {
 		if _, present := sections[i].(map[string]any)["assessment"]; present {
 			t.Fatalf("section %d kept an assessment: %v", i, sections[i])
@@ -282,7 +282,7 @@ func TestSchemaRejectsAnAssessmentOutsideTheScale(t *testing.T) {
 	doc, err := decodeObject(authoredFixture(), "candidate")
 	checkNoError(t, err)
 	doc["sections"].([]any)[0].(map[string]any)["assessment"] = map[string]any{"level": 7, "factors": []any{}, "reasons": []any{map[string]any{"text": "Too high."}}}
-	if _, findings := v.Prepare(tileJSON(t, doc), bundle, t.TempDir()); findings == "" {
+	if _, findings := v.Prepare(encodeJSON(t, doc), bundle, t.TempDir()); findings == "" {
 		t.Fatal("a level outside 1-5 was accepted")
 	}
 }

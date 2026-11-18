@@ -179,13 +179,29 @@ func (s *Server) scoped(path string) (string, bool) {
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com; base-uri 'none'; form-action 'none'; frame-src 'self'; frame-ancestors 'none'; object-src 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
 		if s.origin == "" || r.Host != strings.TrimPrefix(s.origin, "http://") {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
+		}
+		// Browsers label every request with where it came from. The app's own
+		// requests are same-origin and a typed or native navigation is none.
+		// Requests from inside a page or frame of another origin (fetch,
+		// subresources, frame navigations, form posts) are refused before any
+		// route sees them, even with the session cookie attached. A top-level
+		// GET navigation is let through, so a link or the desktop shell can
+		// open the app from elsewhere; it can read nothing. Clients that are
+		// not browsers send no label.
+		if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
+			topLevel := (r.Method == "GET" || r.Method == "HEAD") &&
+				r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+			if !topLevel {
+				http.Error(w, "cross-site request refused", http.StatusForbidden)
+				return
+			}
 		}
 		if r.URL.Path == mcpPath {
 			s.serveMCP(w, r)

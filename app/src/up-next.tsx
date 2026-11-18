@@ -17,7 +17,6 @@ import {
   useState,
   type ComponentType,
   type Dispatch,
-  type ReactNode,
   type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
@@ -34,12 +33,7 @@ import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import {
-  RISK_SCORE_MEANING,
-  sectionsInReviewOrder,
-  type ReviewDocument,
-  type RiskScoreLevel,
-} from "@baum/viewer/review-document";
+import { sectionsInReviewOrder, type ReviewDocument } from "@baum/viewer/review-document";
 import {
   appURL,
   documentRequest,
@@ -98,6 +92,7 @@ import { LoadingStatus, NineDots } from "./nine-dots";
 import {
   GITHUB_KEY_LABEL,
   KeyBar,
+  listStep,
   onBody,
   useGitHubKey,
   useLastRow,
@@ -113,6 +108,7 @@ import { useToast } from "./toast";
 import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
 import { reviewable, type ReviewEvent } from "./pending-review-model";
 import { cn } from "@baum/viewer/components/classnames";
+import { minutesText, RiskCard, StackOverview } from "./stack-overview";
 
 /** What the person does next about a pull request: read a review they were
  *  asked for, unblock their own, merge it, bring it up to date with its base,
@@ -835,10 +831,6 @@ function prHref(entry: Entry, cloneFor: (entry: Entry) => string, inbox?: Inbox)
   );
 }
 
-function minutesText(minutes: number) {
-  return minutes < 1 ? "<1 min" : `~${formatCount(Math.round(minutes))} min`;
-}
-
 const sumMinutes = (items: { minutes?: number | null }[]) =>
   items.reduce((sum, item) => sum + (typeof item.minutes === "number" ? item.minutes : 0), 0);
 
@@ -1432,11 +1424,17 @@ export function UpNextPage({
     if (key === "Escape" && menu) {
       event.preventDefault();
       setMenu(false);
-    } else if (key === "j" || key === "ArrowDown" || key === "k" || key === "ArrowUp") {
+    } else if (listStep(key) !== null) {
       if (rows.length === 0) return;
       event.preventDefault();
-      const step = key === "j" || key === "ArrowDown" ? 1 : -1;
-      select(rows[Math.min(rows.length - 1, Math.max(0, index + step))]!.key);
+      const step = listStep(key)!;
+      const to =
+        step === "first"
+          ? 0
+          : step === "last"
+            ? rows.length - 1
+            : Math.min(rows.length - 1, Math.max(0, index + step));
+      select(rows[to]!.key);
     } else if (key === " ") {
       // Space on a link or button presses it, except on a row, where it opens
       // or closes the row's group: from a member, back to its group, which
@@ -1907,6 +1905,7 @@ export function UpNextPage({
                 href={appURL(
                   `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
                 )}
+                memberHref={(entry) => prHref(entry, cloneFor, scope)}
                 pick={(key) => {
                   toggleGroup(selectedGroup, true);
                   select(key);
@@ -2800,41 +2799,6 @@ function BlockRow({ line, entry }: { line: PanelRow; entry: Entry }) {
   );
 }
 
-/** The risk card of a pull request's or a group's panel: its score as five
- *  blocks, in words, and what the review says of it below (`children`). */
-function RiskCard({
-  score,
-  text,
-  children,
-}: {
-  score: number;
-  /** The score in words: "3 of 5", or "at least 3 of 5". */
-  text: string;
-  children?: ReactNode;
-}) {
-  return (
-    <div className="upnext-risk">
-      <div className="upnext-risk-head">
-        <span className="upnext-label">Risk</span>
-        <span className="upnext-risk-blocks" aria-hidden="true">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <span
-              key={n}
-              className={
-                n <= score ? `upnext-risk-on upnext-risk-${Math.min(score, 5)}` : undefined
-              }
-            />
-          ))}
-        </span>
-        <span className="upnext-risk-text">
-          {text} · {RISK_SCORE_MEANING[score as RiskScoreLevel]}
-        </span>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 /** The last fix ended without changing anything, which is the agent's
  *  judgement, not an error: said in neutral words, with the agent's reason
  *  (the first paragraph of what it said) and the way to the rest. */
@@ -2883,12 +2847,13 @@ function memberState(row: Row): { text: string; tone: string } {
 /** A review group's panel, laid out as a pull request's: its base and facts
  *  summed, its review's state, its risk, and its shown members in order, a
  *  stack's from its base up, each with what it waits on. Picking a member
- *  previews it. */
+ *  previews it. A stack's panel is its overview (`StackOverview`). */
 function GroupPanel({
   line,
   doc,
   entries,
   href,
+  memberHref,
   pick,
   Link,
 }: {
@@ -2898,6 +2863,8 @@ function GroupPanel({
   /** Every pull request read, for the members the queue does not list. */
   entries: Entry[];
   href: string;
+  /** A member's review page. */
+  memberHref: (entry: Entry) => string;
   pick: (key: string) => void;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -2944,6 +2911,23 @@ function GroupPanel({
     }),
   ];
   const unread = total - rows.length;
+  // A stack has no combined review: its panel is its overview.
+  if (group.stack)
+    return (
+      <StackOverview
+        group={group}
+        members={rows.map(({ number, row, entry, state }) => ({
+          number,
+          entry,
+          state,
+          pick: row ? () => pick(row.key) : undefined,
+        }))}
+        entries={entries}
+        href={href}
+        memberHref={memberHref}
+        Link={Link}
+      />
+    );
   const reason = doc?.summary.risk_score?.reasons[0];
   const reasonTitle = reason
     ? (doc?.sections.find((section) => section.id === reason.section)?.title ?? "")

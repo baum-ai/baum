@@ -71,6 +71,8 @@
      pair these with `motion-reduce:animate-none`. */
   --animate-pane-in: pane-in 180ms ease-out both;
   --animate-shimmer: shimmer 1.4s linear infinite;
+  /* A menu drops a few pixels into place under what opened it. */
+  --animate-drop-in: drop-in 120ms ease-out;
 
   @keyframes pane-in {
     from {
@@ -80,6 +82,12 @@
     to {
       opacity: 1;
       transform: none;
+    }
+  }
+  @keyframes drop-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
     }
   }
   @keyframes shimmer {

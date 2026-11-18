@@ -400,6 +400,7 @@ export function AgentText({
   onExpand,
   caption,
   progress = false,
+  open = false,
 }: {
   vendor?: string;
   author?: string;
@@ -408,6 +409,9 @@ export function AgentText({
   truncated?: boolean;
   onExpand?: () => void;
   caption?: string | null;
+  /** Shown whole, with nothing to unfold; the rest of a preview is fetched
+   *  (`onExpand`) as it is drawn. */
+  open?: boolean;
   /** In a log, a message the agent wrote on its way to its reply: said
    *  quietly, as a point in a list, held to a few lines. */
   progress?: boolean;
@@ -423,6 +427,7 @@ export function AgentText({
       lines={quiet ? 4 : log ? 24 : 12}
       onExpand={onExpand}
       measure={text}
+      open={open}
     >
       <MessageText text={text} muted={quiet} reading={log && !quiet} />
     </CollapsibleText>
@@ -507,8 +512,12 @@ function CollapsibleText({
   truncated,
   lines,
   onExpand,
+  open = false,
 }: {
   children: ReactNode;
+  /** Shown whole and never folded: no control, no fade and no height of
+   *  its own to scroll in. */
+  open?: boolean;
   /** The text inside, to decide whether it needs a control at all. */
   measure: string;
   /** The stored length, larger than `shown` while only a preview is here. */
@@ -546,6 +555,12 @@ function CollapsibleText({
     observer.observe(element);
     return () => observer.disconnect();
   }, [measure, lines, expanded]);
+  // Shown whole, a preview fetches its rest as it is drawn.
+  const expand = useRef(onExpand);
+  expand.current = onExpand;
+  useEffect(() => {
+    if (open && truncated) expand.current?.();
+  }, [open, truncated]);
   const scrollable = expanded && scrolls;
   const tall = overflows ?? (measure.length > 480 || measure.split("\n").length > lines);
   const fits = !truncated && !tall;
@@ -560,6 +575,17 @@ function CollapsibleText({
     setExpanded((value) => !value);
   };
 
+  if (open)
+    return (
+      <>
+        <div className="min-w-0">{children}</div>
+        {truncated ? (
+          <p className="mt-1.5 text-xs text-tertiary">
+            Showing the first {formatCompact(shown)} of {formatCompact(length)} characters.
+          </p>
+        ) : null}
+      </>
+    );
   return (
     <>
       <div

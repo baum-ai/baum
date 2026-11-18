@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"strconv"
@@ -143,7 +144,7 @@ func decodeCanonical(raw []byte) (any, error) {
 	if err := decoder.Decode(&value); err != nil {
 		return nil, errNotJSON
 	}
-	if decoder.More() {
+	if _, err := decoder.Token(); err != io.EOF {
 		return nil, errNotJSON
 	}
 	return value, nil

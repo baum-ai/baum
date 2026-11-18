@@ -299,6 +299,8 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 	for _, row := range rows {
 		if row.CostUSD != nil {
 			spent += *row.CostUSD
+		} else if p.MaxCostUSD > 0 && row.Calls > 0 && stopped == "" {
+			stopped = fmt.Sprintf("cost guard: resumed case %s made %d call(s) but has no cost (usage not reported or the model is not priced), so --max-cost-usd cannot be enforced", row.CaseID, row.Calls)
 		}
 	}
 	slots := make(chan struct{}, max(p.Concurrency, 1))
@@ -377,7 +379,14 @@ func (p Plan) runCase(ctx context.Context, runner *Runner, id string) Row {
 	run.Settings.OutputDir = caseDir
 	out, err := run.Run(ctx, c)
 	if err != nil {
-		return fail("internal", err)
+		// Keep the outcome's usage and cost: the generation may have spent
+		// before writing its files failed, and the cost guard must count it.
+		out.CaseID = id
+		out.Status, out.Reason, out.Error = "failed", "internal", err.Error()
+		out.Document, out.DocumentValid = nil, false
+		_ = os.MkdirAll(caseDir, 0o700)
+		_ = writeJSON(filepath.Join(caseDir, "outcome.json"), out)
+		return rowOf(out, "failed")
 	}
 	if out.Status == "interrupted" {
 		_ = os.Remove(caseDir)

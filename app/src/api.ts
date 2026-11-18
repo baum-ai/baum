@@ -159,10 +159,35 @@ export type ReviewGroup = {
     model: string;
     recorded_cost_usd: number | null;
   } | null;
-  risk_score: { score: number | null; status: string } | null;
+  /** The latest version's risk; a stack's is its riskiest member review's. */
+  risk_score: {
+    score: number | null;
+    status: string;
+    reasons?: { section: string; text: string }[];
+  } | null;
   /** The members the latest version covered, with the heads it read. */
   reviewed: { number: number; head_sha: string; review_version: number }[];
   outdated: boolean;
+  /** A stack's overview, in place of a combined review; absent for a group a
+   *  person made (and from an older daemon). */
+  overview?: StackOverviewData;
+};
+/** What a stack's page shows beside its pull requests, from their saved
+ *  reviews. */
+export type StackOverviewData = {
+  /** The open pull request whose saved review scores the highest risk. */
+  riskiest?: number;
+  /** How many open pull requests have a saved review. */
+  reviewed: number;
+  /** A few sentences about the whole stack, written from those reviews. */
+  summary: {
+    text: string;
+    model: string;
+    created_at: string;
+    members: { number: number; review_version: number }[];
+  } | null;
+  /** The summary read every open pull request's latest saved review. */
+  current: boolean;
 };
 export const MAX_GROUP_MEMBERS = 8;
 /** An older daemon answers 404 or `available: false`: no groups. */
@@ -602,6 +627,9 @@ export function focusSession(
     {},
   );
 }
+/** A path with the home folder written as `~`. */
+export const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
   // Analytics names agents by their session store's vendor slug.
