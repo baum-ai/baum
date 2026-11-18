@@ -14,6 +14,29 @@ import (
 	"github.com/baum-ai/baum/tiles/library"
 )
 
+// A baum.review/2 version holds the types of its ready dedicated tiles
+// filled, so an added tile of a type its generation filled (a pinned or
+// added type always is) shows once, as the generated tile.
+func TestGeneratedReadsAReviewV2Document(t *testing.T) {
+	entry, _ := library.Get("api_change")
+	schema, _ := library.Get("schema_change")
+	doc, err := json.Marshal(map[string]any{"schema": "baum.review/2", "tiles": []map[string]any{
+		{"id": "tl_api_change", "type": "api_change", "owner": "sec_a", "state": "ready", "definition": json.RawMessage(entry.Encoded)},
+		{"id": "tl_schema_change", "type": "schema_change", "owner": "sec_a", "state": "failed", "definition": json.RawMessage(schema.Encoded)},
+		{"id": "tl_flow", "type": "flow", "owner": "sec_a", "state": "ready"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := addedtiles.Generated(nil, doc)
+	if !got["api_change"] || got["schema_change"] || len(got) != 1 {
+		t.Errorf("generated: %v", got)
+	}
+	if got := addedtiles.Generated(nil, []byte(`{"schema":"baum.review/1"}`)); len(got) != 0 {
+		t.Errorf("a baum.review/1 document without a composition: %v", got)
+	}
+}
+
 func apiData(hunk string) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"x","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, hunk))
 }

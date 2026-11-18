@@ -86,7 +86,7 @@ func (a LocalAPI) addedFor(ctx context.Context, c repos.Clone, number int, versi
 	if len(added) == 0 {
 		return nil
 	}
-	v := addedtiles.Version{Number: version.Metadata.Version, Latest: latest, Generated: addedtiles.Generated(version.Composition), Diff: diffOfStored(version.Document)}
+	v := addedtiles.Version{Number: version.Metadata.Version, Latest: latest, Generated: addedtiles.Generated(version.Composition, version.Document), Diff: diffOfStored(version.Document)}
 	held, missing := addedtiles.AddedFor(added, fills, v, func(digest string) (json.RawMessage, bool) { return a.Added.Definition(ctx, digest) })
 	if a.Fills != nil {
 		for _, add := range missing {

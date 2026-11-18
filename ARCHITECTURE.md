@@ -1918,6 +1918,15 @@ person added):
   `StagedTiles.Always`, beside the pull request's added types, and are filled
   whatever the outline answers; `jobs.Local` gives each the last data held
   for it (the latest version's composition), reused by the added types' rule.
+  A `baum.review/2` review passes them, with the added types, to the
+  orchestration (`orchestrate.Run.Always`): a type the map plans no tile of,
+  and no reused section holds, gets a tile on the logical section with the
+  most hunks (resting on its hunks; on the context, resting on every hunk,
+  without one), filled once that section is written and never passed to its
+  section agent, which therefore cannot drop it. Its fill may still find the
+  type does not apply. The served view shows an added type that the
+  version's generation filled as the generated tile alone
+  (`addedtiles.Generated` reads the document's ready dedicated tiles).
 - **Eligible:** the other saved types that are not deleted and whose path
   globs are empty or match a path of the diff (`tilelibrary.MatchPath`:
   doublestar's `**` and `{a,b}`, each segment a `path.Match` pattern; a glob

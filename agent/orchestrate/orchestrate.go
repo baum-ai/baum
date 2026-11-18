@@ -117,6 +117,12 @@ type Run struct {
 	// Registry is the tile types offered; nil is the native types and
 	// library.All.
 	Registry *Registry
+	// Always are the dedicated types filled whatever the map answers: the
+	// saved types pinned to the repository and the library types the person
+	// added to the pull request's review. A type the map plans no tile of
+	// gets one from the host (mandatoryTiles). A name the registry does not
+	// offer as a dedicated type is ignored.
+	Always []string
 	// MCP is baum's MCP server, with a token scoped to the pull request;
 	// nil runs the calls without it.
 	MCP *agent.MCPServer
