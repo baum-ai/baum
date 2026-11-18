@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
@@ -116,7 +117,18 @@ func triage(ctx context.Context, in triageInput) error {
 		// commit: nothing the review covers moved.
 		return &UnchangedError{Reason: "The new commits change no files since the review."}
 	}
-	user := fmt.Sprintf("<review>\n%s\n</review>\n\n<diff>\n%s\n</diff>", outline, diff)
+	// The diff is raw git output: its secrets are masked as a review's
+	// patches are (bundle.Redact) before the model reads it. A diff that
+	// cannot be masked is not sent, and the review is written.
+	redactor, err := bundle.NewRedactor()
+	if err != nil {
+		return nil
+	}
+	masked, _, err := redactor.RedactString(ctx, string(diff))
+	if err != nil {
+		return nil
+	}
+	user := fmt.Sprintf("<review>\n%s\n</review>\n\n<diff>\n%s\n</diff>", outline, masked)
 	completion, err := completer.Complete(ctx, agent.CompleteRequest{System: triageSystem, User: user, Schema: triageSchema, MaxOutputTokens: 1024})
 	if err != nil {
 		return nil
@@ -125,8 +137,10 @@ func triage(ctx context.Context, in triageInput) error {
 	if json.Unmarshal(completion.Document, &verdict) != nil || verdict.Regenerate {
 		return nil
 	}
-	reason := strings.TrimSpace(verdict.Reason)
-	if reason == "" {
+	// The reason becomes the job's summary: whatever of the diff the model
+	// echoes is masked again, and an unmaskable one is replaced.
+	reason, _, err := redactor.RedactString(ctx, strings.TrimSpace(verdict.Reason))
+	if err != nil || reason == "" {
 		reason = "The new commits don't change what the review says."
 	}
 	return &UnchangedError{Reason: truncate(reason, maxSummary)}
