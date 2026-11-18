@@ -2240,6 +2240,70 @@ fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 `e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
 only with `INBOX_SCREENSHOTS=1`.
 
+Real reviews: a review page is designed against real data with pictures of
+saved reviews from a dataset the person supplies, which is a directory of
+review stores (`reviews/<machine>/<repo>.versions.sqlite`), bare mirrors of the
+repositories (`repos/<repo>.git`), the app's database per machine
+(`state/<machine>/app.sqlite`) and an index (`index/pulls.jsonl`,
+`index/cases.jsonl`). Nothing from it is committed, and its path appears in no
+file. From the repository root:
+
+```sh
+just real-review-screens /path/to/dataset [full|tiles] [owner/repo#12,owner/repo#40@2]
+```
+
+The recipe builds the app and the fixture, then mounts the dataset read-only
+into the `ui-test` service, which runs the fixture and the script
+(`playwright.real-reviews.config.ts`). It does not cut the container off from
+the network (`docker compose run` has no option for it); the fixture itself
+reaches nothing, since GitHub and model calls are refused.
+
+`TestLocalAppRealReviews`
+(`../internal/uiserver/real_reviews_fixture_test.go`, skipped without
+`BAUM_APP_REAL_REVIEWS`) runs the real daemon on a temporary state directory,
+with no model and no GitHub: it clones each repository from its mirror with
+shared objects, so a hunk's excerpt is read from Git at the version's own
+commits, puts every saved version of each picked pull request and its images
+through the store's own `Put`, and answers discovery with pull request facts
+read from the dataset's app database (the saved review's header where it has
+no row). The reviewed head is reported as the pull request's head, so the page
+shows the review as current; checks, merge state and conversations are not live.
+Sessions, decisions and the Timeline are not served.
+
+The pick is a list of `repo#number[@version]`, which opens that version (the
+latest by default); the history lists every saved version. Without a list the
+fixture chooses from the calibration split of the repository with the most
+saved reviews (`BAUM_APP_REAL_REPOS` names others). `BAUM_APP_REAL_COUNT`, 14
+by default, is the most it chooses. In priority order it takes the review with
+the most sections, the highest risk, the most unassigned hunks, the most images
+and the most threads, one with sessions of each agent, one of each size bucket
+(xl, xs, m, s, l), one without images and one without threads, then spreads the
+rest over the numbers, stopping at the count. A pull request named twice is
+read once. It logs the chosen identifiers with
+their tags and writes `picks.json` for the script.
+
+`e2e/real-review-screens.spec.ts`, taken only with `REAL_REVIEW_SCREENSHOTS=1`,
+opens each review with `?view=<view>` at 1440×900, 900×900 and 390×844, in the
+light and dark schemes (the app follows the system's), waits for fonts, images
+and spinners to settle, and writes
+`test-results/real-reviews/<repo>-<number>-v<version>/<view>-<state>-<width>-<theme>.png`,
+with a `-full.png` beside it that is as tall as the page's scrolling content,
+and an `index.html` contact sheet in the directory. The sheet is built from the
+run's own manifest (`run.json`), so it lists only this run's reviews; the
+folders of earlier runs stay in place and are not listed. It lists what a
+picture does not show clearly: a notice, an unavailable excerpt, an image that
+failed, sideways scrolling, a full-page picture that is truncated, a detail
+that was skipped for want of a document, and a review left unfinished after
+`REAL_REVIEW_MINUTES` (8 by default). Expected 404, 502 and 503 console errors
+from the refusing backends stay in `console-errors.txt` and out of the sheet's
+error count. States are the `STATES` list at the top of the
+spec: the landing page, a detail (the first section, or with `view=tiles` the
+first element matching `REAL_REVIEW_TILE`) and its first hunk excerpt opened.
+A new page adds a state by adding an entry with the steps that open it.
+`REAL_REVIEW_ONLY` limits the run to reviews whose `repo#number` contains the
+text, and `REAL_REVIEW_FULL=0` skips the full-page pictures. The pictures hold
+private content: keep them out of commits and shared services.
+
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
 reports. Jobs save each update before publishing progress, including failed and
