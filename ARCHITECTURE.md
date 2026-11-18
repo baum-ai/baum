@@ -1259,7 +1259,14 @@ main suite and its screenshots do not see them.
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,
 and the settings chat reads and proposes it with the other appearance
-settings. A pending review comment may target a tile (`kind` `tile`, `id` the
+settings. The same route carries the custom colour themes: `light_theme`
+and `dark_theme` name the theme of each slot (the built-in `default-light` and
+`default-dark` when empty) and `themes` lists the built-ins and the person's
+own, kept in `AppearancePreferences` and validated by `internal/themes` (an
+allowlist of palette tokens, each a plain colour, and the contrast check that
+evaluates the palette's recipes from the tile kit's generated `tokens.css`).
+`POST`, `PATCH` and `DELETE /api/settings/appearance/themes[/{id}]` create,
+rename and delete a theme. A pending review comment may target a tile (`kind` `tile`, `id` the
 tile's ID); a comment on a section keeps its `section` target. After a
 rollback to a release without `tile` targets, a daemon finds a saved review
 record that holds one invalid and reads the whole saved-reviews document

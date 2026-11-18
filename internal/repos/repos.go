@@ -25,6 +25,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/themes"
 )
 
 // ErrNotFound reports a clone or picked repository the registry does not hold.
@@ -101,6 +102,45 @@ type AppearancePreferences struct {
 	// ReviewPage is the page a review opens on: "full" (the review's
 	// sections) or "tiles" (its tile document); empty is full.
 	ReviewPage string `json:"review_page,omitempty"`
+	// LightTheme and DarkTheme are the ids of the themes used when Theme
+	// (system, light or dark) selects the light or the dark slot; empty is
+	// the built-in default-light or default-dark. Any theme may sit in
+	// either slot. An id no longer in Themes counts as empty.
+	LightTheme string `json:"light_theme,omitempty"`
+	DarkTheme  string `json:"dark_theme,omitempty"`
+	// Themes are the custom colour themes, at most themes.MaxThemes.
+	Themes []CustomTheme `json:"themes,omitempty"`
+}
+
+// CustomTheme is a colour theme the person made: a base ("light" or "dark")
+// and colour overrides for the palette tokens themes.Tokens allows.
+type CustomTheme struct {
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Base   string            `json:"base"`
+	Tokens map[string]string `json:"tokens,omitempty"`
+}
+
+// validateThemes refuses more than themes.MaxThemes custom themes, an id that
+// is empty, long, repeated or a built-in's, and what themes.Validate refuses.
+func validateThemes(list []CustomTheme) error {
+	if len(list) > themes.MaxThemes {
+		return fmt.Errorf("at most %d custom themes", themes.MaxThemes)
+	}
+	seen := map[string]bool{themes.DefaultLight: true, themes.DefaultDark: true}
+	for _, t := range list {
+		if t.ID == "" || len(t.ID) > 64 {
+			return errors.New("a theme id must be 1 to 64 bytes")
+		}
+		if seen[t.ID] {
+			return fmt.Errorf("theme id %q is taken", t.ID)
+		}
+		seen[t.ID] = true
+		if err := themes.Validate(themes.Theme{ID: t.ID, Name: t.Name, Base: t.Base, Tokens: t.Tokens}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan
@@ -329,6 +369,9 @@ func (p Preferences) ValidateChange(prev Preferences) error {
 // Validate accepts an empty Model, unlike Settings: it means the backend's
 // default even when the config file names a model.
 func (p Preferences) Validate() error {
+	if err := validateThemes(p.Appearance.Themes); err != nil {
+		return err
+	}
 	if p.Backend != nil && !p.Backend.Valid() {
 		return errors.New("invalid backend")
 	}

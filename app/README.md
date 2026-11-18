@@ -1667,7 +1667,19 @@ elsewhere) shows keyboard shortcut hints; each names only the platform's key. Pr
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
 `full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
-and loopback port changes. **Plan usage** below them has a switch per plan
+and loopback port changes. The same document carries the custom colour themes:
+`light_theme` and `dark_theme` are the ids of the themes the Light and Dark
+slots use (`theme` still picks which slot is active; any theme may sit in
+either, and an empty or vanished id is `default-light` or `default-dark`), and
+`themes` lists the built-ins first (`builtin: true`, no tokens) and then the
+person's own (`{id, name, base, tokens}`, at most 32; a token is one of the
+palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
+`light_theme` and `dark_theme` and refuses an unknown id.
+`POST api/settings/appearance/themes` (`{name, base, tokens, slot}`; `slot` is
+`light`, `dark` or empty) creates a theme under a new `c-` id and may put it in
+a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`) renames it, and
+`DELETE` removes it and resets a slot that used it; all answer with the
+appearance document, and the built-ins can be neither renamed nor deleted. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
 reviews', the fixes' and decision capture's (Auto counts the first plan it can

@@ -49,6 +49,17 @@ const (
 	MaxKit        = 64 << 10
 )
 
+// PaletteCSS returns the generated palette and tokens stylesheet
+// (tokens.css) the frame documents inline, so other packages can evaluate the
+// palette's recipes.
+func PaletteCSS() string {
+	data, err := files.ReadFile("tokens.css")
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 var majors = []int{1}
 
 // Majors returns the kit majors this build ships, oldest first.
