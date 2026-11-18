@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -23,13 +25,20 @@ const savedReview = `{"summary":{"title":"Add retries","text":"Jobs back off and
 type fakeVersions struct {
 	head string
 	err  error
+	// kept is the head KeepHead recorded, as version@head.
+	kept string
 }
 
-func (f fakeVersions) Latest(context.Context, store.Key) (store.Version, error) {
+func (f *fakeVersions) Latest(context.Context, store.Key) (store.Version, error) {
 	if f.err != nil {
 		return store.Version{}, f.err
 	}
-	return store.Version{Metadata: store.Metadata{Head: f.head}, Document: []byte(savedReview)}, nil
+	return store.Version{Metadata: store.Metadata{Head: f.head, Version: 3}, Document: []byte(savedReview)}, nil
+}
+
+func (f *fakeVersions) KeepHead(_ context.Context, _ store.Key, version int, head, _ string, _ time.Time) error {
+	f.kept = strconv.Itoa(version) + "@" + head
+	return nil
 }
 
 type fakeDiffs struct {
@@ -102,13 +111,18 @@ func TestTriage(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := Prepared{Item: Item{PR: 7}, Repository: "org/repo", HeadSHA: newHead, BaseSHA: reviewedHead}
-			err := triage(context.Background(), triageInput{prefs: tc.prefs, versions: tc.versions, key: store.Key{Repository: "org/repo", Number: 7}, clone: tc.diff, p: p, backend: tc.backend})
+			versions := tc.versions
+			err := triage(context.Background(), triageInput{prefs: tc.prefs, versions: &versions, key: store.Key{Repository: "org/repo", Number: 7}, clone: tc.diff, p: p, backend: tc.backend, system: "decide"})
 			var unchanged *UnchangedError
 			switch {
 			case tc.unchanged == "" && err != nil:
 				t.Fatalf("review stood down: %v", err)
 			case tc.unchanged != "" && (!errors.As(err, &unchanged) || unchanged.Reason != tc.unchanged):
 				t.Fatalf("got %v, want unchanged %q", err, tc.unchanged)
+			}
+			// A review stood down is recorded as current at the new head.
+			if want := map[bool]string{true: "3@" + newHead}[tc.unchanged != ""]; versions.kept != want {
+				t.Fatalf("kept %q, want %q", versions.kept, want)
 			}
 			c, ok := tc.backend.(*completerBackend)
 			if ok && (c.calls > 0) != tc.asked {
@@ -121,6 +135,9 @@ func TestTriage(t *testing.T) {
 					if !strings.Contains(c.asked.User, want) {
 						t.Fatalf("prompt lacks %q:\n%s", want, c.asked.User)
 					}
+				}
+				if c.asked.System != "decide" {
+					t.Fatalf("system prompt %q", c.asked.System)
 				}
 				if strings.Contains(c.asked.User, "Gone") {
 					t.Fatal("a mitigated risk reached the prompt")

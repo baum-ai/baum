@@ -214,6 +214,9 @@ func openRoot(root string, write bool) (*Store, error) {
 		_, err = db.Exec(chatSchema)
 	}
 	if err == nil {
+		_, err = db.Exec(keptSchema)
+	}
+	if err == nil {
 		// A move that cannot finish now (a full disk, a writer holding the lock
 		// past busy_timeout) keeps its committed batches and resumes on the next
 		// writable open; reads fall back to the rows not moved yet, so it does

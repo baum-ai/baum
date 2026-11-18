@@ -12,12 +12,15 @@ const (
 	IDReviewStagedOutline ID = "review-staged-outline"
 	IDReviewStagedDetails ID = "review-staged-details"
 	IDReviewStagedContext ID = "review-staged-context"
-	IDFix                 ID = "fix"
-	IDFixConflicts        ID = "fix-conflicts"
-	IDFixChecks           ID = "fix-checks"
-	IDFixThreads          ID = "fix-threads"
-	IDFixChat             ID = "fix-chat"
-	IDExtraction          ID = "extraction"
+	// IDReviewTriage decides, with automatic reviews set to review on
+	// change, whether new commits need a new review.
+	IDReviewTriage ID = "review-triage"
+	IDFix          ID = "fix"
+	IDFixConflicts ID = "fix-conflicts"
+	IDFixChecks    ID = "fix-checks"
+	IDFixThreads   ID = "fix-threads"
+	IDFixChat      ID = "fix-chat"
+	IDExtraction   ID = "extraction"
 )
 
 // Overrides maps a prompt to the text that replaces its built-in text. A nil

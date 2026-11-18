@@ -13,6 +13,7 @@ import {
   type ReviewSteps,
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import { formatDate } from "@baum/viewer/components/format";
 import type {
   HostSessionView,
   SessionListState,
@@ -389,6 +390,12 @@ export function LocalReview({
         : entry.status === "current" || entry.status === "outdated" || entry.status === "failed"
           ? entry.status
           : undefined;
+  // The review was kept for the head the pull request is at: it is current,
+  // and says so with the agent's reason rather than as outdated.
+  const kept =
+    !generating && entry.status === "current" && entry.kept && entry.kept.head === pr.head_sha
+      ? entry.kept
+      : null;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
   // The decisions of its sessions, in their own pane beside Sessions and
   // Commits rather than above the review.
@@ -918,8 +925,16 @@ export function LocalReview({
                 // The stacks and groups it belongs to, under the title with its
                 // other facts rather than as a notice over the review.
                 subtitle:
-                  groups.length > 0 ? (
+                  groups.length > 0 || kept ? (
                     <>
+                      {kept ? (
+                        <span
+                          className="local-kept-note"
+                          title={`Checked ${formatDate(kept.kept_at)}: ${kept.reason}`}
+                        >
+                          Still applies to the newer commits
+                        </span>
+                      ) : null}
                       {groups.map((group) => (
                         <ViewerLink
                           key={group.id}

@@ -101,6 +101,11 @@ export type Entry = GitHubState & {
     recorded_cost_usd: number | null;
   } | null;
   risk_score: { score: number | null; status: string } | null;
+  /** A newer head the latest review was found to still cover: with
+   *  automatic reviews set to On change, the agent read what it changed and
+   *  kept the review, which is then current at that head. Absent when there
+   *  is none, and from an older daemon. */
+  kept?: { head: string; reason: string; kept_at: string };
   historical: boolean;
   /** The repository's list is not current (discovery failed, unvalidated or past its next poll). Age is not part of it: see `metadataStale`. */
   stale: boolean;

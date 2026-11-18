@@ -26,6 +26,9 @@ type Refresher struct {
 	GitHub   assemble.GitHub
 	Git      Git
 	Sessions assemble.Sessions
+	// KeptHead is a newer head the saved review was found to still cover
+	// (store.Kept), "" when there is none: the review is current there too.
+	KeptHead string
 }
 
 // Refresh returns a validated replacement document. Callers publish it with
@@ -130,6 +133,9 @@ func (r Refresher) Refresh(ctx context.Context, repository github.Repository, nu
 	}
 	state := "outdated"
 	if stored.Review.Head == evidence.PullRequest.HeadSHA && stored.Review.Base == evidence.PullRequest.BaseSHA {
+		state = "current"
+	}
+	if r.KeptHead != "" && r.KeptHead == evidence.PullRequest.HeadSHA {
 		state = "current"
 	}
 	header["generation_state"], _ = json.Marshal(state)
