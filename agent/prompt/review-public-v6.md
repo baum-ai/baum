@@ -425,11 +425,6 @@ or three. Every logical section with hunks has a `behavior` block. A section has
   lists, also in previous sections you keep; with no `attachments`, add no
   `images` block. `media` takes a URL only if it appears in the bundle.
 
-### Tiles
-
-Write tiles only if tile guidance follows this prompt, and only of the kinds
-it lists. Otherwise leave `tiles` out.
-
 ## 6. Anchors
 
 | anchor | resolves against |

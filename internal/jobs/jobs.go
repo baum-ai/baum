@@ -329,9 +329,12 @@ type Queue struct {
 	// replaced: their cancellation ends them as superseded.
 	superseded map[string]bool
 	// drafts holds the latest draft of each running staged review, by job.
-	drafts  map[string][]byte
-	cancels map[string]context.CancelFunc
-	wake    chan struct{}
+	drafts map[string][]byte
+	// draftTiles keeps the encoded tile view of each draft in drafts; an
+	// entry goes with its job's draft.
+	draftTiles draftTiles
+	cancels    map[string]context.CancelFunc
+	wake       chan struct{}
 	// chat lists the stored conversations; nil lists none.
 	chat    ChatService
 	ctx     context.Context
@@ -1569,6 +1572,7 @@ func (q *Queue) worker() {
 				cancel()
 				delete(q.cancels, j.ID)
 				delete(q.drafts, j.ID)
+				q.draftTiles.drop(j.ID)
 				delete(q.superseded, j.ID)
 				if q.log != nil {
 					q.log.Error("ended job missing from the history", "job", j.ID)
@@ -1586,6 +1590,7 @@ func (q *Queue) worker() {
 			current.State = "completed"
 			// The draft is never a version: it goes with the job.
 			delete(q.drafts, j.ID)
+			q.draftTiles.drop(j.ID)
 			current.Draft = 0
 			var refused *NotAutomaticError
 			var fixErr *fix.Error

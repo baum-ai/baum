@@ -12,7 +12,6 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/review"
-	"github.com/baum-ai/baum/review/tilecatalogue"
 )
 
 // Generator is the generate-and-repair loop: it asks the backend for a review
@@ -50,14 +49,7 @@ type Run struct {
 	// schema.json and the rejected-N.json files of the repairs, and the backend
 	// runs there.
 	Directory string
-	// TileKinds is the tile allow-list: the only kinds the run offers the model
-	// and keeps from what it returns.
-	TileKinds []string
-	// TileEntries, when set, are the catalogue entries offered in the prompt
-	// instead of the shipped entries of TileKinds (tilecatalogue.WithCandidates).
-	// Evaluation uses it to try selection guidance; none (nil or empty) keeps the shipped ones.
-	TileEntries []tilecatalogue.Entry
-	Budgets     Budgets
+	Budgets   Budgets
 	// Endpoint is how the backend reaches the model; nil leaves its own.
 	Endpoint *Endpoint
 	// Decorate, when set, adds to every document the model returns what the
@@ -101,8 +93,8 @@ func (g *Generator) Generate(ctx context.Context, run Run) (outcome Outcome, doc
 // ReviewTask is the review of run as a task RunTask runs: it writes
 // bundle.json into the run directory and returns the review's model schema,
 // its prompts (the instructions, the bundle and the source excerpts, and the
-// repair text) and its Accept, which keeps the offered tile kinds, preserves
-// the first pass's risk omissions in a repair, masks the secrets written
+// repair text) and its Accept, which preserves the first pass's risk
+// omissions in a repair, masks the secrets written
 // into identifiers and prepares the document with the validator. A secret
 // masked in a closed value stops the repairs: the host rejects the run
 // whatever a later pass returns.
@@ -120,17 +112,8 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 	}
 	// One redactor for every pass, so its counts cover them all: a secret
 	// written in any pass fails the run.
-	identifiers, err := review.NewOutputRedactor(g.Validator, redactor, run.Bundle, nil)
-	if err != nil {
-		return Task{}, err
-	}
-	if err := tilecatalogue.Validate(run.TileKinds); err != nil {
-		return Task{}, fmt.Errorf("tile kinds: %w", err)
-	}
-	schema, err := g.Validator.ModelSchema(run.TileKinds)
-	if err != nil {
-		return Task{}, err
-	}
+	identifiers := review.NewOutputRedactor(g.Validator, redactor, run.Bundle, nil)
+	schema := g.Validator.Schema
 	if run.ModelSchema != nil {
 		if schema, err = run.ModelSchema(schema); err != nil {
 			return Task{}, fmt.Errorf("model schema: %w", err)
@@ -149,11 +132,7 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 		logger.InfoContext(ctx, "review inputs prepared", "bundle_bytes", len(run.EncodedBundle), "hunks", len(run.Bundle.Diff), "hunks_with_patches", patches)
 	}
 	source := sourceContext(run.Directory, run.Bundle)
-	tileText := tilecatalogue.Instructions(run.TileKinds)
-	if len(run.TileEntries) > 0 {
-		tileText = tilecatalogue.InstructionsFor(run.TileEntries)
-	}
-	instructions := prompt.Body + tileText
+	instructions := prompt.Body
 	repairInstruction, repairEnding := RepairText(g.Backend.Name())
 	if prompt.Repair != "" {
 		repairInstruction = prompt.Repair
@@ -175,7 +154,7 @@ func (g *Generator) ReviewTask(ctx context.Context, run Run) (Task, error) {
 			return instructions + repairInstruction + string(run.EncodedBundle) + "\nRejected document:\n" + string(pass.Rejected) + "\nThe validator found:\n" + pass.Findings + fmt.Sprintf(repairEnding, pass.Number-1, pass.Repairs), nil
 		},
 		Accept: func(ctx context.Context, pass TaskPass, reply []byte, outcome *Outcome) (Verdict, error) {
-			document := review.DocumentWithTileKinds(reply, run.TileKinds)
+			document := reply
 			if run.Decorate != nil {
 				document = run.Decorate(document)
 			}

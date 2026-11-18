@@ -589,6 +589,34 @@ it("opens Pull requests on Open, with Closed last, and comes back to the tab las
   expect(tabs()[1]!.getAttribute("aria-pressed")).toBe("true");
   localStorage.clear();
 });
+it("pages Pull requests after filtering and resets to the first page when the tab changes", async () => {
+  entries = Array.from({ length: 65 }, (_, i) => entry(i + 1));
+  await act(async () => root.render(<App />));
+  const rows = () => node.querySelectorAll(".inbox-pr-title");
+  const pager = () => node.querySelector('[aria-label="Pull requests pagination"]')!;
+  const move = async (label: string) =>
+    act(async () =>
+      [...pager().querySelectorAll("button")]
+        .find((button) => button.textContent === label)!
+        .click(),
+    );
+  expect(rows()).toHaveLength(30);
+  expect(pager().textContent).toContain("1–30 of 65");
+  await move("Next");
+  expect(rows()).toHaveLength(30);
+  expect(rows()[0]!.textContent).toBe("Change 31");
+  await move("Next");
+  expect(rows()).toHaveLength(5);
+  expect(pager().textContent).toContain("61–65 of 65");
+  await move("Previous");
+  expect(rows()[0]!.textContent).toBe("Change 31");
+  const tabs = node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button');
+  await act(async () => tabs[1]!.click());
+  expect(rows()).toHaveLength(0);
+  await act(async () => tabs[0]!.click());
+  expect(rows()[0]!.textContent).toBe("Change 1");
+});
+
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];
   await act(async () => root.render(<App />));
@@ -2784,6 +2812,42 @@ it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
+});
+it("folds the sidebar opened under the mouse when the pointer or focus leaves the window", async () => {
+  entries = [entry(1)];
+  // A narrow window always folds the sidebar.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(width < 64rem)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  await act(async () => root.render(<App />));
+  const lane = node.querySelector<HTMLElement>(".local-rail-lane")!;
+  const rail = () => lane.getAttribute("data-rail");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const hover = async () => {
+      const event = new MouseEvent("pointermove", { bubbles: true });
+      Object.defineProperty(event, "pointerType", { value: "mouse" });
+      await act(async () => {
+        lane.dispatchEvent(event);
+        vi.advanceTimersByTime(200);
+      });
+    };
+    await hover();
+    expect(rail()).toBe("open");
+    // Off the left edge of the window: no leave reaches the sidebar itself.
+    await act(async () =>
+      document.dispatchEvent(new MouseEvent("mouseout", { relatedTarget: null })),
+    );
+    expect(rail()).toBe("folded");
+    await hover();
+    expect(rail()).toBe("open");
+    await act(async () => window.dispatchEvent(new FocusEvent("blur")));
+    expect(rail()).toBe("folded");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("offers the shortcuts, a problem report and the docs from Help beside the baum title", async () => {
   entries = [entry(1)];

@@ -17,7 +17,7 @@ import (
 // a repair given that message tends to return the document unchanged.
 type sectionItemSchemas struct {
 	evidence, risk, attention *jsonschema.Resolved
-	blocks, tiles             map[string]*jsonschema.Resolved
+	blocks                    map[string]*jsonschema.Resolved
 }
 
 func newSectionItemSchemas(defs map[string]any) (*sectionItemSchemas, error) {
@@ -39,11 +39,7 @@ func newSectionItemSchemas(defs map[string]any) (*sectionItemSchemas, error) {
 	if err != nil {
 		return nil, err
 	}
-	tiles, err := kindVariants(defs, "tile")
-	if err != nil {
-		return nil, err
-	}
-	return &sectionItemSchemas{evidence: evidence, risk: risk, attention: resolvedAttention, blocks: blocks, tiles: tiles}, nil
+	return &sectionItemSchemas{evidence: evidence, risk: risk, attention: resolvedAttention, blocks: blocks}, nil
 }
 
 // kindVariants resolves each oneOf variant of a definition discriminated by
@@ -97,15 +93,8 @@ func (s *sectionItemSchemas) findings(location string, section map[string]any, s
 		}
 	}
 	for _, risk := range jsonObjects(section["risks"]) {
-		where := fmt.Sprintf("%s risk %v", location, risk["id"])
-		tiles := s.tileFindings(where, risk["tiles"])
-		withoutTiles := maps.Clone(risk)
-		delete(withoutTiles, "tiles")
-		if err := s.risk.Validate(withoutTiles); err != nil {
-			tiles = append(tiles, where+": "+conciseSchemaError(err))
-		}
-		if len(tiles) > 0 {
-			findings = append(findings, tiles...)
+		if err := s.risk.Validate(risk); err != nil {
+			findings = append(findings, fmt.Sprintf("%s risk %v: %s", location, risk["id"], conciseSchemaError(err)))
 			remainder["risks"] = []any{}
 		}
 	}
@@ -121,10 +110,6 @@ func (s *sectionItemSchemas) findings(location string, section map[string]any, s
 			findings = append(findings, fmt.Sprintf("%s (%v): %s", where, block["kind"], conciseSchemaError(err)))
 			remainder["blocks"] = []any{}
 		}
-	}
-	if tiles := s.tileFindings(location, section["tiles"]); len(tiles) > 0 {
-		findings = append(findings, tiles...)
-		remainder["tiles"] = []any{}
 	}
 	if len(findings) == 0 {
 		return nil
@@ -161,22 +146,6 @@ func attentionFindings(location string, value any, validationErr error) []string
 	}
 	if len(findings) == 0 {
 		return []string{location + " attention: " + conciseSchemaError(validationErr)}
-	}
-	return findings
-}
-
-func (s *sectionItemSchemas) tileFindings(location string, value any) []string {
-	var findings []string
-	for _, tile := range jsonObjects(value) {
-		where := fmt.Sprintf("%s tile %v", location, tile["id"])
-		variant, known := s.tiles[fmt.Sprint(tile["kind"])]
-		if !known {
-			findings = append(findings, fmt.Sprintf("%s: kind %q is not a catalogue tile kind; use one of %s", where, fmt.Sprint(tile["kind"]), strings.Join(slices.Sorted(maps.Keys(s.tiles)), ", ")))
-			continue
-		}
-		if err := variant.Validate(tile); err != nil {
-			findings = append(findings, fmt.Sprintf("%s (%v): %s", where, tile["kind"], conciseSchemaError(err)))
-		}
 	}
 	return findings
 }

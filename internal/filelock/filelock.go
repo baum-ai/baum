@@ -47,6 +47,11 @@ func TryLock(ctx context.Context, path string) (*Lock, error) {
 		if err = f.Close(); err != nil {
 			return nil, err
 		}
+		// On Windows the new file took its directory's ACL, which need not be
+		// private (the account records' lock sits in the config directory).
+		if err = privatefs.ProtectFile(path); err != nil {
+			return nil, err
+		}
 	} else if !errors.Is(err, os.ErrExist) {
 		return nil, err
 	}

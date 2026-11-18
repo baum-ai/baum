@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"hash/maphash"
 	"maps"
 	"regexp"
@@ -34,17 +33,13 @@ type OutputRedactor struct {
 // the repository paths of the run's checkout, either tree. With a nil
 // validator a document has no contract: every string, keys included, is free
 // text.
-func NewOutputRedactor(v *DocumentValidator, redactor *bundlepkg.Redactor, b *bundlepkg.Bundle, checkout map[string]bool) (*OutputRedactor, error) {
+func NewOutputRedactor(v *DocumentValidator, redactor *bundlepkg.Redactor, b *bundlepkg.Bundle, checkout map[string]bool) *OutputRedactor {
 	o := outputRedaction{redactor: redactor, bundle: b, checkout: checkout}
 	if v != nil {
 		o.schema = v.strict
 	}
 	o.defs, _ = o.schema["$defs"].(map[string]any)
-	var err error
-	if o.inherited, err = inheritedTileSources(b); err != nil {
-		return nil, err
-	}
-	return &OutputRedactor{o: o}, nil
+	return &OutputRedactor{o: o}
 }
 
 // Document redacts one document. A document with nothing to mask is returned
@@ -56,7 +51,7 @@ func (r *OutputRedactor) Document(ctx context.Context, document []byte) ([]byte,
 
 // Identifiers masks the secrets in the identifiers of a document as the model
 // wrote it, and must run before DocumentValidator.Prepare. Prepare respells
-// every identifier, category and tile-local name in lowercase with
+// every identifier and category in lowercase with
 // underscores, and a secret respelled that way (sk-ant-api03-AbC... as
 // sk_ant_api03_abc...) is one no rule detects any more, so Document cannot
 // find it after Prepare. The values scanned are those normalization respells,
@@ -119,8 +114,6 @@ type outputRedaction struct {
 	schema   map[string]any
 	defs     map[string]any
 	bundle   *bundlepkg.Bundle
-	// inherited are the previous review's code sources.
-	inherited []tileCode
 	// checkout lists the repository paths of the run's checkout.
 	checkout map[string]bool
 	// slots are the strings of the document being walked.
@@ -176,7 +169,7 @@ func (o *outputRedaction) document(document []byte) ([]byte, error) {
 		return nil, err
 	}
 	o.changed, o.slots = false, nil
-	o.value(value, o.schema, "", nil, slotFree, func(s string) { value = s })
+	o.value(value, o.schema, "", slotFree, func(s string) { value = s })
 	if err := o.maskSlots(); err != nil || !o.changed {
 		return document, err
 	}
@@ -189,13 +182,9 @@ type slotKind int
 const (
 	// slotFree is model-written text, masked wherever a span touches it.
 	slotFree slotKind = iota
-	// slotBundle is an excerpt line the bundle supplied: it keeps its text
-	// unless a span reaching into model-written text touches it.
-	slotBundle
 	// slotKept keeps its exact text: a reference that resolves to something
-	// the redacted bundle or the checkout holds, a key the schema names, a
-	// canonical hunk header, or a value the schema fixes (a constant or an
-	// enum member).
+	// the redacted bundle or the checkout holds, a key the schema names, or a
+	// value the schema fixes (a constant or an enum member).
 	slotKept
 	// slotClosed is context for the strings around it, like slotKept, but kept
 	// only because it fully matches a closed pattern or is a date-time. Such a
@@ -241,10 +230,8 @@ var errOutputMaskLength = errors.New("output redaction changed the text length")
 // keeps its exact text only when it is a reference that resolves (see
 // resolvedReference) or its value meets the schema's closing constraint (see
 // closedValue), though a value closed only by a pattern or date-time is still
-// scanned on its own; every other string is free text. Within a code source's
-// excerpt, excerpt holds the lines the bundle supplies, whose text is the
-// bundle's, and a canonical hunk header holds only line numbers.
-func (o *outputRedaction) value(value any, schema map[string]any, scope string, excerpt map[tileLine]bool, kind slotKind, set func(string)) {
+// scanned on its own; every other string is free text.
+func (o *outputRedaction) value(value any, schema map[string]any, scope string, kind slotKind, set func(string)) {
 	ref, _ := schema["$ref"].(string)
 	def := strings.TrimPrefix(ref, "#/$defs/")
 	schema = resolveSchema(schema, o.defs)
@@ -259,13 +246,9 @@ func (o *outputRedaction) value(value any, schema map[string]any, scope string, 
 				scope = constant
 			}
 		}
-		switch def {
-		case "tileCodeFile":
-			scope, excerpt = def, o.excerptLines(v)
-		case "contextRef":
+		if def == "contextRef" {
 			scope = def
 		}
-		bundleLine := def == "tileCodeLine" && excerpt != nil && excerpt[exactLine(v)]
 		for _, key := range slices.Sorted(maps.Keys(v)) {
 			child := v[key]
 			prop, _ := props[key].(map[string]any)
@@ -279,20 +262,15 @@ func (o *outputRedaction) value(value any, schema map[string]any, scope string, 
 			_, paired := child.(string)
 			o.slots = append(o.slots, outputSlot{text: key, kind: keyKind, key: true, paired: paired, set: entry.rename})
 			kind := slotFree
-			if text, ok := child.(string); ok && prop != nil {
-				switch {
-				case o.resolvedReference(scope, key, text), excerpt != nil && key == "header" && canonicalHunkHeader(text):
-					kind = slotKept
-				case bundleLine && key == "text":
-					kind = slotBundle
-				}
+			if text, ok := child.(string); ok && prop != nil && o.resolvedReference(scope, key, text) {
+				kind = slotKept
 			}
-			o.value(child, prop, key, excerpt, kind, entry.set)
+			o.value(child, prop, key, kind, entry.set)
 		}
 	case []any:
 		items, _ := schema["items"].(map[string]any)
 		for i, child := range v {
-			o.value(child, items, scope, excerpt, slotFree, func(s string) { v[i] = s })
+			o.value(child, items, scope, slotFree, func(s string) { v[i] = s })
 		}
 	case string:
 		limit := 0
@@ -350,7 +328,7 @@ func (o *outputRedaction) resolvedReference(scope, key, value string) bool {
 		return false
 	}
 	switch scope + "." + key {
-	case "tileCodeFile.path", "file.path", "contextRef.path":
+	case "file.path", "contextRef.path":
 		return o.checkout[value] || slices.ContainsFunc(b.Diff, func(h bundlepkg.Hunk) bool { return h.Path == value || h.OldPath == value })
 	case "pr_comment.id", "bot_report.id":
 		return slices.ContainsFunc(b.Conversation, func(c bundlepkg.ConversationItem) bool {
@@ -391,12 +369,7 @@ func (o *outputRedaction) resolvedReference(scope, key, value string) bool {
 // count is recorded.
 //
 // A kept string never changes, except that a value closed only by a pattern or
-// date-time is then masked on its own (see maskClosed). An excerpt line the bundle supplied keeps its
-// text unless a span reaching into model-written text touches it: the bundle
-// was redacted already, and the line must keep matching it. A bundle line
-// that such a span does mask no longer matches the bundle, so completion
-// rejects the document: the model can fail its own run this way, never keep
-// a secret.
+// date-time is then masked on its own (see maskClosed).
 func (o *outputRedaction) maskSlots() error {
 	if len(o.slots) == 0 {
 		return nil
@@ -897,8 +870,8 @@ func (o *outputRedaction) findLines(lines []string, visit func(line int, span re
 // scan redacts the joined text of the slots it is given and returns, by slot
 // index, the text each may take, with the number of spans masked. With pairs,
 // a key is joined to its string value by "=" rather than a newline. Spans
-// found within kept and bundle text alone (redacted again with only that text
-// left) are neither applied nor counted.
+// found within kept text alone (redacted again with only that text left) are
+// neither applied nor counted.
 func (o *outputRedaction) scan(indexes []int, pairs bool) (map[int]string, int, error) {
 	var builder strings.Builder
 	protected := false
@@ -925,9 +898,8 @@ func (o *outputRedaction) scan(indexes []int, pairs bool) (map[int]string, int, 
 	if len(masked) != len(joined) {
 		return nil, 0, errOutputMaskLength
 	}
-	// protectedOnly is the joined text with only kept and bundle strings left,
-	// the rest blanked in place: what it masks is not the model's doing.
-	protectedOnly := ""
+	// The joined text with only kept strings left, the rest blanked in place:
+	// what it masks is not the model's doing.
 	if protected && masked != joined {
 		blanked, offset := []byte(joined), 0
 		for _, i := range indexes {
@@ -941,12 +913,9 @@ func (o *outputRedaction) scan(indexes []int, pairs bool) (map[int]string, int, 
 			}
 			offset += len(slot.text) + 1
 		}
-		var protectedCount int
-		if protectedOnly, protectedCount, err = o.redactor.RedactString(o.ctx, string(blanked)); err != nil {
+		_, protectedCount, err := o.redactor.RedactString(o.ctx, string(blanked))
+		if err != nil {
 			return nil, 0, err
-		}
-		if len(protectedOnly) != len(joined) {
-			return nil, 0, errOutputMaskLength
 		}
 		count = max(count-protectedCount, 0)
 	}
@@ -956,13 +925,8 @@ func (o *outputRedaction) scan(indexes []int, pairs bool) (map[int]string, int, 
 		slot := o.slots[i]
 		end := offset + len(slot.text)
 		text := masked[offset:end]
-		switch slot.kind {
-		case slotKept, slotClosed:
+		if slot.kind == slotKept || slot.kind == slotClosed {
 			text = slot.text
-		case slotBundle:
-			if protectedOnly == "" || protectedOnly[offset:end] == text {
-				text = slot.text
-			}
 		}
 		out[i] = text
 		offset = end + 1
@@ -1268,77 +1232,6 @@ func replaceStrings(value any, replacements map[string]string) any {
 	return value
 }
 
-// excerptLines lists the excerpt lines a code source may carry unmasked: the
-// head or merge-base comparison lines its revision names, and the lines the
-// previous review's source for the same file, revision and version showed.
-// It is nil for a source without an excerpt.
-func (o *outputRedaction) excerptLines(source map[string]any) map[tileLine]bool {
-	code, ok := exactTileCode(source)
-	if !ok || o.bundle == nil {
-		return nil
-	}
-	lines := map[tileLine]bool{}
-	for _, prior := range o.inherited {
-		if prior.Path == code.Path && prior.Revision == code.Revision && prior.Version == code.Version && prior.Diff != nil {
-			for _, hunk := range prior.Diff.Hunks {
-				for _, line := range hunk.Lines {
-					lines[line] = true
-				}
-			}
-		}
-	}
-	root := ""
-	switch code.Revision {
-	case o.bundle.PullRequest.HeadSHA:
-		root = "head"
-	case o.bundle.PullRequest.MergeBaseSHA:
-		root = "merge-base"
-	}
-	if root != "" {
-		for _, line := range comparisonLines(o.bundle, code.Path, root) {
-			lines[line] = true
-		}
-	}
-	return lines
-}
-
-// exactTileCode and exactLine read a code source by its exact key names;
-// encoding/json matches keys case-insensitively, which would let a
-// case-variant key stand in for the one the contract names.
-func exactTileCode(source map[string]any) (tileCode, bool) {
-	code := tileCode{}
-	code.Path, _ = source["path"].(string)
-	code.Revision, _ = source["revision"].(string)
-	if version, ok := jsonInt(source["review_version"]); ok {
-		code.Version = version
-	}
-	diff, ok := source["diff"].(map[string]any)
-	if !ok {
-		return code, false
-	}
-	code.Diff = &struct {
-		Hunks []tileHunk `json:"hunks"`
-	}{}
-	for _, raw := range jsonObjects(diff["hunks"]) {
-		hunk := tileHunk{}
-		hunk.Header, _ = raw["header"].(string)
-		for _, line := range jsonObjects(raw["lines"]) {
-			hunk.Lines = append(hunk.Lines, exactLine(line))
-		}
-		code.Diff.Hunks = append(code.Diff.Hunks, hunk)
-	}
-	return code, true
-}
-
-func exactLine(value map[string]any) tileLine {
-	line := tileLine{}
-	line.Kind, _ = value["kind"].(string)
-	line.Text, _ = value["text"].(string)
-	line.Old, _ = jsonInt(value["old_line"])
-	line.New, _ = jsonInt(value["new_line"])
-	return line
-}
-
 func jsonInt(value any) (int, bool) {
 	switch number := value.(type) {
 	case json.Number:
@@ -1348,14 +1241,6 @@ func jsonInt(value any) (int, bool) {
 		return int(number), number == float64(int(number))
 	}
 	return 0, false
-}
-
-// canonicalHunkHeader reports a header of the form normalization writes,
-// which holds nothing but line numbers.
-func canonicalHunkHeader(value any) bool {
-	header, _ := value.(string)
-	old, oldCount, next, newCount, ok := tileHunkRange(header)
-	return ok && header == fmt.Sprintf("@@ -%d,%d +%d,%d @@", old, oldCount, next, newCount)
 }
 
 // closedValue reports how a value meets its schema's closing constraint:
