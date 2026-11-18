@@ -70,10 +70,13 @@ func (rr reviewRead) version(ctx context.Context, w http.ResponseWriter) (store.
 }
 
 // tilesHandler serves GET /api/tiles: the review document and the tile
-// document converted from it, with the selectors, errors and no-store ETag of
-// GET /api/document. Its document is the normalised review
-// (review.NormalizeStored), which differs from the stored one on the plain
-// route only where a stored-document rule applies.
+// document converted from it and composed with the version's stored
+// composition, if any, with the selectors, errors and no-store ETag of
+// GET /api/document. Answers are kept under the version's store revision,
+// which changes with every write to its row, composition included. Its
+// document is the normalised review (review.NormalizeStored), which differs
+// from the stored one on the plain route only where a stored-document rule
+// applies.
 func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !acquire(r.Context(), slots) {
@@ -91,7 +94,7 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 				return
 			}
 			var err error
-			if body, err = tileview.Encode(tileview.Build(version.Document, tiles.Options{})); err != nil {
+			if body, err = tileview.Encode(tileview.Build(version.Document, version.Composition, tiles.Options{})); err != nil {
 				apiError(w, err)
 				return
 			}

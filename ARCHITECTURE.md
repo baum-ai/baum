@@ -1089,12 +1089,58 @@ handles, and in `tiles/testdata/compositions` each template and
 normalisation rule. `internal/tilescorpus` runs every check over a
 directory of real review stores when `BAUM_TILES_CORPUS` names one, composes
 each version with its template, five seeded random compositions and one
-with hidden tiles, and logs only counts.
+with hidden tiles, and logs only counts. With `BAUM_TILES_CORPUS_DIGESTS=1`
+and `-run TestServedDigests` (`just oss-tiles-corpus <dir> -run
+TestServedDigests`) it logs instead one digest of the served answer per
+version, by position, so a change to serving can be shown not to change the
+answers by diffing the lines of two runs.
+
+**Storing compositions.** A version's composition is kept in the nullable
+`versions.composition` column of the review store (`store.Version.Composition`,
+the JSON as stored), beside the review document, which stays
+`baum.review/1` for every other reader. `Put` writes it in the version's own
+INSERT and nothing changes it afterwards: `RefreshCurrent` and
+`CompleteCurrent` rewrite only the document, and a composition is applied on
+read, so it follows a refreshed document. Only a normalised composition is
+stored: `Put` normalises the one it is given against the tile document
+converted from the document (`tiles.NormalizeComposition`) and stores exactly
+what it returns, so a hidden list or generator in the body it was given is
+dropped: hiding tiles is a personal edit that does not belong in the shared
+version row. The generator comes apart from the body, in
+`Version.CompositionGenerator`, and is set with `SetGenerator` (refused if the
+schema would not accept it). `store.ParseComposition` reads a stored one for a
+reader, nil for none or an unusable one. A composition problem never costs
+the review its place in the history: one that is over 256 KiB (`tiles.MaxStoredComposition`), is not
+`baum.composition/1` or that the document cannot take (it does not convert to
+tiles) is not stored, and a generator the schema refuses is left off (the
+composition is kept); a composition that chooses nothing, a hidden list alone
+included, is stored as none. Each is counted
+(`store.compositions_dropped`, `store.composition_generators_dropped`) and
+logged at debug level without content. A writable open adds the column with an
+`ALTER TABLE` when it is missing, which is additive and copies nothing. A
+store that cannot be altered (opened read-only, or held by another writer)
+keeps working: each read asks whether the column exists and selects `NULL` in
+its place when it does not, and a write that carries a composition tries the
+migration once more, leaving the composition out (counted likewise) only if
+that fails too. A version with no composition, a store without the
+column and a composition no reader can use all mean the default converted
+layout. An older build ignores the column, since its statements name their
+columns: it reads every document, writes `NULL` compositions for the versions
+it generates and refreshes the document in place, and a build that knows the
+column reads what it wrote as the default layout.
 
 **Serving.** The desktop daemon converts a review each time it answers for
-one; nothing about the tile document is stored. All three routes answer
+one, composed with the version's stored composition when it has one; the
+tile document itself is not stored. All three routes answer
 `{"document": <baum.review/1>, "tiles": <baum.tiles/1> | null, "problem"?: string}`.
-`tiles` is converted from exactly the bytes `document` holds. `document` is the
+`tiles` is converted from exactly the bytes `document` holds, then composed:
+`tiles.Compose(tiles.FromReview(document), composition)` with the stored
+composition (`tileview.Build(document, composition, options)`). With none, or
+an empty one, the answer is the converted document's, byte for byte as before
+compositions existed. A composition over 256 KiB, one that does not parse, one
+that `Compose` refuses and one that makes it panic are ignored: the converted layout is served with no problem for the
+reader, and the ignored composition is counted (`tileview.compositions_ignored`
+in the daemon's work statistics). `document` is the
 normalised review when normalisation succeeds (the stored-document rules,
 `review.NormalizeStored`, then the derived hunk URLs) and the stored review
 otherwise, with `tiles: null`. The plain routes serve the stored bytes (with
@@ -1120,17 +1166,23 @@ whatever its size.
 - `GET /api/tiles?clone=&pr=[&version=N]` takes the selector of
   `GET /api/document`, with the same 400, 404 and 413 answers. The answer is
   `no-store` with a strong `ETag` of the body (a matching `If-None-Match` is a
-  304), kept by store revision as the viewers are.
+  304), kept by store revision as the viewers are. The version's composition
+  is read with its document. A version's revision changes with every write to
+  its row, the composition included, so a kept answer is never served for
+  another composition.
 - `GET /api/jobs/{id}/draft?tiles=1` answers the running review's draft in
   that shape, plus the draft's `draft` count, converted with `Options.Draft`
   so a context not yet written is a pending context tile. Only the exact value
   `1` selects tiles; without it, or with any other value (`true`, empty), the
   answer is the draft alone, as before. The converted answer is kept per job
-  by the draft's count, so the app's polling converts each draft once, and is
-  dropped when the job has no draft any more.
+  by the draft's count and the digest of its composition (`tileview.Key`; a
+  draft has none yet, so it is served with the converted layout), so the app's
+  polling converts each draft once, and is dropped when the job has no draft
+  any more.
 - `GET /api/groups/{id}/tiles[?version=N]` answers a review group's version,
   with the selectors and errors of `GET /api/groups/{id}/document`; its
-  answers are kept by group, version and the document's digest.
+  answers are kept by group, version and the document's digest. A group has
+  no composition: it is served with the converted layout.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,

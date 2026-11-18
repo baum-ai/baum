@@ -2,6 +2,7 @@ package uiserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
 	"os/exec"
@@ -80,6 +81,25 @@ func withVersion(t *testing.T, doc []byte, n int) []byte {
 	value["review"].(map[string]any)["version"] = n
 	delete(value["review"].(map[string]any), "previous_version")
 	return tileviewtest.Encode(t, value)
+}
+
+// putComposed saves doc as the next version with a composition that pins one
+// of its tiles, and returns that tile's ID.
+func (f *tilesFixture) putComposed(t *testing.T, doc []byte) string {
+	t.Helper()
+	ctx := context.Background()
+	var previous store.Version
+	if latest, err := f.versions.Latest(ctx, f.key); err == nil {
+		previous = latest
+	}
+	n := previous.Metadata.Version + 1
+	document := withVersion(t, doc, n)
+	composition, pinned := tileviewtest.PinnedComposition(t, document)
+	next := store.Version{Metadata: store.Metadata{Version: n}, Document: document, Composition: composition}
+	if err := f.versions.Put(ctx, f.key, previous, next); err != nil {
+		t.Fatal(err)
+	}
+	return pinned
 }
 
 func (f *tilesFixture) get(path, query, etag string) *httptest.ResponseRecorder {
@@ -359,5 +379,69 @@ func TestTilesConvertsAnUnchangedVersionOnce(t *testing.T) {
 	f.get("/api/tiles", "", "")
 	if got := tileview.Builds.Load() - before; got != 3 {
 		t.Fatalf("%d conversions after a rewrite and a new version", got)
+	}
+}
+
+// A version's stored composition is applied to the tiles served for it, the
+// document served beside them is unchanged, and the next version, which has
+// none, is served with the converted layout.
+func TestTilesServesTheStoredComposition(t *testing.T) {
+	f := newTilesFixture(t)
+	f.put(t, titled(t, "Plain"))
+	plain := decodeTiles(t, f.get("/api/tiles", "", ""))
+	pinned := f.putComposed(t, titled(t, "Plain"))
+	composed := decodeTiles(t, f.get("/api/tiles", "", ""))
+	if composed.Problem != "" || composed.Tiles == nil {
+		t.Fatalf("problem %q", composed.Problem)
+	}
+	first := composed.Tiles.Layout.Entries[0]
+	if first.Tile != pinned || !first.Pin || plain.Tiles.Layout.Entries[0].Tile == pinned {
+		t.Fatalf("first tile %q (pinned %v), want %q pinned; the plain layout starts with %q", first.Tile, first.Pin, pinned, plain.Tiles.Layout.Entries[0].Tile)
+	}
+	if composed.Tiles.Origin.Kind != tiles.OriginGenerated || plain.Tiles.Origin.Kind != tiles.OriginConverted {
+		t.Errorf("origins %q and %q", composed.Tiles.Origin.Kind, plain.Tiles.Origin.Kind)
+	}
+	// Version 1 still has no composition; asking for it by number is the
+	// converted answer, byte for byte.
+	one := f.get("/api/tiles", "&version=1", "")
+	again := f.get("/api/tiles", "&version=1", "")
+	if one.Code != 200 || one.Body.String() != again.Body.String() || decodeTiles(t, one).Tiles.Origin.Kind != tiles.OriginConverted {
+		t.Error("version 1 is not served with the converted layout")
+	}
+	// The same document with and without a composition is answered with
+	// another body and ETag: two clones hold it as version 1, one with a
+	// composition.
+	other, composedOne := newTilesFixture(t), newTilesFixture(t)
+	other.put(t, titled(t, "Plain"))
+	composedOne.putComposed(t, titled(t, "Plain"))
+	same := composedOne.get("/api/tiles", "", "")
+	without := other.get("/api/tiles", "", "")
+	if same.Code != 200 || without.Code != 200 || same.Header().Get("ETag") == without.Header().Get("ETag") || same.Body.String() == without.Body.String() {
+		t.Error("a composition does not change the answer or its ETag")
+	}
+}
+
+// A composition the daemon cannot use is served as no composition, with no
+// problem for the reader.
+func TestTilesIgnoresAnUnusableStoredComposition(t *testing.T) {
+	f := newTilesFixture(t)
+	f.put(t, titled(t, "Plain"))
+	want := f.get("/api/tiles", "", "").Body.String()
+	db, err := sql.Open("sqlite", filepath.Join(f.versions.Root(), "versions.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE versions SET composition='{"schema":"baum.composition/9"}'`); err != nil {
+		t.Fatal(err)
+	}
+	// The write renews the version's revision, so the answer is built again.
+	before := tileview.Builds.Load()
+	got := f.get("/api/tiles", "", "")
+	if tileview.Builds.Load() != before+1 {
+		t.Error("the answer was not built again")
+	}
+	if got.Body.String() != want {
+		t.Error("an unusable composition changed the answer")
 	}
 }
