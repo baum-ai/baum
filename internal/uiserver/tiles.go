@@ -69,6 +69,22 @@ func (rr reviewRead) version(ctx context.Context, w http.ResponseWriter) (store.
 	return version, true
 }
 
+// libraryType is an entry of GET /api/tile-library.
+type libraryType struct {
+	Name    string       `json:"name"`
+	Title   string       `json:"title"`
+	UseWhen string       `json:"use_when"`
+	Sizes   []tiles.Size `json:"sizes"`
+	Kit     int          `json:"kit"`
+	Digest  string       `json:"digest"`
+}
+
+// tileLibrary serves GET /api/tile-library: the custom tile types this
+// version ships, which it lists as {"types": [...]}. It ships none yet.
+func tileLibrary(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string][]libraryType{"types": {}})
+}
+
 // tilesHandler serves GET /api/tiles: the review document and the tile
 // document converted from it and composed with the version's stored
 // composition, if any, with the selectors, errors and no-store ETag of
@@ -87,19 +103,19 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 		if !ok {
 			return
 		}
-		body, found := answers.Get(read.revisionKey())
+		answer, found := answers.Get(read.revisionKey())
 		if !found {
 			version, ok := read.version(r.Context(), w)
 			if !ok {
 				return
 			}
 			var err error
-			if body, err = tileview.Encode(tileview.Build(version.Document, version.Composition, tiles.Options{})); err != nil {
+			if answer, err = tileview.Encode(tileview.Build(version.Document, version.Composition, tiles.Options{})); err != nil {
 				apiError(w, err)
 				return
 			}
-			answers.Put(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision), body)
+			answers.Put(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision), answer)
 		}
-		etagjson.Serve(w, r, body)
+		etagjson.Serve(w, r, answer.Body)
 	}
 }

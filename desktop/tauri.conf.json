@@ -50,7 +50,7 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0 (>= 2.38)"]
+        "depends": ["libwebkit2gtk-4.1-0 (>= 2.40)"]
       }
     },
     "macOS": {

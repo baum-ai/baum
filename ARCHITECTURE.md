@@ -1160,8 +1160,9 @@ daemon compiles its schemas in the background at start-up (`tileview.Warm`,
 about 0.4 s, logging a warning if it fails), so the first review opened does
 not wait for them. Each route keeps its encoded answers, so an unchanged
 document is not converted again: up to 16 answers per cache, and when they
-together pass 64 MiB the least recently used go first, the newest staying
-whatever its size.
+together pass 64 MiB (their bodies and the HTML of the custom tile types they
+registered) the least recently used go first, the newest staying whatever its
+size.
 
 - `GET /api/tiles?clone=&pr=[&version=N]` takes the selector of
   `GET /api/document`, with the same 400, 404 and 413 answers. The answer is
@@ -1183,6 +1184,70 @@ whatever its size.
   with the selectors and errors of `GET /api/groups/{id}/document`; its
   answers are kept by group, version and the document's digest. A group has
   no composition: it is served with the converted layout.
+
+**Custom tile frames.** A custom tile draws in an iframe whose document is
+the kit's composition of its type's HTML (see "Custom tile kit"), served by
+the app server at `GET /tile-frames/<hex>`, where `hex` is the 64 hex digits
+of the definition digest. One URL serves a type wherever it appears: a saved
+version, an older one, a draft or a group review; a tile's data never enters
+the document.
+
+- **Registry.** `internal/tileframes` keeps the composed documents by
+  digest, at most 32 MiB of them, the least recently used going first and the
+  newest always kept. `Add` takes a definition the validator checked, checks
+  its digest against its content once and composes it once; adding a digest
+  already held only marks it used. `MarkHung` refuses a digest until the
+  daemon restarts. `tileview` keeps the one registry the routes share
+  (`tileview.FrameRegistry`). Only the daemon's render check or the
+  authenticated app may mark a digest hung, never a message from a frame:
+  otherwise a tile could switch other tiles off.
+- **Registration.** `tileview.Build`, which all three tile routes use,
+  registers the type of every custom tile the validator left `ready`. A ready
+  tile whose document cannot be composed (its HTML is within the format's
+  262144 characters but over the kit's 256 KiB in UTF-8) is marked
+  `unavailable` instead; an unavailable or pending tile is never registered.
+  Each route's kept answers carry the definitions they registered and
+  register them again whenever they are served, so a document the registry
+  dropped comes back with the next read of a tile route that names it.
+- **What the tile routes serve.** Every custom tile's `definition` is served
+  without its HTML: `source` is `{"format": "html", "bytes": <length of the
+  HTML in UTF-8>}`, and every other member, `digest` included, is as stored
+  (`tileview.ServedDefinition`; a definition that is not an object is served
+  as `{}`). The page needs the title, `kit`, `sizes` and the digest, from
+  which it builds the frame URL. The served definition no longer matches its
+  digest, so nothing checks or converts a served document again; the digest
+  is the one the validator verified on the stored one. The chat's agent reads
+  the same answers, so its reads of the tile routes hold no tile source
+  either. `GET /api/document` and the plain draft route serve review
+  documents, which hold no custom tiles today; once a stored composition or a
+  draft can carry them, those routes need the same projection.
+- **Route.** The route is checked before the namespace and the MCP route,
+  after the Host check, and needs no cookie. It answers only `GET` and `HEAD`
+  with `Sec-Fetch-Dest: iframe`, `Sec-Fetch-Mode: navigate` and
+  `Sec-Fetch-Site: same-origin` (a request with none of them is counted and
+  logged at debug level, without its path), for a path that is exactly the prefix and 64
+  lowercase hex digits as sent, and a registered digest not marked hung;
+  everything else is the same plain 404. The answer is the composed document
+  with `kit.CSP` in place of the app's policy, `Content-Type: text/html;
+  charset=utf-8`, `Cache-Control: no-store` (a cached copy would outlive the
+  registry and skip the checks), `Cross-Origin-Resource-Policy: same-origin`
+  and `Vary` on the three fetch metadata headers; the query and `Range` are
+  ignored. `SECURITY.md` ("Custom tiles") gives the reasons for each check.
+- **Library.** `GET /api/tile-library` lists the custom tile types this
+  version ships, as `{"types": [{name, title, use_when, sizes, kit,
+  digest}]}`. It ships none yet, so the list is empty.
+
+Tests serve custom tiles through `tileview.SetFixture`, which runs a function
+on every converted tile document before its tiles are checked and panics
+outside a test binary. `tileviewtest.AddCustomTiles` adds three synthetic
+types (`internal/tileview/tileviewtest/testdata/custom`): `widget_health`,
+written against the kit's documented API; `escape_probe`, which tries every
+way out of its frame and posts what each did to the page as `{probe:
+"escape_probe", results}`; and `widget_owners` (tile `newer_kit`), written for
+a kit major this version lacks and so unavailable. The browser fixture serves
+them in every version of acme/demo#7's review when it is started with
+`BAUM_APP_CUSTOM_TILES=1`, as the development browser suite starts it; the
+main suite and its screenshots do not see them.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,
@@ -1352,6 +1417,11 @@ are rules for whoever writes the page's side:
   data: they go to the local UI and the render check's result, nowhere else.
 - Clamp `resize` (120 to 20,000px), rate-limit messages, and unmount a frame
   that floods.
+- A frame that never says `hello`, after the page has read its tile route
+  again (which registers its document again) and remounted it once, shows
+  "This tile couldn't load" rather than an empty box: an engine that sends
+  no `Sec-Fetch-*` headers gets a 404 for every frame, and that must be
+  visible.
 - Treat `hello`, `ready` and `error` as signals from honest authors only: a
   tile can fake `ready`, swallow its errors or replace `console.error`. The
   render check is a quality gate, not a security control; the sandbox, the

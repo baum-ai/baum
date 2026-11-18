@@ -1381,8 +1381,11 @@ needs the launch secret and cannot read the response. The header is absent from
 agent CLIs calling the MCP endpoint, the hook command, the desktop shell's own
 client, health checks and test clients, and those pass; the browser app's own
 requests are `same-origin` and a typed launch URL is `none`, and those pass too.
-The page's Content-Security-Policy names `frame-src 'self'` explicitly, and the
-app embeds no frame. The capability is the daemon's app
+The page's Content-Security-Policy names `frame-src 'self'` explicitly; the
+only frames the app embeds are custom tiles' frames. The one document route
+outside the namespace and without the cookie is a custom tile's frame,
+`GET /tile-frames/<digest>`, served only to a same-origin frame navigation (see
+[Custom tiles](#custom-tiles)). The capability is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
@@ -1603,6 +1606,99 @@ only GitHub writes are the ones listed under "Writes to GitHub": a merge, a
 branch update and a re-run you confirm and a fix you start, with that fix's
 replies on the review threads it addressed, and resolving a review thread you
 chose; it supplies no approvals or other discussion controls.
+
+### Custom tiles
+
+A custom tile is HTML and JavaScript an AI agent wrote: a component that
+draws one tile's data in a review's tile document. It is untrusted code, and
+it runs only in its own frame, `<iframe sandbox="allow-scripts">`, whose
+document the daemon serves with its own Content-Security-Policy:
+`default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';
+img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none';
+frame-ancestors 'self'; sandbox allow-scripts`.
+
+**What a tile's frame cannot reach.** The sandbox gives the frame an opaque
+origin, so it cannot read the app's page, its cookies or storage, or the
+desktop app's bridge, and it cannot open windows, submit forms or navigate
+the app's page. The frame's policy allows no request at all: no `fetch`,
+images, fonts, styles or frames from anywhere, the daemon included;
+everything the kit needs is inlined into the document. A request the frame
+tries to send to the daemon anyway would carry no cookie, and the frame
+never learns the secret `/s/<namespace>/` path the app's API lives under.
+
+A frame can still navigate itself (`location.href = …`, a meta refresh): its
+own policy does not govern that. The control for it is the page's
+`frame-src`, which today falls back to the page's `default-src 'self'`, so a
+frame can only be navigated to the daemon's own origin, where every route
+but `/tile-frames/` needs the cookie and that route refuses a navigation a
+frame starts (it is `cross-site`). The frame also talks to the page by
+`postMessage`; the frame protocol (see "Custom tile kit" in
+`ARCHITECTURE.md`) has no message that approves, merges, comments, changes a
+setting or reads anything, and the page must treat every message from a
+frame as untrusted.
+
+**How its document is served.** The frame document is
+`GET /tile-frames/<digest>`, where the digest is the 64 lowercase hex digits
+of the tile type's definition digest. It is the one document route outside
+the session namespace and without the cookie, so that a tile never sees the
+namespace and its document request carries no credential. In its place it is
+served only when all of these hold, and otherwise answers the same plain 404,
+which never says whether a digest exists:
+
+- the Host check passes, as for every route;
+- the method is `GET` or `HEAD`;
+- the request is a frame navigation started by a document of the daemon's own
+  origin: `Sec-Fetch-Dest: iframe`, `Sec-Fetch-Mode: navigate` and
+  `Sec-Fetch-Site: same-origin`, all three present. A client that sends no
+  fetch metadata, a script's fetch, an `<object>` or `<embed>`, an address
+  typed into the address bar (`none`), another loopback service (`same-site`),
+  any web page and a tile's own frame (opaque, so `cross-site`) are refused;
+- the path is exactly `/tile-frames/` and the digits, with no encoding, extra
+  segment or trailing slash; the query is ignored;
+- the daemon itself handed that type to the authenticated app: the tile
+  routes register the types of the custom tiles they serve, and nothing a
+  request carries is ever registered, so the route serves only HTML the app
+  already received. At most 32 MiB of documents are kept, the least recently
+  used going first; reading the tile route again registers its types again.
+
+The answer is `no-store`, sets no cookie, ignores `Range` and carries
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+`Cross-Origin-Resource-Policy: same-origin`.
+
+**What a tile is given.** The frame protocol gives a tile its own data, the
+face and size it draws, the app's theme and language, and the items of the
+review its data cites. Nothing else: not the review, the repository, other
+tiles, or code it does not cite. Anything given to a tile is visible to
+whoever wrote it. The tile routes send each custom tile's definition without
+its HTML (its length in bytes instead), to the app and to every read of them
+by the chat's agent.
+
+**Residual risks.**
+
+- A tile's author can learn what the tile is given, at low bandwidth: the
+  browser may resolve or connect to hosts a tile names in its markup (DNS
+  prefetch and preconnect) before any policy applies, and where the engine
+  offers WebRTC (Chromium, and WebKit outside WebKitGTK; macOS is
+  unverified), a peer connection can reach a server the policy does not
+  govern. baum ships no script that tries to block these inside the frame: a
+  fresh realm gets around such a script. It minimises what a tile receives
+  instead.
+- A tile that runs a busy loop freezes the app's window until it is closed.
+- In the desktop app, a frame's navigation to an external address may be
+  handed to the desktop shell's navigation handler, which opens external
+  addresses in your browser, before the page's `frame-src` is applied. Until
+  the shell refuses frame navigations, a tile may be able to open a page of
+  its choosing in your browser, with what the tile was given in its address.
+- A local process that knows a tile type's digest can fetch that type's
+  source by sending the three `Sec-Fetch-*` headers itself; the checks are
+  not authentication. It never gets a tile's data, which is not in the
+  document, and a process running as you can read the app's credential
+  anyway.
+- The author today is your own agent, writing for you; a tile shared by or
+  imported from someone else trusts its author with what it is given.
+
+Tile code is never read from repository content: a pull request cannot
+supply a tile.
 
 ### MCP server for agents
 

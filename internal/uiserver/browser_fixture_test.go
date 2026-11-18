@@ -52,9 +52,12 @@ import (
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
+	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
+	"github.com/baum-ai/baum/tiles"
 )
 
 // browserDiscovery serves fixed pull requests. Once pushed reports true (the
@@ -268,6 +271,23 @@ func (f browserTransport) RoundTrip(r *http.Request) (*http.Response, error) { r
 func TestLocalAppBrowserFixture(t *testing.T) {
 	if os.Getenv("BAUM_APP_BROWSER_FIXTURE") != "1" {
 		t.Skip("Playwright fixture process")
+	}
+	// With BAUM_APP_CUSTOM_TILES=1, the tile routes serve acme/demo#7's
+	// reviews with the synthetic custom tiles (tileviewtest.CustomTileIDs: one
+	// well-behaved, one that tries to escape its frame, one unavailable),
+	// which no generation writes yet. It is decided when the process starts,
+	// so no kept tile answer is served without them, and only the browser
+	// suites that start the fixture with it see them.
+	if os.Getenv("BAUM_APP_CUSTOM_TILES") == "1" {
+		t.Cleanup(tileview.SetFixture(func(doc *tiles.Document) {
+			var header struct {
+				Repository  string `json:"repository"`
+				PullRequest int    `json:"pull_request"`
+			}
+			if json.Unmarshal(doc.Review, &header) == nil && header.Repository == "acme/demo" && header.PullRequest == 7 {
+				tileviewtest.AddCustomTiles(doc)
+			}
+		}))
 	}
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")

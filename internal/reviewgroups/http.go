@@ -429,16 +429,16 @@ func (h *API) tiles(w http.ResponseWriter, r *http.Request) {
 	// number does, so a rewrite is never answered from the old one.
 	sum := sha256.Sum256(version.Document)
 	key := fmt.Sprintf("%s\x00%d\x00%x", g.ID, version.Metadata.Version, sum)
-	body, found := h.tileAnswers.Get(key)
+	answer, found := h.tileAnswers.Get(key)
 	if !found {
 		var err error
-		if body, err = tileview.Encode(tileview.Build(version.Document, nil, tiles.Options{})); err != nil {
+		if answer, err = tileview.Encode(tileview.Build(version.Document, nil, tiles.Options{})); err != nil {
 			fail(w, err)
 			return
 		}
-		h.tileAnswers.Put(key, body)
+		h.tileAnswers.Put(key, answer)
 	}
-	etagjson.Serve(w, r, body)
+	etagjson.Serve(w, r, answer.Body)
 }
 
 // patchDocument is what the patch route reads of a group review.
