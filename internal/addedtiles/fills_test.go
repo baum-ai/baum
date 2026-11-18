@@ -21,8 +21,8 @@ func TestGeneratedReadsAReviewV2Document(t *testing.T) {
 	entry, _ := library.Get("api_change")
 	schema, _ := library.Get("schema_change")
 	doc, err := json.Marshal(map[string]any{"schema": "baum.review/2", "tiles": []map[string]any{
-		{"id": "tl_api_change", "type": "api_change", "owner": "sec_a", "state": "ready", "definition": json.RawMessage(entry.Encoded)},
-		{"id": "tl_schema_change", "type": "schema_change", "owner": "sec_a", "state": "failed", "definition": json.RawMessage(schema.Encoded)},
+		{"id": "tl_api_change", "type": "api_change", "owner": "sec_a", "state": "ready", "definition": entry.Encoded},
+		{"id": "tl_schema_change", "type": "schema_change", "owner": "sec_a", "state": "failed", "definition": schema.Encoded},
 		{"id": "tl_flow", "type": "flow", "owner": "sec_a", "state": "ready"},
 	}})
 	if err != nil {
