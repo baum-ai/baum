@@ -18,21 +18,23 @@ import (
 
 // keptSchema creates the kept_heads table. openRoot runs it on every writable
 // open, so a store made before it existed gains it on its next write.
-const keptSchema = `CREATE TABLE IF NOT EXISTS kept_heads (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, head TEXT NOT NULL, reason TEXT NOT NULL, kept_at INTEGER NOT NULL, PRIMARY KEY(repository,pr,version)) WITHOUT ROWID`
+const keptSchema = `CREATE TABLE IF NOT EXISTS kept_heads (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, head TEXT NOT NULL, base TEXT NOT NULL, reason TEXT NOT NULL, kept_at INTEGER NOT NULL, PRIMARY KEY(repository,pr,version)) WITHOUT ROWID`
 
 // maxKeptReason bounds the reason stored with a kept head.
 const maxKeptReason = 2000
 
-// Kept is the latest head a version was kept for, and why.
+// Kept is the latest head a version was kept for, the base it was checked
+// against, and why.
 type Kept struct {
 	Head   string    `json:"head"`
+	Base   string    `json:"base"`
 	Reason string    `json:"reason"`
 	At     time.Time `json:"kept_at"`
 }
 
-// KeepHead records that version of k still covers head (see Kept). It
-// replaces what the version recorded before.
-func (s *Store) KeepHead(ctx context.Context, k Key, version int, head, reason string, at time.Time) error {
+// KeepHead records that version of k still covers head on base (see Kept).
+// It replaces what the version recorded before.
+func (s *Store) KeepHead(ctx context.Context, k Key, version int, head, base, reason string, at time.Time) error {
 	if !k.valid() || version <= 0 || head == "" {
 		return errors.New("invalid kept head")
 	}
@@ -47,7 +49,7 @@ func (s *Store) KeepHead(ctx context.Context, k Key, version int, head, reason s
 	if _, err = db.ExecContext(ctx, keptSchema); err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO kept_heads(repository,pr,version,head,reason,kept_at) VALUES (?,?,?,?,?,?)`, k.repository(), k.Number, version, head, reason, at.UnixNano())
+	_, err = db.ExecContext(ctx, `INSERT OR REPLACE INTO kept_heads(repository,pr,version,head,base,reason,kept_at) VALUES (?,?,?,?,?,?,?)`, k.repository(), k.Number, version, head, base, reason, at.UnixNano())
 	return err
 }
 
@@ -69,7 +71,7 @@ func (s *Store) KeptHead(ctx context.Context, k Key, version int) (*Kept, error)
 	}
 	var kept Kept
 	var at int64
-	err = db.QueryRowContext(ctx, `SELECT head,reason,kept_at FROM kept_heads WHERE repository=? AND pr=? AND version=?`, k.repository(), k.Number, version).Scan(&kept.Head, &kept.Reason, &at)
+	err = db.QueryRowContext(ctx, `SELECT head,base,reason,kept_at FROM kept_heads WHERE repository=? AND pr=? AND version=?`, k.repository(), k.Number, version).Scan(&kept.Head, &kept.Base, &kept.Reason, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -96,7 +98,7 @@ func keptHeads(ctx context.Context, tx *sql.Tx, entries map[Key]*Summary) error 
 	if ok, err := hasKeptHeads(ctx, tx); err != nil || !ok {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT repository,pr,version,head,reason,kept_at FROM kept_heads`)
+	rows, err := tx.QueryContext(ctx, `SELECT repository,pr,version,head,base,reason,kept_at FROM kept_heads`)
 	if err != nil {
 		return err
 	}
@@ -106,7 +108,7 @@ func keptHeads(ctx context.Context, tx *sql.Tx, entries map[Key]*Summary) error 
 		var version int
 		var kept Kept
 		var at int64
-		if err := rows.Scan(&k.Repository, &k.Number, &version, &kept.Head, &kept.Reason, &at); err != nil {
+		if err := rows.Scan(&k.Repository, &k.Number, &version, &kept.Head, &kept.Base, &kept.Reason, &at); err != nil {
 			return err
 		}
 		item := entries[k]

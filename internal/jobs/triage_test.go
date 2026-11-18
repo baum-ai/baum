@@ -20,6 +20,9 @@ const (
 	newHead      = "2222222222222222222222222222222222222222"
 )
 
+// triageSecret is a credential-shaped value the redactor masks.
+const triageSecret = "ghp_" + "JTeKdNnFRIBXuDL7DxtpYlSXpfKtHF4vUCsM"
+
 const savedReview = `{"summary":{"title":"Add retries","text":"Jobs back off and stop."},"sections":[{"title":"Retry policy","summary":{"text":"Adds RetryPolicy."},"risks":[{"tier":"high","text":"Retries in step","state":"active"},{"tier":"low","text":"Gone","state":"mitigated"}]}]}`
 
 type fakeVersions struct {
@@ -36,8 +39,8 @@ func (f *fakeVersions) Latest(context.Context, store.Key) (store.Version, error)
 	return store.Version{Metadata: store.Metadata{Head: f.head, Version: 3}, Document: []byte(savedReview)}, nil
 }
 
-func (f *fakeVersions) KeepHead(_ context.Context, _ store.Key, version int, head, _ string, _ time.Time) error {
-	f.kept = strconv.Itoa(version) + "@" + head
+func (f *fakeVersions) KeepHead(_ context.Context, _ store.Key, version int, head, base, _ string, _ time.Time) error {
+	f.kept = strconv.Itoa(version) + "@" + head + "^" + base
 	return nil
 }
 
@@ -96,7 +99,7 @@ func TestTriage(t *testing.T) {
 		unchanged string
 		asked     bool
 	}{
-		"insignificant": {onChange, fakeVersions{head: reviewedHead}, &fakeDiffs{diff: "diff --git a/README.md b/README.md\n-teh\n+the\n"}, &completerBackend{reply: `{"regenerate":false,"reason":"Only fixes a typo in the README."}`}, "Only fixes a typo in the README.", true},
+		"insignificant": {onChange, fakeVersions{head: reviewedHead}, &fakeDiffs{diff: "diff --git a/README.md b/README.md\n-old wording\n+new wording\n"}, &completerBackend{reply: `{"regenerate":false,"reason":"Only rewords the README."}`}, "Only rewords the README.", true},
 		"significant":   {onChange, fakeVersions{head: reviewedHead}, &fakeDiffs{diff: "diff --git a/x.go b/x.go\n"}, &completerBackend{reply: `{"regenerate":true,"reason":"Changes the retry loop."}`}, "", true},
 		"empty diff":    {onChange, fakeVersions{head: reviewedHead}, &fakeDiffs{diff: "\n"}, &completerBackend{}, "The new commits change no files since the review.", false},
 		"always":        {repos.Preferences{Automatic: true}, fakeVersions{head: reviewedHead}, &fakeDiffs{diff: "x"}, &completerBackend{reply: `{"regenerate":false,"reason":"r"}`}, "", false},
@@ -121,7 +124,7 @@ func TestTriage(t *testing.T) {
 				t.Fatalf("got %v, want unchanged %q", err, tc.unchanged)
 			}
 			// A review stood down is recorded as current at the new head.
-			if want := map[bool]string{true: "3@" + newHead}[tc.unchanged != ""]; versions.kept != want {
+			if want := map[bool]string{true: "3@" + newHead + "^" + reviewedHead}[tc.unchanged != ""]; versions.kept != want {
 				t.Fatalf("kept %q, want %q", versions.kept, want)
 			}
 			c, ok := tc.backend.(*completerBackend)
@@ -147,6 +150,25 @@ func TestTriage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A credential in the diff is masked before the model reads it, and again
+// in the reason that becomes the job's summary.
+func TestTriageMasksSecrets(t *testing.T) {
+	diff := &fakeDiffs{diff: "diff --git a/.env b/.env\n+GITHUB_TOKEN=" + triageSecret + "\n"}
+	c := &completerBackend{reply: `{"regenerate":false,"reason":"Only sets GITHUB_TOKEN=` + triageSecret + `."}`}
+	p := Prepared{Item: Item{PR: 7}, Repository: "org/repo", HeadSHA: newHead, BaseSHA: reviewedHead}
+	err := triage(context.Background(), triageInput{prefs: repos.Preferences{Automatic: true, Updates: repos.UpdatesOnChange}, versions: &fakeVersions{head: reviewedHead}, key: store.Key{Repository: "org/repo", Number: 7}, clone: diff, p: p, backend: c, system: "decide"})
+	var unchanged *UnchangedError
+	if !errors.As(err, &unchanged) {
+		t.Fatalf("got %v, want unchanged", err)
+	}
+	if c.calls != 1 || strings.Contains(c.asked.User, triageSecret) || !strings.Contains(c.asked.User, "GITHUB_TOKEN=") {
+		t.Fatalf("the diff reached the model unmasked:\n%s", c.asked.User)
+	}
+	if strings.Contains(unchanged.Reason, triageSecret) || !strings.HasPrefix(unchanged.Reason, "Only sets") {
+		t.Fatalf("reason not masked: %q", unchanged.Reason)
 	}
 }
 

@@ -21,14 +21,14 @@ func TestKeptHeads(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
-	if err := s.KeepHead(ctx, k, 1, "head-b", "typo", at); err != nil {
+	if err := s.KeepHead(ctx, k, 1, "head-b", "base-a", "typo", at); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.KeepHead(ctx, k, 1, "head-c", "comments only", at.Add(time.Minute)); err != nil {
+	if err := s.KeepHead(ctx, k, 1, "head-c", "base-b", "comments only", at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	kept, err := s.KeptHead(ctx, k, 1)
-	if err != nil || kept == nil || kept.Head != "head-c" || kept.Reason != "comments only" || !kept.At.Equal(at.Add(time.Minute)) {
+	if err != nil || kept == nil || kept.Head != "head-c" || kept.Base != "base-b" || kept.Reason != "comments only" || !kept.At.Equal(at.Add(time.Minute)) {
 		t.Fatalf("kept %+v %v", kept, err)
 	}
 	rows, err := s.Snapshot(ctx)
@@ -44,7 +44,7 @@ func TestKeptHeads(t *testing.T) {
 	if err != nil || len(rows) != 1 || rows[0].Kept != nil {
 		t.Fatalf("a newer version inherited the kept head: %+v %v", rows, err)
 	}
-	if err := s.KeepHead(ctx, k, 0, "x", "", at); err == nil {
+	if err := s.KeepHead(ctx, k, 0, "x", "", "", at); err == nil {
 		t.Fatal("kept a head for version 0")
 	}
 }

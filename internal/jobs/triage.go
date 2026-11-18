@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
@@ -55,7 +56,7 @@ type triageInput struct {
 	prefs    repos.Preferences
 	versions interface {
 		Latest(context.Context, store.Key) (store.Version, error)
-		KeepHead(context.Context, store.Key, int, string, string, time.Time) error
+		KeepHead(context.Context, store.Key, int, string, string, string, time.Time) error
 	}
 	key   store.Key
 	clone interface {
@@ -103,7 +104,7 @@ func triage(ctx context.Context, in triageInput) error {
 	// request does not show it as outdated. A failed write leaves it shown as
 	// outdated, as before, and still writes no review.
 	keep := func(reason string) error {
-		_ = in.versions.KeepHead(context.WithoutCancel(ctx), in.key, latest.Metadata.Version, in.p.HeadSHA, reason, time.Now().UTC())
+		_ = in.versions.KeepHead(context.WithoutCancel(ctx), in.key, latest.Metadata.Version, in.p.HeadSHA, in.p.BaseSHA, reason, time.Now().UTC())
 		return &UnchangedError{Reason: reason}
 	}
 	if len(strings.TrimSpace(string(diff))) == 0 {
@@ -111,7 +112,18 @@ func triage(ctx context.Context, in triageInput) error {
 		// commit: nothing the review covers moved.
 		return keep("The new commits change no files since the review.")
 	}
-	user := fmt.Sprintf("<review>\n%s\n</review>\n\n<diff>\n%s\n</diff>", outline, diff)
+	// The diff is raw git output: its secrets are masked as a review's
+	// patches are (bundle.Redact) before the model reads it. A diff that
+	// cannot be masked is not sent, and the review is written.
+	redactor, err := bundle.NewRedactor()
+	if err != nil {
+		return nil
+	}
+	masked, _, err := redactor.RedactString(ctx, string(diff))
+	if err != nil {
+		return nil
+	}
+	user := fmt.Sprintf("<review>\n%s\n</review>\n\n<diff>\n%s\n</diff>", outline, masked)
 	completion, err := completer.Complete(ctx, agent.CompleteRequest{System: in.system, User: user, Schema: triageSchema, MaxOutputTokens: 1024})
 	if err != nil {
 		return nil
@@ -120,8 +132,10 @@ func triage(ctx context.Context, in triageInput) error {
 	if json.Unmarshal(completion.Document, &verdict) != nil || verdict.Regenerate {
 		return nil
 	}
-	reason := strings.TrimSpace(verdict.Reason)
-	if reason == "" {
+	// The reason becomes the job's summary: whatever of the diff the model
+	// echoes is masked again, and an unmaskable one is replaced.
+	reason, _, err := redactor.RedactString(ctx, strings.TrimSpace(verdict.Reason))
+	if err != nil || reason == "" {
 		reason = "The new commits don't change what the review says."
 	}
 	return keep(truncate(reason, maxSummary))

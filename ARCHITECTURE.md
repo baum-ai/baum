@@ -4898,11 +4898,13 @@ it and `Queue.SubmitAutomatic` decides each job.
   `prompt.Triage` (`review-triage-public-v1.md`, `IDReviewTriage`), which a
   person can replace like the other prompts; a resolution that fails writes
   the review. A review it keeps is recorded in the clone's store
-  (`Store.KeepHead`, table `kept_heads`: the latest kept head of a version and
-  the reason). `Store.Snapshot` reports it with the latest version
+  (`Store.KeepHead`, table `kept_heads`: the latest kept head of a version, the
+  base it was checked against and the reason). `Store.Snapshot` reports it with the latest version
   (`Summary.Kept`), the review index counts the review `current` at that head
   as at its own and lists it as `kept`, and a background refresh writes
-  `generation_state: current` for it (`refresh.Refresher.KeptHead`). A newer
+  `generation_state: current` for it while the base has not moved since
+  (`refresh.Refresher.KeptHead`, `KeptBase`), as it does for the review's
+  own head. A newer
   version has no kept head until one is recorded for it.
 - **Turning off.** `Scheduler.Gate`, installed with
   `Queue.SetAutomaticGate`, reads the current preferences and repository
