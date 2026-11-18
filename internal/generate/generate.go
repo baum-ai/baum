@@ -139,7 +139,11 @@ type Options struct {
 	// base, and the result is the same version with its metadata, model,
 	// prompt version and generation time. Request.Previous must be the
 	// version before it, which it was reconciled with.
-	Continue  *store.Version
+	Continue *store.Version
+	// NoReuse, for a staged run, writes every section's details instead of
+	// reusing the previous version's (agent.StagedRun.NoReuse). Only tools
+	// that measure the prompts set it.
+	NoReuse   bool
 	Validator *review.DocumentValidator
 	Redactor  *bundle.Redactor
 	// Progress receives one line per step; nil discards them. The document is
@@ -359,7 +363,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	var genErr, redactErr error
 	closed := 0
 	if staged {
-		continued.Run, continued.Prompts = run, stagedPrompts
+		continued.Run, continued.Prompts, continued.NoReuse = run, stagedPrompts, o.NoReuse
 		draftModel := o.Model
 		if o.Continue != nil {
 			draftModel = o.Continue.Metadata.Model
