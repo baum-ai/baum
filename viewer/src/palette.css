@@ -113,6 +113,9 @@
   --status-critical-bg: var(--red-100);
   --status-info: var(--accent-600);
   --status-info-bg: var(--accent-100);
+  /* Work under way, such as a review being generated: a teal series, so it
+     stays apart from positive green and caution amber at a dot's size. */
+  --status-progress: var(--data-6);
   --status-neutral: var(--ink-600);
   --status-neutral-bg: var(--ink-100);
   /* A merged pull request, as GitHub draws one: the keyword purple, which
