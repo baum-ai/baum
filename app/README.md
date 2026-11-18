@@ -922,7 +922,12 @@ nothing (`no_changes`, which is the agent's judgement, not a failure) says so
 in a neutral notice with the first paragraph of what the agent said, which
 says why, and **Read what the agent said**; its row says "last fix changed
 nothing". The PR page's fix notice and the job page say it the same way,
-without the failure icon. Agent sessions working on its
+without the failure icon. A review job that completed with
+`no_significant_change` (On change found nothing in the new commits that would
+alter the saved review) is neutral too: the Jobs list says "Review still
+applies" with the first paragraph of the agent's one-line reason, and the job
+page says "Review still applies" without a check or a cross; no new review is
+shown. Agent sessions working on its
 branch are counted at the foot of the panel, as a link to Sessions
 (`?page=sessions&peek=<agent:id>`) that opens that session's card there, its
 peek and its reply where it takes one, as a click on it does (with several,
@@ -1756,11 +1761,22 @@ object clears the app's value). `GET api/settings` returns `agent_env` and
 `agent_env_source` (`app`, or `file` while the config file's `[agent_env]`
 applies, which the section notes). `~` and `$VARS` are expanded; the values
 are stored on this computer, so no secrets belong there.
-Automatic reviews are on by default. The global switch is a master switch (the
-desktop tray's pause sets it): off stops automatic generation everywhere. Each
+Automatic reviews are on by default. "Review pull requests automatically" is a
+choice of four: Never, On open, On change and Always (default). Never is the
+master switch (the desktop tray's pause sets it): it stops automatic generation
+everywhere, and a paused state reads as Never. The others set `enabled` and
+`updates` through `PUT api/automatic`: On open reviews a pull request once on
+its own and gives later pushes no new automatic review; On change reviews once,
+then on each push has the agent read what changed since the saved review and
+write a new one only if the change would make a difference; Always writes a new
+review on every push. The row's detail says what the selected choice does, and
+"Which pull requests" shows whenever the choice is not Never. A daemon that
+sends no `updates` reads as Always. The desktop setup step offers the same four
+as a segmented choice. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
-`true`, `false`); only "Off" differs while the global switch is on, and while
-it is off a repository set to "On" is shown as paused by the global switch.
+`true`, `false`); only "Off" differs while the global choice is not Never, and
+while it is Never a repository set to "On" is shown as paused by the global
+switch.
 Repositories lists picked GitHub repositories and their clones. Add repositories
 opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any

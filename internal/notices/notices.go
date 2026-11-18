@@ -157,6 +157,10 @@ func (s *Service) JobDone(ctx context.Context, job jobs.Job) {
 		s.Publish(n)
 		return
 	}
+	if job.Reason == jobs.ReasonNoSignificantChange {
+		// The saved review still holds: there is no new review to announce.
+		return
+	}
 	switch {
 	case job.State == "failed":
 		n.Kind = KindFailed

@@ -38,13 +38,13 @@ func TestReviewsCLI(t *testing.T) {
 		return s
 	}
 	// Until the app chooses, the config file decides.
-	if got := show(); got != (reviewSettings{Backend: "claude", Model: "file-model", FixNetwork: true, Automatic: true, PullRequests: "both", DecisionsBackend: "claude", DecisionsEffectiveModel: "claude-haiku-5-5"}) {
+	if got := show(); got != (reviewSettings{Backend: "claude", Model: "file-model", FixNetwork: true, Automatic: true, PullRequests: "both", Updates: "always", DecisionsBackend: "claude", DecisionsEffectiveModel: "claude-haiku-5-5"}) {
 		t.Fatalf("defaults %+v", got)
 	}
 	if _, e := run("set", "--backend=codex", "--model=gpt-5.5", "--automatic=false", "--pull-requests=requested"); e != nil {
 		t.Fatal(e)
 	}
-	if got := show(); got != (reviewSettings{Backend: "codex", Model: "gpt-5.5", FixNetwork: true, Automatic: false, PullRequests: "requested", DecisionsBackend: "codex", DecisionsEffectiveModel: "gpt-6-luna"}) {
+	if got := show(); got != (reviewSettings{Backend: "codex", Model: "gpt-5.5", FixNetwork: true, Automatic: false, PullRequests: "requested", Updates: "always", DecisionsBackend: "codex", DecisionsEffectiveModel: "gpt-6-luna"}) {
 		t.Fatalf("after set %+v", got)
 	}
 	// The decision capture model is the app's choice; empty is the default.
@@ -128,6 +128,21 @@ func TestReviewsCLI(t *testing.T) {
 	}
 	if got := show(); got.Effort != "" || got.DecisionsEffort != "" {
 		t.Fatalf("after clearing efforts %+v", got)
+	}
+	if _, e := run("set", "--updates=on_change"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.Updates != "on_change" {
+		t.Fatalf("after choosing on change %+v", got)
+	}
+	if _, e := run("set", "--updates=sometimes"); e == nil {
+		t.Fatal("an unknown updates choice was accepted")
+	}
+	if _, e := run("set", "--updates=always"); e != nil {
+		t.Fatal(e)
+	}
+	if got := show(); got.Updates != "always" {
+		t.Fatalf("after choosing always %+v", got)
 	}
 	if _, e := run("set", "--pull-requests=all"); e != nil {
 		t.Fatal(e)

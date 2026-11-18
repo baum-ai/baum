@@ -114,6 +114,11 @@ import {
   modelPresets,
   withModel,
   type PullRequests,
+  modeSettings,
+  reviewMode,
+  reviewModes,
+  type ReviewMode,
+  type Updates,
   type ReviewSettings,
 } from "./desktop/setup-model";
 import { CommandText, useCopy } from "./desktop/terminal-setup";
@@ -904,6 +909,7 @@ function ReviewsSection({
         backend: shownBackend(defaults.backend),
         model: defaults.backend === "auto" ? "" : defaults.model,
         automatic: automatic.enabled,
+        updates: automatic.updates ?? "always",
         pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
       }),
       effort: defaults.effort ?? "",
@@ -922,6 +928,8 @@ function ReviewsSection({
     setDraft(next);
     save({
       enabled: next.automatic,
+      // Never leaves what a push does as it was.
+      ...(next.automatic ? { updates: next.updates } : {}),
       backend: next.backend,
       model: next.model,
       effort: next.effort,
@@ -934,6 +942,7 @@ function ReviewsSection({
     });
   };
   const harness = harnesses.find((h) => h.id === draft.backend);
+  const mode = reviewMode(draft.automatic, draft.updates as Updates);
   return (
     <section aria-labelledby="settings-reviews-heading" className="settings-section">
       <SectionHead
@@ -951,18 +960,23 @@ function ReviewsSection({
       ) : null}
       <div className="local-panel settings-list">
         <SettingRow
+          pick
           label="Review pull requests automatically"
           htmlFor="review-automatic"
-          detail="New pushes and review requests in your repositories. Drafts, forks and authors without write access are skipped."
+          detail={`${reviewModes.find((m) => m.id === mode)!.detail} Drafts, forks and authors without write access are skipped.`}
         >
-          <input
+          <select
             id="review-automatic"
-            type="checkbox"
-            role="switch"
-            className="local-switch"
-            checked={draft.automatic}
-            onChange={(event) => change({ automatic: event.target.checked })}
-          />
+            className={cn(SELECT_FIELD, "settings-select settings-model-pick")}
+            value={mode}
+            onChange={(event) => change(modeSettings(event.target.value as ReviewMode))}
+          >
+            {reviewModes.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
         </SettingRow>
         {draft.automatic ? (
           <SettingRow
