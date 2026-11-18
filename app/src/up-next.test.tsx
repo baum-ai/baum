@@ -586,6 +586,41 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   expect(shown()).toBe("Change 3");
 });
 
+it.each(["archive", "snooze"])(
+  "restores the page and selection on undo after %s",
+  async (action) => {
+    entries = Array.from({ length: 31 }, (_, i) => requested(i + 1));
+    await render();
+    const pager = () => node.querySelector('[aria-label="Inbox pagination"]');
+    await act(async () => pager()!.querySelectorAll("button")[1]!.click());
+    const restored = shown();
+    if (action === "archive") {
+      await press("e");
+    } else {
+      await press("s");
+      await press("1");
+    }
+    expect(pager()).toBeNull();
+    expect(shown()).not.toBe(restored);
+    await press("u");
+    expect(pager()!.textContent).toContain("31–31 of 31");
+    expect(shown()).toBe(restored);
+  },
+);
+
+it("keeps the inbox summary on pages with only waiting pull requests", async () => {
+  entries = [
+    ...Array.from({ length: 30 }, (_, i) => requested(i + 1)),
+    mine(31, { checks: "running" }),
+  ];
+  await render();
+  await act(async () =>
+    node.querySelectorAll<HTMLButtonElement>('[aria-label="Inbox pagination"] button')[1]!.click(),
+  );
+  expect(list()).toEqual(["Change 31"]);
+  expect(node.querySelector(".upnext-list-summary")!.textContent).toContain("30 things for you");
+});
+
 it("archives with e, undoes with u, and never shows it again, not even as done", async () => {
   await render();
   await act(async () => row("Change 3").click());
