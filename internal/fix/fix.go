@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -329,6 +330,9 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		}
 		return out, fail(ReasonGit, err)
 	}
+	if o.Conflicts && !merged {
+		return out, fail(ReasonConflictsRemain, errors.New("the agent abandoned the merge of the base branch, so the conflicts remain; nothing was pushed"))
+	}
 	head, err := checkout.Commit(ctx, commitMessage(o, merged))
 	if err != nil {
 		if ctx.Err() != nil {
@@ -506,8 +510,14 @@ func markers(dir string, paths []string) []string {
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		file, err := os.Open(full)
+		// Opened without blocking and checked again: a process the agent
+		// left could have swapped a FIFO in.
+		file, err := os.OpenFile(full, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		if err != nil {
+			continue
+		}
+		if info, err := file.Stat(); err != nil || !info.Mode().IsRegular() {
+			_ = file.Close()
 			continue
 		}
 		scanner := bufio.NewScanner(file)

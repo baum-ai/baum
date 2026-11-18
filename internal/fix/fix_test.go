@@ -487,3 +487,21 @@ func TestFixReportsAPushRefusedForWorkflowScope(t *testing.T) {
 		t.Fatalf("err %v (reason %q)", err, reasonOf(err))
 	}
 }
+
+// A conflicts fix whose agent abandons the merge pushes nothing.
+func TestConflictFixRefusesAnAbandonedMerge(t *testing.T) {
+	r := NewRepositories(t)
+	o := options(t, r, &fakeAgent{fix: func(_ context.Context, dir string) error {
+		if err := runIn(dir, "merge", "--abort"); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, "b.txt"), []byte("other\n"), 0o644)
+	}})
+	o.Conflicts = true
+	if _, err := Run(context.Background(), o); reasonOf(err) != ReasonConflictsRemain {
+		t.Fatalf("err %v (reason %q), want conflicts_remain", err, reasonOf(err))
+	}
+	if got := gitIn(t, r.Remote, "rev-parse", "refs/heads/feature"); got != r.Head {
+		t.Fatal("an abandoned merge was pushed")
+	}
+}

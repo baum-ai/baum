@@ -3,7 +3,9 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -20,9 +22,10 @@ var credentialPaths = []string{
 }
 
 // FixCredentialPaths are the absolute paths a fix agent's commands may not
-// read: credentialPaths under home, and the login files under the Claude
-// Code configuration directory and Codex home of environ when they are set
-// elsewhere. The agent CLI itself, which signs in with them, is not confined
+// read: credentialPaths under home, the login files under the Claude Code
+// configuration directory and Codex home of environ when they are set
+// elsewhere, and the session's runtime directory (XDG_RUNTIME_DIR, else
+// /run/user/<uid> on Linux), whose D-Bus socket reaches the keyring. The agent CLI itself, which signs in with them, is not confined
 // by them: only the commands it runs are.
 func FixCredentialPaths(home string, environ []string) []string {
 	var paths []string
@@ -31,17 +34,29 @@ func FixCredentialPaths(home string, environ []string) []string {
 			paths = append(paths, filepath.Join(home, filepath.FromSlash(p)))
 		}
 	}
+	runtimeDir := ""
+	if runtime.GOOS == "linux" {
+		runtimeDir = filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+	}
 	for _, entry := range environ {
 		name, value, _ := strings.Cut(entry, "=")
 		if value == "" || !filepath.IsAbs(value) {
 			continue
 		}
 		switch name {
+		case "XDG_RUNTIME_DIR":
+			runtimeDir = value
 		case "CLAUDE_CONFIG_DIR":
 			paths = append(paths, filepath.Join(value, ".credentials.json"))
 		case "CODEX_HOME":
 			paths = append(paths, filepath.Join(value, "auth.json"))
 		}
+	}
+	if runtimeDir != "" {
+		// The session's runtime directory holds the D-Bus socket, through
+		// which the Secret Service keyring answers, and the SSH, GPG and
+		// keyring agents' sockets.
+		paths = append(paths, runtimeDir)
 	}
 	slices.Sort(paths)
 	return slices.Compact(paths)

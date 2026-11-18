@@ -1246,8 +1246,9 @@ password other than the CLI's own provider settings, and `GOCACHE`,
 `GOMODCACHE`, `GOPATH`, `npm_config_cache`, `YARN_CACHE_FOLDER`,
 `PIP_CACHE_DIR` and `XDG_CACHE_HOME` under the scratch directory.
 `agent.FixCredentialPaths` are the files under the home directory (and
-`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) where tools keep credentials, which the
-commands may not read. `claude` keeps restricted mode and the other review
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) where tools keep credentials and the
+runtime directory (`XDG_RUNTIME_DIR`, `/run/user/<uid>` on Linux, for its
+D-Bus and agent sockets), which the commands may not read. `claude` keeps restricted mode and the other review
 flags but has `Read,Glob,Grep,Edit,Write,Bash`, `--permission-mode
 acceptEdits` and `--settings` with no `blockReadsOutsideWorkingDirectories` (restricted mode
 keeps the file tools in the checkout; with it Claude Code hides the home
@@ -4454,7 +4455,10 @@ digest changed (`threads_changed`).
 `baum/fixes/<id>`: `checkout` (the work tree), `git` (the agent's own
 repository, made with `init --template= --separate-git-dir` in the clone's
 object format, the clone's objects as alternates, `commit.gpgSign` and
-`tag.gpgSign` false, the head branch checked out at the head fetched into
+`tag.gpgSign` false, the files written by baum's own `read-tree -u --reset`
+with the clone's configuration (so Git LFS smudges from the clone) and then
+recorded with `reset --mixed` (`GIT_LFS_SKIP_SMUDGE=1` in the agent's
+repository), the head branch at the head fetched into
 `refs/baum/fix/<id>/` from the remote whose URL names the repository
 (`ErrHeadMoved` when the branch moved on) and the base, fetched for every fix,
 as `refs/remotes/origin/<base>`), `tmp` (scratch), `hooks` (empty) and
@@ -4466,9 +4470,11 @@ merge keeps a marker, decides whether the result merges the base
 (`Fix.Merged`: the base is an ancestor of the commit the agent's `HEAD` or
 `MERGE_HEAD` names, read as files, the ancestry read with
 `GIT_ALTERNATE_OBJECT_DIRECTORIES` naming the agent's objects and
-`core.commitGraph=false`, and the head does not already have it), and makes
-its own commit (`Fix.Commit`: `read-tree` of the head into its index, `add
---all`, `write-tree`, `commit-tree [-S] -p <head> [-p <base>]`), requires a
+`core.commitGraph=false`, and the head does not already have it), refuses a
+conflict fix whose result does not merge the base (`conflicts_remain`), and
+makes its own commit (`Fix.Commit`: `read-tree` of the head into its index,
+`add --all`, after a merge `add --force` of the files the base added that the
+checkout has, `write-tree`, `commit-tree [-S] -p <head> [-p <base>]`), requires a
 new commit that descends from the head, and pushes it with a plain `git push`
 to the head branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 `merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
@@ -4490,8 +4496,10 @@ log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
 which the job never keeps. A
 fix checks its commit before the push (`fix.guard`), against what the fix
 itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or,
-when the result merges the base, only paths that differ from both head and
-base, with added lines those neither side had; submodules always included).
+when the result merges the base, from the tree `merge-tree --write-tree`
+makes when the merge is clean, else only paths that differ from both head
+and base, with added lines those neither side had; submodules always
+included).
 It fails with `conflicts_remain` when an added line is a conflict marker, with
 `credential_added` when a non-e-mail span the redactor finds overlaps an added
 line, when a changed file sits at a well-known credential path (OpenSSH

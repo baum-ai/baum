@@ -605,6 +605,10 @@ every fix; a branch that moved on stops the fix. The directory holds:
 - `hooks`, an empty directory, and `index`, baum's own index, which the agent
   cannot write.
 
+baum writes the checkout's files with its own git and your clone's
+configuration before the agent runs, so smudge filters such as Git LFS find
+your clone's store and remote; the agent's repository only records them.
+
 For a conflict, baum starts the merge of the base branch in the agent's
 repository itself, before the agent runs, so the agent finds the conflict
 markers. When the fix ends, however it ends (success, failure, cancellation),
@@ -671,8 +675,13 @@ What the agent can do, per backend:
   `~/.yarnrc.yml`, `~/.pypirc`, `~/.gem/credentials`, `~/.cargo/credentials`,
   `~/.terraform.d/credentials.tfrc.json`, and the agent CLIs' own logins
   (`~/.codex/auth.json`, `~/.claude/.credentials.json`, and those under
-  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`). The CLI itself, outside its
-  commands' sandbox, still signs in with them. This holds whether the network
+  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`), and the session's runtime directory
+  (`$XDG_RUNTIME_DIR`, `/run/user/<uid>` on Linux), whose D-Bus socket
+  reaches the Secret Service keyring (where baum keeps its own GitHub token,
+  and `gh` and git credential helpers often keep theirs) and which holds the
+  SSH, GPG and keyring agents' sockets. Claude Code's sandbox also refuses
+  Unix socket connections on Linux. The CLI itself, outside its commands'
+  sandbox, still signs in with them. This holds whether the network
   is on or off, and on a Codex older than 0.170.0 it does not hold at all.
 - Both get the same environment allowlist as a review: no SSH agent, no
   `GIT_` variable, no GitHub token, no provider credential baum did not set.
@@ -803,14 +812,18 @@ What baum does after the agent:
   a merge commit of the head and the base when the result merges the base (a
   conflict fix always does), one commit on the head otherwise. Nothing the
   agent committed, staged or branched is pushed, so a fix only adds commits
-  on the head and never rewrites the branch. It refuses to commit while a
-  conflicted file of its own merge still has a conflict marker, and fails
+  on the head and never rewrites the branch. A file the base tracks although
+  an ignore rule covers it stays in a merge commit. It refuses to commit while
+  a conflicted file of its own merge still has a conflict marker, refuses a
+  conflict fix whose agent abandoned the merge (`conflicts_remain`), and fails
   when nothing changed.
 - It still checks that the result descends from the head it started from.
 - It checks what the fix itself changed: the paths and lines the result has
   that the pull request's head did not, and, when the result merges the base
-  branch, only paths that also differ from the base and lines neither side
-  had. Submodules are included whatever your git configuration says. A
+  branch, those that differ from the merge git makes without conflicts (so
+  reverting a change the base made counts as the fix's), or, when git's merge
+  conflicts or the git is older than 2.38, only paths that also differ from
+  the base and lines neither side had. Submodules are included whatever your git configuration says. A
   conflict marker line among those lines refuses the fix
   (`conflicts_remain`), so a merge the agent made and left unresolved is not
   pushed.
@@ -869,6 +882,13 @@ What remains:
   would still be committed and pushed to the pull request's branch, which may
   be public. Turn **Network access** off for fixes if you want the agent
   offline.
+- Provider settings the agent CLI signs in with stay in its environment:
+  an API key baum sets for an endpoint, or `ANTHROPIC_*`, `AWS_*` and the
+  like from your agent environment. Claude Code's commands inherit them,
+  and with network access on they could send them out. A Claude Code
+  subscription login is not in the environment.
+- On macOS, whether the sandboxes let commands ask the keychain for an item
+  without a prompt was not checked.
 - With network access on, the agent's commands can also download and run
   code (a dependency's install script, a tool), as a build on your computer
   would, inside the same sandbox.

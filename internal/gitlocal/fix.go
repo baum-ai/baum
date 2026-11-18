@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -189,6 +191,12 @@ func (f *Fix) makeAgentRepository(ctx context.Context, baseRef string) error {
 	if err := os.WriteFile(alternates, []byte(filepath.ToSlash(filepath.Join(f.repo.common, "objects"))+"\n"), 0o644); err != nil {
 		return err
 	}
+	// baum's own git writes the files, with the clone's configuration, so a
+	// smudge filter (Git LFS) finds the clone's store and remote; the agent's
+	// repository then only records them.
+	if _, err := f.git(ctx, 0, "read-tree", "-u", "--reset", f.Head); err != nil {
+		return err
+	}
 	steps := [][]string{
 		{"config", "commit.gpgSign", "false"},
 		{"config", "tag.gpgSign", "false"},
@@ -198,7 +206,7 @@ func (f *Fix) makeAgentRepository(ctx context.Context, baseRef string) error {
 	if f.Base != "" {
 		steps = append(steps, []string{"update-ref", "refs/remotes/origin/" + baseRef, f.Base})
 	}
-	steps = append(steps, []string{"symbolic-ref", "HEAD", "refs/heads/" + f.headRef}, []string{"reset", "--quiet", "--hard", "HEAD"})
+	steps = append(steps, []string{"symbolic-ref", "HEAD", "refs/heads/" + f.headRef}, []string{"reset", "--quiet", "--mixed", "HEAD"})
 	for _, args := range steps {
 		if _, err := f.agentGit(ctx, 0, args...); err != nil {
 			return err
@@ -290,7 +298,9 @@ func (f *Fix) git(ctx context.Context, limit int64, args ...string) ([]byte, err
 // use it, before the agent has run, while every file in that repository is
 // baum's.
 func (f *Fix) agentGit(ctx context.Context, limit int64, args ...string) ([]byte, error) {
-	env := append(f.userEnv(), "GIT_DIR="+f.gitDir, "GIT_WORK_TREE="+f.tree)
+	// Git LFS cannot download from a repository without a remote; the files
+	// are baum's to write (makeAgentRepository).
+	env := append(f.userEnv(), "GIT_DIR="+f.gitDir, "GIT_WORK_TREE="+f.tree, "GIT_LFS_SKIP_SMUDGE=1")
 	return run(ctx, runSpec{dir: f.tree, env: env, limit: limit, timeout: f.repo.opts.CommandTimeout, config: f.config()}, args...)
 }
 
@@ -403,10 +413,26 @@ const maxRefFileBytes = 1 << 20
 // maxRefFileBytes of it, following no symbolic link.
 func readAgentFile(path string) string {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxRefFileBytes {
+	if err != nil || !info.Mode().IsRegular() {
 		return ""
 	}
-	data, err := os.ReadFile(path)
+	return readRegular(path, maxRefFileBytes)
+}
+
+// readRegular reads at most limit bytes of the regular file at path, or
+// returns "". It opens without blocking and checks what it opened, so a FIFO
+// or device a process swapped in after a check cannot stall the read.
+func readRegular(path string, limit int64) string {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > limit {
+		return ""
+	}
+	data, err := io.ReadAll(io.LimitReader(file, limit))
 	if err != nil {
 		return ""
 	}
@@ -493,10 +519,12 @@ type Change struct {
 
 // Changes lists what commit changes that the fix itself made, as git's tree
 // entries, submodules included: the paths it changes against the fix's
-// starting head. When the result merges the base branch (Merged), a path
-// counts only when it also differs from the base branch, and a line only
-// when neither side has it, so what the merge brought in is not taken for
-// the fix's own work. A rename is its old and new paths.
+// starting head. When the result merges the base branch (Merged), they are
+// measured from the tree git's own merge makes when it makes one without
+// conflicts; otherwise a path counts only when it also differs from the base
+// branch, and a line only when neither side has it, so what the merge
+// brought in is not taken for the fix's own work. A rename is its old and
+// new paths.
 func (f *Fix) Changes(ctx context.Context, commit string) ([]Change, error) {
 	if !validOID(commit) {
 		return nil, ErrInvalidInput
@@ -508,6 +536,9 @@ func (f *Fix) Changes(ctx context.Context, commit string) ([]Change, error) {
 	}
 	if merged {
 		from = append(from, f.Base)
+		if tree := f.cleanMerge(ctx); tree != "" {
+			from = []string{tree}
+		}
 	}
 	var paths []string
 	entries := map[string]rawEntry{}
@@ -552,6 +583,21 @@ func (f *Fix) Changes(ctx context.Context, commit string) ([]Change, error) {
 		changes = append(changes, change)
 	}
 	return changes, nil
+}
+
+// cleanMerge is the tree git's own merge of the head and the base makes,
+// when it makes one without conflicts (merge-tree --write-tree, git 2.38 and
+// later); "" otherwise.
+func (f *Fix) cleanMerge(ctx context.Context) string {
+	out, err := f.git(ctx, 64<<10, "merge-tree", "--write-tree", "--no-messages", f.Head, f.Base)
+	if err != nil {
+		return ""
+	}
+	tree, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	if !validOID(tree) {
+		return ""
+	}
+	return tree
 }
 
 // rawEntry is one path of git's raw diff output.
@@ -645,6 +691,11 @@ func (f *Fix) Commit(ctx context.Context, message string) (string, error) {
 	if _, err := f.git(ctx, 0, "add", "--all"); err != nil {
 		return "", err
 	}
+	if merged {
+		if err := f.addBaseFiles(ctx); err != nil {
+			return "", err
+		}
+	}
 	out, err := f.git(ctx, maxOIDOutputBytes, "write-tree")
 	if err != nil {
 		return "", err
@@ -681,6 +732,33 @@ func (f *Fix) Commit(ctx context.Context, message string) (string, error) {
 		return "", errors.New("unexpected commit")
 	}
 	return commit, nil
+}
+
+// addBaseFiles stages the files the base branch tracks and the head does not
+// that the checkout has, even where an ignore rule would leave them out (a
+// file the base added with git add -f): git add --all skips an ignored path
+// the index does not track yet, and the merge would drop it.
+func (f *Fix) addBaseFiles(ctx context.Context) error {
+	out, err := f.git(ctx, 16<<20, "diff-tree", "-r", "-z", "--name-only", "--no-renames", "--diff-filter=A", f.Head, f.Base, "--")
+	if err != nil {
+		return err
+	}
+	var paths []byte
+	for path := range strings.SplitSeq(strings.TrimRight(string(out), "\x00"), "\x00") {
+		if path == "" || !validGitPath(path) {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(f.tree, filepath.FromSlash(path))); err == nil {
+			paths = append(append(paths, path...), 0)
+		}
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	env := append(f.userEnv(), "GIT_DIR="+f.repo.common, "GIT_WORK_TREE="+f.tree, "GIT_INDEX_FILE="+f.index, "GIT_LITERAL_PATHSPECS=1")
+	_, err = run(ctx, runSpec{dir: f.tree, env: env, timeout: f.repo.opts.CommandTimeout, config: f.config(), stdin: paths},
+		"add", "--force", "--pathspec-from-file=-", "--pathspec-file-nul")
+	return err
 }
 
 // Descends reports whether commit has the fix's starting head among its

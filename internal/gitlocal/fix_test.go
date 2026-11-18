@@ -566,3 +566,85 @@ func TestFixPushTellsAWorkflowScopeRefusal(t *testing.T) {
 		t.Fatalf("another refusal taken for a workflow scope one: %v", err)
 	}
 }
+
+// A file the base tracks under an ignore rule (added with git add -f) stays
+// in baum's merge commit.
+func TestFixMergeKeepsTheBasesIgnoredFiles(t *testing.T) {
+	f := newFixFixture(t)
+	ctx := context.Background()
+	git(t, f.seed, "checkout", "-q", "main")
+	write(t, f.seed, ".gitignore", "gen/\n", 0o644)
+	write(t, f.seed, "gen/keep.txt", "kept\n", 0o644)
+	git(t, f.seed, "add", ".gitignore")
+	git(t, f.seed, "add", "-f", "gen/keep.txt")
+	git(t, f.seed, "commit", "-q", "-m", "a tracked file under an ignored directory")
+	git(t, f.seed, "push", "-q", "origin", "main")
+	fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	if conflicts, err := fix.Merge(ctx, "Merge"); err != nil || len(conflicts) != 1 {
+		t.Fatalf("conflicts %v %v", conflicts, err)
+	}
+	write(t, fix.Dir(), "a.txt", "resolved\n", 0o644)
+	result, err := fix.Commit(ctx, "Merge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := git(t, f.clone, "show", result+":gen/keep.txt"); got != "kept" {
+		t.Fatalf("gen/keep.txt %q", got)
+	}
+}
+
+// The checkout is written with the clone's configuration, so a smudge filter
+// the clone defines (as Git LFS does) runs with the clone's settings.
+func TestFixChecksOutWithTheClonesFilters(t *testing.T) {
+	f := newFixFixture(t)
+	git(t, f.seed, "checkout", "-q", "feature")
+	write(t, f.seed, ".gitattributes", "*.big filter=upper\n", 0o644)
+	write(t, f.seed, "x.big", "small\n", 0o644)
+	head := commit(t, f.seed, "a filtered file")
+	git(t, f.seed, "push", "-q", "origin", "feature")
+	git(t, f.clone, "config", "filter.upper.smudge", "tr a-z A-Z")
+	git(t, f.clone, "config", "filter.upper.clean", "tr A-Z a-z")
+	fix, err := startFix(t, f, FixOptions{HeadSHA: head})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	if got := readFile(t, filepath.Join(fix.Dir(), "x.big")); got != "SMALL\n" {
+		t.Fatalf("x.big %q, want the clone's smudge filter applied", got)
+	}
+	if head, err := fix.Commit(context.Background(), "nothing"); err != nil || head != f.head && head != fix.Head {
+		t.Fatalf("a smudged file counted as a change: %s %v", head, err)
+	}
+}
+
+// After a merge git could make without conflicts, a path the result leaves
+// at the head's version, reverting the base's change, is the fix's change.
+func TestFixChangesSeeABaseChangeTheMergeReverted(t *testing.T) {
+	f := newFixFixture(t)
+	ctx := context.Background()
+	git(t, f.seed, "checkout", "-q", "-b", "clean", "main~1")
+	write(t, f.seed, "c.txt", "clean\n", 0o644)
+	head := commit(t, f.seed, "clean change")
+	git(t, f.seed, "push", "-q", "origin", "clean")
+	fix, err := startFix(t, f, FixOptions{HeadRef: "clean", HeadSHA: head, BaseRef: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	if conflicts, err := fix.Merge(ctx, "Merge"); err != nil || len(conflicts) != 0 {
+		t.Fatalf("conflicts %v %v", conflicts, err)
+	}
+	// The agent puts a.txt back as the head had it.
+	write(t, fix.Dir(), "a.txt", "one\n", 0o644)
+	result, err := fix.Commit(ctx, "Merge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changes := changesByPath(t, fix, result); len(changes) != 1 || changes["a.txt"].Path != "a.txt" {
+		t.Fatalf("changes %+v, want the reverted a.txt", changes)
+	}
+}

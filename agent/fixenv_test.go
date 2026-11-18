@@ -34,10 +34,10 @@ func TestFixEnvironmentDropsTokensAndMovesCaches(t *testing.T) {
 }
 
 func TestFixCredentialPaths(t *testing.T) {
-	paths := FixCredentialPaths("/home/user", []string{"CLAUDE_CONFIG_DIR=/cfg/claude", "CODEX_HOME=/cfg/codex", "CODEX_HOME=relative"})
+	paths := FixCredentialPaths("/home/user", []string{"CLAUDE_CONFIG_DIR=/cfg/claude", "CODEX_HOME=/cfg/codex", "CODEX_HOME=relative", "XDG_RUNTIME_DIR=/run/user/1000"})
 	for _, want := range []string{"/home/user/.ssh", "/home/user/.aws", "/home/user/.config/gcloud", "/home/user/.config/gh", "/home/user/.netrc", "/home/user/.git-credentials",
 		"/home/user/.docker/config.json", "/home/user/.npmrc", "/home/user/.pypirc", "/home/user/.kube", "/home/user/.gnupg", "/home/user/.codex/auth.json",
-		"/home/user/.claude/.credentials.json", "/cfg/claude/.credentials.json", "/cfg/codex/auth.json"} {
+		"/home/user/.claude/.credentials.json", "/cfg/claude/.credentials.json", "/cfg/codex/auth.json", "/run/user/1000"} {
 		if !slices.Contains(paths, filepath.FromSlash(want)) {
 			t.Errorf("missing %s", want)
 		}

@@ -459,7 +459,10 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
     }
   };
   const save = (body: Record<string, unknown>) => {
-    waiting.current = body;
+    // A save that waits keeps the fields of the one it replaces, so a control
+    // that sends one field (such as fix_network) and one that sends a whole
+    // section never drop each other's change.
+    waiting.current = { ...waiting.current, ...body };
     if (!busy.current) void drain();
   };
   const status = (

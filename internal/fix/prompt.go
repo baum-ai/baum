@@ -136,7 +136,7 @@ func environment(t task) string {
 	if t.Network {
 		b.WriteString("- Commands can reach the network, to install dependencies and fetch what builds and tests need.\n")
 	} else {
-		b.WriteString("- The network is off: commands cannot install dependencies or fetch anything. Use what the checkout and its caches already have.\n")
+		b.WriteString("- The network is off: commands cannot install dependencies or fetch anything, and the package caches start empty. Check only what builds from what is already on disk, and say in your summary what you could not check.\n")
 	}
 	return b.String()
 }
