@@ -1,4 +1,5 @@
 import { useMemo, useRef } from "react";
+import { cn } from "@baum/viewer/components/classnames";
 import { FilesIcon, SectionIcon, SummaryIcon } from "@baum/viewer/components/icons";
 import type {
   ReviewPlaceContext,
@@ -6,10 +7,12 @@ import type {
   ReviewPlaceSteps,
   ReviewRailRow,
 } from "@baum/viewer/components/review-viewer";
+import { SideNavButton, SideNavNest } from "@baum/viewer/components/side-nav";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
 import {
   CONTEXT_ID,
+  defaultSection,
   listedSections,
   placeOf,
   reviewOf,
@@ -18,38 +21,37 @@ import {
   viewFiles,
   type ViewPlace,
 } from "./model";
-import { ViewPane, ViewTabs, type ViewMemory } from "./view-pane";
+import { ViewPane } from "./view-pane";
 
-export const TAB_LABEL = { overview: "Overview", sections: "How it works", code: "Code" } as const;
+export const TAB_LABEL = {
+  overview: "Overview",
+  sections: "How it works",
+  code: "Files changed",
+} as const;
 
-/** The review page's tabs as the review viewer's places: the Overview on the
+/** The review page's places for the review viewer: the Overview on the
  *  Summary, How it works on a section (the Changes and a risk open it too),
- *  and Code on the host's own `code` place. The tabs are the way through the
- *  page, so the viewer draws no rail (`noRail`): the side pane lists the
- *  Sessions, Commits and Decisions, whose items open under the tabs. The keys
- *  that stepped through the rail step through the tabs and the sections. */
+ *  and Files changed on the host's own `code` place. The viewer's rail leads
+ *  through them: Overview, How it works with its sections nested, Files
+ *  changed, then Decisions, Sessions and Commits as plain rows (`flatRail`)
+ *  that open a pane listing their items. The keys that step through the rail
+ *  step through the same rows, and through the sections and files. */
 export function useViewPlaces(): ReviewPlaces {
   // The latest document the viewer named, for the chips of its prose, which
   // are resolved without a context.
   const latest = useRef<ReviewDocument | null>(null);
-  const memory = useRef<ViewMemory>({ section: null, file: null });
   return useMemo<ReviewPlaces>(
     () => ({
-      noRail: true,
+      flatRail: true,
+      ownFiles: true,
+      renderRail: (context) => <ViewRail context={context} />,
       railRows: (context) => railRows(context),
-      // A session, a commit or the decisions opened from the side pane sit
-      // under the tabs, with none current: the way back to the review.
-      paneHead: (context) => (
-        <div className="mb-5">
-          <ViewTabs document={context.document} context={context} memory={memory} />
-        </div>
-      ),
       steps: (selection, context) => {
         latest.current = context.document;
         return context.document ? stepsOf(selection, context.document, context) : null;
       },
       renderPane: (snapshot, historical, context) => (
-        <ViewPane snapshot={snapshot} historical={historical} place={context} memory={memory} />
+        <ViewPane snapshot={snapshot} historical={historical} place={context} />
       ),
       jump: (section, item) => {
         const document = latest.current;
@@ -61,19 +63,23 @@ export function useViewPlaces(): ReviewPlaces {
           return { kind: "risk", section, id: item };
         return { kind: "section", id: section };
       },
-      // The side pane starts folded, as the tabs want the width, and then
-      // stays as the reader leaves it, on the tabs and on what its lists
-      // open alike.
-      sidePaneFolded: () => true,
+      // The side pane starts folded on the review's own places, which want
+      // the width; on a session, the commits or the decisions it is as the
+      // reader left it.
+      sidePaneFolded: onPage,
       quietHistory: true,
     }),
     [],
   );
 }
 
+const onPage = (selection: Selection) =>
+  ["summary", "changes", "risks", "section", "risk", "tile"].includes(selection.kind);
+
+/** The rail row a place sits on. */
 function railKey(place: ViewPlace): string {
   if (place.tab === "overview") return "overview";
-  if (place.tab === "code") return "code";
+  if (place.tab === "code") return "files";
   return `section:${place.section}`;
 }
 
@@ -96,8 +102,71 @@ function railRows(context: ReviewPlaceContext): ReviewRailRow[] {
         go: go({ tab: "sections", section: section.id }),
       }),
     ),
-    { key: "code", label: TAB_LABEL.code, go: go({ tab: "code", file: null }) },
+    { key: "files", label: TAB_LABEL.code, go: go({ tab: "code", file: null }) },
   ];
+}
+
+/** The rail: the Overview, How it works with the sections under it, and Files
+ *  changed. The viewer follows with Decisions, Sessions and Commits. */
+function ViewRail({ context }: { context: ReviewPlaceContext }) {
+  const document = context.document;
+  if (!document) return null;
+  const review = reviewOf(document);
+  // A session, a commit or the decisions are none of the page's places.
+  const place = onPage(context.selection) ? placeOf(context.selection, review) : null;
+  const list = listedSections(review);
+  const first = defaultSection(list);
+  const count = viewFiles(review).length;
+  const go = (next: ViewPlace) => () => context.select(selectionOf(next));
+  return (
+    <>
+      <SideNavButton
+        label={TAB_LABEL.overview}
+        icon={SummaryIcon}
+        tint="accent"
+        active={place?.tab === "overview"}
+        controls="review-section"
+        onSelect={go({ tab: "overview" })}
+      />
+      {first ? (
+        <>
+          {/* The group's own row opens its first section, and is never the
+              row the reader is on: that is the section. */}
+          <SideNavButton
+            label={TAB_LABEL.sections}
+            icon={SectionIcon}
+            tint="accent"
+            active={false}
+            controls="review-section"
+            onSelect={go({ tab: "sections", section: first })}
+          />
+          <SideNavNest id="review-sections">
+            {list.map((section) => (
+              <div key={section.id} className={cn(section.obsolete && "opacity-60 grayscale")}>
+                <SideNavButton
+                  label={section.title}
+                  wrap
+                  depth={1}
+                  active={place?.tab === "sections" && place.section === section.id}
+                  controls="review-section"
+                  onSelect={go({ tab: "sections", section: section.id })}
+                />
+              </div>
+            ))}
+          </SideNavNest>
+        </>
+      ) : null}
+      <SideNavButton
+        label={TAB_LABEL.code}
+        icon={FilesIcon}
+        tint="accent"
+        active={place?.tab === "code"}
+        count={count}
+        controls="review-section"
+        onSelect={go({ tab: "code", file: null })}
+      />
+    </>
+  );
 }
 
 /** The navigator bar's and the pane foot's way through the page: the
@@ -138,7 +207,9 @@ function stepsOf(
     label:
       place.tab === "sections"
         ? (list.find((section) => section.id === place.section)?.title ?? TAB_LABEL.sections)
-        : TAB_LABEL[place.tab],
+        : place.tab === "code"
+          ? "Files"
+          : TAB_LABEL[place.tab],
     icon: place.tab === "code" ? FilesIcon : place.tab === "sections" ? SectionIcon : SummaryIcon,
     position:
       place.tab === "sections" && at > 0

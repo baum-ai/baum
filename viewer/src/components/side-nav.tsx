@@ -295,6 +295,9 @@ export function SideNavButton({
   aside,
   description,
   wrap,
+  count,
+  busy = false,
+  indicator,
   onSelect,
 }: {
   label: string;
@@ -313,6 +316,13 @@ export function SideNavButton({
   aside?: ReactNode;
   /** What the aside says that the label does not, for assistive technology. */
   description?: string;
+  /** How many items the pane the row opens lists, at the row's end and in
+   *  the row's name. */
+  count?: number;
+  /** The pane's items are being fetched right now. */
+  busy?: boolean;
+  /** Something in the pane is happening now: see `SideNavDisclosure`. */
+  indicator?: "live" | "attention";
   onSelect: () => void;
 }) {
   const state = active ? "active" : "idle";
@@ -320,6 +330,7 @@ export function SideNavButton({
   return (
     <button
       type="button"
+      aria-label={count === undefined ? undefined : `${label}, ${count}`}
       aria-pressed={active}
       aria-controls={controls}
       aria-describedby={description ? descriptionId : undefined}
@@ -329,6 +340,13 @@ export function SideNavButton({
       <ActiveMark active={active} />
       {Icon ? <Icon className={glyphClass(state, tint)} /> : null}
       <Label wrap={wrap}>{label}</Label>
+      {indicator ? <RowIndicator indicator={indicator} /> : null}
+      {busy ? <Spinner size={11} className="text-tertiary" /> : null}
+      {count === undefined ? null : (
+        <span aria-hidden className="flex-none text-xs tabular-nums text-tertiary">
+          {count}
+        </span>
+      )}
       {aside ? (
         <span aria-hidden className="flex flex-none items-center">
           {aside}

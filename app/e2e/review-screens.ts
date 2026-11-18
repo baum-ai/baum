@@ -49,7 +49,7 @@ export async function steady(page: Page, where: string, tiles: boolean): Promise
     page.evaluate((tiles) => {
       const pane = document.querySelector("#review-section");
       if (!pane || pane.querySelector(".loading-status")) return "loading";
-      if (tiles && !pane.querySelector('[role="tablist"][aria-label="Review"]'))
+      if (tiles && !document.querySelector('#review-rail button[aria-controls="review-section"]'))
         return "no content";
       const moving = document
         .getAnimations()

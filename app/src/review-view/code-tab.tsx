@@ -8,15 +8,18 @@ import { ChevronDownIcon } from "@baum/viewer/components/icons";
 import { JumpLink, TierBadge } from "@baum/viewer/components/review-parts";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { NavRow } from "./nav-row";
-import { Button } from "@baum/viewer/components/ui";
+import { Button, SegmentedControl } from "@baum/viewer/components/ui";
 import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import { hunkUrl, type IndexedHunk, type ReviewDocument } from "@baum/viewer/review-document";
 import { LoadingStatus } from "../nine-dots";
 import type { ReviewV2 } from "./document";
 import {
-  FILE_GROUPS,
+  FILE_GROUPINGS,
+  groupFiles,
   notesByHunk,
   selectionOf,
+  type FileGroupRow,
+  type FileGrouping,
   type HunkNote,
   type ListedSection,
   type ViewFile,
@@ -25,9 +28,35 @@ import {
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 const folder = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 
-/** Code: every changed file, grouped, beside the one open, whose diff carries
- *  the notes on each hunk (the behaviour steps and risks that cite it), each
- *  linking to the section that explains it. Generated files stay folded. */
+const GROUPING_KEY = "baum.review.fileGrouping";
+
+/** The grouping of the file list, kept in this browser so it is the same on
+ *  the next pull request. Storage can be missing or refuse a write; the
+ *  choice then holds for the page alone. */
+export function useFileGrouping(): [FileGrouping, (next: FileGrouping) => void] {
+  const [grouping, setGrouping] = useState<FileGrouping>(() => {
+    try {
+      const saved = localStorage.getItem(GROUPING_KEY);
+      return FILE_GROUPINGS.find((each) => each.value === saved)?.value ?? "type";
+    } catch {
+      return "type";
+    }
+  });
+  const choose = (next: FileGrouping) => {
+    setGrouping(next);
+    try {
+      localStorage.setItem(GROUPING_KEY, next);
+    } catch {
+      // Not remembered; the choice stands for this page.
+    }
+  };
+  return [grouping, choose];
+}
+
+/** Files changed: every changed file, grouped by type, folder or feature, in a
+ *  list beside the one open, whose diff carries the notes on each hunk (the
+ *  behaviour steps and risks that cite it), each linking to the section that
+ *  explains it. Generated files stay folded. */
 export function CodeTab({
   document,
   review,
@@ -46,50 +75,54 @@ export function CodeTab({
   context: ReviewPlaceContext;
 }) {
   const notes = useMemo(() => notesByHunk(review), [review]);
+  const [grouping, setGrouping] = useFileGrouping();
   const [generatedOpen, setGeneratedOpen] = useState(file?.group === "Generated");
+  const groups = useMemo(() => groupFiles(files, grouping, list), [files, grouping, list]);
   const open = (path: string) => context.select(selectionOf({ tab: "code", file: path }));
   if (files.length === 0)
     return <p className="text-base text-secondary">This pull request changes no files.</p>;
   return (
     <div className="grid min-w-0 gap-6 @3xl:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]">
       <nav aria-label="Changed files" className="min-w-0 space-y-3">
-        {FILE_GROUPS.map((group) => {
-          const members = files.filter((each) => each.group === group);
-          if (members.length === 0) return null;
-          const folded = group === "Generated" && !generatedOpen;
+        <SegmentedControl<FileGrouping>
+          label="Group files by"
+          value={grouping}
+          items={FILE_GROUPINGS}
+          onChange={setGrouping}
+          className="w-full [&>button]:flex-1"
+        />
+        {groups.map((group) => {
+          const folded = group.generated && !generatedOpen;
           return (
-            <div key={group} className="min-w-0">
-              {group === "Generated" ? (
+            <div
+              key={group.key}
+              className="min-w-0"
+              style={{ marginLeft: `${group.depth * 0.75}rem` }}
+            >
+              {group.generated ? (
                 <GeneratedToggle
                   open={!folded}
-                  files={members.length}
+                  files={group.files.length}
                   onToggle={() => setGeneratedOpen((value) => !value)}
                   className="px-2.5 pb-1.5"
                 />
               ) : (
-                <p className={cn(CARD_LABEL, "px-2.5 pb-1.5")}>{group}</p>
+                <GroupHeading group={group} grouping={grouping} />
               )}
               {folded ? null : (
-                <ul className="flex flex-col gap-0.5">
-                  {members.map((member) => {
-                    const count = member.hunks.reduce(
-                      (total, hunk) => total + (notes.get(hunk.id)?.length ?? 0),
-                      0,
-                    );
-                    return (
-                      <li key={member.path} className="min-w-0" title={member.path}>
-                        <NavRow
-                          title={basename(member.path)}
-                          line={folder(member.path) || "/"}
-                          aside={count > 0 ? pluralize("note", count, true) : undefined}
-                          mono
-                          active={member.path === file?.path}
-                          controls={`${idPrefix}review-view-file`}
-                          onSelect={() => open(member.path)}
-                        />
-                      </li>
-                    );
-                  })}
+                <ul className={cn("flex flex-col gap-0.5", grouping === "folder" && "pl-2")}>
+                  {group.files.map((member) => (
+                    <li key={member.path} className="min-w-0" title={member.path}>
+                      <FileRow
+                        file={member}
+                        notes={notes}
+                        showFolder={grouping !== "folder"}
+                        active={member.path === file?.path}
+                        controls={`${idPrefix}review-view-file`}
+                        onSelect={() => open(member.path)}
+                      />
+                    </li>
+                  ))}
                 </ul>
               )}
             </div>
@@ -108,6 +141,72 @@ export function CodeTab({
         />
       ) : null}
     </div>
+  );
+}
+
+function GroupHeading({ group, grouping }: { group: FileGroupRow; grouping: FileGrouping }) {
+  const className = "px-2.5 pb-1.5";
+  if (grouping === "folder")
+    return (
+      <p
+        className={cn("truncate font-mono text-xs font-medium text-tertiary", className)}
+        title={group.title}
+      >
+        {group.title}
+      </p>
+    );
+  if (grouping === "feature")
+    return (
+      <p className={cn("text-xs leading-snug font-medium text-secondary", className)}>
+        {group.markdown ? <InlineMarkdown>{group.title}</InlineMarkdown> : group.title}
+      </p>
+    );
+  return <p className={cn(CARD_LABEL, className)}>{group.title}</p>;
+}
+
+/** A changed file in the list: its name, where it is (unless the heading says),
+ *  and what changed in it. */
+function FileRow({
+  file,
+  notes,
+  showFolder,
+  active,
+  controls,
+  onSelect,
+}: {
+  file: ViewFile;
+  notes: Map<string, HunkNote[]>;
+  showFolder: boolean;
+  active: boolean;
+  controls: string;
+  onSelect: () => void;
+}) {
+  const count = file.hunks.reduce((total, hunk) => total + (notes.get(hunk.id)?.length ?? 0), 0);
+  const added = file.hunks.reduce((total, hunk) => total + hunk.additions, 0);
+  const removed = file.hunks.reduce((total, hunk) => total + hunk.deletions, 0);
+  const counts = added + removed > 0;
+  return (
+    <NavRow
+      title={basename(file.path)}
+      line={showFolder ? folder(file.path) || "/" : undefined}
+      aside={
+        counts || count > 0 ? (
+          <span className="flex flex-col items-end tabular-nums">
+            {counts ? (
+              <span>
+                <span className="text-status-positive">+{added}</span>{" "}
+                <span className="text-status-critical">−{removed}</span>
+              </span>
+            ) : null}
+            {count > 0 ? <span>{pluralize("note", count, true)}</span> : null}
+          </span>
+        ) : undefined
+      }
+      mono
+      active={active}
+      controls={controls}
+      onSelect={onSelect}
+    />
   );
 }
 

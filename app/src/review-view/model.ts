@@ -336,6 +336,132 @@ export function shownFile(files: ViewFile[], asked: string | null): ViewFile | u
   );
 }
 
+/** How the Files changed list groups the files: by what they are, by the
+ *  directory they are in, or by the section that explains them. */
+export type FileGrouping = "type" | "folder" | "feature";
+
+export const FILE_GROUPINGS: { value: FileGrouping; label: string }[] = [
+  { value: "type", label: "Type" },
+  { value: "folder", label: "Folder" },
+  { value: "feature", label: "Feature" },
+];
+
+export const NO_SECTION = "Not in a section";
+
+/** One heading of the file list and the files under it. A file explained by
+ *  several sections is under each of them. */
+export type FileGroupRow = {
+  key: string;
+  title: string;
+  /** Indentation, for a folder inside a folder. */
+  depth: number;
+  files: ViewFile[];
+  /** The title is a section's, which may carry inline markdown. */
+  markdown?: boolean;
+  /** The generated files, which stay folded until opened. */
+  generated?: boolean;
+};
+
+type Folder = { name: string; files: ViewFile[]; folders: Map<string, Folder> };
+
+const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+
+/** The directories of the changed files as groups, depth first. A directory
+ *  holding no file of its own and one directory is joined to that one
+ *  (`oss/internal/jobs`), so the list never has a heading with a single
+ *  heading under it. Files of the repository root come first. */
+function folderGroups(files: ViewFile[]): FileGroupRow[] {
+  const root: Folder = { name: "", files: [], folders: new Map() };
+  for (const file of files) {
+    let at = root;
+    const parts = file.path.split("/").slice(0, -1);
+    for (const part of parts) {
+      let next = at.folders.get(part);
+      if (!next) {
+        next = { name: part, files: [], folders: new Map() };
+        at.folders.set(part, next);
+      }
+      at = next;
+    }
+    at.files.push(file);
+  }
+  const rows: FileGroupRow[] = [];
+  const walk = (start: Folder, depth: number, prefix: string) => {
+    let folder = start;
+    let name = start.name;
+    while (folder.files.length === 0 && folder.folders.size === 1) {
+      folder = [...folder.folders.values()][0]!;
+      name = `${name}/${folder.name}`;
+    }
+    const path = prefix ? `${prefix}/${name}` : name;
+    const sorted = folder.files.toSorted((a, b) =>
+      baseName(a.path).localeCompare(baseName(b.path)),
+    );
+    if (folder.files.length > 0 || folder.folders.size > 1)
+      rows.push({ key: `folder:${path}`, title: name, depth, files: sorted });
+    const inner = folder.files.length > 0 || folder.folders.size > 1 ? depth + 1 : depth;
+    for (const child of [...folder.folders.values()].toSorted((a, b) =>
+      a.name.localeCompare(b.name),
+    ))
+      walk(child, inner, path);
+  };
+  if (root.files.length > 0)
+    rows.push({
+      key: "folder:",
+      title: "Repository root",
+      depth: 0,
+      files: root.files.toSorted((a, b) => a.path.localeCompare(b.path)),
+    });
+  for (const child of [...root.folders.values()].toSorted((a, b) => a.name.localeCompare(b.name)))
+    walk(child, 0, "");
+  return rows;
+}
+
+/** The changed files in the groups of a grouping: the type groups in their
+ *  fixed order, the directories, or the sections in the list's order with the
+ *  files of no section last. Groups without files are left out. */
+export function groupFiles(
+  files: ViewFile[],
+  grouping: FileGrouping,
+  sections: ListedSection[],
+): FileGroupRow[] {
+  if (grouping === "folder") return folderGroups(files);
+  if (grouping === "feature") {
+    const rows = sections.flatMap((section): FileGroupRow[] => {
+      const members = files.filter((file) => file.sections.includes(section.id));
+      return members.length > 0
+        ? [
+            {
+              key: `feature:${section.id}`,
+              title: section.title,
+              depth: 0,
+              files: members,
+              markdown: true,
+            },
+          ]
+        : [];
+    });
+    const loose = files.filter((file) => file.sections.length === 0);
+    return loose.length > 0
+      ? [...rows, { key: "feature:", title: NO_SECTION, depth: 0, files: loose }]
+      : rows;
+  }
+  return FILE_GROUPS.flatMap((group): FileGroupRow[] => {
+    const members = files.filter((file) => file.group === group);
+    return members.length > 0
+      ? [
+          {
+            key: `type:${group}`,
+            title: group,
+            depth: 0,
+            files: members,
+            ...(group === "Generated" ? { generated: true } : {}),
+          },
+        ]
+      : [];
+  });
+}
+
 /** A behaviour step or risk pinned to a hunk it cites, with the section that
  *  explains it. */
 export type HunkNote = {

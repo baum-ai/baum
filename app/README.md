@@ -1663,7 +1663,7 @@ api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
 and says why. It applies to reviews that start after the change. While it is
 on, the appearance settings report `arranged_tiles`, and a pull request's
 review page (without `?view=`) reads the version's view and opens a version
-whose view has more than the review alone (`isArranged`) on the overview tabs,
+whose view has more than the review alone (`isArranged`) on the overview page,
 any other on the full review (`useArrangedTiles`). A running review's `arranging` phase reads
 "Arranging the page…".
 
@@ -2273,15 +2273,16 @@ Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
 `../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
 `pnpm test:unit` runs them again against the compacted script the daemon inlines
 (`KIT_SCRIPT=inlined`, `../tiles/kit/testdata/v1.inlined.js`).
-The overview tabs: `e2e/review-view.spec.ts` serves acme/demo#7's tile route
+The overview page: `e2e/review-view.spec.ts` serves acme/demo#7's tile route
 with the `baum.review/2` document of `src/review-view/fixture-1303.ts` and
-checks the tabs, the address and that no tab scrolls sideways at 390, 900 and
-1440px; `REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each tab, light and
+checks the rail, the address, the file grouping and that no place scrolls
+sideways at 390, 900 and
+1440px; `REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each place, light and
 dark. It also removes an added tile and undoes it, shows pending cards on
 their sections (both against routes it answers itself), checks the review
 page setting and an arranged version with tile reviews on, and, until the
 daemon answers `baum.review/2`, that a `baum.review/1` answer with its view
-draws the same tabs.
+draws the same page.
 Custom tiles on the review page: `pnpm test:custom-tiles`
 (`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
@@ -2376,9 +2377,12 @@ that was skipped for want of a document, and a review left unfinished after
 `REAL_REVIEW_MINUTES` (8 by default). Expected 404, 502 and 503 console errors
 from the refusing backends stay in `console-errors.txt` and out of the sheet's
 error count. States are the `STATES` list at the top of the
-spec: the page as it opens (`landing`, the Overview tab with `view=tiles`), a
+spec: the page as it opens (`landing`, the Overview with `view=tiles`), a
 detail (the first section) and its first hunk excerpt opened, and with
-`view=tiles` "Where this fits" (`context`) and the Code tab (`code`).
+`view=tiles` "Where this fits" (`context`), the section's Code and Tests views,
+Files changed grouped by type, folder and feature (`code`, `code-folder`,
+`code-feature`), and the rail's Sessions and Commits pages and the first
+session (`sessions`, `session`, `commits`).
 `BAUM_APP_REAL_COMPOSITIONS` names a directory of presentations to serve in
 place of the saved ones, each `<number>@<version>.json` (a replay run's
 `composition.json`), with `<number>@<version>.document.json` replacing that
@@ -2626,33 +2630,28 @@ transcript.
 
 With the review page set to **Overview tabs (preview)** (`review_page` `tiles`,
 or `?view=tiles`), or with tile reviews on and a version that has more than
-its review alone, a pull request's review opens on three tabs (`src/review-view/`,
-drawn through the viewer's places seam by `useViewPlaces`): **Overview**,
-**How it works** and **Code**. A group's or a stack's page always shows the
-full review. The head, the version menu, history, Compare, the side pane, the
-Decisions, Sessions and Commits panes and the review dialog are the full
-review's own. The tabs are the way through the page, so it has no rail and,
-where the panes stack, no navigator bar (the viewer's `noRail`).
+its review alone, a pull request's review opens on the viewer's rail
+(`src/review-view/`, drawn through the viewer's places seam by `useViewPlaces`,
+with the viewer's `flatRail` and `ownFiles`). A group's or a stack's page always
+shows the full review. The head, the version menu, history, Compare, the side
+pane, the Decisions, Sessions and Commits panes and the review dialog are the
+full review's own. The rail lists, in order:
 
-- **The side pane** starts folded and then stays as the reader leaves it. Its
-  tabs are Details, Activity and Comments, then **Sessions**, **Commits** and
-  **Decisions** for the pull request that has them, each a compact list:
-  a session by title over its agent, start and duration (one at work first,
-  marked live or waiting), a commit by subject over its short id, author and
-  time, a decision by title over its kind, who made it and when, under its
-  session's name when there are several. The tabs that do not fit the pane's
-  width go under a ⋯ at the strip's end, which carries a tab's dot; the tab
-  on show always stands in the strip. Files is not offered: Code has the
-  files.
-- **An item opened from those lists** (a session's transcript, a commit with
-  its diff, the decisions with the one picked open and brought into view,
-  `pane=decisions&decision=<id>`) shows in the review pane under the page's
-  tabs, none of them current. The tabs are the way back: each opens where it
-  was read last, so the tab the reader came from returns them to the same
-  section or file. Its row stays marked in the side pane.
-- **Where the panes stack** the button at the end of the tabs opens the side
-  pane as a sheet (as `]` does), with the navigator bar's dot when CI fails or
-  a thread is open; picking an item closes the sheet.
+- **Overview**, then **How it works** with "Where this fits" and each section
+  nested under it (the group's own row opens the first real section; an
+  obsolete section is muted), then **Files changed** with the number of changed
+  files. These are the page's places; the rail's other rows are the viewer's.
+- **Decisions**, **Sessions** and **Commits** are plain rows, with no
+  disclosure and nothing nested under them (`flatRail`; the full review keeps
+  its disclosures). Each has its count and a live or waiting dot, and opens a
+  page listing the pull request's items; a session, a commit or a decision
+  opened from there shows in the review pane and leaves its group's row marked.
+  Files changed is the app's own place (`ownFiles`), so the viewer's Files row
+  and its file tree are not drawn.
+- The side pane has its usual tabs (Details, Activity, Comments, and the
+  conversation) and starts folded on the page's own places, then stays as the
+  reader leaves it. Where the panes stack, the rail is a sheet opened from the
+  navigator bar, which also steps through the places.
 
 The page reads each version from `GET api/tiles` (a draft's from
 `api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
@@ -2666,7 +2665,7 @@ rather than the page. A section without a `body` (a document written before
 bodies, with a `summary` and `steps`) reads as one, as the daemon's `BodyOf`
 does: a prose block, a points block, then its tiles; tiles the body does not
 place (a person's own among them) follow it, and a tile block naming a missing
-or another section's tile is ignored. The tabs read only this document. The review viewer
+or another section's tile is ignored. The page reads only this document. The review viewer
 around them (the head, history, side pane, comments, selection and keys) and
 the viewer's parts they draw (citation chips, images, diffs) read a
 `baum.review/1` review, which `chromeOf` makes from the document: what
@@ -2675,7 +2674,7 @@ empty there. Until the daemon converts every version, it may answer with a
 `baum.review/1` document and its `view` (`baum.view/1`) instead; the page
 converts that answer (`review-view/from-v1.ts`, to be removed once the daemon
 answers `baum.review/2`) and keeps the served review for the chrome. With tile
-reviews on and no page chosen, a version opens on the tabs when it has more
+reviews on and no page chosen, a version opens on this page when it has more
 than the review alone (tiles, an overview part the model wrote, a verdict with
 points, or a record of the three levels' calls: `isArranged`).
 
@@ -2683,9 +2682,9 @@ points, or a record of the three levels' calls: `isArranged`).
   land there: the Overview is the Summary (no `pane`), How it works is
   `pane=section&section=<id>` (`context` is "Where this fits"; a risk's
   `pane=risk` opens its section at the risk, and the Changes its first
-  section), and Code is `pane=tile&tile=code&tile_item=<path>`. A link to a
-  tile opens the section it is placed on. Switching tabs comes back to the
-  section and file read last.
+  section), and Files changed is `pane=tile&tile=code&tile_item=<path>` (the
+  address keeps `code`). A link to a tile opens the section it is placed on.
+  The Files changed row opens the first file that is not generated.
 - **Overview**, always in this order: the summary (`summary.text`), the risk
   (score, level and why: `risk_why`, or else the score's first reason) with
   the verdict inside its card when it has points (each linking to its
@@ -2693,9 +2692,9 @@ points, or a record of the three levels' calls: `isArranged`).
   (`overview.diagram`) under its title, and what was asked (`overview.intent`,
   else each linked session's first prompt), each linking to the prompt in its
   session.
-- **How it works** lists "Where this fits" first (the review's context, its
-  files as chips, and the tiles `context` owns) and opens on the first real
-  section; each section's line in the list is its `gist`. A section shows its
+- **How it works** lists "Where this fits" first in the rail (the review's
+  context, its files as chips, and the tiles `context` owns) and opens on the
+  first real section. The sections are the rail's rows, not a list in the page. A section shows its
   title, then a row of views, each with its count and disabled (never hidden)
   when the section has nothing for it: **Overview** (its gist, then its body block by
   block, then its risks: prose at reading width, points as hairline lines that
@@ -2704,7 +2703,7 @@ points, or a record of the three levels' calls: `isArranged`).
   label; a table cell `{text, was}` strikes the old value, and a flow whose
   steps have `more` makes them buttons that show the step's detail below; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
-  migration hunks, file by file, drawn as the Code tab draws them with the
+  migration hunks, file by file, drawn as Files changed draws them with the
   section's own steps and risks pinned to the hunks they cite, and its
   generated or vendored files folded at the end), **Tests** (its test hunks,
   under the names of the tests they add or change where those can be read
@@ -2715,11 +2714,21 @@ points, or a record of the three levels' calls: `isArranged`).
   Docs count files, Session quotes. The view is `section_view=<view>` beside
   `section=`, and opening another section opens its Overview. The full
   review's check callouts and line counts are not shown.
-- **Code** lists every changed file grouped as code, tests, docs, config and
-  generated (folded, and a generated file's diff waits for Show the diff), and
-  shows the open file's hunks with the steps and open risks that cite each
-  pinned under it, each linking to its section. A code chip anywhere on
-  the page opens its file here.
+- **Files changed** (`code-tab.tsx`) lists every changed file in a list beside
+  the open file, under a switch, **Group files by**, with three modes. **Type**
+  groups them as code, tests, docs, config and generated (folded, and a
+  generated file's diff waits for Show the diff). **Folder** groups them by
+  directory, a directory with no file of its own and one directory joined to it
+  (`oss/internal/jobs`), files by name under their folder. **Feature** groups
+  them by the sections that explain them (`ViewFile.sections`), in the
+  sections' order; a file explained by several sections is listed under each
+  (and marked in each), and the files no section explains come last under "Not
+  in a section". A row shows the file's name (and its folder, where the heading
+  does not), its added and removed lines and its notes. The mode is kept in the
+  browser (`localStorage` `baum.review.fileGrouping`; when storage is refused it
+  holds for the page). The open file shows its hunks with the steps and open
+  risks that cite each pinned under it, each linking to its section. A code
+  chip anywhere on the page opens its file here.
 - **Tiles** always show their title. Flows, columns, sequences and tables are
   drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
   caption and citations, and lay themselves out by the room they have: lanes
@@ -2732,11 +2741,10 @@ points, or a record of the three levels' calls: `isArranged`).
   views), the file open in Code, or the pull request on the Overview; on a tile the keys are on
   (`j`/`k`), on that tile, placed on the code it cites. `a` asks the session
   panel about the tile the keys are on, else the pull request. `←`/`→`
-  (and `Shift+J`/`Shift+K`) step through the places the rail listed: the
-  Overview, each section, then Code, where `→` goes on from file to file; they do
-  nothing on a session, a commit or the decisions, whose tabs lead back. `]`
-  opens the side pane and gives it the keys (`h`/`l` move between its tabs,
-  those under the ⋯ too). Escape and `u` leave the pull request as on the full
+  (and `Shift+J`/`Shift+K`) step through the rail's rows: the
+  Overview, each section, then Files changed, where `→` goes on from file to
+  file, then the viewer's Decisions, Sessions and Commits. `]`
+  opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request as on the full
   review. The session panel's focus names `view: tiles` and the tab: on the
   Overview `tab: overview`; on How it works `tab: sections` and the `section`
   read (`context` for Where this fits; a risk adds its `item`; a link to a
@@ -2759,7 +2767,7 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   served definition the daemon marks `builtin: true`, is baum's own: it has
   no caption or edge, though it draws in the same frame. Its frame is told
   the size `full`, or the largest its type declares. A citation the tile's
-  reader clicks opens the cited code in the Code tab, a risk or section in
+  reader clicks opens the cited code in Files changed, a risk or section in
   How it works, or the tile cited where it stands. Citations resolve against
   the shown version's review (its index, its sections, their risks and
   evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),

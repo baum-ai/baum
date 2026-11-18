@@ -893,3 +893,93 @@ describe("ReviewViewer places without a rail", () => {
     expect(steps.current?.rail?.next).toBeNull();
   });
 });
+
+const row = (container: HTMLElement, label: string) =>
+  [...container.querySelectorAll<HTMLButtonElement>("#review-rail button")].find((each) =>
+    each.textContent?.startsWith(label),
+  )!;
+
+describe("ReviewViewer places with a flat rail", () => {
+  const filesSlot = {
+    files: [],
+    loading: false,
+    failed: false,
+    retry() {},
+    renderTree: () => <p>File tree</p>,
+    renderFiles: () => null,
+  };
+  it("draws Decisions, Sessions and Commits as plain rows that open their panes", async () => {
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({ flatRail: true }),
+          ...groups(),
+          files: filesSlot,
+        })}
+      </Host>,
+    );
+    for (const label of ["Decisions", "Sessions", "Commits"]) {
+      expect(row(container, label).getAttribute("aria-expanded")).toBeNull();
+    }
+    expect(row(container, "Sessions").textContent).toBe("Sessions1");
+    expect(row(container, "Commits").textContent).toBe("Commits1");
+    // No items are nested under a row.
+    expect(container.querySelector("#review-sessions, #review-commits")).toBeNull();
+    expect(
+      [...container.querySelectorAll("#review-rail button")].some(
+        (each) => each.textContent === "Session a" || each.textContent === "Commit a",
+      ),
+    ).toBe(false);
+    await act(async () => row(container, "Sessions").click());
+    expect(search(container)).toContain("pane=sessions");
+    expect(container.querySelector("#review-section")?.textContent).toContain("Session pane all");
+    expect(row(container, "Sessions").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps the group's row current on one of its items", async () => {
+    const container = await render(
+      <Host initial="pane=session&session=ses_a">
+        {viewer({ places: dummyPlaces({ flatRail: true }), ...groups() })}
+      </Host>,
+    );
+    expect(row(container, "Sessions").getAttribute("aria-pressed")).toBe("true");
+    expect(row(container, "Commits").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("leaves the Files changed row to a host that draws it", async () => {
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({ flatRail: true, ownFiles: true }),
+          ...groups(),
+          files: filesSlot,
+        })}
+      </Host>,
+    );
+    expect(row(container, "Files changed")).toBeUndefined();
+  });
+
+  it("steps the keys through the host's rows, then Decisions, Sessions and Commits", async () => {
+    const steps = { current: null } as NonNullable<ReviewViewerProps["steps"]>;
+    await render(
+      <Host initial="pane=tile&tile=tile-b">
+        {viewer({
+          places: dummyPlaces({ flatRail: true, ownFiles: true }),
+          ...groups(),
+          files: filesSlot,
+          steps,
+        })}
+      </Host>,
+    );
+    expect(steps.current?.rail?.previous?.label).toBe("Host row tile-a");
+    expect(steps.current?.rail?.next?.label).toBe("Decisions");
+  });
+
+  it("keeps the disclosures without the flag", async () => {
+    const container = await render(
+      <Host>{viewer({ places: dummyPlaces(), ...groups(), files: filesSlot })}</Host>,
+    );
+    for (const label of ["Files changed", "Sessions", "Commits"])
+      expect(row(container, label).getAttribute("aria-expanded")).not.toBeNull();
+  });
+});

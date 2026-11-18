@@ -61,7 +61,9 @@ export function NavRow({
       >
         {mono ? title : <InlineMarkdown>{title}</InlineMarkdown>}
       </span>
-      {aside ? <span className="row-span-2 flex-none text-xs text-tertiary">{aside}</span> : null}
+      {aside ? (
+        <span className={cn("flex-none text-xs text-tertiary", line && "row-span-2")}>{aside}</span>
+      ) : null}
       {line ? (
         <span className={cn("col-start-1 min-w-0", wideLine && "hidden @3xl:block")}>
           {mono ? (

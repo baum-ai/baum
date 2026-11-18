@@ -4,10 +4,10 @@ import { expect, test, type Page } from "@playwright/test";
 import { legacyAnswer1303, REVIEW_1303 } from "../src/review-view/fixture-1303";
 import { launchURL } from "./inbox-helpers";
 
-// The review page's overview tabs (`?view=tiles`) on the fixture's acme/demo#7,
+// The review page's rail and places (`?view=tiles`) on the fixture's acme/demo#7,
 // whose tile route answers with #1303's baum.review/2 document, as the daemon
 // serves it. REVIEW_VIEW_SHOTS=<dir> also writes a picture of each
-// tab at each width, light and dark.
+// place at each width, light and dark.
 
 const PR7 = "repository=acme%2Fdemo&pr=7&view=tiles";
 const SHOTS = process.env.REVIEW_VIEW_SHOTS ?? "";
@@ -43,6 +43,12 @@ function watchErrors(page: Page) {
   return errors;
 }
 
+/** A row of the rail, which on the tiles page is the way through the page. */
+const railRow = (page: Page, name: string) =>
+  page.locator("#review-rail").getByRole("button", { name: new RegExp(`^${name}(, \\d+)?$`) });
+/** The rail's own mark of the tiles page: its How it works group. */
+const tilesRail = (page: Page) => railRow(page, "How it works");
+
 const PLACES = [
   ["overview", ""],
   ["sections", "&pane=section&section=sec_allowlist"],
@@ -53,26 +59,50 @@ const PLACES = [
   ["code", "&pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go"],
 ] as const;
 
-test("the tabs switch, keep their place in the address and survive a reload", async ({ page }) => {
+test("the rail switches places, keeps them in the address and survives a reload", async ({
+  page,
+}) => {
   const errors = watchErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, PR7);
-  const tabs = page.getByRole("tablist", { name: "Review" });
-  await expect(tabs.getByRole("tab", { name: "Overview" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(railRow(page, "Overview")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[role="tablist"][aria-label="Review"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "How a phone reaches the daemon" })).toBeVisible();
-  await tabs.getByRole("tab", { name: "How it works" }).click();
+  await railRow(page, "How it works").click();
   await expect(page).toHaveURL(/section=sec_pairing/);
-  await page.getByRole("button", { name: "What a phone can do" }).first().click();
+  await railRow(page, "What a phone can do").click();
   await expect(page.getByRole("heading", { name: "What a phone can reach" })).toBeVisible();
   await page.reload();
   await expect(page.getByRole("heading", { name: "What a phone can reach" })).toBeVisible();
-  await tabs.getByRole("tab", { name: "Code" }).click();
+  await expect(railRow(page, "What a phone can do")).toHaveAttribute("aria-pressed", "true");
+  await railRow(page, "Files changed").click();
   await expect(page).toHaveURL(/tile=code/);
   await page.goBack();
   await expect(page).toHaveURL(/section=sec_allowlist/);
+  expect(errors).toEqual([]);
+});
+
+test("Files changed groups by type, folder or feature, and remembers it", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, `${PR7}${PLACES.find(([name]) => name === "code")![1]}`);
+  const files = page.getByRole("navigation", { name: "Changed files" });
+  const by = page.getByRole("group", { name: "Group files by" });
+  await expect(by.getByRole("button", { name: "Type" })).toHaveAttribute("aria-pressed", "true");
+  await expect(files.getByText("Tests", { exact: true })).toBeVisible();
+  await by.getByRole("button", { name: "Folder" }).click();
+  await expect(files.getByText("oss", { exact: true })).toBeVisible();
+  await expect(files.getByText("Tests", { exact: true })).toHaveCount(0);
+  await page.reload();
+  await expect(by.getByRole("button", { name: "Folder" })).toHaveAttribute("aria-pressed", "true");
+  await by.getByRole("button", { name: "Feature" }).click();
+  await expect(files.getByText("Pairing", { exact: true })).toBeVisible();
+  await files
+    .getByRole("button", { name: /relay\.go/ })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/tile_item=oss%2Finternal%2Fremote%2Frelay\.go/);
+  expect(await overflows(page)).toBe(false);
   expect(errors).toEqual([]);
 });
 
@@ -104,7 +134,7 @@ test("a section's views switch, keep their place in the address and reset per se
   await expect(page.getByRole("article", { name: "oss/SECURITY.md diff" })).toBeVisible();
   await page.reload();
   await expect(views.getByRole("tab", { name: "Docs" })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("button", { name: "Relay connection" }).first().click();
+  await railRow(page, "Relay connection").click();
   await expect(page).toHaveURL(/section=sec_relay/);
   await expect(page).not.toHaveURL(/section_view/);
   await expect(views.getByRole("tab", { name: "Overview" })).toHaveAttribute(
@@ -121,16 +151,14 @@ test("a section's views switch, keep their place in the address and reset per se
 });
 
 for (const width of [390, 900, 1440]) {
-  test(`at ${width}px no tab scrolls the page sideways`, async ({ page }) => {
+  test(`at ${width}px no place scrolls the page sideways`, async ({ page }) => {
     // A picture shows more of the page than the check needs.
     if (SHOTS) test.setTimeout(120_000);
     await page.setViewportSize({ width, height: SHOTS ? 1800 : 900 });
     for (const [name, place] of PLACES) {
       await open(page, `${PR7}${place}`);
-      await expect(page.getByRole("tablist", { name: "Review" })).toBeVisible();
-      await expect(
-        page.locator('#review-section [role="tabpanel"]:not([hidden])').first(),
-      ).toBeVisible();
+      await expect(page.locator("#review-section")).toBeVisible();
+      await expect(page.locator('[role="tablist"][aria-label="Review"]')).toHaveCount(0);
       expect(await overflows(page), `${name} at ${width}px`).toBe(false);
       if (!SHOTS) continue;
       mkdirSync(SHOTS, { recursive: true });
@@ -294,84 +322,58 @@ async function withSessionWork(page: Page) {
   );
 }
 
-/** Opens a tab of the side pane, from under its ⋯ when it did not fit, once
- *  the pull request's lists have arrived. */
-async function sideTab(page: Page, name: string) {
-  const tab = page.locator(`#conversation-tab-${name.toLowerCase()}`);
-  await expect(async () => {
-    if (await tab.count()) await tab.click({ timeout: 1000 });
-    else {
-      const more = page.getByRole("group", { name: "More tabs" });
-      if (!(await more.isVisible())) await page.locator("[data-pane-tabs-more]").click();
-      await more.getByRole("button", { name }).click({ timeout: 1000 });
-    }
-    await expect(tab).toHaveAttribute("aria-selected", "true", { timeout: 1000 });
-  }).toPass({ timeout: 15_000 });
-}
-
-test("the side pane lists the sessions and decisions, which open under the tabs", async ({
+test("the rail's Sessions, Commits and Decisions are plain rows that open their panes", async ({
   page,
 }) => {
   const errors = watchErrors(page);
   await withSessionWork(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, PR7);
-  // No rail: the tabs are the way through the page.
-  await expect(page.locator("#review-rail")).toHaveCount(0);
-  // The side pane starts folded; ] unfolds it.
-  await expect(page.getByRole("button", { name: "Expand side pane" })).toBeVisible();
-  await page.keyboard.press("]");
-  await expect(page.getByRole("button", { name: "Collapse side pane" })).toBeVisible();
-  await sideTab(page, "Sessions");
-  const aside = page.locator("#review-aside");
-  await aside.getByRole("button", { name: /Resolve the conflict with the base/ }).click();
+  const rail = page.locator("#review-rail");
+  // Plain rows: nothing folds open under them, Files changed included.
+  for (const name of ["Files changed", "Decisions", "Sessions", "Commits"])
+    await expect(rail.getByRole("button", { name: new RegExp(`^${name}`) })).not.toHaveAttribute(
+      "aria-expanded",
+      /.*/,
+    );
+  const sessions = rail.getByRole("button", { name: /^Sessions/ });
+  await sessions.click();
+  await expect(page).toHaveURL(/pane=sessions/);
+  const pane = page.locator("#review-section");
+  await pane
+    .getByRole("button", { name: /Resolve the conflict with the base/ })
+    .first()
+    .click();
   await expect(page).toHaveURL(/pane=session&session=running-on-7/);
-  // The side pane stays open, on the session's row.
+  // The group's row stays current on its item.
+  await expect(sessions).toHaveAttribute("aria-pressed", "true");
+  await rail.getByRole("button", { name: /^Decisions/ }).click();
+  await expect(page).toHaveURL(/pane=decisions/);
   await expect(
-    aside.getByRole("button", { name: /Resolve the conflict with the base/ }),
-  ).toHaveAttribute("aria-pressed", "true");
-  // The tabs stand above the session, none of them current, and lead back.
-  const tabs = page.locator("#review-section").getByRole("group", { name: "Review" });
-  await expect(tabs.getByRole("button", { name: "Overview" })).toHaveAttribute(
-    "aria-pressed",
-    "false",
-  );
-  await sideTab(page, "Decisions");
-  await aside.getByRole("button", { name: /Deny by default in the allowlist/ }).click();
-  await expect(page).toHaveURL(/pane=decisions&decision=dec_2/);
-  await expect(
-    page
-      .locator("#review-section")
-      .getByRole("button", { name: /Deny by default in the allowlist/ }),
-  ).toHaveAttribute("aria-expanded", "true");
-  await tabs.getByRole("button", { name: "Overview" }).click();
-  await expect(
-    page.getByRole("tablist", { name: "Review" }).getByRole("tab", { name: "Overview" }),
-  ).toHaveAttribute("aria-selected", "true");
+    pane.getByRole("button", { name: /Deny by default in the allowlist/ }).first(),
+  ).toBeVisible();
+  await railRow(page, "Overview").click();
+  await expect(railRow(page, "Overview")).toHaveAttribute("aria-pressed", "true");
   expect(errors).toEqual([]);
 });
 
-test("below the side by side width the tabs open the side pane, with no navigator bar", async ({
+test("below the side by side width the rail is a sheet, and the commits open from it", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 900, height: 900 });
   await open(page, PR7);
-  await expect(page.locator('button[aria-controls="review-rail"]')).toHaveCount(0);
-  await page.locator('#review-section button[aria-controls="review-aside"]').click();
-  const aside = page.locator("#review-aside");
-  await expect(aside).toBeVisible();
-  await sideTab(page, "Commits");
-  await page.locator("#conversation-panel-commits button").first().click();
-  await expect(page).toHaveURL(/pane=commit&commit=/);
-  // Picking it closes the sheet; the commit sits under the tabs.
-  await expect(aside).toBeHidden();
-  await expect(
-    page.locator("#review-section").getByRole("group", { name: "Review" }),
-  ).toBeVisible();
+  await expect(page.locator("#review-rail")).toBeHidden();
+  await page.locator('button[aria-controls="review-rail"]').first().click();
+  await expect(page.locator("#review-rail")).toBeVisible();
+  await page
+    .locator("#review-rail")
+    .getByRole("button", { name: /^Commits/ })
+    .click();
+  await expect(page).toHaveURL(/pane=commits/);
   expect(await overflows(page)).toBe(false);
 });
 
-test("the Code tab names the open file once, in its diff's header", async ({ page }) => {
+test("Files changed names the open file once, in its diff's header", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, `${PR7}${PLACES.find(([name]) => name === "code")![1]}`);
   const file = page.locator("#review-view-file");
@@ -390,26 +392,24 @@ test("the setting chooses the review page", async ({ page }) => {
   await select.selectOption("tiles");
   try {
     await signedIn(page, "repository=acme%2Fdemo&pr=7");
-    await expect(page.getByRole("tablist", { name: "Review" })).toBeVisible();
+    await expect(tilesRail(page)).toBeVisible();
     // An address the full review wrote lands on the same place: a risk opens
     // How it works on its section.
     await signedIn(
       page,
       "repository=acme%2Fdemo&pr=7&pane=risk&risk_section=sec_allowlist&risk_id=rsk_always_allow",
     );
-    await expect(
-      page.getByRole("tablist", { name: "Review" }).getByRole("tab", { name: "How it works" }),
-    ).toHaveAttribute("aria-selected", "true");
+    await expect(railRow(page, "What a phone can do")).toHaveAttribute("aria-pressed", "true");
   } finally {
     await signedIn(page, "page=settings");
     await page.locator("#review-page").selectOption("full");
   }
   await signedIn(page, "repository=acme%2Fdemo&pr=7");
   await expect(page.getByRole("heading", { name: "Summary", level: 2 })).toBeVisible();
-  await expect(page.getByRole("tablist", { name: "Review" })).toHaveCount(0);
+  await expect(tilesRail(page)).toHaveCount(0);
 });
 
-test("with tile reviews on, an arranged version opens on its tabs", async ({ page }) => {
+test("with tile reviews on, an arranged version opens on its rail", async ({ page }) => {
   // The fixture's acme/demo#12 was generated with a composition; #7 was not.
   await signedIn(page, "repository=acme%2Fdemo&pr=12");
   const labs = (on: boolean) =>
@@ -422,7 +422,7 @@ test("with tile reviews on, an arranged version opens on its tabs", async ({ pag
         }).then((r) => r.status),
       on,
     );
-  const tabs = page.getByRole("tablist", { name: "Review" });
+  const tabs = tilesRail(page);
   // Off, it opens on the full review, as the setting says.
   await expect(page.getByText("An arranged fixture review").first()).toBeVisible();
   await expect(tabs).toHaveCount(0);
@@ -446,7 +446,7 @@ test("with tile reviews on, an arranged version opens on its tabs", async ({ pag
 // TEMPORARY, with src/review-view/from-v1.ts: until the daemon answers
 // baum.review/2 for every version, it answers with a baum.review/1 document
 // and its view, which the page converts.
-test("a baum.review/1 answer with its view draws the same tabs", async ({ page }) => {
+test("a baum.review/1 answer with its view draws the same page", async ({ page }) => {
   const errors = watchErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, PR7, legacyAnswer1303());

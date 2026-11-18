@@ -405,6 +405,16 @@ export type ReviewPlaces = {
    *  `ReviewSidePaneButton` in its own head, as the way to the side pane's
    *  sheet where the panes stack. */
   noRail?: boolean;
+  /** The rail's Sessions and Commits rows are plain rows: no disclosure and
+   *  no items nested under them, as Decisions already is. Each opens its pane,
+   *  which lists the items (`renderPane(null, …)`), and an item opened from
+   *  there leaves its group's row current. Absent, they fold open as the
+   *  older review's do. */
+  flatRail?: boolean;
+  /** The host draws the Files changed row itself, in `renderRail` and
+   *  `railRows`, because its files are a place of its own, so the viewer
+   *  leaves its own Files row and the nested file tree out. */
+  ownFiles?: boolean;
   /** Drawn at the top of the review pane on the viewer's own places (a
    *  session, a commit, the decisions), as the way back to the host's
    *  places. Used with `noRail`. */
@@ -747,6 +757,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   // The host's places are the way through the page: no rail, and the groups
   // are tabs of the side pane.
   const railless = Boolean(places?.noRail);
+  const flat = Boolean(places?.flatRail);
   const selection = useMemo<Selection>(
     () =>
       (requested.kind === "tile" && !hasPlaces) ||
@@ -1500,7 +1511,7 @@ function ReviewWorkspace<F extends ReviewFile>({
               }))
             : []),
         ]),
-    ...(filesSlot && !comparing && !railless
+    ...(filesSlot && !comparing && !railless && !places?.ownFiles
       ? [
           { key: "files", label: "Files changed", go: () => setSelection({ kind: "files" }) },
           ...(open.files
@@ -1518,7 +1529,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     ...(sessionState && !railless
       ? [
           { key: "sessions", label: "Sessions", go: () => setSelection({ kind: "sessions" }) },
-          ...(open.sessions
+          ...(open.sessions && !flat
             ? listedItems(sessionState).map((item) => ({
                 key: `session:${item.id}`,
                 label: item.label,
@@ -1530,7 +1541,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     ...(commitState && !railless
       ? [
           { key: "commits", label: "Commits", go: () => setSelection({ kind: "commits" }) },
-          ...(open.commits
+          ...(open.commits && !flat
             ? listedItems(commitState).map((item) => ({
                 key: `commit:${item.id}`,
                 label: item.label,
@@ -1551,14 +1562,18 @@ function ReviewWorkspace<F extends ReviewFile>({
           : selection.kind === "file"
             ? `file:${selection.id}`
             : selection.kind === "session"
-              ? `session:${selection.id}`
+              ? flat
+                ? "sessions"
+                : `session:${selection.id}`
               : selection.kind === "commit"
-                ? `commit:${selectedCommit?.id ?? selection.id}`
+                ? flat
+                  ? "commits"
+                  : `commit:${selectedCommit?.id ?? selection.id}`
                 : selection.kind;
   const railAt = railRows.findIndex((row) => row.key === railKey);
   // Space on a selected group opens or closes it in the rail.
   const foldable =
-    hostSteps || railless
+    hostSteps || railless || flat
       ? null
       : selection.kind === "changes" ||
           selection.kind === "files" ||
@@ -2225,7 +2240,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                           </>
                         )}
 
-                        {filesSlot ? (
+                        {filesSlot && !places?.ownFiles ? (
                           <>
                             <SideNavDisclosure
                               label="Files changed"
@@ -2295,7 +2310,23 @@ function ReviewWorkspace<F extends ReviewFile>({
                           />
                         ) : null}
 
-                        {sessionState ? (
+                        {sessionState && flat ? (
+                          <SideNavButton
+                            label="Sessions"
+                            icon={SessionsIcon}
+                            tint="teal"
+                            busy={sessionState.status === "loading"}
+                            indicator={sessions?.indicator}
+                            active={selection.kind === "sessions" || selection.kind === "session"}
+                            count={
+                              sessionState.status === "ready"
+                                ? sessionState.items.length
+                                : undefined
+                            }
+                            controls="review-section"
+                            onSelect={() => setSelection({ kind: "sessions" })}
+                          />
+                        ) : sessionState ? (
                           <>
                             <SideNavDisclosure
                               label="Sessions"
@@ -2353,7 +2384,19 @@ function ReviewWorkspace<F extends ReviewFile>({
                           </>
                         ) : null}
 
-                        {commitState ? (
+                        {commitState && flat ? (
+                          <SideNavButton
+                            label="Commits"
+                            icon={CommitIcon}
+                            busy={commitState.status === "loading"}
+                            active={selection.kind === "commits" || selection.kind === "commit"}
+                            count={
+                              commitState.status === "ready" ? commitState.items.length : undefined
+                            }
+                            controls="review-section"
+                            onSelect={() => setSelection({ kind: "commits" })}
+                          />
+                        ) : commitState ? (
                           <>
                             <SideNavDisclosure
                               label="Commits"

@@ -13,7 +13,7 @@ import { capture, inspect, settle, type Issue } from "./review-screens";
 // Per review, size and theme it opens the review page and takes each of STATES,
 // as a viewport picture and a full-page one. Settings, all optional:
 //   REAL_REVIEW_VIEW     the review page: full (default) or tiles (the
-//                        overview tabs)
+//                        Overview / How it works / Files changed rail)
 //   REAL_REVIEW_ONLY     only the reviews whose repo#number contains this text
 //   REAL_REVIEW_MINUTES  the time one review may take before it is left and
 //                        recorded as a problem (default 8)
@@ -64,10 +64,10 @@ type State = {
 };
 
 export const STATES: State[] = [
-  // The full review's summary, or the Overview tab.
+  // The full review's summary, or the Overview.
   { name: "landing", open: async () => true },
   {
-    // The first section: on the overview tabs, How it works opened on it.
+    // The first section: on the tiles page, How it works opened on it.
     name: "detail",
     open: async ({ page, address, firstSection }) => {
       if (!firstSection) return false;
@@ -111,27 +111,43 @@ export const STATES: State[] = [
     },
   },
   {
-    // The Code tab on its first file.
+    // Files changed on its first file, grouped by type.
     name: "code",
     views: ["tiles"],
-    open: async ({ page, address }) => {
-      await page.goto(address({ pane: "tile", tile: "code" }));
-    },
+    open: async (c) => openFiles(c, "type"),
   },
   {
-    // The side pane open on its Sessions tab (a sheet where the panes stack).
-    name: "side-sessions",
+    // The same list grouped by folder.
+    name: "code-folder",
     views: ["tiles"],
-    open: async (c) => openSideSessions(c),
+    open: async (c) => openFiles(c, "folder"),
   },
   {
-    // The first session of that list, opened in the review pane under the tabs.
-    name: "side-session",
+    // The same list grouped by feature (the sections).
+    name: "code-feature",
+    views: ["tiles"],
+    open: async (c) => openFiles(c, "feature"),
+  },
+  {
+    // The rail's Sessions row: the pane listing the sessions.
+    name: "sessions",
+    views: ["tiles"],
+    open: async (c) => openList(c, "Sessions"),
+  },
+  {
+    // The first session of that list, opened in the review pane.
+    name: "session",
     views: ["tiles"],
     open: async (c) => {
-      if (!(await openSideSessions(c))) return false;
-      await c.page.locator("#conversation-panel-sessions button").first().click();
+      if (!(await openList(c, "Sessions", true))) return false;
+      await c.page.locator("#review-section").getByRole("button").first().click();
     },
+  },
+  {
+    // The rail's Commits row: the pane listing the commits.
+    name: "commits",
+    views: ["tiles"],
+    open: async (c) => openList(c, "Commits"),
   },
   {
     // The first hunk excerpt of the detail, opened to code.
@@ -145,42 +161,60 @@ export const STATES: State[] = [
   },
 ];
 
-/** Opens the side pane on its Sessions tab from the Overview: `]` unfolds it,
- *  or opens its sheet where the panes stack. False when the pull request has
- *  no Sessions tab or no session in it. */
-async function openSideSessions({ page, address }: Context) {
+/** Files changed, grouped the way the reader chose last (kept in the browser). */
+async function openFiles({ page, address }: Context, grouping: string) {
+  await page.goto(address({ pane: "tile", tile: "code" }));
+  await page.evaluate((value) => localStorage.setItem("baum.review.fileGrouping", value), grouping);
+  await page.reload();
+  const by = page.getByRole("group", { name: "Group files by" });
+  if (
+    !(await by.waitFor().then(
+      () => true,
+      () => false,
+    ))
+  )
+    return false;
+  await expect(by.getByRole("button", { name: new RegExp(`^${grouping}$`, "i") })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+}
+
+/** The pane the rail's Sessions, Commits or Decisions row opens. False when
+ *  the pull request has no such row or nothing in it. */
+async function openList({ page, address }: Context, name: string, withItems = false) {
   await page.goto(address());
-  await page.getByRole("tablist", { name: "Review" }).waitFor();
-  await page.keyboard.press("]");
-  await page.locator("#review-aside [role='tablist']").waitFor();
-  const tab = page.locator("#conversation-tab-sessions");
-  const more = page.locator("[data-pane-tabs-more]");
-  // The pull request's sessions arrive after the page: give them a moment.
+  // Where the panes stack the rail is a sheet, opened from the navigator bar.
+  await page.locator("#review-rail").waitFor({ state: "attached" });
+  const opener = page.locator('button[aria-controls="review-rail"]').first();
+  if (!(await page.locator("#review-rail").isVisible()) && (await opener.count()))
+    await opener.click();
+  const row = page.locator("#review-rail").getByRole("button", { name: new RegExp(`^${name}`) });
+  // The pull request's lists arrive after the page: give them a moment.
+  if (
+    !(await row
+      .first()
+      .waitFor({ timeout: 10_000 })
+      .then(
+        () => true,
+        () => false,
+      ))
+  )
+    return false;
   await page
     .waitForFunction(
-      () =>
-        document.querySelector("#conversation-tab-sessions") ||
-        document
-          .querySelector("[data-pane-tabs-more]")
-          ?.getAttribute("title")
-          ?.includes("Sessions"),
-      undefined,
+      (label) =>
+        [...document.querySelectorAll("#review-rail button")].some(
+          (each) => each.textContent?.startsWith(label) && /\d$/.test(each.textContent),
+        ),
+      name,
       { timeout: 10_000 },
     )
     .catch(() => undefined);
-  if (await tab.isVisible()) await tab.click();
-  else if ((await more.count()) && (await more.getAttribute("title"))?.includes("Sessions")) {
-    await more.click();
-    await page
-      .getByRole("group", { name: "More tabs" })
-      .getByRole("button", { name: "Sessions" })
-      .click();
-  } else return false;
-  const first = page.locator("#conversation-panel-sessions button").first();
-  return first.waitFor({ timeout: 10_000 }).then(
-    () => true,
-    () => false,
-  );
+  const shown = (await row.first().textContent()) ?? "";
+  if (!/\d$/.test(shown) || (withItems && /(^|\D)0$/.test(shown))) return false;
+  await row.first().click();
+  return true;
 }
 
 const slugOf = (pick: Pick) =>

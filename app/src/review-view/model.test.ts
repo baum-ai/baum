@@ -9,6 +9,7 @@ import {
   CONTEXT_ID,
   defaultSection,
   detailsOf,
+  groupFiles,
   intentRows,
   isArranged,
   listedSections,
@@ -24,6 +25,7 @@ import {
   shownFile,
   tilesOn,
   viewFiles,
+  type ViewFile,
 } from "./model";
 
 /** #1303 as the page reads it off the tile route. */
@@ -802,5 +804,94 @@ describe("a section's body", () => {
       { kind: "step", id: "sec_a-b1-p0", text: "Does a thing." },
     ]);
     expect(listedSections(review).find((entry) => entry.id === "sec_a")?.line).toBe("Lead prose.");
+  });
+});
+
+describe("grouping the changed files", () => {
+  const file = (path: string, sections: string[] = [], group: ViewFile["group"] = "Code") =>
+    ({ path, group, hunks: [], sections }) as ViewFile;
+  const sections = [
+    { id: CONTEXT_ID, title: "Where this fits" },
+    { id: "a", title: "Pairing" },
+    { id: "b", title: "Relay" },
+    { id: "c", title: "Nothing changed here" },
+  ];
+  const files = [
+    file("oss/internal/jobs/run.go", ["a"]),
+    file("oss/internal/jobs/queue.go", ["a", "b"]),
+    file("oss/internal/jobs/z_test.go", ["b"], "Tests"),
+    file("oss/internal/remote/relay.go", ["b"]),
+    file("oss/README.md", [], "Docs"),
+    file("go.mod", [], "Config"),
+    file("oss/go.sum", [], "Generated"),
+  ];
+  const shape = (rows: ReturnType<typeof groupFiles>) =>
+    rows.map((row) => [row.title, row.depth, row.files.map((each) => each.path)]);
+
+  it("by type: Code, Tests, Docs, Config and Generated, empty groups left out", () => {
+    const rows = groupFiles(files, "type", sections);
+    expect(rows.map((row) => row.title)).toEqual(["Code", "Tests", "Docs", "Config", "Generated"]);
+    expect(rows.find((row) => row.title === "Generated")?.generated).toBe(true);
+    expect(groupFiles([file("a.go")], "type", sections).map((row) => row.title)).toEqual(["Code"]);
+  });
+
+  it("by folder: compact directories, files by name under their folder", () => {
+    expect(shape(groupFiles(files, "folder", sections))).toEqual([
+      ["Repository root", 0, ["go.mod"]],
+      // oss holds files of its own, so it stands and its folders nest in it.
+      ["oss", 0, ["oss/go.sum", "oss/README.md"]],
+      ["internal", 1, []],
+      [
+        "jobs",
+        2,
+        ["oss/internal/jobs/queue.go", "oss/internal/jobs/run.go", "oss/internal/jobs/z_test.go"],
+      ],
+      ["remote", 2, ["oss/internal/remote/relay.go"]],
+    ]);
+  });
+
+  it("by folder: a chain of folders with one folder each is one heading", () => {
+    expect(
+      shape(
+        groupFiles(
+          [file("oss/internal/jobs/run.go"), file("oss/internal/jobs/queue.go")],
+          "folder",
+          sections,
+        ),
+      ),
+    ).toEqual([
+      ["oss/internal/jobs", 0, ["oss/internal/jobs/queue.go", "oss/internal/jobs/run.go"]],
+    ]);
+  });
+
+  it("by feature: the sections in order, a file under each of its sections, the rest last", () => {
+    const rows = groupFiles(files, "feature", sections);
+    expect(shape(rows)).toEqual([
+      ["Pairing", 0, ["oss/internal/jobs/run.go", "oss/internal/jobs/queue.go"]],
+      [
+        "Relay",
+        0,
+        [
+          "oss/internal/jobs/queue.go",
+          "oss/internal/jobs/z_test.go",
+          "oss/internal/remote/relay.go",
+        ],
+      ],
+      ["Not in a section", 0, ["oss/README.md", "go.mod", "oss/go.sum"]],
+    ]);
+    // Sections that explain no file have no heading.
+    expect(rows.map((row) => row.title)).not.toContain("Nothing changed here");
+  });
+
+  it("by feature, a review with every file in a section has no 'Not in a section'", () => {
+    const rows = groupFiles([file("a.go", ["a"])], "feature", sections);
+    expect(rows.map((row) => row.title)).toEqual(["Pairing"]);
+  });
+
+  it("lists every file of the real review under some feature", () => {
+    const real = viewFiles(REVIEW);
+    const rows = groupFiles(real, "feature", listedSections(REVIEW));
+    const listed = new Set(rows.flatMap((row) => row.files.map((each) => each.path)));
+    expect([...listed].toSorted()).toEqual(real.map((each) => each.path).toSorted());
   });
 });

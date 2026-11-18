@@ -2,12 +2,7 @@ import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import pluralize from "pluralize";
 import { chipLinkClass } from "@baum/viewer/components/chip-classes";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
-import {
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ExternalLinkIcon,
-} from "@baum/viewer/components/icons";
+import { ChevronRightIcon, ExternalLinkIcon } from "@baum/viewer/components/icons";
 import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Cites } from "./cites";
@@ -43,12 +38,11 @@ import {
   type V2Section,
   type ViewTile,
 } from "./model";
-import { NavRow } from "./nav-row";
 import { SectionViewBody, SectionViewTabs } from "./section-views";
 import { BLOCK_LABEL, ViewTileCard } from "./view-tile";
 
-/** How it works: the list of sections ("Where this fits" first) beside the
- *  section read, which shows its views (its Overview: its summary, the tiles
+/** How it works: the section read (the rail lists the sections, "Where this
+ *  fits" first), which shows its views (its Overview: its summary, the tiles
  *  it owns, its steps and its risks; its code, tests, the session turns it
  *  cites and its docs). It reads the baum.review/2 `review`; `document` is
  *  what the viewer's parts read. */
@@ -92,8 +86,7 @@ export function SectionsTab({
     historical,
   );
   return (
-    <div className="grid min-w-0 gap-6 @3xl:grid-cols-[minmax(13rem,17rem)_minmax(0,1fr)]">
-      <SectionList list={list} section={section} idPrefix={idPrefix} context={context} />
+    <>
       <article ref={root} id={`${idPrefix}review-view-section`} className="min-w-0 space-y-7">
         {section === CONTEXT_ID ? (
           <WhereThisFits
@@ -123,7 +116,7 @@ export function SectionsTab({
           </p>
         )}
       </article>
-    </div>
+    </>
   );
 }
 
@@ -413,103 +406,6 @@ function PointRow({
         </div>
       ) : null}
     </li>
-  );
-}
-
-/** The sections to choose from: the whole list beside the section where the
- *  page is wide, and where it is not (a narrow window, or the side pane
- *  open) one row naming the section read, which opens the list, with the
- *  previous and next section beside it, so the section starts on the first
- *  screen. */
-function SectionList({
-  list,
-  section,
-  idPrefix,
-  context,
-}: {
-  list: ListedSection[];
-  section: string;
-  idPrefix: string;
-  context: ReviewPlaceContext;
-}) {
-  const [open, setOpen] = useState(false);
-  const at = list.findIndex((entry) => entry.id === section);
-  const current = list[at];
-  const pick = (id: string) => {
-    setOpen(false);
-    context.select({ kind: "section", id });
-  };
-  const rows = (
-    <ol className="flex flex-col gap-0.5">
-      {list.map((entry) => (
-        <li key={entry.id} className="min-w-0">
-          <NavRow
-            title={entry.title}
-            line={entry.obsolete ? "No longer in the code" : entry.line}
-            wideLine
-            muted={entry.obsolete}
-            active={entry.id === section}
-            controls={`${idPrefix}review-view-section`}
-            onSelect={() => pick(entry.id)}
-          />
-        </li>
-      ))}
-    </ol>
-  );
-  return (
-    <nav aria-label="Sections" className="min-w-0">
-      <div className="hidden @3xl:block">{rows}</div>
-      <div className="space-y-2 @3xl:hidden">
-        <div className="flex items-stretch gap-2">
-          <button
-            type="button"
-            aria-expanded={open}
-            aria-controls={`${idPrefix}review-view-section-list`}
-            onClick={() => setOpen((shown) => !shown)}
-            className={cn(
-              "flex min-w-0 flex-1 items-center gap-2 rounded-md border border-default bg-surface-card px-3 py-2 text-left shadow-xs hover:bg-surface-hover",
-              FOCUS_RING,
-            )}
-          >
-            <span className="flex-none text-xs text-tertiary tabular-nums">
-              {at >= 0 ? `${at + 1} of ${list.length}` : `${list.length} sections`}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-base text-primary">
-              {current ? <InlineMarkdown>{current.title}</InlineMarkdown> : "Choose a section"}
-            </span>
-            <ChevronDownIcon
-              aria-hidden
-              className={cn("size-4 flex-none text-tertiary", open && "rotate-180")}
-            />
-          </button>
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-label="Previous section"
-            disabled={at <= 0}
-            onClick={() => {
-              const previous = list[at - 1];
-              if (previous) pick(previous.id);
-            }}
-          >
-            <ChevronLeftIcon aria-hidden className="size-4" />
-          </Button>
-          <Button
-            variant="secondary"
-            size="compact"
-            aria-label="Next section"
-            disabled={at < 0 || at >= list.length - 1}
-            onClick={() => {
-              const next = list[at + 1];
-              if (next) pick(next.id);
-            }}
-          >
-            <ChevronRightIcon aria-hidden className="size-4" />
-          </Button>
-        </div>
-        {open ? <div id={`${idPrefix}review-view-section-list`}>{rows}</div> : null}
-      </div>
-    </nav>
   );
 }
 

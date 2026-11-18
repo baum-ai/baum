@@ -88,51 +88,135 @@ const page = (initial = "", document = review1303()) =>
   );
 
 const pane = (container: HTMLElement) => container.querySelector<HTMLElement>("#review-section")!;
-const tabs = (container: HTMLElement) => [
-  ...pane(container).querySelectorAll<HTMLButtonElement>(
-    '[role="tablist"][aria-label="Review"] [role="tab"]',
-  ),
+const rail = (container: HTMLElement) => container.querySelector<HTMLElement>("#review-rail")!;
+/** The rail's rows that open the review pane, in order. */
+const railRows = (container: HTMLElement) => [
+  ...rail(container).querySelectorAll<HTMLButtonElement>('button[aria-controls~="review-section"]'),
 ];
-const tab = (container: HTMLElement, name: string) =>
-  tabs(container).find((each) => each.textContent === name)!;
-const panel = (container: HTMLElement) =>
-  pane(container).querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!;
+const rowLabel = (row: HTMLElement) =>
+  row.querySelector("span[title]")?.getAttribute("title") ?? row.textContent ?? "";
+const railRow = (container: HTMLElement, name: string) =>
+  railRows(container).find((each) => rowLabel(each) === name)!;
+/** The review pane's body: the place the address names. */
+const panel = (container: HTMLElement) => pane(container);
 const button = (scope: HTMLElement, text: string) =>
   [...scope.querySelectorAll<HTMLButtonElement>("button")].find((each) =>
     each.textContent?.includes(text),
   )!;
 const click = (element: HTMLElement) => act(async () => element.click());
 
-describe("the review page's tabs", () => {
-  it("draws Overview, How it works and Code, and keeps the tab in the address", async () => {
+describe("the review page's rail", () => {
+  it("lists Overview, How it works with its sections, and Files changed, and keeps the place in the address", async () => {
     const container = await page();
-    expect(tabs(container).map((each) => each.textContent)).toEqual([
+    expect(railRows(container).map(rowLabel)).toEqual([
       "Overview",
       "How it works",
-      "Code",
+      "Where this fits",
+      "Pairing",
+      "Relay connection",
+      "Encryption",
+      "Requests",
+      "What a phone can do",
+      "Daemon lifecycle",
+      "Dependencies",
+      "Files changed",
     ]);
-    expect(tab(container, "Overview").getAttribute("aria-selected")).toBe("true");
-    await click(tab(container, "How it works"));
-    // The tab opens on the first real section, never on Where this fits.
+    // No tabs above the pane.
+    expect(pane(container).querySelector('[role="tablist"][aria-label="Review"]')).toBeNull();
+    expect(railRow(container, "Overview").getAttribute("aria-pressed")).toBe("true");
+    await click(railRow(container, "How it works"));
+    // The group opens its first real section, never Where this fits.
     expect(search.get("pane")).toBe("section");
     expect(search.get("section")).toBe("sec_pairing");
-    expect(tab(container, "How it works").getAttribute("aria-selected")).toBe("true");
-    await click(tab(container, "Code"));
+    expect(railRow(container, "Pairing").getAttribute("aria-pressed")).toBe("true");
+    expect(railRow(container, "How it works").getAttribute("aria-pressed")).toBe("false");
+    await click(railRow(container, "Files changed"));
     expect(search.get("pane")).toBe("tile");
     expect(search.get("tile")).toBe("code");
-    await click(tab(container, "How it works"));
-    // Back to the section read last.
-    expect(search.get("section")).toBe("sec_pairing");
+    expect(railRow(container, "Files changed").getAttribute("aria-pressed")).toBe("true");
+    await click(railRow(container, "Requests"));
+    expect(search.get("section")).toBe("sec_requests");
+  });
+
+  it("counts the changed files on its row, with no disclosure on it", async () => {
+    const container = await page();
+    const row = railRow(container, "Files changed");
+    expect(row.getAttribute("aria-expanded")).toBeNull();
+    expect(row.textContent).toMatch(/\d+$/);
+    expect(rail(container).querySelector("#review-files")).toBeNull();
   });
 
   it("opens where the address says, so a reload or a link lands there", async () => {
     const container = await page(
       "pane=tile&tile=code&tile_item=oss%2Finternal%2Fremote%2Frelay.go",
     );
-    expect(tab(container, "Code").getAttribute("aria-selected")).toBe("true");
+    expect(railRow(container, "Files changed").getAttribute("aria-pressed")).toBe("true");
     expect(panel(container).querySelector("#review-view-file")?.getAttribute("aria-label")).toBe(
       "oss/internal/remote/relay.go",
     );
+  });
+});
+
+describe("the rail's plain rows", () => {
+  function WithGroups({ document }: { document: ReviewDocument }) {
+    const places = useViewPlaces();
+    return (
+      <ReviewViewer
+        document={document}
+        places={places}
+        sessions={{
+          state: {
+            status: "ready",
+            items: [{ id: "ses_a", label: "Session a", indicator: "live" }],
+          },
+          indicator: "live",
+          renderPane: (id) => <p>Session pane {id ?? "all"}</p>,
+        }}
+        commits={{
+          state: { status: "ready", items: [{ id: "c0ffee", label: "Commit a" }] },
+          renderPane: (id) => <p>Commit pane {id ?? "all"}</p>,
+        }}
+        decisions={{ count: 3, renderPane: () => <p>Decisions pane</p> }}
+      />
+    );
+  }
+  const grouped = (initial = "") =>
+    render(
+      <Host initial={initial}>
+        <WithGroups document={review1303()} />
+      </Host>,
+    );
+
+  it("lists Files changed, Decisions, Sessions and Commits after the sections, none folding open", async () => {
+    const container = await grouped();
+    expect(railRows(container).map(rowLabel).slice(-4)).toEqual([
+      "Files changed",
+      "Decisions",
+      "Sessions",
+      "Commits",
+    ]);
+    for (const name of ["Files changed", "Decisions", "Sessions", "Commits"])
+      expect(railRow(container, name).getAttribute("aria-expanded")).toBeNull();
+    expect(railRow(container, "Sessions").textContent).toBe("Sessions1");
+    expect(rail(container).querySelector('[role="img"][aria-label="In progress"]')).not.toBeNull();
+  });
+
+  it("opens a pane from a row and leaves the Overview unmarked there", async () => {
+    const container = await grouped();
+    await click(railRow(container, "Sessions"));
+    expect(search.get("pane")).toBe("sessions");
+    expect(pane(container).textContent).toContain("Session pane all");
+    expect(railRow(container, "Sessions").getAttribute("aria-pressed")).toBe("true");
+    expect(railRow(container, "Overview").getAttribute("aria-pressed")).toBe("false");
+    await click(railRow(container, "Commits"));
+    expect(pane(container).textContent).toContain("Commit pane all");
+    expect(railRow(container, "Commits").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps the group's row marked on one of its items", async () => {
+    const container = await grouped("pane=session&session=ses_a");
+    expect(railRow(container, "Sessions").getAttribute("aria-pressed")).toBe("true");
+    expect(railRow(container, "Overview").getAttribute("aria-pressed")).toBe("false");
   });
 });
 
@@ -165,7 +249,7 @@ describe("the Overview", () => {
     expect(verdict.querySelectorAll("li")).toHaveLength(2);
     await click(button(verdict, "What a phone can do"));
     expect(search.get("section")).toBe("sec_allowlist");
-    expect(tab(container, "How it works").getAttribute("aria-selected")).toBe("true");
+    expect(railRow(container, "What a phone can do").getAttribute("aria-pressed")).toBe("true");
   });
 
   it("says what was asked against what the pull request does, linking the prompt", async () => {
@@ -206,18 +290,10 @@ describe("How it works", () => {
   it("lists Where this fits first and shows the section read", async () => {
     const container = await page("pane=section&section=sec_allowlist");
     const view = panel(container);
-    const list = view.querySelector<HTMLElement>('nav[aria-label="Sections"]')!;
-    expect([...list.querySelectorAll("[data-row-title]")].map((each) => each.textContent)).toEqual([
-      "Where this fits",
-      "Pairing",
-      "Relay connection",
-      "Encryption",
-      "Requests",
-      "What a phone can do",
-      "Daemon lifecycle",
-      "Dependencies",
-    ]);
-    expect(button(list, "What a phone can do").getAttribute("aria-pressed")).toBe("true");
+    // The sections are the rail's, not a list inside the pane.
+    expect(view.querySelector('nav[aria-label="Sections"]')).toBeNull();
+    expect(railRows(container).map(rowLabel)).toContain("Where this fits");
+    expect(railRow(container, "What a phone can do").getAttribute("aria-pressed")).toBe("true");
     const body = view.querySelector<HTMLElement>("article")!;
     expect(body.querySelector("h2")?.textContent).toBe("What a phone can do");
     expect(body.textContent).toContain("lists 37 routes by method and exact path");
@@ -294,7 +370,7 @@ describe("a section's views", () => {
       ["Docs 1", false, "false"],
     ]);
     // Where this fits has no views.
-    await click(button(pane(container), "Where this fits"));
+    await click(railRow(container, "Where this fits"));
     expect(views(container)).toEqual([]);
   });
 
@@ -306,7 +382,7 @@ describe("a section's views", () => {
     expect(
       viewPanel(container).querySelector('[aria-label$=" diff"]')?.getAttribute("aria-label"),
     ).toBe("oss/internal/uiserver/remote_test.go diff");
-    await click(button(pane(container), "Relay connection"));
+    await click(railRow(container, "Relay connection"));
     expect(search.get("section")).toBe("sec_relay");
     expect(search.has("section_view")).toBe(false);
     expect(viewTab(container, "Overview").getAttribute("aria-selected")).toBe("true");
@@ -383,6 +459,104 @@ describe("a section's views", () => {
 });
 
 describe("Code", () => {
+  const switcher = (container: HTMLElement) =>
+    panel(container).querySelector<HTMLElement>('[role="group"][aria-label="Group files by"]')!;
+  const filesNav = (container: HTMLElement) =>
+    panel(container).querySelector<HTMLElement>('nav[aria-label="Changed files"]')!;
+  const headings = (container: HTMLElement) =>
+    [...filesNav(container).querySelectorAll<HTMLElement>("p")].map((each) => each.textContent);
+
+  it("groups by type, folder or feature, from a switch above the list", async () => {
+    const container = await page("pane=tile&tile=code");
+    expect(
+      [...switcher(container).querySelectorAll("button")].map((each) => [
+        each.textContent,
+        each.getAttribute("aria-pressed"),
+      ]),
+    ).toEqual([
+      ["Type", "true"],
+      ["Folder", "false"],
+      ["Feature", "false"],
+    ]);
+    expect(headings(container)).toEqual(["Code", "Tests", "Docs"]);
+
+    await click(button(switcher(container), "Folder"));
+    expect(button(switcher(container), "Folder").getAttribute("aria-pressed")).toBe("true");
+    const folders = headings(container);
+    expect(folders.slice(0, 2)).toEqual(["oss", "internal"]);
+    expect(folders).toContain("remote");
+    expect(folders).not.toContain("Code");
+    // Under a folder, files are listed by name alone.
+    expect(filesNav(container).textContent).toContain("relay.go");
+    expect(
+      filesNav(container).querySelector('[title="oss/internal/remote/relay.go"]'),
+    ).not.toBeNull();
+
+    await click(button(switcher(container), "Feature"));
+    const features = headings(container);
+    expect(features.slice(0, 2)).toEqual(["Pairing", "Relay connection"]);
+    expect(features.at(-1)).toBe("Dependencies");
+    expect(features).not.toContain("Not in a section");
+  });
+
+  it("puts a file no section explains under Not in a section, last", async () => {
+    const without: ReviewV2 = {
+      ...REVIEW_1303,
+      sections: REVIEW_1303.sections.map((each) =>
+        each.id === "sec_deps" ? { ...each, hunks: [] } : each,
+      ),
+    };
+    localStorage.setItem("baum.review.fileGrouping", "feature");
+    const container = await page("pane=tile&tile=code", review1303(without));
+    const features = headings(container);
+    expect(features.at(-1)).toBe("Not in a section");
+    expect(features).not.toContain("Dependencies");
+    const loose = [...filesNav(container).querySelectorAll("li")].filter(
+      (each) => each.title === "oss/go.sum",
+    );
+    expect(loose).toHaveLength(1);
+  });
+
+  it("lists a file under every section that explains it, marking each", async () => {
+    const container = await page(
+      "pane=tile&tile=code&tile_item=oss%2Finternal%2Fremote%2Frelay.go",
+    );
+    await click(button(switcher(container), "Feature"));
+    const rows = [...filesNav(container).querySelectorAll<HTMLElement>("li")].filter(
+      (each) => each.title === "oss/internal/remote/relay.go",
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    for (const row of rows)
+      expect(row.querySelector("button")?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("remembers the grouping for the next page", async () => {
+    const container = await page("pane=tile&tile=code");
+    await click(button(switcher(container), "Folder"));
+    expect(localStorage.getItem("baum.review.fileGrouping")).toBe("folder");
+    act(() => root?.unmount());
+    const again = await page("pane=tile&tile=code");
+    expect(button(switcher(again), "Folder").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps working where storage is refused", async () => {
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    try {
+      const container = await page("pane=tile&tile=code");
+      expect(button(switcher(container), "Type").getAttribute("aria-pressed")).toBe("true");
+      await click(button(switcher(container), "Folder"));
+      expect(button(switcher(container), "Folder").getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      getItem.mockRestore();
+      setItem.mockRestore();
+    }
+  });
+
   it("lists the files grouped, generated ones folded", async () => {
     const container = await page("pane=tile&tile=code");
     const list = panel(container).querySelector<HTMLElement>('nav[aria-label="Changed files"]')!;
