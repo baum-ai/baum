@@ -2353,15 +2353,20 @@ draws the same page.
 Custom tiles on the review page: `pnpm test:custom-tiles`
 (`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
-each opening a tile's place (`pane=tile&tile=<id>`, How it works on the
-section the view places it on): the well-behaved tile at 1440, 900 and
+each opening a tile's place (`pane=tile&tile=<id>`, the rail's row of the
+How it works section the tile stands on). With that variable the fixture
+stores acme/demo#7's versions and #13 as `baum.review/2` documents with
+their tiles (`browserV2`): #7's with the synthetic custom tiles on the
+section of its first hunk, #13's with its composition's library and
+authored tiles. The well-behaved tile at 1440, 900 and
 390px in light and dark (pictures into `test-results/custom-tiles` with
 `CUSTOM_TILE_SHOTS=1`), a review generated with library and authored tiles
 (`library-tiles.spec.ts`, acme/demo#13, with the same widths, themes and
 pictures), and the escape probes on the real frame route
 (`tile-frames.spec.ts`), with a server on port 4170 that must hear nothing.
-The synthetic tiles share a section, so each test serves the view with only
-the ones it drives (`showOnly`). `just local_app::e2e-webkit`
+The synthetic tiles share a section, so each test serves the document with
+only the ones it drives (`showOnly`, which drops the others' tiles and tile
+blocks). `just local_app::e2e-webkit`
 runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
 macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
 The main suite starts the fixture without custom tiles.
@@ -2697,21 +2702,40 @@ transcript.
 
 Every single pull request's review opens on the viewer's rail
 (`src/review-view/`, drawn through the viewer's places seam by `useViewPlaces`,
-with the viewer's `flatRail` and `ownFiles`); there is no other page, and no
-setting for it (the stored `review_page` and `arranged_tiles` appearance
-values are ignored). Only the content of the Overview and of a section
-depends on the version shown: a `baum.review/2` version draws the Overview and
-section bodies below, and a `baum.review/1` version draws the viewer's own
-Summary and section pages (every block they show: behaviour steps, evidence,
-intent, entities, risks, agent findings, attention, and so on) inside the same
-rail, side pane and keys. The rail's How it works rows come from the version's
-own sections ("Where this fits" only for a version that has one: a
-`baum.review/1` context is part of its Summary), and Files changed, Decisions,
-Sessions and Commits are the same for both. `shellRequest` reads a version
-from `GET api/document` and, when it is `baum.review/2`, again from
-`api/tiles`; a `baum.review/1` version is kept as stored, drawn through the
-viewer's `ReviewPlaceContext.builtInPane`. Each version of a history or a
-comparison is drawn by its own version's pages. A group's or a stack's page keeps the viewer's own places. The
+with the viewer's `flatRail` and `ownFiles`) in every state; there is no other
+layout, and no setting for it (the stored `review_page` and `arranged_tiles`
+appearance values are ignored). The page always passes its places, with or
+without a document:
+
+- **No review yet** (none asked for, queued, being written with no draft
+  yet, failed, needing a clone, or still loading): the rail has Overview, How
+  it works greyed with "No sections yet." under it, and Files changed with the
+  pull request's file count when its facts are read (left out when the facts
+  are unavailable), then Decisions, Sessions and Commits from the facts. The
+  Overview is current and its pane is the page's placeholder: "Review
+  queued", "Generating the review" (with Cancel), the failed job's outcome
+  with Try again, "No review yet" with Generate review, "Needs a local
+  clone", or "Loading review…". Files changed opens the viewer's own files
+  pane on the facts (`pane=files`, `pane=file`); once a review lands, that
+  address becomes the review's Files changed (`pane=tile&tile=code`, with the
+  open file), replacing the history entry. The side pane starts folded.
+- **A draft** and **every saved version** are drawn in the same rail, side
+  pane and keys. Only the content of the Overview and of a section depends
+  on the version shown: a `baum.review/2` version (and a draft) draws the
+  Overview and section bodies below, and a `baum.review/1` version draws the
+  viewer's own Summary and section pages (every block they show: behaviour
+  steps, evidence, images, intent, entities, risks, agent findings,
+  attention, and so on) in the pane, through the viewer's
+  `ReviewPlaceContext.builtInPane`. The rail's How it works rows come from
+  the version's own sections ("Where this fits" only for a version that has
+  one: a `baum.review/1` context is part of its Summary), and Files changed,
+  Decisions, Sessions and Commits are the same for both. `shellRequest`
+  reads a version from `GET api/document` and, when it is `baum.review/2`,
+  again from `api/tiles`; a `baum.review/1` version is kept as stored.
+- **An earlier version** read alone or compared is drawn the same way, each
+  by its own version's pages.
+
+A group's or a stack's page (`src/group.tsx`) keeps the viewer's own places. The
 head, the version menu, history, Compare, the side pane, the Decisions,
 Sessions and Commits panes and the review dialog are the viewer's own. The rail
 lists, in order:
@@ -2732,8 +2756,8 @@ lists, in order:
   reader leaves it. Where the panes stack, the rail is a sheet opened from the
   navigator bar, which also steps through the places.
 
-The page reads each version from `GET api/tiles` (a draft's from
-`api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
+The page reads each `baum.review/2` version from `GET api/tiles` (a draft's
+from `api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
 `baum.review/2` document (`oss/reviewv2/document.go`; `review-view/document.ts`
 has its types): the summary with its `verdict` and `risk_why`, the
 `overview` (`screenshots`, `diagram`, `intent`), the `context`, the sections
