@@ -3,6 +3,7 @@ import "./flow.css";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { type Column, Table } from "@baum/viewer/components/table";
+import { Toggle } from "@baum/viewer/components/ui";
 import type {
   ColumnsData,
   FlowData,
@@ -317,6 +318,7 @@ export function validSequence(data: unknown): data is SequenceData {
       (step) =>
         isRecord(step) &&
         isString(step.text) &&
+        (step.was === undefined || isString(step.was)) &&
         Number.isInteger(step.from) &&
         Number.isInteger(step.to) &&
         (step.from as number) >= 0 &&
@@ -327,94 +329,370 @@ export function validSequence(data: unknown): data is SequenceData {
   );
 }
 
-/** A message's arrow between two actors' columns, its text above it. The
- *  arrow runs between the middles of the two columns it spans. */
-function Message({ step }: { step: SequenceData["steps"][number] }) {
-  const tone = toneOf(step.tone);
-  const low = Math.min(step.from, step.to);
-  const high = Math.max(step.from, step.to);
-  const span = high - low + 1;
-  const inset = `${50 / span}%`;
-  const style = { gridColumn: `${low + 1} / span ${span}` };
-  if (step.from === step.to)
-    return (
-      <div style={style} className="flex justify-center px-1">
-        <Box title={step.text} tone={tone} className="w-full max-w-64 text-center" />
-      </div>
-    );
-  const leftward = step.to < step.from;
+/** A message's line and mark colour by tone. */
+const STROKE: Record<Tone, string> = {
+  plain: "text-(--border-strong)",
+  new: "text-status-info",
+  good: "text-status-positive",
+  bad: "text-status-critical",
+  muted: "text-(--border-strong) opacity-60",
+  missing: "text-status-critical opacity-60",
+};
+
+/** A message's number, in a small circle before its text. */
+function StepNumber({ at, tone }: { at: number; tone: Tone }) {
   return (
-    <div
-      style={{ ...style, marginLeft: inset, marginRight: inset }}
-      className="grid min-w-0 gap-0.5 py-0.5"
-      data-tone={tone}
+    <span
+      aria-hidden
+      className={cn(
+        "inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border px-1 text-xs leading-none font-semibold tabular-nums",
+        tone === "plain" || tone === "muted"
+          ? "border-default bg-surface-wash text-secondary"
+          : cn("border-current", STROKE[tone]),
+      )}
     >
-      <InlineMarkdown className={cn("px-2 text-center text-base leading-snug", INK[tone])}>
-        {step.text}
-      </InlineMarkdown>
-      <span aria-hidden className="flex items-center text-tertiary">
-        {leftward ? <span className="-mr-1 text-xs leading-none">◀</span> : null}
+      {at + 1}
+    </span>
+  );
+}
+
+/** The end of a message's line: an arrowhead, or a cross for a message that
+ *  is refused (`bad`). */
+function Head({ refused, flip }: { refused: boolean; flip: boolean }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 10 10"
+      className={cn("size-2.5 shrink-0 overflow-visible", flip && "-scale-x-100")}
+    >
+      {refused ? (
+        <path d="M2 1 L9 9 M9 1 L2 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      ) : (
+        <path d="M0 0 L10 5 L0 10 Z" fill="currentColor" />
+      )}
+    </svg>
+  );
+}
+
+type SequenceStep = SequenceData["steps"][number];
+type Change = "added" | "changed";
+
+/** What the pull request does to a message: its `change`, or `added` for
+ *  one an earlier review marked with the `new` tone. */
+const changeOf = (step: SequenceStep): Change | null =>
+  step.change === "added" || step.change === "changed"
+    ? step.change
+    : step.tone === "new"
+      ? "added"
+      : null;
+
+/** A changed message's pill, and the bar at its row's left edge, by change. */
+const CHANGE: Record<Change, { bar: string; pill: string; label: string }> = {
+  added: { bar: "bg-status-info", pill: "bg-status-info text-inverse", label: "New" },
+  changed: { bar: "bg-status-caution", pill: "bg-status-caution text-inverse", label: "Changed" },
+};
+
+/** The bar at a changed message's left edge. */
+function ChangeBar({ change }: { change: Change | null }) {
+  return change ? (
+    <span
+      aria-hidden
+      className={cn("absolute inset-y-1 left-0 w-1 rounded-full", CHANGE[change].bar)}
+    />
+  ) : null;
+}
+
+function ChangePill({ change }: { change: Change }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex h-5 shrink-0 items-center rounded-full px-1.5 text-xs leading-none font-semibold",
+        CHANGE[change].pill,
+      )}
+    >
+      {CHANGE[change].label}
+    </span>
+  );
+}
+
+/** A message's number, its change, its text and, when it changed, what it
+ *  said before, struck through. */
+function MessageLabel({ step, at }: { step: SequenceStep; at: number }) {
+  const tone = toneOf(step.tone);
+  const change = changeOf(step);
+  return (
+    <span className={cn("flex min-w-0 items-start gap-1.5 text-base leading-snug", INK[tone])}>
+      <StepNumber at={at} tone={tone} />
+      {change ? <ChangePill change={change} /> : null}
+      <span className="min-w-0">
+        <InlineMarkdown className="block">{step.text}</InlineMarkdown>
+        {change === "changed" && step.was ? (
+          <del className="block text-sm text-tertiary">
+            <InlineMarkdown>{step.was}</InlineMarkdown>
+          </del>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
+/** One message: its label above a line from the sender's lifeline to the
+ *  receiver's, dashed for a reply. A message an actor sends itself is a
+ *  loop on its lifeline with the label beside it, on the side with room.
+ *  The columns have no gap, so a lifeline is a column's middle. */
+function Message({ step, at, names }: { step: SequenceStep; at: number; names: string[] }) {
+  const actors = names.length;
+  const tone = toneOf(step.tone);
+  // What the lines and marks show, for a screen reader.
+  const said = [
+    step.from === step.to
+      ? names[step.from]
+      : `${names[step.from] ?? ""} to ${names[step.to] ?? ""}`,
+    step.reply && "reply",
+    tone === "bad" && step.from !== step.to && "refused",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const label = (
+    <>
+      <span className="sr-only">{said}: </span>
+      <MessageLabel step={step} at={at} />
+    </>
+  );
+  if (step.from === step.to) {
+    const middle = ((step.from + 0.5) / actors) * 100;
+    const rightward = step.from < actors - 1;
+    return (
+      <div data-tone={tone} data-self="" className="relative col-span-full py-1">
         <span
+          aria-hidden
+          style={rightward ? { left: `${middle}%` } : { right: `${100 - middle}%` }}
           className={cn(
-            "h-0.5 flex-1",
-            tone === "bad" || tone === "missing"
-              ? "bg-status-critical"
-              : tone === "good"
-                ? "bg-status-positive"
-                : tone === "new"
-                  ? "bg-status-info"
-                  : "bg-(--border-strong)",
-            tone === "missing" && "opacity-60",
+            "absolute top-1/2 h-5 w-5 -translate-y-1/2 border-2 border-current",
+            step.reply && "border-dashed",
+            rightward ? "rounded-r-md border-l-0" : "rounded-l-md border-r-0",
+            STROKE[tone],
           )}
         />
-        {leftward ? null : <span className="-ml-1 text-xs leading-none">▶</span>}
+        {/* Beside the loop, as wide as the room before the next lifeline. */}
+        <div
+          style={{
+            width: `calc(${100 / actors}% - 2rem)`,
+            ...(rightward
+              ? { marginLeft: `calc(${middle}% + 1.75rem)` }
+              : { marginLeft: "auto", marginRight: `calc(${100 - middle}% + 1.75rem)` }),
+          }}
+          className={cn("flex min-h-7 items-center", !rightward && "justify-end")}
+        >
+          {label}
+        </div>
+      </div>
+    );
+  }
+  const low = Math.min(step.from, step.to);
+  const span = Math.abs(step.to - step.from) + 1;
+  const inset = `${50 / span}%`;
+  const leftward = step.to < step.from;
+  const refused = tone === "bad";
+  return (
+    <div
+      style={{ gridColumn: `${low + 1} / span ${span}`, marginLeft: inset, marginRight: inset }}
+      className="grid min-w-0 gap-1 py-0.5"
+      data-tone={tone}
+      data-reply={step.reply ? "" : undefined}
+    >
+      <div className="flex justify-center px-2">{label}</div>
+      <span aria-hidden className={cn("flex items-center", STROKE[tone])}>
+        {leftward ? <Head refused={refused} flip /> : null}
+        <span
+          className={cn(
+            "flex-1 border-t-2 border-current",
+            step.reply && "border-dashed",
+            leftward ? "-ml-px" : "-mr-px",
+          )}
+        />
+        {leftward ? null : <Head refused={refused} flip={false} />}
       </span>
     </div>
   );
 }
 
-export function SequenceDiagram({ data }: { data: SequenceData }) {
-  const columns = { gridTemplateColumns: `repeat(${data.actors.length}, minmax(0, 1fr))` };
+/** What a message's colour means, for the tones a legend explains (`new`
+ *  reads as added, `plain` needs no words). */
+const TONE_MEANS: Partial<Record<Tone, string>> = {
+  good: "works or is allowed",
+  bad: "fails or is refused",
+  muted: "outside this change",
+  missing: "doesn't exist yet",
+};
+
+/** A short sample of a message's line in the legend. */
+function LineSample({ tone, reply = false }: { tone: Tone; reply?: boolean }) {
   return (
-    <>
-      {/* Wide: the actors across the top, each message an arrow between them. */}
+    <span aria-hidden className={cn("flex w-6 items-center", STROKE[tone])}>
+      <span className={cn("-mr-px flex-1 border-t-2 border-current", reply && "border-dashed")} />
+      <Head refused={tone === "bad"} flip={false} />
+    </span>
+  );
+}
+
+/** Under a sequence, a legend of the marks it uses, only those, and, when
+ *  some messages changed and some did not, a switch that fades the rest. */
+function SequenceKey({
+  steps,
+  focused,
+  onFocus,
+}: {
+  steps: SequenceStep[];
+  focused: boolean;
+  onFocus: (on: boolean) => void;
+}) {
+  const changes = new Set(steps.map(changeOf));
+  const tones = new Set(steps.map((step) => toneOf(step.tone)));
+  const reply = steps.some((step) => step.reply);
+  const self = steps.some((step) => step.from === step.to);
+  const toggle = changes.has(null) && changes.size > 1;
+  const entry = (key: string, sample: ReactNode, text: string) => (
+    <li key={key} className="inline-flex items-center gap-1.5">
+      {sample}
+      {text}
+    </li>
+  );
+  const entries = [
+    ...(["added", "changed"] as const).map((change) =>
+      changes.has(change)
+        ? entry(
+            change,
+            <ChangePill change={change} />,
+            change === "added" ? "added by this pull request" : "changed by this pull request",
+          )
+        : null,
+    ),
+    ...(["good", "bad", "muted", "missing"] as const).map((tone) =>
+      tones.has(tone) ? entry(tone, <LineSample tone={tone} />, TONE_MEANS[tone] ?? "") : null,
+    ),
+    reply ? entry("reply", <LineSample tone="plain" reply />, "a reply") : null,
+    self
+      ? entry(
+          "self",
+          <span
+            aria-hidden
+            className="h-3 w-2.5 rounded-r-sm border-2 border-l-0 border-current text-(--border-strong)"
+          />,
+          "a check within one actor",
+        )
+      : null,
+  ].filter(Boolean);
+  if (entries.length === 0 && !toggle) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-subtle pt-2.5">
+      <ul
+        aria-label="Legend"
+        className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-tertiary"
+      >
+        {entries}
+      </ul>
+      {toggle ? (
+        <Toggle checked={focused} onChange={onFocus} className="ml-auto text-sm">
+          Show only changes
+        </Toggle>
+      ) : null}
+    </div>
+  );
+}
+
+export function SequenceDiagram({ data }: { data: SequenceData }) {
+  // Messages the pull request didn't touch are faded while this is on.
+  const [focused, setFocused] = useState(false);
+  const actors = data.actors.length;
+  const columns = { gridTemplateColumns: `repeat(${actors}, minmax(0, 1fr))` };
+  const faded = (step: SequenceStep) => focused && !changeOf(step);
+  return (
+    <div className="grid min-w-0 gap-3">
+      {/* Wide: each actor a lifeline under its name, each message a line
+          between two of them, in order and numbered; a changed message
+          has a bar at its row's left edge. */}
       <div className="hidden min-w-0 @xl:block">
-        <div style={columns} className="grid gap-x-2 border-b border-default pb-1.5">
+        <div style={columns} className="grid">
           {data.actors.map((actor, at) => (
-            <InlineMarkdown key={at} className="text-center text-base font-semibold text-primary">
-              {actor}
-            </InlineMarkdown>
+            <div key={at} className="flex justify-center px-1">
+              <InlineMarkdown className="max-w-full rounded-md border border-default bg-surface-card px-3 py-1 text-center text-sm font-semibold text-primary shadow-xs">
+                {actor}
+              </InlineMarkdown>
+            </div>
           ))}
         </div>
-        <ol style={columns} className="mt-2 grid gap-x-2 gap-y-2">
-          {data.steps.map((step, at) => (
-            <li key={at} style={columns} className="col-span-full grid gap-x-2">
-              <Message step={step} />
-            </li>
-          ))}
-        </ol>
+        <div className="relative">
+          <div aria-hidden style={columns} className="pointer-events-none absolute inset-0 grid">
+            {data.actors.map((_, at) => (
+              <span key={at} className="mx-auto w-px bg-(--border-default)" />
+            ))}
+          </div>
+          <ol style={columns} className="relative grid gap-y-1.5 pt-3 pb-2">
+            {data.steps.map((step, at) => {
+              const change = changeOf(step);
+              return (
+                <li
+                  key={at}
+                  style={columns}
+                  data-change={change ?? undefined}
+                  className={cn(
+                    "relative col-span-full grid py-1 transition-opacity",
+                    faded(step) && "opacity-35",
+                  )}
+                  data-faded={faded(step) || undefined}
+                >
+                  <ChangeBar change={change} />
+                  <Message step={step} at={at} names={data.actors} />
+                </li>
+              );
+            })}
+          </ol>
+        </div>
       </div>
-      {/* Narrow: the same messages as a list, who to whom first. */}
+      {/* Narrow: the same messages as a numbered list, who to whom first. */}
       <ol className="grid gap-1.5 @xl:hidden">
         {data.steps.map((step, at) => {
           const tone = toneOf(step.tone);
+          const change = changeOf(step);
           return (
-            <li key={at} className={cn("min-w-0 rounded-md border px-3 py-2 text-base", BOX[tone])}>
-              <span className="font-medium text-primary">
-                <InlineMarkdown>
-                  {step.from === step.to
-                    ? (data.actors[step.from] ?? "")
-                    : `${data.actors[step.from] ?? ""} → ${data.actors[step.to] ?? ""}`}
+            <li
+              key={at}
+              data-change={change ?? undefined}
+              className={cn(
+                "relative flex min-w-0 gap-2 rounded-md border px-3 py-2 text-base transition-opacity",
+                BOX[tone],
+                step.reply && "border-dashed",
+                faded(step) && "opacity-35",
+              )}
+              data-faded={faded(step) || undefined}
+            >
+              <ChangeBar change={change} />
+              <StepNumber at={at} tone={tone} />
+              <span className="grid min-w-0 justify-items-start gap-0.5">
+                <span className="font-medium text-primary">
+                  <InlineMarkdown>
+                    {step.from === step.to
+                      ? (data.actors[step.from] ?? "")
+                      : `${data.actors[step.from] ?? ""} → ${data.actors[step.to] ?? ""}`}
+                  </InlineMarkdown>
+                </span>
+                {change ? <ChangePill change={change} /> : null}
+                <InlineMarkdown className={cn("block leading-snug", INK[tone])}>
+                  {step.text}
                 </InlineMarkdown>
+                {change === "changed" && step.was ? (
+                  <del className="block text-sm text-tertiary">
+                    <InlineMarkdown>{step.was}</InlineMarkdown>
+                  </del>
+                ) : null}
               </span>
-              <InlineMarkdown className={cn("block leading-snug", INK[tone])}>
-                {step.text}
-              </InlineMarkdown>
             </li>
           );
         })}
       </ol>
-    </>
+      <SequenceKey steps={data.steps} focused={focused} onFocus={setFocused} />
+    </div>
   );
 }
 

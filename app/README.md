@@ -2786,7 +2786,15 @@ sections.
 - **Tiles** always show their title. Flows, columns, sequences and tables are
   drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
   caption and citations, and lay themselves out by the room they have: lanes
-  wrap and then stack, columns stack, and a sequence becomes a list. A code
+  wrap and then stack, columns stack, and a sequence becomes a list. A wide
+  sequence draws each actor as a lifeline under its name and each message,
+  numbered, as an arrow between two lifelines: dashed for a reply, ending in
+  a cross when it is `bad`; a message an actor sends itself is a loop on its
+  lifeline. A message the pull request adds or changes (`change`, or the
+  `new` tone) has a New or Changed pill and a bar at its row's edge, with a
+  changed message's earlier text (`was`) struck through. A legend under the
+  sequence explains only the marks it uses, and when some messages changed
+  and some did not, a "Show only changes" switch fades the rest. A code
   tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
   in that range. Exhibits draw as the generic tiles do, and library and
   chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that

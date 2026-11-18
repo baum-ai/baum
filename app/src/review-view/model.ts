@@ -34,7 +34,17 @@ export type ColumnsData = Captioned & {
 };
 export type SequenceData = Captioned & {
   actors: string[];
-  steps: { from: number; to: number; text: string; tone?: Tone }[];
+  /** `reply`: an answer to an earlier step, drawn dashed. `change`: what the
+   *  pull request does to it; `was`: a changed step's earlier text. */
+  steps: {
+    from: number;
+    to: number;
+    text: string;
+    tone?: Tone;
+    reply?: boolean;
+    change?: "added" | "changed";
+    was?: string;
+  }[];
 };
 /** A table cell: its text, or what it is now with what it was before the
  *  change (`was`, drawn struck through). */

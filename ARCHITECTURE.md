@@ -3059,7 +3059,9 @@ the tile analysis's tiles (see "Extra tiles" under "Tile documents"). A native t
 is `{id: "dg_…", type, title, data}`; its type is `flow` (1–4 lanes of 1–6
 steps, each with a title, note, tone and the connector before it), `columns`
 (2–3 labelled lists of 1–8 items), `sequence` (2–4 actors and 1–10 messages
-between them by index) or `table` (2–5 columns, 1–12 rows of their length),
+between them by index, each with a tone, whether it replies to an earlier
+one, and whether the pull request added or changed it, with its earlier
+text) or `table` (2–5 columns, 1–12 rows of their length),
 and every data has an optional `caption` and a `source` of hunk anchors. A
 `baum.composition/1`, the removed tile grid's layout, which older versions
 may store, is ignored, read as no composition.

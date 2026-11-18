@@ -80,8 +80,12 @@ notice) and a `source`: the hunk ids it rests on, from the sections'
   and after, can and can't, kept and removed. An item has a `title` and an
   optional `note`.
 - `sequence`: 2 to 4 `actors` and up to 10 `steps` in order, each from one
-  actor to another (`from` and `to` index `actors`) with a short `text`; a
-  step from an actor to itself is a note on it. Use it for a protocol or a
+  actor to another (`from` and `to` index `actors`) with a short `text` and
+  `reply` (true when it answers an earlier step, else null), `change`
+  (`added` or `changed` for a step this pull request adds or changes, else
+  null; it replaces the `new` tone here, so an added refusal is `added` and
+  `bad`) and `was` (a changed step's earlier text, else null); a step from
+  an actor to itself is a check or note on it. Use it for a protocol or a
   handshake.
 - `table`: 2 to 5 `columns` and up to 12 `rows` of the same length. Use it
   only for values a reader compares (limits, codes, states), never for
