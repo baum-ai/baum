@@ -1,8 +1,10 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { HighlightedCode } from "@baum/viewer/components/markdown";
 import { AnchorChips, PROSE } from "@baum/viewer/components/review-parts";
 import { type Column, Table } from "@baum/viewer/components/table";
-import type { Anchor } from "@baum/viewer/review-document";
+import { type Lang, languageForFence, languageForPath } from "@baum/viewer/highlight";
+import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
 
 export type ProseData = { text: string; anchors: Anchor[] };
@@ -99,6 +101,20 @@ function DiagramDetail({ tile, ctx }: TileFaceProps) {
 /** Text compared without its closing full stop and outer space. */
 const bare = (text: string | undefined) => (text ?? "").trim().replace(/\.$/, "");
 
+/** The language a code tile's excerpt is coloured in: the one it names, else
+ *  the one the path of the first hunk it cites names. */
+export function codeLanguage(data: CodeData, review: ReviewDocument): Lang | null {
+  const named = languageForFence(data.language);
+  if (named) return named;
+  for (const anchor of data.source ?? []) {
+    if (anchor.type !== "hunk") continue;
+    const hunk = review.index.hunks.find((each) => each.id === anchor.id);
+    const lang = hunk ? languageForPath(hunk.path) : null;
+    if (lang) return lang;
+  }
+  return null;
+}
+
 function CodeDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as CodeData;
   // The caption is the tile's headline, which the detail's heading shows.
@@ -106,7 +122,7 @@ function CodeDetail({ tile, ctx }: TileFaceProps) {
   return (
     <div className="space-y-2">
       <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
-        <code>{data.content}</code>
+        <HighlightedCode code={data.content} lang={codeLanguage(data, ctx.review)} />
       </pre>
       {caption ? <p className="text-base text-tertiary">{caption}</p> : null}
       <AnchorChips document={ctx.review} anchors={data.source} />

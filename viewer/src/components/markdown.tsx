@@ -224,6 +224,25 @@ function HighlightedCodeBlock({
   );
 }
 
+/** Code outside Markdown (a code tile's excerpt), coloured as a fenced block
+ *  is when `lang` is a language the highlighter knows and the code is within
+ *  the limits; plain otherwise. */
+export function HighlightedCode({
+  code,
+  lang,
+  className,
+}: {
+  code: string;
+  lang: Lang | null;
+  className?: string;
+}) {
+  return lang && withinHighlightLimits(code.split("\n").length, code.length) ? (
+    <HighlightedCodeBlock code={code} lang={lang} className={className} />
+  ) : (
+    <code className={className}>{code}</code>
+  );
+}
+
 /** A fenced block's code, coloured when its fence names a language the
  *  highlighter knows and it is within the limits. */
 function codeBlock(className: string | undefined, children: ReactNode) {
