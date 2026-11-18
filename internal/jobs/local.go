@@ -325,12 +325,14 @@ func (l *Local) resolve(ctx context.Context) (config.Config, error) {
 
 // resolveFix is resolve for a fix: the preferences' fix agent, when set,
 // replaces the review's backend and model (repos.Preferences.ResolveFix).
-func (l *Local) resolveFix(ctx context.Context) (config.Config, error) {
+// network is whether the fix agent's commands may reach the network
+// (repos.Preferences.FixNetworkAllowed).
+func (l *Local) resolveFix(ctx context.Context) (cfg config.Config, network bool, err error) {
 	prefs, e := l.Registry.Preferences(ctx)
 	if e != nil {
-		return config.Config{}, e
+		return config.Config{}, false, e
 	}
-	return prefs.ResolveFix(prefs.Resolve(l.Config)), nil
+	return prefs.ResolveFix(prefs.Resolve(l.Config)), prefs.FixNetworkAllowed(), nil
 }
 
 func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)) (*float64, error) {

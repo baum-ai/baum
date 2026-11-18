@@ -1,5 +1,5 @@
 import { SavedStateNotice } from "./ui-state";
-import { PreferencesProvider } from "./preferences";
+import { PreferencesProvider, usePreferences } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
@@ -366,6 +366,7 @@ function Application() {
   );
 }
 function Workspace({ url }: { url: UrlState }) {
+  const { preferences } = usePreferences();
   const [clones, setClones] = useState<Clone[]>([]);
   const [picked, setPicked] = useState<Repository[]>([]);
   const [attached, setAttached] = useState<FoundClones["attached"]>([]);
@@ -1331,11 +1332,12 @@ function Workspace({ url }: { url: UrlState }) {
           url.search,
           (id) => clones.find((clone) => clone.id === id)?.repository,
           location.hash,
+          preferences.review_page,
         ),
         panel.ask,
       ),
     // The hash is a pull request's anchor: read again whenever the page draws.
-    [url.search, clones, location.hash, panel.ask],
+    [url.search, clones, location.hash, panel.ask, preferences.review_page],
   );
   const pageTitle =
     pageContext.page === "pull_request"

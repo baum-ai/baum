@@ -24,7 +24,9 @@ import {
   generateGroup,
   groupDocumentRequest,
   groupJob,
+  groupTilesRequest,
   isActiveJob,
+  navigate,
   request,
   sameRepository,
   type Clone,
@@ -45,6 +47,12 @@ import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from 
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { listedForGroup, useGroupRail, type RailMember } from "./group-rail";
 import { useLiveThreadsOf } from "./threads";
+import { TileHostContext, type TileHost } from "./tiles/host";
+import { useBackToLanding } from "./tiles/keys";
+import { tileDocOf, tilesMissing } from "./tiles/tile-document";
+import { useTilePlaces } from "./tiles/use-tile-places";
+import { fullReviewPlace, useReviewPage, withView } from "./tiles/view";
+import { withSelection } from "@baum/viewer/review-selection";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Local request failed.";
@@ -261,9 +269,15 @@ function GroupReviewPage({
   const [retry, setRetry] = useState(0);
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
+  // As on a pull request's page, the tiles page reads each version with its
+  // tile document.
+  const tilesPage = useReviewPage() === "tiles";
+  const readDocument = tilesPage ? groupTilesRequest : groupDocumentRequest;
+  const places = useTilePlaces();
+  const onTiles = tilesPage && Boolean(tileDocOf(doc));
   const loadVersion = useVersionLoader(
-    group.id,
-    (version) => groupDocumentRequest(group.id, version),
+    `${group.id}:${tilesPage ? "tiles" : "full"}`,
+    (version) => readDocument(group.id, version),
     doc?.review.version,
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
@@ -331,7 +345,7 @@ function GroupReviewPage({
     }
     const abort = new AbortController();
     setFailed(false);
-    groupDocumentRequest(group.id, undefined, abort.signal)
+    readDocument(group.id, undefined, abort.signal)
       .then(setDoc)
       .catch(() => {
         if (!abort.signal.aborted) setFailed(true);
@@ -350,7 +364,7 @@ function GroupReviewPage({
         if (!abort.signal.aborted) setHistoryFailed(true);
       });
     return () => abort.abort();
-  }, [group.id, group.version_count, group.updated_at, revision, retry]);
+  }, [group.id, group.version_count, group.updated_at, revision, retry, tilesPage]);
   const patches = useMemo(() => {
     const cache = new Map<string, Promise<string | null>>();
     return (path: string, version: number, hunk: string) => {
@@ -539,10 +553,32 @@ function GroupReviewPage({
       step.go();
     }
   });
+  useBackToLanding(onTiles, url);
+  const sectionLabels = (section: { pull_requests?: number[] }) =>
+    section.pull_requests?.length ? (
+      <>
+        {section.pull_requests.map((number) => {
+          const entry = members.find((m) => m.number === number)?.entry;
+          return (
+            <Badge key={number} size="compact">
+              {entry ? <ViewerLink href={memberHref(entry)}>#{number}</ViewerLink> : `#${number}`}
+            </Badge>
+          );
+        })}
+      </>
+    ) : null;
+  const tileHost: TileHost = {
+    draft: false,
+    commentCounts: new Map(),
+    renderSectionLabels: sectionLabels,
+    fullReview: (tile) =>
+      appURL(`?${withView(withSelection(url.search, fullReviewPlace(tile)), "full")}`),
+  };
 
   return (
-    <>
+    <TileHostContext.Provider value={tileHost}>
       <ReviewViewer
+        places={onTiles ? places : undefined}
         // A file a context chip names opens here, in a dialog over the page,
         // read at the stack's head from the group's own file route.
         openRepositoryFile={(reference) => {
@@ -836,6 +872,23 @@ function GroupReviewPage({
                 <GenerationOutcome job={job} compact />
               </div>
             ) : null}
+            {tilesPage && tilesMissing(doc) ? (
+              <Notice
+                action={
+                  <a
+                    href={appURL(`?${withView(url.search, "full")}`)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      navigate(event.currentTarget.href);
+                    }}
+                  >
+                    Always use the full review here
+                  </a>
+                }
+              >
+                This review can't be shown as tiles, so this is its full review.
+              </Notice>
+            ) : null}
             {failed && doc ? (
               <Alert>
                 The latest review could not be read. This saved version remains available.{" "}
@@ -844,24 +897,7 @@ function GroupReviewPage({
             ) : null}
           </>
         }
-        renderSectionLabels={(section) =>
-          section.pull_requests?.length ? (
-            <>
-              {section.pull_requests.map((number) => {
-                const entry = members.find((m) => m.number === number)?.entry;
-                return (
-                  <Badge key={number} size="compact">
-                    {entry ? (
-                      <ViewerLink href={memberHref(entry)}>#{number}</ViewerLink>
-                    ) : (
-                      `#${number}`
-                    )}
-                  </Badge>
-                );
-              })}
-            </>
-          ) : null
-        }
+        renderSectionLabels={sectionLabels}
         hunkPatches={patches}
         {...rail}
       />
@@ -909,6 +945,6 @@ function GroupReviewPage({
           your agent runs in an isolated environment.
         </ConfirmDialog>
       ) : null}
-    </>
+    </TileHostContext.Provider>
   );
 }

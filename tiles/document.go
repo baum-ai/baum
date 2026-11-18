@@ -234,6 +234,9 @@ type Group struct {
 const (
 	GroupChanges  = "changes"
 	GroupObsolete = "obsolete"
+	// GroupHidden holds, last and collapsed, the tiles a reader hid from a
+	// generated review (CompositionLayout.Hidden).
+	GroupHidden = "hidden"
 )
 
 // OverviewData is the data of an overview tile.

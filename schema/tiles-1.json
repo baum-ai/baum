@@ -108,7 +108,7 @@
     },
     "blockOrigin": {
       "type": "object",
-      "description": "Where a block, or an item of a block, moved into an aggregate tile came from: the change, the block's 0-based position among the change's blocks and, for an item, its position in the block. id is the item's ID in the change when it was renamed.",
+      "description": "Where a block, or an item of a block, moved into an aggregate tile or promoted to a tile of its own came from: the change, the block's 0-based position among the change's blocks and, for an item, its position in the block. id is the item's ID in the change when it was renamed.",
       "properties": {
         "change": { "$ref": "#/$defs/sectionId" },
         "block": { "type": "integer", "minimum": 0 },
@@ -429,10 +429,12 @@
     },
     "tileData_table": {
       "type": "object",
+      "description": "A table. origin is set on a table block of a change promoted to a tile of its own: the block moved here, and origin says where it goes back.",
       "properties": {
         "columns": { "$ref": "#/$defs/reviewTableBlock/properties/columns" },
         "rows": { "$ref": "#/$defs/reviewTableBlock/properties/rows" },
-        "source": { "$ref": "#/$defs/reviewTableBlock/properties/source" }
+        "source": { "$ref": "#/$defs/reviewTableBlock/properties/source" },
+        "origin": { "$ref": "#/$defs/blockOrigin" }
       },
       "additionalProperties": false,
       "required": ["columns", "rows", "source"]
@@ -449,11 +451,13 @@
     },
     "tileData_code": {
       "type": "object",
+      "description": "A code excerpt. origin is set on a code block of a change promoted to a tile of its own: the block moved here, and origin says where it goes back.",
       "properties": {
         "language": { "$ref": "#/$defs/reviewCodeBlock/properties/language" },
         "content": { "$ref": "#/$defs/reviewCodeBlock/properties/content" },
         "caption": { "$ref": "#/$defs/reviewCodeBlock/properties/caption" },
-        "source": { "$ref": "#/$defs/reviewCodeBlock/properties/source" }
+        "source": { "$ref": "#/$defs/reviewCodeBlock/properties/source" },
+        "origin": { "$ref": "#/$defs/blockOrigin" }
       },
       "additionalProperties": false,
       "required": ["language", "content", "source"]

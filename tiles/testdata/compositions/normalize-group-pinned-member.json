@@ -1,0 +1,192 @@
+{
+  "fixes": [
+    "tile \"sec_config_flag\" cannot be in that group (only a current change that is not pinned can be in the changes group); it is placed outside it",
+    "the layout does not place tile \"overview\"; it is added in the default order",
+    "the layout does not place tile \"risks\"; it is added in the default order",
+    "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
+    "the layout does not place tile \"evidence\"; it is added in the default order",
+    "the layout does not place tile \"media\"; it is added in the default order",
+    "the layout does not place tile \"intent\"; it is added in the default order",
+    "the layout does not place tile \"context\"; it is added in the default order",
+    "the layout does not place tile \"decisions\"; it is added in the default order",
+    "the layout does not place tile \"everything_else\"; it is added in the default order"
+  ],
+  "composition": {
+    "schema": "baum.composition/1",
+    "layout": {
+      "entries": [
+        {
+          "tile": "sec_config_flag",
+          "size": "half",
+          "pin": true
+        },
+        {
+          "tile": "overview",
+          "size": "half"
+        },
+        {
+          "tile": "risks",
+          "size": "half"
+        },
+        {
+          "tile": "sec_retry_policy",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "evidence",
+          "size": "third"
+        },
+        {
+          "tile": "media",
+          "size": "third"
+        },
+        {
+          "tile": "intent",
+          "size": "third"
+        },
+        {
+          "tile": "context",
+          "size": "third"
+        },
+        {
+          "tile": "decisions",
+          "size": "third"
+        },
+        {
+          "tile": "everything_else",
+          "size": "third"
+        }
+      ]
+    }
+  },
+  "layout": {
+    "entries": [
+      {
+        "tile": "sec_config_flag",
+        "size": "half",
+        "pin": true
+      },
+      {
+        "tile": "overview",
+        "size": "half"
+      },
+      {
+        "tile": "risks",
+        "size": "half"
+      },
+      {
+        "tile": "sec_retry_policy",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "evidence",
+        "size": "third"
+      },
+      {
+        "tile": "media",
+        "size": "third"
+      },
+      {
+        "tile": "intent",
+        "size": "third"
+      },
+      {
+        "tile": "context",
+        "size": "third"
+      },
+      {
+        "tile": "decisions",
+        "size": "third"
+      },
+      {
+        "tile": "everything_else",
+        "size": "third"
+      }
+    ],
+    "groups": [
+      {
+        "id": "changes",
+        "title": "Changes"
+      }
+    ],
+    "landing": 7
+  },
+  "tiles": [
+    {
+      "id": "overview",
+      "type": "overview",
+      "title": "Retry failed deliveries with backoff",
+      "state": "ready"
+    },
+    {
+      "id": "risks",
+      "type": "risks",
+      "title": "Risks",
+      "state": "ready"
+    },
+    {
+      "id": "sec_retry_policy",
+      "type": "change",
+      "title": "Retry failed deliveries",
+      "state": "ready",
+      "covers": [
+        "h_000000000001",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "sec_config_flag",
+      "type": "change",
+      "title": "Add a flag that turns retries off",
+      "state": "ready",
+      "covers": [
+        "h_000000000003",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
+      "state": "ready"
+    },
+    {
+      "id": "intent",
+      "type": "intent",
+      "title": "Intent",
+      "state": "ready"
+    },
+    {
+      "id": "context",
+      "type": "context",
+      "title": "Context",
+      "state": "ready"
+    },
+    {
+      "id": "decisions",
+      "type": "decisions",
+      "title": "Decisions",
+      "state": "ready"
+    },
+    {
+      "id": "everything_else",
+      "type": "everything_else",
+      "title": "Everything else",
+      "state": "ready",
+      "covers": [
+        "h_000000000004",
+        "h_000000000005",
+        "h_000000000006",
+        "h_000000000007"
+      ]
+    }
+  ]
+}

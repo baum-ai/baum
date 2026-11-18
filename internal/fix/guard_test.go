@@ -167,13 +167,37 @@ func TestFixRefusesAWorkflowChangeWithReviewComments(t *testing.T) {
 				}
 				return
 			}
-			if reasonOf(err) != ReasonWorkflowChanged || !strings.Contains(err.Error(), ".github/workflows/ci.yml") {
+			if reasonOf(err) != ReasonWorkflowChanged || !strings.Contains(err.Error(), ".github/workflows/ci.yml") || !strings.Contains(err.Error(), "Reconnect with workflow access in Settings") {
 				t.Fatalf("err %v (reason %q)", err, reasonOf(err))
 			}
 			if pushedHead(t, r) {
 				t.Fatal("the workflow change was pushed")
 			}
 		})
+	}
+}
+
+// With workflow access on baum's GitHub connection, or access unknown, every
+// kind of fix may push a workflow change; the other checks still apply.
+func TestFixPushesAWorkflowChangeWithWorkflowAccess(t *testing.T) {
+	r := NewRepositories(t)
+	o := guardOptions(t, r, true, func(dir string) error {
+		return writeIn(dir, ".github/workflows/ci.yml", "on: push\njobs: {}\n")
+	})
+	o.AllowWorkflows = true
+	if _, err := Run(context.Background(), o); err != nil || !pushedHead(t, r) {
+		t.Fatalf("err %v, pushed %v", err, pushedHead(t, r))
+	}
+	r = NewRepositories(t)
+	o = guardOptions(t, r, true, func(dir string) error {
+		if err := writeIn(dir, ".github/workflows/ci.yml", "on: push\n"); err != nil {
+			return err
+		}
+		return writeIn(dir, ".netrc", "machine github.com login x password y\n")
+	})
+	o.AllowWorkflows = true
+	if _, err := Run(context.Background(), o); reasonOf(err) != ReasonCredentialAdded {
+		t.Fatalf("err %v (reason %q), want credential_added with workflow access", err, reasonOf(err))
 	}
 }
 

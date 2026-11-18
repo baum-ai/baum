@@ -171,7 +171,7 @@ func entryOrder(doc *tiles.Document) []string {
 
 func TestDefaultLayout(t *testing.T) {
 	_, doc := convert(t, fixtureNamed(t, "base"))
-	want := []string{"overview", "risks", "sec_retry_policy", "sec_config_flag", "media", "evidence", "intent", "context", "decisions", "everything_else"}
+	want := []string{"overview", "risks", "sec_retry_policy", "sec_config_flag", "evidence", "media", "intent", "context", "decisions", "everything_else"}
 	if got := entryOrder(doc); !slices.Equal(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
 	}
@@ -212,7 +212,7 @@ func TestDefaultLayout(t *testing.T) {
 	}
 	// Review score descending, attention first within a score, otherwise
 	// document order.
-	wantChanges := []string{"sec_retry_policy", "sec_part_3", "sec_part_2", "sec_part_5", "sec_config_flag", "sec_part_1", "sec_part_0", "sec_part_4"}
+	wantChanges := []string{"sec_retry_policy", "sec_part_3", "sec_part_2", "sec_part_6", "sec_part_5", "sec_config_flag", "sec_part_1", "sec_part_0", "sec_part_4"}
 	if !slices.Equal(changes, wantChanges) {
 		t.Errorf("changes = %v, want %v", changes, wantChanges)
 	}
@@ -223,8 +223,17 @@ func TestDefaultLayout(t *testing.T) {
 			shown++
 		}
 	}
-	if shown != 4 {
-		t.Errorf("%d changes are shown on the landing page, want 4", shown)
+	// Nine changes fold: six show, two rows under the overview and risks,
+	// and the other three wait behind the group's control.
+	if group := many.Layout.Groups[0]; group.ID != tiles.GroupChanges || group.CollapseAfter == nil || *group.CollapseAfter != tiles.ChangesShown {
+		t.Errorf("the changes group of nine is %+v, want it folded after %d", group, tiles.ChangesShown)
+	}
+	if shown != 6 {
+		t.Errorf("%d changes are shown on the landing page, want 6", shown)
+	}
+	// Eight or fewer are never folded.
+	if group := doc.Layout.Groups[0]; group.CollapseAfter != nil {
+		t.Errorf("the changes group of two is folded after %d", *group.CollapseAfter)
 	}
 
 	_, unscored := convert(t, fixtureNamed(t, "unscored"))

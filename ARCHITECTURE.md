@@ -657,19 +657,23 @@ showing one part of the review. It has three parts.
   "Show N more tiles" reveals the rest that are not hidden (`tiles.More`).
   `tiles.Arrange` orders a layout and sets `landing`: it first gives a custom
   tile's entry of a size its definition does not declare the first size it
-  declares; then pinned entries move to the front, and the risks tile, when
-  it ranks an active critical or high risk and would otherwise miss the
-  landing page, moves ahead of them; both moves are stable and move an entry
-  with its whole group. A narrow
-  window stacks the same order into fewer columns, so the landing page does
-  not depend on the viewport.
+  declares; then pinned entries move to the front. Two tiles must then be on
+  the landing page, in this order: the risks tile when it ranks an active
+  critical or high risk, and the overview. Each that would miss it moves to
+  the front with the pinned entries and the one before it; should the
+  pinned entries alone fill the landing page, it goes before them. Every
+  move is stable and moves an entry with its whole group. A converted
+  document keeps its order. A narrow window stacks the same order into
+  fewer columns, so the landing page does not depend on the viewport.
 
 Who writes what: the host writes the substrate's header, facts, statistics,
 index, agent reviews, derived fields, risk lifecycle fields and risk score,
 and each tile's `covers`, `headline`, `state` and `problems` and the
-layout's `landing`. The review's author (today a `baum.review/1` generation,
+layout's `landing`. The review's author (a `baum.review/1` generation,
 converted) writes the outline, the risks' and evidence's text, the
-recommendation, and each tile's type, title and data.
+recommendation, and each tile's type, title and data. A generated review's
+composition (see "Compositions" below) adds the layout, promoted blocks,
+library tiles and tiles a composer wrote.
 
 The schema refers to `review-1.json`'s definitions by name, and to the parts
 of it that are not definitions (the review header, summary, statistics,
@@ -686,7 +690,7 @@ document is shown, when it is a single tile under another ID than its type,
 its data does not have its type's shape (only a draft's pending context
 tile may have empty data), its references do not resolve (a change tile's
 change, which everything else must not show too, the ranked risks, the
-changes of moved items), a decision ID repeats among the decisions tile's
+changes of moved items and of promoted blocks), a decision ID repeats among the decisions tile's
 items, its type is unknown, or it is a custom tile that fails one of the
 checks below. `CheckTiles` runs just those
 tile checks, for a host serving a document it converted.
@@ -892,9 +896,12 @@ repeated section ID.
   tile appear only when they have something to show; with `Options.Draft` a
   missing context is a pending context tile.
 - The default layout is the overview and risks tiles (half each), the
-  change tiles in review order (a third each, in a "Changes" group showing
-  four), then media, evidence, intent, context, decisions and everything
-  else (a third each), then the obsolete changes. Review order is the
+  change tiles in review order (a third each, in a "Changes" group that
+  shows every change up to eight and otherwise six, two rows, folding the
+  rest behind its control), then evidence, media, intent, context, decisions
+  and everything else (a third each), then the obsolete changes. How many
+  changes the group shows is one rule, which templates and compositions
+  without `changes_shown` share. Review order is the
   viewer's: by review score, highest first, a section with attention first
   within a score, otherwise document order; a document without scores keeps
   its order.
@@ -917,22 +924,172 @@ repeated section ID.
   resolves a repeated ID to its first occurrence, so the two pages can differ
   on such an ID.
 
+**Compositions.** A generated review is stored as its `baum.review/1`
+document and a composition (`baum.composition/1`,
+`schema/composition-1.json`, `tiles.Composition`), and the tile document
+served for it is `tiles.Compose(tiles.FromReview(document), composition)`.
+Every other reader keeps reading the review document. The composition holds
+choices and the content a review has no place for, never a copy of the
+review's:
+
+- `layout`: the tiles in reading order, each with a size and optionally the
+  `changes` group (the only group a composition sets) and a pin, and
+  `changes_shown`, how many members the changes group shows before folding
+  (without it, the converter's rule). Obsolete changes are not listed: the
+  host always places them last, in their collapsed group. `hidden` lists the
+  tiles a reader removed; only the host writes it (normalisation drops a
+  model's), and applying the composition moves those tiles, out of their
+  groups, to a last collapsed "Hidden tiles" group after the obsolete
+  changes, so the document still presents everything once and a reader can
+  bring them back. The overview, and the risks tile while it ranks a
+  critical or high risk, are never hidden.
+- `promotions`: a table or code block of a current change moved to a tile of
+  its own, `{id, change, block, digest, title}`. `block` is the block's
+  position among the change's blocks in the review, as an origin gives it;
+  `digest` is the SHA-256 of the block's RFC 8785 canonical JSON
+  (`tiles.BlockDigest`), and a block that no longer matches it is not
+  promoted. The block leaves its change tile, and the table or code tile's
+  data carries an `origin`, from which `ToReview` puts it back.
+  `tiles.Promotable` lists the blocks a document offers.
+- `library`: library tiles, each a custom tile type's definition, with its
+  digest, and the data filled for this review (`pending`, with empty data,
+  while a draft's fill runs). Its title is its definition's title and its ID
+  its definition's name (`tiles.LibraryTileID`), or `library_` and the name
+  for a name that starts as a change, promoted or authored tile's ID does
+  (`sec_`, `table_`, `code_`, `prose_`, `diagram_`), so a library tile never
+  takes such an ID from another subject; a review has at most one tile of a
+  library type.
+- `authored`: table, code and prose tiles the composer wrote, `{id, title,
+  data}`, each citing at least one hunk or file of the review, every
+  citation resolving as a custom tile's must. `ToReview` leaves them out, as
+  it leaves custom tiles.
+- `notes`, kept for evaluation and never shown: a reason per tile, the
+  moves against the previous version, and a custom tile the composer
+  suggests, which is only logged; and `generator`: the prompt version and
+  digest, the model, when, the template it started from, whether it is the
+  fallback, and the fixes normalisation made, by kind. Only the host writes
+  the generator, through `Composition.SetGenerator`, which refuses one the
+  schema would not accept.
+
+A single tile's ID is its type, a change tile's its section's, a library
+tile's as above, and a promoted or authored tile's its type, an
+underscore and a slug (`table_retry_delays`). The model chooses the layout,
+the promotions and their titles, and writes the authored tiles, the library
+tiles' data and the notes. The host writes the block digests, the generator,
+the IDs it renames and the pins repository settings ask for, and, when the
+composition is applied, everything a tile document derives: covers,
+headlines, states, problems, groups, `landing` and the order `Arrange`
+imposes.
+
+`tiles.NormalizeComposition` repairs a composition a model wrote against the
+converted document before it is stored, and reports each fix by kind
+(`tiles.Report`, `Report.Counts`). A fix names a tile only by an ID that is a
+plain identifier and never quotes the composition; a report lists the first
+200 fixes and counts them all. Normalising its result changes nothing. The
+parts only the host writes, the generator and the hidden list, are dropped
+from what a model wrote, and only the first few hundred of each list (a
+generous multiple of what a composition holds) are read, so a huge
+composition costs no more than a few milliseconds.
+
+| Part | Rule |
+| --- | --- |
+| Library tiles | Dropped when the definition has no valid name, another tile or an earlier library tile has the ID, or the definition, data or citations fail the custom tile checks. The first 8 that pass are kept. |
+| Promotions | The ID is `table_` or `code_` and a slug, naming a block of that kind in a current, ready change tile at that position. At most one per change and per block. Dropped when the stored digest no longer matches or the block does not have the tile's shape. The first 3 that pass are kept. |
+| Authored tiles | The ID is `table_`, `code_` or `prose_` and a slug; the first 3 that pass are kept. Dropped when the data is not a JSON object of at most 64 KiB, carries an `origin`, does not have its type's shape, cites no hunk or file, or has a citation that does not resolve. |
+| IDs | A promoted or authored tile whose ID a converted tile, a library tile or an earlier composition tile has gets the first free numeric suffix (`_2`, `_3`, …). |
+| Text | Control characters (C0 and DEL) are removed from titles, notes and prose, a prose tile keeping tabs and newlines. Titles are one line, at most 80 characters, the type's catalogue title when blank. |
+| Entries | An entry naming no tile, a second entry for a tile and an entry for an obsolete change are dropped. A size the tile does not allow becomes its default: overview, risks, table, code and diagram tiles are half or full, a custom tile takes its definition's sizes, the others any size. Only a current change tile that is not pinned may be in the changes group; any other group is removed. |
+| Omitted tiles | Appended in the converter's order and sizes, a change at the end of the changes group, then the composition's tiles at their default size. |
+| Changes group | Made contiguous at its first member; `changes_shown` is at least 1. |
+| Notes | A reason or move naming no tile is dropped; reasons are cut to 160 characters, moves to 20. |
+
+`tiles.Compose` normalises the composition again, so any composition, a
+hostile one too, gives a valid document; adds its tiles, moves the promoted
+blocks, applies the layout, sets the origin to `generated` and runs
+`Arrange`. Unlike normalisation before storing, it keeps a library or
+authored tile that fails its checks (a custom tile made with a newer kit,
+say), unavailable with its problems, as a stored custom tile is shown. It
+honours the hidden list and passes the generator it is given, trusting them
+as the host's: only a composition that `NormalizeComposition` returned, with
+the host's own additions, may be stored or composed for display, and a
+preview of what a model wrote is normalised first. A nil
+or empty composition gives the converted document unchanged, byte for byte,
+so a review without one is served exactly as before. Whatever the
+composition:
+
+- the tiles cover exactly the current hunks: every change tile and the
+  everything else tile is placed with its covers, and a promotion moves a
+  table or code block, never a change's summary or hunks;
+- the recommendation and the risk score are the review's, and every risk,
+  evidence item, decision and block is presented exactly once;
+- the overview is on the landing page, and so is the risks tile whenever it
+  ranks an active critical or high risk; pins cannot push either off, and
+  neither is ever in a group or hidden;
+- a change the recommendation names in its refs is never folded in the
+  changes group: the host raises the number the group shows to reach the
+  last of them or, when that would put one past the landing page, moves them
+  to the front of the group and shows at least as many;
+- at most 3 promoted tiles (one per change), 3 authored and 8 library tiles;
+- the document passes the tile schema and document rules, `ToReview` gives
+  back the review, and the result is deterministic.
+
+Normalising and applying a composition takes about a millisecond for a
+typical review.
+
+**Templates.** `tiles.Template(doc, content)` lays a converted document out
+by the template of its change kind (`tiles.TemplateName`), places the
+content's library, promoted and authored tiles, and returns the normalised
+composition with its generator naming the template. Templates are where a
+composer starts, a draft's layout until its composition is written, and the
+fallback when a composition is missing or unusable.
+
+| Template | Change kinds | Order |
+| --- | --- | --- |
+| `feature` | feature, bugfix and any other | overview (half), risks (half), the composition's tiles (half), the changes, evidence, media, intent, context, decisions, everything else |
+| `refactor` | refactor | overview (half), risks (half), the composition's tiles (half), the changes, evidence, context, everything else, then the rest |
+| `dependency` | dependency, upstream_sync, cherry_pick | overview (half), everything else (half), risks (half), evidence, the composition's tiles (half), the changes, then the rest |
+| `docs` | docs, ci, mechanical, translation, release, export | overview (full), the changes, everything else, then the rest |
+
+Changes are a third each in the changes group, in review order; "the rest"
+is every other tile in the converter's order and sizes.
+
+**ID stability.** A tile keeps its ID from one version of a pull request to
+the next while its subject persists: single and change tiles by
+construction, and library tiles by their type's name (`tiles.LibraryTileID`).
+`tiles.StabilizeIDs(previous, next)`, run on a composition before it is
+normalised, gives a promotion the ID the previous composition gave a
+promotion of the same change and kind, when each version has exactly one
+and no tile of the next has that ID, and renames, with a numeric suffix, a
+promoted or authored tile whose ID the previous version gave another
+subject; the layout and notes follow the renames.
+
 The test-support package `tiles/tilestest`, which uses only the public API,
-checks conversions. `CheckConversion` asserts the invariants of one: the
-tiles cover exactly the current hunks, which are the index's; every risk
-and evidence item is presented exactly once, and each section's blocks,
-rebuilt from its own tile and the moved items' origins, are the review's in
-order, with the same decisions and images; the risks tile ranks exactly the
-active risks of current changes; the recommendation and risk score are
-unchanged, present exactly when they were, and every risk they name
-resolves; every active critical or high risk is ranked and the risks and
-overview tiles are on the landing page; every tile is placed once and passes
-the tile checks; and the round trip holds. `CheckStability` checks that a
-change two consecutive versions share keeps its tile's ID and type, and that
-the tiles they share are change and single tiles.
-The goldens in `tiles/testdata` cover each shape the conversion handles, and
-`internal/tilescorpus` runs every check over a directory of real review
-stores when `BAUM_TILES_CORPUS` names one, logging only counts.
+checks conversions and compositions. `CheckConversion` asserts the
+invariants of a conversion: the tiles cover exactly the current hunks,
+which are the index's; every risk and evidence item is presented exactly
+once, and each section's blocks, rebuilt from its own tile and the moved
+items' and promoted blocks' origins, are the review's in order, with the
+same decisions and images; the risks tile ranks exactly the active risks of
+current changes; the recommendation and risk score are unchanged, present
+exactly when they were, and every risk they name resolves; every active
+critical or high risk is ranked and the risks and overview tiles are on the
+landing page; every tile is placed once and passes the tile checks; and the
+round trip holds. `CheckGenerated` asserts them for a composed document,
+the guarantees above among them: the risks tile must be on the landing page
+only when it ranks a critical or high risk, a hidden tile is in the last
+group, and a library or authored tile may be unavailable with its problems.
+`CheckStability` checks that a change two consecutive versions share keeps
+its tile's ID and type, that a tile ID both share names the same subject (a
+change or single tile of the same type, a library tile of the same type, a
+promoted block of the same change and kind, or an authored tile of the same
+type), and that a promoted block keeps its ID as `StabilizeIDs` gives it.
+`RandomComposition` draws compositions, hostile ones too, for property
+tests. The goldens in `tiles/testdata` cover each shape the conversion
+handles, and in `tiles/testdata/compositions` each template and
+normalisation rule. `internal/tilescorpus` runs every check over a
+directory of real review stores when `BAUM_TILES_CORPUS` names one, composes
+each version with its template, five seeded random compositions and one
+with hidden tiles, and logs only counts.
 
 **Serving.** The desktop daemon converts a review each time it answers for
 one; nothing about the tile document is stored. All three routes answer
@@ -1236,15 +1393,48 @@ OpenAI's strict structured outputs accept.
 `agent.Fixer` is the one write mode, for a fix a person confirmed
 (`internal/fix`, see "Fix jobs" below): `Fix` runs the agent over a checkout
 it may edit, with no schema, and returns its final message as the summary.
-Only the local profiles implement it. `claude` keeps restricted mode and the
-other review flags but has `Read,Glob,Grep,Edit,Write` and `--permission-mode
-acceptEdits`: it edits files and runs nothing. `codex` runs `--sandbox
-workspace-write` with `sandbox_workspace_write.network_access=false`,
-`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` set to
-`Request.Scratch`, which is also its commands' `TMPDIR`. `cursor-agent` and
-`anthropic` have no write mode. The fix instructions are
-`prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`, `fix-checks.md` and
-`fix-threads.md`).
+Only the local profiles implement it. `Request.Scratch` is the agent's scratch
+directory, `Request.GitDir` its own git repository outside the checkout and
+`Request.Network` whether its commands reach the network (the `fix_network`
+preference). Both run with `agent.FixEnvironment` over their usual
+environment: no GitHub, git-host or registry token, SSH agent, askpass or
+repository-choosing Git variable, no variable named like a token, secret or
+password other than the CLI's own provider settings, and `GOCACHE`,
+`GOMODCACHE`, `GOPATH`, `npm_config_cache`, `YARN_CACHE_FOLDER`,
+`PIP_CACHE_DIR` and `XDG_CACHE_HOME` under the scratch directory.
+`agent.FixCredentialPaths` are the files under the home directory (and
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) where tools keep credentials and the
+runtime directory (`XDG_RUNTIME_DIR`, `/run/user/<uid>` on Linux, for its
+D-Bus and agent sockets), which the commands may not read. `claude` keeps restricted mode and the other review
+flags but has `Read,Glob,Grep,Edit,Write,Bash`, `--permission-mode
+acceptEdits` and `--settings` with no `blockReadsOutsideWorkingDirectories` (restricted mode
+keeps the file tools in the checkout; with it Claude Code hides the home
+directory and then fails every command when a file it protects there is a
+symbolic link), `permissions.allow` `Bash` (plus
+`WebFetch(domain:*)` with the network, the only way to open every domain to
+the sandbox) and `sandbox` `enabled`, `failIfUnavailable`,
+`autoAllowBashIfSandboxed`, `allowUnsandboxedCommands: false`,
+`filesystem.allowWrite` the scratch and git directories, `allowRead` the home
+directory and the git directory's alternates, `denyRead` the credential
+paths, and, without the network, `network.allowedDomains: []`. A result
+whose `startup_failure_reason` is `sandbox_required_unavailable` runs the fix
+again with `Read,Glob,Grep,Edit,Write`, no sandbox and a system prompt saying
+it cannot run commands, logging why; a `system` event whose fields do not
+decode (a `permission_denied` notice's text `message`) is skipped. TMPDIR is
+not moved for Claude Code: a long scratch path breaks its sandbox's sockets.
+`codex` from `PermissionProfileVersion` (0.170.0) on, off Windows, runs
+without `--sandbox` but with `-c default_permissions="baum_fix"`,
+`permissions.baum_fix.filesystem={"/"="read", <credential path>="none",
+<checkout, scratch, git directory>="write"}` and
+`permissions.baum_fix.network.enabled`; an older one `--sandbox
+workspace-write` with `sandbox_workspace_write.network_access`,
+`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` the
+scratch and git directories. The scratch directory is its commands'
+`TMPDIR`. `cursor-agent` and `anthropic` have no write mode. The fix
+instructions are `prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`,
+`fix-checks.md` and `fix-threads.md`), followed by baum's own "Your
+environment" section (the repository, the sandbox, the network) before the
+data.
 
 `agent.Converser` runs one turn of a person's own session, for the session
 panel (see "Session panel conversations" below). Unlike every other run it
@@ -3301,7 +3491,7 @@ an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed), the
-review harness and model, the fix agent (`fix_backend`, `fix_model`), data
+review harness and model, the fix agent (`fix_backend`, `fix_model`) and its network access (`fix_network`, on when absent), data
 extraction's (`decisions`: `enabled`, `backend`, `model`), `pull_requests`
 and `agent_env`; a field an older baum saved and this one dropped
 (`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are
@@ -4437,16 +4627,32 @@ an error line gives its last 200 lines. It then reads the review threads
 again, refusing threads whose
 digest changed (`threads_changed`).
 
-`fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
-registered clone under the user cache directory's `baum/fixes/<id>`, detached
-at the head fetched into `refs/baum/fix/<id>/` from the remote whose URL names
-the repository (`ErrHeadMoved` when the branch moved on). For a conflict it
-merges the base commit itself; a clean merge needs no agent. The agent
+`fix.Run` then works in a `gitlocal.Fix`, under the user cache directory's
+`baum/fixes/<id>`: `checkout` (the work tree), `git` (the agent's own
+repository, made with `init --template= --separate-git-dir` in the clone's
+object format, the clone's objects as alternates, `commit.gpgSign` and
+`tag.gpgSign` false, the files written by baum's own `read-tree -u --reset`
+with the clone's configuration (so Git LFS smudges from the clone) and then
+recorded with `reset --mixed` (`GIT_LFS_SKIP_SMUDGE=1` in the agent's
+repository), the head branch at the head fetched into
+`refs/baum/fix/<id>/` from the remote whose URL names the repository
+(`ErrHeadMoved` when the branch moved on) and the base, fetched for every fix,
+as `refs/remotes/origin/<base>`), `tmp` (scratch), `hooks` (empty) and
+`index` (baum's). For a conflict it merges the base commit in the agent's
+repository itself, before the agent; a clean merge needs no agent. The agent
 (`agent.Fixer`) runs with the prompt, the untrusted data between nonce-tagged
-markers, and the run budgets. baum then checks that no conflicted file keeps a
-marker, commits what was left (completing the merge), requires a new commit
-that descends from the head, and pushes it with a plain `git push` to the head
-branch. Phases are `reading checks`, `reading review comments`, `fetching`,
+markers, and the run budgets. baum then checks that no conflicted file of its
+merge keeps a marker, decides whether the result merges the base
+(`Fix.Merged`: the base is an ancestor of the commit the agent's `HEAD` or
+`MERGE_HEAD` names, read as files, the ancestry read with
+`GIT_ALTERNATE_OBJECT_DIRECTORIES` naming the agent's objects and
+`core.commitGraph=false`, and the head does not already have it), refuses a
+conflict fix whose result does not merge the base (`conflicts_remain`), and
+makes its own commit (`Fix.Commit`: `read-tree` of the head into its index,
+`add --all`, after a merge `add --force` of the files the base added that the
+checkout has, `write-tree`, `commit-tree [-S] -p <head> [-p <base>]`), requires a
+new commit that descends from the head, and pushes it with a plain `git push`
+to the head branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 `merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
 records `commit`, `commit_url` and the agent's masked `summary`. A fix whose
 agent changed nothing completes without a commit, with reason `no_changes`
@@ -4455,7 +4661,7 @@ failure, so it sends no notice and the app shows that summary in neutral
 words (jobs saved as failed by an older daemon are shown the same way). A
 failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
 `git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
-`credential_added`, `nested_repository`, `workflow_changed`, `push_rejected`,
+`credential_added`, `nested_repository`, `workflow_changed`, `workflow_scope`, `push_rejected`,
 `push_failed`, `signed_out`) and a bounded detail. `signed_out` is an agent
 failure whose provider refused its sign-in (`agent.SignInRejected`); review
 jobs (and the chat jobs of the earlier Ask did) report the same reason in
@@ -4465,18 +4671,27 @@ minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
 which the job never keeps. A
 fix checks its commit before the push (`fix.guard`), against what the fix
-itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or
-from the merge commit after a clean merge of the base, or, after a merge that
-stopped at conflicts, only paths that differ from both head and base, with
-added lines those neither side had; submodules always included). It fails with
+itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or,
+when the result merges the base, from the tree `merge-tree --write-tree`
+makes when the merge is clean, else only paths that differ from both head
+and base, with added lines those neither side had; submodules always
+included).
+It fails with `conflicts_remain` when an added line is a conflict marker, with
 `credential_added` when a non-e-mail span the redactor finds overlaps an added
 line, when a changed file sits at a well-known credential path (OpenSSH
 private key names, `.git-credentials`, `.netrc`, `.aws/credentials`,
 `gh/hosts.yml`), or when a changed text file is over 8 MiB; with
 `nested_repository` when it adds or changes a gitlink (mode `160000`); and,
-when review threads or a conversation were in the prompt, with
-`workflow_changed` when it changes a path under `.github/workflows/` or
-`.github/actions/`. The detail names the paths, masked.
+when review threads or a conversation were in the prompt and baum's saved
+GitHub connection is known to lack workflow access (`fix.Options.AllowWorkflows`
+false: `jobs.workflowAccess` reads `githubauth.Manager.Status`; an explicit
+token or an unreadable status allows), with `workflow_changed` when it
+changes a path under `.github/workflows/` or `.github/actions/`, saying to
+choose Reconnect with workflow access in Settings. The detail names the
+paths, masked. A push GitHub refuses with "refusing to allow ... to create or
+update workflow ... without `workflow` scope" (or `workflows` permission), in
+git's stderr or the porcelain stdout, is `gitlocal.ErrWorkflowScope` and
+`workflow_scope`.
 
 A fix can also be made from a conversation of the earlier Ask (see "Earlier
 questions to the review agent"). The app no longer offers it (its **Fix this**
@@ -4509,7 +4724,8 @@ that differs from the digest (`chat_changed`) stops the fix before the agent run
 the change the conversation asks for and only that, verify it, the conversation
 is data) and one `BEGIN UNTRUSTED DATA` block per turn, oldest first, each
 through the redactor (questions included) and with the nonce stripped, like a
-thread. A fix from a conversation never pushes a workflow change
+thread. A fix from a conversation pushes no workflow change unless baum's
+GitHub connection has workflow access or its access is unknown
 (`workflow_changed`).
 The commit message says "Make the change from a conversation". The phase is
 `reading the conversation`.
@@ -4555,13 +4771,18 @@ never retried. The job's `thread_outcomes` hold each thread's `resolved`,
 `replied` (the reply posted, the resolution not), `skipped`,
 `already_resolved` or `failed` with the agent's cleaned summary; none of these
 fails the fix.
-The worktree, its registration and the refs are removed whatever happens.
-After a push the daemon polls the repository's discovery at once. Git commands
-in the checkout set `GIT_DIR` and `GIT_WORK_TREE` and an empty
-`core.hooksPath`; see [SECURITY.md](SECURITY.md#fixing-a-pull-request).
+The fix directory and the refs are removed whatever happens.
+After a push the daemon polls the repository's discovery at once. baum's own
+git commands over the checkout set `GIT_DIR` to the clone's common directory,
+`GIT_WORK_TREE` to the checkout and `GIT_INDEX_FILE` to its own index, with an
+empty `core.hooksPath` and `core.fsmonitor`, `core.untrackedCache`,
+`core.sparseCheckout` and `index.sparse` off; once the agent has run, none
+uses the agent's repository as its git directory; see
+[SECURITY.md](SECURITY.md#fixing-a-pull-request).
 Before the merge and the agent, `Fix.CheckSigning` makes an unreferenced
-`commit-tree -S` commit when `commit.gpgSign` is set (commit-tree ignores the
-setting), and a failure is `fix.ReasonSigning` with git's error.
+`commit-tree -S` commit of the head's tree when `commit.gpgSign` is set
+(commit-tree ignores the setting), and a failure is `fix.ReasonSigning` with
+git's error.
 
 ### Local application presentation
 
@@ -4595,6 +4816,36 @@ it runs; a pull request whose head moved is told to regenerate instead. The
 renderer stays in `viewer/`; the app owns
 only local inbox, jobs, confirmation and settings presentation. The common
 viewer build/freshness scripts include both embedded applications.
+
+### Tile page
+
+With the `review_page` preference set to `tiles`, or `?view=tiles` in the
+address, the PR and group pages read every version, and a running job's
+draft, from the tile routes (see "Tile documents"), which answer the
+`baum.review/1` document with its tile document. `api.ts` hangs the tile
+document on the review document under an enumerable symbol (`TILES`), so the
+copies the page makes of a document (a draft, a retry marking failed sections
+pending, live threads) carry it, and the viewer's version loader, history and
+Compare hand it back unchanged. `TypeScript` does no conversion: it mirrors
+the types (`src/tiles/tile-document.ts`, reusing the viewer's domain types)
+and reads the Go goldens through a structural guard in its tests. A document
+whose tiles are null shows as the full review.
+
+The page passes the viewer `places` (`useTilePlaces`): a rail of the tiles in
+the layout's order, a pane per snapshot (the landing page or a tile's detail)
+called inside the viewer's history so an earlier version and both columns of
+a comparison draw their own tiles, stepping through the Summary and the tiles,
+prose chips sent to the tile holding their item, and the rail and the side
+pane folded on the landing page (`railFolded`, `sidePaneFolded`), whose grid
+then has the width. Everything else is the viewer's and the page's own. The landing
+grid mirrors `tiles.Hidden` and `tiles.More`: a group member past
+`collapse_after` waits behind its group's cell wherever it stands, and the
+entries from `landing` on behind "Show N more tiles". A registry maps each
+built-in type to its glance and detail faces, a check of its data and the
+anchors a comment on it is placed on; an unknown, custom, unavailable or
+failing tile renders unavailable inside its own error boundary. Comments use
+the `tile` target except on a Change tile (its section's target) and a risk
+(the risk's), so a full review and an older daemon read them as before.
 
 ### Free background synchronization
 

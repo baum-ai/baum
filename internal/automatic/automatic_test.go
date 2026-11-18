@@ -821,12 +821,19 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 	if prefs.Effort == nil || *prefs.Effort != "high" || prefs.FixEffort == nil || *prefs.FixEffort != "low" {
 		t.Fatalf("%+v", prefs)
 	}
+	if code := put(h.scheduler, `{"fix_network":false}`); code != 200 {
+		t.Fatal(code)
+	}
 	if code := put(h.scheduler, `{"effort":"","fix_backend":""}`); code != 200 {
 		t.Fatal(code)
 	}
 	prefs, _ = h.registry.Preferences(context.Background())
 	if prefs.Effort != nil || prefs.FixEffort != nil || prefs.FixBackend != nil {
 		t.Fatalf("after clearing %+v", prefs)
+	}
+	// Resetting the fix agent keeps the network choice.
+	if prefs.FixNetwork == nil || prefs.FixNetworkAllowed() {
+		t.Fatalf("the reset cleared fix_network: %+v", prefs)
 	}
 }
 

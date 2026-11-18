@@ -3441,6 +3441,9 @@ a.local-session-pr:hover {
   :is(.list-row, [data-list-row]):hover .row-menu-button,
   :is(.list-row, [data-list-row]):focus-within .row-menu-button,
   :is(.list-row, [data-list-row])[data-focused] .row-menu-button,
+  .tile-card:hover .row-menu-button,
+  .tile-card:focus-within .row-menu-button,
+  .tile-card[data-review-block-active] .row-menu-button,
   .row-menu-button[aria-expanded="true"],
   .row-menu-button:focus-visible {
     opacity: 1;
@@ -6109,6 +6112,9 @@ a.upnext-done-text:hover {
 .upnext-check-running {
   color: var(--status-caution);
 }
+.upnext-check-cancelled {
+  color: var(--text-secondary);
+}
 .upnext-check-passing {
   color: var(--status-positive);
 }
@@ -7568,4 +7574,10 @@ dialog.review-dialog {
   padding: 0.5rem 0 0;
   border-top: 1px solid var(--border-subtle);
   list-style: none;
+}
+
+/* A tile's heading takes the keys as its detail opens, for the next Tab to
+   start there; it is no control, so it shows no ring. */
+#review-section h2[tabindex="-1"]:focus {
+  outline: none;
 }

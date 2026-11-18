@@ -131,6 +131,11 @@ type Preferences struct {
 	FixBackend *config.Backend `json:"fix_backend,omitempty"`
 	FixModel   *string         `json:"fix_model,omitempty"`
 	FixEffort  *string         `json:"fix_effort,omitempty"`
+	// FixNetwork says whether the fix agent's commands get network access
+	// (installing dependencies, fetching what builds and tests need). Nil
+	// means on. Unlike FixModel and FixEffort it applies with or without a
+	// FixBackend.
+	FixNetwork *bool `json:"fix_network,omitempty"`
 	// ClaudeConfigDir and FixClaudeConfigDir are the Claude Code
 	// configuration directories reviews (with data extraction) and fixes run
 	// Claude Code with (config.Config.ClaudeConfigDir), absolute paths; nil
@@ -451,6 +456,12 @@ func (p Preferences) ResolveExtraction(cfg config.Config) config.Config {
 		}
 	}
 	return cfg
+}
+
+// FixNetworkAllowed reports whether the fix agent's commands get network
+// access: true unless FixNetwork is set to false.
+func (p Preferences) FixNetworkAllowed() bool {
+	return p.FixNetwork == nil || *p.FixNetwork
 }
 
 // ResolveFix gives the config a fix runs with, from review, the config

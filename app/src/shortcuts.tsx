@@ -929,31 +929,41 @@ function shortcutGroups(
       place: "review",
       title: "A pull request or group",
       rows: [
-        { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
-        { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
+        {
+          keys: ["j", "ArrowDown"],
+          label: "Next item in the section, or tile on the tiles page's summary",
+          short: "move",
+        },
+        { keys: ["k", "ArrowUp"], label: "Previous item, or tile", short: "move" },
         {
           keys: MAC ? ["⇧J", "⇧↓", "ArrowRight"] : ["Shift+J", "Shift+↓", "ArrowRight"],
-          label: "Next section",
+          label: "Next section, or tile",
           short: "sections",
         },
         {
           keys: MAC ? ["⇧K", "⇧↑", "ArrowLeft"] : ["Shift+K", "Shift+↑", "ArrowLeft"],
-          label: "Previous section",
+          label: "Previous section, or tile",
           short: "sections",
         },
         {
           keys: [" "],
-          label: "Open or close the item's details, or the selected group in the sidebar",
+          label:
+            "Open or close the item's details, a group's hidden tiles, or the selected group in the sidebar",
           short: "expand",
         },
-        { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
+        {
+          keys: ["Enter"],
+          label: "Open the item, such as a tile or a commit in the list",
+          short: "open",
+        },
+        { keys: ["Escape", "u"], label: "From a tile, back to the tiles page's summary" },
         { keys: ["m"], label: "Merge, where offered", short: "merge" },
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
         { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         {
           keys: ["c"],
-          label: `Comment on the section, risk or file being read; ${COMMAND}↵ saves it`,
+          label: `Comment on the section, risk, file or tile being read; ${COMMAND}↵ saves it`,
           short: "comment",
         },
         {
