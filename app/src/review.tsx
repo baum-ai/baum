@@ -108,9 +108,15 @@ import {
 } from "./pending-review";
 import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
-import { readSelection } from "@baum/viewer/review-selection";
+import { readSelection, withSelection } from "@baum/viewer/review-selection";
 import { useViewPlaces } from "./review-view/places";
-import { commentSelection, reviewOf, servedReview, withReview } from "./review-view/model";
+import {
+  CODE_PLACE,
+  commentSelection,
+  reviewOf,
+  servedReview,
+  withReview,
+} from "./review-view/model";
 import { activeTile } from "./review-view/view-tile";
 import { TileHostContext, type TileHost } from "./tiles/host";
 import { addedTilesKey, useAddedTilesEvents } from "./tiles/added-events";
@@ -580,6 +586,27 @@ export function LocalReview({
     [showingDraft, draft, retrying, doc, failedSections],
   );
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
+  // Before there is a review, Files changed lists the pull request's files
+  // in the viewer's own files pane; once one lands, the same place is the
+  // review's Files changed, in place of that address.
+  const factsFile =
+    shownDocument && (selection.kind === "files" || selection.kind === "file")
+      ? selection.kind === "file"
+        ? selection.id
+        : ""
+      : null;
+  useEffect(() => {
+    if (factsFile === null) return;
+    url.update(
+      (current) =>
+        withSelection(current, {
+          kind: "tile",
+          id: CODE_PLACE,
+          ...(factsFile ? { item: factsFile } : {}),
+        }),
+      { replace: true, preventScrollReset: true },
+    );
+  }, [factsFile, url]);
   // What c comments on: the section, risk, file or tile being read; on the
   // review page's Code tab, the file open there.
   const commentOn = commentTarget(viewedDocument ?? null, commentSelection(selection));
@@ -1022,7 +1049,7 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
-                places={shownDocument ? places : undefined}
+                places={places}
                 detailsChecks={(shown) =>
                   liveDetailsChecks(
                     shown,

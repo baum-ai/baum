@@ -276,7 +276,12 @@ version read alone (absent on the current version and while comparing, when
 `historicalDocument` is the other one); `compareWith(version)`, `versions` and
 `loadVersion`; `sectionHistory`; `hunkPatches` (null while comparing, for a
 `HunkPatchProvider` around cited code); `onRetryDetails`; `contextPending`;
-and `generation`, the document's generation state as the head shows it. A pane
+`generation`, the document's generation state as the head shows it; and
+`files`, the viewer's `files` slot with how many files it lists (`count`,
+null while it loads), or null without one. The places are drawn while
+`document` is null too (a review not yet written): the rail, the steps and
+the navigator bar are the host's, and the pane shows `placeholder`, or the
+viewer's Files pane on a `files` selection. A pane
 offers a retry and says a context is being written only for the current
 version. The seam's types, including `ReviewStep` and `IconProps`, are all
 exported from `components/review-viewer`. Moving between items of one tile

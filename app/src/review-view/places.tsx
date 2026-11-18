@@ -11,6 +11,7 @@ import { SideNavButton, SideNavNest } from "@baum/viewer/components/side-nav";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
 import {
+  CODE_PLACE,
   CONTEXT_ID,
   defaultSection,
   groupFiles,
@@ -53,7 +54,9 @@ export function useViewPlaces(): ReviewPlaces {
       railRows: (context) => railRows(context),
       steps: (selection, context) => {
         latest.current = context.document;
-        return context.document ? stepsOf(selection, context.document, context) : null;
+        return context.document
+          ? stepsOf(selection, context.document, context)
+          : emptySteps(selection, context);
       },
       renderPane: (snapshot, historical, context) => (
         <ViewPane snapshot={snapshot} historical={historical} place={context} />
@@ -96,7 +99,10 @@ function railRows(context: ReviewPlaceContext): ReviewRailRow[] {
     label: TAB_LABEL.overview,
     go: go({ tab: "overview" }),
   };
-  if (!document) return [overview];
+  if (!document)
+    return context.files
+      ? [overview, { key: "files", label: TAB_LABEL.code, go: () => context.select(FILES) }]
+      : [overview];
   const list = listedSections(reviewOf(document));
   return [
     overview,
@@ -115,7 +121,7 @@ function railRows(context: ReviewPlaceContext): ReviewRailRow[] {
  *  changed. The viewer follows with Decisions, Sessions and Commits. */
 function ViewRail({ context }: { context: ReviewPlaceContext }) {
   const document = context.document;
-  if (!document) return null;
+  if (!document) return <EmptyRail context={context} />;
   const review = reviewOf(document);
   // A session, a commit or the decisions are none of the page's places.
   const place = onPage(context.selection) ? placeOf(context.selection, review) : null;
@@ -172,6 +178,79 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
       />
     </>
   );
+}
+
+/** The viewer's own Files changed, which lists the changed files the pull
+ *  request's facts name while there is no review to place them in. */
+const FILES: Selection = { kind: "files" };
+
+const onFiles = (selection: Selection) =>
+  selection.kind === "files" ||
+  selection.kind === "file" ||
+  (selection.kind === "tile" && selection.id === CODE_PLACE);
+
+/** The rail before there is a review (one queued, being written with no
+ *  draft yet, failed, or never asked for): the same rows, the Overview
+ *  saying where the review is, How it works with nothing under it yet, and
+ *  Files changed listing the pull request's files, where they can be read. */
+function EmptyRail({ context }: { context: ReviewPlaceContext }) {
+  const files = onFiles(context.selection);
+  return (
+    <>
+      <SideNavButton
+        label={TAB_LABEL.overview}
+        icon={SummaryIcon}
+        tint="accent"
+        active={!files && onPage(context.selection)}
+        controls="review-section"
+        onSelect={() => context.select({ kind: "summary" })}
+      />
+      <SideNavButton
+        label={TAB_LABEL.sections}
+        icon={SectionIcon}
+        tint="accent"
+        active={false}
+        disabled
+        onSelect={() => undefined}
+      />
+      <SideNavNest id="review-sections">
+        <p className="px-2.5 py-1.5 text-base text-tertiary">No sections yet.</p>
+      </SideNavNest>
+      {context.files ? (
+        <SideNavButton
+          label={TAB_LABEL.code}
+          icon={FilesIcon}
+          tint="accent"
+          active={files}
+          count={context.files.count ?? undefined}
+          controls="review-section"
+          onSelect={() => context.select(FILES)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/** The navigator bar's way through the page before there is a review: the
+ *  Overview, then Files changed. */
+function emptySteps(selection: Selection, context: ReviewPlaceContext): ReviewPlaceSteps {
+  const overview = { label: TAB_LABEL.overview, go: () => context.select({ kind: "summary" }) };
+  const files = context.files ? { label: TAB_LABEL.code, go: () => context.select(FILES) } : null;
+  if (onFiles(selection))
+    return {
+      label: TAB_LABEL.code,
+      icon: FilesIcon,
+      previous: overview,
+      next: null,
+      railKey: "files",
+    };
+  return {
+    label: selection.kind === "summary" ? TAB_LABEL.overview : TAB_LABEL.sections,
+    icon: selection.kind === "summary" ? SummaryIcon : SectionIcon,
+    previous: null,
+    next: files,
+    railKey: "overview",
+  };
 }
 
 /** The navigator bar's and the pane foot's way through the page: the
