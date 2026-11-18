@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -103,7 +105,7 @@ func TestFixMergesCommitsAndPushesWithoutForce(t *testing.T) {
 		t.Fatalf("the fix directory remains: %v", err)
 	}
 	if list := git(t, f.clone, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
-		t.Fatalf("a worktree remains registered:\n%s", list)
+		t.Fatalf("a worktree is registered in the clone:\n%s", list)
 	}
 	if refs := git(t, f.clone, "for-each-ref", "refs/baum/"); refs != "" {
 		t.Fatalf("temporary refs remain: %s", refs)
@@ -182,8 +184,8 @@ func TestFixChecksSigningWithTheAgentEnvironment(t *testing.T) {
 	if err := fix.CheckSigning(ctx); err == nil {
 		t.Fatal("signing with a failing program passed the check")
 	}
-	if head, err := fix.HEAD(ctx); err != nil || head != f.head {
-		t.Fatalf("the check moved HEAD to %s (%v), or GIT_DIR from the agent environment was used", head, err)
+	if head := agentHEAD(fix.GitDir()); head != f.head {
+		t.Fatalf("the check moved the agent's HEAD to %s, or GIT_DIR from the agent environment was used", head)
 	}
 }
 
@@ -299,4 +301,243 @@ func TestFixChangesLeaveOutWhatAMergeBrought(t *testing.T) {
 			t.Fatalf("changes %+v", changes)
 		}
 	})
+}
+
+// The agent's repository has the branch checked out at the head, the base as
+// origin/<base> and the clone's objects, and lives outside the checkout.
+func TestFixGivesTheAgentARepositoryOfItsOwn(t *testing.T) {
+	f := newFixFixture(t)
+	fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	if got := git(t, fix.Dir(), "rev-parse", "--absolute-git-dir"); resolveExisting(got) != resolveExisting(fix.GitDir()) || inside(fix.Dir(), fix.GitDir()) {
+		t.Fatalf("git directory %s, want %s outside the checkout", got, fix.GitDir())
+	}
+	if branch := git(t, fix.Dir(), "symbolic-ref", "--short", "HEAD"); branch != "feature" {
+		t.Fatalf("branch %s", branch)
+	}
+	if head, base := git(t, fix.Dir(), "rev-parse", "HEAD"), git(t, fix.Dir(), "rev-parse", "origin/main"); head != f.head || base != f.base {
+		t.Fatalf("HEAD %s origin/main %s", head, base)
+	}
+	if status := git(t, fix.Dir(), "status", "--porcelain"); status != "" {
+		t.Fatalf("the checkout is not clean: %s", status)
+	}
+	if hooks, _ := os.ReadDir(filepath.Join(fix.GitDir(), "hooks")); len(hooks) != 0 {
+		t.Fatalf("the agent's repository has hooks from a template: %v", hooks)
+	}
+}
+
+// What the agent did with git decides the commit's parents; the tree is the
+// checkout's whatever the agent committed.
+func TestFixCommitsWhatTheAgentLeft(t *testing.T) {
+	t.Run("merge of the base", func(t *testing.T) {
+		f := newFixFixture(t)
+		ctx := context.Background()
+		fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = fix.Close() }()
+		// The agent merges origin/main itself, resolves the conflict and
+		// commits, then changes one more file without committing it.
+		cmd := exec.Command("git", "merge", "origin/main")
+		cmd.Dir = fix.Dir()
+		_ = cmd.Run()
+		write(t, fix.Dir(), "a.txt", "feature and main\n", 0o644)
+		commit(t, fix.Dir(), "agent merge")
+		write(t, fix.Dir(), "b.txt", "fix\n", 0o644)
+		if merged, err := fix.Merged(ctx); err != nil || !merged {
+			t.Fatalf("merged %v %v", merged, err)
+		}
+		result, err := fix.Commit(ctx, "Merge and fix")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parents := git(t, f.clone, "rev-list", "--parents", "-n", "1", result); parents != result+" "+f.head+" "+f.base {
+			t.Fatalf("not baum's merge of head and base: %s", parents)
+		}
+		if got := git(t, f.clone, "show", result+":b.txt"); got != "fix" {
+			t.Fatalf("b.txt %q", got)
+		}
+		if got := git(t, f.clone, "log", "-1", "--format=%s", result); got != "Merge and fix" {
+			t.Fatalf("message %q", got)
+		}
+		changes := changesByPath(t, fix, result)
+		if len(changes) != 2 || addedText(changes["a.txt"]) != "feature and main" || addedText(changes["b.txt"]) != "fix" {
+			t.Fatalf("changes %+v", changes)
+		}
+	})
+	t.Run("merge left uncommitted", func(t *testing.T) {
+		f := newFixFixture(t)
+		ctx := context.Background()
+		fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = fix.Close() }()
+		cmd := exec.Command("git", "merge", "origin/main")
+		cmd.Dir = fix.Dir()
+		_ = cmd.Run()
+		write(t, fix.Dir(), "a.txt", "resolved\n", 0o644)
+		result, err := fix.Commit(ctx, "Merge")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parents := git(t, f.clone, "rev-list", "--parents", "-n", "1", result); parents != result+" "+f.head+" "+f.base {
+			t.Fatalf("not a merge of head and base: %s", parents)
+		}
+	})
+	t.Run("commits on the head", func(t *testing.T) {
+		f := newFixFixture(t)
+		ctx := context.Background()
+		fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = fix.Close() }()
+		write(t, fix.Dir(), "b.txt", "one\n", 0o644)
+		commit(t, fix.Dir(), "agent one")
+		write(t, fix.Dir(), "c.txt", "two\n", 0o644)
+		commit(t, fix.Dir(), "agent two")
+		// A branch the agent made and left is of no account.
+		git(t, fix.Dir(), "branch", "scratch", "origin/main")
+		result, err := fix.Commit(ctx, "Fix")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parents := git(t, f.clone, "rev-list", "--parents", "-n", "1", result); parents != result+" "+f.head {
+			t.Fatalf("not one commit on the head: %s", parents)
+		}
+		if files := git(t, f.clone, "diff-tree", "--no-commit-id", "--name-only", "-r", f.head, result); files != "b.txt\nc.txt" {
+			t.Fatalf("files %q", files)
+		}
+	})
+	t.Run("reset to another history", func(t *testing.T) {
+		f := newFixFixture(t)
+		ctx := context.Background()
+		fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = fix.Close() }()
+		// The agent resets its branch to the head's parent and changes
+		// nothing in the files: baum's commit still sits on the head.
+		git(t, fix.Dir(), "reset", "--soft", "HEAD~1")
+		if head, err := fix.Commit(ctx, "Fix"); err != nil || head != f.head {
+			t.Fatalf("commit %s %v, want the head and nothing made", head, err)
+		}
+	})
+}
+
+// Nothing the agent writes in its repository or the checkout runs when baum
+// reads the result, commits it and pushes it.
+func TestFixRunsNothingTheAgentWrote(t *testing.T) {
+	f := newFixFixture(t)
+	ctx := context.Background()
+	fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	marker := filepath.Join(t.TempDir(), "ran")
+	payload := "#!/bin/sh\necho \"$0\" >> '" + marker + "'\nexit 0\n"
+	hooks := filepath.Join(fix.GitDir(), "hooks")
+	for _, hook := range []string{"pre-commit", "commit-msg", "post-commit", "pre-push", "post-checkout", "reference-transaction", "post-index-change", "pre-auto-gc"} {
+		write(t, hooks, hook, payload, 0o755)
+	}
+	write(t, t.TempDir(), "x", "", 0o644)
+	script := filepath.Join(t.TempDir(), "evil.sh")
+	write(t, filepath.Dir(script), "evil.sh", payload, 0o755)
+	agentConfig := strings.Join([]string{
+		"[core]", "\tfsmonitor = " + script, "\thooksPath = " + hooks, "\tsshCommand = " + script, "\tpager = " + script,
+		"[filter \"evil\"]", "\tclean = " + script, "\tsmudge = " + script, "\tprocess = " + script, "\trequired = true",
+		"[diff \"evil\"]", "\ttextconv = " + script, "\tcommand = " + script,
+		"[merge \"evil\"]", "\tdriver = " + script,
+		"[gpg]", "\tprogram = " + script,
+		"[credential]", "\thelper = !" + script,
+		"[include]", "\tpath = " + filepath.Join(fix.GitDir(), "more"),
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(fix.GitDir(), "config"), []byte(agentConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write(t, fix.GitDir(), "info/attributes", "* filter=evil diff=evil merge=evil\n", 0o644)
+	write(t, fix.Dir(), ".gitattributes", "* filter=evil diff=evil merge=evil\n", 0o644)
+	write(t, fix.Dir(), "b.txt", "fix\n", 0o644)
+	// The agent points the checkout's .git file elsewhere and plants refs.
+	write(t, fix.Dir(), ".git", "gitdir: "+f.clone+"/.git\n", 0o644)
+	write(t, fix.GitDir(), "refs/heads/feature", f.base+"\n", 0o644)
+
+	if _, err := fix.Merged(ctx); err != nil {
+		t.Fatal(err)
+	}
+	result, err := fix.Commit(ctx, "Fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fix.Changes(ctx, result); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := fix.Descends(ctx, result); !ok || err != nil {
+		t.Fatalf("descends %v %v", ok, err)
+	}
+	if err := fix.Push(ctx, result); err != nil {
+		t.Fatal(err)
+	}
+	if ran := readFile(t, marker); ran != "<absent>" {
+		t.Fatalf("something the agent wrote ran:\n%s", ran)
+	}
+	if got := git(t, f.remote, "show", "refs/heads/feature:b.txt"); got != "fix" {
+		t.Fatalf("pushed b.txt %q", got)
+	}
+	// The planted configuration is live: git run with the agent's repository
+	// as its git directory would have run it.
+	write(t, fix.Dir(), "b.txt", "again\n", 0o644)
+	control := exec.Command("git", "--git-dir="+fix.GitDir(), "--work-tree="+fix.Dir(), "add", "b.txt")
+	control.Dir = fix.Dir()
+	_ = control.Run()
+	if readFile(t, marker) == "<absent>" {
+		t.Fatal("the planted configuration does not run even in the agent's repository; the test proves nothing")
+	}
+}
+
+func TestAgentHEADReadsFilesOnly(t *testing.T) {
+	const a, b = "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+	dir := t.TempDir()
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"detached", map[string]string{"HEAD": a + "\n"}, a},
+		{"loose", map[string]string{"HEAD": "ref: refs/heads/x\n", "refs/heads/x": b + "\n"}, b},
+		{"packed", map[string]string{"HEAD": "ref: refs/heads/x\n", "packed-refs": "# pack-refs\n" + a + " refs/heads/y\n" + b + " refs/heads/x\n"}, b},
+		{"nested", map[string]string{"HEAD": "ref: refs/heads/x\n", "refs/heads/x": "ref: refs/heads/y\n", "refs/heads/y": a}, a},
+		{"loop", map[string]string{"HEAD": "ref: refs/heads/x\n", "refs/heads/x": "ref: refs/heads/x\n"}, ""},
+		{"outside refs", map[string]string{"HEAD": "ref: ../../etc/passwd\n"}, ""},
+		{"garbage", map[string]string{"HEAD": "nonsense"}, ""},
+		{"missing", map[string]string{}, ""},
+	}
+	for i, c := range cases {
+		gitDir := filepath.Join(dir, strconv.Itoa(i))
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, content := range c.files {
+			write(t, gitDir, name, content, 0o644)
+		}
+		if got := agentHEAD(gitDir); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	// A symbolic link is not followed.
+	linked := filepath.Join(dir, "linked")
+	write(t, linked, "target", a+"\n", 0o644)
+	if err := os.Symlink(filepath.Join(linked, "target"), filepath.Join(linked, "HEAD")); err != nil {
+		t.Skip(err)
+	}
+	if got := agentHEAD(linked); got != "" {
+		t.Errorf("symbolic link followed: %q", got)
+	}
 }

@@ -60,7 +60,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	cfg, e := l.resolveFix(ctx)
+	cfg, _, e := l.resolveFix(ctx)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -193,7 +193,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolveFix(ctx)
+	cfg, network, e := l.resolveFix(ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -295,7 +295,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
 		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: selected.Backend.Name(), Model: selected.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript, Prompts: overrides, Logger: jobLogger(ctx, l.Log, p),
+		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Network: network, Transcript: transcript, Prompts: overrides, Logger: jobLogger(ctx, l.Log, p),
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
 	var cost *float64

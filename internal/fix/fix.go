@@ -5,15 +5,19 @@
 // review thread the agent addressed, with text it composes itself, and
 // resolves the thread (see threads.go).
 //
-// The agent gets write access to that checkout only, never git credentials
-// or the network (see agent.Fixer). baum itself fetches the branch, starts
-// the merge of the base branch for a conflict, commits what the agent left
-// (with no hook running), refuses a result that does not descend from the
-// head the fix was confirmed for or that adds a credential or a nested
-// repository (see guard.go), and pushes with a plain, never forced, git push
-// using the user's own git credentials for the clone's remote. The
-// checkout is a linked worktree of the registered clone under baum's cache
-// directory, removed when the fix ends however it ends.
+// The agent runs commands in its backend's sandbox (see agent.Fixer): it may
+// write to the checkout, a git repository of its own with the base branch as
+// origin/<base>, and a scratch directory, reach the network when the
+// fix_network preference allows it, and never gets git credentials. baum
+// itself fetches the branch and the base, starts the merge of the base
+// branch for a conflict, makes its own commit of the files the agent left (a
+// merge commit when the agent's result merges the base; no hook, and nothing
+// from the agent's repository, runs), refuses a result that does not descend
+// from the head the fix was confirmed for or that adds a credential, a
+// nested repository or a conflict marker (see guard.go), and pushes with a
+// plain, never forced, git push using the user's own git credentials for the
+// clone's remote. Everything lives in a directory under baum's cache
+// directory, removed when the fix ends however it ends (gitlocal.Fix).
 package fix
 
 import (
@@ -128,6 +132,9 @@ type Options struct {
 	// Env are the user's agent variables for the git commands of the fix
 	// (gitlocal.FixOptions.Env).
 	Env []string
+	// Network lets the agent's commands reach the network
+	// (agent.Request.Network): the fix_network preference, on by default.
+	Network bool
 	// Prompts replace the built-in fix prompts (prompt.FixWith); nil keeps
 	// them. The texts must already be validated.
 	Prompts prompt.Overrides
@@ -206,11 +213,9 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	}
 	defer func() { _ = repo.Close() }()
 	progress("fetching")
-	base := ""
-	if o.Conflicts {
-		base = o.BaseRef
-	}
-	checkout, err := repo.StartFix(ctx, gitlocal.FixOptions{Dir: dir, ID: o.ID, HeadRef: o.HeadRef, HeadSHA: o.HeadSHA, BaseRef: base, Env: o.Env})
+	// Every fix fetches the base branch: the agent sees it as origin/<base>,
+	// since CI on pull_request builds the merge with it.
+	checkout, err := repo.StartFix(ctx, gitlocal.FixOptions{Dir: dir, ID: o.ID, HeadRef: o.HeadRef, HeadSHA: o.HeadSHA, BaseRef: o.BaseRef, Env: o.Env})
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -232,11 +237,10 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		}
 		return out, fail(ReasonSigning, fmt.Errorf("git could not sign a commit, so the agent did not run: %w", err))
 	}
-	message := commitMessage(o)
 	var conflicts []string
 	if o.Conflicts {
 		progress("merging")
-		if conflicts, err = checkout.Merge(ctx, message); err != nil {
+		if conflicts, err = checkout.Merge(ctx, commitMessage(o, true)); err != nil {
 			if ctx.Err() != nil {
 				return out, ctx.Err()
 			}
@@ -250,7 +254,7 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		if err := os.Mkdir(scratch, 0o700); err != nil {
 			return out, fail(ReasonGit, err)
 		}
-		text, tag, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence, Threads: o.Threads, Chat: o.Chat, Prompts: o.Prompts}, o.Conflicts, o.Checks)
+		text, tag, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence, Threads: o.Threads, Chat: o.Chat, Prompts: o.Prompts, Network: o.Network, Scratch: scratch}, o.Conflicts, o.Checks)
 		if err != nil {
 			return out, fail(ReasonBackend, err)
 		}
@@ -261,7 +265,8 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		runCtx, cancel := context.WithTimeout(ctx, wall)
 		// The agent's steps go to the transcript, not the log.
 		started := time.Now()
-		result, err := o.Agent.Fix(runCtx, agent.Request{Directory: checkout.Dir(), Scratch: scratch, Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
+		result, err := o.Agent.Fix(runCtx, agent.Request{Directory: checkout.Dir(), Scratch: scratch, GitDir: checkout.GitDir(), Network: o.Network, Logger: o.Logger,
+			Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
 		timedOut := runCtx.Err() != nil
 		cancel()
 		if o.Logger != nil {
@@ -307,7 +312,14 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	if left := markers(checkout.Dir(), conflicts); len(left) > 0 {
 		return out, fail(ReasonConflictsRemain, fmt.Errorf("conflict markers remain in %s", strings.Join(left, ", ")))
 	}
-	head, err := checkout.Commit(ctx, message)
+	merged, err := checkout.Merged(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
+		return out, fail(ReasonGit, err)
+	}
+	head, err := checkout.Commit(ctx, commitMessage(o, merged))
 	if err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
@@ -427,7 +439,10 @@ func pushesTo(ctx context.Context, repo *gitlocal.Repo, remote string, names fun
 	return true
 }
 
-func commitMessage(o Options) string {
+// commitMessage is the message of baum's commit; merged says it merges the
+// base branch, which a conflicts fix always does and any other fix does when
+// its agent merged the base.
+func commitMessage(o Options, merged bool) string {
 	agentName := o.Backend
 	if o.Model != "" {
 		agentName += ", " + o.Model
@@ -435,6 +450,8 @@ func commitMessage(o Options) string {
 	var done []string
 	if o.Conflicts {
 		done = append(done, "Conflicts resolved")
+	} else if merged {
+		done = append(done, "base branch merged")
 	}
 	if o.Checks {
 		done = append(done, "failing checks fixed")
@@ -454,7 +471,7 @@ func commitMessage(o Options) string {
 	}
 	what = strings.ToUpper(what[:1]) + what[1:]
 	switch {
-	case o.Conflicts:
+	case o.Conflicts || merged:
 		return fmt.Sprintf("Merge branch '%s' into %s\n\n%s by an agent (%s) through baum, on request.", o.BaseRef, o.HeadRef, what, agentName)
 	case o.hasChat():
 		return fmt.Sprintf("Make the change from a conversation\n\nChanged by an agent (%s) through baum, on request.", agentName)
@@ -483,8 +500,7 @@ func markers(dir string, paths []string) []string {
 		scanner := bufio.NewScanner(file)
 		scanner.Buffer(make([]byte, 64<<10), 8<<20)
 		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.HasPrefix(line, "<<<<<<< ") || strings.HasPrefix(line, ">>>>>>> ") || line == "<<<<<<<" || line == ">>>>>>>" {
+			if marker(scanner.Text()) {
 				left = append(left, path)
 				break
 			}

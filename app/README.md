@@ -1697,7 +1697,9 @@ and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
 api/settings`. A chosen fix agent applies in every repository. A
 **Network access** switch (on by default) is sent alone as `fix_network` and
 reported as a plain boolean; it applies with or without a chosen fix agent and
-is kept when the agent returns to the reviews'. **Data
+is kept when the agent returns to the reviews'. On, the fix agent's commands
+can install dependencies and fetch what builds and tests need; off, its
+sandbox allows no connection, so it can't install dependencies. **Data
 extraction** has the same Agent and Model rows, its agent "Same as reviews
 (agent)" by default.
 

@@ -25,6 +25,10 @@ type task struct {
 	Chat *ChatContext
 	// Prompts replace the built-in fix prompts.
 	Prompts prompt.Overrides
+	// Network says the agent's commands can reach the network; Scratch is
+	// its scratch directory.
+	Network bool
+	Scratch string
 }
 
 // newFence gives each prompt its random tag; tests pin it.
@@ -47,6 +51,7 @@ func buildPrompt(ctx context.Context, t task, conflicts, checks bool) (string, s
 	var b strings.Builder
 	text, _ := prompt.FixWith(t.Prompts, conflicts, checks, len(t.Threads) > 0, t.Chat != nil && len(t.Chat.Turns) > 0)
 	b.WriteString(text)
+	b.WriteString(environment(t))
 	b.WriteString("\n## Data\n\n" + fence.Notice("the repository, GitHub, the checks or reviewers") + "\n")
 	block := func(heading, text string) error {
 		fenced, err := fence.Masked(ctx, redactor, text)
@@ -114,4 +119,24 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// environment is baum's own description of where the agent works, after the
+// instructions, which an override of them cannot drop. Branch names stay in
+// the data: they are the pull request's.
+func environment(t task) string {
+	var b strings.Builder
+	b.WriteString("\n## Your environment\n\n")
+	b.WriteString("- The checkout is a git repository of its own. The pull request's head branch (named in the data below) is checked out at the head, and its base branch is `origin/` followed by the base branch's name. It has no remote to push to and no credentials.\n")
+	b.WriteString("- When you can run commands, they run in a sandbox that writes only to the checkout, its git repository and the scratch directory")
+	if t.Scratch != "" {
+		fmt.Fprintf(&b, " `%s`, which also holds the package and build caches", t.Scratch)
+	}
+	b.WriteString(". A write anywhere else fails, or may appear to succeed and leave nothing behind. Files where tools keep credentials cannot be read.\n")
+	if t.Network {
+		b.WriteString("- Commands can reach the network, to install dependencies and fetch what builds and tests need.\n")
+	} else {
+		b.WriteString("- The network is off: commands cannot install dependencies or fetch anything. Use what the checkout and its caches already have.\n")
+	}
+	return b.String()
 }

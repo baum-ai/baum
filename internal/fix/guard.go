@@ -24,6 +24,8 @@ import (
 //   - A gitlink: git add records a repository the agent made in the checkout
 //     as a commit of another repository, which the push would carry without
 //     its content (ReasonNestedRepository).
+//   - A conflict marker line the fix adds (ReasonConflictsRemain): a merge
+//     the agent made itself and left unresolved, in any file.
 //   - A workflow or action change, in a fix whose prompt held review
 //     comments or a conversation, other people's or an agent's words: a
 //     workflow runs with the repository's secrets as soon as it is pushed
@@ -82,6 +84,9 @@ func guard(ctx context.Context, checkout *gitlocal.Fix, head string, untrusted b
 	}
 	if len(unchecked) > 0 {
 		return fail(ReasonCredentialAdded, fmt.Errorf("the agent's change has files too large to check for credentials (%s), which baum never pushes", named(ctx, redactor, unchecked)))
+	}
+	if left := addedMarkers(changes); len(left) > 0 {
+		return fail(ReasonConflictsRemain, fmt.Errorf("conflict markers remain in %s", named(ctx, redactor, left)))
 	}
 	var links, flows []string
 	for _, change := range changes {
@@ -166,4 +171,33 @@ func named(ctx context.Context, redactor *bundle.Redactor, paths []string) strin
 		return fmt.Sprintf("%d files", len(paths))
 	}
 	return masked
+}
+
+// addedMarkers lists the changed text files with a conflict marker line among
+// the lines the fix added.
+func addedMarkers(changes []gitlocal.Change) []string {
+	var left []string
+	for _, change := range changes {
+		for _, r := range change.Added {
+			if markerLines(change.Content[r[0]:r[1]]) {
+				left = append(left, change.Path)
+				break
+			}
+		}
+	}
+	return left
+}
+
+// markerLines reports whether text has a conflict marker line.
+func markerLines(text string) bool {
+	for line := range strings.SplitSeq(text, "\n") {
+		if marker(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func marker(line string) bool {
+	return strings.HasPrefix(line, "<<<<<<< ") || strings.HasPrefix(line, ">>>>>>> ") || line == "<<<<<<<" || line == ">>>>>>>"
 }
