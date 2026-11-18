@@ -1269,15 +1269,18 @@ written against the kit's documented API; `escape_probe`, which tries every
 way out of its frame and posts what each did to the page as `{probe:
 "escape_probe", mode, face, results}`; and `widget_owners` (tile `newer_kit`),
 written for a kit major this version lacks and so unavailable.
-`tileviewtest.AddBrowserTiles` adds those and a tile of the escape probe's
-type for each of its other modes (`escape_spoof`, `escape_flood`,
+`tileviewtest.CustomTiles` and `EscapeProbeTiles` give those and a tile of
+the escape probe's type for each of its other modes (`escape_spoof`, `escape_flood`,
 `escape_leave_daemon`, `escape_leave_outside`, `escape_leave_early`,
 `escape_hello_again`, `escape_focus`, `escape_busy`: hostile messages, a
 flood, navigating itself to the daemon or another origin after or before it
-drew, a second hello, taking the keyboard repeatedly, a busy loop). The browser fixture serves them in every version of acme/demo#7's
-review when it is started with `BAUM_APP_CUSTOM_TILES=1`, as the custom tile
-suite (`app/custom-tile-tests`) and the development browser suite start it;
-the main suite and its screenshots do not see them.
+drew, a second hello, taking the keyboard repeatedly, a busy loop). The browser fixture stores every version of acme/demo#7's
+review as a `baum.review/2` document with them, on the section of its first
+hunk (and #13 with its composition's library and authored tiles), when it is
+started with `BAUM_APP_CUSTOM_TILES=1`, as the custom tile suite
+(`app/custom-tile-tests`) and the development browser suite start it; the
+main suite and its screenshots keep `baum.review/1` versions and do not see
+them.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,

@@ -6,6 +6,8 @@ import {
   frameBox,
   frameReady,
   open,
+  railRow,
+  sectionRow,
   servePatch,
   showOnly,
   SHOTS,
@@ -36,9 +38,7 @@ for (const width of WIDTHS)
       await page.emulateMedia({ colorScheme: scheme });
       await open(page, detail("widget_health"));
       // The link to the tile opens How it works on its section.
-      await expect(
-        page.getByRole("tablist", { name: "Review" }).getByRole("tab", { name: "How it works" }),
-      ).toHaveAttribute("aria-selected", "true");
+      await expect(sectionRow(page)).toHaveCount(1);
       const tile = tileOn(page, "widget_health");
       await expect(tile).toBeVisible();
       await frameReady(page, "widget_health");
@@ -105,7 +105,7 @@ test("the frame follows its height and the app's theme live", async ({ page }) =
   await expect(frameBox(page, "widget_health")).toHaveAttribute("data-frame-state", "ready");
 });
 
-test("a citation in the frame opens the cited code in the Code tab", async ({ page }) => {
+test("a citation in the frame opens the cited code in Files changed", async ({ page }) => {
   await showOnly(page, ["widget_health"]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, detail("widget_health"));
@@ -115,9 +115,7 @@ test("a citation in the frame opens the cited code in the Code tab", async ({ pa
   await expect(chip).toBeVisible();
   await chip.click();
   await expect(page).toHaveURL(/tile=code/);
-  await expect(
-    page.getByRole("tablist", { name: "Review" }).getByRole("tab", { name: "Code" }),
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(railRow(page, "Files changed")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("a citation of another tile shows that tile", async ({ page }) => {
