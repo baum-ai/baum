@@ -6274,6 +6274,9 @@ a.upnext-done-text:hover {
 .upnext-check-running {
   color: var(--status-caution);
 }
+.upnext-check-cancelled {
+  color: var(--text-secondary);
+}
 .upnext-check-passing {
   color: var(--status-positive);
 }

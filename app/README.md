@@ -404,9 +404,11 @@ checks, failing and running first" with a **See all on GitHub** link.
 The same bordered rows align the icon, name and status, and actions in the
 review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
-red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
-else green "9/9 passing", with the count by state (`checksSummary`) as its
-tooltip. A failing check with a
+red "1/9 failing" while any fails, else red "1/9 cancelled" while any was
+cancelled (GitHub counts it as failing), else amber "2/9 running" while any
+runs, else green "9/9 passing", with the count by state (`checksSummary`) as its
+tooltip. Cancelled checks list right after the failing ones and stay unfolded
+with them. A failing or cancelled check with a
 `job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
 then shows "Re-running on GitHub"; a refusal is shown under the check. The
