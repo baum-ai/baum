@@ -337,6 +337,9 @@ export type Automatic = {
   enabled: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
   pull_requests?: "all" | "both" | "authored" | "requested";
+  /** What a push to a reviewed pull request does; absent from older daemons,
+   *  which review every push. */
+  updates?: "always" | "on_open" | "on_change";
   repositories: AutomaticStatus[];
 };
 const jobReasons: Record<string, string> = {
@@ -378,6 +381,8 @@ const jobReasons: Record<string, string> = {
   head_changed: "New commits arrived on the branch, so the fix stopped. Try again on the new head.",
   no_remote: "The local clone has no remote for this repository to push to.",
   git: "A git command in the temporary checkout failed.",
+  no_significant_change:
+    "The new commits don't change what the review says, so baum kept the existing review.",
   no_changes: "The agent changed nothing, so there was nothing to push.",
   conflicts_remain: "The agent left conflict markers in a file, so nothing was pushed.",
   history_rewritten:
@@ -403,6 +408,13 @@ export function changedNothing(job: Job): boolean {
     job.reason === "no_changes" &&
     (job.state === "completed" || job.state === "failed")
   );
+}
+/** A review that ended by keeping the saved review: the agent read what
+ *  changed since it and found nothing that would make a difference. It is an
+ *  outcome to read, not an error and not a new review; the agent's one line
+ *  is in `summary`. */
+export function keptReview(job: Job): boolean {
+  return !job.kind && job.reason === "no_significant_change" && job.state === "completed";
 }
 /** The first paragraph of what a fix's agent said, which says why when it
  *  changed nothing; empty without a summary. */

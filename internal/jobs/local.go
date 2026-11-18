@@ -405,6 +405,16 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	var guarded generate.Assembler = headAssembler{Assembler: assembler, head: p.HeadSHA}
 	var published generate.Versions = identityVersions{versions, manager}
 	key := store.Key{Repository: p.Repository, Number: p.PR}
+	// An automatic review of a new head, with reviews set to follow only
+	// significant changes, first asks whether the saved review still holds.
+	if p.Triage && p.Kind == "" && p.Group == "" {
+		if prefs, err := l.Registry.Preferences(ctx); err == nil && prefs.ReviewUpdates() == repos.UpdatesOnChange {
+			progress(Progress{Phase: "checking", Backend: selected.Backend.Name(), Model: selected.Model})
+			if e := triage(ctx, triageInput{prefs: prefs, versions: versions, key: key, clone: clone, p: p, backend: selected.Backend}); e != nil {
+				return nil, e
+			}
+		}
+	}
 	var group *generate.Group
 	if p.Group != "" {
 		// A group's members carry their confirmed heads, which the group

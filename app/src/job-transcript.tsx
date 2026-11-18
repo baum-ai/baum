@@ -11,6 +11,7 @@ import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
   changedNothing,
+  keptReview,
   jobName,
   isActiveJob,
   jobReasonText,
@@ -309,13 +310,15 @@ function JobHeader({ job }: { job: Job }) {
         </p>
       ) : (
         <p role="status" className="local-job-phase">
-          {changedNothing(job) ? null : job.state === "completed" ? (
+          {changedNothing(job) || keptReview(job) ? null : job.state === "completed" ? (
             <CircleCheckIcon size={16} className="local-job-pushed" />
           ) : job.state === "failed" ? (
             <CircleCrossIcon size={16} className="local-tool-failed" />
           ) : null}
           {changedNothing(job) ? (
             `${name} changed nothing, so nothing was pushed`
+          ) : keptReview(job) ? (
+            "Review still applies"
           ) : job.state === "completed" && job.commit ? (
             <>
               {name}: pushed{" "}

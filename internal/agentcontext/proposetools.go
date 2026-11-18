@@ -225,10 +225,11 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name:        "propose_reviews",
-		Description: "Proposes a change to the Settings page's Reviews section: whether automatic reviews are on, for which pull requests (both: the person's own and those they were asked to review; authored; requested; all), and the harness reviews use (backend: auto, claude or codex), its model (empty for the harness's default) and effort. Only the fields given change. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
+		Description: "Proposes a change to the Settings page's Reviews section: whether automatic reviews are on, how they follow later pushes (updates: always reviews every push; on_open reviews once; on_change reviews once, then again only when the agent finds a push would change the review), for which pull requests (both: the person's own and those they were asked to review; authored; requested; all), and the harness reviews use (backend: auto, claude or codex), its model (empty for the harness's default) and effort. Only the fields given change. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"enabled":{"type":"boolean","description":"Automatic reviews on or off."},` +
 			`"pull_requests":{"type":"string","maxLength":32,"description":"both, authored, requested or all."},` +
+			`"updates":{"type":"string","maxLength":32,"description":"always, on_open or on_change."},` +
 			`"backend":{"type":"string","maxLength":32,"description":"auto, claude or codex."},` +
 			`"model":{"type":"string","maxLength":256},` +
 			`"effort":` + effort + `},` +
@@ -238,6 +239,7 @@ func proposeTools() []Tool {
 			var a struct {
 				Enabled      *bool   `json:"enabled,omitempty"`
 				PullRequests *string `json:"pull_requests,omitempty"`
+				Updates      *string `json:"updates,omitempty"`
 				Backend      *string `json:"backend,omitempty"`
 				Model        *string `json:"model,omitempty"`
 				Effort       *string `json:"effort,omitempty"`

@@ -86,6 +86,9 @@ func TestJobDoneIgnoresOtherStatesAndUnscoredReviews(t *testing.T) {
 	unchanged := job("completed", "no_changes", false)
 	unchanged.Kind = jobs.KindFix
 	s.JobDone(context.Background(), unchanged)
+	// An automatic review that found the saved review still holds wrote
+	// nothing new: not news either.
+	s.JobDone(context.Background(), job("completed", jobs.ReasonNoSignificantChange, true))
 	if len(*got) != 0 {
 		t.Fatalf("%v", *got)
 	}

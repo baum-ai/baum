@@ -4877,6 +4877,23 @@ it and `Queue.SubmitAutomatic` decides each job.
   repository is enabled unless its `automatic` is `false`. Disabling a
   repository (or the switch), or unregistering it,
   forgets its state.
+- **Updates** (`Preferences.Updates`, `updates` in `GET`/`PUT
+  /api/automatic`: `always`, stored empty and the default; `on_open`;
+  `on_change`) say how automatic reviews follow a pull request after its first
+  saved review. With `on_open`, `submit` treats a pending head of a pull
+  request whose latest saved version (`Reviewed`) is at any head as done,
+  without a job. With `on_change`, the job is queued as usual and the queue
+  sets the unstored `Prepared.Triage` on every automatic job it executes;
+  `Local.Execute` then reads the preferences and, when a saved version exists
+  at another head, makes one `agent.Completer` call with the review's outline
+  (overview, section summaries, active risks) and `gitlocal.Repo.Diff` from
+  the saved head to the new one, at most 200 KiB. A `regenerate: false`
+  answer ends the job `completed` with reason `no_significant_change` and the
+  agent's reason as its `summary` (`jobs.UnchangedError`); no version is
+  written and `notices` publishes nothing. An empty diff is unchanged without
+  a call. Anything triage cannot decide (no Completer, no saved version, a
+  diff too large or unreadable, a failed call or reply) writes the review.
+  Off is still the master switch (`automatic`).
 - **Turning off.** `Scheduler.Gate`, installed with
   `Queue.SetAutomaticGate`, reads the current preferences and repository
   settings from the registry. The queue asks it under its mutex when an

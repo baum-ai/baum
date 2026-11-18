@@ -255,11 +255,39 @@ export function describeAgent(agent: Agent) {
 }
 
 export type PullRequests = "all" | "both" | "authored" | "requested";
+/** What a push to a reviewed pull request does. */
+export type Updates = "always" | "on_open" | "on_change";
+/** How automatic reviews are set in one choice: off, or what a push does. */
+export type ReviewMode = "never" | Updates;
+export const reviewModes: { id: ReviewMode; label: string; detail: string }[] = [
+  { id: "never", label: "Never", detail: "baum reviews a pull request only when you ask." },
+  {
+    id: "on_open",
+    label: "On open",
+    detail: "baum reviews a pull request once on its own. Later pushes don't get a new review.",
+  },
+  {
+    id: "on_change",
+    label: "On change",
+    detail:
+      "baum reviews once, then checks each push and writes a new review only when the change would alter it.",
+  },
+  { id: "always", label: "Always", detail: "baum writes a new review on every push." },
+];
+/** The choice that on/off and what a push does make; older daemons send no
+ *  `updates`, which reviews every push. */
+export const reviewMode = (automatic: boolean, updates?: Updates): ReviewMode =>
+  automatic ? (updates ?? "always") : "never";
+/** The settings a choice sets: Never leaves what a push does as it was. */
+export const modeSettings = (mode: ReviewMode): { automatic: boolean; updates?: Updates } =>
+  mode === "never" ? { automatic: false } : { automatic: true, updates: mode };
 export type ReviewSettings = {
   backend: string;
   model: string;
   effort?: string;
   automatic: boolean;
+  /** Absent from older daemons, which review every push. */
+  updates?: Updates;
   pull_requests: PullRequests;
   /** The fixes' own agent, model and effort; an empty agent follows the
    *  reviews. */
@@ -359,6 +387,7 @@ export function storedReviews(settings: ReviewSettings): ReviewSettings {
     model: settings.model,
     ...(settings.effort !== undefined ? { effort: settings.effort } : {}),
     automatic: settings.automatic,
+    ...(settings.updates !== undefined ? { updates: settings.updates } : {}),
     pull_requests: settings.pull_requests,
     fix_backend: fix,
     fix_model: fix ? (settings.fix_model ?? "") : "",
