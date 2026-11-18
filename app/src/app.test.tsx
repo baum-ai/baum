@@ -2940,6 +2940,25 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
   await choose("Report a problem");
   expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
 });
+it("keeps the page's keys off the page behind the shortcuts sheet", async () => {
+  entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  history.replaceState(null, "", "/s/test-ns/?repository=acme%2Fdemo&pr=42");
+  await act(async () => root.render(<App />));
+  await press("?");
+  await act(async () => (document.activeElement as HTMLElement).click());
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
+  // With the focus outside the sheet, as after a click on its padding.
+  (document.activeElement as HTMLElement | null)?.blur();
+  await press("u");
+  expect(location.search).toContain("pr=42");
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
+});
 it("goes back to the inbox from a pull request page with u or Escape, keeping the filter", async () => {
   entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];
   const page = "/s/test-ns/?filter=requested&repository=acme%2Fdemo&pr=42";

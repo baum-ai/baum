@@ -1210,9 +1210,22 @@ export function ShortcutsSheet({
         spellCheck={false}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => {
+          // Back to the list, to scroll the matches.
+          if (event.key !== "ArrowDown") return;
+          event.preventDefault();
+          body.current?.focus();
+        }}
         className="go-to-input"
       />
-      <div ref={body} id="shortcuts-list" tabIndex={-1} className="shortcuts-body">
+      <div
+        ref={body}
+        id="shortcuts-list"
+        tabIndex={-1}
+        role="region"
+        aria-labelledby="shortcuts-title"
+        className="shortcuts-body"
+      >
         {ordered.length === 0 ? (
           <p className="go-to-empty">Nothing matches “{query}”.</p>
         ) : (

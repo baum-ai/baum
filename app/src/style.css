@@ -5344,7 +5344,7 @@ dialog.go-to {
 }
 /* The shortcuts sheet: Go to's dialog, with a title over its search field
    and a list that scrolls below them, read more often than searched. */
-dialog.shortcuts-sheet {
+dialog.shortcuts-sheet[open] {
   display: flex;
   flex-direction: column;
   max-height: min(40rem, 76vh);
@@ -5379,9 +5379,6 @@ dialog.shortcuts-sheet {
   gap: 1rem;
   padding: 0.4rem 0.65rem;
   border-radius: var(--radius-sm);
-}
-.shortcuts-list > div:hover {
-  background: var(--surface-hover);
 }
 .shortcuts-list dt {
   display: flex;

@@ -1531,11 +1531,12 @@ function Workspace({ url }: { url: UrlState }) {
         if (shortcuts) setShortcuts(false);
         else if (openHelp.current) openHelp.current();
         else setShortcuts(true);
+      } else if (shortcuts) {
+        // With the sheet open, no page key acts behind it.
       } else if (
         onList &&
         (VIEW_KEYS.previous.includes(event.key) || VIEW_KEYS.next.includes(event.key))
       ) {
-        if (shortcuts) return;
         // One view along, stopping at either end, as the tabs read.
         event.preventDefault();
         const index = tabKeys.indexOf(activeTab);

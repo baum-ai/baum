@@ -679,8 +679,13 @@ it("finds keys in the sheet by what they do or by the key", async () => {
   const seen = vi.fn();
   window.addEventListener("keydown", seen);
   keydown("u");
-  window.removeEventListener("keydown", seen);
   expect(seen).not.toHaveBeenCalled();
+  // A key with a modifier still reaches the app's keys.
+  act(() => {
+    list.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+  });
+  window.removeEventListener("keydown", seen);
+  expect(seen).toHaveBeenCalledTimes(1);
   expect(document.activeElement).toBe(input);
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "merge");
@@ -699,6 +704,10 @@ it("finds keys in the sheet by what they do or by the key", async () => {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   expect(sheet.textContent).toContain("Nothing matches “zzz”.");
+  // ↓ from the field returns to the list.
+  input.focus();
+  expect(keydown("ArrowDown").defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(list);
 });
 
 it("lists the keys of where the sheet was opened first", async () => {
