@@ -3282,7 +3282,7 @@ an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed), the
-review harness and model, the fix agent (`fix_backend`, `fix_model`), data
+review harness and model, the fix agent (`fix_backend`, `fix_model`) and its network access (`fix_network`, on when absent), data
 extraction's (`decisions`: `enabled`, `backend`, `model`), `pull_requests`
 and `agent_env`; a field an older baum saved and this one dropped
 (`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are

@@ -25,6 +25,7 @@ type PreferencesInput struct {
 	FixModel     *string `json:"fix_model,omitempty"`
 	Effort       *string `json:"effort,omitempty"`
 	FixEffort    *string `json:"fix_effort,omitempty"`
+	FixNetwork   *bool   `json:"fix_network,omitempty"`
 	PullRequests *string `json:"pull_requests,omitempty"`
 	// The Claude Code configuration directories of reviews and fixes; empty
 	// goes back to the environment's. The route checks each with
@@ -74,6 +75,10 @@ func EditPreferences(p repos.Preferences, input PreferencesInput) (repos.Prefere
 		if model == "" && next.FixBackend == nil {
 			next.FixModel = nil
 		}
+	}
+	if input.FixNetwork != nil {
+		network := *input.FixNetwork
+		next.FixNetwork = &network
 	}
 	for _, e := range []struct{ input, target **string }{{&input.Effort, &next.Effort}, {&input.FixEffort, &next.FixEffort}} {
 		if *e.input == nil {
