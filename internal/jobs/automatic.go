@@ -18,8 +18,9 @@ const (
 	// TriggerRetry re-runs an automatic job a daemon stop or restart
 	// interrupted, once.
 	TriggerRetry = "retry"
-	// TriggerStackReviewed generates a stack group's review once every
-	// member has a saved review of its current head.
+	// TriggerStackReviewed generated a stack group's combined review once
+	// every member had a saved review of its current head. Stacks have an
+	// overview instead now; jobs an earlier release queued still carry it.
 	TriggerStackReviewed = "stack_reviewed"
 	// TriggerSetup reviews one of the pull requests open when desktop setup
 	// finished (automatic.Scheduler.CatchUp).

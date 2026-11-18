@@ -52,6 +52,7 @@ import {
 } from "./api";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
+import { ListPagination, useListPage } from "./list-pagination";
 import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
@@ -173,6 +174,7 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
 }
 export function Inbox({
   rows,
+  pageScope = "",
   cloneFor,
   selection,
   setSelection,
@@ -188,6 +190,7 @@ export function Inbox({
   bulk,
 }: {
   rows: Entry[];
+  pageScope?: string;
   cloneFor: (entry: Entry) => string;
   selection: Set<string>;
   setSelection: Dispatch<SetStateAction<Set<string>>>;
@@ -223,7 +226,24 @@ export function Inbox({
   const changedRows = useChangedRows(rows);
   // Review groups start collapsed.
   const [expanded, setExpanded] = useState(new Set<string>());
-  const groups = inboxGroups(rows, reviewGroups);
+  // Kept for when the list is drawn again, back from a row's review.
+  const [focusedId, setFocusedId] = useLastRow("pulls", section);
+  const allGroups = inboxGroups(rows, reviewGroups);
+  const rowIDs = allGroups.flatMap((group) => [
+    ...group.groups.map(({ group }) => `group:${group.id}`),
+    ...group.rows.map((entry) => `pr:${rowKey(entry)}`),
+  ]);
+  const pagination = useListPage(pageScope, rowIDs.length, rowIDs.indexOf(focusedId ?? ""));
+  let offset = 0;
+  const groups = allGroups.flatMap((group) => {
+    const grouped = pagination.slice(group.groups, offset);
+    const loose = pagination.slice(group.rows, offset + group.groups.length);
+    const count = group.groups.length + group.rows.length;
+    offset += count;
+    return grouped.length || loose.length
+      ? [{ ...group, count, groups: grouped, rows: loose }]
+      : [];
+  });
   const visible = groups
     .flatMap((group) =>
       collapsed.has(group.id)
@@ -248,8 +268,6 @@ export function Inbox({
           ...group.rows.map((entry) => ({ id: `pr:${rowKey(entry)}`, entry })),
         ],
   );
-  // Kept for when the list is drawn again, back from a row's review.
-  const [focusedId, setFocusedId] = useLastRow("pulls", section);
   // A row that left the list (collapsed, filtered out) is no longer focused.
   const focused = items.find((item) => item.id === focusedId);
   const focusedKey = focused?.id ?? null;
@@ -495,7 +513,7 @@ export function Inbox({
           title={group.heading}
           hint={group.hint}
           tone={group.tone}
-          count={group.rows.length + group.groups.length}
+          count={group.count}
           collapsed={collapsed.has(group.id)}
           toggle={() =>
             setCollapsed((previous) => {
@@ -522,6 +540,14 @@ export function Inbox({
           {group.rows.map((entry) => renderRow(entry, false))}
         </ListSection>
       ))}
+      <ListPagination
+        label="Pull requests pagination"
+        pagination={pagination}
+        onMove={() => {
+          setFocusedId(null);
+          section.current?.scrollIntoView?.({ block: "start" });
+        }}
+      />
       {merging ? (
         <MergeDialog
           key={rowKey(merging)}
@@ -975,7 +1001,7 @@ function GroupRow({
               <NineDots size={14} />
               Generating group review
             </span>
-          ) : group.outdated ? (
+          ) : group.stack ? null : group.outdated ? (
             <span className="inbox-activity">Group review outdated</span>
           ) : group.version_count === 0 ? (
             <span className="inbox-activity">No group review yet</span>

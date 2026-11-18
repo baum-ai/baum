@@ -5559,8 +5559,9 @@ including `no_bots` against the pull request's `author_bot` from discovery.
 
 ### Review groups
 
-`internal/reviewgroups` keeps review groups, named sets of 2 to 8 open pull
-requests of one repository reviewed together, in the shared
+`internal/reviewgroups` keeps review groups, named sets of open pull
+requests of one repository (2 to 8 for a group a person makes, any number
+for a stack group), in the shared
 `app.sqlite` application database in the state directory, not in a clone. Their combined
 reviews are versions keyed by group ID in the same file, so they never collide
 with a member's own versions in its clone's `versions.sqlite`; deleting a
@@ -5576,11 +5577,28 @@ snapshot `localApplication` passes the repository's open pull requests to
 `Store.SyncStacks`. It plans stacks with the hosted platform's rules
 (`stacks.Plan`: pull requests by one author, each based on another's head
 branch, as chains or trees; see `stacks/README.md`) over the live stack groups
-and creates, updates or dissolves stack groups (`stack` true) of 2 to 8
-members. A new stack group is named after its bottom pull request's title
-until its first review names it (below). Pull requests in a person's group,
+and creates, updates or dissolves stack groups (`stack` true) of two or more
+members, with no upper bound. A new stack group is named after its bottom
+pull request's title. Pull requests in a person's group,
 or in a stack group the person deleted, take no part, and a person's rename
 or member change makes a stack group theirs.
+
+A stack group has no combined review. `/api/groups` answers it with no
+versions and an `overview`: the riskiest open member (highest saved
+`summary.risk_score`, read from the review index on each request, the lowest
+in the stack on a tie), whose risk is the group's `risk_score`, and the stack
+summary. `reviewgroups.Summarizer` writes that summary: woken after every
+finished job and every stack sync that changed a group, it compares the open
+members' latest saved review versions in the review index with those the
+stored summary read (`stack_summaries`, one row per stack group), and once
+they differ and at least two are reviewed it reads those reviews (title,
+summary and section titles, never code) and makes one short call through
+`decisionlog.Calls`, which resolves the data extraction backend and cheap
+model and records the call in the decision log's ledger (stage
+`stack_summary`). Failures back off and stop after three tries until the
+reviews change. Automatic generation queues no group review, and a group job
+for a stack group is refused (`ErrStackOverview`); combined versions an
+earlier release wrote for a stack stay stored, unlisted.
 
 A job item names `{clone, group}` with `pr` 0, so pull request scheduling and
 notices, keyed by pull request, never match a group job; the queue's busy and
@@ -6222,9 +6240,10 @@ it and `Queue.SubmitAutomatic` decides each job.
   discovery's handling, so the stack groups are current) and makes the three most
   recently updated eligible open pull requests across them pending with
   trigger `setup`, unless their head is already pending or handled. A pull
-  request in a stack group counts with its group as one, and the group's
-  eligible members are made pending together, so the group's review follows
-  theirs. The pass submits them like any other pending head: a head already
+  request in a stack group of at most eight open pull requests counts with its
+  group as one, and the group's eligible members are made pending together,
+  so the stack's page has their reviews to sum up; a larger stack's members
+  count one by one, so setup never queues dozens of reviews. The pass submits them like any other pending head: a head already
   reviewed is skipped, the switches and a restart's drain apply, and an interrupted run
   is retried once. A repository whose poll fails is left out.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
@@ -6235,28 +6254,17 @@ it and `Queue.SubmitAutomatic` decides each job.
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.
-- **Stack groups.** After the pull requests, each pass looks at the
-  repository's stack groups (`Scheduler.Groups`). Once every member is
-  recorded, eligible and has no pending head, and every member's saved
-  review is of its current head, it queues the group's review (trigger
-  `stack_reviewed`) with those member heads, unless the group's latest
-  version already read every current member at its current head (a merged
-  member alone calls for none). Automatic generation must have handled at
-  least one member's current head (its `done`): a stack reviewed before the
-  baseline, or only by hand, is not caught up. Each set of member heads is
-  submitted once (`done`), with the pull requests' retry rules and triggers:
-  failures to prepare back off and give up after five attempts, an
-  interrupted run is retried once (`retry`), and a job stopped before it
-  started is submitted again (`ready_for_review` after a draft). A
-  member GitHub shows moved on or turned draft before discovery does is
-  retried a minute later. Groups a person made are never generated
-  automatically.
+- **Stack groups.** Automatic generation queues no group review: a stack
+  has an overview instead, whose summary `reviewgroups.Summarizer` writes
+  from the members' automatic reviews (see "Review groups"). The
+  `stack_reviewed` trigger survives only on jobs an earlier release queued.
+  Groups a person made are never generated automatically.
 - **State.** The `state/automatic` document in the application database holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, when the PR started waiting for it
   (`waiting`, kept when a newer head replaces a pending one), last head handled,
-  retried head, last stopped job put back), its stack groups (member heads handled,
-  attempts, retried heads, last stopped job put back, trigger) and its notice. A `paused_until` and
+  retried head, last stopped job put back) and its notice. The `groups` an
+  earlier release kept there for stack reviews are ignored on load. A `paused_until` and
   `paused_cap` an older baum saved for its daily cap are ignored on load, and
   its `daily_cap` notice is dropped. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor

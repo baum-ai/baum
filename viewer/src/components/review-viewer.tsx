@@ -1238,8 +1238,9 @@ function ReviewWorkspace<F extends ReviewFile>({
         else navigateFromSummary(destination);
       },
     );
-  const hostSteps =
-    places && PLACE_KINDS.has(selection.kind) ? places.steps(selection, hostContext) : null;
+  // A selection the host owns steps only as the host says, even with no steps.
+  const hostOwned = Boolean(places) && PLACE_KINDS.has(selection.kind);
+  const hostSteps = places && hostOwned ? places.steps(selection, hostContext) : null;
   const hostFolds = places?.railFolded?.(selection) ?? false;
   if (railChoice && railChoice.answer !== hostFolds) setRailChoice(null);
   const railFolded =
@@ -1488,13 +1489,13 @@ function ReviewWorkspace<F extends ReviewFile>({
         : viewedId
           ? steps.findIndex((step) => step.key === viewedId)
           : -1;
-  const previousStep = hostSteps
-    ? hostSteps.previous
+  const previousStep = hostOwned
+    ? (hostSteps?.previous ?? null)
     : stepAt < 0
       ? null
       : (steps[Math.ceil(stepAt) - 1] ?? null);
-  const nextStep = hostSteps
-    ? hostSteps.next
+  const nextStep = hostOwned
+    ? (hostSteps?.next ?? null)
     : stepAt < 0
       ? null
       : (steps[Math.floor(stepAt) + 1] ?? null);

@@ -23,7 +23,7 @@ const (
 
 func (q *Queue) Handler() http.Handler {
 	mux := http.NewServeMux()
-	drafts := &draftTiles{}
+	drafts := &q.draftTiles
 	respond := func(w http.ResponseWriter, v any) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(v)
@@ -226,7 +226,7 @@ func (q *Queue) Handler() http.Handler {
 			// are arranged is laid out by the template until the
 			// composition lands, then by the composition.
 			job, _ := q.Find(id)
-			body, err := drafts.get(id, revision, draft, composition, q.addedOf(job))
+			body, err := drafts.get(q, id, revision, draft, composition, q.addedOf(job))
 			if err != nil {
 				http.Error(w, http.StatusText(500), 500)
 				return
@@ -277,7 +277,8 @@ func (q *Queue) Handler() http.Handler {
 
 // draftTiles keeps the encoded tile view of each job's latest draft, by the
 // draft's count, so an unchanged draft is not converted on every poll. A job's
-// entry goes when a read finds the job has no draft (it ended).
+// entry goes with its draft: when the queue ends or archives the job, or a
+// read finds it has none.
 type draftTiles struct {
 	mu   sync.Mutex
 	kept map[string]draftTileView
@@ -292,11 +293,13 @@ type draftTileView struct {
 	frames tileview.Frames
 }
 
-// get returns the encoded tile view of the draft, composed with composition
-// when given and the pull request's own layout, so a regeneration in
-// progress does not move the page back to the generated layout. The kept
-// view is that of the same draft count, composition and layout.
-func (d *draftTiles) get(id string, revision int, draft, composition []byte, added []tileview.AddedTile) ([]byte, error) {
+// get returns the encoded tile view of the draft of q's job id, composed
+// with composition when given and the pull request's own layout, so a
+// regeneration in progress does not move the page back to the generated
+// layout. The kept view is that of the same draft count, composition and
+// layout, and is kept only while the job still has a draft, so one converted
+// as the job ended is not kept.
+func (d *draftTiles) get(q *Queue, id string, revision int, draft, composition []byte, added []tileview.AddedTile) ([]byte, error) {
 	key, layoutKey := tileview.Key(composition), tileview.AddedKey(added)
 	d.mu.Lock()
 	kept, ok := d.kept[id]
@@ -314,12 +317,17 @@ func (d *draftTiles) get(id string, revision int, draft, composition []byte, add
 		return nil, err
 	}
 	full = append(full, '\n')
-	d.mu.Lock()
-	if d.kept == nil {
-		d.kept = map[string]draftTileView{}
+	// q.mu before d.mu, as where the queue drops a job's draft.
+	q.mu.Lock()
+	if _, live := q.drafts[id]; live {
+		d.mu.Lock()
+		if d.kept == nil {
+			d.kept = map[string]draftTileView{}
+		}
+		d.kept[id] = draftTileView{revision, key, layoutKey, full, built.Frames}
+		d.mu.Unlock()
 	}
-	d.kept[id] = draftTileView{revision, key, layoutKey, full, built.Frames}
-	d.mu.Unlock()
+	q.mu.Unlock()
 	return full, nil
 }
 

@@ -28,6 +28,7 @@ import (
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/addedtiles"
+	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentdirs"
@@ -75,6 +76,7 @@ import (
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -449,6 +451,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
+		// A stack's page sums up its members' saved reviews in a few
+		// sentences, written again when they change; it runs once a model
+		// call can be made and recorded (the decision log's ledger, below).
+		summaries := &reviewgroups.Summarizer{Store: groups, Index: index.Snapshot, Read: latestReview(registry), Changed: changed, Log: log}
 		// Automatic generation is separate from the model-free background
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
@@ -477,6 +483,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					log.Warn("stack groups not updated", "repository", snapshot.Repository, "error", err)
 				} else if synced {
 					changed()
+					summaries.Wake()
 				}
 			}
 			scheduler.Observe(ctx, snapshot)
@@ -517,6 +524,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				go notify.JobDone(ctx, job)
 				// A PR whose job finished may have a pending head.
 				scheduler.Wake()
+				// A new saved review may call for its stack's summary.
+				summaries.Wake()
 				// A fix pushed a new head: show it at once, and poll again
 				// until its checks appear, which takes GitHub a few seconds.
 				if repo, err := github.ParseRepository(job.Repository); err == nil && job.Kind == jobs.KindFix && job.Commit != "" {
@@ -629,6 +638,12 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				builds.worker.Store(featureLog)
 				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
 					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
+				// A stack summary is one short call with the cheap data
+				// extraction model, recorded in the decision log's ledger.
+				calls := &decisionlog.Calls{Store: decisionStore, Registry: registry, Config: cfg, Log: log}
+				summaries.Complete = func(ctx context.Context, g reviewgroups.Group, req decisions.ModelRequest, check func([]byte) error) ([]byte, string, error) {
+					return calls.Complete(ctx, decisionlog.Attempt{Repository: g.Repository, Stage: decisionlog.StageStackSummary, Item: "group:" + g.ID, Mode: "summarize"}, req, check)
+				}
 			}
 		}
 		home, _ := os.UserHomeDir()
@@ -998,6 +1013,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					wg.Go(func() { decisionRelevance.Run(ctx) })
 					wg.Go(func() { capture.Run(ctx) })
 					wg.Go(func() { featureLog.Run(ctx) })
+				}
+				if summaries.Complete != nil {
+					summaries.Wake()
+					wg.Go(func() { summaries.Run(ctx) })
 				}
 				if requestEvents != nil {
 					wg.Go(func() { requests.Run(ctx, requestEvents) })
@@ -1387,6 +1406,28 @@ func coalesce(every time.Duration, f func()) func() {
 			mu.Unlock()
 			f()
 		})
+	}
+}
+
+// latestReview reads the latest saved review of a pull request from a
+// registered clone's store, for the stack summaries.
+func latestReview(registry *repos.Registry) func(context.Context, string, int) (store.Version, error) {
+	return func(ctx context.Context, id string, number int) (store.Version, error) {
+		clones, err := registry.List(ctx)
+		if err != nil {
+			return store.Version{}, err
+		}
+		for _, clone := range clones {
+			if clone.ID != id {
+				continue
+			}
+			versions, err := store.Open(clone.CommonDir, "", false)
+			if err != nil {
+				return store.Version{}, err
+			}
+			return versions.Latest(ctx, store.Key{Repository: clone.Repository, Number: number})
+		}
+		return store.Version{}, store.ErrNotFound
 	}
 }
 

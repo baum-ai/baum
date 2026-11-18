@@ -17,16 +17,17 @@ func TestDraftTilesKeepsTheViewPerDraftAndComposition(t *testing.T) {
 	draft := tileviewtest.Encode(t, tileviewtest.Base(t))
 	composition := tileviewtest.ViewComposition(t)
 	var d draftTiles
+	q := &Queue{drafts: map[string]heldDraft{"job": {}}}
 	before := tileview.Builds.Load()
-	plain, err := d.get("job", 1, draft, nil, nil)
+	plain, err := d.get(q, "job", 1, draft, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := d.get("job", 1, draft, nil, nil)
+	again, err := d.get(q, "job", 1, draft, nil, nil)
 	if err != nil || !bytes.Equal(plain, again) || tileview.Builds.Load() != before+1 {
 		t.Fatalf("an unchanged draft was built %d times: %v", tileview.Builds.Load()-before, err)
 	}
-	composed, err := d.get("job", 1, draft, composition, nil)
+	composed, err := d.get(q, "job", 1, draft, composition, nil)
 	if err != nil || bytes.Equal(plain, composed) || tileview.Builds.Load() != before+2 {
 		t.Fatalf("composed view: %v, %d builds", err, tileview.Builds.Load()-before)
 	}
@@ -48,14 +49,15 @@ func TestDraftTilesKeepsTheViewPerDraftAndComposition(t *testing.T) {
 func TestDraftTilesShowTheAddedTiles(t *testing.T) {
 	draft := tileviewtest.Encode(t, tileviewtest.Base(t))
 	var d draftTiles
-	plain, err := d.get("job", 1, draft, nil, nil)
+	q := &Queue{drafts: map[string]heldDraft{"job": {}}}
+	plain, err := d.get(q, "job", 1, draft, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	entry, _ := library.Get("api_change")
 	added := []tileview.AddedTile{{Tile: tiles.LibraryTile{Definition: entry.Encoded, Data: json.RawMessage(`{}`), Pending: true}, Section: "context", Filling: true}}
 	before := tileview.Builds.Load()
-	withAdded, err := d.get("job", 1, draft, nil, added)
+	withAdded, err := d.get(q, "job", 1, draft, nil, added)
 	if err != nil || bytes.Equal(plain, withAdded) || tileview.Builds.Load() != before+1 {
 		t.Fatalf("the added tile was not built: %v", err)
 	}

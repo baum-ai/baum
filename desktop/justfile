@@ -15,9 +15,13 @@ fmt:
 test *args: frontend sidecar
     {{ cargo }} test --locked {{ args }}
 
+# Vite's build mode for the frontend: BAUM_FRONTEND_MODE=profile builds the
+# profiling build (oss/app/README.md), which the sidecar then embeds.
+frontend_mode := env("BAUM_FRONTEND_MODE", "production")
+
 # Bundle the React application and native setup screen in the UI container.
 frontend:
-    {{ heavy }} --workdir /oss/app ui-test pnpm build
+    {{ heavy }} --workdir /oss/app ui-test pnpm exec vite build --mode {{ frontend_mode }}
 
 # Build the viewer the bundled baum embeds, which frontend leaves out
 [private]
@@ -115,6 +119,15 @@ run: frontend sidecar
 # one per name (scripts/isolated.sh; --copy-data copies this machine's data)
 isolated *args: frontend viewer sidecar
     sh {{ source_directory() }}/scripts/isolated.sh {{ args }}
+
+# Save a PNG of a running --headless isolated app's screen
+isolated-screenshot name="default" out="isolated-screenshot.png":
+    #!/bin/sh
+    set -eu
+    shot=$(docker exec -w /tmp baum-desktop-{{ name }} sh -c 'rm -f wayland-screenshot-*.png; XDG_RUNTIME_DIR=/tmp/runtime WAYLAND_DISPLAY=wayland-0 weston-screenshooter >/dev/null && ls /tmp/wayland-screenshot-*.png')
+    cd "{{ invocation_directory() }}"
+    docker cp -q "baum-desktop-{{ name }}:$shot" "{{ out }}"
+    echo "{{ out }}"
 
 # A login shell in a running isolated app's container, on its D-Bus session
 isolated-shell name="default":

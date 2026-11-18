@@ -26,6 +26,31 @@ unchanged snapshot sets no new state. Every daemon answer the app polls is
 `no-store`, so none goes through the webview's HTTP cache: WebKitGTK 2.50's
 cache path leaks memory in its network process.
 
+`pnpm build:profile` builds the same pages for profiling: with
+source maps, React's profiling build, and a collector, `window.__baumPerf`
+(`src/perf.ts`, `src/perf-collector.ts`). `__baumPerf.snapshot()` returns, as
+JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
+
+- each navigation, with `content` (the first frame after React committed with
+  no `LoadingStatus` on screen) and `settled` (as content, with no request in
+  flight). Only the latest navigation completes: one left before it settled
+  is marked `superseded`, and a redirect (a replaced history entry) continues
+  the navigation on its way;
+- each key press and click, with `duration` from the input to the frame drawn
+  after it, `delay` before the first listener ran and `processing` until the
+  window's own listeners ran after React's;
+- the gaps between animation frames, bucketed, and those over 50 ms;
+- commits per `<Profiled>` region (`app`, `sidebar`, `main`, `session-panel`),
+  each tagged with the page shown;
+- requests made with `fetch`, to their headers, without the secret namespace;
+- the scenario's own `__baumPerf.mark(name)` markers, the DOM's element count
+  and, where the engine has it, the JS heap size.
+
+It measures by hand rather than with the Event Timing or Long Tasks APIs,
+which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
+things. Every other build leaves it out, and fails if `__baumPerf` reaches a
+chunk.
+
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
@@ -301,9 +326,15 @@ it: it waits, as "Waiting on #N", on the lowest of them, which merges first,
 and stays out of Ready to merge and Merge all. A stack's members stay out of **Merge all**, as a stack merges from its
 base up. The group's panel is laid out as a pull request's: the branch it
 merges into ("Stacked on main"), its members' lines, files and review times
-summed, a line when its review is missing or outdated, **Open the stack** (or group) as the default, the
+summed, a line when a group's review is missing or outdated, **Open the stack** (or group) as the default, the
 same risk card with the group review's main reason, What changed from the group
 review (`api/groups/<id>/document`: its summary and sections), and its members.
+A stack has no group review: its panel is its overview (`StackOverview`, the
+stack's page shows the same), whose risk card names the riskiest pull request
+(`overview.riskiest`, with its review's score and main reason, its title
+linking to its page) and whose What changed is the stack summary
+(`overview.summary`), or "Summary appears once two pull requests are
+reviewed." until two are, with no sections.
 Their list opens and closes from its head, which counts them, landed ones
 included ("7 pull requests"), and those merged (`landed`); it starts open. A
 stack's members run from its base up, its landed ones first, joined by a line,
@@ -1012,7 +1043,10 @@ right of its baum title, after Help, folds it to a rail of glyphs (56px) so
 the page gets the width, and pins it open again (`Sidebar` in
 `src/shell.tsx`). Folded, resting the mouse on the rail for a moment opens it
 over the page, which does not move, and it folds again shortly after the
-pointer leaves or when a link in it is chosen; keyboard focus in the rail
+pointer leaves or when a link in it is chosen. It folds at once when the
+pointer leaves the window or the window loses focus, since a pointer that
+leaves straight off the rail at the window's edge may never send the rail
+its own leave event; keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
@@ -1257,6 +1291,10 @@ the page and empty otherwise, the removed rows struck through and fading out
   list in its new order. It has no delete: an inbox is deleted from its row in the
   sidebar or its edit page, neither of which deletes the last one.
 
+Inbox and Pull requests list 30 items per page. A review group or stack counts
+as one item and keeps its members with it. Filters apply before pagination,
+and changing the filter or tab returns to the first page.
+
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a
@@ -1418,9 +1456,15 @@ the members of expanded groups. The group row shows the group's risk, its name
 with a "Group of N" badge, "repository · #n, …" and, when it applies,
 "Generating group review", "Group review outdated" or "No group review yet". A
 stack group, which baum made for stacked pull requests, shows the hosted
-list's stack icon and member count before its name instead of the badge, and
-"Stack" instead of "Review group" on its page.
-The group page (`?group=<id>`) is the shared viewer with the group's name as
+list's stack icon and member count before its name instead of the badge, its
+riskiest pull request's risk, and none of the group review lines.
+A stack's page (`?group=<id>` of a stack group) is its overview, under a bar
+with its name, the way back and Refresh: the Stack chip, repository and count,
+"Stacked on", the size and review time summed, Risk, What changed and the
+pull requests, landed ones first, each with its review status and risk and
+linking to its own review page. It has no combined review, Generate, Rename
+or Delete; a stack of any size has one.
+The page of a group a person made (`?group=<id>`) is the shared viewer with the group's name as
 heading, member labels on sections, and, folded to a line under the title ("7
 pull requests · 4 merged", landed members counted), the members (state and
 their own review status, each linking to its page) with Rename, Add pull
@@ -1747,9 +1791,9 @@ The jobs list and the PR page mark an automatic job "Started
 automatically because new commits were pushed" (or "because your review was
 requested", "because the pull request was marked ready for review", or
 "Started automatically again" for the one retry of a run a daemon stop or
-restart interrupted); it is cancelled like any other. A stack group's review,
-which the daemon generates with its members' automatic reviews, carries no
-such note, like a group review generated by hand. Drafts get no automatic
+restart interrupted); it is cancelled like any other. A stack gets no
+automatic group review: its page's summary follows its members' reviews.
+Drafts get no automatic
 review, but Generate works on them as usual. `automatic` SSE events (a notice,
 and every repository's status after a settings change in any window) reread
 the automatic state, settings, clones and pull requests.
@@ -2986,7 +3030,7 @@ sidebar order, stopping at the first and the last. Typing fields and dialogs kee
 Ctrl+K always opens Go to.
 Enter is drawn as ↵ in button shortcut hints.
 
-On PR and stack review pages, `]` toggles the right-hand Details/Activity
+On PR and group review pages, `]` toggles the right-hand Details/Activity
 sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
 Opening it with `]` gives it the keys: `h` and `l` then step through Details,
 Activity and Comments, until Esc (or a click in the review) gives them back.

@@ -1,5 +1,9 @@
 import { Avatar } from "@baum/viewer/components/avatar";
 import { BrandMark } from "@baum/viewer/components/brand-logo";
+import { cn } from "@baum/viewer/components/classnames";
+import { DialogDetail, DialogHeader, DialogTitle } from "@baum/viewer/components/dialog-shell";
+import { dialogClassName, fieldClassName } from "@baum/viewer/components/primitive-classes";
+import { ListRow } from "@baum/viewer/components/list-row";
 import { usePreferences, type PageModifier } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
@@ -20,6 +24,7 @@ import {
   LiveDot,
   SegmentedControl,
 } from "@baum/viewer/components/ui";
+import { Empty } from "@baum/viewer/components/states";
 import {
   formatCount,
   formatDateTime,
@@ -117,6 +122,11 @@ import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
 import { TileLibrarySection } from "./settings-tiles";
 import { tileLibrary } from "./tile-library";
+
+/** The settings' controls, in the shared field look; widths stay the page's
+ *  (`settings-select`). */
+const SELECT_FIELD = fieldClassName({ kind: "select" });
+const INPUT_FIELD = fieldClassName();
 
 /** The harness and model reviews use, and the ones fixes use: an empty
  *  `fix_backend` follows the review's. */
@@ -712,7 +722,7 @@ function AccountAdvanced({
         <div className="settings-model">
           <select
             id={id}
-            className="local-field settings-select"
+            className={cn(SELECT_FIELD, "settings-select")}
             value={custom ? CUSTOM : value}
             onChange={(event) => {
               const next = event.target.value;
@@ -731,7 +741,7 @@ function AccountAdvanced({
           </select>
           {custom ? (
             <input
-              className="local-field settings-select"
+              className={cn(INPUT_FIELD, "settings-select")}
               aria-label={`${account.name} folder`}
               placeholder={account.placeholder}
               value={text}
@@ -775,7 +785,7 @@ function AgentSelect({
   return (
     <select
       id={id}
-      className="local-field settings-select"
+      className={cn(SELECT_FIELD, "settings-select")}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
@@ -823,7 +833,7 @@ function ModelField({
     <div className="settings-model">
       <select
         id={id}
-        className="local-field settings-select"
+        className={cn(SELECT_FIELD, "settings-select")}
         value={custom ? CUSTOM : value}
         disabled={disabled}
         onChange={(event) => {
@@ -842,7 +852,7 @@ function ModelField({
       </select>
       {custom ? (
         <input
-          className="local-field settings-select"
+          className={cn(INPUT_FIELD, "settings-select")}
           aria-label="Custom model"
           placeholder={`Model name, as ${harnessName(backend)} lists it`}
           value={text}
@@ -882,7 +892,7 @@ function EffortSelect({
       id={id}
       aria-label={label}
       title="How hard the agent thinks. Default leaves it to the agent; higher thinks longer and costs more."
-      className="local-field settings-select settings-effort"
+      className={cn(SELECT_FIELD, "settings-select settings-effort")}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
@@ -995,7 +1005,7 @@ function ReviewsSection({
           >
             <select
               id="review-pull-requests"
-              className="local-field settings-select settings-model-pick"
+              className={cn(SELECT_FIELD, "settings-select settings-model-pick")}
               value={draft.pull_requests}
               onChange={(event) => change({ pull_requests: event.target.value as PullRequests })}
             >
@@ -2168,7 +2178,7 @@ function JobConcurrencyRow() {
     >
       <select
         id="job-concurrency"
-        className="local-field settings-select"
+        className={cn(SELECT_FIELD, "settings-select")}
         disabled={value === null}
         value={value ?? MAX_JOB_CONCURRENCY}
         onChange={(e) => void choose(Number(e.target.value))}
@@ -2244,7 +2254,7 @@ function TimeLimitRows() {
       >
         <select
           id={id}
-          className="local-field settings-select"
+          className={cn(SELECT_FIELD, "settings-select")}
           disabled={value === null}
           value={current}
           onChange={(e) => void choose(key, Number(e.target.value))}
@@ -2319,7 +2329,7 @@ function ZoomSection() {
           {mod} + and {mod} − also change it, and {mod} 0 resets it to 100%.
         </p>
         <select
-          className="local-field"
+          className={SELECT_FIELD}
           aria-label="Zoom"
           disabled={!zoom}
           value={zoom?.level ?? 1}
@@ -2778,17 +2788,21 @@ function DiagnosticsDialog({
       ref={dialog}
       onCancel={close}
       aria-labelledby="diagnostics-dialog-title"
-      className="local-dialog-wide"
+      className={dialogClassName({ size: "wide" })}
     >
-      <div className="local-dialog-head">
-        <div>
-          <h2 ref={title} id="diagnostics-dialog-title" tabIndex={-1} className="outline-none">
-            Check this computer
-          </h2>
-          <p>What baum needs here, what it found, and how to fix each problem.</p>
-        </div>
-        <CloseButton onClick={close} />
-      </div>
+      <DialogHeader aside={<CloseButton onClick={close} />}>
+        <DialogTitle
+          ref={title}
+          id="diagnostics-dialog-title"
+          tabIndex={-1}
+          className="outline-none"
+        >
+          Check this computer
+        </DialogTitle>
+        <DialogDetail>
+          What baum needs here, what it found, and how to fix each problem.
+        </DialogDetail>
+      </DialogHeader>
       <DiagnosticsSection onReport={onReport} />
     </dialog>
   );
@@ -2882,13 +2896,10 @@ export function RepositoriesPage({
         {repositories.length === 0 && loading ? (
           <LoadingStatus block>Loading repositories…</LoadingStatus>
         ) : repositories.length === 0 ? (
-          <div className="local-empty">
-            <h2>No repositories yet</h2>
-            <p>
-              Pick GitHub repositories to see their pull requests. baum finds their local clones for
-              you.
-            </p>
-          </div>
+          <Empty variant="page" title="No repositories yet" className="px-6">
+            Pick GitHub repositories to see their pull requests. baum finds their local clones for
+            you.
+          </Empty>
         ) : null}
         {menu.menu}
         {repositories.length > 0 ? (
@@ -3016,7 +3027,7 @@ function RepositoryReviews({
           >
             <select
               id="repository-automatic"
-              className="local-field settings-select"
+              className={cn(SELECT_FIELD, "settings-select")}
               value={draft.mode}
               onChange={(e) => change({ mode: e.target.value as AutomaticMode })}
             >
@@ -3120,10 +3131,10 @@ function RepositoryRow({
   const cloneState =
     !clone.available && (cloneActions.progress || cloneActions.form || cloneActions.errors);
   return (
-    <li
+    <ListRow
       data-row-id={repository.repository}
       data-focused={focused || undefined}
-      className="list-row local-repo-row"
+      className="local-repo-row"
       onContextMenu={(event) => menu.open(event, actions(), clone.repository)}
     >
       <div className="local-repo-main">
@@ -3240,7 +3251,7 @@ function RepositoryRow({
           </Button>
         </div>
       ) : null}
-    </li>
+    </ListRow>
   );
 }
 
@@ -3323,12 +3334,9 @@ export function RepositoryPage({
           {loading ? (
             <LoadingStatus block>Reading the repositories…</LoadingStatus>
           ) : (
-            <div className="local-empty">
-              <h2>This repository is not registered</h2>
-              <p>
-                <Link href={appURL("?page=repositories")}>Go to Repositories</Link>
-              </p>
-            </div>
+            <Empty variant="page" title="This repository is not registered">
+              <Link href={appURL("?page=repositories")}>Go to Repositories</Link>
+            </Empty>
           )}
         </div>
       </section>
@@ -3494,7 +3502,7 @@ function GeneralSection() {
           <select
             id="preferred-theme"
             disabled={!ready}
-            className="local-field settings-select"
+            className={cn(SELECT_FIELD, "settings-select")}
             value={preferences.theme}
             onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
           >
@@ -3511,7 +3519,7 @@ function GeneralSection() {
           <select
             id="page-modifier"
             disabled={!ready}
-            className="local-field settings-select"
+            className={cn(SELECT_FIELD, "settings-select")}
             value={pageModifier(preferences.page_modifier)}
             onChange={(event) => update({ page_modifier: event.target.value as PageModifier })}
           >

@@ -1395,8 +1395,8 @@ func TestCatchUpQueuesNothingWhileAutomaticGenerationIsOff(t *testing.T) {
 }
 
 // A stack group counts as one pull request and its members are caught up
-// together, so the group's review follows theirs; a pull request merely based
-// on another's branch is not a stack.
+// together, so the stack's page has their reviews, and no combined review
+// follows; a pull request merely based on another's branch is not a stack.
 func TestCatchUpTakesAStackGroupWhole(t *testing.T) {
 	h := newHarness(t)
 	_, mine := withGroups(t, h)
@@ -1435,7 +1435,7 @@ func TestCatchUpTakesAStackGroupWhole(t *testing.T) {
 	h.waitIdle()
 	h.reviewed[1], h.reviewed[2] = "a1", "b1"
 	h.pass()
-	h.want(append(members, "org/repo#group@1@a1,2@b1:stack_reviewed")...)
+	h.want(members...)
 }
 
 // A newer snapshot that shows a chosen pull request no longer covered, at the

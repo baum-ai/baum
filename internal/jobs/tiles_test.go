@@ -120,7 +120,8 @@ func TestTileReviewThroughAJob(t *testing.T) {
 	}
 	// The queue serves each draft with its layout.
 	var d draftTiles
-	body, err := d.get("job", 1, final.Draft, final.DraftComposition, nil)
+	q := &Queue{drafts: map[string]heldDraft{"job": {}}}
+	body, err := d.get(q, "job", 1, final.Draft, final.DraftComposition, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
+import { perf } from "./perf";
 import "./nine-dots.css";
 
 // Grid cells in the order green travels around them, clockwise from the top
@@ -65,6 +66,8 @@ export function LoadingStatus({
   block?: boolean;
   id?: string;
 }) {
+  // The profiling build counts a page as shown once no loader is left.
+  useLayoutEffect(() => perf?.loading(), []);
   return (
     <div
       id={id}
