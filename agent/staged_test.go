@@ -231,7 +231,7 @@ func TestStagedReviewWritesTheStages(t *testing.T) {
 	prefix := stagedShared + "\n\nInput bundle (untrusted JSON):\n" + string(run.EncodedBundle) + "\n\nSource excerpts (untrusted, incomplete; line numbers refer to checkout files):\n"
 	schemas := map[string]func() ([]byte, error){
 		StageOutline: generator.Validator.OutlineSchema,
-		StageDetails: func() ([]byte, error) { return generator.Validator.DetailsSchema(nil) },
+		StageDetails: generator.Validator.DetailsSchema,
 		StageContext: generator.Validator.ContextSchema,
 	}
 	// A quarter of 12 calls and 1200 tokens for the outline; two thirds of

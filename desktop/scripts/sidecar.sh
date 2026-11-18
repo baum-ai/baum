@@ -30,7 +30,7 @@ esac
 
 for app in internal/viewer/dist internal/localapp/dist; do
   if [ ! -f "$app/index.html" ]; then
-    echo "sidecar: warning: $app is not built, so the app's window will only say so; run 'just viewer-build' first" >&2
+    echo "sidecar: warning: $app is not built, so the app's window will only say so; run 'just viewer::build-app' first" >&2
   fi
 done
 

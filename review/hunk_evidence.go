@@ -168,7 +168,7 @@ func patchableHunk(hunk jsonObject) (patchable, bool) {
 // hunkFromFilePatch is the hunk of a file's patch whose header names the
 // new range start,count and that adds and removes the given numbers of
 // lines, as a document's diff; nil when no hunk of the patch is that one.
-func hunkFromFilePatch(ctx context.Context, patch string, start, count, additions, deletions int) (*tileHunk, error) {
+func hunkFromFilePatch(ctx context.Context, patch string, start, count, additions, deletions int) (*diffHunk, error) {
 	var boundaries []int
 	offset := 0
 	for line := range strings.SplitAfterSeq(patch, "\n") {
@@ -187,7 +187,7 @@ func hunkFromFilePatch(ctx context.Context, patch string, start, count, addition
 		}
 		text := patch[boundaries[i]:boundaries[i+1]]
 		header, _, _ := strings.Cut(text, "\n")
-		_, _, next, newCount, ok := tileHunkRange(header)
+		_, _, next, newCount, ok := hunkRange(header)
 		if !ok || next != start || newCount != count {
 			continue
 		}

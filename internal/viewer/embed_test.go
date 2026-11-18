@@ -108,9 +108,8 @@ func TestNoSourceMaps(t *testing.T) {
 }
 
 // The server's Content-Security-Policy has no 'unsafe-eval', so a script that
-// builds code from a string fails at run time and leaves the page blank. Ajv
-// does this when it compiles a schema, so the viewer ships precompiled
-// validators; see scripts/review-tile-validators.mjs in the viewer package.
+// builds code from a string fails at run time and leaves the page blank, as
+// Ajv's schema compilation would.
 func TestNoRuntimeCodeGeneration(t *testing.T) {
 	uibuild.Require(t, Assets())
 	evaluates := regexp.MustCompile(`new Function\(|(?:^|[^\w$.])eval\(|Error compiling schema`)

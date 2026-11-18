@@ -173,11 +173,11 @@ export function Agent({ agent }: { agent: string }) {
 
 /** The agent by its mark alone, its name for assistive technology; by name
  *  when it has no mark. */
-function AgentMark({ agent }: { agent: string }) {
+export function AgentMark({ agent, size = 18 }: { agent: string; size?: number }) {
   const logo = agentLogos[agent];
   return logo ? (
-    <span role="img" aria-label={agentName(agent)}>
-      <BrandMark brand={logo} size={18} />
+    <span role="img" aria-label={agentName(agent)} title={agentName(agent)}>
+      <BrandMark brand={logo} size={size} />
     </span>
   ) : (
     <span className="local-feed-agent">{agentName(agent)}</span>

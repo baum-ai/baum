@@ -1,6 +1,7 @@
 package repos
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -14,8 +15,8 @@ import (
 // the other's field.
 func TestPreferencesCodexHome(t *testing.T) {
 	claude, codex := config.BackendClaude, config.BackendCodex
-	work, personal := "/home/dev/.codex-work", "/home/dev/.codex.personal"
-	claudeDir := "/home/dev/.claude.personal"
+	work, personal := filepath.Join(t.TempDir(), ".codex-work"), filepath.Join(t.TempDir(), ".codex.personal")
+	claudeDir := filepath.Join(t.TempDir(), ".claude.personal")
 	empty := ""
 	global := config.Config{Backend: config.BackendCodex}
 
@@ -86,7 +87,7 @@ func TestPreferencesCodexHome(t *testing.T) {
 // once each.
 func TestPreferencesCodexHomesAreThoseCodexRunsWith(t *testing.T) {
 	claude, codex := config.BackendClaude, config.BackendCodex
-	work, personal := "/home/dev/.codex-work", "/home/dev/.codex.personal"
+	work, personal := filepath.Join(t.TempDir(), ".codex-work"), filepath.Join(t.TempDir(), ".codex.personal")
 	off := false
 	global := config.Config{Backend: config.BackendAuto}
 	for name, c := range map[string]struct {

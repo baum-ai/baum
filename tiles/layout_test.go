@@ -111,6 +111,42 @@ func TestArrangeMovesPinnedEntriesFirst(t *testing.T) {
 	}
 }
 
+// A pinned group member moves to the front with its whole group, so the group
+// stays contiguous.
+func TestArrangeMovesPinnedGroupMembersWithTheirGroup(t *testing.T) {
+	doc := &tiles.Document{Layout: tiles.Layout{
+		Entries: []tiles.Entry{
+			{Tile: "overview", Size: tiles.SizeFull},
+			{Tile: "change1", Size: tiles.SizeThird, Group: "g"}, {Tile: "change2", Size: tiles.SizeThird, Group: "g", Pin: true},
+		},
+		Groups: []tiles.Group{{ID: "g", Title: "G"}},
+	}}
+	tiles.Arrange(doc)
+	if want := []string{"change1", "change2", "overview"}; !slices.Equal(order(doc.Layout), want) {
+		t.Errorf("order = %v, want %v", order(doc.Layout), want)
+	}
+}
+
+// A severe risks tile goes ahead of pinned entries that fill the landing page.
+func TestArrangePlacesSevereRisksAheadOfPins(t *testing.T) {
+	doc := &tiles.Document{
+		Risks: []tiles.Risk{{ID: "rsk_x", Tier: "high", State: "active", Change: "sec_x"}},
+		Tiles: []tiles.Tile{{ID: tiles.TypeRisks, Type: tiles.TypeRisks, Data: []byte(`{"ranked":["rsk_x"]}`)}},
+		Layout: tiles.Layout{Entries: []tiles.Entry{
+			{Tile: "overview", Size: tiles.SizeFull}, {Tile: tiles.TypeRisks, Size: tiles.SizeHalf},
+			{Tile: "a", Size: tiles.SizeFull, Pin: true}, {Tile: "b", Size: tiles.SizeFull, Pin: true},
+			{Tile: "c", Size: tiles.SizeFull, Pin: true},
+		}},
+	}
+	tiles.Arrange(doc)
+	if want := []string{"risks", "a", "b", "c", "overview"}; !slices.Equal(order(doc.Layout), want) {
+		t.Errorf("order = %v, want %v", order(doc.Layout), want)
+	}
+	if doc.Layout.Landing != 3 {
+		t.Errorf("Landing = %d, want 3", doc.Layout.Landing)
+	}
+}
+
 // A risks tile that ranks an active critical or high risk moves to the front
 // when it would otherwise miss the landing page; one already on it stays.
 func TestArrangeMovesSevereRisksOntoTheLandingPage(t *testing.T) {

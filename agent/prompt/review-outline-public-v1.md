@@ -37,8 +37,8 @@ the run directory.
 
 Do not write the summary's `context` (the context stage writes it) or
 `review_minutes` (the host computes it), nor a section's `summary`,
-`attention`, `risks`, `evidence`, `blocks` or `tiles` (the section details
-stage writes them). Do not write `review`, `stats`, `index`,
+`attention`, `risks`, `evidence` or `blocks` (the section details stage
+writes them). Do not write `review`, `stats`, `index`,
 `agent_reviews`, `unassigned_hunks`, `stack`, or a section's `derived` or
 `pull_requests`.
 

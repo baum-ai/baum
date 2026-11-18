@@ -10,10 +10,8 @@
       "**",
       "!!coverage",
       "!!e2e-dist",
-      "!!generated",
       "!!playwright-report",
       "!!test-results",
-      "!!src/precompiled",
       "!!src/palette-utilities.css"
     ]
   },

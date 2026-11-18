@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { CodeDiff, type CodeDiffFile } from "@baum/viewer/components/review-tiles/code-diff";
+import { CodeDiff, type CodeDiffFile } from "@baum/viewer/components/code-diff";
 import type {
   FileOpenRequest,
   ReviewFile,

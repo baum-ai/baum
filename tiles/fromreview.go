@@ -68,8 +68,6 @@ type reviewSection struct {
 	Derived      json.RawMessage   `json:"derived"`
 	Assessment   json.RawMessage   `json:"assessment,omitempty"`
 	Details      string            `json:"details,omitempty"`
-	// Tiles is the retired per-section tile list, which the converter drops.
-	Tiles json.RawMessage `json:"tiles,omitempty"`
 }
 
 type reviewRisk struct {
@@ -83,8 +81,6 @@ type reviewRisk struct {
 	State             string          `json:"state"`
 	IntroducedVersion int             `json:"introduced_version"`
 	MitigatedVersion  *int            `json:"mitigated_version"`
-	// Tiles is the retired per-risk tile list, which the converter drops.
-	Tiles json.RawMessage `json:"tiles,omitempty"`
 }
 
 type reviewEvidence struct {

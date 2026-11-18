@@ -301,6 +301,9 @@ func New(opts Options) (*Service, error) {
 		}
 		root = filepath.Join(cache, "baum", "console")
 	}
+	// Directories under root are spelled as the agent's pwd and git's
+	// worktree list spell them, not through an alias such as /var on macOS.
+	root = resolveExisting(root)
 	st, err := openStore(opts.Database, ReasonRestarted, opts.Now())
 	if err != nil {
 		return nil, err

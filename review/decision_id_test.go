@@ -16,7 +16,7 @@ func decisionDocument(t *testing.T, item map[string]any) []byte {
 	doc, err := decodeObject(authoredFixture(), "candidate")
 	checkNoError(t, err)
 	doc["sections"].([]any)[0].(map[string]any)["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
-	return tileJSON(t, doc)
+	return encodeJSON(t, doc)
 }
 
 // A decision item the host attached carries its decision's ID through
@@ -59,12 +59,8 @@ func TestDecisionItemsCarryTheHostsDecisionID(t *testing.T) {
 		t.Fatalf("a document without decision IDs has one: %s", without)
 	}
 
-	for _, kinds := range [][]string{nil, {"bug-fix"}} {
-		schema, err := v.ModelSchema(kinds)
-		checkNoError(t, err)
-		if strings.Contains(string(schema), "decision_id") {
-			t.Fatalf("the model schema for tile kinds %v offers decision_id", kinds)
-		}
+	if strings.Contains(string(v.Schema), "decision_id") {
+		t.Fatal("the model schema offers decision_id")
 	}
 	encoded, err := json.Marshal(v.Contract())
 	checkNoError(t, err)

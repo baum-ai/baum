@@ -77,7 +77,7 @@ func TestSchemaBoundsIdentifiersAtMaxIdentifierLength(t *testing.T) {
 	}
 }
 
-var exampleIdentifier = regexp.MustCompile(`"((?:sec|rsk|ev|fnd|ar|beh|grp|dec|tile)_[a-z0-9_]+)"`)
+var exampleIdentifier = regexp.MustCompile(`"((?:sec|rsk|ev|fnd|ar|beh|grp|dec)_[a-z0-9_]+)"`)
 
 // lengthen makes an identifier 131 characters or longer, as models wrote
 // them before identifiers were bounded.
@@ -87,7 +87,7 @@ func lengthen(id string) string {
 
 // preBoundDocument is the example document as a release before 2026-10-07.1
 // could have stored it: every identifier, and every reference to one, over
-// 128 characters, plus a long category, tile-local names and two risks whose
+// 128 characters, plus a long category and two risks whose
 // identifiers share their first 124 characters. It returns the document and
 // the same document with each long identifier replaced by its shortened form
 // wherever it is a whole string value, which is what normalization must
@@ -116,20 +116,6 @@ func preBoundDocument(t *testing.T) (long, want []byte) {
 	}
 	risks[1].(map[string]any)["id"], twin["id"] = shared+"_one", shared+"_two"
 	section["risks"] = append(risks, twin)
-	node := lengthen("worker")
-	data := section["tiles"].([]any)[0].(map[string]any)["data"].(map[string]any)
-	data["containers"].([]any)[0].(map[string]any)["id"] = node
-	for _, raw := range data["edges"].([]any) {
-		edge := raw.(map[string]any)
-		if edge["from"] == "worker" {
-			edge["from"] = node
-		}
-	}
-	for _, raw := range data["sequences"].([]any)[0].(map[string]any)["steps"].([]any) {
-		if step := raw.(map[string]any); step["from"] == "worker" {
-			step["from"] = node
-		}
-	}
 	if long, err = json.Marshal(doc); err != nil {
 		t.Fatal(err)
 	}
