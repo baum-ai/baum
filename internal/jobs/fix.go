@@ -348,14 +348,18 @@ type connectionStatus interface {
 // whatever was in its prompt (fix.Options.AllowWorkflows): unless the saved
 // GitHub connection the fix reads GitHub with is known to lack workflow
 // access. Without a saved connection (an explicit token, whose scopes are
-// unknown) or with a status it cannot read, they are allowed: GitHub refuses
-// a push the git credential may not make.
+// unknown) they are allowed; a status it cannot read refuses them.
 func workflowAccess(ctx context.Context, connection connectionStatus) bool {
 	if connection == nil {
 		return true
 	}
 	status, err := connection.Status(ctx)
-	if err != nil || status.State != "connected" {
+	if err != nil {
+		// The saved connection is there but unreadable: refuse rather than
+		// take its access for unknown.
+		return false
+	}
+	if status.State != "connected" {
 		return true
 	}
 	return status.Workflow

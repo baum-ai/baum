@@ -206,7 +206,18 @@ func (f *Fix) makeAgentRepository(ctx context.Context, baseRef string) error {
 	if f.Base != "" {
 		steps = append(steps, []string{"update-ref", "refs/remotes/origin/" + baseRef, f.Base})
 	}
-	steps = append(steps, []string{"symbolic-ref", "HEAD", "refs/heads/" + f.headRef}, []string{"reset", "--quiet", "--mixed", "HEAD"})
+	steps = append(steps, []string{"symbolic-ref", "HEAD", "refs/heads/" + f.headRef})
+	// Filters the clone alone defines (git lfs install --local, git-crypt)
+	// apply in the agent's repository too, so the files baum wrote do not
+	// look changed there.
+	filters, _ := run(ctx, runSpec{dir: f.repo.dir, env: f.userEnv(), limit: 1 << 20, timeout: f.repo.opts.CommandTimeout},
+		"config", "--local", "--includes", "-z", "--get-regexp", `^filter\.`)
+	for entry := range strings.SplitSeq(strings.TrimRight(string(filters), "\x00"), "\x00") {
+		if key, value, ok := strings.Cut(entry, "\n"); ok && strings.HasPrefix(key, "filter.") {
+			steps = append(steps, []string{"config", "--add", key, value})
+		}
+	}
+	steps = append(steps, []string{"reset", "--quiet", "--mixed", "HEAD"})
 	for _, args := range steps {
 		if _, err := f.agentGit(ctx, 0, args...); err != nil {
 			return err
@@ -589,7 +600,11 @@ func (f *Fix) Changes(ctx context.Context, commit string) ([]Change, error) {
 // when it makes one without conflicts (merge-tree --write-tree, git 2.38 and
 // later); "" otherwise.
 func (f *Fix) cleanMerge(ctx context.Context) string {
-	out, err := f.git(ctx, 64<<10, "merge-tree", "--write-tree", "--no-messages", f.Head, f.Base)
+	// No work tree: attributes the agent wrote in the checkout choose no
+	// merge driver.
+	env := append(f.userEnv(), "GIT_DIR="+f.repo.common)
+	out, err := run(ctx, runSpec{dir: f.dir, env: env, limit: 64 << 10, timeout: f.repo.opts.CommandTimeout, config: f.config()},
+		"merge-tree", "--write-tree", "--no-messages", f.Head, f.Base)
 	if err != nil {
 		return ""
 	}
@@ -734,12 +749,22 @@ func (f *Fix) Commit(ctx context.Context, message string) (string, error) {
 	return commit, nil
 }
 
-// addBaseFiles stages the files the base branch tracks and the head does not
+// addBaseFiles stages the files the base branch added since the merge base
 // that the checkout has, even where an ignore rule would leave them out (a
 // file the base added with git add -f): git add --all skips an ignored path
 // the index does not track yet, and the merge would drop it.
 func (f *Fix) addBaseFiles(ctx context.Context) error {
-	out, err := f.git(ctx, 16<<20, "diff-tree", "-r", "-z", "--name-only", "--no-renames", "--diff-filter=A", f.Head, f.Base, "--")
+	// Added since the merge base, so a file the pull request deleted is not
+	// one the base added.
+	out, err := f.git(ctx, maxOIDOutputBytes, "merge-base", f.Head, f.Base)
+	if err != nil {
+		return err
+	}
+	mergeBase := strings.TrimSpace(string(out))
+	if !validOID(mergeBase) {
+		return errors.New("unexpected merge base")
+	}
+	out, err = f.git(ctx, 16<<20, "diff-tree", "-r", "-z", "--name-only", "--no-renames", "--diff-filter=A", mergeBase, f.Base, "--")
 	if err != nil {
 		return err
 	}

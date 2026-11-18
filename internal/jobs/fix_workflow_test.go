@@ -25,7 +25,7 @@ func TestWorkflowAccessFollowsTheGitHubConnection(t *testing.T) {
 		{"explicit token, scopes unknown", nil, true},
 		{"connected with workflow access", fakeConnection{status: githubauth.Status{State: "connected", Workflow: true}}, true},
 		{"connected without workflow access", fakeConnection{status: githubauth.Status{State: "connected"}}, false},
-		{"status unreadable", fakeConnection{err: errors.New("keyring locked")}, true},
+		{"status unreadable", fakeConnection{err: errors.New("keyring locked")}, false},
 		{"not connected", fakeConnection{status: githubauth.Status{State: "disconnected"}}, true},
 	} {
 		if got := workflowAccess(ctx, test.connection); got != test.want {

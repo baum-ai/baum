@@ -98,7 +98,7 @@ func checkFixEnvironment(t *testing.T, env map[string]string, scratch string) {
 		t.Errorf("caches outside the scratch directory: %v", env)
 	}
 	for name := range env {
-		if name == "SSH_AUTH_SOCK" || strings.HasPrefix(name, "GIT_") || name == "GITHUB_TOKEN" || name == "NPM_TOKEN" {
+		if name == "SSH_AUTH_SOCK" || (strings.HasPrefix(name, "GIT_") && name != "GIT_LFS_SKIP_SMUDGE") || name == "GITHUB_TOKEN" || name == "NPM_TOKEN" {
 			t.Errorf("the agent received %s", name)
 		}
 	}

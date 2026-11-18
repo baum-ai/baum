@@ -98,7 +98,8 @@ var providerPrefixes = []string{"ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "A
 // choose a repository, and with package and build caches under scratch, so
 // installs and builds work in the sandbox: GOCACHE, GOMODCACHE, GOPATH
 // (whose pkg/sumdb Go writes when it verifies a module), npm_config_cache,
-// YARN_CACHE_FOLDER, PIP_CACHE_DIR and XDG_CACHE_HOME.
+// YARN_CACHE_FOLDER, PIP_CACHE_DIR and XDG_CACHE_HOME, and with
+// GIT_LFS_SKIP_SMUDGE=1.
 // An empty scratch sets no cache.
 func FixEnvironment(environ []string, scratch string) []string {
 	kept := slices.DeleteFunc(slices.Clone(environ), func(entry string) bool {
@@ -122,6 +123,10 @@ func FixEnvironment(environ []string, scratch string) []string {
 	for _, name := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "npm_config_cache", "YARN_CACHE_FOLDER", "PIP_CACHE_DIR", "XDG_CACHE_HOME"} {
 		kept = append(kept, name+"="+caches[name])
 	}
+	// The agent's git repository has no remote, so Git LFS cannot download an
+	// object it lacks: a merge or checkout writes the pointer instead of
+	// failing, and baum's commit keeps the pointer as it is.
+	kept = append(slices.DeleteFunc(kept, func(entry string) bool { return strings.HasPrefix(entry, "GIT_LFS_SKIP_SMUDGE=") }), "GIT_LFS_SKIP_SMUDGE=1")
 	return kept
 }
 

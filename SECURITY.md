@@ -848,8 +848,13 @@ What baum does after the agent:
   (`workflow_changed`), whether or not it also fixes conflicts or checks; the
   refusal says to choose Reconnect with workflow access in Settings and run
   the fix again. With workflow access, or when baum cannot know the token's
-  scopes (an explicit token or `GITHUB_TOKEN`), every fix may push one: GitHub
-  itself refuses a workflow change the pushing credential may not make. A
+  scopes (an explicit token or `GITHUB_TOKEN`), every fix may push one. A
+  connection whose status cannot be read refuses them. The push itself uses
+  your git credentials: GitHub refuses a workflow change from an HTTPS token
+  without the `workflow` scope, but an SSH key, or a token that has the scope,
+  is not limited, so with workflow access a review comment that steers the
+  agent can bring about a `pull_request` workflow change that runs with the
+  repository's secrets. A
   workflow change the merge of the base branch brought is not the fix's. A
   fix of conflicts or failing checks alone may change a workflow.
 - The push uses your git credentials, not baum's connection. When GitHub

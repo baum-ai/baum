@@ -572,6 +572,17 @@ func TestFixPushTellsAWorkflowScopeRefusal(t *testing.T) {
 func TestFixMergeKeepsTheBasesIgnoredFiles(t *testing.T) {
 	f := newFixFixture(t)
 	ctx := context.Background()
+	// The pull request stops tracking a build output and ignores it.
+	git(t, f.seed, "checkout", "-q", "feature")
+	write(t, f.seed, "dist/bundle.js", "built\n", 0o644)
+	git(t, f.seed, "add", "-f", "dist/bundle.js")
+	git(t, f.seed, "commit", "-q", "-m", "a build output")
+	git(t, f.seed, "rm", "-q", "--cached", "dist/bundle.js")
+	write(t, f.seed, ".gitignore", "dist/\n", 0o644)
+	git(t, f.seed, "add", ".gitignore")
+	git(t, f.seed, "commit", "-q", "-m", "stop tracking the build output")
+	f.head = git(t, f.seed, "rev-parse", "HEAD")
+	git(t, f.seed, "push", "-q", "origin", "feature")
 	git(t, f.seed, "checkout", "-q", "main")
 	write(t, f.seed, ".gitignore", "gen/\n", 0o644)
 	write(t, f.seed, "gen/keep.txt", "kept\n", 0o644)
@@ -584,16 +595,22 @@ func TestFixMergeKeepsTheBasesIgnoredFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = fix.Close() }()
-	if conflicts, err := fix.Merge(ctx, "Merge"); err != nil || len(conflicts) != 1 {
+	if conflicts, err := fix.Merge(ctx, "Merge"); err != nil || len(conflicts) != 2 {
 		t.Fatalf("conflicts %v %v", conflicts, err)
 	}
 	write(t, fix.Dir(), "a.txt", "resolved\n", 0o644)
+	write(t, fix.Dir(), ".gitignore", "dist/\ngen/\n", 0o644)
+	// A build the agent ran wrote the output the pull request stopped tracking.
+	write(t, fix.Dir(), "dist/bundle.js", "rebuilt\n", 0o644)
 	result, err := fix.Commit(ctx, "Merge")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := git(t, f.clone, "show", result+":gen/keep.txt"); got != "kept" {
 		t.Fatalf("gen/keep.txt %q", got)
+	}
+	if files := git(t, f.clone, "ls-tree", "-r", "--name-only", result); strings.Contains(files, "dist/") {
+		t.Fatalf("the build output the pull request stopped tracking came back:\n%s", files)
 	}
 }
 
@@ -615,6 +632,12 @@ func TestFixChecksOutWithTheClonesFilters(t *testing.T) {
 	defer func() { _ = fix.Close() }()
 	if got := readFile(t, filepath.Join(fix.Dir(), "x.big")); got != "SMALL\n" {
 		t.Fatalf("x.big %q, want the clone's smudge filter applied", got)
+	}
+	// The agent's repository knows the clone's filter, so it sees no change.
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = fix.Dir()
+	if out, err := cmd.Output(); err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("the agent's repository sees changes: %q %v", out, err)
 	}
 	if head, err := fix.Commit(context.Background(), "nothing"); err != nil || head != f.head && head != fix.Head {
 		t.Fatalf("a smudged file counted as a change: %s %v", head, err)

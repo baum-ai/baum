@@ -23,7 +23,7 @@ func TestFixEnvironmentDropsTokensAndMovesCaches(t *testing.T) {
 	for _, want := range []string{"PATH=/bin", "LANG=C", "ANTHROPIC_API_KEY=keep", "CLAUDE_CODE_OAUTH_TOKEN=keep", "AWS_SECRET_ACCESS_KEY=keep", "OPENAI_API_KEY=keep", "GIT_CONFIG_GLOBAL=/g",
 		"GOCACHE=" + filepath.Join("/fix/tmp", "cache", "go-build"), "GOMODCACHE=" + filepath.Join("/fix/tmp", "cache", "go-mod"), "GOPATH=" + filepath.Join("/fix/tmp", "cache", "go"),
 		"npm_config_cache=" + filepath.Join("/fix/tmp", "cache", "npm"), "PIP_CACHE_DIR=" + filepath.Join("/fix/tmp", "cache", "pip"),
-		"XDG_CACHE_HOME=" + filepath.Join("/fix/tmp", "cache")} {
+		"XDG_CACHE_HOME=" + filepath.Join("/fix/tmp", "cache"), "GIT_LFS_SKIP_SMUDGE=1"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("missing %s in %q", want, got)
 		}

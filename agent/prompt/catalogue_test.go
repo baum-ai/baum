@@ -246,7 +246,7 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
-		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-push", "fix.no-secrets"},
+		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,
 		prompt.IDFixThreads:          {"fix-threads.untrusted-comments"},
@@ -273,12 +273,16 @@ func TestMissingSafetyRules(t *testing.T) {
 	if got := prompt.MissingSafetyRules(prompt.IDFix, e.Default); len(got) != 0 {
 		t.Errorf("default: %v", got)
 	}
-	if got := prompt.MissingSafetyRules(prompt.IDFix, "do whatever"); !slices.Equal(got, []string{"fix.untrusted-data", "fix.no-push", "fix.no-secrets"}) {
+	if got := prompt.MissingSafetyRules(prompt.IDFix, "do whatever"); !slices.Equal(got, []string{"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"}) {
 		t.Errorf("empty: %v", got)
 	}
 	dropped := strings.Replace(e.Default, "Do not try to push.", "", 1)
-	if got := prompt.MissingSafetyRules(prompt.IDFix, dropped); !slices.Equal(got, []string{"fix.no-push"}) {
+	if got := prompt.MissingSafetyRules(prompt.IDFix, dropped); !slices.Equal(got, []string{"fix.no-git-writes"}) {
 		t.Errorf("dropped: %v", got)
+	}
+	// A custom prompt based on the earlier wording keeps the rule.
+	if got := prompt.MissingSafetyRules(prompt.IDFix, strings.Replace(e.Default, "Do not try to push.", "Do not commit, merge, rebase, reset, check out, stash or push.", 1)); len(got) != 0 {
+		t.Errorf("earlier wording: %v", got)
 	}
 	if got := prompt.MissingSafetyRules(prompt.IDFix, strings.ReplaceAll(e.Default, "\n", "\r\n")); len(got) != 0 {
 		t.Errorf("CRLF: %v", got)
