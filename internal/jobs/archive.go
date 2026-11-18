@@ -132,6 +132,7 @@ func (q *Queue) archive() error {
 		archived[id] = true
 		delete(q.dirty, id)
 		delete(q.drafts, id)
+		q.draftTiles.drop(id)
 		delete(q.superseded, id)
 		delete(q.cancels, id)
 		if err := os.Remove(transcriptPath(q.transcripts, id)); err != nil && !os.IsNotExist(err) && q.log != nil {

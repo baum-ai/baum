@@ -12,7 +12,6 @@ import {
 } from "react";
 
 import { firstByPath } from "../hunk-index";
-import { useUrlState } from "../navigation";
 import {
   checkStatus,
   type LoadReviewVersion,
@@ -698,10 +697,6 @@ function ReviewWorkspace<F extends ReviewFile>({
         : requested,
     [requested, hasPlaces, hasSessions, hasCommits, hasDecisions, hasFiles],
   );
-  // Tiles are not ready for readers yet, so they stay hidden unless the URL
-  // asks for them with `?tiles=1`, which keeps them reachable while built.
-  const { search } = useUrlState();
-  const showTiles = search.get("tiles") === "1";
   // A section or risk being read has to stay visible in the rail, however
   // the selection arrived (a click, Back, a shared link). File diffs are
   // different: the tree may fold while the selected diff stays in the pane,
@@ -1132,8 +1127,9 @@ function ReviewWorkspace<F extends ReviewFile>({
       placeGeneration,
     ],
   );
-  const hostSteps =
-    places && PLACE_KINDS.has(selection.kind) ? places.steps(selection, hostContext) : null;
+  // A selection the host owns steps only as the host says, even with no steps.
+  const hostOwned = Boolean(places) && PLACE_KINDS.has(selection.kind);
+  const hostSteps = places && hostOwned ? places.steps(selection, hostContext) : null;
   const hostFolds = places?.railFolded?.(selection) ?? false;
   if (railChoice && railChoice.answer !== hostFolds) setRailChoice(null);
   const railFolded =
@@ -1373,13 +1369,13 @@ function ReviewWorkspace<F extends ReviewFile>({
         : viewedId
           ? steps.findIndex((step) => step.key === viewedId)
           : -1;
-  const previousStep = hostSteps
-    ? hostSteps.previous
+  const previousStep = hostOwned
+    ? (hostSteps?.previous ?? null)
     : stepAt < 0
       ? null
       : (steps[Math.ceil(stepAt) - 1] ?? null);
-  const nextStep = hostSteps
-    ? hostSteps.next
+  const nextStep = hostOwned
+    ? (hostSteps?.next ?? null)
     : stepAt < 0
       ? null
       : (steps[Math.floor(stepAt) + 1] ?? null);
@@ -2614,7 +2610,6 @@ function ReviewWorkspace<F extends ReviewFile>({
           loadVersion={loadVersion}
           activeVersions={sectionHistory?.active.get(section.id)}
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}
-          showTiles={showTiles}
           labels={renderSectionLabels?.(section, snapshot)}
           onRetryDetails={historical ? undefined : onRetryDetails}
         />

@@ -2,9 +2,11 @@ package uiserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
@@ -18,13 +20,23 @@ import (
 // clock tick, is served as rewritten by /api/document and its viewer's
 // routes, never from the viewer of the bytes before; an unchanged document is
 // a 304 for its ETag and is not parsed again.
-func TestRewrittenDocumentIsNeverServedStale(t *testing.T) {
+// storedDocumentAPI is a local API over the store of a clone of owner/repo,
+// with a GET of a path for its pull request 7.
+type storedDocumentAPI struct {
+	versions *store.Store
+	key      store.Key
+	handler  *LocalHandler
+	get      func(path, etag string) *httptest.ResponseRecorder
+}
+
+func newStoredDocumentAPI(t *testing.T) storedDocumentAPI {
+	t.Helper()
 	ctx := context.Background()
 	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = registry.Close() }()
+	t.Cleanup(func() { _ = registry.Close() })
 	dir := appdbtest.TempDir(t)
 	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"remote", "add", "origin", "https://github.com/owner/repo"}} {
 		cmd := exec.Command("git", args...)
@@ -41,16 +53,8 @@ func TestRewrittenDocumentIsNeverServedStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := store.Key{Repository: "owner/repo", Number: 7}
-	document := func(checks string) []byte {
-		return []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaaaaaaa","base":"bbbbbbbb"},"checks":"` + checks + `"}`)
-	}
-	saved := store.Version{Metadata: store.Metadata{Version: 1}, Document: document("aaaa")}
-	if err := versions.Put(ctx, key, store.Version{}, saved); err != nil {
-		t.Fatal(err)
-	}
 	handler := LocalAPI{Registry: registry, Config: config.Default()}.Handler()
-	defer handler.Close()
+	t.Cleanup(handler.Close)
 	handler.documents.resolve = func(context.Context, locallink.Request) (locallink.Result, error) {
 		return locallink.Result{Available: true}, nil
 	}
@@ -63,6 +67,20 @@ func TestRewrittenDocumentIsNeverServedStale(t *testing.T) {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		return w
+	}
+	return storedDocumentAPI{versions: versions, key: store.Key{Repository: "owner/repo", Number: 7}, handler: handler, get: get}
+}
+
+func TestRewrittenDocumentIsNeverServedStale(t *testing.T) {
+	ctx := context.Background()
+	api := newStoredDocumentAPI(t)
+	versions, key, handler, get := api.versions, api.key, api.handler, api.get
+	document := func(checks string) []byte {
+		return []byte(`{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaaaaaaa","base":"bbbbbbbb"},"checks":"` + checks + `"}`)
+	}
+	saved := store.Version{Metadata: store.Metadata{Version: 1}, Document: document("aaaa")}
+	if err := versions.Put(ctx, key, store.Version{}, saved); err != nil {
+		t.Fatal(err)
 	}
 	builds := func() int {
 		handler.documents.mu.Lock()
@@ -106,5 +124,34 @@ func TestRewrittenDocumentIsNeverServedStale(t *testing.T) {
 	}
 	if builds() != 3 {
 		t.Fatal("builds", builds())
+	}
+}
+
+// A version an earlier release stored with tiles on its sections and risks,
+// of a kind the catalogue offered last, one it had retired and one it never
+// had, is served without them.
+func TestStoredDocumentIsServedWithoutTiles(t *testing.T) {
+	api := newStoredDocumentAPI(t)
+	tiles := `[{"id":"tile_fix","kind":"bug-fix","data":{"bug":"b","fix":"f"}},{"id":"tile_was","kind":"refactor","data":{"was":"w","now":"n"}},{"id":"tile_preview","kind":"ui-preview","data":{}}]`
+	document := func(tiles string) string {
+		return `{"review":{"repository":"owner/repo","pull_request":7,"version":1,"head":"aaaaaaaa","base":"bbbbbbbb"},"sections":[{"id":"sec_a","risks":[{"id":"rsk_a"` + tiles + `}]` + tiles + `}]}`
+	}
+	saved := store.Version{Metadata: store.Metadata{Version: 1}, Document: []byte(document(`,"tiles":` + tiles))}
+	if err := api.versions.Put(context.Background(), api.key, store.Version{}, saved); err != nil {
+		t.Fatal(err)
+	}
+	w := api.get("/api/document", "")
+	if w.Code != 200 {
+		t.Fatalf("read: %d %s", w.Code, w.Body.String())
+	}
+	var got, want any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(document("")), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("served %s, want %s", w.Body.String(), document(""))
 	}
 }

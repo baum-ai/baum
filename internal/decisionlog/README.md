@@ -152,7 +152,12 @@ changes; other skips only when it changes.
   with others.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
   reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
-  (`capture`, or a feature log stage) and the `item` it was about.
+  (`capture`, a feature log stage, `decision_relevance`, or `stack_summary`)
+  and the `item` it was about. `Calls` makes one such call for another part
+  of the daemon, a stack's summary (`internal/reviewgroups`, item
+  `group:<id>`): the backend and model resolved as capture's, the cost
+  reserved, a reply its caller's check refuses recorded as failed, and no
+  capture gate.
 
 Nothing is pruned: the ledger and the decisions, obsolete ones included, are
 kept for good, as hosted extraction keeps them.

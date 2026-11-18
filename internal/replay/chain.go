@@ -117,6 +117,9 @@ func (p Plan) runChain(ctx context.Context, runner *Runner, u unit, halted func(
 		if ended != "" {
 			rec.Stopped = ended
 			rev.Status, rev.Reason = "skipped", skip
+			// What an earlier run left of a skipped revision is not a result of
+			// this chain: neither metrics nor a resume may take it for one.
+			_ = os.RemoveAll(filepath.Join(p.RunDir(), "cases", id))
 			add(Row{CaseID: id, Status: "skipped", Reason: skip})
 			continue
 		}
