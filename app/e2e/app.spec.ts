@@ -180,7 +180,7 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   await expect(page.getByText("Source screenshot request", { exact: true })).toBeVisible();
   await expect(page.locator('[aria-current="step"]')).toContainText("Source screenshot request");
   await page.goBack();
-  await page.getByRole("button", { name: "Summary", exact: true }).click();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
