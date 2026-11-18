@@ -60,6 +60,9 @@ const LOGIN_PATH_TIMEOUT: Duration = Duration::from_secs(30);
 const HOOKS_TIMEOUT: Duration = Duration::from_secs(240);
 /// Starting a GitHub sign-in asks GitHub for a device code.
 const GITHUB_TIMEOUT: Duration = Duration::from_secs(45);
+/// Where a GitHub sign-in's code is entered. Fixed rather than the daemon's
+/// verification URL, as on the setup screen.
+const GITHUB_DEVICE_PAGE: &str = "https://github.com/login/device";
 
 /// The setup screen's state while the app runs.
 #[derive(Default)]
@@ -727,12 +730,20 @@ pub async fn save_review_settings(
 /// The GitHub step signs in through the attached daemon's own API, which runs
 /// the device flow and keeps the credential, so the screen never holds a
 /// token. It reads the connection, or starts, cancels or rechecks a sign-in;
-/// disconnecting stays in the app's settings.
+/// disconnecting stays in the app's settings. `open` opens GitHub's device
+/// page in the browser, a fixed address, a few seconds after a sign-in starts:
+/// the screen can no longer open a window then, and the window's navigations
+/// never open the browser (see `navigation::decide`).
 #[tauri::command]
 pub async fn github_connection(
     app: AppHandle,
     action: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    if action.as_deref() == Some("open") {
+        let page = url::Url::parse(GITHUB_DEVICE_PAGE).expect("static URL");
+        crate::open_externally(&app, &page);
+        return Ok(serde_json::Value::Null);
+    }
     blocking(move || {
         let launch =
             crate::tray::launch(&app).ok_or("baum is still starting. Try again in a moment.")?;

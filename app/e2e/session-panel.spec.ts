@@ -27,7 +27,7 @@ test("opens the session panel on a pull request and starts a session there", asy
   await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
 
   // The key opens it from anywhere, its composer taking the keys.
-  await page.keyboard.press("`");
+  await page.keyboard.press("Control+`");
   await expect(panel(page)).toBeVisible();
   await expect(panel(page).getByRole("heading", { name: "New session" })).toBeVisible();
   await expect(page.getByTestId("session-panel-page")).toHaveText(
@@ -78,26 +78,32 @@ test("opens the session panel on a pull request and starts a session there", asy
     animations: "disabled",
   });
 
-  // Escape in the empty composer hides it; the key brings it back on the
-  // same session.
-  await composer.press("Escape");
+  // The key in the composer hides it, and brings it back on the same
+  // session.
+  await composer.press("Control+`");
   await expect(panel(page)).toHaveCount(0);
-  await page.keyboard.press("`");
+  await page.keyboard.press("Control+`");
   await expect(
     panel(page).getByRole("heading", { name: "Why is the retry delay capped?" }),
   ).toBeVisible();
 
-  // With something typed, the first Escape gives the keys to the panel and
-  // the second hides it; the pull request's page under it keeps both, so it
-  // does not go back to its list.
+  // From the composer, the first Escape gives the keys to the panel and
+  // the second gives them back to the page, the panel staying open; the pull
+  // request's page under it gets neither, so it does not go back to its
+  // list. The key takes them back to the composer, where it hides the panel.
   await composer.fill("A half-written question");
   await composer.press("Escape");
   await expect(panel(page)).toBeVisible();
   await expect(panel(page)).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(panel(page)).toHaveCount(0);
+  await expect(panel(page)).toBeVisible();
+  await expect(panel(page)).not.toBeFocused();
   await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
-  await page.keyboard.press("`");
+  await page.keyboard.press("Control+`");
+  await expect(composer).toBeFocused();
+  await composer.press("Control+`");
+  await expect(panel(page)).toHaveCount(0);
+  await page.keyboard.press("Control+`");
   await expect(composer).toHaveValue("A half-written question");
   await composer.fill("");
 
@@ -167,7 +173,7 @@ test("from the top, the panel leaves the pull request's bar in view", async ({ p
     await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
     await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
     await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
-    await page.keyboard.press("`");
+    await page.keyboard.press("Control+`");
     await expect(panel(page)).toBeVisible();
     await expect(panel(page)).toHaveAttribute("data-position", "top");
     const box = (await panel(page).boundingBox())!;

@@ -29,7 +29,7 @@ directory.
 ```
 {
   "sections": [
-    { id, summary, attention, risks, evidence, blocks, tiles }, ...
+    { id, summary, attention, risks, evidence, blocks }, ...
   ]
 }
 ```
@@ -44,7 +44,7 @@ section you are not asked for. Do not write a section's `title`, `kind`,
 
 - `summary`: `{text, anchors}`. One to three sentences on what this section
   changes and its effect. Anchors are hunks or files.
-- `risks`, `evidence`, `attention`, `blocks` and `tiles`: below.
+- `risks`, `evidence`, `attention` and `blocks`: below.
 - Size the details to the section's assessment level. A level 1 section
   and the mechanical section get a one- or two-sentence summary and no
   `question`, risks or `missing` items, unless you find a concrete defect
@@ -224,11 +224,6 @@ has at most one of each of `intent`, `behavior`, `groups`, `decisions`,
   heading. Use only IDs `attachments` lists, also in previous sections you
   keep; with no `attachments`, add no `images` block. `media` takes a URL
   only if it appears in the bundle.
-
-### Tiles
-
-Write tiles only if tile guidance follows this prompt, and only of the kinds
-it lists. Otherwise leave `tiles` out.
 
 ## Final checklist
 

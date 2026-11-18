@@ -26,9 +26,7 @@ type Prompt struct {
 type Prompts interface {
 	// Instructions returns the review instructions for a backend. The loop
 	// ignores Version and Digest: the host records the version in the
-	// document's generator.prompt_version and keeps the digest. The loop
-	// appends the offered tile guidance (tilecatalogue.Instructions) to the
-	// body itself.
+	// document's generator.prompt_version and keeps the digest.
 	Instructions(ctx context.Context, backend string) (Prompt, error)
 }
 

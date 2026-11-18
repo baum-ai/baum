@@ -58,7 +58,21 @@ function keepPlaceholder(): Plugin {
   };
 }
 
-export default defineConfig({
+// The profiling build's collector (src/perf.ts) must not reach any other build.
+function withoutProfiling(): Plugin {
+  return {
+    name: "without-profiling",
+    apply: "build",
+    generateBundle(_, bundle) {
+      for (const [name, chunk] of Object.entries(bundle)) {
+        if (chunk.type === "chunk" && chunk.code.includes("__baumPerf"))
+          this.error(`${name} contains the profiling collector outside a profiling build`);
+      }
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => ({
   // The server serves the app under a secret /s/<namespace>/ path, so built
   // asset URLs resolve against the page rather than the origin root.
   base: "./",
@@ -67,6 +81,7 @@ export default defineConfig({
     tailwindcss(),
     keepPlaceholder(),
     desktopBundle(),
+    ...(mode === "profile" ? [] : [withoutProfiling()]),
     ...(process.env.BAUM_DESKTOP_DEV_DIR
       ? [desktopDevelopment(process.env.BAUM_DESKTOP_DEV_DIR, process.env.BAUM_DESKTOP_DAEMON_HOST)]
       : []),
@@ -75,7 +90,8 @@ export default defineConfig({
     assetsInlineLimit: 0,
     outDir: "../internal/localapp/dist",
     emptyOutDir: true,
-    sourcemap: false,
+    // A profile names functions by their source files and lines.
+    sourcemap: mode === "profile",
     rolldownOptions: {
       input: {
         app: resolve(import.meta.dirname, "index.html"),
@@ -85,5 +101,10 @@ export default defineConfig({
       },
     },
   },
-  resolve: { dedupe: ["react", "react-dom"] },
-});
+  resolve: {
+    dedupe: ["react", "react-dom"],
+    // React's profiling build reports renders to <Profiler> in production.
+    alias:
+      mode === "profile" ? [{ find: "react-dom/client", replacement: "react-dom/profiling" }] : [],
+  },
+}));

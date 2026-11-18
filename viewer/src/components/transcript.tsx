@@ -119,10 +119,14 @@ export function SessionTranscript({
   modelLabel,
   renderAvatar,
   layout = "chat",
+  openLastReply = false,
 }: {
   session: TranscriptSession;
   replies: RepliesState;
   focusTurn?: number;
+  /** Shows the last turn's reply whole, with nothing to unfold: for a host
+   *  where the latest answer is what is being read, as a live session's is. */
+  openLastReply?: boolean;
 } & TranscriptHostProps) {
   // Days split in the reader's own zone. The routes that show a transcript
   // render it on the client only, so this guard is defensive, as charts are.
@@ -177,6 +181,7 @@ export function SessionTranscript({
                 replies={state}
                 day={days[index] ?? null}
                 focused={focusTurn === prompt.ordinal}
+                openReply={openLastReply && index === session.prompts.length - 1}
                 source={source}
                 formatCost={formatCost}
                 renderAvatar={renderAvatar}
@@ -242,6 +247,7 @@ function Turn({
   replies,
   day,
   focused,
+  openReply,
   source,
   formatCost,
   renderAvatar,
@@ -252,6 +258,8 @@ function Turn({
   /** The day this turn starts, when it is not the previous turn's. */
   day: string | null;
   focused: boolean;
+  /** Whether the turn's reply is shown whole rather than folded. */
+  openReply: boolean;
 } & TranscriptHostProps) {
   const { activity, load, available } = useTurnActivity(session.run_id, prompt.turn_id, source);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -308,6 +316,7 @@ function Turn({
           load();
         }}
         openActivity={available ? toggleActivity : undefined}
+        open={openReply}
       />
       <TurnFooter
         prompt={prompt}
@@ -437,6 +446,7 @@ function AgentReplies({
   activity,
   loadActivity,
   openActivity,
+  open = false,
 }: {
   vendor: string;
   prompt: TranscriptPrompt;
@@ -445,6 +455,8 @@ function AgentReplies({
   loadActivity: () => void;
   /** Absent when the host has no activity to open. */
   openActivity?: () => void;
+  /** Whether the turn's last reply is shown whole rather than folded. */
+  open?: boolean;
 }) {
   const log = useLogLayout();
   // The transcript says once that the replies are loading or missing.
@@ -460,6 +472,7 @@ function AgentReplies({
         key={`${shown.timestamp ?? "undated"}-${index}`}
         vendor={named ? vendor : undefined}
         progress={progress}
+        open={open && !progress && index === prompt.replies.length - 1}
         text={text}
         length={shown.text_length}
         truncated={stillPreview}

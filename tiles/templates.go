@@ -2,6 +2,7 @@ package tiles
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 )
 
@@ -87,15 +88,22 @@ func Template(doc *Document, content *Composition) (Composition, Report) {
 	if content == nil {
 		content = &Composition{}
 	}
+	// The generator is host-written: keep it apart from the model output the
+	// composer normalises, which drops and reports a generator.
+	host := content.Generator
+	model := *content
+	model.Generator = nil
 	name := TemplateName(changeKindOf(doc))
 	cm := newComposer(doc, modeWrite)
-	if err := cm.prepare(content); err != nil {
+	if err := cm.prepare(&model); err != nil {
 		return Composition{Schema: CompositionName}, Report{Fixes: []Fix{{Kind: FixUnusable, Detail: err.Error()}}}
 	}
-	out := cm.finish(content, cm.templateLayout(name))
+	out := cm.finish(&model, cm.templateLayout(name))
 	generator := Generator{}
-	if out.Generator != nil {
-		generator = *out.Generator
+	if host != nil {
+		generator = *host
+		generator.Fixes = maps.Clone(host.Fixes)
+		generator.Problems = slices.Clone(host.Problems)
 	}
 	generator.Template = name
 	out.Generator = &generator

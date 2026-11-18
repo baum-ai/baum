@@ -15,16 +15,17 @@ func TestDraftTilesKeepsTheViewPerDraftAndComposition(t *testing.T) {
 	draft := tileviewtest.Encode(t, tileviewtest.Base(t))
 	composition, pinned := tileviewtest.PinnedComposition(t, draft)
 	var d draftTiles
+	q := &Queue{drafts: map[string][]byte{"job": draft}}
 	before := tileview.Builds.Load()
-	plain, err := d.get("job", 1, draft, nil)
+	plain, err := d.get(q, "job", 1, draft, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := d.get("job", 1, draft, nil)
+	again, err := d.get(q, "job", 1, draft, nil)
 	if err != nil || !bytes.Equal(plain, again) || tileview.Builds.Load() != before+1 {
 		t.Fatalf("an unchanged draft was built %d times: %v", tileview.Builds.Load()-before, err)
 	}
-	composed, err := d.get("job", 1, draft, composition)
+	composed, err := d.get(q, "job", 1, draft, composition)
 	if err != nil || bytes.Equal(plain, composed) || tileview.Builds.Load() != before+2 {
 		t.Fatalf("composed view: %v, %d builds", err, tileview.Builds.Load()-before)
 	}

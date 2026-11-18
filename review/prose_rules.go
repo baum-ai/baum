@@ -49,7 +49,7 @@ var proseKeys = map[string]bool{
 // proseSkipKeys are subtrees that never hold prose a reader takes as the
 // review's own words.
 var proseSkipKeys = map[string]bool{
-	"id": true, "anchors": true, "refs": true, "tiles": true, "hunks": true, "source": true,
+	"id": true, "anchors": true, "refs": true, "hunks": true, "source": true,
 	"assessment": true, "derived": true, "authorship": true, "implements": true,
 	"author": true, "risk_score": true, "index": true,
 }
