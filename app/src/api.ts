@@ -383,7 +383,9 @@ const jobReasons: Record<string, string> = {
   history_rewritten:
     "The result didn't build on the pull request's commits, so baum refused to push it.",
   workflow_changed:
-    "The agent changed a GitHub workflow or action, which a fix of review comments or a conversation never pushes. Nothing was pushed.",
+    "The agent changed a GitHub workflow or action, which needs workflow access that baum's GitHub connection does not have, so nothing was pushed. Choose Reconnect with workflow access in Settings, then run the fix again.",
+  workflow_scope:
+    "GitHub refused the push because the git credential it used can't change workflows. Give that credential the workflow scope (for the GitHub CLI: gh auth refresh -s workflow), then run the fix again.",
   credential_added:
     "The agent's change adds what looks like a credential, which baum never pushes. Nothing was pushed.",
   nested_repository:
