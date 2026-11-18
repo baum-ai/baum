@@ -8,7 +8,7 @@ import (
 )
 
 func TestFixEnvironmentDropsTokensAndMovesCaches(t *testing.T) {
-	environ := []string{"PATH=/bin", "HOME=/home/u", "GITHUB_TOKEN=a", "GH_TOKEN=b", "GH_HOST=c", "SSH_AUTH_SOCK=/s", "GIT_DIR=/r", "GIT_ASKPASS=/p",
+	environ := []string{"PATH=/bin", "HOME=/home/user", "GITHUB_TOKEN=a", "GH_TOKEN=b", "GH_HOST=c", "SSH_AUTH_SOCK=/s", "GIT_DIR=/r", "GIT_ASKPASS=/p",
 		"NPM_TOKEN=d", "MY_SERVICE_TOKEN=e", "DB_PASSWORD=f", "STRIPE_SECRET_KEY=g", "SOME_API_KEY=h",
 		"ANTHROPIC_API_KEY=keep", "CLAUDE_CODE_OAUTH_TOKEN=keep", "AWS_SECRET_ACCESS_KEY=keep", "OPENAI_API_KEY=keep",
 		"GIT_CONFIG_GLOBAL=/g", "GOCACHE=/old", "LANG=C"}
@@ -34,10 +34,10 @@ func TestFixEnvironmentDropsTokensAndMovesCaches(t *testing.T) {
 }
 
 func TestFixCredentialPaths(t *testing.T) {
-	paths := FixCredentialPaths("/home/u", []string{"CLAUDE_CONFIG_DIR=/cfg/claude", "CODEX_HOME=/cfg/codex", "CODEX_HOME=relative"})
-	for _, want := range []string{"/home/u/.ssh", "/home/u/.aws", "/home/u/.config/gcloud", "/home/u/.config/gh", "/home/u/.netrc", "/home/u/.git-credentials",
-		"/home/u/.docker/config.json", "/home/u/.npmrc", "/home/u/.pypirc", "/home/u/.kube", "/home/u/.gnupg", "/home/u/.codex/auth.json",
-		"/home/u/.claude/.credentials.json", "/cfg/claude/.credentials.json", "/cfg/codex/auth.json"} {
+	paths := FixCredentialPaths("/home/user", []string{"CLAUDE_CONFIG_DIR=/cfg/claude", "CODEX_HOME=/cfg/codex", "CODEX_HOME=relative"})
+	for _, want := range []string{"/home/user/.ssh", "/home/user/.aws", "/home/user/.config/gcloud", "/home/user/.config/gh", "/home/user/.netrc", "/home/user/.git-credentials",
+		"/home/user/.docker/config.json", "/home/user/.npmrc", "/home/user/.pypirc", "/home/user/.kube", "/home/user/.gnupg", "/home/user/.codex/auth.json",
+		"/home/user/.claude/.credentials.json", "/cfg/claude/.credentials.json", "/cfg/codex/auth.json"} {
 		if !slices.Contains(paths, filepath.FromSlash(want)) {
 			t.Errorf("missing %s", want)
 		}

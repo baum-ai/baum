@@ -98,7 +98,7 @@ func TestFixRunsCommandsInTheSandbox(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "/agent.sock")
 	t.Setenv("GIT_ASKPASS", "/askpass")
 	t.Setenv("GITHUB_TOKEN", "ghp_secret")
-	t.Setenv("GOCACHE", "/home/cache")
+	t.Setenv("GOCACHE", "/home/user/cache")
 	for _, network := range []bool{true, false} {
 		dir, scratch, gitDir, clone := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 		if err := os.MkdirAll(filepath.Join(gitDir, "objects", "info"), 0o755); err != nil {

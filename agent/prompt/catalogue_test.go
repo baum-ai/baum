@@ -31,22 +31,22 @@ var baseline = map[string]string{
 	"cursor-agent review": "d5998d7816dd1f46a8649fe185259d8d457fd1969246d8ed56f043258999c269",
 	"cursor-agent group":  "3d0a6153c400e943252ce317c4cc0e4939f4e90087bfeb6dfa1e8e7a22dc4129",
 	"cursor-agent staged": "b162744a88a21c8e4720642d9f62bffd8a26e6e008c16b09dc53e1b8a1ebadf1",
-	"fix 0":               "5ff07cb79658980528df0d7dc38c2e8f2bd3c211422f66c769a21408237e4971",
-	"fix 1":               "a01d046cb31bb35be38e4304c9957a47a87a8dfdd682def427ab00251a9848aa",
-	"fix 2":               "e7f530cb2f66b78c599930498089aaa8d060c968d5fda760c7a75a7dada877bf",
-	"fix 3":               "1c89f7afe44e7185189ad34b6860c8972fc56da3e9c67ada6cc8092baef1d0d9",
-	"fix 4":               "8e02ce5a96bc1903eccf6724d5083133c405faf41ffa33005168f6aa447b84b4",
-	"fix 5":               "e6d92e17a48ee22166dfc0b0ffdfc5f2f98c8cc0ec1e53b3e7859977dc9862dc",
-	"fix 6":               "b53355f2d107721a9ecbd9bbc1406c00d7d1e07a724c6f1408e95464ddfb3319",
-	"fix 7":               "d0594de5f7d903a824013544c234902ab9e357e8559df28ae064e819ff316462",
-	"fix 8":               "3767be0d9d0e81ea6173e9b2bb2763184d29defdebcba8015770e41ca53aecec",
-	"fix 9":               "16016895652a6f3fdc94430be7675d782e445fe5299e376ad19b21b6d01eef86",
-	"fix 10":              "56091500cf46af68dcdd47f4812c0367555de42e4f2f51adf99c1811abd27827",
-	"fix 11":              "16698369e9727e1550e43c7c688421838261220ae0fd02ac7ba1558895c4a8e5",
-	"fix 12":              "1839eb22fbf2c3296b69984e52e616a5dff8fa3ab6a32b43aa6516cafcc96684",
-	"fix 13":              "dd115a648650fa176de95287b3997141ea7fc68c798cf78519d2b30b6c06ce84",
-	"fix 14":              "741d2786e9150947a1ef445a7f5b7a6c28984adc0584bfc338f95fc03ac9ecc2",
-	"fix 15":              "2b4db4dd265428b3a70d920ebc12441f681457c9afa20559799f21d662d729a1",
+	"fix 0":               "fe66f520877324fce47415babd1b6a499ae14439c3b54228110ac37e642370ee",
+	"fix 1":               "fb8a3cbd108bfcf1a9a3ddc8fa27cb32c5cd9617d20c69cde9af0cd389334871",
+	"fix 2":               "ee1eb9f72e6c822e23501fb2c5dd47fae531f0c736ee5aea598397604af93d2e",
+	"fix 3":               "8a2df39a4c292be76dcca3dc20ce389a04e7f380dc76ef53d57031f9eb5388c1",
+	"fix 4":               "4beb31f7721ec77463cdf2866a53d6b765978096e3df60e972f42a23bdddbae1",
+	"fix 5":               "1308b16c4a6ed70bdbb9f46b30f5cbf8cb7177f86539e090c0a593f0bf8284a5",
+	"fix 6":               "09c781642505cfc34af89958d087b00819aa3182b678414ee5f7f60b5ab334ce",
+	"fix 7":               "511d16941e76c519bcc0c5322e918dea36a354f2849c23c01826f624f7db2d0c",
+	"fix 8":               "00f13a33f2faad8a1bf2521016e540d00985a96ea78d754ff0f62e6b96299e4f",
+	"fix 9":               "41ef8ca3762fd9284f995a64b2f22c561f6b67d5e4d59379402c133b49457c89",
+	"fix 10":              "e506d4035ec4c28ad0a3fbe2cafb67a35518a1c855bfc213076a4b432f3deed0",
+	"fix 11":              "f4d8b609fde7355595ab9ef78944806ba43d98f1ac8f5b96e17ac9c5d21ffd52",
+	"fix 12":              "6bc486fa191a75f4804b438cef4bde33b9e1974719242f4b3e2e9347802abd3c",
+	"fix 13":              "6f81c43f35a64fa7742018b3d7273cfcc51c410a47ac3e55723913d8f3ede266",
+	"fix 14":              "3aad90ee71a18938cf426c8959187f3e250d2867d0b708e40a209300bc34d1d2",
+	"fix 15":              "49591bfd05ff37df5438d67f2f6a11d0d62bae90fb32592bd35f521c0fd2ff74",
 }
 
 func sha(s string) string {
@@ -246,7 +246,7 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
-		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
+		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-push", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,
 		prompt.IDFixThreads:          {"fix-threads.untrusted-comments"},
@@ -273,11 +273,11 @@ func TestMissingSafetyRules(t *testing.T) {
 	if got := prompt.MissingSafetyRules(prompt.IDFix, e.Default); len(got) != 0 {
 		t.Errorf("default: %v", got)
 	}
-	if got := prompt.MissingSafetyRules(prompt.IDFix, "do whatever"); !slices.Equal(got, []string{"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"}) {
+	if got := prompt.MissingSafetyRules(prompt.IDFix, "do whatever"); !slices.Equal(got, []string{"fix.untrusted-data", "fix.no-push", "fix.no-secrets"}) {
 		t.Errorf("empty: %v", got)
 	}
-	dropped := strings.Replace(e.Default, "Do not commit, merge, rebase, reset, check out, stash or push.", "", 1)
-	if got := prompt.MissingSafetyRules(prompt.IDFix, dropped); !slices.Equal(got, []string{"fix.no-git-writes"}) {
+	dropped := strings.Replace(e.Default, "Do not try to push.", "", 1)
+	if got := prompt.MissingSafetyRules(prompt.IDFix, dropped); !slices.Equal(got, []string{"fix.no-push"}) {
 		t.Errorf("dropped: %v", got)
 	}
 	if got := prompt.MissingSafetyRules(prompt.IDFix, strings.ReplaceAll(e.Default, "\n", "\r\n")); len(got) != 0 {
