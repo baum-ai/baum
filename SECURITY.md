@@ -1848,7 +1848,10 @@ untrusted:
   resting on a tile is not a click). The page cannot see clicks inside a
   frame, so this is how it tells one apart. Focus a frame takes otherwise is
   given back to the page's element that had it, and a frame that takes it a
-  fourth time is unmounted.
+  fourth time is unmounted (its document unloaded at once, before the page
+  draws the failure). A key pressed in the instant a frame holds the
+  keyboard, before the page takes it back on its next task, reaches the
+  frame.
 - **Forwarded keys.** The whitelist is the page's reading keys only: Escape
   and `u` (back to the summary), `j` and `k` (next and previous),
   ArrowLeft and ArrowRight (previous and next tile), `[` and `]` (the
