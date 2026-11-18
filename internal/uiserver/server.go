@@ -187,6 +187,13 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
+		// The frame route applies its own, stricter fetch-metadata checks and
+		// answers every refusal with the same 404, so it runs before the
+		// cross-site check below.
+		if strings.HasPrefix(r.URL.Path, framePrefix) {
+			serveFrame(w, r)
+			return
+		}
 		// Browsers label every request with where it came from. The app's own
 		// requests are same-origin and a typed or native navigation is none.
 		// Requests from inside a page or frame of another origin (fetch,
@@ -202,10 +209,6 @@ func (s *Server) Handler() http.Handler {
 				http.Error(w, "cross-site request refused", http.StatusForbidden)
 				return
 			}
-		}
-		if strings.HasPrefix(r.URL.Path, framePrefix) {
-			serveFrame(w, r)
-			return
 		}
 		if r.URL.Path == mcpPath {
 			s.serveMCP(w, r)
