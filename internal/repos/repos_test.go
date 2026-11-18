@@ -407,6 +407,32 @@ func TestPreferencesExtractionBackend(t *testing.T) {
 	}
 }
 
+// Fix network access is on unless turned off, and needs no fix agent.
+func TestPreferencesFixNetwork(t *testing.T) {
+	if !(Preferences{}).FixNetworkAllowed() {
+		t.Fatal("nil fix network is off")
+	}
+	off, on := false, true
+	if (Preferences{FixNetwork: &off}).FixNetworkAllowed() || !(Preferences{FixNetwork: &on}).FixNetworkAllowed() {
+		t.Fatal("fix network not read")
+	}
+	if err := (Preferences{FixNetwork: &off}).Validate(); err != nil {
+		t.Fatalf("fix network without a fix agent: %v", err)
+	}
+	r, err := Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if _, err := r.UpdatePreferences(context.Background(), func(p Preferences) Preferences { p.FixNetwork = &off; return p }); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Preferences(context.Background())
+	if err != nil || got.FixNetwork == nil || got.FixNetworkAllowed() {
+		t.Fatalf("round trip %+v %v", got, err)
+	}
+}
+
 // Each use case has its own reasoning effort: reviews', fixes' with a fix
 // agent, and data extraction's.
 func TestPreferencesEfforts(t *testing.T) {

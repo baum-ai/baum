@@ -1697,7 +1697,12 @@ and puts the control back. **Fixes** chooses the agent that fixes: "Same as
 reviews (agent · model)" (the default) or Claude Code or Codex, then a model
 and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
 (`""` returns to the reviews', effort included) and reported by `GET
-api/settings`. A chosen fix agent applies in every repository. **Data
+api/settings`. A chosen fix agent applies in every repository. A
+**Network access** switch (on by default) is sent alone as `fix_network` and
+reported as a plain boolean; it applies with or without a chosen fix agent and
+is kept when the agent returns to the reviews'. On, the fix agent's commands
+can install dependencies and fetch what builds and tests need; off, its
+sandbox allows no connection, so it can't install dependencies. **Data
 extraction** has the same Agent and Model rows, its agent "Same as reviews
 (agent)" by default.
 

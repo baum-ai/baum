@@ -20,12 +20,12 @@ const testSession = "01a18588-ef8c-7962-b6af-d86e6966dacd"
 func TestMaxTurnsOnlyWithACallBudget(t *testing.T) {
 	backend := &Backend{Model: "sonnet"}
 	schema := []byte(`{"type":"object"}`)
-	for _, args := range [][]string{backend.args(agent.Request{Schema: schema}), backend.fixArgs(agent.Request{})} {
+	for _, args := range [][]string{backend.args(agent.Request{Schema: schema}), backend.fixArgs(agent.Request{}, true)} {
 		if slices.Contains(args, "--max-turns") {
 			t.Errorf("unbounded run has --max-turns: %q", args)
 		}
 	}
-	for _, args := range [][]string{backend.args(agent.Request{MaxCalls: 7, Schema: schema}), backend.fixArgs(agent.Request{MaxCalls: 7})} {
+	for _, args := range [][]string{backend.args(agent.Request{MaxCalls: 7, Schema: schema}), backend.fixArgs(agent.Request{MaxCalls: 7}, true)} {
 		if i := slices.Index(args, "--max-turns"); i < 0 || args[i+1] != "7" {
 			t.Errorf("bounded run lacks --max-turns 7: %q", args)
 		}

@@ -1393,15 +1393,48 @@ OpenAI's strict structured outputs accept.
 `agent.Fixer` is the one write mode, for a fix a person confirmed
 (`internal/fix`, see "Fix jobs" below): `Fix` runs the agent over a checkout
 it may edit, with no schema, and returns its final message as the summary.
-Only the local profiles implement it. `claude` keeps restricted mode and the
-other review flags but has `Read,Glob,Grep,Edit,Write` and `--permission-mode
-acceptEdits`: it edits files and runs nothing. `codex` runs `--sandbox
-workspace-write` with `sandbox_workspace_write.network_access=false`,
-`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` set to
-`Request.Scratch`, which is also its commands' `TMPDIR`. `cursor-agent` and
-`anthropic` have no write mode. The fix instructions are
-`prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`, `fix-checks.md` and
-`fix-threads.md`).
+Only the local profiles implement it. `Request.Scratch` is the agent's scratch
+directory, `Request.GitDir` its own git repository outside the checkout and
+`Request.Network` whether its commands reach the network (the `fix_network`
+preference). Both run with `agent.FixEnvironment` over their usual
+environment: no GitHub, git-host or registry token, SSH agent, askpass or
+repository-choosing Git variable, no variable named like a token, secret or
+password other than the CLI's own provider settings, and `GOCACHE`,
+`GOMODCACHE`, `GOPATH`, `npm_config_cache`, `YARN_CACHE_FOLDER`,
+`PIP_CACHE_DIR` and `XDG_CACHE_HOME` under the scratch directory.
+`agent.FixCredentialPaths` are the files under the home directory (and
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) where tools keep credentials and the
+runtime directory (`XDG_RUNTIME_DIR`, `/run/user/<uid>` on Linux, for its
+D-Bus and agent sockets), which the commands may not read. `claude` keeps restricted mode and the other review
+flags but has `Read,Glob,Grep,Edit,Write,Bash`, `--permission-mode
+acceptEdits` and `--settings` with no `blockReadsOutsideWorkingDirectories` (restricted mode
+keeps the file tools in the checkout; with it Claude Code hides the home
+directory and then fails every command when a file it protects there is a
+symbolic link), `permissions.allow` `Bash` (plus
+`WebFetch(domain:*)` with the network, the only way to open every domain to
+the sandbox) and `sandbox` `enabled`, `failIfUnavailable`,
+`autoAllowBashIfSandboxed`, `allowUnsandboxedCommands: false`,
+`filesystem.allowWrite` the scratch and git directories, `allowRead` the home
+directory and the git directory's alternates, `denyRead` the credential
+paths, and, without the network, `network.allowedDomains: []`. A result
+whose `startup_failure_reason` is `sandbox_required_unavailable` runs the fix
+again with `Read,Glob,Grep,Edit,Write`, no sandbox and a system prompt saying
+it cannot run commands, logging why; a `system` event whose fields do not
+decode (a `permission_denied` notice's text `message`) is skipped. TMPDIR is
+not moved for Claude Code: a long scratch path breaks its sandbox's sockets.
+`codex` from `PermissionProfileVersion` (0.170.0) on, off Windows, runs
+without `--sandbox` but with `-c default_permissions="baum_fix"`,
+`permissions.baum_fix.filesystem={"/"="read", <credential path>="none",
+<checkout, scratch, git directory>="write"}` and
+`permissions.baum_fix.network.enabled`; an older one `--sandbox
+workspace-write` with `sandbox_workspace_write.network_access`,
+`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` the
+scratch and git directories. The scratch directory is its commands'
+`TMPDIR`. `cursor-agent` and `anthropic` have no write mode. The fix
+instructions are `prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`,
+`fix-checks.md` and `fix-threads.md`), followed by baum's own "Your
+environment" section (the repository, the sandbox, the network) before the
+data.
 
 `agent.Converser` runs one turn of a person's own session, for the session
 panel (see "Session panel conversations" below). Unlike every other run it
@@ -3457,7 +3490,7 @@ an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed), the
-review harness and model, the fix agent (`fix_backend`, `fix_model`), data
+review harness and model, the fix agent (`fix_backend`, `fix_model`) and its network access (`fix_network`, on when absent), data
 extraction's (`decisions`: `enabled`, `backend`, `model`), `pull_requests`
 and `agent_env`; a field an older baum saved and this one dropped
 (`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are
@@ -4593,16 +4626,32 @@ an error line gives its last 200 lines. It then reads the review threads
 again, refusing threads whose
 digest changed (`threads_changed`).
 
-`fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
-registered clone under the user cache directory's `baum/fixes/<id>`, detached
-at the head fetched into `refs/baum/fix/<id>/` from the remote whose URL names
-the repository (`ErrHeadMoved` when the branch moved on). For a conflict it
-merges the base commit itself; a clean merge needs no agent. The agent
+`fix.Run` then works in a `gitlocal.Fix`, under the user cache directory's
+`baum/fixes/<id>`: `checkout` (the work tree), `git` (the agent's own
+repository, made with `init --template= --separate-git-dir` in the clone's
+object format, the clone's objects as alternates, `commit.gpgSign` and
+`tag.gpgSign` false, the files written by baum's own `read-tree -u --reset`
+with the clone's configuration (so Git LFS smudges from the clone) and then
+recorded with `reset --mixed` (`GIT_LFS_SKIP_SMUDGE=1` in the agent's
+repository), the head branch at the head fetched into
+`refs/baum/fix/<id>/` from the remote whose URL names the repository
+(`ErrHeadMoved` when the branch moved on) and the base, fetched for every fix,
+as `refs/remotes/origin/<base>`), `tmp` (scratch), `hooks` (empty) and
+`index` (baum's). For a conflict it merges the base commit in the agent's
+repository itself, before the agent; a clean merge needs no agent. The agent
 (`agent.Fixer`) runs with the prompt, the untrusted data between nonce-tagged
-markers, and the run budgets. baum then checks that no conflicted file keeps a
-marker, commits what was left (completing the merge), requires a new commit
-that descends from the head, and pushes it with a plain `git push` to the head
-branch. Phases are `reading checks`, `reading review comments`, `fetching`,
+markers, and the run budgets. baum then checks that no conflicted file of its
+merge keeps a marker, decides whether the result merges the base
+(`Fix.Merged`: the base is an ancestor of the commit the agent's `HEAD` or
+`MERGE_HEAD` names, read as files, the ancestry read with
+`GIT_ALTERNATE_OBJECT_DIRECTORIES` naming the agent's objects and
+`core.commitGraph=false`, and the head does not already have it), refuses a
+conflict fix whose result does not merge the base (`conflicts_remain`), and
+makes its own commit (`Fix.Commit`: `read-tree` of the head into its index,
+`add --all`, after a merge `add --force` of the files the base added that the
+checkout has, `write-tree`, `commit-tree [-S] -p <head> [-p <base>]`), requires a
+new commit that descends from the head, and pushes it with a plain `git push`
+to the head branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 `merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
 records `commit`, `commit_url` and the agent's masked `summary`. A fix whose
 agent changed nothing completes without a commit, with reason `no_changes`
@@ -4611,7 +4660,7 @@ failure, so it sends no notice and the app shows that summary in neutral
 words (jobs saved as failed by an older daemon are shown the same way). A
 failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
 `git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
-`credential_added`, `nested_repository`, `workflow_changed`, `push_rejected`,
+`credential_added`, `nested_repository`, `workflow_changed`, `workflow_scope`, `push_rejected`,
 `push_failed`, `signed_out`) and a bounded detail. `signed_out` is an agent
 failure whose provider refused its sign-in (`agent.SignInRejected`); review
 jobs (and the chat jobs of the earlier Ask did) report the same reason in
@@ -4621,18 +4670,27 @@ minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
 which the job never keeps. A
 fix checks its commit before the push (`fix.guard`), against what the fix
-itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or
-from the merge commit after a clean merge of the base, or, after a merge that
-stopped at conflicts, only paths that differ from both head and base, with
-added lines those neither side had; submodules always included). It fails with
+itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or,
+when the result merges the base, from the tree `merge-tree --write-tree`
+makes when the merge is clean, else only paths that differ from both head
+and base, with added lines those neither side had; submodules always
+included).
+It fails with `conflicts_remain` when an added line is a conflict marker, with
 `credential_added` when a non-e-mail span the redactor finds overlaps an added
 line, when a changed file sits at a well-known credential path (OpenSSH
 private key names, `.git-credentials`, `.netrc`, `.aws/credentials`,
 `gh/hosts.yml`), or when a changed text file is over 8 MiB; with
 `nested_repository` when it adds or changes a gitlink (mode `160000`); and,
-when review threads or a conversation were in the prompt, with
-`workflow_changed` when it changes a path under `.github/workflows/` or
-`.github/actions/`. The detail names the paths, masked.
+when review threads or a conversation were in the prompt and baum's saved
+GitHub connection is known to lack workflow access (`fix.Options.AllowWorkflows`
+false: `jobs.workflowAccess` reads `githubauth.Manager.Status`; an explicit
+token or an unreadable status allows), with `workflow_changed` when it
+changes a path under `.github/workflows/` or `.github/actions/`, saying to
+choose Reconnect with workflow access in Settings. The detail names the
+paths, masked. A push GitHub refuses with "refusing to allow ... to create or
+update workflow ... without `workflow` scope" (or `workflows` permission), in
+git's stderr or the porcelain stdout, is `gitlocal.ErrWorkflowScope` and
+`workflow_scope`.
 
 A fix can also be made from a conversation of the earlier Ask (see "Earlier
 questions to the review agent"). The app no longer offers it (its **Fix this**
@@ -4665,7 +4723,8 @@ that differs from the digest (`chat_changed`) stops the fix before the agent run
 the change the conversation asks for and only that, verify it, the conversation
 is data) and one `BEGIN UNTRUSTED DATA` block per turn, oldest first, each
 through the redactor (questions included) and with the nonce stripped, like a
-thread. A fix from a conversation never pushes a workflow change
+thread. A fix from a conversation pushes no workflow change unless baum's
+GitHub connection has workflow access or its access is unknown
 (`workflow_changed`).
 The commit message says "Make the change from a conversation". The phase is
 `reading the conversation`.
@@ -4711,13 +4770,18 @@ never retried. The job's `thread_outcomes` hold each thread's `resolved`,
 `replied` (the reply posted, the resolution not), `skipped`,
 `already_resolved` or `failed` with the agent's cleaned summary; none of these
 fails the fix.
-The worktree, its registration and the refs are removed whatever happens.
-After a push the daemon polls the repository's discovery at once. Git commands
-in the checkout set `GIT_DIR` and `GIT_WORK_TREE` and an empty
-`core.hooksPath`; see [SECURITY.md](SECURITY.md#fixing-a-pull-request).
+The fix directory and the refs are removed whatever happens.
+After a push the daemon polls the repository's discovery at once. baum's own
+git commands over the checkout set `GIT_DIR` to the clone's common directory,
+`GIT_WORK_TREE` to the checkout and `GIT_INDEX_FILE` to its own index, with an
+empty `core.hooksPath` and `core.fsmonitor`, `core.untrackedCache`,
+`core.sparseCheckout` and `index.sparse` off; once the agent has run, none
+uses the agent's repository as its git directory; see
+[SECURITY.md](SECURITY.md#fixing-a-pull-request).
 Before the merge and the agent, `Fix.CheckSigning` makes an unreferenced
-`commit-tree -S` commit when `commit.gpgSign` is set (commit-tree ignores the
-setting), and a failure is `fix.ReasonSigning` with git's error.
+`commit-tree -S` commit of the head's tree when `commit.gpgSign` is set
+(commit-tree ignores the setting), and a failure is `fix.ReasonSigning` with
+git's error.
 
 ### Local application presentation
 

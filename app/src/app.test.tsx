@@ -1080,6 +1080,25 @@ it("chooses a separate agent and model for fixes", async () => {
   await choose(agent, "");
   expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
 });
+it("turns network access for fixes off and on, with or without a fix agent", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "claude",
+    model: "claude-haiku-5-5",
+    fix_backend: "",
+    fix_model: "",
+    fix_network: true,
+  });
+  await act(async () => root.render(<App />));
+  const network = node.querySelector<HTMLInputElement>("#fix-network")!;
+  expect(network.checked).toBe(true);
+  await act(async () => network.click());
+  expect(puts.at(-1)).toEqual({ path: "/s/test-ns/api/automatic", body: { fix_network: false } });
+  expect(network.checked).toBe(false);
+  await act(async () => network.click());
+  expect(puts.at(-1)!.body).toEqual({ fix_network: true });
+});
 it("chooses the Claude Code configuration directory of reviews under Advanced", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
