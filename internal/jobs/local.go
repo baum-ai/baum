@@ -34,6 +34,7 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -482,6 +483,14 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 		// worktree of the clone at the head.
 		options.V2 = &generate.V2{Clone: c.Path, MCP: l.ReviewMCP, Step: backend.step}
 	}
+	// A details retry of a baum.review/2 version writes its failed
+	// sections again in levels (completeV2Details), whatever the setting is
+	// now.
+	if p.Kind == KindDetails && group == nil {
+		if latest, e := versions.Latest(ctx, key); e == nil && latest.Metadata.Schema == reviewv2.Name {
+			options.V2 = &generate.V2{Clone: c.Path, MCP: l.ReviewMCP, Step: backend.step}
+		}
+	}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
 	}
@@ -529,6 +538,9 @@ func (l *Local) completeDetails(ctx context.Context, versions *store.Store, mana
 	}
 	if latest.Metadata.Version != p.Version {
 		return generate.Result{}, ErrSuperseded
+	}
+	if o.V2 != nil {
+		return l.completeV2Details(ctx, versions, manager, key, p, o, latest)
 	}
 	// The version was reconciled with the one before it, and so is its
 	// completion.

@@ -5537,6 +5537,17 @@ It never writes the outline or the context again, keeps no agent session, and
 a section that fails again stays `failed`. A failed retry's notice is
 `details_failed`; a completed one has none.
 
+A retry of a `baum.review/2` version (its metadata's schema) runs the levels
+instead (`completeV2Details`), whatever the tile reviews setting is now, with
+the version itself as the previous version: its complete sections and their
+tiles are reused without a call, so the map, the failed sections, their
+tiles, the context and the overview run, under the prompts in use now (the
+staged prompts' digest is not compared). Only the failed sections the new run
+wrote complete over the same hunks, and the tiles they own, are spliced into
+the version's latest bytes by ID (`spliceV2Sections`); its overview, other
+sections and metadata stay, and the write is fenced and retried on a
+conflict as a staged retry's is.
+
 `Queue.SubmitAutomatic` is how the automatic scheduler (see "Automatic
 generation") queues a job nobody confirmed. It prepares the item like a
 person's start, so the job has the same budgets, recheck before running and
