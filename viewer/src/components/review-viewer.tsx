@@ -4,6 +4,7 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -370,6 +371,16 @@ export type ReviewPlaces = {
    *  answer is applied whenever it changes, as the reader moves between
    *  places; the reader can unfold or fold the rail in between. */
   railFolded?: (selection: Selection) => boolean;
+  /** Whether the side pane starts folded for a selection, once wide, as the
+   *  rail does with `railFolded`: applied whenever the answer changes, the
+   *  reader's toggle holding until then. Where it answers false the side pane
+   *  is as the reader last chose it. */
+  sidePaneFolded?: (selection: Selection) => boolean;
+  /** An earlier version read alone opens without the viewer's "Historical ·
+   *  Review vN" line (it stays for assistive technology), for a host whose
+   *  version bar already says so on a page that needs the room. Two compared
+   *  versions keep their labels. */
+  quietHistory?: boolean;
 };
 
 export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
@@ -738,7 +749,29 @@ function ReviewWorkspace<F extends ReviewFile>({
     const pane = conversationPane.current;
     if (pane && !pane.contains(window.document.activeElement)) pane.focus({ preventScroll: true });
   }, [asideKeys]);
-  const chatCollapsed = chosenCollapsed || foldSidePane;
+  // A host's places can start the side pane folded for a selection, as on a
+  // landing page that wants the width, the way they start the rail folded:
+  // the reader's fold or unfold holds until the host's answer changes, and
+  // where the host does not fold it, the reader's own choice stands. Without
+  // places nothing changes.
+  const hostFoldsAside = places?.sidePaneFolded?.(selection) ?? false;
+  const [asideChoice, setAsideChoice] = useState<{ answer: boolean; folded: boolean } | null>(null);
+  if (asideChoice && asideChoice.answer !== hostFoldsAside) setAsideChoice(null);
+  const asideCollapsed = hostFoldsAside
+    ? asideChoice && asideChoice.answer === hostFoldsAside
+      ? asideChoice.folded
+      : true
+    : chosenCollapsed;
+  const asideFolds = useRef(hostFoldsAside);
+  asideFolds.current = hostFoldsAside;
+  const chooseAside = useCallback(
+    (fold: boolean) => {
+      if (asideFolds.current) setAsideChoice({ answer: true, folded: fold });
+      else setChatCollapsed(fold);
+    },
+    [setChatCollapsed],
+  );
+  const chatCollapsed = asideCollapsed || foldSidePane;
   // A host's places can start the rail folded to a strip, as on a landing page
   // whose own grid is the way in. The host's answer is applied when it
   // changes, as the reader moves between places; the reader's fold or unfold
@@ -751,8 +784,8 @@ function ReviewWorkspace<F extends ReviewFile>({
   const railFocus = useRef<"expand" | "collapse" | null>(null);
   const expandRail = useRef<HTMLButtonElement>(null);
   const collapseRail = useRef<HTMLButtonElement>(null);
-  const paneChoice = useRef({ chosenCollapsed, foldSidePane, sheet });
-  paneChoice.current = { chosenCollapsed, foldSidePane, sheet };
+  const paneChoice = useRef({ chosenCollapsed: asideCollapsed, foldSidePane, sheet });
+  paneChoice.current = { chosenCollapsed: asideCollapsed, foldSidePane, sheet };
   useEffect(() => {
     const toggle = (event: KeyboardEvent) => {
       if (
@@ -775,7 +808,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       if (isWide(workspace.current)) {
         if (paneChoice.current.foldSidePane) return;
         if (paneChoice.current.chosenCollapsed) setAsideKeys((n) => n + 1);
-        setChatCollapsed(!paneChoice.current.chosenCollapsed);
+        chooseAside(!paneChoice.current.chosenCollapsed);
       } else {
         if (paneChoice.current.sheet !== "aside") setAsideKeys((n) => n + 1);
         setSheet((currentSheet) => (currentSheet === "aside" ? null : "aside"));
@@ -783,7 +816,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     };
     window.document.addEventListener("keydown", toggle);
     return () => window.document.removeEventListener("keydown", toggle);
-  }, [setChatCollapsed, workspace]);
+  }, [chooseAside, workspace]);
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
@@ -797,7 +830,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   /** Opens a tab of the side pane, unfolding it if it was folded. */
   const openBarTab = (tab: ConversationTab) => {
     setBarTab(tab);
-    setChatCollapsed(false);
+    chooseAside(false);
     setSheet("aside");
   };
   const revealComments = comments?.reveal ?? 0;
@@ -805,10 +838,10 @@ function ReviewWorkspace<F extends ReviewFile>({
   useEffect(() => {
     if (!revealComments) return;
     setBarTab("comments");
-    setChatCollapsed(false);
+    chooseAside(false);
     setSheet("aside");
     setCommentsShown((n) => n + 1);
-  }, [revealComments, setBarTab, setChatCollapsed]);
+  }, [revealComments, setBarTab, chooseAside]);
   // "Discuss this PR" asks for the composer; the focus waits for the render
   // that unfolds the side pane, since a folded pane hides the text box.
   const [composerFocus, setComposerFocus] = useState(0);
@@ -1692,7 +1725,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
           title="Collapse side pane (])"
           aria-keyshortcuts="]"
-          onClick={() => setChatCollapsed(true)}
+          onClick={() => chooseAside(true)}
         >
           <ChevronRightIcon />
         </IconButton>
@@ -2317,6 +2350,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                         key={document.review.version}
                         document={document}
                         view={historyView}
+                        labelled={!places?.quietHistory}
                       >
                         {(snapshot, historical) => (
                           <ReviewRefsProvider document={snapshot}>
@@ -2389,7 +2423,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                       title="Expand side pane (])"
                       aria-keyshortcuts="]"
                       className="h-9 w-9 text-secondary"
-                      onClick={() => setChatCollapsed(false)}
+                      onClick={() => chooseAside(false)}
                     >
                       <ChevronLeftIcon />
                     </IconButton>

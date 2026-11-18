@@ -1,5 +1,6 @@
 import { formatUSD } from "@baum/viewer/components/format";
 import type { ReviewDocument } from "@baum/viewer/review-document";
+import { parseTileDocument, withTiles, type TiledDocument } from "./tiles/tile-document";
 export type Clone = {
   id: string;
   path: string;
@@ -388,7 +389,9 @@ const jobReasons: Record<string, string> = {
   history_rewritten:
     "The result didn't build on the pull request's commits, so baum refused to push it.",
   workflow_changed:
-    "The agent changed a GitHub workflow or action, which a fix of review comments or a conversation never pushes. Nothing was pushed.",
+    "The agent changed a GitHub workflow or action, which needs workflow access that baum's GitHub connection does not have, so nothing was pushed. Choose Reconnect with workflow access in Settings, then run the fix again.",
+  workflow_scope:
+    "GitHub refused the push because the git credential it used can't change workflows. Give that credential the workflow scope (for the GitHub CLI: gh auth refresh -s workflow), then run the fix again.",
   credential_added:
     "The agent's change adds what looks like a credential, which baum never pushes. Nothing was pushed.",
   nested_repository:
@@ -1232,6 +1235,34 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     signal,
   ).then(validDocument);
 }
+/** A version of the review with its tile document, as the tiles page reads
+ *  it: the review the page's chrome reads, carrying the tiles (or null where
+ *  the daemon could not convert it). */
+export function tilesRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
+  return request<TilesAnswer>(
+    `api/tiles?${selector(clone, pr, version)}`,
+    undefined,
+    "GET",
+    signal,
+  ).then(tiledDocument);
+}
+export function groupTilesRequest(id: string, version?: number, signal?: AbortSignal) {
+  return request<TilesAnswer>(
+    `api/groups/${encodeURIComponent(id)}/tiles${version ? `?version=${version}` : ""}`,
+    undefined,
+    "GET",
+    signal,
+  ).then(tiledDocument);
+}
+/** The daemon's answer for a review's tiles: `tiles` is null, with a
+ *  `problem`, when the review could not be converted. */
+export type TilesAnswer = { document: ReviewDocument; tiles: unknown; problem?: string };
+export function tiledDocument(body: TilesAnswer): TiledDocument {
+  return withTiles(
+    validDocument(body.document),
+    body.tiles === null ? null : parseTileDocument(body.tiles),
+  );
+}
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(
     `api/groups/${encodeURIComponent(id)}/document${version ? `?version=${version}` : ""}`,
@@ -1448,7 +1479,7 @@ export type OrganizationAccess = { hidden: string[]; approval_url: string };
  *  whole. The session panel carries it in the page
  *  context's focus; an earlier question to the review's agent stored it. */
 export type ChatFocus = {
-  kind: "section" | "overview";
+  kind: "section" | "overview" | "tile";
   id?: string;
   title?: string;
   anchors?: ChatAnchor[];

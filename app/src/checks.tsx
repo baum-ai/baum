@@ -28,8 +28,8 @@ export type Check = {
   conclusion: string;
   title?: string;
   url?: string;
-  /** The GitHub Actions job behind a failing check, which Retry re-runs;
-   *  absent for other apps' checks and commit statuses. */
+  /** The GitHub Actions job behind a failing or cancelled check, which Retry
+   *  re-runs; absent for other apps' checks and commit statuses. */
   job_id?: number;
   /** The check run's id, which `api/prs/check-log` takes; absent for a commit
    *  status and from an older daemon. */
@@ -73,19 +73,27 @@ export function conclusionText(conclusion: string): string {
   return CONCLUSIONS[conclusion] ?? conclusion.replaceAll("_", " ");
 }
 
-type CheckState = "failing" | "running" | "passing" | "other";
+type CheckState = "failing" | "cancelled" | "running" | "passing" | "other";
 
 export function checkState(check: Check): CheckState {
   if (check.status !== "completed") return "running";
   if (FAILING.has(check.conclusion)) return "failing";
+  if (check.conclusion === "cancelled") return "cancelled";
   return check.conclusion === "success" ? "passing" : "other";
 }
 
-const ORDER: Record<CheckState, number> = { failing: 0, running: 1, passing: 2, other: 3 };
+const ORDER: Record<CheckState, number> = {
+  failing: 0,
+  cancelled: 1,
+  running: 2,
+  passing: 3,
+  other: 4,
+};
 
 /** The checks counted in a word, out of them all, and how it reads: "2/9
- *  failing" while any fails, else "1/9 running" while any runs, else "9/9
- *  passing". */
+ *  failing" while any fails, else "1/9 cancelled" while any was cancelled
+ *  (GitHub counts a cancelled check as failing, so "passing" would hide why),
+ *  else "1/9 running" while any runs, else "9/9 passing". */
 export function checksCount(checks: Check[]): {
   text: string;
   tone: "critical" | "caution" | "positive";
@@ -93,16 +101,19 @@ export function checksCount(checks: Check[]): {
   const count = (state: CheckState) => checks.filter((check) => checkState(check) === state).length;
   const of = (n: number, word: string) => `${formatCount(n)}/${formatCount(checks.length)} ${word}`;
   if (count("failing")) return { text: of(count("failing"), "failing"), tone: "critical" };
+  if (count("cancelled")) return { text: of(count("cancelled"), "cancelled"), tone: "critical" };
   if (count("running")) return { text: of(count("running"), "running"), tone: "caution" };
   return { text: of(count("passing"), "passing"), tone: "positive" };
 }
 
-/** The checks counted by state, in words: "1 failing, 2 running and 9 passed". */
+/** The checks counted by state, in words: "1 failing, 1 cancelled, 2 running
+ *  and 9 passed". */
 export function checksSummary(checks: Check[]): string {
   const count = (state: CheckState) => checks.filter((check) => checkState(check) === state).length;
   return joinAnd(
     [
       count("failing") ? `${formatCount(count("failing"))} failing` : "",
+      count("cancelled") ? `${formatCount(count("cancelled"))} cancelled` : "",
       count("running") ? `${formatCount(count("running"))} running` : "",
       count("passing") ? `${formatCount(count("passing"))} passed` : "",
       count("other") ? `${formatCount(count("other"))} skipped or neutral` : "",
@@ -114,6 +125,8 @@ function StateIcon({ state }: { state: CheckState }) {
   switch (state) {
     case "failing":
       return <CircleCrossIcon size={14} className="upnext-check-icon upnext-check-failing" />;
+    case "cancelled":
+      return <CircleCrossIcon size={14} className="upnext-check-icon upnext-check-cancelled" />;
     case "running":
       return <CircleDashedIcon size={14} className="upnext-check-icon upnext-check-running" />;
     case "passing":
@@ -279,12 +292,13 @@ function CheckLog({
   );
 }
 
-/** Every check of the head commit the panel shows, failing first, each
- *  linking to its details: `checks` when the caller reads them (`useChecks`),
- *  else read here. When the signed-in account may push (`canRetry`), a failing
- *  GitHub Actions job has Retry, which re-runs that job at once. While any
- *  check fails only the failing ones show, the others behind Show other
- *  checks. `failingOnly` lists only the failing ones. */
+/** Every check of the head commit the panel shows, failing first, then
+ *  cancelled, each linking to its details: `checks` when the caller reads them
+ *  (`useChecks`), else read here. When the signed-in account may push
+ *  (`canRetry`), a failing or cancelled GitHub Actions job has Retry, which
+ *  re-runs that job at once. While any check fails or was cancelled only those
+ *  show, the others behind Show other checks. `failingOnly` lists only the
+ *  failing ones. */
 export function PullRequestChecks({
   repository,
   number,
@@ -363,9 +377,12 @@ export function PullRequestChecks({
       </div>
     );
   }
-  // A failing check, or one retried here, which stays in sight as it reruns.
+  // A failing or cancelled check, or one retried here, which stays in sight as
+  // it reruns.
+  const needsRetry = (check: Check) =>
+    checkState(check) === "failing" || checkState(check) === "cancelled";
   const failingNow = (check: Check) =>
-    checkState(check) === "failing" || (check.job_id != null && retried.has(check.job_id));
+    needsRetry(check) || (check.job_id != null && retried.has(check.job_id));
   const sorted = read.checks
     .filter((check) => !failingOnly || checkState(check) === "failing")
     .sort((a, b) => ORDER[checkState(a)] - ORDER[checkState(b)] || a.name.localeCompare(b.name));
@@ -391,8 +408,9 @@ export function PullRequestChecks({
           const job = check.job_id;
           const busy = job != null && retrying.has(job);
           const done = job != null && retried.has(job);
-          // A failing GitHub Actions run has a log to show the end of.
-          const logId = state === "failing" && check.has_log ? check.id : undefined;
+          // A failing or cancelled GitHub Actions run has a log to show the
+          // end of.
+          const logId = needsRetry(check) && check.has_log ? check.id : undefined;
           const logOpen = logId != null && logs.has(logId);
           return (
             <li key={`${check.name}-${index}`} className="upnext-check-row">
@@ -428,7 +446,7 @@ export function PullRequestChecks({
                 ) : null}
               </span>
               <span className="upnext-check-actions">
-                {canRetry && job != null && state === "failing" && !done ? (
+                {canRetry && job != null && needsRetry(check) && !done ? (
                   <button
                     type="button"
                     className={cn("upnext-secondary upnext-thread-resolve", SMALL)}

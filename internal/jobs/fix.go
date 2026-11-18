@@ -60,7 +60,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	cfg, e := l.resolveFix(ctx)
+	cfg, _, e := l.resolveFix(ctx)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -193,7 +193,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolveFix(ctx)
+	cfg, network, e := l.resolveFix(ctx)
 	if e != nil {
 		return nil, e
 	}
@@ -208,6 +208,11 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 		ctx, cancel = manager.IdentityContext(ctx)
 		defer cancel()
 	}
+	var connection connectionStatus
+	if manager != nil {
+		connection = manager
+	}
+	workflows := workflowAccess(ctx, connection)
 	if e := l.confirmed(ctx, p); e != nil {
 		return nil, e
 	}
@@ -295,7 +300,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	out, err := fix.Run(ctx, fix.Options{ID: id(), Clone: c.Path, Repository: repository, Number: p.PR, Title: pr.Title,
 		HeadRef: p.Fix.HeadRef, HeadSHA: p.HeadSHA, BaseRef: p.Fix.BaseRef, Conflicts: p.Fix.Conflicts, Checks: p.Fix.Checks, Evidence: evidence,
 		Threads: threads, Chat: conversation, Replies: l.Client, Agent: fixer, Backend: selected.Backend.Name(), Model: selected.Model, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens,
-		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Transcript: transcript, Prompts: overrides, Logger: jobLogger(ctx, l.Log, p),
+		WallClock: time.Duration(cfg.Budgets.RunTimeout), Directory: l.FixDirectory, Env: cfg.AgentEnviron(), Network: network, AllowWorkflows: workflows, Transcript: transcript, Prompts: overrides, Logger: jobLogger(ctx, l.Log, p),
 		Progress: func(phase string) { progress(Progress{Phase: phase, HasTranscript: hasTranscript}) }})
 	report := Progress{Phase: "finishing", HasTranscript: hasTranscript}
 	var cost *float64
@@ -331,4 +336,31 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	}
 	progress(report)
 	return cost, err
+}
+
+// connectionStatus is the saved GitHub connection's status
+// (githubauth.Manager).
+type connectionStatus interface {
+	Status(context.Context) (githubauth.Status, error)
+}
+
+// workflowAccess reports whether a fix may push workflow and action changes
+// whatever was in its prompt (fix.Options.AllowWorkflows): unless the saved
+// GitHub connection the fix reads GitHub with is known to lack workflow
+// access. Without a saved connection (an explicit token, whose scopes are
+// unknown) they are allowed; a status it cannot read refuses them.
+func workflowAccess(ctx context.Context, connection connectionStatus) bool {
+	if connection == nil {
+		return true
+	}
+	status, err := connection.Status(ctx)
+	if err != nil {
+		// The saved connection is there but unreadable: refuse rather than
+		// take its access for unknown.
+		return false
+	}
+	if status.State != "connected" {
+		return true
+	}
+	return status.Workflow
 }

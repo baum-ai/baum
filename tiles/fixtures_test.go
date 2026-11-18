@@ -275,7 +275,7 @@ var fixtures = []fixture{
 	}},
 	{name: "many-changes", mutate: func(doc map[string]any) {
 		hunks := array(object(doc, "index"), "hunks")
-		for i := range 6 {
+		for i := range 7 {
 			id := fmt.Sprintf("h_00000000010%d", i)
 			hunks = append(hunks, map[string]any{"id": id, "path": fmt.Sprintf("worker/part%d.go", i), "change": "added", "role": "code", "new_range": []any{1, 5}, "additions": 5, "deletions": 0})
 			s := clone(sectionOf(doc, "sec_config_flag")).(map[string]any)

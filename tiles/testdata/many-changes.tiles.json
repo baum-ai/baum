@@ -259,6 +259,18 @@
         ],
         "path": "worker/part5.go",
         "role": "code"
+      },
+      {
+        "additions": 5,
+        "change": "added",
+        "deletions": 0,
+        "id": "h_000000000106",
+        "new_range": [
+          1,
+          5
+        ],
+        "path": "worker/part6.go",
+        "role": "code"
       }
     ],
     "prs": [],
@@ -685,6 +697,49 @@
         },
         "state": "unchanged"
       }
+    },
+    {
+      "id": "sec_part_6",
+      "title": "Part 6 of the worker",
+      "kind": "logical",
+      "hunks": [
+        "h_000000000106"
+      ],
+      "assessment": {
+        "factors": [],
+        "level": 2,
+        "reasons": [
+          {
+            "anchors": [
+              {
+                "id": "h_000000000003",
+                "type": "hunk"
+              }
+            ],
+            "text": "A boolean read once at start."
+          }
+        ]
+      },
+      "derived": {
+        "additions": 30,
+        "deletions": 0,
+        "evidence_summary": {
+          "asserted": 1
+        },
+        "open_findings": 0,
+        "review_score": 3,
+        "reviewers": [
+          {
+            "login": "ops-lead",
+            "source": "codeowners"
+          }
+        ],
+        "risk_tier": "low",
+        "role_loc": {
+          "code": 30
+        },
+        "state": "unchanged"
+      }
     }
   ],
   "risks": [
@@ -971,6 +1026,30 @@
       "state": "ready"
     },
     {
+      "id": "sec_part_6",
+      "type": "change",
+      "title": "Part 6 of the worker",
+      "headline": "Adds part 6",
+      "data": {
+        "change": "sec_part_6",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_000000000106",
+              "type": "hunk"
+            }
+          ],
+          "text": "Adds part 6."
+        },
+        "attention": null,
+        "blocks": []
+      },
+      "covers": [
+        "h_000000000106"
+      ],
+      "state": "ready"
+    },
+    {
       "id": "sec_part_5",
       "type": "change",
       "title": "Part 5 of the worker",
@@ -1116,6 +1195,14 @@
       "state": "ready"
     },
     {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "headline": "3 items, 1 missing",
+      "data": {},
+      "state": "ready"
+    },
+    {
       "id": "media",
       "type": "media",
       "title": "Media",
@@ -1146,14 +1233,6 @@
           }
         ]
       },
-      "state": "ready"
-    },
-    {
-      "id": "evidence",
-      "type": "evidence",
-      "title": "Evidence",
-      "headline": "3 items, 1 missing",
-      "data": {},
       "state": "ready"
     },
     {
@@ -1316,6 +1395,11 @@
         "group": "changes"
       },
       {
+        "tile": "sec_part_6",
+        "size": "third",
+        "group": "changes"
+      },
+      {
         "tile": "sec_part_5",
         "size": "third",
         "group": "changes"
@@ -1341,11 +1425,11 @@
         "group": "changes"
       },
       {
-        "tile": "media",
+        "tile": "evidence",
         "size": "third"
       },
       {
-        "tile": "evidence",
+        "tile": "media",
         "size": "third"
       },
       {
@@ -1369,9 +1453,9 @@
       {
         "id": "changes",
         "title": "Changes",
-        "collapse_after": 4
+        "collapse_after": 6
       }
     ],
-    "landing": 12
+    "landing": 8
   }
 }

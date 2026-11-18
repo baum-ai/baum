@@ -985,6 +985,11 @@ it("names a feature build's reasons in its own words, and others' as before", ()
   expect(jobReasonText("daily_cap")).toBe("It stopped before it started.");
 });
 
+it("tells how to allow workflow changes, and what a refused workflow push needs", () => {
+  expect(jobReasonText("workflow_changed")).toContain("Reconnect with workflow access in Settings");
+  expect(jobReasonText("workflow_scope")).toContain("gh auth refresh -s workflow");
+});
+
 it("keeps the build state shown when a read of it fails", async () => {
   answers["api/timeline/build"] = {
     building: { placed: 30, total: 40, stopped: "backend_unavailable", spent_usd: 1.5 },

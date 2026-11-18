@@ -597,6 +597,8 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 		}
 	}
 
+	place(Tile{ID: TypeEvidence, Type: TypeEvidence, Title: "Evidence", Headline: evidenceHeadline(c.doc.Evidence), Data: json.RawMessage(`{}`), State: StateReady}, SizeThird, "")
+
 	if len(c.moved.media) > 0 {
 		data, err := json.Marshal(MediaData{Items: c.moved.media})
 		if err != nil {
@@ -604,8 +606,6 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 		}
 		place(Tile{ID: TypeMedia, Type: TypeMedia, Title: "Media", Headline: countHeadline(len(c.moved.media), "media block", "media blocks"), Data: data, State: StateReady}, SizeThird, "")
 	}
-
-	place(Tile{ID: TypeEvidence, Type: TypeEvidence, Title: "Evidence", Headline: evidenceHeadline(c.doc.Evidence), Data: json.RawMessage(`{}`), State: StateReady}, SizeThird, "")
 
 	var implements []json.RawMessage
 	if err := json.Unmarshal(src.Summary.Implements, &implements); err != nil {
@@ -737,14 +737,28 @@ func detailsState(s *section) string {
 	return StateReady
 }
 
+// The Changes group shows every change up to ChangesShownAll; with more it
+// shows ChangesShown, two rows of thirds, and folds the rest behind its own
+// control, which then always holds at least three.
+const (
+	ChangesShown    = 6
+	ChangesShownAll = 8
+)
+
 func groupsOf(entries []Entry) []Group {
 	groups := []Group{}
 	present := map[string]bool{}
+	count := map[string]int{}
 	for _, entry := range entries {
 		present[entry.Group] = true
+		count[entry.Group]++
 	}
 	if present[GroupChanges] {
-		groups = append(groups, Group{ID: GroupChanges, Title: "Changes", CollapseAfter: new(4)})
+		changes := Group{ID: GroupChanges, Title: "Changes"}
+		if count[GroupChanges] > ChangesShownAll {
+			changes.CollapseAfter = new(ChangesShown)
+		}
+		groups = append(groups, changes)
 	}
 	if present[GroupObsolete] {
 		groups = append(groups, Group{ID: GroupObsolete, Title: "Obsolete changes", CollapseAfter: new(0)})

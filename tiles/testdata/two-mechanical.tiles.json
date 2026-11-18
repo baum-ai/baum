@@ -677,6 +677,14 @@
       "state": "ready"
     },
     {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "headline": "3 items, 1 missing",
+      "data": {},
+      "state": "ready"
+    },
+    {
       "id": "media",
       "type": "media",
       "title": "Media",
@@ -707,14 +715,6 @@
           }
         ]
       },
-      "state": "ready"
-    },
-    {
-      "id": "evidence",
-      "type": "evidence",
-      "title": "Evidence",
-      "headline": "3 items, 1 missing",
-      "data": {},
       "state": "ready"
     },
     {
@@ -875,11 +875,11 @@
         "group": "changes"
       },
       {
-        "tile": "media",
+        "tile": "evidence",
         "size": "third"
       },
       {
-        "tile": "evidence",
+        "tile": "media",
         "size": "third"
       },
       {
@@ -902,8 +902,7 @@
     "groups": [
       {
         "id": "changes",
-        "title": "Changes",
-        "collapse_after": 4
+        "title": "Changes"
       }
     ],
     "landing": 8

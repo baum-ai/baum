@@ -13,5 +13,5 @@ side comes first, the base branch's second.
   still has one.
 - Change other files only where the merged code would not build otherwise,
   for example a call to a function the base branch renamed.
-- Do not run `git add` or `git merge --continue`: baum completes the merge
-  commit.
+- Do not abort the merge. Committing it is up to you: baum makes the merge
+  commit itself from the files you leave.

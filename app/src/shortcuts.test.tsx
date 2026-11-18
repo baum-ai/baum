@@ -598,6 +598,8 @@ it("lists exactly the keys that work in the sheet", async () => {
     "←",
     "Space",
     "Enter",
+    "Esc",
+    "u",
     "m",
     "f",
     "t",

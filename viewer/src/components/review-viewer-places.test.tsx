@@ -366,6 +366,72 @@ describe("ReviewViewer places and the rail's fold", () => {
   });
 });
 
+/** Whether the side pane is folded to its strip, once wide. */
+const asideFolded = (container: HTMLElement) =>
+  container.querySelector("#review-aside")?.className.includes("wide:items-center") ?? false;
+const pressAside = (container: HTMLElement, label: string) =>
+  container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click();
+const goTo = (container: HTMLElement, row: string) =>
+  [...container.querySelectorAll<HTMLButtonElement>('[data-testid="host-rail"] button')]
+    .find((button) => button.textContent?.includes(row))!
+    .click();
+
+describe("ReviewViewer places and an earlier version's label", () => {
+  it("keeps the label for assistive technology alone when the host's version bar says it", async () => {
+    const loadVersion = vi.fn(async () => ({ status: "ready" as const, document: earlier() }));
+    const quiet = await render(
+      <Host initial="pane=tile&tile=tile-a&review=2">
+        {viewer({ places: dummyPlaces({ quietHistory: true }), versions: [2], loadVersion })}
+      </Host>,
+    );
+    const label = [...quiet.querySelectorAll("p")].find((p) =>
+      p.textContent?.startsWith("Historical · Review v2"),
+    );
+    expect(label?.className).toContain("sr-only");
+    act(() => root?.unmount());
+    root = null;
+    document.body.replaceChildren();
+    const plain = await render(
+      <Host initial="pane=tile&tile=tile-a&review=2">
+        {viewer({ places: dummyPlaces(), versions: [2], loadVersion })}
+      </Host>,
+    );
+    const shown = [...plain.querySelectorAll("p")].find((p) =>
+      p.textContent?.startsWith("Historical · Review v2"),
+    );
+    expect(shown?.className).not.toContain("sr-only");
+  });
+});
+
+describe("ReviewViewer places and the side pane's fold", () => {
+  it("starts folded where the host says so and as the reader left it elsewhere", async () => {
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({ sidePaneFolded: (selection) => selection.kind === "summary" }),
+        })}
+      </Host>,
+    );
+    expect(asideFolded(container)).toBe(true);
+    // The reader unfolds it; that holds while the host's answer does.
+    await act(async () => pressAside(container, "Expand side pane"));
+    expect(asideFolded(container)).toBe(false);
+    // A place the host does not fold shows the reader's own choice: open.
+    await act(async () => goTo(container, "tile-a"));
+    expect(asideFolded(container)).toBe(false);
+    // Back on the landing place the host's fold applies again.
+    await act(async () => goTo(container, "home"));
+    expect(asideFolded(container)).toBe(true);
+  });
+
+  it("leaves the side pane to the reader without an answer", async () => {
+    const container = await render(<Host>{viewer({ places: dummyPlaces() })}</Host>);
+    expect(asideFolded(container)).toBe(false);
+    await act(async () => pressAside(container, "Collapse side pane"));
+    expect(asideFolded(container)).toBe(true);
+  });
+});
+
 describe("ReviewViewer without places", () => {
   it("reads a tile selection as the Summary, without writing the URL", async () => {
     const container = await render(<Host initial="pane=tile&tile=overview">{viewer()}</Host>);

@@ -94,9 +94,9 @@ function StateMark({ state }: { state: string }) {
   );
 }
 
-function Dot() {
+function Dot({ className }: { className?: string }) {
   return (
-    <span aria-hidden className="text-disabled">
+    <span aria-hidden className={cn("text-disabled", className)}>
       •
     </span>
   );
@@ -357,7 +357,28 @@ export function ReviewHeader({
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-secondary">
-            {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+            {/* The GitHub link stays with the repository's name, never on a
+                line of its own. */}
+            {repositoryFullName || githubUrl ? (
+              <span className="inline-flex items-center gap-1">
+                {repositoryFullName ? <span>{repositoryFullName}</span> : null}
+                {githubUrl ? (
+                  <a
+                    href={githubUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="View on GitHub"
+                    title="View on GitHub"
+                    className={cn(
+                      "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
+                      FOCUS_RING,
+                    )}
+                  >
+                    <GitHubIcon size={16} />
+                  </a>
+                ) : null}
+              </span>
+            ) : null}
             {/* Beside the repository from sm; on a phone, a row of their own. */}
             {facts.branches ? (
               <span className="hidden sm:contents">
@@ -370,8 +391,10 @@ export function ReviewHeader({
               </span>
             ) : null}
             {reviewMinutes !== null ? (
-              <>
-                {repositoryFullName ? <Dot /> : null}
+              // The dot goes with the time, so a line never ends on it; on a
+              // phone, where the time takes a line of its own, there is none.
+              <span className="inline-flex items-center gap-2">
+                {repositoryFullName ? <Dot className="hidden sm:inline" /> : null}
                 <span
                   title={`Estimated time to read this review: about ${reviewMinutes} ${
                     reviewMinutes === 1 ? "minute" : "minutes"
@@ -379,22 +402,7 @@ export function ReviewHeader({
                 >
                   ~{reviewMinutes} min to review
                 </span>
-              </>
-            ) : null}
-            {githubUrl ? (
-              <a
-                href={githubUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="View on GitHub"
-                title="View on GitHub"
-                className={cn(
-                  "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
-                  FOCUS_RING,
-                )}
-              >
-                <GitHubIcon size={16} />
-              </a>
+              </span>
             ) : null}
             {slots.subtitle ? (
               <span className="flex min-w-0 flex-wrap items-center gap-2">

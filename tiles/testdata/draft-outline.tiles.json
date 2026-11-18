@@ -504,8 +504,7 @@
     "groups": [
       {
         "id": "changes",
-        "title": "Changes",
-        "collapse_after": 4
+        "title": "Changes"
       }
     ],
     "landing": 8

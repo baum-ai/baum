@@ -141,6 +141,8 @@ export type ReviewDefaults = {
   fix_backend?: string;
   fix_model?: string;
   fix_effort?: string;
+  /** Whether the fix agent's commands get network access; absent is on. */
+  fix_network?: boolean;
   /** The Claude Code configuration directories reviews and fixes run with;
    *  empty leaves it to the environment, which gives
    *  `default_claude_config_dir`. `claude_config_dirs` are the ones baum
@@ -462,7 +464,10 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
     }
   };
   const save = (body: Record<string, unknown>) => {
-    waiting.current = body;
+    // A save that waits keeps the fields of the one it replaces, so a control
+    // that sends one field (such as fix_network) and one that sends a whole
+    // section never drop each other's change.
+    waiting.current = { ...waiting.current, ...body };
     if (!busy.current) void drain();
   };
   const status = (
@@ -1080,6 +1085,14 @@ function FixesSection({
   const { save, error, status, failures } = useAutoSave(changed);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
   useEffect(() => setDraft(saved), [key, failures]);
+  const savedNetwork = defaults.fix_network ?? true;
+  const [network, setNetwork] = useState(savedNetwork);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `savedNetwork` stands for the saved choice
+  useEffect(() => setNetwork(savedNetwork), [savedNetwork, failures]);
+  const changeNetwork = (fix_network: boolean) => {
+    setNetwork(fix_network);
+    save({ fix_network });
+  };
   const change = (next: typeof saved) => {
     setDraft(next);
     save({
@@ -1160,6 +1173,20 @@ function FixesSection({
             </div>
           </SettingRow>
         ) : null}
+        <SettingRow
+          label="Network access"
+          htmlFor="fix-network"
+          detail="Lets the agent install dependencies and fetch what builds and tests need. With it off, the agent can't install dependencies."
+        >
+          <input
+            id="fix-network"
+            type="checkbox"
+            role="switch"
+            className="local-switch"
+            checked={network}
+            onChange={(event) => changeNetwork(event.target.checked)}
+          />
+        </SettingRow>
         <AccountAdvanced
           id={draft.backend === "codex" ? "fix-codex-home" : "fix-claude-config-dir"}
           backend={draft.backend}
@@ -3385,6 +3412,24 @@ function GeneralSection() {
             <option value="system">System</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
+          </select>
+        </SettingRow>
+        <SettingRow
+          label="Review page"
+          htmlFor="review-page"
+          detail="How a pull request's or a group's review opens. Tiles shows what matters on one screen, each part a tile to open."
+        >
+          <select
+            id="review-page"
+            disabled={!ready}
+            className="local-field settings-select"
+            value={preferences.review_page}
+            onChange={(event) =>
+              update({ review_page: event.target.value as typeof preferences.review_page })
+            }
+          >
+            <option value="full">Full review</option>
+            <option value="tiles">Tiles (preview)</option>
           </select>
         </SettingRow>
         <SettingRow

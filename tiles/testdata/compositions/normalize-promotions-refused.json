@@ -1,0 +1,228 @@
+{
+  "fixes": [
+    "a promotion's ID is not table_ or code_ followed by a slug; it is left out",
+    "promotion \"table_missing_change\" names no table or code block of its kind in a current change; it is left out",
+    "promotion \"table_no_block\" names no table or code block of its kind in a current change; it is left out",
+    "promotion \"table_moved_block\" names no table or code block of its kind in a current change; it is left out",
+    "promotion \"code_wrong_kind\" names no table or code block of its kind in a current change; it is left out",
+    "the block promotion \"table_changed\" names has changed since it was promoted; it is left out",
+    "promotion \"code_early_return\" names a block already promoted or a change that already has a promotion; it is left out",
+    "promotion \"table_flag_defaults\" names a block already promoted or a change that already has a promotion; it is left out",
+    "promotion \"table_obsolete\" names no table or code block of its kind in a current change; it is left out",
+    "the layout does not place tile \"overview\"; it is added in the default order",
+    "the layout does not place tile \"risks\"; it is added in the default order",
+    "the layout does not place tile \"sec_retry_policy\"; it is added in the default order",
+    "the layout does not place tile \"sec_config_flag\"; it is added in the default order",
+    "the layout does not place tile \"evidence\"; it is added in the default order",
+    "the layout does not place tile \"media\"; it is added in the default order",
+    "the layout does not place tile \"intent\"; it is added in the default order",
+    "the layout does not place tile \"context\"; it is added in the default order",
+    "the layout does not place tile \"decisions\"; it is added in the default order",
+    "the layout does not place tile \"everything_else\"; it is added in the default order",
+    "the layout does not place tile \"table_flag_defaults\"; it is added in the default order"
+  ],
+  "composition": {
+    "schema": "baum.composition/1",
+    "layout": {
+      "entries": [
+        {
+          "tile": "overview",
+          "size": "half"
+        },
+        {
+          "tile": "risks",
+          "size": "half"
+        },
+        {
+          "tile": "sec_retry_policy",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "sec_config_flag",
+          "size": "third",
+          "group": "changes"
+        },
+        {
+          "tile": "evidence",
+          "size": "third"
+        },
+        {
+          "tile": "media",
+          "size": "third"
+        },
+        {
+          "tile": "intent",
+          "size": "third"
+        },
+        {
+          "tile": "context",
+          "size": "third"
+        },
+        {
+          "tile": "decisions",
+          "size": "third"
+        },
+        {
+          "tile": "everything_else",
+          "size": "third"
+        },
+        {
+          "tile": "table_flag_defaults",
+          "size": "half"
+        }
+      ]
+    },
+    "promotions": [
+      {
+        "id": "table_flag_defaults",
+        "change": "sec_config_flag",
+        "block": 3,
+        "digest": "sha256:cd5da8607f8b42b3bf1f14415a9c55cbee17355154a5f850478db5cb126a8093",
+        "title": "Flag defaults"
+      }
+    ]
+  },
+  "layout": {
+    "entries": [
+      {
+        "tile": "overview",
+        "size": "half"
+      },
+      {
+        "tile": "risks",
+        "size": "half"
+      },
+      {
+        "tile": "sec_retry_policy",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_config_flag",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "evidence",
+        "size": "third"
+      },
+      {
+        "tile": "media",
+        "size": "third"
+      },
+      {
+        "tile": "intent",
+        "size": "third"
+      },
+      {
+        "tile": "context",
+        "size": "third"
+      },
+      {
+        "tile": "decisions",
+        "size": "third"
+      },
+      {
+        "tile": "everything_else",
+        "size": "third"
+      },
+      {
+        "tile": "table_flag_defaults",
+        "size": "half"
+      }
+    ],
+    "groups": [
+      {
+        "id": "changes",
+        "title": "Changes"
+      }
+    ],
+    "landing": 8
+  },
+  "tiles": [
+    {
+      "id": "overview",
+      "type": "overview",
+      "title": "Retry failed deliveries with backoff",
+      "state": "ready"
+    },
+    {
+      "id": "risks",
+      "type": "risks",
+      "title": "Risks",
+      "state": "ready"
+    },
+    {
+      "id": "sec_retry_policy",
+      "type": "change",
+      "title": "Retry failed deliveries",
+      "state": "ready",
+      "covers": [
+        "h_000000000001",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "sec_config_flag",
+      "type": "change",
+      "title": "Add a flag that turns retries off",
+      "state": "ready",
+      "covers": [
+        "h_000000000003",
+        "h_000000000002"
+      ]
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
+      "state": "ready"
+    },
+    {
+      "id": "intent",
+      "type": "intent",
+      "title": "Intent",
+      "state": "ready"
+    },
+    {
+      "id": "context",
+      "type": "context",
+      "title": "Context",
+      "state": "ready"
+    },
+    {
+      "id": "decisions",
+      "type": "decisions",
+      "title": "Decisions",
+      "state": "ready"
+    },
+    {
+      "id": "everything_else",
+      "type": "everything_else",
+      "title": "Everything else",
+      "state": "ready",
+      "covers": [
+        "h_000000000004",
+        "h_000000000005",
+        "h_000000000006",
+        "h_000000000007"
+      ]
+    },
+    {
+      "id": "table_flag_defaults",
+      "type": "table",
+      "title": "Flag defaults",
+      "state": "ready",
+      "covers": [
+        "h_000000000003"
+      ]
+    }
+  ]
+}

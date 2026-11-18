@@ -38,7 +38,7 @@ func TestWithoutMCPTheArgumentsAreUnchanged(t *testing.T) {
 	backend := &Backend{Model: "m"}
 	for name, args := range map[string][]string{
 		"review": backend.args(agent.Request{MaxCalls: 3, Schema: []byte(`{}`)}),
-		"fix":    backend.fixArgs(agent.Request{MaxCalls: 3}),
+		"fix":    backend.fixArgs(agent.Request{MaxCalls: 3}, true),
 	} {
 		if !slices.Equal(args[len(args)-3:], tail) {
 			t.Errorf("%s ends %q", name, args[len(args)-3:])
@@ -54,7 +54,7 @@ func TestWithoutMCPTheArgumentsAreUnchanged(t *testing.T) {
 func TestMCPNamesOnlyBaumAndNoToken(t *testing.T) {
 	backend := &Backend{Model: "m"}
 	request := agent.Request{MaxCalls: 3, Schema: []byte(`{}`), MCP: testMCP()}
-	for name, args := range map[string][]string{"review": backend.args(request), "fix": backend.fixArgs(request)} {
+	for name, args := range map[string][]string{"review": backend.args(request), "fix": backend.fixArgs(request, true)} {
 		if !slices.Contains(args, "--strict-mcp-config") {
 			t.Errorf("%s: no --strict-mcp-config in %q", name, args)
 		}

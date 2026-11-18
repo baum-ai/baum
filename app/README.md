@@ -404,9 +404,11 @@ checks, failing and running first" with a **See all on GitHub** link.
 The same bordered rows align the icon, name and status, and actions in the
 review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
-red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
-else green "9/9 passing", with the count by state (`checksSummary`) as its
-tooltip. A failing check with a
+red "1/9 failing" while any fails, else red "1/9 cancelled" while any was
+cancelled (GitHub counts it as failing), else amber "2/9 running" while any
+runs, else green "9/9 passing", with the count by state (`checksSummary`) as its
+tooltip. Cancelled checks list right after the failing ones and stay unfolded
+with them. A failing or cancelled check with a
 `job_id` has **Retry** when discovery says the account can push
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
 then shows "Re-running on GitHub"; a refusal is shown under the check. The
@@ -1655,9 +1657,10 @@ stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
 straight to Connections. **General**, the default, offers System, Light and Dark
-themes, the modifier held with `1` to `8` for the sidebar's pages, and whether
-holding Option (Alt elsewhere) shows keyboard shortcut hints; each names only
-the platform's key. Preferences
+themes, the review page a pull request opens on (**Full review**, the
+default, or **Tiles (preview)**; see [Tiles page](#tiles-page)), the modifier
+held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
+elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
 `full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
@@ -1699,7 +1702,12 @@ and puts the control back. **Fixes** chooses the agent that fixes: "Same as
 reviews (agent · model)" (the default) or Claude Code or Codex, then a model
 and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
 (`""` returns to the reviews', effort included) and reported by `GET
-api/settings`. A chosen fix agent applies in every repository. **Data
+api/settings`. A chosen fix agent applies in every repository. A
+**Network access** switch (on by default) is sent alone as `fix_network` and
+reported as a plain boolean; it applies with or without a chosen fix agent and
+is kept when the agent returns to the reviews'. On, the fix agent's commands
+can install dependencies and fetch what builds and tests need; off, its
+sandbox allows no connection, so it can't install dependencies. **Data
 extraction** has the same Agent and Model rows, its agent "Same as reviews
 (agent)" by default.
 
@@ -2569,6 +2577,95 @@ page offers **Open in panel** instead of Focus and has no reply bar, and a
 pull request's sessions tag it **Panel** with **Open in panel** beside Open
 transcript.
 
+## Tiles page
+
+A pull request's or a group's review can open as tiles instead of the full
+review (`src/tiles/`). Settings > General chooses which (`review_page`), and
+`?view=tiles` or `?view=full` in the address overrides it for that address.
+The page reads each version from `GET api/tiles` (a group's from
+`api/groups/{id}/tiles`, a draft's from `api/jobs/{id}/draft?tiles=1`): the
+review the page's chrome reads, carrying the converted tile document. A review
+the daemon cannot convert (`tiles: null`) shows as the full review, with a
+notice and a link that keeps the full review for that address. Facts-only
+pages, before a review exists, are the same on both.
+
+The page is drawn through the viewer's places seam (`useTilePlaces`), so the
+head, the version menu, history, Compare, the side pane's tabs, the Files,
+Decisions, Sessions and Commits panes, comments and the review dialog are the
+full review's own.
+
+- **Landing page** (the Summary, `pane` absent). The rail starts folded
+  there (`railFolded`) and opens in a tile's detail for stepping; the side
+  pane starts folded on every place of the tiles page (`sidePaneFolded`), so
+  the reader's own unfold holds as they move between them. At 1440×900 the
+  first screen shows the band, the Overview and Risks cards side by side, and
+  the first row of changes. A band in the same place on every review leads:
+  the recommendation (its decision, its sentence and the tiles it cites) when
+  the review gives one, the risk score on one line with its strongest reason
+  (every reason in its title; on a phone the meaning takes two lines and the
+  reason waits in the title), "N missing · N failed evidence" whenever any
+  evidence of a current change is missing or failed, leading to the Evidence
+  tile at the first, and where the version stands only when that is news:
+  outdated, a draft, "Writing details for N of M changes", "N changes
+  couldn't be written" with Retry, or an earlier version. Below it, the tiles' glance faces in the layout's order,
+  on a grid of six units (a full tile six, a half three, a third two) that
+  becomes two columns and then one as the pane narrows. The Changes group
+  shows every change up to eight and otherwise its first six, the rest behind
+  a slim row naming the first three ("Show 4 more changes · …, … and 1
+  more"); the tiles past the
+  landing area wait behind "Show N more tiles · …". Both are kept in the
+  address (`expand=<group,…>`, `more=1`), so Back restores them.
+- **Glance faces** say whether a tile needs opening. A card is as tall as its
+  row asks: it shows what it must (a change's warning, every critical or high
+  risk), then fills the rest of its row with more of its own content (more of
+  the overview, further risks, more evidence or decisions), fading at the
+  foot; a card with little to say is short in one column. The Overview card
+  leaves the title to the page and shows the kind, the reading time, a
+  breaking change, what needs attention and the summary. A Change shows its
+  review score, its state, its high or critical risk (named by tier and
+  category when the Risks card beside it says it in full) or what needs
+  attention, what it does, its size and its open risks and evidence; Risks
+  counts the open risks by tier and shows every critical and high one in
+  full, never cut;
+  Evidence counts what is verified, claimed, missing and failed, the gaps
+  first; Media shows the first images; Intent the issues it implements and
+  the stated reasons; Decisions who made them; Context the area; Everything
+  else the hunks no change describes and their files. A card's ⋯ (or a right
+  click) offers Open, Comment, Ask about this tile and Open in Full review.
+- **Detail faces** (`pane=tile&tile=<id>&tile_item=<id>`) hold everything about
+  one tile, with the rail unfolded for stepping between tiles. A Change's
+  detail is its section as the full review draws it, then the tiles that
+  gather its risks, evidence, intent, decisions and media. The detail is held
+  to a reading measure on a wide window. A link to an item scrolls to it,
+  marks it and gives it the keys. "Summary", Escape and `u` lead back to the
+  landing page: back through history when the entry before is that landing
+  page, so Back does not open the tile again, else in the tile's place. The
+  landing page comes back where the reader left it, with the card of the tile
+  read last under the keys (the first card when that tile is not on it).
+- **Always shown.** The recommendation and any missing or failed evidence are
+  in the band; every active critical or high risk is on the landing page, in
+  the Risks tile or, while that tile is not ready or not on the landing page,
+  in a "Read before approving" band over the grid.
+- **Tiles that cannot be drawn** (unavailable, of a type this version does not
+  know, a custom tile, or one that fails while drawing) show a quiet
+  "unavailable" face; the rest of the page is unaffected. A tile still being
+  written shows that it is.
+- **Links.** A full review's address still works: a section opens its tile
+  (the mechanical change's is Everything else), a risk opens Risks at it, and
+  the Changes overview scrolls the landing page to the Changes group. A chip
+  in prose opens the tile that holds what it names.
+- **Compare.** Each side draws its own snapshot; the current side marks tiles
+  new since the compared version and changes whose code moved.
+- **Keys.** As on the full review: `j`/`k` move between the cards (or the
+  items of a tile), Enter opens the card, Space shows a group's hidden
+  members, `←`/`→` and Shift+J/K step through the Summary and the tiles in
+  order, Escape and `u` go back from a tile, `c` comments on the tile open or
+  the card the keys are on, and `a`, `]`, `m`, `f` and `v` work as everywhere
+  on the page.
+
+The session panel's page context names the page in its `focus`: `view`
+`tiles`, and the `tile` open with its `item`.
+
 ## Your review
 
 A reader reviews from the PR page and Up next
@@ -2588,7 +2685,13 @@ draft and the page reloads.
 On the PR page, `c` comments on the item being read (`commentTarget`): the
 selected section or risk, placed on the first line its anchors cite (else the
 section's first hunk), a changed file, on its first hunk, or else the pull
-request as a whole. It opens the side pane's **Comments** tab (the viewer's
+request as a whole. On the tiles page a comment is on a tile: a Change tile's
+is its section's, and one on a risk in it or in Risks is the risk's, each
+targeted and placed exactly as the full review does; any other tile is a
+`tile` target, placed on the first line it cites (an evidence item's or a
+decision's anchors, Everything else's first hunk) or, for the Overview,
+Intent, Context and Media, put in the review's body under its title. Each card
+counts the comments on its tile. It opens the side pane's **Comments** tab (the viewer's
 `comments` slot) with a box for the comment, saved with ⌘↵ and put away with
 Esc. The tab lists the comments in the order written, each with its item and
 place; its ⋯ (or a right click) edits or deletes one, and the tab ends with

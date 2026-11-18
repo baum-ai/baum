@@ -105,11 +105,13 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result,
 }
 
 // Fix runs Codex with write access to the request's directory, for a fix a
-// person asked for (agent.Fixer). Codex's workspace-write sandbox lets the
-// commands it runs write to that directory and to Request.Scratch, which
-// becomes their TMPDIR, and nowhere else (not /tmp or the caller's TMPDIR),
-// with the network off. As in a review, they can read any file the user can.
-// Its final message is the result's Document. Only the Local profile fixes.
+// person asked for (agent.Fixer). Its sandbox (fixSandbox) lets the commands
+// it runs write to that directory, to Request.Scratch, which becomes their
+// TMPDIR, and to Request.GitDir, and nowhere else (not /tmp or the caller's
+// TMPDIR), with the network on only when Request.Network is set. From Codex
+// PermissionProfileVersion on, they cannot read the credential paths; an
+// older Codex lets them read any file the user can, as in a review. Its final
+// message is the result's Document. Only the Local profile fixes.
 func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
 	if c.Profile != Local {
 		return agent.Result{}, errors.New("codex: only the Local profile runs fixes")

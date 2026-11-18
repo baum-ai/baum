@@ -1,7 +1,7 @@
 // Package tilestest checks conversions between baum.review/1 and
-// baum.tiles/1 documents, for tests and for runs over real review stores,
-// and builds custom tiles for tests. It uses only the tiles package's public
-// API.
+// baum.tiles/1 documents and the documents compositions generate, for tests
+// and for runs over real review stores, and builds custom tiles and random
+// compositions for tests. It uses only the tiles package's public API.
 package tilestest
 
 import (
@@ -101,6 +101,12 @@ var validator = tiles.NewValidator()
 //
 // The tenth invariant compares consecutive versions (CheckStability).
 func CheckConversion(normalized []byte, doc *tiles.Document) []string {
+	return check(normalized, doc, false)
+}
+
+// check checks the invariants CheckConversion lists, as CheckGenerated
+// relaxes them for a generated document.
+func check(normalized []byte, doc *tiles.Document, generated bool) []string {
 	var failures []string
 	fail := func(invariant int, format string, args ...any) {
 		failures = append(failures, fmt.Sprintf("invariant %d: ", invariant)+fmt.Sprintf(format, args...))
@@ -250,20 +256,46 @@ func CheckConversion(normalized []byte, doc *tiles.Document) []string {
 		fail(7, "landing is %d, the layout packs %d", doc.Layout.Landing, landing)
 	}
 	visible := tiles.Visible(doc.Layout)
-	for id, invariant := range map[string]int{tiles.TypeOverview: 7, tiles.TypeRisks: 6} {
+	severe := false
+	for _, risk := range doc.Risks {
+		if risk.State == "active" && current[risk.Change] && (risk.Tier == "critical" || risk.Tier == "high") {
+			severe = true
+			if !slices.Contains(ranked.Ranked, risk.ID) {
+				fail(6, "%s risk %s is not ranked", risk.Tier, risk.ID)
+			}
+		}
+	}
+	landing := map[string]int{tiles.TypeOverview: 7, tiles.TypeRisks: 6}
+	if generated {
+		// A generated layout may put the risks tile anywhere while it ranks
+		// no critical or high risk.
+		landing = map[string]int{tiles.TypeOverview: 6}
+		if severe {
+			landing[tiles.TypeRisks] = 6
+		}
+	}
+	for id, invariant := range landing {
 		if p, ok := position[id]; !ok || !visible[p] {
 			fail(invariant, "the %s tile is not on the landing page", id)
 		}
 	}
-	for _, risk := range doc.Risks {
-		if risk.State == "active" && current[risk.Change] && (risk.Tier == "critical" || risk.Tier == "high") && !slices.Contains(ranked.Ranked, risk.ID) {
-			fail(6, "%s risk %s is not ranked", risk.Tier, risk.ID)
+	for _, entry := range doc.Layout.Entries {
+		if entry.Tile == tiles.TypeRisks && entry.Group != "" && (!generated || entry.Group != tiles.GroupHidden) {
+			fail(6, "the risks tile is in a group")
 		}
 	}
 
 	// 8. Tile-level checks.
 	for i := range doc.Tiles {
 		tile := &doc.Tiles[i]
+		if generated && composed(tile) && tile.State == tiles.StateUnavailable {
+			// A library or authored tile that fails its checks is shown
+			// unavailable, with its problems.
+			if len(tile.Problems) == 0 {
+				fail(8, "tile %s is unavailable without a problem", tile.ID)
+			}
+			continue
+		}
 		if tile.State == tiles.StateUnavailable {
 			fail(8, "tile %s is unavailable", tile.ID)
 		}
@@ -331,6 +363,10 @@ func blockFailures(source review, doc *tiles.Document) []string {
 			_ = json.Unmarshal(tile.Data, &data)
 			for _, m := range data.Items {
 				claim(m.Origin, identity(m.Block), "media block")
+			}
+		case tiles.TypeTable, tiles.TypeCode:
+			if origin := promotedOrigin(&tile); origin != nil {
+				claim(origin, block{Kind: tile.Type}, "promoted block")
 			}
 		case tiles.TypeDecisions:
 			var data tiles.DecisionsData
@@ -449,31 +485,55 @@ func RoundTripEqual(normalized, back []byte) (bool, error) {
 // the same ID and type in both (its change tile, or everything_else for the
 // current mechanical change; a change that is mechanical in either version
 // may move between them, as it becomes obsolete or current again or changes
-// kind), and a tile ID both versions have names a change tile or a single
-// tile, of the same type in both.
+// kind); a tile ID both versions have names a tile of the same subject in
+// both: a change or single tile of the same type, a library tile of the same
+// type, a promoted block of the same change and kind, or an authored tile of
+// the same type; and a promoted block whose change and kind exactly one
+// promoted tile of each version has keeps its ID, unless another tile of the
+// next version has that ID (tiles.StabilizeIDs).
 func CheckStability(previous, next *tiles.Document) []string {
 	var failures []string
 	fail := func(format string, args ...any) {
 		failures = append(failures, "invariant 10: "+fmt.Sprintf(format, args...))
 	}
-	types := func(doc *tiles.Document) map[string]string {
+	subjects := func(doc *tiles.Document) map[string]string {
 		byID := map[string]string{}
-		for _, tile := range doc.Tiles {
-			byID[tile.ID] = tile.Type
+		for i := range doc.Tiles {
+			byID[doc.Tiles[i].ID] = stableSubject(&doc.Tiles[i])
 		}
 		return byID
 	}
-	before, after := types(previous), types(next)
-	for id, kind := range before {
+	before, after := subjects(previous), subjects(next)
+	for id, subject := range before {
 		other, ok := after[id]
 		if !ok {
 			continue
 		}
-		if other != kind {
-			fail("tile %s is a %s tile in one version and a %s tile in the next", id, kind, other)
+		if other != subject {
+			fail("tile %s is a %s tile in one version and a %s tile in the next", id, subject, other)
 		}
-		if builtin, ok := tiles.Builtin(kind); kind != tiles.TypeChange && (!ok || !builtin.Single) {
-			fail("tile %s is in both versions but is neither a change nor a single tile", id)
+	}
+	promotions := func(doc *tiles.Document) map[string][]string {
+		byKey := map[string][]string{}
+		for i := range doc.Tiles {
+			tile := &doc.Tiles[i]
+			if composed(tile) || (tile.Type != tiles.TypeTable && tile.Type != tiles.TypeCode) {
+				continue
+			}
+			if origin := promotedOrigin(tile); origin != nil {
+				key := tile.Type + " " + origin.Change
+				byKey[key] = append(byKey[key], tile.ID)
+			}
+		}
+		return byKey
+	}
+	was, now := promotions(previous), promotions(next)
+	for key, ids := range was {
+		if len(ids) != 1 || len(now[key]) != 1 || ids[0] == now[key][0] {
+			continue
+		}
+		if _, taken := after[ids[0]]; !taken {
+			fail("a promoted %s keeps neither its ID %s nor gives it to another tile", key, ids[0])
 		}
 	}
 	presenters := func(doc *tiles.Document) (map[string]string, map[string]string) {
@@ -494,14 +554,14 @@ func CheckStability(previous, next *tiles.Document) []string {
 		}
 		return presenter, kinds
 	}
-	was, kinds := presenters(previous)
-	now, _ := presenters(next)
+	presented, kinds := presenters(previous)
+	presentedNow, _ := presenters(next)
 	for _, change := range next.Changes {
 		if _, ok := kinds[change.ID]; !ok {
 			continue
 		}
-		if was[change.ID] != now[change.ID] && change.Kind != tiles.KindMechanical && kinds[change.ID] != tiles.KindMechanical {
-			fail("change %s is shown by tile %q in one version and %q in the next", change.ID, was[change.ID], now[change.ID])
+		if presented[change.ID] != presentedNow[change.ID] && change.Kind != tiles.KindMechanical && kinds[change.ID] != tiles.KindMechanical {
+			fail("change %s is shown by tile %q in one version and %q in the next", change.ID, presented[change.ID], presentedNow[change.ID])
 		}
 	}
 	return failures

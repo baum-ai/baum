@@ -14,9 +14,11 @@ import (
 // IDs back, and so do the references FromReview rewrote. It reads the
 // substrate and the tiles that hold review content (overview, change,
 // intent, decisions, context, media and everything_else); the risks and
-// evidence tiles and the layout only present the substrate. baum.review/1
-// has no place for custom tiles, or for the prose, table, diagram and code
-// tiles, so the review it returns leaves them out.
+// evidence tiles and the layout only present the substrate. A table or code
+// tile with an origin holds a block a composition promoted, which goes back
+// to its change. baum.review/1 has no place for custom tiles, or for other
+// prose, table, diagram and code tiles, so the review it returns leaves them
+// out.
 func ToReview(doc *Document) ([]byte, error) {
 	if doc.Schema != Name {
 		return nil, fmt.Errorf("tiles: the document's schema is %q, not %q", doc.Schema, Name)
@@ -112,6 +114,22 @@ func ToReview(doc *Document) ([]byte, error) {
 		}
 	}
 
+	for i := range doc.Tiles {
+		tile := &doc.Tiles[i]
+		if tile.Type != TypeTable && tile.Type != TypeCode {
+			continue
+		}
+		raw, origin, err := promotedBlock(tile)
+		if err != nil {
+			return nil, err
+		}
+		if origin != nil {
+			if err := addMoved(origin.Change, origin.Block, raw); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	var everythingElse *EverythingElseData
 	if tile := byID[TypeEverythingElse]; tile != nil {
 		everythingElse = &EverythingElseData{}
@@ -139,6 +157,26 @@ func ToReview(doc *Document) ([]byte, error) {
 		out.Sections = append(out.Sections, section)
 	}
 	return json.Marshal(out)
+}
+
+// promotedBlock rebuilds the block a promoted table or code tile holds,
+// with its origin, or returns a nil origin for a tile without one.
+func promotedBlock(tile *Tile) (json.RawMessage, *BlockOrigin, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(tile.Data, &fields); err != nil {
+		return nil, nil, fmt.Errorf("tiles: %s data: %w", tile.Type, err)
+	}
+	if fields["origin"] == nil {
+		return nil, nil, nil
+	}
+	var origin BlockOrigin
+	if err := json.Unmarshal(fields["origin"], &origin); err != nil {
+		return nil, nil, fmt.Errorf("tiles: %s origin: %w", tile.Type, err)
+	}
+	delete(fields, "origin")
+	fields["kind"] = jsonString(tile.Type)
+	raw, err := json.Marshal(fields)
+	return raw, &origin, err
 }
 
 type movedDecisions struct {
