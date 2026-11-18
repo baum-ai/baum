@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "build:profile": "vite build --mode profile",
+    "gallery": "vite --config vite.gallery.config.ts",
     "lint:palette": "node scripts/check-palette.mjs",
     "tile-kit": "node scripts/build-tile-kit.mjs",
     "tile-kit:check": "node scripts/build-tile-kit.mjs --check",

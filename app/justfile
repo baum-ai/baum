@@ -38,3 +38,33 @@ tile-kit-screens:
 tile-type-screens dirs="tiles/library/schema_change,tiles/library/api_change":
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --rm --no-deps -e BAUM_TILE_DIRS="{{ dirs }}" -e BAUM_TILE_OUT=/oss/app/test-results/tile-types oss-test sh -ec 'rm -rf app/test-results/tile-types && go test ./tiles/library -run "^TestRenderDirs$" -count=1 -v'
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/app -e TILE_TYPE_SAMPLES ui-test sh -ec 'TILE_TYPE_SCREENSHOTS=1 pnpm exec playwright test -c playwright.tile-types.config.ts'
+
+# Serves http://127.0.0.1:${DIAGRAM_GALLERY_PORT:-5181}; Ctrl+C stops it. It
+# reads replay runs, gallery-data/*.json and, given stores (a directory such
+# as a folder of clones), the desktop app's review stores under it
+# (<clone>/.git/baum/reviews/versions.sqlite), all read-only.
+# Native diagram gallery (flow, columns, sequence, table) with hot reload.
+[no-cd]
+[positional-arguments]
+diagram-gallery stores="":
+    #!/usr/bin/env sh
+    set -eu
+    stores="${1:-}"
+    port="${DIAGRAM_GALLERY_PORT:-5181}"
+    runs="${BAUM_REPLAY_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/baum/replay-runs}"
+    set -- -e "DIAGRAM_GALLERY_PORT=$port" -e DIAGRAM_GALLERY_HOST=0.0.0.0 -e "DIAGRAM_GALLERY_POLLING=${DIAGRAM_GALLERY_POLLING:-0}"
+    if [ -d "$runs" ]; then
+        runs="$(cd "$runs" && pwd)"
+        set -- "$@" -v "$runs:/data/replay-runs:ro" -e DIAGRAM_GALLERY_RUNS=/data/replay-runs
+    fi
+    if [ -n "$stores" ]; then
+        if [ ! -d "$stores" ]; then
+            echo "diagram-gallery: $stores is not a directory" >&2
+            exit 1
+        fi
+        stores="$(cd "$stores" && pwd)"
+        set -- "$@" -v "$stores:/data/stores:ro" -e DIAGRAM_GALLERY_STORES=/data/stores
+    fi
+    echo "diagram gallery: http://127.0.0.1:$port"
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/app \
+        -p "127.0.0.1:$port:$port" "$@" ui-test pnpm gallery

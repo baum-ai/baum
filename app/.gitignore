@@ -5,3 +5,5 @@ test-results/
 e2e/fixture
 video/frames/
 video/out/
+# Diagram gallery inputs: loose diagrams copied from reviews hold repository content.
+/gallery-data/

@@ -2899,6 +2899,53 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   (`src/tiles/added-events.ts`), which reads the versions on screen (and a
   draft) again, as it does after the event stream reconnects.
 
+### Native diagram gallery
+
+A dev page (`gallery/`, served by `vite.gallery.config.ts`, never part of the
+app's build) draws the review page's native diagrams (flow, columns, sequence,
+table) with its own `ViewTileCard`, without opening the app: in a card on the
+overview and in "Where this fits", bare in a section, and a failed, pending or
+unreadable tile as the page shows it. Editing `native-tiles.tsx`, `flow.css`,
+the palette or a sample redraws it in place. From the repository root:
+
+```sh
+just local_app::diagram-gallery [stores-dir]
+```
+
+It serves `http://127.0.0.1:5181` from the `ui-test` service.
+`DIAGRAM_GALLERY_PORT` changes the port, `DIAGRAM_GALLERY_HOST` the address the
+server listens on (the recipe listens on all of the container's and publishes
+only to 127.0.0.1), and `DIAGRAM_GALLERY_POLLING=1` watches files by polling,
+for a mount that misses file events. Each diagram shows its title, type,
+origin, placement and the page's verdict (`NATIVE[type].valid`), with a
+one-line reason when the page cannot draw it. Controls, kept in the address:
+type, source, the section's width at a 1440 window, a 900 window and a 390
+phone (the overview's column is as wide), and light, dark or both side by side.
+The diagrams come from:
+
+- the fixture `src/review-view/fixture-1303.ts` (acme/demo#7) and
+  `gallery/samples.ts`: per type the smallest and the largest the schemas
+  allow, realistic ones and one the page cannot read
+  (`gallery/gallery.test.tsx` checks each against the page's check,
+  composition-2.json and review-2.json);
+- replay runs under `$BAUM_REPLAY_OUT` or `~/.cache/baum/replay-runs`: each
+  case's `document.json` and `composition.json`;
+- the desktop app's review stores (`<clone>/.git/baum/reviews/versions.sqlite`,
+  or any `versions.sqlite` such as the app's fallback under
+  `~/.local/share/baum/reviews/`) found under the optional `stores-dir`: each
+  pull request's latest version only, its baum.review/2 document or, for an
+  older review, its composition;
+- loose JSON in `oss/app/gallery-data/` (a review, a composition, one diagram
+  or an array of them), which git ignores.
+
+A baum.review/2 document is read with the page's own `parseReviewV2` and cited
+against itself; a composition's or a sample's diagram is drawn without its
+citations, which name another review's hunks. The page asks the server
+(`GET /api/diagrams`) again every two seconds, so a new run or review version
+appears without a reload; a document it cannot parse is listed as a problem,
+and when the server does not answer, it says so and still draws the built-in
+diagrams.
+
 ## Your review
 
 A reader reviews from the PR page and Up next
