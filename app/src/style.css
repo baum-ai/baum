@@ -5349,9 +5349,6 @@ dialog.shortcuts-sheet {
   flex-direction: column;
   max-height: min(40rem, 76vh);
 }
-dialog.shortcuts-sheet:not([open]) {
-  display: none;
-}
 .shortcuts-head {
   display: flex;
   align-items: center;
@@ -5361,10 +5358,6 @@ dialog.shortcuts-sheet:not([open]) {
 .shortcuts-sheet .go-to-input {
   padding-top: 0.5rem;
   font-size: var(--text-base);
-  appearance: none;
-}
-.shortcuts-sheet .go-to-input::-webkit-search-cancel-button {
-  appearance: none;
 }
 .shortcuts-body {
   flex: 1;

@@ -659,11 +659,28 @@ it("finds keys in the sheet by what they do or by the key", async () => {
   // It opens on the list, for reading; a typed key moves to the search field.
   expect(document.activeElement?.id).toBe("shortcuts-list");
   const input = sheet.querySelector("input")!;
-  await act(async () => {
-    document.activeElement!.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "m", bubbles: true }),
-    );
-  });
+  const list = document.activeElement as HTMLElement;
+  const keydown = (key: string) => {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    act(() => {
+      document.activeElement!.dispatchEvent(event);
+    });
+    return event;
+  };
+  // `?` (which closes the sheet) and Space (which scrolls it) stay on the list.
+  keydown("?");
+  keydown(" ");
+  expect(document.activeElement).toBe(list);
+  // `/` only moves to the field.
+  expect(keydown("/").defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  list.focus();
+  // Another character goes to the field, not to the page's keys behind it.
+  const seen = vi.fn();
+  window.addEventListener("keydown", seen);
+  keydown("u");
+  window.removeEventListener("keydown", seen);
+  expect(seen).not.toHaveBeenCalled();
   expect(document.activeElement).toBe(input);
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "merge");

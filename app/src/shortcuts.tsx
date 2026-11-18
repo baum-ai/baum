@@ -1186,9 +1186,10 @@ export function ShortcutsSheet({
         if (event.target === search.current) return;
         if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
         // `?` closes the sheet and Space scrolls it. Another character lands
-        // in the search field, and `/` only moves there.
+        // in the search field, not on the page's keys, and `/` only moves there.
         if (event.key === "?" || event.key === " ") return;
         if (event.key === "/") event.preventDefault();
+        event.stopPropagation();
         search.current?.focus();
       }}
       className="go-to shortcuts-sheet"
@@ -1201,7 +1202,8 @@ export function ShortcutsSheet({
       </div>
       <input
         ref={search}
-        type="search"
+        type="text"
+        role="searchbox"
         aria-label="Search the shortcuts"
         aria-controls="shortcuts-list"
         placeholder="Search the shortcuts…"
