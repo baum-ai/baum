@@ -445,7 +445,7 @@ func (p Plan) runCase(ctx context.Context, runner *Runner, id string, prepare fu
 		out.Document, out.DocumentValid = nil, false
 		_ = os.MkdirAll(caseDir, 0o700)
 		_ = writeJSON(filepath.Join(caseDir, "outcome.json"), out)
-		return rowOf(out, "failed")
+		return rowOf(out, "failed"), nil
 	}
 	if out.Status == "interrupted" {
 		_ = os.Remove(caseDir)
