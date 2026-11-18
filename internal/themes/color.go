@@ -2,6 +2,7 @@ package themes
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -35,6 +36,15 @@ func parseHex(h string) (RGBA, error) {
 		c[i] = float64(v) / 255
 	}
 	return RGBA{c[0], c[1], c[2], c[3]}, nil
+}
+
+// Hex is the colour as #rrggbb, or #rrggbbaa when it is not opaque.
+func (c RGBA) Hex() string {
+	b := func(v float64) int { return int(math.Round(clamp(v) * 255)) }
+	if c.A >= 1 {
+		return fmt.Sprintf("#%02x%02x%02x", b(c.R), b(c.G), b(c.B))
+	}
+	return fmt.Sprintf("#%02x%02x%02x%02x", b(c.R), b(c.G), b(c.B), b(c.A))
 }
 
 func clamp(v float64) float64 { return math.Min(1, math.Max(0, v)) }

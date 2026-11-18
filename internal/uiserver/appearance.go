@@ -318,6 +318,15 @@ func (a LocalAPI) saveTheme(w http.ResponseWriter, r *http.Request, change func(
 	writeJSON(w, appearanceOf(prefs))
 }
 
+// newThemeID is the id of a new custom theme.
+func newThemeID() (string, error) {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return "c-" + hex.EncodeToString(raw[:]), nil
+}
+
 // postTheme is POST /api/settings/appearance/themes: it creates a theme with
 // a new id and, when slot is light or dark, puts it in that slot.
 func (a LocalAPI) postTheme(w http.ResponseWriter, r *http.Request) {
@@ -330,12 +339,12 @@ func (a LocalAPI) postTheme(w http.ResponseWriter, r *http.Request) {
 	if !decodeThemeBody(w, r, &input) {
 		return
 	}
-	var raw [8]byte
-	if _, err := rand.Read(raw[:]); err != nil {
+	id, err := newThemeID()
+	if err != nil {
 		http.Error(w, "Could not save appearance settings", http.StatusInternalServerError)
 		return
 	}
-	theme := repos.CustomTheme{ID: "c-" + hex.EncodeToString(raw[:]), Name: input.Name, Base: input.Base, Tokens: input.Tokens}
+	theme := repos.CustomTheme{ID: id, Name: input.Name, Base: input.Base, Tokens: input.Tokens}
 	a.saveTheme(w, r, func(p repos.Preferences) (repos.Preferences, error) { return addTheme(p, theme, input.Slot) })
 }
 

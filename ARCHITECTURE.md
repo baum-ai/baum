@@ -6981,7 +6981,7 @@ home folder:
 
 | Tool | Scope | Section | Reads |
 | --- | --- | --- | --- |
-| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier, review page) and `Options.PlanChoices` (each plan's shown, default and explicit) |
+| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier, review page, `light_theme` and `dark_theme`, `themes` as `{id, name, base, tokens, builtin}`) and `Options.PlanChoices` (each plan's shown, default and explicit). It adds `theme_tokens` (`themes.Seeds` and `themes.Roles()`), `theme_defaults` (`light` and `dark`: `themes.Resolve` with no overrides, allowlisted tokens as `#rrggbb` or `#rrggbbaa`), `slot_values` (the same for each slot's theme) and `theme_note` (the `theme` setting picks the active slot; system follows the operating system) |
 | `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences) |
 | `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
 | `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
@@ -7044,7 +7044,13 @@ after, the target's revision and the page context it was made on. A
 `Proposer` reads a target (`Current`), validates a change (`Validate`) and
 saves it (`Apply`), each given the page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
-one and a page with no proposer; it reads the target's value and revision
+one and a page with no proposer, with one exception: `ProposalAnywhere`
+(`"app"`, a sentinel and not a page) is for a colour theme, which is not about
+the page the person has open. For it `Propose` and `Save` skip the same-page
+check (some page must still be open), its proposer is `Options.Proposers["app"]`
+(the sentinel is never registered as a page), `Propose` refuses any target but
+`theme` under it and `theme` under any real page, and its proposer resolves
+`theme` alone; it reads the target's value and revision
 itself, ignoring the agent's revision, refuses with the bare
 `ErrNotRecorded` a `Before` the agent sent that no longer matches, and
 records the proposal; nothing changes. A tool gets only a `Receipt` (id,
@@ -7066,11 +7072,19 @@ proposals only through the Go API for now.
 never through an agent: the value of an agent environment variable the agent
 proposed adding. It goes to `Apply` alone, is never kept in the proposal, and
 prints and logs as withheld. Every proposer but the agent environment's
-refuses one.
+refuses one. `SaveInput.Theme` (`{name, slot}`, `slot` "", `light` or `dark`)
+is what the person chose when saving a theme proposal: the name they gave it
+and the slot it goes in, each defaulting to the proposal's name and its base.
+It is not secret, but like the value it reaches `Apply` alone; only the theme
+proposer takes one (`target.takesTheme`) and refuses a `Value`, and every other
+proposer refuses a `Theme`.
 
 The `propose_*` tools record proposals. Each is global (an action neither
 lists nor calls one), reads nothing, names its page and target, passes the
-change asked for as `After`, and answers the receipt and a fixed status. A
+change asked for as `After`, and answers the receipt and a fixed status
+(`propose_theme` adds `contrast_warnings`, the pairs of the proposed colours
+under 4.5:1, which it works out from its own arguments with
+`themes.Contrast`; it reads no state). A
 tool's schema bounds types and sizes only, so a value the page refuses
 reaches the proposer and is refused with the page's own words. Pages list
 their tools, and `current_page` lists a section's with its `section_tools`.
@@ -7079,7 +7093,8 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 
 | Page (section) | Tool | Target | Saved as |
 | --- | --- | --- | --- |
-| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier, review page) |
+| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier, review page, and the `light_theme` and `dark_theme` slots, which must name a theme the preferences hold) |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme`, a common tool listed on every page | `theme` | `POST /api/settings/appearance/themes` (`addTheme`) with the name and slot from `SaveInput.Theme`, else the proposal's name and its base's slot; the id is made once outside the transaction. The revision is a constant, so changes to the slots or themes during the preview do not make the save stale. Its "before" is the names of the light and dark slots' themes. |
 | `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
 | `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
 | `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |

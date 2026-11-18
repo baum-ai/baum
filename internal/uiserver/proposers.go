@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/themes"
 	"github.com/baum-ai/baum/internal/uistate"
 )
 
@@ -76,6 +77,7 @@ type Proposers struct {
 // Pages are the proposers by page name, for agentcontext.Options.Proposers.
 func (p *Proposers) Pages() map[string]agentcontext.Proposer {
 	return map[string]agentcontext.Proposer{
+		agentcontext.ProposalAnywhere: pageProposer{p, p.anywhereTarget},
 		agentcontext.PageSettings:     pageProposer{p, p.settingsTarget},
 		agentcontext.PageRepositories: pageProposer{p, p.repositoryTarget},
 		agentcontext.PageInbox:        pageProposer{p, p.inboxTarget},
@@ -136,6 +138,9 @@ type target struct {
 	// takesValue marks the one target whose save takes a value the person
 	// types (an agent environment variable's).
 	takesValue bool
+	// takesTheme marks the one target whose save takes the name and slot the
+	// person chose (a colour theme's).
+	takesTheme bool
 }
 
 // pageProposer is a page's Proposer: resolve finds the target a proposal
@@ -169,7 +174,10 @@ func (pp pageProposer) Validate(ctx context.Context, page agentcontext.PageConte
 	return t.validate(ctx, proposal.After)
 }
 
-var errNoValue = errors.New("this proposal takes no value")
+var (
+	errNoValue = errors.New("this proposal takes no value")
+	errNoTheme = errors.New("this proposal takes no theme name or slot")
+)
 
 func (pp pageProposer) Apply(ctx context.Context, page agentcontext.PageContext, proposal agentcontext.Proposal, revision string, input agentcontext.SaveInput) error {
 	t, err := pp.resolve(page, proposal.Target)
@@ -178,6 +186,9 @@ func (pp pageProposer) Apply(ctx context.Context, page agentcontext.PageContext,
 	}
 	if input.Value != nil && !t.takesValue {
 		return errNoValue
+	}
+	if input.Theme != nil && !t.takesTheme {
+		return errNoTheme
 	}
 	return t.apply(ctx, proposal.After, func(state any) error {
 		if pp.p.revision(state) != revision {
@@ -312,6 +323,99 @@ func (p *Proposers) prefsTarget(value, state func(repos.Preferences) any, valida
 	}
 }
 
+// anywhereTarget resolves the targets proposed under
+// agentcontext.ProposalAnywhere, which is not a page: the theme alone.
+func (p *Proposers) anywhereTarget(_ agentcontext.PageContext, name string) (*target, error) {
+	if name != agentcontext.TargetTheme {
+		return nil, fmt.Errorf("only a colour theme is proposed from any page; %q is a change to a page", name)
+	}
+	return p.themeTarget(), nil
+}
+
+// themeChange is a theme proposal's After.
+type themeChange struct {
+	Name   string            `json:"name"`
+	Base   string            `json:"base"`
+	Tokens map[string]string `json:"tokens"`
+}
+
+// themeTargetState is the constant its revision is: a theme proposal adds a
+// new theme, so nothing the person changes while previewing it (the slots, the
+// other themes) makes the save stale.
+const themeTargetState = "theme"
+
+// themeTarget is a new custom colour theme, saved as POST
+// /api/settings/appearance/themes is: the name and slot the person chose when
+// saving (SaveInput.Theme), else the proposal's name and its base's slot.
+func (p *Proposers) themeTarget() *target {
+	decode := func(after json.RawMessage) (themeChange, error) {
+		var in themeChange
+		if err := decodeAfter(after, &in); err != nil {
+			return in, err
+		}
+		return in, themes.Validate(themes.Theme{Name: in.Name, Base: in.Base, Tokens: in.Tokens})
+	}
+	return &target{
+		takesTheme: true,
+		read: func(ctx context.Context) (any, any, error) {
+			prefs, err := p.API.Registry.Preferences(ctx)
+			if err != nil {
+				return nil, nil, errors.New("the settings could not be read")
+			}
+			appearance := appearanceOf(prefs)
+			name := func(id string) string {
+				for _, t := range appearance.Themes {
+					if t.ID == id {
+						return t.Name
+					}
+				}
+				return id
+			}
+			return struct {
+				LightTheme string `json:"light_theme"`
+				DarkTheme  string `json:"dark_theme"`
+			}{name(appearance.LightTheme), name(appearance.DarkTheme)}, themeTargetState, nil
+		},
+		validate: func(_ context.Context, after json.RawMessage) error { _, err := decode(after); return err },
+		apply: func(ctx context.Context, after json.RawMessage, unchanged func(any) error, input agentcontext.SaveInput) error {
+			in, err := decode(after)
+			if err != nil {
+				return err
+			}
+			name, slot := in.Name, in.Base
+			if input.Theme != nil {
+				if input.Theme.Name != "" {
+					name = input.Theme.Name
+				}
+				if input.Theme.Slot != "" {
+					slot = input.Theme.Slot
+				}
+				if err := themes.ValidateName(name); err != nil {
+					return err
+				}
+			}
+			// The id is made once, outside the transaction, which may run
+			// its function again.
+			id, err := newThemeID()
+			if err != nil {
+				return errors.New("could not make a theme id")
+			}
+			theme := repos.CustomTheme{ID: id, Name: name, Base: in.Base, Tokens: in.Tokens}
+			_, err = p.API.updatePreferences(ctx, func(prefs repos.Preferences) error {
+				if err := unchanged(themeTargetState); err != nil {
+					return err
+				}
+				_, err := addTheme(prefs, theme, slot)
+				return err
+			}, func(prefs repos.Preferences) repos.Preferences {
+				prefs, _ = addTheme(prefs, theme, slot)
+				return prefs
+			})
+			return err
+		},
+	}
+}
+
 func (p *Proposers) appearanceTarget() *target {
 	decode := func(after json.RawMessage) (appearanceInput, error) {
 		var in appearanceInput
@@ -319,7 +423,7 @@ func (p *Proposers) appearanceTarget() *target {
 			return in, err
 		}
 		if in == (appearanceInput{}) {
-			return in, errors.New("propose a theme, key_hints, page_modifier or review_page")
+			return in, errors.New("propose a theme, key_hints, page_modifier, review_page, light_theme or dark_theme")
 		}
 		return in, in.check()
 	}

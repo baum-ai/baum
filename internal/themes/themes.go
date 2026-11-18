@@ -12,6 +12,7 @@ package themes
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -47,6 +48,30 @@ var Tokens = map[string]bool{
 	"--action-primary": true, "--action-primary-hover": true,
 	"--nav-hover": true, "--nav-selected": true,
 	"--status-positive": true, "--status-caution": true, "--status-critical": true,
+}
+
+// Seeds are the allowlisted tokens the rest of the palette derives from:
+// changing one recolours everything built on it, so a theme is best made of
+// seeds, with roles set only where a seed cannot reach.
+var Seeds = []string{
+	"--color-ink", "--color-paper", "--color-shadow",
+	"--brand-forest", "--brand-sand-100", "--brand-green-600",
+	"--color-critical", "--color-blue",
+	"--series-1", "--series-2", "--series-3", "--series-4",
+	"--series-5", "--series-6", "--series-7", "--series-8",
+	"--series-caramel", "--series-sage", "--series-espresso",
+}
+
+// Roles are the allowlisted tokens that are not seeds, sorted.
+func Roles() []string {
+	var out []string
+	for token := range Tokens {
+		if !slices.Contains(Seeds, token) {
+			out = append(out, token)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Theme is a custom colour theme.

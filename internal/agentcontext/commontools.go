@@ -18,7 +18,7 @@ import (
 // commonToolNames are the tools of every page: they read the app as a whole,
 // not what one page shows. New adds them to the tools of every page, and
 // RegisterPage to those of each page registered later.
-var commonToolNames = []string{"search", "link", "app_help", "daemon_status"}
+var commonToolNames = []string{"search", "link", "app_help", "daemon_status", "propose_theme"}
 
 // withCommonTools is names followed by the common tools, each once.
 func withCommonTools(names []string) []string {

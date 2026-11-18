@@ -54,6 +54,14 @@ type Proposal struct {
 	Operation *OperationProposal `json:"operation,omitempty"`
 }
 
+// ProposalAnywhere is a sentinel page name, not a page: the one kind of
+// proposal that is not about the page the person has open (a colour theme,
+// TargetTheme, which the app previews wherever they are and the person saves
+// from anywhere). Propose and Save skip the same-page check for it, and no
+// other target may use it: its proposer refuses any but the theme target, and
+// the theme target refuses any real page.
+const ProposalAnywhere = "app"
+
 // Proposer is how one page takes proposals. Every method gets the page
 // context the proposal was made on, so it can refuse a target that does not
 // belong to what that page shows (another pull request's item on a pull
@@ -79,6 +87,16 @@ type Proposer interface {
 // learns. It is passed to Apply alone and never kept in the proposal.
 type SaveInput struct {
 	Value *string `json:"value,omitempty"`
+	// Theme is what the person chose when saving a colour theme proposal: its
+	// name and the slot it goes in. Empty fields take the proposal's own.
+	Theme *ThemeSave `json:"theme,omitempty"`
+}
+
+// ThemeSave is the person's choices when saving a theme proposal. Slot is
+// "light", "dark" or empty for the theme's base.
+type ThemeSave struct {
+	Name string `json:"name"`
+	Slot string `json:"slot"`
 }
 
 // String, GoString and LogValue never print the value, so neither a log line
@@ -87,10 +105,15 @@ func (in SaveInput) String() string       { return in.redacted() }
 func (in SaveInput) GoString() string     { return in.redacted() }
 func (in SaveInput) LogValue() slog.Value { return slog.StringValue(in.redacted()) }
 func (in SaveInput) redacted() string {
-	if in.Value == nil {
-		return "SaveInput{}"
+	switch {
+	case in.Value != nil && in.Theme != nil:
+		return "SaveInput{Value: [withheld], Theme: set}"
+	case in.Value != nil:
+		return "SaveInput{Value: [withheld]}"
+	case in.Theme != nil:
+		return "SaveInput{Theme: set}"
 	}
-	return "SaveInput{Value: [withheld]}"
+	return "SaveInput{}"
 }
 
 // A consumer holds at most maxProposals proposals; a new one past that is
@@ -185,7 +208,14 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	}
 	proposal.Kind = ProposalDiff
 	page, ok := p.registry.Page(consumer)
-	if !ok || page.Page != proposal.Page {
+	// The exception is for the theme target alone, and the theme target is
+	// proposed under it alone.
+	if (proposal.Page == ProposalAnywhere) != (proposal.Target == TargetTheme) {
+		return Proposal{}, ErrNoProposer
+	}
+	// The theme proposal is the one exception: it is not about a page, so
+	// whatever page is open will do.
+	if !ok || (proposal.Page != ProposalAnywhere && page.Page != proposal.Page) {
 		return Proposal{}, ErrNotCurrentPage
 	}
 	proposer := p.proposers(proposal.Page)
@@ -287,7 +317,7 @@ func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInp
 	// The person may have navigated since: the page must still be the one
 	// the proposal was made on, showing the same thing.
 	page, ok := p.registry.Page(consumer)
-	if !ok || !samePage(page, proposal.Context) {
+	if !ok || (proposal.Page != ProposalAnywhere && !samePage(page, proposal.Context)) {
 		return ErrNotCurrentPage
 	}
 	// Current refuses a target that does not belong to the page as it is

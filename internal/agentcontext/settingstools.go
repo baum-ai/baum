@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/themes"
 )
 
 // The tools of the Settings page and of a repository's page. Each returns a
@@ -117,7 +118,7 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 func (s *Server) settingsTools() []Tool {
 	return []Tool{{
 		Name: "settings_general",
-		Description: "What the Settings page's General section shows: the theme (system, light or dark), whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), the review page (full or tiles), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
+		Description: "What the Settings page's General section shows: the theme (system, light or dark), the colour themes (the built-in and the person's own: id, name, base, tokens) and which one each slot uses (light_theme, dark_theme), the tokens a theme may set and what they resolve to, whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), the review page (full or tiles), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
 			"The plan choices are worked out from what the daemon already holds; nothing is fetched.",
 		Scope:     ScopeGlobal,
 		Projected: []string{"/api/settings/appearance"},
@@ -217,6 +218,38 @@ type planChoice struct {
 	Explicit bool   `json:"explicit"`
 }
 
+// themeInfo is a colour theme as settings_general lists it.
+type themeInfo struct {
+	ID      string            `json:"id"`
+	Name    string            `json:"name"`
+	Base    string            `json:"base"`
+	Tokens  map[string]string `json:"tokens"`
+	Builtin bool              `json:"builtin"`
+}
+
+// themeTokens are the tokens a theme may set: the seeds the palette derives
+// from, and the roles built on them.
+type themeTokens struct {
+	Seeds []string `json:"seeds"`
+	Roles []string `json:"roles"`
+}
+
+// themeColours is what a base with tokens over it resolves to, for the tokens
+// a theme may set, as #rrggbb or #rrggbbaa.
+func themeColours(base string, tokens map[string]string) map[string]string {
+	out := map[string]string{}
+	resolved, err := themes.Resolve(base, tokens)
+	if err != nil {
+		return out
+	}
+	for token, colour := range resolved {
+		if themes.Tokens[token] {
+			out[token] = colour.Hex()
+		}
+	}
+	return out
+}
+
 func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
 	body, _, err := c.get(ctx, "/api/settings/appearance", nil)
 	if err != nil {
@@ -227,18 +260,55 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 		KeyHints     bool   `json:"key_hints"`
 		PageModifier string `json:"page_modifier"`
 		ReviewPage   string `json:"review_page"`
+		LightTheme   string `json:"light_theme"`
+		DarkTheme    string `json:"dark_theme"`
+		Themes       []struct {
+			ID      string            `json:"id"`
+			Name    string            `json:"name"`
+			Base    string            `json:"base"`
+			Builtin bool              `json:"builtin"`
+			Tokens  map[string]string `json:"tokens"`
+		} `json:"themes"`
 	}
 	if json.Unmarshal(body, &appearance) != nil {
 		return "", errors.New("the appearance settings are not readable")
 	}
 	out := struct {
-		Theme         string       `json:"theme"`
-		KeyHints      bool         `json:"key_hints"`
-		PageModifier  string       `json:"page_modifier"`
-		ReviewPage    string       `json:"review_page"`
-		PlanUsage     []planChoice `json:"plan_usage"`
-		PlanUsageNote string       `json:"plan_usage_note,omitempty"`
-	}{Theme: appearance.Theme, KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, ReviewPage: appearance.ReviewPage, PlanUsage: []planChoice{}}
+		Theme         string                       `json:"theme"`
+		KeyHints      bool                         `json:"key_hints"`
+		PageModifier  string                       `json:"page_modifier"`
+		ReviewPage    string                       `json:"review_page"`
+		LightTheme    string                       `json:"light_theme"`
+		DarkTheme     string                       `json:"dark_theme"`
+		Themes        []themeInfo                  `json:"themes"`
+		ThemeTokens   themeTokens                  `json:"theme_tokens"`
+		ThemeDefaults map[string]map[string]string `json:"theme_defaults"`
+		SlotValues    map[string]map[string]string `json:"slot_values"`
+		ThemeNote     string                       `json:"theme_note"`
+		PlanUsage     []planChoice                 `json:"plan_usage"`
+		PlanUsageNote string                       `json:"plan_usage_note,omitempty"`
+	}{Theme: appearance.Theme, KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, ReviewPage: appearance.ReviewPage, PlanUsage: []planChoice{},
+		LightTheme: appearance.LightTheme, DarkTheme: appearance.DarkTheme, Themes: []themeInfo{},
+		ThemeTokens:   themeTokens{Seeds: themes.Seeds, Roles: themes.Roles()},
+		ThemeDefaults: map[string]map[string]string{"light": themeColours("light", nil), "dark": themeColours("dark", nil)},
+		SlotValues:    map[string]map[string]string{},
+		ThemeNote:     "The colours in use are the active slot's theme: the theme setting picks it (light uses the light slot, dark the dark slot, system follows the operating system). theme_defaults are the built-in light and dark colours, slot_values what each slot's theme resolves to. A theme sets some tokens over its base; the rest follow from them."}
+	for _, t := range appearance.Themes {
+		tokens := t.Tokens
+		if tokens == nil {
+			tokens = map[string]string{}
+		}
+		out.Themes = append(out.Themes, themeInfo{ID: t.ID, Name: t.Name, Base: t.Base, Tokens: tokens, Builtin: t.Builtin})
+	}
+	for slot, id := range map[string]string{"light": appearance.LightTheme, "dark": appearance.DarkTheme} {
+		base, tokens := slot, map[string]string(nil)
+		for _, t := range out.Themes {
+			if t.ID == id {
+				base, tokens = t.Base, t.Tokens
+			}
+		}
+		out.SlotValues[slot] = themeColours(base, tokens)
+	}
 	var choices []json.RawMessage
 	if s.planChoices != nil {
 		choices, err = s.planChoices(ctx)
