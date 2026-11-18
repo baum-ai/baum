@@ -30,7 +30,8 @@
 // a git worktree at the head the calls run in, with full history.
 //
 // The run's call and token budgets and its time limit are split between the
-// levels (Shares); what a level leaves flows to the next. Each landed part
+// levels (Shares), with the map given at least MinMapTime; what a level
+// leaves flows to the next. Each landed part
 // publishes a draft (Run.Draft), completed by Run.Complete
 // (reviewv2.Complete) as the final document is.
 package orchestrate
@@ -68,6 +69,13 @@ var Levels = []string{LevelMap, LevelSections, LevelContext, LevelTiles, LevelOv
 // map, the sections with the context, the tiles and the overview, in that
 // order. What a level leaves flows to the next.
 var Shares = [4]float64{0.20, 0.45, 0.25, 0.10}
+
+// MinMapTime is the least time the map gets when the run's time limit
+// allows it. The map reads the pull request before it plans, and a large one
+// needs longer than its share of a short limit; its repair also runs in this
+// time. The map still ends by the end of the sections' share, so the later
+// levels keep their deadlines.
+const MinMapTime = 4 * time.Minute
 
 // DefaultConcurrency is how many calls run at once when Run.Concurrency is
 // zero.
@@ -308,17 +316,32 @@ func levelIndex(level string) int {
 
 // levelContext bounds a level's calls by its share of the run's time: each
 // level must end by the time the shares up to it have passed, so what an
-// earlier level leaves flows on.
+// earlier level leaves flows on. The map gets at least MinMapTime
+// (levelEnd).
 func (o *orchestration) levelContext(ctx context.Context, level string) (context.Context, context.CancelFunc) {
 	if o.deadline.IsZero() {
 		return context.WithCancel(ctx)
 	}
-	total := o.deadline.Sub(o.started)
-	cumulative := 0.0
-	for i := 0; i <= levelIndex(level); i++ {
-		cumulative += Shares[i]
+	return context.WithDeadline(ctx, levelEnd(o.started, o.deadline, level))
+}
+
+// levelEnd is when a level of a run from started to deadline must end: once
+// the shares up to it have passed. The map ends no sooner than MinMapTime
+// after the start, and no later than the end of the sections' share.
+func levelEnd(started, deadline time.Time, level string) time.Time {
+	total := deadline.Sub(started)
+	end := func(index int) time.Duration {
+		cumulative := 0.0
+		for i := 0; i <= index; i++ {
+			cumulative += Shares[i]
+		}
+		return time.Duration(float64(total) * cumulative)
 	}
-	return context.WithDeadline(ctx, o.started.Add(time.Duration(float64(total)*cumulative)))
+	index := levelIndex(level)
+	if index != 0 {
+		return started.Add(end(index))
+	}
+	return started.Add(max(end(0), min(MinMapTime, end(1))))
 }
 
 func (o *orchestration) step(text string) {
