@@ -74,7 +74,7 @@ const (
 	// credential may not change workflows (an OAuth or personal token
 	// without the workflow scope, an app without the workflows permission).
 	ReasonWorkflowScope = "workflow_scope"
-	ReasonPushFailed       = "push_failed"
+	ReasonPushFailed    = "push_failed"
 )
 
 // Error is a fix that failed, with the machine-readable Reason. Its text is

@@ -64,12 +64,14 @@ type fixSettings struct {
 		Allow      []string `json:"allow"`
 	} `json:"permissions"`
 	Sandbox *struct {
-		Enabled             bool `json:"enabled"`
-		FailIfUnavailable   bool `json:"failIfUnavailable"`
-		AutoAllow           bool `json:"autoAllowBashIfSandboxed"`
-		AllowUnsandboxed    bool `json:"allowUnsandboxedCommands"`
-		Network             *struct{ AllowedDomains []string `json:"allowedDomains"` } `json:"network"`
-		Filesystem          struct {
+		Enabled           bool `json:"enabled"`
+		FailIfUnavailable bool `json:"failIfUnavailable"`
+		AutoAllow         bool `json:"autoAllowBashIfSandboxed"`
+		AllowUnsandboxed  bool `json:"allowUnsandboxedCommands"`
+		Network           *struct {
+			AllowedDomains []string `json:"allowedDomains"`
+		} `json:"network"`
+		Filesystem struct {
 			AllowWrite []string `json:"allowWrite"`
 			AllowRead  []string `json:"allowRead"`
 			DenyRead   []string `json:"denyRead"`
