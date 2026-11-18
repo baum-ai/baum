@@ -21,6 +21,9 @@ type reviewSettings struct {
 	Model        string         `json:"model"`
 	Automatic    bool           `json:"automatic"`
 	PullRequests string         `json:"pull_requests"`
+	// Updates is how automatic reviews follow later pushes: always,
+	// on_open or on_change.
+	Updates string `json:"updates"`
 	// Effort is the reviews' reasoning effort, empty for the agent's own.
 	Effort string `json:"effort"`
 	// FixBackend, FixModel and FixEffort are empty when fixes follow the
@@ -28,6 +31,8 @@ type reviewSettings struct {
 	FixBackend string `json:"fix_backend"`
 	FixModel   string `json:"fix_model"`
 	FixEffort  string `json:"fix_effort"`
+	// FixNetwork is whether the fix agent's commands get network access.
+	FixNetwork bool `json:"fix_network"`
 	// DecisionsChosenBackend and DecisionsModel are the data extraction
 	// backend and model the app chose, decision capture's and the feature
 	// log's: empty for the reviews' backend and its default model.
@@ -71,7 +76,9 @@ func newReviewsCommand() *cobra.Command {
 			Effort:       cfg.Effort,
 			Automatic:    prefs.Automatic,
 			PullRequests: cmp.Or(prefs.PullRequests, pullRequestsBoth),
+			Updates:      prefs.ReviewUpdates(),
 		}
+		settings.FixNetwork = prefs.FixNetworkAllowed()
 		if prefs.FixBackend != nil {
 			settings.FixBackend = string(*prefs.FixBackend)
 		}
@@ -164,6 +171,10 @@ func newReviewsCommand() *cobra.Command {
 				v = strings.TrimSpace(v)
 				next.FixModel = &v
 			}
+			if flags.Changed("fix-network") {
+				v, _ := flags.GetBool("fix-network")
+				next.FixNetwork = &v
+			}
 			for _, f := range []struct {
 				flag   string
 				target **string
@@ -180,6 +191,12 @@ func newReviewsCommand() *cobra.Command {
 			}
 			if pullRequests != nil {
 				next.PullRequests = *pullRequests
+			}
+			if flags.Changed("updates") {
+				v, _ := flags.GetString("updates")
+				if next.Updates = strings.ToLower(strings.TrimSpace(v)); next.Updates == repos.UpdatesAlways {
+					next.Updates = ""
+				}
 			}
 			if flags.Changed("decisions-backend") {
 				next.Decisions.Backend = decisionsBackend
@@ -211,10 +228,12 @@ func newReviewsCommand() *cobra.Command {
 	set.Flags().String("fix-model", "", "model for fixes (empty uses the fix agent's default)")
 	efforts := strings.Join(config.Efforts, ", ")
 	set.Flags().String("effort", "", "reasoning effort for reviews: "+efforts+" (empty uses the agent's own)")
+	set.Flags().Bool("fix-network", true, "whether the fix agent's commands get network access")
 	set.Flags().String("fix-effort", "", "reasoning effort for fixes: "+efforts+" (empty uses the fix agent's own)")
 	set.Flags().String("decisions-effort", "", "reasoning effort for data extraction: "+efforts+" (empty uses the agent's own)")
 	set.Flags().Bool("automatic", true, "generate reviews automatically (--automatic=false turns it off)")
 	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both or all")
+	set.Flags().String("updates", "", "how automatic reviews follow later pushes: always, on_open (review once) or on_change (review again only when the agent finds the push changes the review)")
 	set.Flags().String("decisions-backend", "", "backend for data extraction, the decisions of agent sessions and the feature log: claude or codex (empty follows reviews again)")
 	set.Flags().String("decisions-model", "", "model for data extraction (empty uses the backend's default)")
 	root.AddCommand(show, set)

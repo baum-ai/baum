@@ -357,15 +357,79 @@ it("marks a stack baum grouped as the hosted list does, and a person's group as 
   expect(row("Mine").querySelector('[title^="Stack of"]')).toBeNull();
 });
 
-it("labels a stack group's page as a stack", async () => {
-  entries = [entry(3), entry(4)];
-  groups = [group([3, 4], { id: "g2", name: "Stacked", stack: true })];
+it("shows a stack's page as its overview, with no combined review", async () => {
+  entries = [
+    { ...entry(3), status: "current", version_count: 1 },
+    {
+      ...entry(4),
+      status: "current",
+      version_count: 1,
+      risk_score: { score: 4, status: "assessed" },
+    },
+  ];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      name: "Stacked",
+      stack: true,
+      risk_score: {
+        score: 4,
+        status: "assessed",
+        reasons: [{ section: "s1", text: "It changes the lock order." }],
+      },
+      overview: {
+        riskiest: 4,
+        reviewed: 2,
+        summary: {
+          text: "The stack moves the queue onto the new store.",
+          model: "claude-haiku-5-5",
+          created_at: "2026-11-17T09:00:00Z",
+          members: [
+            { number: 3, review_version: 1 },
+            { number: 4, review_version: 1 },
+          ],
+        },
+        current: true,
+      },
+    }),
+  ];
   history.replaceState(null, "", "/s/test-ns/?group=g2");
   await act(async () => root.render(<App />));
-  expect(
-    node.querySelector('[title="baum grouped these stacked pull requests"]')!.textContent,
-  ).toBe("Stack");
+  const page = node.querySelector<HTMLElement>('article[aria-label="Stacked"]')!;
+  expect(page.querySelector(".upnext-chip")!.textContent).toBe("Stack");
+  // Risk is the riskiest pull request's, linked to its own page.
+  const risk = page.querySelector(".upnext-risk")!;
+  expect(risk.textContent).toContain("4 of 5");
+  expect(risk.textContent).toContain("It changes the lock order.");
+  expect(risk.querySelector("a")!.getAttribute("href")).toContain("pr=4");
+  expect(page.querySelector('[aria-label="What changed"]')!.textContent).toContain(
+    "The stack moves the queue onto the new store.",
+  );
+  // Each pull request opens its own review page.
+  const links = [...page.querySelectorAll(".upnext-members a")].map((a) => a.getAttribute("href"));
+  expect(links).toHaveLength(2);
+  expect(links[0]).toContain("pr=3");
+  expect(links[1]).toContain("pr=4");
   expect(node.textContent).not.toContain("Review group");
+  expect(node.textContent).not.toContain("Generate review");
+  expect(requests.some((r) => r.path.startsWith("api/groups/g2/"))).toBe(false);
+});
+
+it("says when a stack's summary will appear", async () => {
+  entries = [{ ...entry(3), status: "current", version_count: 1 }, entry(4)];
+  groups = [
+    group([3, 4], {
+      id: "g2",
+      stack: true,
+      overview: { reviewed: 1, summary: null, current: false },
+    }),
+  ];
+  history.replaceState(null, "", "/s/test-ns/?group=g2");
+  await act(async () => root.render(<App />));
+  expect(node.querySelector('[aria-label="What changed"]')!.textContent).toContain(
+    "Summary appears once two pull requests are reviewed.",
+  );
+  expect(node.querySelector(".upnext-risk")).toBeNull();
 });
 
 it("counts a stack's merged and closed members in the stack on its row", async () => {
@@ -401,12 +465,9 @@ it("shows a stack's merged and closed members first on its page, each marked as 
   ];
   history.replaceState(null, "", "/s/test-ns/?group=g2");
   await act(async () => root.render(<App />));
-  // The pull requests start folded under the title, counted with those landed.
-  const toggle = node.querySelector<HTMLButtonElement>(".local-group-toggle")!;
-  expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  expect(node.querySelector("li.local-group-member")).toBeNull();
-  await act(async () => toggle.click());
-  const rows = [...node.querySelectorAll("li.local-group-member")].map((li) => li.textContent);
+  const list = node.querySelector('[aria-label="Pull requests"]')!;
+  expect(list.querySelector(".upnext-members-toggle")!.textContent).toBe("5 pull requests");
+  const rows = [...list.querySelectorAll("ul.upnext-members > li")].map((li) => li.textContent);
   expect(rows).toHaveLength(5);
   expect(rows[0]).toContain("#1");
   expect(rows[0]).toContain("Merged");
@@ -417,7 +478,6 @@ it("shows a stack's merged and closed members first on its page, each marked as 
   expect(rows[2]).toContain("No longer open");
   expect(rows[3]).toContain("#3");
   expect(rows[3]).not.toContain("Merged");
-  expect(node.querySelectorAll("[data-landed] button")).toHaveLength(0);
 });
 
 it("keeps group jobs apart from pull request jobs", () => {
@@ -514,6 +574,35 @@ it("names the review groups a pull request belongs to", async () => {
   expect(link.textContent).toBe("GroupAuth rework");
 });
 
+const kept = { reason: "Only comments changed.", kept_at: "2026-11-18T12:00:00Z" };
+
+it("says a review kept for the newer commits still applies, with the agent's reason", async () => {
+  const seven = entry(7);
+  entries = [
+    {
+      ...seven,
+      status: "current",
+      version_count: 1,
+      kept: { ...kept, head: seven.pull_request.head_sha },
+    },
+  ];
+  history.replaceState(null, "", "/s/test-ns/?clone=clone&pr=7");
+  await act(async () => root.render(<App />));
+  const note = node.querySelector<HTMLElement>(".local-kept-note")!;
+  expect(note.textContent).toBe("Still applies to the newer commits");
+  expect(note.title).toContain("Only comments changed.");
+});
+
+it("says nothing of a head a review was kept for earlier", async () => {
+  entries = [
+    { ...entry(7), status: "current", version_count: 1, kept: { ...kept, head: "older" } },
+  ];
+  history.replaceState(null, "", "/s/test-ns/?clone=clone&pr=7");
+  await act(async () => root.render(<App />));
+  // The review is current at its own head; an older kept head says nothing.
+  expect(node.querySelector(".local-kept-note")).toBeNull();
+});
+
 const local = (sessions: object[], commits: object[]) => ({ available: true, sessions, commits });
 const commitOf = (oid: string, session: string, committedAt: string) => ({
   oid,
@@ -522,12 +611,12 @@ const commitOf = (oid: string, session: string, committedAt: string) => ({
   links: [{ session, method: "commit_ref", confidence: 1 }],
 });
 
-it("shows Decisions, Sessions and Commits in a stack's rail, read through each member", async () => {
+it("shows Decisions, Sessions and Commits in a group's rail, read through each member", async () => {
   entries = [
     { ...entry(7), status: "current", version_count: 1 },
     { ...entry(8), status: "current", version_count: 1 },
   ];
-  groups = [group([7, 8], { version_count: 1, stack: true })];
+  groups = [group([7, 8], { version_count: 1 })];
   const shared = { id: "s-shared", vendor: "claude", title: "Shared session" };
   answers = {
     "api/sessions?clone=clone&pr=7": local(
@@ -601,9 +690,7 @@ it("hands the viewer every member's review threads as GitHub has them now", asyn
   entries[0]!.pull_request.unresolved = 1;
   entries[1]!.pull_request.unresolved = 0;
   // A landed member discovery no longer lists: its count is unknown.
-  groups = [
-    group([7, 8], { version_count: 1, stack: true, landed: [{ number: 9, state: "merged" }] }),
-  ];
+  groups = [group([7, 8], { version_count: 1, landed: [{ number: 9, state: "merged" }] })];
   answers = {
     "api/prs/review-threads?repository=acme%2Fdemo&pr=7&unresolved=1": {
       threads: [{ id: "T7" }],
@@ -657,9 +744,9 @@ it("keeps reading a removed member's threads while its saved review is displayed
   });
 });
 
-it("shows a stack member's file patch once however many of its hunks the review cites", async () => {
+it("shows a group member's file patch once however many of its hunks the review cites", async () => {
   entries = [{ ...entry(7), status: "current", version_count: 1 }];
-  groups = [group([7], { version_count: 1, stack: true })];
+  groups = [group([7], { version_count: 1 })];
   const patch = "@@ -1,1 +1,1 @@\n-old line\n+only once\n";
   // The daemon answers the member's whole file patch for each cited hunk.
   for (const hunk of example.index.hunks.filter((h) => h.path === "queue/store.go"))
@@ -671,9 +758,9 @@ it("shows a stack member's file patch once however many of its hunks the review 
   expect(files.textContent?.match(/only once/g)).toHaveLength(1);
 });
 
-it("lists and reads a stack's files for the earlier version on screen", async () => {
+it("lists and reads a group's files for the earlier version on screen", async () => {
   entries = [{ ...entry(7), status: "current", version_count: 2 }];
-  groups = [group([7], { version_count: 2, stack: true })];
+  groups = [group([7], { version_count: 2 })];
   const earlier = {
     ...example,
     review: { ...example.review, version: 2 },

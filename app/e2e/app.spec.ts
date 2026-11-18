@@ -366,17 +366,17 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   ).toHaveCount(1);
   await openSettings(page, "Reviews");
   const automatic = page.getByRole("region", { name: "Reviews", exact: true });
-  const toggle = automatic.getByRole("switch", { name: /Review pull requests automatically/ });
-  // The switch saves as it changes.
-  await toggle.click();
+  const toggle = automatic.getByRole("combobox", { name: /Review pull requests automatically/ });
+  // The choice saves as it changes.
+  await toggle.selectOption("never");
   await expect(automatic.getByRole("status")).toHaveText("Saved");
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveValue("never");
   // The section is in the address, so a reload stays on it.
   await page.reload();
   // After a reload the section renders once the settings requests answer,
   // which can take a while on a busy CI runner.
   await expect(automatic).toBeVisible({ timeout: 15000 });
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveValue("never");
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
   await page.getByRole("link", { name: "Settings for acme/demo" }).click();
   const repository = page.getByRole("region", { name: "Repository acme/demo", exact: true });
@@ -385,9 +385,9 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("link", { name: "Settings for acme/demo" })).toBeVisible();
   await openSettings(page, "Reviews");
-  await toggle.click();
+  await toggle.selectOption("always");
   await expect(automatic.getByRole("status")).toHaveText("Saved");
-  await expect(toggle).toBeChecked();
+  await expect(toggle).toHaveValue("always");
   expect(errors).toEqual([]);
 });
 
@@ -593,7 +593,7 @@ test("Ask opens the session panel on the pull request and lists the earlier ques
   await expect
     .poll(() => reported.at(-1))
     .toMatchObject({ page: "pull_request", repository: "acme/demo", pull_request: 7 });
-  await composer.press("Escape");
+  await composer.press("Control+`");
   await expect(panel).toHaveCount(0);
 
   // The questions asked of the review's agent before the panel stay

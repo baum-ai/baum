@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/review"
-	"github.com/baum-ai/baum/review/tilecatalogue"
 	"github.com/baum-ai/baum/schema"
 )
 
@@ -28,7 +27,7 @@ func TestCodexStagedSchemasMeetStrictModeRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	details, err := validator.DetailsSchema(tilecatalogue.Kinds())
+	details, err := validator.DetailsSchema()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +93,7 @@ func TestCodexOutputSchemaLimitsAttentionReferencesToItemKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model, err := validator.ModelSchema(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := StrictSchema(model)
+	encoded, err := StrictSchema(validator.Schema)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -200,7 +200,6 @@ type documentStatsAgentFindings struct {
 }
 
 type sectionContent struct {
-	Tiles     json.RawMessage    `json:"tiles,omitempty"`
 	ID        string             `json:"id"`
 	Title     string             `json:"title"`
 	Kind      string             `json:"kind"`
@@ -272,7 +271,6 @@ type documentSection struct {
 }
 
 type authoredRisk struct {
-	Tiles    json.RawMessage       `json:"tiles,omitempty"`
 	ID       string                `json:"id"`
 	Tier     string                `json:"tier"`
 	Category string                `json:"category"`
@@ -366,7 +364,7 @@ type documentHunk struct {
 	Additions int       `json:"additions"`
 	Deletions int       `json:"deletions"`
 	GitHubURL *string   `json:"github_url,omitempty"`
-	Diff      *tileHunk `json:"diff,omitempty"`
+	Diff      *diffHunk `json:"diff,omitempty"`
 }
 
 type documentCheck struct {

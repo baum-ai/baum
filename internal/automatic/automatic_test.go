@@ -821,12 +821,19 @@ func TestHandlerSavesReviewChoices(t *testing.T) {
 	if prefs.Effort == nil || *prefs.Effort != "high" || prefs.FixEffort == nil || *prefs.FixEffort != "low" {
 		t.Fatalf("%+v", prefs)
 	}
+	if code := put(h.scheduler, `{"fix_network":false}`); code != 200 {
+		t.Fatal(code)
+	}
 	if code := put(h.scheduler, `{"effort":"","fix_backend":""}`); code != 200 {
 		t.Fatal(code)
 	}
 	prefs, _ = h.registry.Preferences(context.Background())
 	if prefs.Effort != nil || prefs.FixEffort != nil || prefs.FixBackend != nil {
 		t.Fatalf("after clearing %+v", prefs)
+	}
+	// Resetting the fix agent keeps the network choice.
+	if prefs.FixNetwork == nil || prefs.FixNetworkAllowed() {
+		t.Fatalf("the reset cleared fix_network: %+v", prefs)
 	}
 }
 
@@ -1395,8 +1402,8 @@ func TestCatchUpQueuesNothingWhileAutomaticGenerationIsOff(t *testing.T) {
 }
 
 // A stack group counts as one pull request and its members are caught up
-// together, so the group's review follows theirs; a pull request merely based
-// on another's branch is not a stack.
+// together, so the stack's page has their reviews, and no combined review
+// follows; a pull request merely based on another's branch is not a stack.
 func TestCatchUpTakesAStackGroupWhole(t *testing.T) {
 	h := newHarness(t)
 	_, mine := withGroups(t, h)
@@ -1435,7 +1442,7 @@ func TestCatchUpTakesAStackGroupWhole(t *testing.T) {
 	h.waitIdle()
 	h.reviewed[1], h.reviewed[2] = "a1", "b1"
 	h.pass()
-	h.want(append(members, "org/repo#group@1@a1,2@b1:stack_reviewed")...)
+	h.want(members...)
 }
 
 // A newer snapshot that shows a chosen pull request no longer covered, at the

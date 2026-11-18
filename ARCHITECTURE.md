@@ -23,8 +23,8 @@ implements. The packages are being moved here in stages: so far `bundle` holds
 the evidence types, the diff index, the `REVIEW.md` loader, reference
 extraction, the code checkout archive, description image handling, and the
 caps, input redaction, byte trimming and digest applied to a bundle,
-`review` holds the document model, validation, history, refresh, output
-redaction and the tile catalogue, and `agent` holds the backend interface,
+`review` holds the document model, validation, history, refresh and output
+redaction, and `agent` holds the backend interface,
 request, result, usage and event types, the budgets and the local environment
 allowlist, and `decisions` holds the decision schema, the cleaned session
 transcript, the reply parser and the citation validator; the Go side of
@@ -61,7 +61,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | --- | --- |
 | `schema` | the canonical `baum.review/1` JSON Schema and its validator, and the `baum.tiles/1` tile document schema, which reuses its definitions |
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
-| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction, the tile catalogue |
+| `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction |
 | `tiles` | the `baum.tiles/1` tile document: its types, validator and built-in tile types, and the lossless conversion from and to a stored `baum.review/1` document |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
 | `viewer` | the React components that render a document and its versions, and the standalone single-page app that the reference viewer host embeds |
@@ -291,8 +291,7 @@ requests a read made (`CountRequests`).
 `review` derives three views from `schema/review-1.json`:
 
 - the **stored** schema, with every derived field, which a stored document
-  must satisfy; it also accepts tiles of the kinds the schema retired
-  (`schema/legacy-review-tiles.json`);
+  must satisfy;
 - the **strict authored** contract: what the model is responsible for;
 - the **lenient model-facing** schema, which accepts the shapes models
   commonly produce. Normalisation maps it onto the strict contract without a
@@ -306,7 +305,7 @@ written (a live draft shown while a job runs) and `failed` when they could
 not be written after repairs (a published version keeps the outline). Such a
 section keeps its outline (`id`, `title`, `kind`, `hunks`, `assessment`,
 `derived`); its `summary` may be absent or null, its `attention` null and its
-`evidence`, `blocks` and tiles empty, and its risks are those the previous
+`evidence` and `blocks` empty, and its risks are those the previous
 version recorded for it. Without the state a section still needs its summary.
 The model never writes the state: the strict authored contract and every
 schema derived from it for a model (`ModelSchema`, Codex's strict schema)
@@ -332,12 +331,12 @@ copy:
   `context` and `review_minutes`), `relations` and, per section, `id`,
   `title`, `kind`, `hunks` and `assessment`; the details are
   `{"sections": [...]}` with each section's `id`, `summary`, `attention`,
-  `risks`, `evidence`, `blocks` and `tiles`; the context is
+  `risks`, `evidence` and `blocks`; the context is
   `{"context": ...}`. Each property is the model schema's own, rules naming
   a dropped property go, and so do unreachable definitions.
 - **The staged contract**: the strict authored contract, except that a
   section may carry the `details` state (with a null summary, a null
-  attention and no evidence, blocks or tiles) and the summary may lack its
+  attention and no evidence or blocks) and the summary may lack its
   context. `PrepareStaged` and `CompleteStaged` are `Prepare` and
   `CompleteWithPrompt` under it; the one-pass contract is unchanged.
 - **Parts.** `PrepareOutline` keeps the outline fields, gives every section
@@ -355,7 +354,7 @@ copy:
   whose hunk IDs are those of the previous version's section with the same
   ID, that section's previous details, when they were complete (no
   `details` state): its summary, attention, active risks without their
-  lifecycle fields, evidence, blocks and tiles. A mitigated risk is left
+  lifecycle fields, evidence and blocks. A mitigated risk is left
   out, so completion keeps it mitigated. The generator validates what it
   reuses like model output and sends a section it rejects to the model.
   Nothing is reused when the bundle offers an image the previous version
@@ -441,7 +440,7 @@ copy:
     fields that carry the review's judgement: evidence claim, detail and
     expects, attention text, risk text, the overview, the review exchange
     summary, assessment reasons and the recommendation text. Behaviour steps,
-    context, intent, titles, the other descriptive blocks, tiles and the
+    context, intent, titles, the other descriptive blocks and the
     release note describe the code under review, which may itself run jobs and
     take snapshots, and are not checked for them.
   - Identifiers in any prose field must resolve, because the viewer links
@@ -520,20 +519,13 @@ mentions one. Generation still
   this rule alone to an encoded document, for a host that serves stored
   documents and keys records of its own (read marks, approvals) by their
   identifiers; such a host compares a stored key through `ShortenIdentifier`.
-- Tile kinds and shapes changed in place before they were finalised. A
-  stored tile the current `$defs/tile` accepts is kept, and so is one of a
-  retired kind the viewer still renders: `schema/legacy-review-tiles.json`
-  (`schema.LegacyTiles`) defines those kinds, and the stored schema accepts
-  them. A field the schema removed from a current kind, which the viewer
-  ignores (an architecture tile's `context` and `deployment`), is removed.
-  Any other tile of a section or risk is dropped, and so is one the
-  document's own tile rules reject: its internal references must resolve,
-  which removing a retired field can break, and a tile kept before it in the
-  same section or risk must not have its ID. Nothing outside a tile refers to
-  it. The rule runs after the identifier rule, so a tile whose only fault is
-  a long identifier is kept. Generation never offers a retired
-  kind: the authored and model-facing contracts derive from `review-1.json`
-  alone.
+- A stored document's section and risk tiles are dropped when it is read.
+  Releases before schema revision 2026-11-13.1 could store typed cards in a
+  section's or a risk's `tiles`, which the schema no longer has; nothing
+  else in a document refers to them. `DropStoredTiles` applies this rule
+  alone to an encoded document, for a host that serves stored documents or
+  hands them to a reader that does not validate them (the hosted read
+  store, a stack review's member reviews, the local viewer server).
 
 ### Refresh and redaction
 
@@ -573,8 +565,7 @@ per value and 1 MiB per document, then masked whole, and counts only if a
 secret was found in it, so the scan stays linear in the document's size and
 a harmless value never fails the run on its own.
 
-Normalisation respells every identifier, category and tile-local name the
-model writes in lowercase with one underscore for each run of other
+Normalisation respells every identifier and category the model writes in lowercase with one underscore for each run of other
 characters, and a secret respelled that way (`sk-ant-api03-AbC…` as
 `sk_ant_api03_abc…`) is one no rule detects. So a host runs the redactor's
 `Identifiers` on the document as the model wrote it, before `Prepare`: the
@@ -669,10 +660,11 @@ showing one part of the review. It has three parts.
   declares; then pinned entries move to the front. Two tiles must then be on
   the landing page, in this order: the risks tile when it ranks an active
   critical or high risk, and the overview. Each that would miss it moves to
-  the front with the pinned entries and the one before it, stably; should
-  the pinned entries alone fill the landing page, it goes before them. A
-  converted document keeps its order. A narrow window stacks the same order into fewer columns, so the
-  landing page does not depend on the viewport.
+  the front with the pinned entries and the one before it; should the
+  pinned entries alone fill the landing page, it goes before them. Every
+  move is stable and moves an entry with its whole group. A converted
+  document keeps its order. A narrow window stacks the same order into
+  fewer columns, so the landing page does not depend on the viewport.
 
 Who writes what: the host writes the substrate's header, facts, statistics,
 index, agent reviews, derived fields, risk lifecycle fields and risk score,
@@ -1164,7 +1156,8 @@ hunk URLs), so the two differ where a rule applies: an identifier longer than
 routes only. A draft comment or a URL made on one page for such an item
 therefore does not carry to the other until the version is refreshed; the
 tiles page reads only the tile routes. This holds for a group review too,
-whose plain `/document` route serves the stored bytes as they are. Only the
+whose plain `/document` route serves the stored bytes with only their section
+and risk tiles dropped (`review.DropStoredTiles`). Only the
 tile-level checks run (`Validator.CheckTiles`), so a tile that fails one is
 `unavailable` in a response that is still served; the full schema is checked
 in tests. A review the converter cannot split gives `tiles: null` and a short
@@ -1441,12 +1434,6 @@ are rules for whoever writes the page's side:
   render check is a quality gate, not a security control; the sandbox, the
   CSP and what the page gives a frame are the boundary.
 
-### Tiles
-
-The tile catalogue (`catalogue.json`) and the tile guidance are public and
-live here. Tiles are off by default; a host offers an allow-list of kinds,
-and the model schema and prompt include only those kinds.
-
 ## `agent`
 
 ### Backends
@@ -1535,15 +1522,48 @@ OpenAI's strict structured outputs accept.
 `agent.Fixer` is the one write mode, for a fix a person confirmed
 (`internal/fix`, see "Fix jobs" below): `Fix` runs the agent over a checkout
 it may edit, with no schema, and returns its final message as the summary.
-Only the local profiles implement it. `claude` keeps restricted mode and the
-other review flags but has `Read,Glob,Grep,Edit,Write` and `--permission-mode
-acceptEdits`: it edits files and runs nothing. `codex` runs `--sandbox
-workspace-write` with `sandbox_workspace_write.network_access=false`,
-`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` set to
-`Request.Scratch`, which is also its commands' `TMPDIR`. `cursor-agent` and
-`anthropic` have no write mode. The fix instructions are
-`prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`, `fix-checks.md` and
-`fix-threads.md`).
+Only the local profiles implement it. `Request.Scratch` is the agent's scratch
+directory, `Request.GitDir` its own git repository outside the checkout and
+`Request.Network` whether its commands reach the network (the `fix_network`
+preference). Both run with `agent.FixEnvironment` over their usual
+environment: no GitHub, git-host or registry token, SSH agent, askpass or
+repository-choosing Git variable, no variable named like a token, secret or
+password other than the CLI's own provider settings, and `GOCACHE`,
+`GOMODCACHE`, `GOPATH`, `npm_config_cache`, `YARN_CACHE_FOLDER`,
+`PIP_CACHE_DIR` and `XDG_CACHE_HOME` under the scratch directory.
+`agent.FixCredentialPaths` are the files under the home directory (and
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) where tools keep credentials and the
+runtime directory (`XDG_RUNTIME_DIR`, `/run/user/<uid>` on Linux, for its
+D-Bus and agent sockets), which the commands may not read. `claude` keeps restricted mode and the other review
+flags but has `Read,Glob,Grep,Edit,Write,Bash`, `--permission-mode
+acceptEdits` and `--settings` with no `blockReadsOutsideWorkingDirectories` (restricted mode
+keeps the file tools in the checkout; with it Claude Code hides the home
+directory and then fails every command when a file it protects there is a
+symbolic link), `permissions.allow` `Bash` (plus
+`WebFetch(domain:*)` with the network, the only way to open every domain to
+the sandbox) and `sandbox` `enabled`, `failIfUnavailable`,
+`autoAllowBashIfSandboxed`, `allowUnsandboxedCommands: false`,
+`filesystem.allowWrite` the scratch and git directories, `allowRead` the home
+directory and the git directory's alternates, `denyRead` the credential
+paths, and, without the network, `network.allowedDomains: []`. A result
+whose `startup_failure_reason` is `sandbox_required_unavailable` runs the fix
+again with `Read,Glob,Grep,Edit,Write`, no sandbox and a system prompt saying
+it cannot run commands, logging why; a `system` event whose fields do not
+decode (a `permission_denied` notice's text `message`) is skipped. TMPDIR is
+not moved for Claude Code: a long scratch path breaks its sandbox's sockets.
+`codex` from `PermissionProfileVersion` (0.170.0) on, off Windows, runs
+without `--sandbox` but with `-c default_permissions="baum_fix"`,
+`permissions.baum_fix.filesystem={"/"="read", <credential path>="none",
+<checkout, scratch, git directory>="write"}` and
+`permissions.baum_fix.network.enabled`; an older one `--sandbox
+workspace-write` with `sandbox_workspace_write.network_access`,
+`exclude_slash_tmp`, `exclude_tmpdir_env_var` and `writable_roots` the
+scratch and git directories. The scratch directory is its commands'
+`TMPDIR`. `cursor-agent` and `anthropic` have no write mode. The fix
+instructions are `prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`,
+`fix-checks.md` and `fix-threads.md`), followed by baum's own "Your
+environment" section (the repository, the sandbox, the network) before the
+data.
 
 `agent.Converser` runs one turn of a person's own session, for the session
 panel (see "Session panel conversations" below). Unlike every other run it
@@ -1742,7 +1762,8 @@ ones did, absent when every prompt was built in. The daemon's jobs and
 `baum decisions` use the prompts resolved for the repository (repository, then
 global, then built in); `baum internal generate` opens no registry and uses the
 built-in prompts. The replaceable review prompts are the four of a staged
-review and a review group's (`review-group`), which is the whole text before
+review, the On change check's (`review-triage`, see "Automatic generation")
+and a review group's (`review-group`), which is the whole text before
 the Submitting heading, the review instructions included; the one-pass review
 prompt (`prompt.Prompts`) is not replaceable, as no job writes one pull
 request's review in one pass. A retry of a staged review's details refuses to run when the
@@ -1759,12 +1780,12 @@ and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v8` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v9` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v6`): the same text with
+review group's prompt (`group-review-public-v7`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -1782,7 +1803,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v3`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v4`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and
@@ -1799,10 +1820,6 @@ name.
 
 The loop owns the rest of what a run sends:
 
-- **Tile guidance.** It appends `tilecatalogue.Instructions(kinds)` to the
-  body for the offered tile kinds, so a prompt never carries it. A `Prompts`
-  implementation that rewrites its body per backend therefore rewrites the body
-  only.
 - **Repair text.** `agent.RepairText(backend)` returns the text that opens and
   closes a repair prompt. A backend that submits through a `StructuredOutput`
   tool (`claude`, `anthropic`) is told to call it again; `codex` and
@@ -1828,14 +1845,14 @@ evidence about the pull request it reviews.
 generator := agent.Generator{Backend: backend, Prompts: prompts, Validator: validator,
 	Redactor: redactor, Logger: logger}
 outcome, document, err := generator.Generate(ctx, agent.Run{
-	Bundle: b, EncodedBundle: encoded, Directory: dir, TileKinds: kinds,
+	Bundle: b, EncodedBundle: encoded, Directory: dir,
 	Budgets: budgets, Endpoint: endpoint})
 ```
 
 The caller unpacks the checkout (and attachments) into `Directory`, which the
 backend then runs in. `Generate` masks the secrets the model writes into
 identifiers, writes `bundle.json` and `schema.json` there, builds the prompt
-(instructions, tile guidance, the bundle and numbered source excerpts of the
+(instructions, the bundle and numbered source excerpts of the
 changed files) and asks the backend for a document. A provider failure is
 retried within `MaxProviderAttempts`, waiting `RetryDelay` (by default
 `1<<min(n,4)` seconds), except a spent budget and an `agent.RejectedError` (a
@@ -1920,7 +1937,7 @@ the local CLI (not yet wired); today only the hosted worker calls them.
 ```go
 outcome, document, err := generator.StagedReview(ctx, agent.StagedRun{
 	Run: agent.Run{Bundle: b, EncodedBundle: encoded, Directory: dir,
-		TileKinds: kinds, Budgets: budgets},
+		Budgets: budgets},
 	Prompts: prompt.StagedPrompts{}, Progress: onProgress})
 completed, findings := validator.CompleteStaged(document, b, dir, outcome.Model, version, now)
 ```
@@ -2237,7 +2254,7 @@ with its own prompt.
 ## `viewer`
 
 `viewer` is a pnpm package of React components that render a document: the
-summary, sections and their blocks, risks, tiles, hunk evidence, images,
+summary, sections and their blocks, risks, hunk evidence, images,
 checks, sessions and the version history with comparison. It also builds a
 standalone single-page app, which the `baum` binary embeds and the reference viewer host
 serves in package integrations and tests.
@@ -2364,8 +2381,8 @@ removes every `index.hunks[].diff` and `index.hunks[].github_url`
 (`review.StripHunkEvidence`), which together were about 70% of a saved
 document's bytes. Everything else is kept byte for byte, in its order: each
 hunk's `id`, `path`, `old_path`, `change`, `role`, `new_range`, `additions`
-and `deletions`, the sections' hunk assignments and tiles (a tile's code is
-the model's, not a hunk's `diff`), `unassigned_hunks` and the stats. Both
+and `deletions`, the sections' hunk assignments, `unassigned_hunks` and the
+stats. Both
 fields are optional in `review-1.json`, so the schema is unchanged.
 
 - Every writer of the store goes through it: `generate.Publish` (generation
@@ -2378,6 +2395,9 @@ fields are optional in `review-1.json`, so the schema is unchanged.
   `diff` and `github_url` as stored, and the app shows its inline excerpts.
 - What `Publish` returns keeps the evidence as generated, before the store
   removes excerpts from its persisted copy.
+- `viewserver` serves a document without its section and risk tiles
+  (`review.DropStoredTiles`, "Stored documents"), so the app shows a version
+  an earlier release stored with them.
 - `github_url` is derived where a document is served: `viewserver`
   (the reference viewer host, and each version the daemon's app serves through
   it) and the app's `GET /api/document` give each hunk without one
@@ -3320,7 +3340,7 @@ A desktop generation job uses `internal/generate` to:
    (`review.FitPreviousHunkAnchors`, as the hosted builder does);
 6. runs the configured backend with the public staged prompt, in stages (see
    "Staged review"): the outline, then the sections' details and the
-   context; tiles are off unless enabled;
+   context;
 7. validates, derives and redacts the document, and stores it as the next
    version, with any section whose details failed `failed` and no context
    when the context stage failed.
@@ -3720,7 +3740,7 @@ an explicit `true`/`false`. The global preference is a master switch
 (`Settings.AutomaticEnabled`): off disables every repository, `true` included;
 on, only an explicit `false` disables one. The `preferences` table holds the
 global preferences as one JSON row: `automatic` (true until changed), the
-review harness and model, the fix agent (`fix_backend`, `fix_model`), data
+review harness and model, the fix agent (`fix_backend`, `fix_model`) and its network access (`fix_network`, on when absent), data
 extraction's (`decisions`: `enabled`, `backend`, `model`), `pull_requests`
 and `agent_env`; a field an older baum saved and this one dropped
 (`cursor_agent_acknowledged`) is ignored on read. The harnesses and models are
@@ -3852,7 +3872,10 @@ Drafts remain local until the person explicitly submits a GitHub review.
 ## Authenticated local application host
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
-HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks.
+HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks, and a
+403 for any request whose `Sec-Fetch-Site` is `cross-site` or `same-site`, except a
+top-level `GET`/`HEAD` document navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`),
+so a link or the desktop shell can open the app from elsewhere.
 Cookies are host-scoped across ports, so the browser application, its API and
 its cookie live under a secret `/s/<namespace>/` path returned by the exchange;
 the server strips that prefix before routing to providers and to `Options.App`.
@@ -4712,8 +4735,9 @@ including `no_bots` against the pull request's `author_bot` from discovery.
 
 ### Review groups
 
-`internal/reviewgroups` keeps review groups, named sets of 2 to 8 open pull
-requests of one repository reviewed together, in the shared
+`internal/reviewgroups` keeps review groups, named sets of open pull
+requests of one repository (2 to 8 for a group a person makes, any number
+for a stack group), in the shared
 `app.sqlite` application database in the state directory, not in a clone. Their combined
 reviews are versions keyed by group ID in the same file, so they never collide
 with a member's own versions in its clone's `versions.sqlite`; deleting a
@@ -4729,11 +4753,28 @@ snapshot `localApplication` passes the repository's open pull requests to
 `Store.SyncStacks`. It plans stacks with the hosted platform's rules
 (`stacks.Plan`: pull requests by one author, each based on another's head
 branch, as chains or trees; see `stacks/README.md`) over the live stack groups
-and creates, updates or dissolves stack groups (`stack` true) of 2 to 8
-members. A new stack group is named after its bottom pull request's title
-until its first review names it (below). Pull requests in a person's group,
+and creates, updates or dissolves stack groups (`stack` true) of two or more
+members, with no upper bound. A new stack group is named after its bottom
+pull request's title. Pull requests in a person's group,
 or in a stack group the person deleted, take no part, and a person's rename
 or member change makes a stack group theirs.
+
+A stack group has no combined review. `/api/groups` answers it with no
+versions and an `overview`: the riskiest open member (highest saved
+`summary.risk_score`, read from the review index on each request, the lowest
+in the stack on a tie), whose risk is the group's `risk_score`, and the stack
+summary. `reviewgroups.Summarizer` writes that summary: woken after every
+finished job and every stack sync that changed a group, it compares the open
+members' latest saved review versions in the review index with those the
+stored summary read (`stack_summaries`, one row per stack group), and once
+they differ and at least two are reviewed it reads those reviews (title,
+summary and section titles, never code) and makes one short call through
+`decisionlog.Calls`, which resolves the data extraction backend and cheap
+model and records the call in the decision log's ledger (stage
+`stack_summary`). Failures back off and stop after three tries until the
+reviews change. Automatic generation queues no group review, and a group job
+for a stack group is refused (`ErrStackOverview`); combined versions an
+earlier release wrote for a stack stay stored, unlisted.
 
 A job item names `{clone, group}` with `pr` 0, so pull request scheduling and
 notices, keyed by pull request, never match a group job; the queue's busy and
@@ -4835,16 +4876,32 @@ an error line gives its last 200 lines. It then reads the review threads
 again, refusing threads whose
 digest changed (`threads_changed`).
 
-`fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
-registered clone under the user cache directory's `baum/fixes/<id>`, detached
-at the head fetched into `refs/baum/fix/<id>/` from the remote whose URL names
-the repository (`ErrHeadMoved` when the branch moved on). For a conflict it
-merges the base commit itself; a clean merge needs no agent. The agent
+`fix.Run` then works in a `gitlocal.Fix`, under the user cache directory's
+`baum/fixes/<id>`: `checkout` (the work tree), `git` (the agent's own
+repository, made with `init --template= --separate-git-dir` in the clone's
+object format, the clone's objects as alternates, `commit.gpgSign` and
+`tag.gpgSign` false, the files written by baum's own `read-tree -u --reset`
+with the clone's configuration (so Git LFS smudges from the clone) and then
+recorded with `reset --mixed` (`GIT_LFS_SKIP_SMUDGE=1` in the agent's
+repository), the head branch at the head fetched into
+`refs/baum/fix/<id>/` from the remote whose URL names the repository
+(`ErrHeadMoved` when the branch moved on) and the base, fetched for every fix,
+as `refs/remotes/origin/<base>`), `tmp` (scratch), `hooks` (empty) and
+`index` (baum's). For a conflict it merges the base commit in the agent's
+repository itself, before the agent; a clean merge needs no agent. The agent
 (`agent.Fixer`) runs with the prompt, the untrusted data between nonce-tagged
-markers, and the run budgets. baum then checks that no conflicted file keeps a
-marker, commits what was left (completing the merge), requires a new commit
-that descends from the head, and pushes it with a plain `git push` to the head
-branch. Phases are `reading checks`, `reading review comments`, `fetching`,
+markers, and the run budgets. baum then checks that no conflicted file of its
+merge keeps a marker, decides whether the result merges the base
+(`Fix.Merged`: the base is an ancestor of the commit the agent's `HEAD` or
+`MERGE_HEAD` names, read as files, the ancestry read with
+`GIT_ALTERNATE_OBJECT_DIRECTORIES` naming the agent's objects and
+`core.commitGraph=false`, and the head does not already have it), refuses a
+conflict fix whose result does not merge the base (`conflicts_remain`), and
+makes its own commit (`Fix.Commit`: `read-tree` of the head into its index,
+`add --all`, after a merge `add --force` of the files the base added that the
+checkout has, `write-tree`, `commit-tree [-S] -p <head> [-p <base>]`), requires a
+new commit that descends from the head, and pushes it with a plain `git push`
+to the head branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 `merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
 records `commit`, `commit_url` and the agent's masked `summary`. A fix whose
 agent changed nothing completes without a commit, with reason `no_changes`
@@ -4853,7 +4910,7 @@ failure, so it sends no notice and the app shows that summary in neutral
 words (jobs saved as failed by an older daemon are shown the same way). A
 failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
 `git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
-`credential_added`, `nested_repository`, `workflow_changed`, `push_rejected`,
+`credential_added`, `nested_repository`, `workflow_changed`, `workflow_scope`, `push_rejected`,
 `push_failed`, `signed_out`) and a bounded detail. `signed_out` is an agent
 failure whose provider refused its sign-in (`agent.SignInRejected`); review
 jobs (and the chat jobs of the earlier Ask did) report the same reason in
@@ -4863,18 +4920,27 @@ minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
 which the job never keeps. A
 fix checks its commit before the push (`fix.guard`), against what the fix
-itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or
-from the merge commit after a clean merge of the base, or, after a merge that
-stopped at conflicts, only paths that differ from both head and base, with
-added lines those neither side had; submodules always included). It fails with
+itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or,
+when the result merges the base, from the tree `merge-tree --write-tree`
+makes when the merge is clean, else only paths that differ from both head
+and base, with added lines those neither side had; submodules always
+included).
+It fails with `conflicts_remain` when an added line is a conflict marker, with
 `credential_added` when a non-e-mail span the redactor finds overlaps an added
 line, when a changed file sits at a well-known credential path (OpenSSH
 private key names, `.git-credentials`, `.netrc`, `.aws/credentials`,
 `gh/hosts.yml`), or when a changed text file is over 8 MiB; with
 `nested_repository` when it adds or changes a gitlink (mode `160000`); and,
-when review threads or a conversation were in the prompt, with
-`workflow_changed` when it changes a path under `.github/workflows/` or
-`.github/actions/`. The detail names the paths, masked.
+when review threads or a conversation were in the prompt and baum's saved
+GitHub connection is known to lack workflow access (`fix.Options.AllowWorkflows`
+false: `jobs.workflowAccess` reads `githubauth.Manager.Status`; an explicit
+token or an unreadable status allows), with `workflow_changed` when it
+changes a path under `.github/workflows/` or `.github/actions/`, saying to
+choose Reconnect with workflow access in Settings. The detail names the
+paths, masked. A push GitHub refuses with "refusing to allow ... to create or
+update workflow ... without `workflow` scope" (or `workflows` permission), in
+git's stderr or the porcelain stdout, is `gitlocal.ErrWorkflowScope` and
+`workflow_scope`.
 
 A fix can also be made from a conversation of the earlier Ask (see "Earlier
 questions to the review agent"). The app no longer offers it (its **Fix this**
@@ -4907,7 +4973,8 @@ that differs from the digest (`chat_changed`) stops the fix before the agent run
 the change the conversation asks for and only that, verify it, the conversation
 is data) and one `BEGIN UNTRUSTED DATA` block per turn, oldest first, each
 through the redactor (questions included) and with the nonce stripped, like a
-thread. A fix from a conversation never pushes a workflow change
+thread. A fix from a conversation pushes no workflow change unless baum's
+GitHub connection has workflow access or its access is unknown
 (`workflow_changed`).
 The commit message says "Make the change from a conversation". The phase is
 `reading the conversation`.
@@ -4953,13 +5020,18 @@ never retried. The job's `thread_outcomes` hold each thread's `resolved`,
 `replied` (the reply posted, the resolution not), `skipped`,
 `already_resolved` or `failed` with the agent's cleaned summary; none of these
 fails the fix.
-The worktree, its registration and the refs are removed whatever happens.
-After a push the daemon polls the repository's discovery at once. Git commands
-in the checkout set `GIT_DIR` and `GIT_WORK_TREE` and an empty
-`core.hooksPath`; see [SECURITY.md](SECURITY.md#fixing-a-pull-request).
+The fix directory and the refs are removed whatever happens.
+After a push the daemon polls the repository's discovery at once. baum's own
+git commands over the checkout set `GIT_DIR` to the clone's common directory,
+`GIT_WORK_TREE` to the checkout and `GIT_INDEX_FILE` to its own index, with an
+empty `core.hooksPath` and `core.fsmonitor`, `core.untrackedCache`,
+`core.sparseCheckout` and `index.sparse` off; once the agent has run, none
+uses the agent's repository as its git directory; see
+[SECURITY.md](SECURITY.md#fixing-a-pull-request).
 Before the merge and the agent, `Fix.CheckSigning` makes an unreferenced
-`commit-tree -S` commit when `commit.gpgSign` is set (commit-tree ignores the
-setting), and a failure is `fix.ReasonSigning` with git's error.
+`commit-tree -S` commit of the head's tree when `commit.gpgSign` is set
+(commit-tree ignores the setting), and a failure is `fix.ReasonSigning` with
+git's error.
 
 ### Local application presentation
 
@@ -5306,6 +5378,34 @@ it and `Queue.SubmitAutomatic` decides each job.
   repository is enabled unless its `automatic` is `false`. Disabling a
   repository (or the switch), or unregistering it,
   forgets its state.
+- **Updates** (`Preferences.Updates`, `updates` in `GET`/`PUT
+  /api/automatic`: `always`, stored empty and the default; `on_open`;
+  `on_change`) say how automatic reviews follow a pull request after its first
+  saved review. With `on_open`, `submit` treats a pending head of a pull
+  request whose latest saved version (`Reviewed`) is at any head as done,
+  without a job. With `on_change`, the job is queued as usual and the queue
+  sets the unstored `Prepared.Triage` on every automatic job it executes;
+  `Local.Execute` then reads the preferences and, when a saved version exists
+  at another head, makes one `agent.Completer` call with the review's outline
+  (overview, section summaries, active risks) and `gitlocal.Repo.Diff` from
+  the saved head to the new one, at most 200 KiB. A `regenerate: false`
+  answer ends the job `completed` with reason `no_significant_change` and the
+  agent's reason as its `summary` (`jobs.UnchangedError`); no version is
+  written and `notices` publishes nothing. An empty diff is unchanged without
+  a call. Anything triage cannot decide (no Completer, no saved version, a
+  diff too large or unreadable, a failed call or reply) writes the review.
+  Off is still the master switch (`automatic`). The check's system prompt is
+  `prompt.Triage` (`review-triage-public-v1.md`, `IDReviewTriage`), which a
+  person can replace like the other prompts; a resolution that fails writes
+  the review. A review it keeps is recorded in the clone's store
+  (`Store.KeepHead`, table `kept_heads`: the latest kept head of a version, the
+  base it was checked against and the reason). `Store.Snapshot` reports it with the latest version
+  (`Summary.Kept`), the review index counts the review `current` at that head
+  as at its own and lists it as `kept`, and a background refresh writes
+  `generation_state: current` for it while the base has not moved since
+  (`refresh.Refresher.KeptHead`, `KeptBase`), as it does for the review's
+  own head. A newer
+  version has no kept head until one is recorded for it.
 - **Turning off.** `Scheduler.Gate`, installed with
   `Queue.SetAutomaticGate`, reads the current preferences and repository
   settings from the registry. The queue asks it under its mutex when an
@@ -5355,9 +5455,10 @@ it and `Queue.SubmitAutomatic` decides each job.
   discovery's handling, so the stack groups are current) and makes the three most
   recently updated eligible open pull requests across them pending with
   trigger `setup`, unless their head is already pending or handled. A pull
-  request in a stack group counts with its group as one, and the group's
-  eligible members are made pending together, so the group's review follows
-  theirs. The pass submits them like any other pending head: a head already
+  request in a stack group of at most eight open pull requests counts with its
+  group as one, and the group's eligible members are made pending together,
+  so the stack's page has their reviews to sum up; a larger stack's members
+  count one by one, so setup never queues dozens of reviews. The pass submits them like any other pending head: a head already
   reviewed is skipped, the switches and a restart's drain apply, and an interrupted run
   is retried once. A repository whose poll fails is left out.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
@@ -5368,28 +5469,17 @@ it and `Queue.SubmitAutomatic` decides each job.
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.
-- **Stack groups.** After the pull requests, each pass looks at the
-  repository's stack groups (`Scheduler.Groups`). Once every member is
-  recorded, eligible and has no pending head, and every member's saved
-  review is of its current head, it queues the group's review (trigger
-  `stack_reviewed`) with those member heads, unless the group's latest
-  version already read every current member at its current head (a merged
-  member alone calls for none). Automatic generation must have handled at
-  least one member's current head (its `done`): a stack reviewed before the
-  baseline, or only by hand, is not caught up. Each set of member heads is
-  submitted once (`done`), with the pull requests' retry rules and triggers:
-  failures to prepare back off and give up after five attempts, an
-  interrupted run is retried once (`retry`), and a job stopped before it
-  started is submitted again (`ready_for_review` after a draft). A
-  member GitHub shows moved on or turned draft before discovery does is
-  retried a minute later. Groups a person made are never generated
-  automatically.
+- **Stack groups.** Automatic generation queues no group review: a stack
+  has an overview instead, whose summary `reviewgroups.Summarizer` writes
+  from the members' automatic reviews (see "Review groups"). The
+  `stack_reviewed` trigger survives only on jobs an earlier release queued.
+  Groups a person made are never generated automatically.
 - **State.** The `state/automatic` document in the application database holds each
   enabled repository's PRs (recorded head, request and draft flags,
   eligibility, pending head and trigger, when the PR started waiting for it
   (`waiting`, kept when a newer head replaces a pending one), last head handled,
-  retried head, last stopped job put back), its stack groups (member heads handled,
-  attempts, retried heads, last stopped job put back, trigger) and its notice. A `paused_until` and
+  retried head, last stopped job put back) and its notice. The `groups` an
+  earlier release kept there for stack reviews are ignored on load. A `paused_until` and
   `paused_cap` an older baum saved for its daily cap are ignored on load, and
   its `daily_cap` notice is dropped. It is rewritten
   atomically on every change, so a restart neither forgets pending heads nor
@@ -6383,8 +6473,8 @@ login shell's, or removes it, so the agent gets a socket that works or none.
 A conversation that names no agent, model or mode opens with the panel's
 setting, a global preference in `app.sqlite` (`repos.PanelPreferences`,
 `ResolvePanel`): agent (`claude-code` or `codex`), model, mode (`auto`, the
-default, `full` or `workspace`) and where the panel opens (`bottom`, the default, or
-`top`). An unset agent follows the fix agent (Codex when the fix backend is
+default, `full` or `workspace`) and where the panel opens (`bottom`, the default,
+`top`, `left` or `right`). An unset agent follows the fix agent (Codex when the fix backend is
 `codex`, Claude Code otherwise) and its model (only a Claude Code or Codex
 fix model counts); an unset model with a chosen agent is that agent's own
 default unless it is the fix agent. `GET /api/settings/panel` answers

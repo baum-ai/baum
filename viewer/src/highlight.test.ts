@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { CodeDiffLine } from "./components/review-tiles/code-diff";
+import type { CodeDiffLine } from "./components/code-diff";
 import {
   type HighlightedLine,
   highlightCode,

@@ -1,6 +1,7 @@
 package tiles
 
 import (
+	"cmp"
 	"encoding/json"
 	"slices"
 )
@@ -33,13 +34,19 @@ func (s Size) Units() int {
 // an active critical or high risk, and the overview tile. Each that is not
 // moves to the front with the pinned entries and those before it in that
 // order; should the pinned entries alone fill the landing page, it goes
-// before them. Every move is stable. A converted document pins nothing and
-// places the overview first and the risks tile second, where they are always
-// on the landing page, so its order is unchanged.
+// before them. Entries move with their group, so groups stay contiguous, and
+// every move is stable. A converted document pins nothing and places the
+// overview first and the risks tile second, where they are always on the
+// landing page, so its order is unchanged.
 func Arrange(doc *Document) {
 	layout := doc.Layout
 	layout.Entries = declaredSizes(doc, layout.Entries)
-	layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin })
+	layout.Entries = rankFirst(layout.Entries, func(entry Entry) int {
+		if entry.Pin {
+			return 0
+		}
+		return 1
+	})
 	layout.Landing = Landing(layout)
 	var required []string
 	if mustShowRisks(doc) {
@@ -53,14 +60,41 @@ func Arrange(doc *Document) {
 		if onLanding(layout, id) {
 			continue
 		}
-		layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return entry.Pin || slices.Contains(lead, entry.Tile) })
+		layout.Entries = rankFirst(layout.Entries, func(entry Entry) int {
+			if entry.Pin || slices.Contains(lead, entry.Tile) {
+				return 0
+			}
+			return 1
+		})
 		layout.Landing = Landing(layout)
 		if !onLanding(layout, id) {
-			layout.Entries = frontFirst(layout.Entries, func(entry Entry) bool { return slices.Contains(lead, entry.Tile) })
+			layout.Entries = rankFirst(layout.Entries, func(entry Entry) int {
+				if slices.Contains(lead, entry.Tile) {
+					return 0
+				}
+				return 1
+			})
 			layout.Landing = Landing(layout)
 		}
 	}
 	doc.Layout = layout
+}
+
+// frontFirst stably moves the entries that match to the front, one by one,
+// regardless of their groups.
+func frontFirst(entries []Entry, match func(Entry) bool) []Entry {
+	out := make([]Entry, 0, len(entries))
+	for _, entry := range entries {
+		if match(entry) {
+			out = append(out, entry)
+		}
+	}
+	for _, entry := range entries {
+		if !match(entry) {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // onLanding reports whether the layout places the tile on its landing page,
@@ -94,18 +128,30 @@ func declaredSizes(doc *Document, entries []Entry) []Entry {
 	return entries
 }
 
-func frontFirst(entries []Entry, front func(Entry) bool) []Entry {
-	entries = slices.Clone(entries)
-	slices.SortStableFunc(entries, func(a, b Entry) int {
-		switch {
-		case front(a) && !front(b):
-			return -1
-		case front(b) && !front(a):
-			return 1
+// rankFirst stably orders entries by rank, lowest first, moving each run of
+// consecutive members of one group as a unit ranked by its lowest member.
+func rankFirst(entries []Entry, rank func(Entry) int) []Entry {
+	type block struct {
+		entries []Entry
+		rank    int
+	}
+	var blocks []block
+	for i, entry := range entries {
+		r := rank(entry)
+		if i > 0 && entry.Group != "" && entry.Group == entries[i-1].Group {
+			last := &blocks[len(blocks)-1]
+			last.entries = append(last.entries, entry)
+			last.rank = min(last.rank, r)
+			continue
 		}
-		return 0
-	})
-	return entries
+		blocks = append(blocks, block{entries: []Entry{entry}, rank: r})
+	}
+	slices.SortStableFunc(blocks, func(a, b block) int { return cmp.Compare(a.rank, b.rank) })
+	out := make([]Entry, 0, len(entries))
+	for _, b := range blocks {
+		out = append(out, b.entries...)
+	}
+	return out
 }
 
 // mustShowRisks reports whether the risks tile ranks an active critical or

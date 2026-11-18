@@ -589,6 +589,34 @@ it("opens Pull requests on Open, with Closed last, and comes back to the tab las
   expect(tabs()[1]!.getAttribute("aria-pressed")).toBe("true");
   localStorage.clear();
 });
+it("pages Pull requests after filtering and resets to the first page when the tab changes", async () => {
+  entries = Array.from({ length: 65 }, (_, i) => entry(i + 1));
+  await act(async () => root.render(<App />));
+  const rows = () => node.querySelectorAll(".inbox-pr-title");
+  const pager = () => node.querySelector('[aria-label="Pull requests pagination"]')!;
+  const move = async (label: string) =>
+    act(async () =>
+      [...pager().querySelectorAll("button")]
+        .find((button) => button.textContent === label)!
+        .click(),
+    );
+  expect(rows()).toHaveLength(30);
+  expect(pager().textContent).toContain("1–30 of 65");
+  await move("Next");
+  expect(rows()).toHaveLength(30);
+  expect(rows()[0]!.textContent).toBe("Change 31");
+  await move("Next");
+  expect(rows()).toHaveLength(5);
+  expect(pager().textContent).toContain("61–65 of 65");
+  await move("Previous");
+  expect(rows()[0]!.textContent).toBe("Change 31");
+  const tabs = node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button');
+  await act(async () => tabs[1]!.click());
+  expect(rows()).toHaveLength(0);
+  await act(async () => tabs[0]!.click());
+  expect(rows()[0]!.textContent).toBe("Change 1");
+});
+
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];
   await act(async () => root.render(<App />));
@@ -974,8 +1002,15 @@ it("saves each review setting as it changes", async () => {
   // "auto" shows as the harness it runs first, with that harness's default model.
   expect(node.querySelector<HTMLSelectElement>("#review-agent")!.value).toBe("claude");
   expect(node.querySelector<HTMLSelectElement>("#review-model")!.value).toBe("claude-haiku-5-5");
-  const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
-  expect(global.checked).toBe(true);
+  const global = node.querySelector<HTMLSelectElement>("#review-automatic")!;
+  // A daemon that sends no `updates` reviews every push.
+  expect([...global.options].map((o) => o.textContent)).toEqual([
+    "Never",
+    "On open",
+    "On change",
+    "Always",
+  ]);
+  expect(global.value).toBe("always");
   expect(node.querySelector("#review-all-note")).toBeNull();
   await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "all");
   expect(node.querySelector("#review-all-note")).not.toBeNull();
@@ -983,6 +1018,7 @@ it("saves each review setting as it changes", async () => {
     path: "/s/test-ns/api/automatic",
     body: {
       enabled: true,
+      updates: "always",
       backend: "claude",
       model: "claude-haiku-5-5",
       effort: "",
@@ -990,7 +1026,12 @@ it("saves each review setting as it changes", async () => {
     },
   });
   expect(section().textContent).toContain("Saved");
-  await act(async () => global.click());
+  await choose(global, "on_change");
+  expect(puts.at(-1)!.body).toMatchObject({ enabled: true, updates: "on_change" });
+  expect(section().textContent).toContain("only when the change would alter it");
+  expect(node.querySelector("#review-pull-requests")).not.toBeNull();
+  // Never is what the switch off was: enabled false, nothing about pushes.
+  await choose(global, "never");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
     body: {
@@ -1051,6 +1092,25 @@ it("chooses a separate agent and model for fixes", async () => {
   });
   await choose(agent, "");
   expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
+});
+it("turns network access for fixes off and on, with or without a fix agent", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "claude",
+    model: "claude-haiku-5-5",
+    fix_backend: "",
+    fix_model: "",
+    fix_network: true,
+  });
+  await act(async () => root.render(<App />));
+  const network = node.querySelector<HTMLInputElement>("#fix-network")!;
+  expect(network.checked).toBe(true);
+  await act(async () => network.click());
+  expect(puts.at(-1)).toEqual({ path: "/s/test-ns/api/automatic", body: { fix_network: false } });
+  expect(network.checked).toBe(false);
+  await act(async () => network.click());
+  expect(puts.at(-1)!.body).toEqual({ fix_network: true });
 });
 it("chooses the Claude Code configuration directory of reviews under Advanced", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
@@ -1256,9 +1316,9 @@ it("puts a control back when its save fails", async () => {
       : stubbed(...args),
   );
   await act(async () => root.render(<App />));
-  const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
-  await act(async () => global.click());
-  expect(global.checked).toBe(true);
+  const global = node.querySelector<HTMLSelectElement>("#review-automatic")!;
+  await choose(global, "never");
+  expect(global.value).toBe("always");
   expect(node.querySelector('[aria-labelledby="settings-reviews-heading"]')!.textContent).toContain(
     "registry is busy",
   );
@@ -1377,27 +1437,25 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   expect(location.search).toBe("?page=settings&section=reviews");
   // j goes into the section, where j and k step through its controls.
   await key("j");
-  const automatic = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  const automatic = node.querySelector<HTMLSelectElement>("#review-automatic")!;
   expect(document.activeElement).toBe(automatic);
-  await key("j");
-  expect(document.activeElement).toBe(node.querySelector("#review-pull-requests"));
   // In a select, letters pick an option rather than move.
-  automatic.focus();
-  // Enter changes a switch as Space does; with automatic reviews off, the
-  // next control is the agent.
-  await key("Enter");
-  expect(automatic.checked).toBe(false);
-  await key("j");
-  expect(document.activeElement).toBe(node.querySelector("#review-agent"));
-  automatic.focus();
-  // Shift+J moves the section from inside one too.
+  // With automatic reviews never, there is no choice of pull requests.
+  await choose(automatic, "never");
+  expect(node.querySelector("#review-pull-requests")).toBeNull();
+  // A select keeps letters for picking, so Shift+J moves the section from
+  // outside it.
+  automatic.blur();
+  // Shift+J moves the section.
   await key("J", true);
   expect(location.search).toBe("?page=settings&section=fixes");
   expect(document.activeElement).toBe(current());
   await key("K", true);
   // Escape goes back to the list; Enter goes in again.
-  const again = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  const again = node.querySelector<HTMLSelectElement>("#review-automatic")!;
   again.focus();
+  // A select keeps Escape to close its list, so leave it first.
+  again.blur();
   await key("Escape");
   expect(document.activeElement).toBe(current());
   expect(current().textContent).toContain("Reviews");
@@ -1992,6 +2050,41 @@ it("marks automatically started jobs in the jobs list", async () => {
     "job-b",
     "job-a",
   ]);
+});
+it("shows a review that kept the saved review as a neutral outcome in the jobs list", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
+      ? Promise.resolve(
+          Response.json({
+            jobs: [
+              {
+                id: "k",
+                clone: "clone",
+                repository: "acme/demo",
+                pr: 1,
+                state: "completed",
+                phase: "finished",
+                reason: "no_significant_change",
+                summary: "Only a typo in a comment changed.\n\nMore detail.",
+                calls: 1,
+                tokens: 10,
+                repairs: 0,
+                actual_cost_usd: null,
+              },
+            ],
+          }),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const row = node.querySelector("#job-k")!;
+  expect(row.querySelector(".local-job-state")!.textContent).toBe("Review still applies");
+  expect(row.textContent).toContain("The new commits don't change what the review says");
+  expect(row.textContent).toContain("Only a typo in a comment changed.");
+  expect(row.textContent).not.toContain("More detail.");
+  expect(row.querySelector(".local-job-state.failed")).toBeNull();
 });
 it("names a feature build by its repository in the jobs list", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=jobs");
@@ -2819,6 +2912,42 @@ it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
+});
+it("folds the sidebar opened under the mouse when the pointer or focus leaves the window", async () => {
+  entries = [entry(1)];
+  // A narrow window always folds the sidebar.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(width < 64rem)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  await act(async () => root.render(<App />));
+  const lane = node.querySelector<HTMLElement>(".local-rail-lane")!;
+  const rail = () => lane.getAttribute("data-rail");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const hover = async () => {
+      const event = new MouseEvent("pointermove", { bubbles: true });
+      Object.defineProperty(event, "pointerType", { value: "mouse" });
+      await act(async () => {
+        lane.dispatchEvent(event);
+        vi.advanceTimersByTime(200);
+      });
+    };
+    await hover();
+    expect(rail()).toBe("open");
+    // Off the left edge of the window: no leave reaches the sidebar itself.
+    await act(async () =>
+      document.dispatchEvent(new MouseEvent("mouseout", { relatedTarget: null })),
+    );
+    expect(rail()).toBe("folded");
+    await hover();
+    expect(rail()).toBe("open");
+    await act(async () => window.dispatchEvent(new FocusEvent("blur")));
+    expect(rail()).toBe("folded");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("offers the shortcuts, a problem report and the docs from Help beside the baum title", async () => {
   entries = [entry(1)];

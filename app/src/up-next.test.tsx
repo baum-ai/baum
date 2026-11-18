@@ -319,6 +319,21 @@ afterEach(async () => {
 });
 // The agent sessions the daemon says are running.
 let liveList: LiveSession[] = [];
+it("pages a saved inbox at 30 items and selects a row on the next page", async () => {
+  entries = Array.from({ length: 31 }, (_, i) => requested(i + 1));
+  await act(async () => root.render(<App />));
+  const rows = () => node.querySelectorAll(".upnext-list-body [data-row]");
+  const pager = () => node.querySelector('[aria-label="Inbox pagination"]')!;
+  expect(rows()).toHaveLength(30);
+  expect(pager().textContent).toContain("1–30 of 31");
+  await act(async () => pager().querySelectorAll("button")[1]!.click());
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0]!.getAttribute("data-focused")).toBe("true");
+  expect(pager().textContent).toContain("31–31 of 31");
+  await act(async () => pager().querySelector("button")!.click());
+  expect(rows()).toHaveLength(30);
+});
+
 const render = async () => {
   await act(async () => root.unmount());
   root = createRoot(node);
@@ -569,6 +584,41 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   await act(async () => choices[0]!.click());
   expect(list()).toContain("Change 3");
   expect(shown()).toBe("Change 3");
+});
+
+it.each(["archive", "snooze"])(
+  "restores the page and selection on undo after %s",
+  async (action) => {
+    entries = Array.from({ length: 31 }, (_, i) => requested(i + 1));
+    await render();
+    const pager = () => node.querySelector('[aria-label="Inbox pagination"]');
+    await act(async () => pager()!.querySelectorAll("button")[1]!.click());
+    const restored = shown();
+    if (action === "archive") {
+      await press("e");
+    } else {
+      await press("s");
+      await press("1");
+    }
+    expect(pager()).toBeNull();
+    expect(shown()).not.toBe(restored);
+    await press("u");
+    expect(pager()!.textContent).toContain("31–31 of 31");
+    expect(shown()).toBe(restored);
+  },
+);
+
+it("keeps the inbox summary on pages with only waiting pull requests", async () => {
+  entries = [
+    ...Array.from({ length: 30 }, (_, i) => requested(i + 1)),
+    mine(31, { checks: "running" }),
+  ];
+  await render();
+  await act(async () =>
+    node.querySelectorAll<HTMLButtonElement>('[aria-label="Inbox pagination"] button')[1]!.click(),
+  );
+  expect(list()).toEqual(["Change 31"]);
+  expect(node.querySelector(".upnext-list-summary")!.textContent).toContain("30 things for you");
 });
 
 it("archives with e, undoes with u, and never shows it again, not even as done", async () => {
@@ -1495,7 +1545,9 @@ it("places a stack by its first shown open member and opens to its members", asy
   await press("j");
   await press("j");
   expect(shown()).toBe("Payments stack");
-  expect(panel().textContent).toContain("There is no group review yet");
+  // A stack's panel is its overview: no combined review to ask for.
+  expect(panel().textContent).not.toContain("group review");
+  expect(panel().textContent).toContain("Open the stack");
   expect(
     Array.from(panel().querySelectorAll('[aria-label="Pull requests"] li')).map(
       (li) => li.textContent,

@@ -196,6 +196,11 @@ type Prepared struct {
 	// automatic job it executes: the executor refuses the run with
 	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
 	RefuseDraft bool `json:"-"`
+	// Triage is set by the queue, never stored, on the inputs of an
+	// automatic review: with automatic reviews set to review
+	// on change, the executor first asks whether the head would change the
+	// saved review, and completes with UnchangedError when it would not.
+	Triage bool `json:"-"`
 	// Fix is what a fix job (KindFix) does.
 	Fix FixInputs `json:"fix,omitzero"`
 	// FixThreads are the review threads a fix addresses (Fix.Threads).
@@ -329,9 +334,12 @@ type Queue struct {
 	// replaced: their cancellation ends them as superseded.
 	superseded map[string]bool
 	// drafts holds the latest draft of each running staged review, by job.
-	drafts  map[string][]byte
-	cancels map[string]context.CancelFunc
-	wake    chan struct{}
+	drafts map[string][]byte
+	// draftTiles keeps the encoded tile view of each draft in drafts; an
+	// entry goes with its job's draft.
+	draftTiles draftTiles
+	cancels    map[string]context.CancelFunc
+	wake       chan struct{}
 	// chat lists the stored conversations; nil lists none.
 	chat    ChatService
 	ctx     context.Context
@@ -1469,6 +1477,7 @@ func (q *Queue) worker() {
 			q.notify(j)
 			inputs := j.Prepared
 			inputs.RefuseDraft = j.Automatic
+			inputs.Triage = j.Automatic
 			cost, err := q.executor.Execute(ctx, inputs, func(p Progress) {
 				q.mu.Lock()
 				// Archiving may move the job in the history: find it again.
@@ -1569,6 +1578,7 @@ func (q *Queue) worker() {
 				cancel()
 				delete(q.cancels, j.ID)
 				delete(q.drafts, j.ID)
+				q.draftTiles.drop(j.ID)
 				delete(q.superseded, j.ID)
 				if q.log != nil {
 					q.log.Error("ended job missing from the history", "job", j.ID)
@@ -1586,12 +1596,14 @@ func (q *Queue) worker() {
 			current.State = "completed"
 			// The draft is never a version: it goes with the job.
 			delete(q.drafts, j.ID)
+			q.draftTiles.drop(j.ID)
 			current.Draft = 0
 			var refused *NotAutomaticError
 			var fixErr *fix.Error
 			var stopped *StoppedError
 			var blocked *BlockedError
 			var members *MembersNeedReviewsError
+			var unchanged *UnchangedError
 			switch {
 			case err != nil && errors.As(err, &members):
 				// A member's own review failed or was cancelled while the
@@ -1611,6 +1623,11 @@ func (q *Queue) worker() {
 				current.State = "failed"
 				current.Reason = stopped.Reason
 				current.Detail = stopped.Error()
+			case err != nil && errors.As(err, &unchanged):
+				// The saved review still holds for the new head: an outcome
+				// the person reads in its summary, not a failure.
+				current.Reason = ReasonNoSignificantChange
+				current.Summary = unchanged.Reason
 			case err != nil && errors.As(err, &fixErr) && fixErr.Reason == fix.ReasonNoChanges:
 				// The agent found nothing it should, or could, change: an
 				// outcome the person reads in its summary, not a failure to

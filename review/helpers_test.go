@@ -1,5 +1,10 @@
 package review
 
+import (
+	"encoding/json"
+	"testing"
+)
+
 const testHunk = "h_0123456789ab"
 
 func authoredFixture() []byte {
@@ -8,3 +13,12 @@ func authoredFixture() []byte {
 
 // sharedValidator is the process-wide document validator for the fixtures.
 func sharedValidator() (*DocumentValidator, error) { return NewDocumentValidator() }
+
+func encodeJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}

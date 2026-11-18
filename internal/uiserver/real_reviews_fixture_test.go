@@ -360,25 +360,33 @@ func (d *realDataset) choosePicks(repositories []string, count int) []realPick {
 		chosen[i] = true
 		tags[i] = append(tags[i], tag)
 	}
-	// want picks, for a tag, the candidate that satisfies it best, unless one
-	// already chosen does; ties go to the lowest number. Once count reviews are
+	// want picks, for a tag, the candidate that satisfies it best; one already
+	// chosen is reused when it scores as well, and without a score any one
+	// already chosen is. Ties go to the lowest number. Once count reviews are
 	// chosen it only tags those, so the rules below are in priority order.
 	want := func(tag string, ok func(candidate) bool, score func(candidate) float64) {
-		best := -1
+		best, bestChosen := -1, -1
+		better := func(i, than int) bool {
+			return than < 0 || (score != nil && score(candidates[i]) > score(candidates[than]))
+		}
 		for i, c := range candidates {
 			if !ok(c) {
 				continue
 			}
-			if chosen[i] {
-				take(i, tag)
-				return
-			}
-			if best < 0 || (score != nil && score(c) > score(candidates[best])) {
+			if better(i, best) {
 				best = i
 			}
+			if chosen[i] && better(i, bestChosen) {
+				bestChosen = i
+			}
 		}
-		if best >= 0 && len(chosen) < count {
+		switch {
+		case bestChosen >= 0 && !better(best, bestChosen):
+			take(bestChosen, tag)
+		case best >= 0 && len(chosen) < count:
 			take(best, tag)
+		case bestChosen >= 0:
+			take(bestChosen, tag)
 		}
 	}
 	want("many-sections", func(c candidate) bool { return true }, func(c candidate) float64 { return float64(c.facts.sections) })

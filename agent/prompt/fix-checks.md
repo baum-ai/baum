@@ -9,6 +9,11 @@ are in the data below.
 - A failure the pull request did not cause and cannot fix (an outage, a flaky
   test, a missing secret, an infrastructure error) needs no change: say so in
   your summary and change nothing.
-- If you can run commands, you may run the project's own build, lint and test
-  commands to check the fix; the network is off. If you cannot, fix what the
-  output shows and say in your summary what you could not check.
+- CI's `pull_request` checks build the merge of the pull request with its
+  base branch, not its head alone. When a failure comes from that merge (code
+  the base branch changed, which the head does not have yet), merge the base
+  branch and fix the result; baum then pushes a merge commit. Merge only
+  when the fix needs it.
+- If you can run commands, run the project's own build, lint and test
+  commands to check the fix. If you cannot, fix what the output shows and say
+  in your summary what you could not check.

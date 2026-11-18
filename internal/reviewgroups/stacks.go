@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -46,17 +47,17 @@ type chainEntry struct {
 // whether anything changed. prs are the open pull requests and observations
 // what discovery knows of others (a merged or closed state):
 //
-//   - a stack of 2 to MaxMembers open pull requests without a group gets a
-//     new stack group;
+//   - a stack of two or more open pull requests without a group gets a new
+//     stack group, however many it has: a stack has no combined review;
 //   - a stack group whose stack gained or lost members gets the stack's
 //     members;
 //   - a member that merged or closed stays in the group in its place, as
 //     Landed with its state, and is no longer a Member. A member discovery
 //     no longer lists and has no observation of is kept as StateUnknown until
 //     its state is known;
-//   - a stack group whose stack is gone (no open member left,
-//     unstacked, or grown past MaxMembers open pull requests) is dissolved:
-//     removed from every list, its versions kept.
+//   - a stack group whose stack is gone (no open member left, or
+//     unstacked) is dissolved: removed from every list, its versions and
+//     summary kept.
 //
 // The person's choices win: a pull request in a group the person made or took
 // over, or in a stack group the person deleted, takes no part.
@@ -154,7 +155,7 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 			}
 			entries = append(entries, entry)
 		}
-		if members, err = cleanMembers(members); err != nil {
+		if members, err = checkMembers(members, math.MaxInt); err != nil {
 			continue
 		}
 		encoded, _ := json.Marshal(members)
@@ -206,7 +207,7 @@ func (s *Store) SyncStacks(ctx context.Context, repository string, prs []discove
 		encodedChain, _ := json.Marshal(list)
 		previousChain, _ := json.Marshal(sortedEntries(g.chain))
 		switch {
-		case (update.Ended != nil && *update.Ended) || len(members) == 0 || len(members) > MaxMembers:
+		case (update.Ended != nil && *update.Ended) || len(members) == 0:
 			// Dissolved, not deleted by the person: the flag goes, so its
 			// pull requests may form a stack group again.
 			_, err = tx.ExecContext(ctx, `UPDATE groups SET deleted=?, stack=0 WHERE id=?`, now.UnixMilli(), g.ID)

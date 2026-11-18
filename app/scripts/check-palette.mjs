@@ -41,8 +41,7 @@ const utility =
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
-    if (entry.isDirectory())
-      return ["precompiled", "generated"].includes(entry.name) ? [] : files(path);
+    if (entry.isDirectory()) return files(path);
     return extensions.has(extname(path)) && !/\.(test|spec)\./.test(path) ? [path] : [];
   });
 }
