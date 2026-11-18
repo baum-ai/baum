@@ -280,7 +280,7 @@ func TestPublishStoresTheDocumentWithoutHunkEvidence(t *testing.T) {
 			t.Fatalf("stored hunk %d = %s, want %s", i, got, expected)
 		}
 	}
-	// Sections (their tiles and hunk assignments), stats, unassigned hunks
+	// Sections (their hunk assignments), stats, unassigned hunks
 	// and the rest of the index are kept byte for byte.
 	for _, pair := range [][2]map[string]json.RawMessage{{stored.rest, generated.rest}, {stored.index, generated.index}} {
 		if len(pair[0]) != len(pair[1]) {
@@ -295,7 +295,7 @@ func TestPublishStoresTheDocumentWithoutHunkEvidence(t *testing.T) {
 	if !bytes.Contains(stored.rest["sections"], []byte(`"hunks"`)) {
 		t.Fatal("fixture sections assign no hunks")
 	}
-	served := decodeHunks(t, viewserver.WithHunkURLs(latest.Document))
+	served := decodeHunks(t, viewserver.Served(latest.Document))
 	for i, hunk := range served.hunks {
 		if want := generated.hunks[i]["github_url"]; !bytes.Equal(hunk["github_url"], want) {
 			t.Fatalf("served github_url %s, generated %s", hunk["github_url"], want)

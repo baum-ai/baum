@@ -160,7 +160,7 @@ func TestStagedInstructions(t *testing.T) {
 		phrases []string
 	}{
 		agent.StageOutline: {"review-outline-public-v1.md", []string{"`change_kind`", "`breaking_change`", "keep every previous section", "Every logical section with hunks has an `assessment`", "needs little or\n   no reading of files"}},
-		agent.StageDetails: {"review-details-public-v1.md", []string{"### Risks", "### Evidence", "`behavior`", "`images`", "### Tiles", "Keep the `id` of a previous risk"}},
+		agent.StageDetails: {"review-details-public-v1.md", []string{"### Risks", "### Evidence", "`behavior`", "`images`", "Keep the `id` of a previous risk"}},
 		agent.StageContext: {"review-context-public-v1.md", []string{"`area` (always)", "omit a part rather than guess or fill it", "without the `head/` or `merge-base/` prefix"}},
 	}
 	for stage, want := range stages {

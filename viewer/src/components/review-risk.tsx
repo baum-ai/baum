@@ -13,7 +13,6 @@ import {
 import { HunkEvidence } from "./hunk-evidence";
 import { Markdown } from "./markdown";
 import { Facts, JumpLink, Part, PROSE, TierBadge } from "./review-parts";
-import { ReviewTiles } from "./review-tiles/lazy-review-tiles";
 import { Badge, CardHeader } from "./ui";
 
 /** One risk on its own, for a reader working down the rail's Risks list rather
@@ -31,7 +30,6 @@ export function ReviewRisk({
   onSelectSection,
   loadVersion,
   activeVersions,
-  showTiles = false,
 }: {
   document: ReviewDocument;
   risk: TriageRisk;
@@ -39,8 +37,6 @@ export function ReviewRisk({
   loadVersion?: LoadReviewVersion;
   /** The review versions in which the risk's section had hunks, once read. */
   activeVersions?: readonly number[];
-  /** Tiles are held back from reviews until they are ready to show. */
-  showTiles?: boolean;
 }) {
   const lifecycle = riskLifecycleLabel(risk, document.review, risk.sectionState);
   return (
@@ -85,8 +81,6 @@ export function ReviewRisk({
               loadVersion={loadVersion}
             />
           </div>
-
-          {showTiles && <ReviewTiles document={document} tiles={risk.tiles} />}
 
           <Part label="Where it came from">
             <Facts

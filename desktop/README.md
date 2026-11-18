@@ -106,7 +106,8 @@ happen only when the user selects an install or add action. Displayed paths abbr
    - Device sign-in: the app attaches to the daemon while setup shows, and the
      step reaches the daemon's GitHub sign-in through the setup screen's
      `github_connection` command, which relays status, start, cancel and retry
-     over the tray's loopback client; disconnecting stays in Settings. Signing
+     over the tray's loopback client and opens GitHub's device page
+     (`open`); disconnecting stays in Settings. Signing
      in displays and copies the code, then waits five seconds before opening
      GitHub's device page in the default browser so the code and clipboard
      confirmation stay visible. During the delay, the browser control is disabled
@@ -747,8 +748,53 @@ doing anything (`src/zoom.rs`).
   including other spellings the asset server maps to a page (`/setup`,
   `/setup.html/`, percent-encoded names), is refused. The bundled pages'
   content security policy has `frame-ancestors 'none'`.
-  `http` and `https` links to other hosts open in the default browser. Other
-  loopback servers, other schemes and new-window requests are refused.
+  Every other navigation is refused and nothing happens: other hosts, other
+  loopback servers, other schemes (`about:`, `data:`, `blob:`, `file:`,
+  `mailto:` and the rest) and any URL with a user name or password. A
+  navigation never opens the default browser. On macOS and Linux the webview
+  asks the same handler (`navigation::decide`) about a navigation in any frame
+  of the page and passes only its URL, so an embedded frame could otherwise
+  open the browser at an address carrying data it read. On Windows wry asks
+  only about the page's own navigations (`NavigationStarting`), and the
+  page's `frame-src` alone governs its frames. Debug builds log a refused
+  navigation's scheme and host.
+- Links to other sites open in the default browser as new-window requests
+  (`target="_blank"` links and `window.open`, `navigation::decide_new_window`):
+  `http` and `https` URLs of hosts other than loopback ones, without a user
+  name or password, go to the browser, and no window ever opens. A sandboxed
+  frame can ask only with `allow-popups`. WebKitGTK lets a page ask only while
+  the person interacts with it; WebView2 (whose pop-up blocker is off in an
+  embedded webview) and WKWebView (where wry leaves
+  `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
+  any time, so the app opens the browser at most once a second
+  (`navigation::OpenLimit`) and drops the rest. The app's pages open every
+  outside link with `target="_blank" rel="noreferrer"` (Markdown links
+  included) or `window.open`, and the app (`app/src/outside-links.ts`) turns a
+  person's click on a same-window link to another site into such a request,
+  so no link is dead. Setup
+  opens GitHub's device page a few seconds after a sign-in starts, when it can
+  no longer ask for a window, through the `open` action of
+  `github_connection`, which opens that fixed address whatever the page
+  passes.
+- Before the page's own scripts run, the main window (and the check window,
+  below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
+  replaced (`src/declaration.rs`), with two fields. `checkWindow` says whether
+  the page can open the tile check window; it is `true` on Linux only (see
+  Tile check window). `tileFrames` says whether the page may embed
+  sandboxed frames of untrusted content served from the daemon's origin. It
+  is `true` on Linux and macOS, where the shell refuses every navigation of a
+  frame away from the app and Tauri injects its scripts, including the
+  command bridge, into the main frame only. On Linux
+  `just desktop::navigation-check` shows that a sandboxed frame at the
+  daemon's origin sees neither the declaration nor the bridge, and that none
+  of its attempts to call a command (`__TAURI_INTERNALS__`, `window.ipc`,
+  WebKit's `ipc` message handler with a guessed or no invoke key, `fetch` to
+  `ipc://localhost` and `http://ipc.localhost`) runs one. It is `false` on
+  Windows, where Tauri injects its scripts into every frame and WebView2 asks
+  the shell only about the page's own navigations, until the same check has
+  been made on a Windows machine; the constant's comment says what to check.
+  WKWebView injects the declaration into the main frame only, as WebKitGTK
+  does; that is known from the APIs Tauri uses on macOS, not yet run there.
 - Tauri treats the daemon's pages as remote. One capability names them,
   `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
   `choose_repository`, the native folder picker the Repositories page's Browse
@@ -758,7 +804,9 @@ doing anything (`src/zoom.rs`).
   offered levels, and the updater's (`update_state`, `check_for_updates`,
   `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
   read the state, start a check, install only an update the app has already
-  downloaded and verified, and record that a notice was closed. They can call no other Tauri command or
+  downloaded and verified, and record that a notice was closed. It also
+  allows `open_check_window` and `close_check_window` (see Tile check
+  window). They can call no other Tauri command or
   plugin.
   `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled
@@ -786,6 +834,121 @@ directories it writes only what the user installs through setup or Settings: the
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
 agent marketplace plugin installations. Notifications use the operating system's
 notification service (`notify-rust`) only from Rust.
+
+## Tile check window
+
+The daemon's page checks a custom tile by rendering it in a second window,
+`tile-check` (`src/check_window.rs`), so that a tile whose script never
+yields stalls that window and not the main one. The person never sees it:
+it is hidden, 1280×900, has no decorations, cannot take focus and stays out
+of the taskbar. WebKitGTK still runs a hidden window's page, but with timers
+slowed to about once a second and no animation frames.
+
+- The main window's daemon page opens it with `open_check_window` (no
+  arguments; it does nothing when the window is open) and closes it with
+  `close_check_window` (no arguments), when a check hangs or after the window
+  has been idle. Only the main window can call them; a close returns once the
+  window is gone, so an open right after it builds a new one. The shell also
+  closes it when the main window starts loading another page and when the app
+  detaches from the daemon, including a window still being built then.
+- It loads `/s/<namespace>/?page=tile-check` at the origin of the daemon page
+  the main window shows, under the main window's navigation rules
+  (`navigation::decide`, without the setup screen). It never opens the
+  browser: every request for a new window is refused.
+- Its capability, `tile-check`, names only this window and grants no
+  command: the page reports its results to the daemon over HTTP. It shares
+  the main window's cookies and storage.
+- WebKitGTK gives it a web process of its own. Destroying a window leaves a
+  spinning web process at full CPU, so on Linux `close_check_window` first
+  ends the window's web process (`webkit_web_view_terminate_web_process`,
+  through the `webkit2gtk` crate at the version wry uses) and then destroys
+  the window. Before that it asks the page to close
+  (`webkit_web_view_try_close`) and waits 200 ms: a page that still answers
+  unloads, and a check it was drawing is reported abandoned and ends as
+  unavailable rather than as a hang that blocks its tile type (the main
+  window loading another page closes the window mid-check). A page that
+  never yields ignores the request and its process is ended after the wait.
+- It is offered (`checkWindow`) on Linux only. On macOS WKWebView likely gives
+  it a separate web content process, but has no public call to end one, so
+  until that is checked the app runs its checks in the main window there. On
+  Windows the page embeds no tile frames, so there is nothing to check.
+
+`just desktop::check-window-check` checks it on Linux: it builds a small Tauri
+app with `src/check_window.rs`, `src/navigation.rs`, `src/declaration.rs`, the
+`daemon-pages` capability (granting only the two commands) and the
+`tile-check` capability (`tests/check-window`), under a virtual display in
+Docker. A mock daemon's main page opens the window, whose page holds a
+sandboxed frame that spins. It fails unless the check window runs in a web
+process other than the main window's, the main window's 100 ms heartbeat
+never stops for a second while the frame spins, the spinning process's CPU
+use drops within a second of `close_check_window` and the process is gone a
+second later, a second open while the window is open loads nothing, a window
+opened again after closing works, an open right after a close builds a new
+window, and the check page can call neither
+command, sees the same declaration, and cannot navigate to another site. It
+takes a few minutes and is not part of CI.
+
+Before turning `checkWindow` on for macOS, a person checks on a Mac, with a
+debug build and a page that calls the commands from the Web Inspector:
+
+1. After `open_check_window`, Activity Monitor shows a second web content
+   process for the app.
+2. In the check window's page (open its inspector from the Develop menu),
+   `setTimeout(() => { for (;;) {} }, 1000)`: the main window stays
+   responsive and its timers keep running.
+3. `close_check_window`: the spinning process's CPU use drops within a second
+   and the process ends.
+4. A hidden (or out of sight) check window still runs timers, and one opened
+   again after closing works.
+
+On Windows the check window stays off with tile frames (`tileFrames`); the
+same steps apply before either is turned on there.
+
+### Checking navigation
+
+`just desktop::navigation-check` checks the Linux webview: it builds a small
+Tauri window with `src/navigation.rs`, `src/declaration.rs` and the
+`daemon-pages` capability (`tests/navigation`), loads a mock daemon's page
+with and without the daemon's Content-Security-Policy, and clicks with a real
+pointer under a virtual display in Docker. It fails if a sandboxed frame's
+navigation is not refused, if a frame reaches the new-window handler or runs
+an app command, if a frame sees `__BAUM_DESKTOP__`, if any request reaches
+another server, or if the page's own links, commands or declaration stop
+working. It takes a few minutes and is not part of CI.
+
+macOS and Windows need a person. Run a debug build of the app (`just
+desktop::dev` on macOS; on Windows, `cargo tauri dev` in `oss/desktop` with
+the frontend served as `desktop::dev` does). Its page comes from the Vite
+server, which sends no Content-Security-Policy, so nothing but the shell
+stops a frame. Open the Web Inspector on the main window (Cmd+Option+I on
+macOS, Ctrl+Shift+I on Windows) and, in its console:
+
+1. `Object.assign(document.createElement("a"), { href: "https://example.com/?same-window" }).click()`:
+   nothing happens and no browser opens (the click is a script's).
+2. Load a frame from the page's own origin, which the shell allows, and drive
+   it:
+   `const f = document.createElement("iframe"); f.sandbox = "allow-scripts allow-same-origin"; f.src = "/connecting.html"; document.body.append(f)`.
+   Once it has loaded, `f.contentWindow.location.href = "https://example.com/?frame"`:
+   no browser opens. On Windows the frame may show the site, since the shell
+   is not asked about frames there; on macOS it stays.
+3. Reload the frame (`f.src = "/connecting.html"`), then
+   `f.contentDocument.head.insertAdjacentHTML("beforeend", "<meta http-equiv=refresh content='0;url=https://example.com/?refresh'>")`:
+   no browser opens.
+4. Reload it, then
+   `f.contentDocument.body.innerHTML = "<a target=_blank href='https://example.com/?popup' style='font-size:48px'>popup</a>"`
+   and click the link with the mouse: no browser opens (no `allow-popups`).
+   Repeat with `target=_top` (no `allow-top-navigation`).
+5. Click links to other sites as a person does: "Open on GitHub" in a pull
+   request's menu, a link in a review's Markdown, the docs in the `?` menu, the
+   release notes link of an update notice. Each opens the default browser,
+   once.
+6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
+   browser opens once at most.
+7. In setup's GitHub step (first run, with a fresh configuration directory),
+   sign in: the browser opens GitHub's device page about five seconds later.
+8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the window
+   freezes (see SECURITY.md); the tray menu still answers, and quitting from
+   it and starting the app again recovers.
 
 ## Updates
 
@@ -860,8 +1023,59 @@ just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--in
 just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
+just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
+```
+
+`isolated` runs the app from this checkout beside the installed one, each
+instance with its own home, credential store and daemon, so several
+branches can be tried at once on Linux with Wayland:
+
+```sh
+just desktop::isolated mobile --copy-data --workspace ~/workspace
+just desktop::isolated-shell mobile   # a login shell in it, e.g. to run claude
+just desktop::isolated agent --headless   # no window: for agents and profiling
+BAUM_RELAY_URL=https://… just desktop::isolated mobile
+```
+
+An instance's home stays between runs under
+`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/desktop-homes/<name>`; delete the
+folder to start again. Its container is `baum-desktop-<name>`, and only one
+can run per name. The `desktop-isolated` image adds gnome-keyring on a D-Bus
+session, so sign-in can store credentials, plus git, ssh and sqlite3. The
+first run installs Claude Code into the home and copies `~/.gitconfig` with
+commit signing turned off, since the signing key is not there.
+
+`--copy-data`, when the instance has no data yet, copies this machine's
+repositories, reviews and settings with consistent SQLite snapshots. It
+leaves out `credentials.json`, the daemon's runtime folder and locks, and the
+Claude and Codex account folders the settings name (data extraction's too), which exist only on the
+host. `--workspace DIR` mounts DIR read-only at the same path, so the copied
+repositories are found. The daemon always opens a repository's existing
+review store (`.git/baum/reviews`), so each one under DIR gets a writable copy
+in the instance's `review-stores/`, mounted over it; `--copy-data` fills new
+copies with a snapshot of the repository's reviews, and without it they start
+empty. `BAUM_RELAY_URL` is written to the home's `.profile`,
+which the daemon's environment comes from.
+
+`--headless` runs the instance without a display of yours: the container
+starts its own headless Weston (`BAUM_ISOLATED_WIDTH` × `BAUM_ISOLATED_HEIGHT`,
+1440 × 900 by default) and the app draws there, so agents can run the real
+WebKitGTK app with no window on your screen and no Wayland session at all.
+`just desktop::isolated-screenshot <name> [out.png]` saves what it shows.
+Weston's headless backend renders with Pixman, in software, and has no input
+seat (GDK logs `gdk_seat_get_keyboard` assertions, which are harmless here),
+so JavaScript, layout and React costs are realistic and painting and
+compositing costs are not.
+
+`BAUM_FRONTEND_MODE=profile` before any recipe that builds the frontend
+(`isolated`, `run`, `build`) builds the profiling build
+([local app](../app/README.md)) instead, and the sidecar embeds it, so the
+daemon's pages expose `window.__baumPerf`:
+
+```sh
+BAUM_FRONTEND_MODE=profile just desktop::isolated perf --copy-data --headless
 ```
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs

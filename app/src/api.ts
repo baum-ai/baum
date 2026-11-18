@@ -160,10 +160,35 @@ export type ReviewGroup = {
     model: string;
     recorded_cost_usd: number | null;
   } | null;
-  risk_score: { score: number | null; status: string } | null;
+  /** The latest version's risk; a stack's is its riskiest member review's. */
+  risk_score: {
+    score: number | null;
+    status: string;
+    reasons?: { section: string; text: string }[];
+  } | null;
   /** The members the latest version covered, with the heads it read. */
   reviewed: { number: number; head_sha: string; review_version: number }[];
   outdated: boolean;
+  /** A stack's overview, in place of a combined review; absent for a group a
+   *  person made (and from an older daemon). */
+  overview?: StackOverviewData;
+};
+/** What a stack's page shows beside its pull requests, from their saved
+ *  reviews. */
+export type StackOverviewData = {
+  /** The open pull request whose saved review scores the highest risk. */
+  riskiest?: number;
+  /** How many open pull requests have a saved review. */
+  reviewed: number;
+  /** A few sentences about the whole stack, written from those reviews. */
+  summary: {
+    text: string;
+    model: string;
+    created_at: string;
+    members: { number: number; review_version: number }[];
+  } | null;
+  /** The summary read every open pull request's latest saved review. */
+  current: boolean;
 };
 export const MAX_GROUP_MEMBERS = 8;
 /** An older daemon answers 404 or `available: false`: no groups. */
@@ -359,7 +384,9 @@ const jobReasons: Record<string, string> = {
   history_rewritten:
     "The result didn't build on the pull request's commits, so baum refused to push it.",
   workflow_changed:
-    "The agent changed a GitHub workflow or action, which a fix of review comments or a conversation never pushes. Nothing was pushed.",
+    "The agent changed a GitHub workflow or action, which needs workflow access that baum's GitHub connection does not have, so nothing was pushed. Choose Reconnect with workflow access in Settings, then run the fix again.",
+  workflow_scope:
+    "GitHub refused the push because the git credential it used can't change workflows. Give that credential the workflow scope (for the GitHub CLI: gh auth refresh -s workflow), then run the fix again.",
   credential_added:
     "The agent's change adds what looks like a credential, which baum never pushes. Nothing was pushed.",
   nested_repository:
@@ -603,6 +630,9 @@ export function focusSession(
     {},
   );
 }
+/** A path with the home folder written as `~`. */
+export const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+
 const agentNames: Record<string, string> = {
   "claude-code": "Claude Code",
   // Analytics names agents by their session store's vendor slug.

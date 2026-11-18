@@ -263,44 +263,63 @@ async function host(page: PageContext = pr, title?: string, liveTick = 0) {
   );
 }
 
-it("opens with its key or button, names the page, and hides with Escape or the key", async () => {
+it("opens with its key or button, names the page, and hides with its key", async () => {
   await host(pr, "Fix it");
   expect(panel()).toBeNull();
+  // The backtick alone is not its key.
   await key(document.body, "`");
+  expect(panel()).toBeNull();
+  await key(document.body, "`", { ctrlKey: true });
   expect(panel()).not.toBeNull();
   expect(node.querySelector('[data-testid="session-panel-page"]')!.textContent).toBe(
     "Fix it · acme/demo #7",
   );
   expect(panel()!.textContent).toContain("New session");
   expect(panel()!.textContent).toContain("A checkout of acme/demo #7, made when it starts");
-  expect(panel()!.textContent).toContain("Claude Code · default model");
+  expect(panel()!.textContent).toContain("default model");
   expect(document.activeElement).toBe(composer());
-  // Typed in the composer, the key is a character, not the panel's.
+  // Typed in the composer, the backtick is a character, not the panel's.
   await key(composer(), "`");
   expect(panel()).not.toBeNull();
-  // Escape in an empty composer hides it.
+  // Escape in the composer, even empty, leaves it; the next gives the keys
+  // back to the page, the panel staying open.
   await key(composer(), "Escape");
+  expect(panel()).not.toBeNull();
+  expect(document.activeElement).toBe(panel());
+  await key(panel()!, "Escape");
+  expect(panel()).not.toBeNull();
+  expect(document.activeElement).toBe(document.body);
+  // With the keys on the page, the key puts them back in the composer,
+  // where it hides the panel.
+  const opener = button("Opener")!;
+  opener.focus();
+  await key(opener, "`", { ctrlKey: true });
+  expect(panel()).not.toBeNull();
+  expect(document.activeElement).toBe(composer());
+  await key(composer(), "`", { ctrlKey: true });
   expect(panel()).toBeNull();
+  expect(document.activeElement).toBe(opener);
   // The sidebar's button shows it again, pressed while it is open.
   const toggle = node.querySelector<HTMLButtonElement>(".local-rail-panel")!;
   expect(toggle.getAttribute("aria-pressed")).toBe("false");
   await act(async () => toggle.click());
   expect(panel()).not.toBeNull();
   expect(toggle.getAttribute("aria-pressed")).toBe("true");
-  // The key on the page hides it, and what was typed waits for it.
+  // The key in the composer hides it, and what was typed waits for it.
   await type(composer(), "draft");
-  await key(document.body, "`");
+  expect(document.activeElement).toBe(composer());
+  await key(composer(), "`", { ctrlKey: true });
   expect(panel()).toBeNull();
-  await key(document.body, "`");
+  await key(document.body, "`", { ctrlKey: true });
   expect(composer().value).toBe("draft");
   // On a layout where the key is a dead key, the key in its place.
-  await key(document.body, "Dead", { code: "Backquote" });
+  await key(composer(), "Dead", { code: "Backquote", ctrlKey: true });
   expect(panel()).toBeNull();
-  await key(document.body, "Dead", { code: "Backquote", shiftKey: true });
+  await key(document.body, "Dead", { code: "Backquote", ctrlKey: true, shiftKey: true });
   expect(panel()).toBeNull();
 });
 
-it("takes two Escapes to hide with a draft, never letting the page under it have one", async () => {
+it("takes two Escapes to give the page its keys back, never letting it have one of them", async () => {
   // The page's own Escape, as a pull request's page goes back to its list
   // on an Escape nothing else took.
   const back = vi.fn();
@@ -312,7 +331,7 @@ it("takes two Escapes to hide with a draft, never letting the page under it have
     await host(pr);
     const opener = button("Opener")!;
     opener.focus();
-    await key(opener, "`");
+    await key(opener, "`", { ctrlKey: true });
     expect(document.activeElement).toBe(composer());
     await type(composer(), "half a thought");
     // The first gives up the field to the panel, which keeps the keys.
@@ -320,15 +339,74 @@ it("takes two Escapes to hide with a draft, never letting the page under it have
     expect(panel()).not.toBeNull();
     expect(document.activeElement).toBe(panel());
     expect(back).not.toHaveBeenCalled();
-    // The second hides the panel, and the keys go back where they were.
+    // The second gives the keys back where they were; the panel stays, and
+    // what was typed with it.
     await key(panel()!, "Escape");
-    expect(panel()).toBeNull();
+    expect(panel()).not.toBeNull();
     expect(back).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(opener);
-    await key(document.body, "`");
     expect(composer().value).toBe("half a thought");
+    // The page has its keys again, Escape among them.
+    await key(opener, "Escape");
+    expect(back).toHaveBeenCalledTimes(1);
   } finally {
     removeEventListener("keydown", pageEscape);
+  }
+});
+
+it("keeps the page's keys while it has them, and reads its session with them", async () => {
+  // A page's own key, as k moves a list's selection.
+  const pageKey = vi.fn();
+  const onPage = (event: KeyboardEvent) => {
+    if (event.key === "k" || event.key === "m") pageKey(event.key);
+  };
+  addEventListener("keydown", onPage);
+  try {
+    await host(pr);
+    await key(document.body, "`", { ctrlKey: true });
+    await key(composer(), "Escape");
+    expect(document.activeElement).toBe(panel());
+    pageKey.mockClear();
+    // Out of the composer the keys are the panel's: the page gets neither
+    // the ones the panel reads with nor any other character.
+    await key(panel()!, "k");
+    await key(panel()!, "m");
+    expect(pageKey).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(panel());
+    // The help's key and a modified key still reach the app.
+    const reached = vi.fn();
+    const onApp = (event: KeyboardEvent) => reached(event.key);
+    addEventListener("keydown", onApp);
+    await key(panel()!, "?");
+    await key(panel()!, "k", { ctrlKey: true });
+    removeEventListener("keydown", onApp);
+    expect(reached.mock.calls.map(([k]) => k)).toEqual(["?", "k"]);
+    // i, as Enter, goes back to the composer.
+    await key(panel()!, "i");
+    expect(document.activeElement).toBe(composer());
+    await key(composer(), "Escape");
+    await key(panel()!, "Enter");
+    expect(document.activeElement).toBe(composer());
+    // The composer is the session's last line: ↑ at its start leaves it,
+    // and j past the last message goes back to it. With something typed
+    // and the caret after it, ↑ stays the field's.
+    await key(composer(), "ArrowUp");
+    expect(document.activeElement).toBe(panel());
+    await key(panel()!, "j");
+    expect(document.activeElement).toBe(composer());
+    await type(composer(), "half");
+    composer().setSelectionRange(4, 4);
+    await key(composer(), "ArrowUp");
+    expect(document.activeElement).toBe(composer());
+    await type(composer(), "");
+    // q hides the panel, but typed in the composer it is a character.
+    await key(composer(), "q");
+    expect(panel()).not.toBeNull();
+    await key(composer(), "Escape");
+    await key(panel()!, "q");
+    expect(panel()).toBeNull();
+  } finally {
+    removeEventListener("keydown", onPage);
   }
 });
 
@@ -492,7 +570,7 @@ it("shows each message of a turn of several until the transcript holds it", asyn
   // The first message is the transcript's, not shown twice.
   expect(tail()).not.toContain("Looking at the guide first.");
   // The model the transcript names replaces "default model".
-  expect(panel()!.textContent).toContain("Claude Code · Claude Opus 5.5");
+  expect(panel()!.textContent).toContain("Opus 5.5");
   // Once the transcript holds the second message, it shows only there.
   transcriptTurns = [
     {
@@ -887,4 +965,51 @@ it("reads the panel's setting again when the fix agent it follows changes", asyn
   current = { ...settings, agent: "codex", model: "gpt-6-luna" };
   await act(async () => panelSettingsChanged());
   await until(() => expect(section()!.textContent).toContain("Now Codex"));
+});
+
+it("opens from a side of the window, as wide as its grip sets it", async () => {
+  answer = (call) =>
+    call.path === "api/settings/panel" && call.method === "GET"
+      ? Response.json({ ...settings, position: "right" })
+      : undefined;
+  await host();
+  await act(async () => sessionPanel.show());
+  await until(() => expect(panel()!.dataset.position).toBe("right"));
+  expect(panel()!.style.width).toContain("480px");
+  expect(panel()!.style.height).toBe("");
+  expect(node.querySelector<HTMLElement>(".local-frame")!.dataset.sessionPanel).toBe("right");
+  const grip = panel()!.querySelector<HTMLElement>('[role="separator"]')!;
+  expect(grip.getAttribute("aria-orientation")).toBe("vertical");
+  // From the right, ← grows it towards the page and → shrinks it.
+  await key(grip, "ArrowLeft");
+  await until(() => expect(panel()!.style.width).toContain("520px"));
+  await key(grip, "ArrowRight");
+  await key(grip, "ArrowRight");
+  await until(() => expect(panel()!.style.width).toContain("440px"));
+});
+
+it("opens from the foot while the window is too narrow for a side panel beside the page", async () => {
+  const wide = window.innerWidth;
+  const resize = (width: number) =>
+    act(async () => {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      window.dispatchEvent(new Event("resize"));
+    });
+  answer = (call) =>
+    call.path === "api/settings/panel" && call.method === "GET"
+      ? Response.json({ ...settings, position: "left" })
+      : undefined;
+  try {
+    await resize(390);
+    await host();
+    await act(async () => sessionPanel.show());
+    await until(() => expect(panel()).not.toBeNull());
+    await until(() => expect(panel()!.dataset.position).toBe("bottom"));
+    expect(panel()!.style.height).not.toBe("");
+    // Wide enough again, it goes back to the side chosen.
+    await resize(1280);
+    await until(() => expect(panel()!.dataset.position).toBe("left"));
+  } finally {
+    await resize(wide);
+  }
 });

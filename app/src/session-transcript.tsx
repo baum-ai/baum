@@ -276,7 +276,8 @@ export function useFollowScroll(version: string | undefined, follow = true) {
 
 /** A message of the transcript: a prompt, or one of the agent's messages
  *  other than its progress notes on the way to a reply. */
-const MESSAGE = '[data-message="human"], [data-agent-text]:not([data-agent-text="progress"])';
+export const MESSAGE =
+  '[data-message="human"], [data-agent-text]:not([data-agent-text="progress"])';
 
 /** The keys that read the transcript in `body` a message at a time: j and k
  *  bring the next or previous one just under `top`, the bar that stays at
@@ -656,12 +657,15 @@ export function TranscriptReader({
   summary,
   live,
   title,
+  openLastReply = false,
 }: {
   transcript: LocalTranscript;
   version: string;
   summary?: string;
   live: boolean;
   title?: string;
+  /** Shows the latest answer whole, as the session panel reads it. */
+  openLastReply?: boolean;
 }) {
   const source = useLocalSource(transcript, version);
   const session = shownSession(transcript, live, title);
@@ -669,7 +673,13 @@ export function TranscriptReader({
     <section aria-label="Transcript" className="local-transcript">
       {summary ? <CompactionSummary summary={summary} /> : null}
       {session.has_inner_trace ? (
-        <SessionTranscript session={session} replies="ready" source={source} layout="log" />
+        <SessionTranscript
+          session={session}
+          replies="ready"
+          source={source}
+          layout="log"
+          openLastReply={openLastReply}
+        />
       ) : (
         <p className="local-transcript-note">
           This session reported its outcome and usage but no tool calls, file reads or diffs.

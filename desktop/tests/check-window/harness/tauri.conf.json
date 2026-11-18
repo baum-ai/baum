@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "check-window-harness",
+  "version": "0.0.0",
+  "identifier": "com.baum.checkwindowharness",
+  "build": { "frontendDist": "dist" },
+  "app": { "windows": [], "withGlobalTauri": false, "security": { "csp": null, "capabilities": ["daemon-pages", "tile-check"] } },
+  "bundle": { "active": false, "icon": ["icons/icon.png"] }
+}

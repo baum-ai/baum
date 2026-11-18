@@ -40,10 +40,7 @@ func RedactOutput(ctx context.Context, validator *review.DocumentValidator, reda
 			outcome.Usage.Speed = nil
 		}
 	}()
-	o, err := review.NewOutputRedactor(validator, redactor, b, checkout)
-	if err != nil {
-		return nil, 0, err
-	}
+	o := review.NewOutputRedactor(validator, redactor, b, checkout)
 	if redacted, err = o.Document(ctx, document); err != nil {
 		return nil, 0, err
 	}

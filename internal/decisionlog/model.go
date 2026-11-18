@@ -427,6 +427,62 @@ type callResult struct {
 	// billed.
 	Called bool
 	Cost   *float64
+	// Model is the model the provider reported, once called.
+	Model string
+}
+
+// Calls makes single short model calls for other parts of the daemon, such
+// as a stack's summary: with the backend and model a capture resolves (the
+// data extraction backend and the cheap decision model by default), the
+// cost reserved and each call recorded in the ledger under its attempt's
+// stage. It does not follow the capture gate: the caller decides when to
+// call.
+type Calls struct {
+	Store *Store
+	// Registry supplies the preferences; nil uses the defaults.
+	Registry *repos.Registry
+	Config   config.Config
+	Backends generate.Backends
+	Log      *slog.Logger
+
+	once     sync.Once
+	redactor *bundle.Redactor
+	initErr  error
+}
+
+// StageStackSummary is the ledger stage of a stack summary's call (see
+// reviewgroups.Summarizer).
+const StageStackSummary = "stack_summary"
+
+// ErrNoCall is a call Calls could not make: no backend can make it, or the
+// preferences could not be read. Nothing was billed.
+var ErrNoCall = errors.New("no model call was made")
+
+// Complete makes one call. check, when set, validates the reply before the
+// call is settled, so an unusable reply is recorded as failed. It returns the
+// reply, masked, and the model that wrote it.
+func (c *Calls) Complete(ctx context.Context, a Attempt, req decisions.ModelRequest, check func([]byte) error) ([]byte, string, error) {
+	c.once.Do(func() { c.redactor, c.initErr = bundle.NewRedactor() })
+	if c.initErr != nil {
+		return nil, "", c.initErr
+	}
+	log := c.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	call := caller{store: c.Store, config: c.Config, backends: c.Backends, prices: pricing.Active(), redactor: c.redactor, log: log, check: check,
+		gate: func(ctx context.Context) (repos.Preferences, bool, error) {
+			if c.Registry == nil {
+				return repos.DefaultPreferences(), true, nil
+			}
+			prefs, err := c.Registry.Preferences(ctx)
+			return prefs, err == nil, err
+		}}
+	result, err := call.complete(ctx, "", "", a, req)
+	if result.Skip != "" {
+		return nil, "", errors.Join(fmt.Errorf("%w: %s", ErrNoCall, result.Skip), err)
+	}
+	return result.JSON, result.Model, err
 }
 
 // complete makes one feature stage call with plan, begin and finish; the
@@ -458,7 +514,7 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 	}
 	// The ledger outlives a cancelled call: it may be paid for.
 	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
-	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}
+	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent, Model: cmp.Or(response.Model, m.model)}
 	if b := c.build; b != nil && m.called {
 		b.add(context.WithoutCancel(ctx), c.store, c.log, spent)
 	}

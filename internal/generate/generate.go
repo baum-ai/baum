@@ -112,8 +112,6 @@ type Options struct {
 	Budgets        agent.Budgets
 	// PassTimeout bounds each backend call; zero leaves it to the wall clock.
 	PassTimeout time.Duration
-	// TileKinds is the tile allow-list; empty offers no tiles.
-	TileKinds []string
 	// PromptSource is recorded in the stored metadata as store.Metadata's
 	// PromptSource; the host that chose the prompts sets it.
 	PromptSource string
@@ -352,7 +350,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		Logger: slog.New(&progressHandler{w: o.Progress, repairs: o.OnRepairs, stages: map[string]int{}}),
 	}
 	run := agent.Run{
-		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, TileKinds: o.TileKinds, Budgets: o.Budgets, Decorate: decorate,
+		Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, Budgets: o.Budgets, Decorate: decorate,
 	}
 	if o.Group != nil {
 		run.ModelSchema = groupModelSchema

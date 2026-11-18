@@ -15,14 +15,31 @@ type StateProps = {
   children?: ReactNode;
 };
 
-/** Nothing has arrived yet — no rows, not zero rows. */
+/** Nothing has arrived yet — no rows, not zero rows.
+ *
+ *  `pane` (the default) is a quiet note inside a pane or card. `page` is a
+ *  page with nothing to show: a semibold title over a secondary sentence,
+ *  then its way forward (`action`), clear of the sentence. */
 export function Empty({
   title,
   children,
   className,
+  variant = "pane",
+  action,
 }: StateProps & {
   title: string;
+  variant?: "pane" | "page";
+  action?: ReactNode;
 }) {
+  if (variant === "page") {
+    return (
+      <div className={cn("px-4 py-12 text-center text-secondary", className)}>
+        <h2 className="mb-1 font-semibold text-primary">{title}</h2>
+        {children ? <p>{children}</p> : null}
+        {action ? <div className="mt-4">{action}</div> : null}
+      </div>
+    );
+  }
   return (
     <div
       className={cn(

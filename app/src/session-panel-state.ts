@@ -2,19 +2,24 @@ import { useSyncExternalStore } from "react";
 import type { ChatFocus } from "./api";
 
 // The session panel's own state, kept for the whole window: whether it is
-// open, the conversation it shows, its height and what is typed in it. Open,
-// height and conversation are remembered across reloads in this window's
+// open, the conversation it shows, its height (from the top or the foot), its
+// width (from a side) and what is typed in it. Open, height, width and
+// conversation are remembered across reloads in this window's
 // storage, as the sidebar's fold is. It has a module of its own so any page
 // can open the panel (Sessions' "Open in panel") without drawing it.
 const STORE_KEY = "baum.session-panel.v1";
 export const MIN_HEIGHT = 200;
 export const DEFAULT_HEIGHT = 380;
+export const MIN_WIDTH = 320;
+export const DEFAULT_WIDTH = 480;
 
 export type PanelState = {
   open: boolean;
   /** The conversation shown; null for a new one. */
   conversation: string | null;
   height: number;
+  /** Its width when it opens from a side of the window. */
+  width: number;
   /** Whether the daemon runs the session panel; null until known. */
   available: boolean | null;
   /** What is typed in the composer. */
@@ -40,6 +45,7 @@ function loadState(): PanelState {
     open: false,
     conversation: null,
     height: DEFAULT_HEIGHT,
+    width: DEFAULT_WIDTH,
     available: null,
     draft: "",
     focus: 0,
@@ -52,6 +58,7 @@ function loadState(): PanelState {
       loaded.conversation = typeof saved.conversation === "string" ? saved.conversation : null;
       if (typeof saved.height === "number" && saved.height >= MIN_HEIGHT)
         loaded.height = saved.height;
+      if (typeof saved.width === "number" && saved.width >= MIN_WIDTH) loaded.width = saved.width;
     }
   } catch {
     // Starts closed.
@@ -67,7 +74,12 @@ function change(patch: Partial<PanelState>) {
   try {
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ open: state.open, conversation: state.conversation, height: state.height }),
+      JSON.stringify({
+        open: state.open,
+        conversation: state.conversation,
+        height: state.height,
+        width: state.width,
+      }),
     );
   } catch {
     // Not remembered across reloads.
@@ -75,8 +87,8 @@ function change(patch: Partial<PanelState>) {
   for (const listener of listeners) listener();
 }
 
-/** What had the keys before the panel opened, where they go back when it
- *  hides. */
+/** What had the keys before the panel took them, where they go back when it
+ *  gives them up or hides. */
 let returnTo: Element | null = null;
 
 /** What opens, hides and points the session panel, from anywhere in the app:
@@ -86,7 +98,9 @@ export const sessionPanel = {
   /** Opens it with the keys in its composer; on `conversation` when given
    *  (null for a new one), else on the one it showed. */
   show(conversation?: string | null) {
-    if (!state.open) returnTo = document.activeElement;
+    // What has the keys now gets them back, unless the panel already does.
+    if (!state.open || !document.activeElement?.closest(".session-panel"))
+      returnTo = document.activeElement;
     change({
       open: true,
       focus: state.focus + 1,
@@ -105,6 +119,9 @@ export const sessionPanel = {
   },
   setHeight(height: number) {
     change({ height: Math.max(MIN_HEIGHT, Math.round(height)) });
+  },
+  setWidth(width: number) {
+    change({ width: Math.max(MIN_WIDTH, Math.round(width)) });
   },
   setAvailable(available: boolean) {
     if (state.available !== available) change({ available });

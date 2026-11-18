@@ -51,6 +51,26 @@ func ProtectDirectory(path string) error {
 	}
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 }
+
+// ProtectFile gives the file at path a protected DACL with one full-control
+// ACE for the current user, so PrivateFile accepts it wherever it was created:
+// a new file otherwise inherits its directory's ACL.
+func ProtectFile(path string) error {
+	sid, err := userSID()
+	if err != nil {
+		return err
+	}
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;" + sid.String() + ")")
+	if err != nil {
+		return err
+	}
+	acl, _, err := descriptor.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
+}
+
 func PrivateFile(path string, info os.FileInfo) bool {
 	if !info.Mode().IsRegular() {
 		return false

@@ -62,6 +62,23 @@ func (s *Service) place(ctx context.Context, id string, page *agentcontext.PageC
 	return placement{dir: dir, note: note}, nil
 }
 
+// resolveExisting is path with symlinks and Windows short names resolved in
+// its deepest existing part and the rest appended.
+func resolveExisting(path string) string {
+	existing, rest := filepath.Clean(path), ""
+	for {
+		if resolved, err := filepath.EvalSymlinks(existing); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		next := filepath.Dir(existing)
+		if next == existing {
+			return filepath.Clean(path)
+		}
+		rest = filepath.Join(filepath.Base(existing), rest)
+		existing = next
+	}
+}
+
 // lockRepository serializes placement on one repository; the returned
 // function unlocks it.
 func (s *Service) lockRepository(repository string) func() {
