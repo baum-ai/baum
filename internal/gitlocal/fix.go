@@ -89,6 +89,18 @@ var ErrHeadMoved = errors.New("the pull request's branch has moved on since the 
 // branch moved on while the fix ran.
 var ErrPushRejected = errors.New("the remote refused the push")
 
+// ErrWorkflowScope reports a push GitHub refused because it changes a
+// workflow and the credential may not: an OAuth App or personal access
+// token without the workflow scope, or a GitHub App without the workflows
+// permission.
+var ErrWorkflowScope = errors.New("the remote refused a workflow change from this credential")
+
+// workflowRefusal matches GitHub's reason for refusing a workflow change,
+// "refusing to allow an OAuth App to create or update workflow
+// `.github/workflows/ci.yml` without `workflow` scope" and its personal
+// access token and GitHub App forms.
+var workflowRefusal = regexp.MustCompile("refusing to allow an? .{1,40} to create or update workflow .{0,512}without `workflows?` (scope|permission)")
+
 var fixID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // StartFix fetches the pull request's branch (and base branch) from the
@@ -703,9 +715,13 @@ func (f *Fix) Push(ctx context.Context, commit string) error {
 		env = b.env(ctx, f.repo.dir, env, err != nil || sshRemote(url))
 	}
 	config := append(f.config(), "push.followTags=false", "push.recurseSubmodules=no", "push.gpgSign=false")
-	_, err := run(ctx, runSpec{dir: f.repo.dir, env: env, timeout: f.repo.opts.FetchTimeout, config: config},
+	out, err := run(ctx, runSpec{dir: f.repo.dir, env: env, limit: 1 << 20, keepOutput: true, timeout: f.repo.opts.FetchTimeout, config: config},
 		"push", "--no-verify", "--porcelain", "--", f.remote, commit+":refs/heads/"+f.headRef)
 	var gitErr *Error
+	// --porcelain reports a ref's "[remote rejected]" reason on stdout.
+	if errors.As(err, &gitErr) && (workflowRefusal.MatchString(gitErr.Stderr) || workflowRefusal.Match(out)) {
+		return fmt.Errorf("%w: %w", ErrWorkflowScope, err)
+	}
 	// --porcelain reports the ref's "[rejected]" on stdout; stderr keeps the
 	// summary.
 	if errors.As(err, &gitErr) && (strings.Contains(gitErr.Stderr, "Updates were rejected") || strings.Contains(gitErr.Stderr, "non-fast-forward") || strings.Contains(gitErr.Stderr, "[rejected]")) {

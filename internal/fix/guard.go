@@ -30,7 +30,8 @@ import (
 //     comments or a conversation, other people's or an agent's words: a
 //     workflow runs with the repository's secrets as soon as it is pushed
 //     (ReasonWorkflowChanged). A fix of conflicts or checks alone may change
-//     one.
+//     one, and so may every fix when baum's GitHub connection has workflow
+//     access or its access is unknown (Options.AllowWorkflows).
 
 // maxNamed bounds the paths a refusal names.
 const maxNamed = 5
@@ -61,9 +62,11 @@ func credentialPath(p string) bool {
 	return false
 }
 
-// guard refuses a result that adds a credential or a gitlink, or, when
-// untrusted words were part of the prompt, changes a workflow or action.
-func guard(ctx context.Context, checkout *gitlocal.Fix, head string, untrusted bool) error {
+// guard refuses a result that adds a credential, a gitlink or a conflict
+// marker, or, with refuseWorkflows (untrusted words were part of the prompt
+// and baum's GitHub connection is known to lack workflow access), changes a
+// workflow or action.
+func guard(ctx context.Context, checkout *gitlocal.Fix, head string, refuseWorkflows bool) error {
 	changes, err := checkout.Changes(ctx, head)
 	if err != nil {
 		return fail(ReasonGit, err)
@@ -93,7 +96,7 @@ func guard(ctx context.Context, checkout *gitlocal.Fix, head string, untrusted b
 		if change.Mode == gitlocal.ModeGitlink {
 			links = append(links, change.Path)
 		}
-		if untrusted && workflow(change.Path) {
+		if refuseWorkflows && workflow(change.Path) {
 			flows = append(flows, change.Path)
 		}
 	}
@@ -101,7 +104,7 @@ func guard(ctx context.Context, checkout *gitlocal.Fix, head string, untrusted b
 		return fail(ReasonNestedRepository, fmt.Errorf("the agent's change adds or changes a nested repository or submodule (%s), which a fix never pushes", named(ctx, redactor, links)))
 	}
 	if len(flows) > 0 {
-		return fail(ReasonWorkflowChanged, fmt.Errorf("the agent changed GitHub workflow or action files (%s), which a fix of review comments or a conversation never pushes", named(ctx, redactor, flows)))
+		return fail(ReasonWorkflowChanged, fmt.Errorf("the agent changed GitHub workflow or action files (%s), which needs workflow access that baum's GitHub connection does not have, so a fix of review comments or a conversation does not push them; choose Reconnect with workflow access in Settings, then run the fix again", named(ctx, redactor, flows)))
 	}
 	return nil
 }

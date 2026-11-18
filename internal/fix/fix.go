@@ -69,6 +69,10 @@ const (
 	// is what git records for a repository the agent made in the checkout.
 	ReasonNestedRepository = "nested_repository"
 	ReasonPushRejected     = "push_rejected"
+	// ReasonWorkflowScope: GitHub refused the push because the git
+	// credential may not change workflows (an OAuth or personal token
+	// without the workflow scope, an app without the workflows permission).
+	ReasonWorkflowScope = "workflow_scope"
 	ReasonPushFailed       = "push_failed"
 )
 
@@ -135,6 +139,12 @@ type Options struct {
 	// Network lets the agent's commands reach the network
 	// (agent.Request.Network): the fix_network preference, on by default.
 	Network bool
+	// AllowWorkflows lets the fix push changes to GitHub workflows and
+	// actions whatever was in its prompt: baum's GitHub connection has
+	// workflow access (Reconnect with workflow access in Settings), or which
+	// access the credential has is unknown (see guard). Without it, a fix
+	// whose prompt held review comments or a conversation refuses them.
+	AllowWorkflows bool
 	// Prompts replace the built-in fix prompts (prompt.FixWith); nil keeps
 	// them. The texts must already be validated.
 	Prompts prompt.Overrides
@@ -336,7 +346,7 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	if !descends {
 		return out, fail(ReasonHistoryRewritten, errors.New("the result does not build on the pull request's head; baum never rewrites a branch's history"))
 	}
-	if err := guard(ctx, checkout, head, len(o.Threads) > 0 || o.hasChat()); err != nil {
+	if err := guard(ctx, checkout, head, (len(o.Threads) > 0 || o.hasChat()) && !o.AllowWorkflows); err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
 		}
@@ -346,6 +356,9 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 	if err := checkout.Push(ctx, head); err != nil {
 		if ctx.Err() != nil {
 			return out, ctx.Err()
+		}
+		if errors.Is(err, gitlocal.ErrWorkflowScope) {
+			return out, fail(ReasonWorkflowScope, errors.New("GitHub refused the push because your git credential cannot change workflows; give it the workflow scope (for the GitHub CLI: gh auth refresh -s workflow) and try again"))
 		}
 		if errors.Is(err, gitlocal.ErrPushRejected) {
 			return out, fail(ReasonPushRejected, err)

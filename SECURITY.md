@@ -756,8 +756,8 @@ turn, and one whose stored turns changed stops before the agent runs. Nothing
 about the confirmation changes: the same evidence, the same dialog, the same
 write access. A fix from a conversation is its own fix: it makes only that
 change, reads no checks or review threads and replies on none, only the newest
-review's conversation can start one, and it never pushes a workflow or action
-change.
+review's conversation can start one, and it pushes a workflow or action
+change only under the workflow access rule below.
 
 The agent reports per thread whether it addressed it, in a JSON block at the
 end of its final message whose opening fence carries the prompt's random tag,
@@ -825,14 +825,26 @@ What baum does after the agent:
 - It refuses a result that adds or changes a gitlink (mode `160000`): `git add`
   records a repository the agent made in the checkout as a commit of another
   repository, which the push would carry without its content.
-- A fix whose prompt held review comments or a conversation refuses a
-  result that changes anything under `.github/workflows/` or
-  `.github/actions/`, whether or not it also fixes conflicts or checks: a
-  workflow runs with the repository's secrets as soon as it is pushed, and no
-  review comment or conversation, being other people's or an agent's words,
-  may bring one about. A workflow change the merge of the base branch brought
-  is not the fix's. A fix of conflicts or failing checks alone may change a
-  workflow.
+- A workflow runs with the repository's secrets as soon as it is pushed, so
+  workflow changes follow the workflow access you gave baum's GitHub
+  connection, the opt-in **Reconnect with workflow access** in Settings that
+  merges of workflow changes already need. When the saved connection is
+  known to lack it, a fix whose prompt held review comments or a
+  conversation (other people's or an agent's words) refuses a result that
+  changes anything under `.github/workflows/` or `.github/actions/`
+  (`workflow_changed`), whether or not it also fixes conflicts or checks; the
+  refusal says to choose Reconnect with workflow access in Settings and run
+  the fix again. With workflow access, or when baum cannot know the token's
+  scopes (an explicit token or `GITHUB_TOKEN`), every fix may push one: GitHub
+  itself refuses a workflow change the pushing credential may not make. A
+  workflow change the merge of the base branch brought is not the fix's. A
+  fix of conflicts or failing checks alone may change a workflow.
+- The push uses your git credentials, not baum's connection. When GitHub
+  refuses it because that credential lacks the `workflow` scope ("refusing to
+  allow ... to create or update workflow ... without `workflow` scope", read
+  from git's output), the fix fails with `workflow_scope`, which says to give
+  the credential the scope (for the GitHub CLI, `gh auth refresh -s
+  workflow`), rather than as an ordinary refused push.
 - It pushes with a plain `git push --no-verify <remote> <commit>:refs/heads/<branch>`
   from your clone to the remote whose URL names the repository: never forced,
   so GitHub refuses it if the branch moved on, and nothing else (no tags, no

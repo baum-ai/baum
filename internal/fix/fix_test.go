@@ -469,3 +469,21 @@ func TestPromptKeepsDataDelimited(t *testing.T) {
 		t.Fatalf("sections:\n%s", text)
 	}
 }
+
+// GitHub's refusal of a workflow change from a git credential without the
+// workflow scope fails the fix with its own reason, saying what to do.
+func TestFixReportsAPushRefusedForWorkflowScope(t *testing.T) {
+	r := NewRepositories(t)
+	hook := filepath.Join(r.Remote, "hooks", "pre-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'refusing to allow a Personal Access Token to create or update workflow `.github/workflows/ci.yml` without `workflow` scope' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o := options(t, r, &fakeAgent{fix: func(_ context.Context, dir string) error {
+		return writeIn(dir, ".github/workflows/ci.yml", "on: push\n")
+	}})
+	o.Checks = true
+	_, err := Run(context.Background(), o)
+	if reasonOf(err) != ReasonWorkflowScope || !strings.Contains(err.Error(), "gh auth refresh -s workflow") {
+		t.Fatalf("err %v (reason %q)", err, reasonOf(err))
+	}
+}

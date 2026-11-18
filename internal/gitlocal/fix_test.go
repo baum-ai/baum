@@ -541,3 +541,28 @@ func TestAgentHEADReadsFilesOnly(t *testing.T) {
 		t.Errorf("symbolic link followed: %q", got)
 	}
 }
+
+// GitHub's refusal of a workflow change from a credential without the
+// workflow scope is told apart from a branch that moved on.
+func TestFixPushTellsAWorkflowScopeRefusal(t *testing.T) {
+	f := newFixFixture(t)
+	ctx := context.Background()
+	write(t, f.remote, "hooks/pre-receive", "#!/bin/sh\necho \"refusing to allow an OAuth App to create or update workflow \\`.github/workflows/ci.yml\\` without \\`workflow\\` scope\" >&2\nexit 1\n", 0o755)
+	fix, err := startFix(t, f, FixOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	write(t, fix.Dir(), ".github/workflows/ci.yml", "on: push\n", 0o644)
+	result, err := fix.Commit(ctx, "Fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fix.Push(ctx, result); !errors.Is(err, ErrWorkflowScope) || errors.Is(err, ErrPushRejected) {
+		t.Fatalf("err %v, want ErrWorkflowScope", err)
+	}
+	write(t, f.remote, "hooks/pre-receive", "#!/bin/sh\necho 'something else' >&2\nexit 1\n", 0o755)
+	if err := fix.Push(ctx, result); errors.Is(err, ErrWorkflowScope) || err == nil {
+		t.Fatalf("another refusal taken for a workflow scope one: %v", err)
+	}
+}
