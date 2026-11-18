@@ -927,7 +927,10 @@ without the failure icon. A review job that completed with
 alter the saved review) is neutral too: the Jobs list says "Review still
 applies" with the first paragraph of the agent's one-line reason, and the job
 page says "Review still applies" without a check or a cross; no new review is
-shown. Agent sessions working on its
+shown. The index lists such a review as `current` at the new head with its
+`kept` head and reason, so the PR page does not mark it outdated and says
+"Still applies to the newer commits" under the title, the agent's reason in
+its tooltip. Agent sessions working on its
 branch are counted at the foot of the panel, as a link to Sessions
 (`?page=sessions&peek=<agent:id>`) that opens that session's card there, its
 peek and its reply where it takes one, as a click on it does (with several,

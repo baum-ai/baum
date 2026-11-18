@@ -1685,7 +1685,8 @@ ones did, absent when every prompt was built in. The daemon's jobs and
 `baum decisions` use the prompts resolved for the repository (repository, then
 global, then built in); `baum internal generate` opens no registry and uses the
 built-in prompts. The replaceable review prompts are the four of a staged
-review and a review group's (`review-group`), which is the whole text before
+review, the On change check's (`review-triage`, see "Automatic generation")
+and a review group's (`review-group`), which is the whole text before
 the Submitting heading, the review instructions included; the one-pass review
 prompt (`prompt.Prompts`) is not replaceable, as no job writes one pull
 request's review in one pass. A retry of a staged review's details refuses to run when the
@@ -5196,7 +5197,18 @@ it and `Queue.SubmitAutomatic` decides each job.
   written and `notices` publishes nothing. An empty diff is unchanged without
   a call. Anything triage cannot decide (no Completer, no saved version, a
   diff too large or unreadable, a failed call or reply) writes the review.
-  Off is still the master switch (`automatic`).
+  Off is still the master switch (`automatic`). The check's system prompt is
+  `prompt.Triage` (`review-triage-public-v1.md`, `IDReviewTriage`), which a
+  person can replace like the other prompts; a resolution that fails writes
+  the review. A review it keeps is recorded in the clone's store
+  (`Store.KeepHead`, table `kept_heads`: the latest kept head of a version, the
+  base it was checked against and the reason). `Store.Snapshot` reports it with the latest version
+  (`Summary.Kept`), the review index counts the review `current` at that head
+  as at its own and lists it as `kept`, and a background refresh writes
+  `generation_state: current` for it while the base has not moved since
+  (`refresh.Refresher.KeptHead`, `KeptBase`), as it does for the review's
+  own head. A newer
+  version has no kept head until one is recorded for it.
 - **Turning off.** `Scheduler.Gate`, installed with
   `Queue.SetAutomaticGate`, reads the current preferences and repository
   settings from the registry. The queue asks it under its mutex when an

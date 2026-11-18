@@ -411,9 +411,15 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	// significant changes, first asks whether the saved review still holds.
 	if p.Triage && p.Kind == "" && p.Group == "" {
 		if prefs, err := l.Registry.Preferences(ctx); err == nil && prefs.ReviewUpdates() == repos.UpdatesOnChange {
-			progress(Progress{Phase: "checking", Backend: selected.Backend.Name(), Model: selected.Model})
-			if e := triage(ctx, triageInput{prefs: prefs, versions: versions, key: key, clone: clone, p: p, backend: selected.Backend}); e != nil {
-				return nil, e
+			// A custom prompt that cannot be read is not replaced by the
+			// built-in one: the review is written, as when triage cannot
+			// decide.
+			if overrides, _, err := l.Registry.ResolvePrompts(ctx, p.Repository); err == nil {
+				system, _ := prompt.Triage(overrides)
+				progress(Progress{Phase: "checking", Backend: selected.Backend.Name(), Model: selected.Model})
+				if e := triage(ctx, triageInput{prefs: prefs, versions: versions, key: key, clone: clone, p: p, backend: selected.Backend, system: system}); e != nil {
+					return nil, e
+				}
 			}
 		}
 	}

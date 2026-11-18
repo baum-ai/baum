@@ -209,7 +209,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-triage", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -227,6 +227,15 @@ func TestCatalogue(t *testing.T) {
 	}
 	if e, _ := prompt.Lookup(prompt.IDFixChat); e.Default != readFile(t, "fix-chat.md") || e.DefaultVersion != prompt.FixVersion {
 		t.Error("fix-chat default")
+	}
+	if e, _ := prompt.Lookup(prompt.IDReviewTriage); e.Default != readFile(t, "review-triage-public-v1.md") || e.DefaultVersion != prompt.TriageVersion {
+		t.Error("triage default")
+	}
+	if text, version := prompt.Triage(nil); text != readFile(t, "review-triage-public-v1.md") || version != prompt.TriageVersion {
+		t.Errorf("built-in triage %q", version)
+	}
+	if text, version := prompt.Triage(prompt.Overrides{prompt.IDReviewTriage: "MINE"}); text != "MINE\n" || version != prompt.TriageVersion+prompt.CustomSuffix {
+		t.Errorf("custom triage %q %q", text, version)
 	}
 	if e, _ := prompt.Lookup(prompt.IDExtraction); e.Default != decisions.PublicPrompt() || e.DefaultVersion != decisions.PublicPromptName {
 		t.Error("extraction default")
@@ -246,6 +255,7 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
+		prompt.IDReviewTriage:        {"review-triage.untrusted-data", "review-triage.when-unsure"},
 		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,

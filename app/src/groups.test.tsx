@@ -574,6 +574,35 @@ it("names the review groups a pull request belongs to", async () => {
   expect(link.textContent).toBe("GroupAuth rework");
 });
 
+const kept = { reason: "Only comments changed.", kept_at: "2026-11-18T12:00:00Z" };
+
+it("says a review kept for the newer commits still applies, with the agent's reason", async () => {
+  const seven = entry(7);
+  entries = [
+    {
+      ...seven,
+      status: "current",
+      version_count: 1,
+      kept: { ...kept, head: seven.pull_request.head_sha },
+    },
+  ];
+  history.replaceState(null, "", "/s/test-ns/?clone=clone&pr=7");
+  await act(async () => root.render(<App />));
+  const note = node.querySelector<HTMLElement>(".local-kept-note")!;
+  expect(note.textContent).toBe("Still applies to the newer commits");
+  expect(note.title).toContain("Only comments changed.");
+});
+
+it("says nothing of a head a review was kept for earlier", async () => {
+  entries = [
+    { ...entry(7), status: "current", version_count: 1, kept: { ...kept, head: "older" } },
+  ];
+  history.replaceState(null, "", "/s/test-ns/?clone=clone&pr=7");
+  await act(async () => root.render(<App />));
+  // The review is current at its own head; an older kept head says nothing.
+  expect(node.querySelector(".local-kept-note")).toBeNull();
+});
+
 const local = (sessions: object[], commits: object[]) => ({ available: true, sessions, commits });
 const commitOf = (oid: string, session: string, committedAt: string) => ({
   oid,

@@ -112,6 +112,10 @@ func (l Local) Refresh(ctx context.Context, clone repos.Clone, number int) (resu
 	}
 	capture := &capturingClient{client: l.Client}
 	updater := refresh.Refresher{GitHub: capture, Git: git, Sessions: assemble.LocalSessions{Dir: git.Dir(), Warn: io.Discard, Repo: git}}
+	// Unreadable, it is unknown: the review shows as outdated, as before.
+	if kept, _ := versions.KeptHead(ctx, key, saved.Metadata.Version); kept != nil {
+		updater.KeptHead, updater.KeptBase = kept.Head, kept.Base
+	}
 	document, err := updater.Refresh(ctx, repo, number, saved, assemble.LimitsFrom(caps).Caps, time.Now().UTC())
 	// Remote metadata is useful even when reviewed git objects are no longer
 	// present or a local session store cannot be read. Never discard it because
