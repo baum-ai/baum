@@ -2206,6 +2206,7 @@ function Workspace({ url }: { url: UrlState }) {
               {!loading && rows.length > 0 ? (
                 <Inbox
                   rows={rows}
+                  pageScope={JSON.stringify([activeTab, pullsQuery])}
                   cloneFor={cloneFor}
                   selection={selection}
                   setSelection={setSelection}

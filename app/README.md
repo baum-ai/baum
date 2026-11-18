@@ -1288,6 +1288,10 @@ the page and empty otherwise, the removed rows struck through and fading out
   list in its new order. It has no delete: an inbox is deleted from its row in the
   sidebar or its edit page, neither of which deletes the last one.
 
+Inbox and Pull requests list 30 items per page. A review group or stack counts
+as one item and keeps its members with it. Filters apply before pagination,
+and changing the filter or tab returns to the first page.
+
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
 Pull request, Review time, Review and Status columns. The pull requests of a

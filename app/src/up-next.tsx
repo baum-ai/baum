@@ -76,6 +76,7 @@ import {
 } from "./inboxes";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./context-menu";
+import { ListPagination, useListPage } from "./list-pagination";
 import { ListSection, type ListTone } from "./list";
 import { useDeadlineNow } from "./live";
 import { peekHref } from "./sessions";
@@ -1180,6 +1181,7 @@ export function UpNextPage({
   const [updating, setUpdating] = useState<Entry | null>(null);
   // Kept for when the inbox is drawn again, back from a pull request.
   const [chosen, setChosen] = useLastRow("inbox");
+  const [restoring, setRestoring] = useState<{ key: string; scope: string } | null>(null);
   const [menu, setMenu] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
@@ -1285,7 +1287,51 @@ export function UpNextPage({
       ),
     },
   ];
-  const groups = withGroups(sections, reviewGroups).filter((group) => group.lines.length > 0);
+  const allGroups = withGroups(sections, reviewGroups);
+  const allLines = allGroups.flatMap((group) => group.lines);
+  const activeCount = allLines.length;
+  const snoozedCount = snoozedOpen ? snoozed.length : 0;
+  const pageScope = JSON.stringify([scope.id, query]);
+  const indexOfLine = (key: string | null) =>
+    allLines.findIndex(
+      (line) => line.key === key || (isGroup(line) && line.members.some((row) => row.key === key)),
+    );
+  const pagination = useListPage(
+    pageScope,
+    activeCount + snoozedCount + (doneOpen ? cleared.length : 0),
+    indexOfLine(chosen),
+  );
+  const restoreIndex = restoring?.scope === pageScope ? indexOfLine(restoring.key) : -1;
+  const { reveal } = pagination;
+  useLayoutEffect(() => {
+    if (restoreIndex < 0) return;
+    reveal(restoreIndex);
+    setRestoring(null);
+  }, [restoreIndex, reveal]);
+  const restoreSelection = (key: string) => {
+    setChosen(key);
+    setRestoring({ key, scope: pageScope });
+  };
+  const openHistory = (
+    open: boolean,
+    setOpen: (open: boolean) => void,
+    offset: number,
+    length: number,
+  ) => {
+    setOpen(!open);
+    if (!open && (offset >= pagination.end || offset + length <= pagination.start)) {
+      pagination.reveal(offset);
+      setChosen(null);
+    }
+  };
+  let offset = 0;
+  const groups = allGroups.flatMap((group) => {
+    const lines = pagination.slice(group.lines, offset);
+    offset += group.lines.length;
+    return lines.length ? [{ ...group, lines, allLines: group.lines }] : [];
+  });
+  const snoozedPage = pagination.slice(snoozed, activeCount);
+  const donePage = pagination.slice(cleared, activeCount + snoozedCount);
   // A group shows its members when opened, or while one of them is chosen.
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const groupOpen = (line: GroupRow) =>
@@ -1302,9 +1348,9 @@ export function UpNextPage({
   // others' pull requests alone (as Unclaimed) opens on its first.
   const last = useRef(0);
   const found = chosen ? rows.findIndex((row) => row.key === chosen) : -1;
-  const actionable = rows.filter(
-    (row) => !(isGroup(row) ? row.members.every((member) => member.waiting) : row.waiting),
-  ).length;
+  const isActionable = (row: Line) =>
+    isGroup(row) ? row.members.some((member) => !member.waiting) : !row.waiting;
+  const actionable = rows.filter(isActionable).length;
   const firstOther = rows.findIndex((row) =>
     isGroup(row) ? row.members.some((member) => member.other) : row.other,
   );
@@ -1387,7 +1433,7 @@ export function UpNextPage({
       text: `Snoozed #${item.entry.pull_request.number} until ${snoozeText(until, now)}`,
       undo: () => {
         inbox.wake(item.key);
-        setChosen(item.key);
+        restoreSelection(item.key);
       },
     });
   };
@@ -1402,7 +1448,7 @@ export function UpNextPage({
       text: `Archived #${row.entry.pull_request.number}`,
       undo: () => {
         inbox.unarchive(row.key);
-        setChosen(row.key);
+        restoreSelection(row.key);
       },
     });
   };
@@ -1510,7 +1556,7 @@ export function UpNextPage({
   const minutes = Math.round(sumMinutes(queue));
   const summary = loading
     ? "Loading your inbox…"
-    : actionable === 0
+    : !allLines.some(isActionable)
       ? cleared.length
         ? `Nothing left. ${formatCount(cleared.length)} handled today.`
         : "Nothing waiting."
@@ -1713,7 +1759,7 @@ export function UpNextPage({
               // members stay out of Merge all.
               const ready =
                 group.id === "merge"
-                  ? group.lines
+                  ? group.allLines
                       .flatMap((line) =>
                         isGroup(line) ? (line.group.stack ? [] : line.members) : [line],
                       )
@@ -1743,7 +1789,7 @@ export function UpNextPage({
                 <ListSection
                   key={group.id}
                   title={group.title}
-                  count={rowsOf(group.lines).length}
+                  count={rowsOf(group.allLines).length}
                   tone={GROUP_TONES[group.id]}
                   action={
                     ready.length > 1 ? (
@@ -1791,10 +1837,10 @@ export function UpNextPage({
                 title="Snoozed"
                 count={snoozed.length}
                 collapsed={!snoozedOpen}
-                toggle={() => setSnoozedOpen((open) => !open)}
+                toggle={() => openHistory(snoozedOpen, setSnoozedOpen, activeCount, snoozed.length)}
                 listClassName="upnext-snoozed"
               >
-                {snoozed.map((item) => (
+                {snoozedPage.map((item) => (
                   <li
                     key={item.key}
                     className="list-row"
@@ -1823,10 +1869,12 @@ export function UpNextPage({
                 count={cleared.length}
                 tone="positive"
                 collapsed={!doneOpen}
-                toggle={() => setDoneOpen((open) => !open)}
+                toggle={() =>
+                  openHistory(doneOpen, setDoneOpen, activeCount + snoozedCount, cleared.length)
+                }
                 listClassName="upnext-done"
               >
-                {cleared.map((item) => (
+                {donePage.map((item) => (
                   <li
                     key={item.key}
                     title={`${item.repository} #${item.number}`}
@@ -1862,6 +1910,15 @@ export function UpNextPage({
               </ListSection>
             ) : null}
           </div>
+          <ListPagination
+            label="Inbox pagination"
+            pagination={pagination}
+            onMove={() => {
+              setChosen(null);
+              last.current = 0;
+              if (list.current) list.current.scrollTop = 0;
+            }}
+          />
           <KeyBar place="inbox" className="upnext-keys" />
         </div>
         <div ref={detail} className="upnext-detail">
