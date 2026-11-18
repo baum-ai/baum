@@ -184,6 +184,10 @@ type Prepared struct {
 	// Draft: GitHub reports the PR as a draft. Automatic jobs skip drafts;
 	// a confirmed run does not.
 	Draft bool `json:"draft,omitempty"`
+	// Closed: GitHub reports the PR merged or closed. Automatic jobs skip
+	// it; a person can still generate its review again (a forced
+	// regeneration), from its head as it was merged or closed.
+	Closed bool `json:"closed,omitempty"`
 	// GroupName is a group job's group name when it was prepared, and
 	// Members its members' numbers and heads ("7@<sha>,9@<sha>"), which a
 	// confirmation covers like a pull request's head.
@@ -195,7 +199,8 @@ type Prepared struct {
 	Awaiting []int `json:"awaiting,omitempty"`
 	// RefuseDraft is set by the queue, never stored, on the inputs of an
 	// automatic job it executes: the executor refuses the run with
-	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft.
+	// NotAutomaticError{ReasonDraft} if GitHub now reports a draft, and
+	// {ReasonClosed} if it reports the pull request merged or closed.
 	RefuseDraft bool `json:"-"`
 	// Fix is what a fix job (KindFix) does.
 	Fix FixInputs `json:"fix,omitzero"`

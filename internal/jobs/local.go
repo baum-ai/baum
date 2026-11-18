@@ -157,7 +157,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{account: accountOf(reader), MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
+	p := Prepared{account: accountOf(reader), MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, Closed: pr.Closed, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
 	return p, list.Version(), nil
 }
 
@@ -243,13 +243,17 @@ type pull struct {
 	// Head and Base are the head commit and the base branch's commit.
 	Head, Base string
 	Draft      bool
+	// Closed: GitHub reports the pull request merged or closed. A person
+	// may still have it reviewed; automatic generation never does.
+	Closed bool
 	// Untrusted: the pull request comes from a fork or an author without
 	// known write access, so running an agent on it needs confirmation.
 	Untrusted bool
 }
 
-// readPull reads an open pull request's head, draft state and trust from
-// GitHub's REST API.
+// readPull reads a pull request's head, draft and closed state and trust
+// from GitHub's REST API. A merged or closed pull request keeps its head
+// commit on GitHub (refs/pull/<N>/head), so it can still be reviewed.
 func readPull(ctx context.Context, reader *github.RESTReader, repository github.Repository, number int) (pull, error) {
 	path := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
 	status, _, raw, e := reader.Read(ctx, fmt.Sprintf("%s/pulls/%d", path, number), "")
@@ -268,8 +272,8 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 		Base struct{ SHA string }
 		User struct{ Login string }
 	}
-	if e = json.Unmarshal(raw, &pr); e != nil || pr.Head.SHA == "" || pr.State != "open" || pr.User.Login == "" {
-		return pull{}, errors.New("open pull request evidence required")
+	if e = json.Unmarshal(raw, &pr); e != nil || pr.Head.SHA == "" || pr.User.Login == "" {
+		return pull{}, errors.New("pull request evidence required")
 	}
 	trusted := false
 	status, _, raw, e = reader.Read(ctx, path+"/collaborators/"+url.PathEscape(pr.User.Login)+"/permission", "")
@@ -279,13 +283,14 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 			trusted = permission.Permission == "write" || permission.Permission == "maintain" || permission.Permission == "admin"
 		}
 	}
-	return pull{Head: pr.Head.SHA, Base: pr.Base.SHA, Draft: pr.Draft, Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
+	return pull{Head: pr.Head.SHA, Base: pr.Base.SHA, Draft: pr.Draft, Closed: pr.State != "open", Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
 }
 
 // confirmed rechecks a job's confirmed inputs. The price list is not one: a
 // job runs, and is priced, with whichever list is active when it runs. An
 // automatic job (RefuseDraft) whose pull request is a draft now is refused
-// with ReasonDraft; a confirmed run of a draft is not.
+// with ReasonDraft, and one whose pull request was merged or closed with
+// ReasonClosed; a confirmed run of either is not.
 //
 // A changed agent, model or limit is not a changed input: the run uses the
 // current settings, as one started now would. The GitHub account is one.
@@ -326,6 +331,9 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	}
 	if p.RefuseDraft && current.Draft {
 		return &NotAutomaticError{ReasonDraft}
+	}
+	if p.RefuseDraft && current.Closed {
+		return &NotAutomaticError{ReasonClosed}
 	}
 	return nil
 }

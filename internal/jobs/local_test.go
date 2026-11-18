@@ -598,6 +598,52 @@ func TestLocalRecheckRefusesAnAutomaticJobOfADraft(t *testing.T) {
 	}
 }
 
+// A merged or closed pull request can still be reviewed when a person asks
+// (a forced regeneration); an automatic job of one is refused before any
+// model call, with ReasonClosed.
+func TestLocalPreparesAClosedPullRequestOnlyForAPerson(t *testing.T) {
+	ctx := context.Background()
+	registry, clone := registeredClone(t)
+	state := "closed"
+	cfg := config.Default()
+	cfg.Backend = config.BackendClaude
+	cfg.Model = "claude-sonnet-4-5"
+	client := github.New(func(context.Context, string) (string, error) { return "fixture-token", nil }, github.Options{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		body := `{"state":"` + state + `","merged":true,"head":{"sha":"first","repo":{"full_name":"owner/repo"}},"user":{"login":"author"}}`
+		if strings.HasSuffix(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	calls := 0
+	local := &Local{Registry: registry, Config: cfg, Client: client, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend {
+		return &generatetest.Backend{Version: "9.9.9", RunFunc: func(context.Context, agent.Request, int) (agent.Result, error) {
+			calls++
+			return agent.Result{}, errors.New("no model calls in this test")
+		}}
+	}}}
+	p, _, e := local.Prepare(ctx, Item{Clone: clone.ID, PR: 1})
+	if e != nil || !p.Closed || p.HeadSHA != "first" {
+		t.Fatalf("merged pull request not prepared: %+v, %v", p, e)
+	}
+	if e = local.confirmed(ctx, p); e != nil {
+		t.Fatalf("a person's review of a merged pull request refused: %v", e)
+	}
+	automatic := p
+	automatic.RefuseDraft = true
+	var refused *NotAutomaticError
+	if _, e = local.Execute(ctx, automatic, func(Progress) {}); !errors.As(e, &refused) || refused.Reason != ReasonClosed {
+		t.Fatalf("automatic job of a merged pull request: %v", e)
+	}
+	if calls != 0 {
+		t.Fatalf("model called %d times for a merged pull request", calls)
+	}
+	state = "open"
+	if p, _, e = local.Prepare(ctx, Item{Clone: clone.ID, PR: 1}); e != nil || p.Closed {
+		t.Fatalf("open pull request: %+v, %v", p, e)
+	}
+}
+
 // The queued confirmation is the durable origin fence, including the interval
 // between worker admission and Execute capturing its cancellation context.
 func TestQueuedJobCannotExecuteWithAnotherAccount(t *testing.T) {

@@ -22,6 +22,7 @@ type autoExecutor struct {
 	backend    string
 	restricted bool
 	draft      bool
+	closed     bool
 	prepared   int
 	started    chan Prepared
 	release    chan struct{}
@@ -36,7 +37,7 @@ func (f *autoExecutor) Prepare(_ context.Context, item Item) (Prepared, string, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepared++
-	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted, Draft: f.draft, Members: f.members[item.Group]}
+	p := Prepared{ConfigDigest: "digest", Item: item, Repository: "org/repo", HeadSHA: f.heads[item.PR], Backend: f.backend, Model: "claude-sonnet-4-5", RequiresIsolationConfirmation: f.restricted, Draft: f.draft, Closed: f.closed, Members: f.members[item.Group]}
 	return p, "2026-10-01", nil
 }
 
@@ -284,6 +285,20 @@ func TestAutomaticInterruptedRunMayRunOnceMore(t *testing.T) {
 		if _, err = q.SubmitAutomatic(ctx, r); !errors.Is(err, ErrDuplicate) {
 			t.Fatalf("PR %d: %v", r.PR, err)
 		}
+	}
+}
+
+// A merged or closed pull request is never generated automatically; a
+// person can still generate it (a forced regeneration).
+func TestAutomaticRefusesClosedPullRequests(t *testing.T) {
+	q, f := newAutoQueue(t)
+	f.closed = true
+	if _, err := q.SubmitAutomatic(context.Background(), auto(1, "a1")); reason(err) != ReasonClosed {
+		t.Fatalf("closed: %v", err)
+	}
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
+	if _, err := q.Submit(context.Background(), e.ID, true, false); err != nil {
+		t.Fatal(err)
 	}
 }
 

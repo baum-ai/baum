@@ -31,6 +31,9 @@ const (
 const (
 	ReasonIsolation = "isolation_confirmation_required"
 	ReasonDraft     = "draft"
+	// ReasonClosed: the pull request was merged or closed. A person can
+	// still generate its review.
+	ReasonClosed = "closed"
 )
 
 // ReasonSettingsUnreadable is the gate's answer when it could not read the
@@ -60,7 +63,8 @@ var (
 )
 
 // NotAutomaticError refuses an item automatic generation may never run:
-// Reason is ReasonIsolation, ReasonDraft or the preparation's blocked reason.
+// Reason is ReasonIsolation, ReasonDraft, ReasonClosed or the preparation's
+// blocked reason.
 type NotAutomaticError struct{ Reason string }
 
 func (e *NotAutomaticError) Error() string { return "not generated automatically: " + e.Reason }
@@ -108,6 +112,9 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	}
 	if p.Draft {
 		return Job{}, &NotAutomaticError{ReasonDraft}
+	}
+	if p.Closed {
+		return Job{}, &NotAutomaticError{ReasonClosed}
 	}
 	if p.RequiresIsolationConfirmation {
 		return Job{}, &NotAutomaticError{ReasonIsolation}
