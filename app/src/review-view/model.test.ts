@@ -11,7 +11,6 @@ import {
   detailsOf,
   groupFiles,
   intentRows,
-  isArranged,
   listedSections,
   notesByHunk,
   placeOf,
@@ -173,20 +172,6 @@ describe("the document a review carries", () => {
     ]);
     const diagramOnSection = { ...REVIEW, overview: { ...REVIEW.overview, diagram: "dg_pairing" } };
     expect(tilesOn(diagramOnSection, "sec_pairing")).toEqual([]);
-  });
-
-  it("is arranged when it has more than the review alone", () => {
-    expect(isArranged(REVIEW)).toBe(true);
-    expect(isArranged(BARE)).toBe(false);
-    expect(isArranged(null)).toBe(false);
-    // A verdict without points is the review's recommendation, not more.
-    expect(
-      isArranged({
-        ...BARE,
-        summary: { ...BARE.summary, verdict: { decision: "approve", text: "Fine", points: [] } },
-      }),
-    ).toBe(false);
-    expect(isArranged({ ...BARE, generation: { map: { status: "ran" } } })).toBe(true);
   });
 });
 

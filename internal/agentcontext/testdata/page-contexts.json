@@ -17,7 +17,12 @@
     { "query": "page=jobs", "context": { "page": "jobs" } },
     {
       "query": "repository=acme%2Fdemo&pr=7",
-      "context": { "page": "pull_request", "repository": "acme/demo", "pull_request": 7 }
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tab": "overview" }
+      }
     },
     {
       "query": "clone=c1&pr=7",
@@ -26,7 +31,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "anchor": "sec_rest" }
+        "focus": { "view": "tiles", "tab": "overview", "anchor": "sec_rest" }
       }
     },
     { "query": "page=pulls&clone=gone&pr=7", "context": { "page": "pulls" } },

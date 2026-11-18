@@ -112,7 +112,7 @@ name. A reference or before-state image is not evidence that the finished
 change passed a test. Images are copied into the saved review version, so
 history keeps them after a native transcript is removed. Entire checkpoint
 images and image paths or URLs merely mentioned in a transcript are excluded.
-The full review's Images part opens each copy at full size and retains its
+The review's Images part opens each copy at full size and retains its
 provenance.
 
 Setup and the app's Add repositories use the same repository picker and daemon
@@ -283,7 +283,7 @@ request, so it stays). A rate limit or a failed read says so above the page,
 with **Retry**; a daemon that serves no facts shows the page as before. Once a
 review is saved the page shows it instead, as before.
 
-A pull request opens on the full review.
+A pull request opens on the review page described under [Review page](#review-page).
 
 Up next's list shows a review group or stack (`api/groups`) with a shown member
 as one row (`withGroups` in `src/up-next.tsx`). A stack takes the section and
@@ -704,7 +704,9 @@ them: Summary, Changes and, while it is open, each change, Files changed,
 Decisions, and Sessions and Commits with theirs while open (the viewer's
 `ReviewSteps` `rail`); a folded group is one place. `Space` on a selected group
 (Changes, Files changed, Sessions, Commits) opens or closes it in the rail
-(`toggleGroup`). `j`/`↓` and `k`/`↑` move through
+(`toggleGroup`). On Files changed `j`/`↓` and `k`/`↑` open the next and
+previous file of the list in its order and stop at the ends. Elsewhere they
+move through
 the blocks of the one read (its attention, each behavior, risk or finding, a
 commit's or session's card, each file of a commit opened alone, a decision,
 or, in a session's transcript, each prompt and agent reply as the transcript
@@ -1607,9 +1609,7 @@ stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
 straight to Connections. **General**, the default, offers System, Light and Dark
-themes, the review page a pull request opens on (**Full review**, the
-default, or **Overview tabs (preview)**, stored as `tiles`; see
-[Overview tabs](#overview-tabs)), the modifier
+themes, the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
 elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
@@ -1661,11 +1661,8 @@ Reviews ends with **Generate reviews as tiles (experimental)** (`TileReviewsRow`
 off by default: read with `GET api/settings/labs` and saved with `PUT
 api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
 and says why. It applies to reviews that start after the change. While it is
-on, the appearance settings report `arranged_tiles`, and a pull request's
-review page (without `?view=`) reads the version's view and opens a version
-whose view has more than the review alone (`isArranged`) on the overview page,
-any other on the full review (`useArrangedTiles`). A running review's `arranging` phase reads
-"Arranging the page…".
+on, a running review's `arranging` phase reads "Arranging the page…". A pull
+request's page is the same whether it is on or off.
 
 While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
 or Codex, a closed **Advanced** disclosure at the end of the section
@@ -2377,9 +2374,9 @@ that was skipped for want of a document, and a review left unfinished after
 `REAL_REVIEW_MINUTES` (8 by default). Expected 404, 502 and 503 console errors
 from the refusing backends stay in `console-errors.txt` and out of the sheet's
 error count. States are the `STATES` list at the top of the
-spec: the page as it opens (`landing`, the Overview with `view=tiles`), a
-detail (the first section) and its first hunk excerpt opened, and with
-`view=tiles` "Where this fits" (`context`), the section's Code and Tests views,
+spec: the page as it opens (`landing`, the Overview), a
+detail (the first section) and its first hunk excerpt opened, and
+"Where this fits" (`context`), the section's Code and Tests views,
 Files changed grouped by type, folder and feature (`code`, `code-folder`,
 `code-feature`), and the rail's Sessions and Commits pages and the first
 session (`sessions`, `session`, `commits`).
@@ -2626,24 +2623,36 @@ page offers **Open in panel** instead of Focus and has no reply bar, and a
 pull request's sessions tag it **Panel** with **Open in panel** beside Open
 transcript.
 
-## Overview tabs
+## Review page
 
-With the review page set to **Overview tabs (preview)** (`review_page` `tiles`,
-or `?view=tiles`), or with tile reviews on and a version that has more than
-its review alone, a pull request's review opens on the viewer's rail
+Every single pull request's review opens on the viewer's rail
 (`src/review-view/`, drawn through the viewer's places seam by `useViewPlaces`,
-with the viewer's `flatRail` and `ownFiles`). A group's or a stack's page always
-shows the full review. The head, the version menu, history, Compare, the side
-pane, the Decisions, Sessions and Commits panes and the review dialog are the
-full review's own. The rail lists, in order:
+with the viewer's `flatRail` and `ownFiles`); there is no other page, and no
+setting for it (the stored `review_page` and `arranged_tiles` appearance
+values are ignored). Only the content of the Overview and of a section
+depends on the version shown: a `baum.review/2` version draws the Overview and
+section bodies below, and a `baum.review/1` version draws the viewer's own
+Summary and section pages (every block they show: behaviour steps, evidence,
+intent, entities, risks, agent findings, attention, and so on) inside the same
+rail, side pane and keys. The rail's How it works rows come from the version's
+own sections ("Where this fits" only for a version that has one: a
+`baum.review/1` context is part of its Summary), and Files changed, Decisions,
+Sessions and Commits are the same for both. `shellRequest` reads a version
+from `GET api/document` and, when it is `baum.review/2`, again from
+`api/tiles`; a `baum.review/1` version is kept as stored, drawn through the
+viewer's `ReviewPlaceContext.builtInPane`. Each version of a history or a
+comparison is drawn by its own version's pages. A group's or a stack's page keeps the viewer's own places. The
+head, the version menu, history, Compare, the side pane, the Decisions,
+Sessions and Commits panes and the review dialog are the viewer's own. The rail
+lists, in order:
 
 - **Overview**, then **How it works** with "Where this fits" and each section
   nested under it (the group's own row opens the first real section; an
   obsolete section is muted), then **Files changed** with the number of changed
   files. These are the page's places; the rail's other rows are the viewer's.
 - **Decisions**, **Sessions** and **Commits** are plain rows, with no
-  disclosure and nothing nested under them (`flatRail`; the full review keeps
-  its disclosures). Each has its count and a live or waiting dot, and opens a
+  disclosure and nothing nested under them (`flatRail`; the group page keeps
+  the viewer's disclosures). Each has its count and a live or waiting dot, and opens a
   page listing the pull request's items; a session, a commit or a decision
   opened from there shows in the review pane and leaves its group's row marked.
   Files changed is the app's own place (`ownFiles`), so the viewer's Files row
@@ -2673,10 +2682,9 @@ the viewer's parts they draw (citation chips, images, diffs) read a
 empty there. Until the daemon converts every version, it may answer with a
 `baum.review/1` document and its `view` (`baum.view/1`) instead; the page
 converts that answer (`review-view/from-v1.ts`, to be removed once the daemon
-answers `baum.review/2`) and keeps the served review for the chrome. With tile
-reviews on and no page chosen, a version opens on this page when it has more
-than the review alone (tiles, an overview part the model wrote, a verdict with
-points, or a record of the three levels' calls: `isArranged`).
+answers `baum.review/2`) and keeps the served review for the chrome. A
+`baum.review/1` version has no tiles: it shows the viewer's Summary and
+sections.
 
 - **Where the reader is** stays in the address, so a reload, Back and a link
   land there: the Overview is the Summary (no `pane`), How it works is
@@ -2743,9 +2751,15 @@ points, or a record of the three levels' calls: `isArranged`).
   panel about the tile the keys are on, else the pull request. `←`/`→`
   (and `Shift+J`/`Shift+K`) step through the rail's rows: the
   Overview, each section, then Files changed, where `→` goes on from file to
-  file, then the viewer's Decisions, Sessions and Commits. `]`
-  opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request as on the full
-  review. The session panel's focus names `view: tiles` and the tab: on the
+  file, then the viewer's Decisions, Sessions and Commits. On Files changed `j`/`k` (`↓`/`↑`)
+  open the next and previous file in the list as it is grouped (Type, Folder or
+  Feature, following a switch made on the page; a file under several sections
+  is taken at its first place) and do nothing at the first and last file
+  (`ReviewPlaceSteps.item`, `listedFiles` in `places.tsx`); the grouping is one
+  shared choice (`useFileGrouping`, `readFileGrouping` in `file-grouping.ts`).
+  Elsewhere they mark blocks as above. `]`
+  opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request. The session
+  panel's focus names `view: tiles` and the tab: on the
   Overview `tab: overview`; on How it works `tab: sections` and the `section`
   read (`context` for Where this fits; a risk adds its `item`; a link to a
   tile names the `tile`), so a tile made or added from chat stands there; on

@@ -4,7 +4,6 @@ import { pageContextOf } from "../page-context";
 import { fromV1 } from "../review-view/from-v1";
 import { withReview, type ViewTile } from "../review-view/model";
 import { fixtureReview, fixtureTile } from "./fixture-test-helper";
-import { reviewPageOf } from "./view";
 
 /** The fixture's review served with its custom tile, a native diagram
  *  citing a hunk and a prose note citing nothing. */
@@ -77,20 +76,10 @@ describe("a comment on a tile", () => {
 });
 
 describe("the review page", () => {
-  it("is the setting, unless the address asks for the other", () => {
-    expect(reviewPageOf(new URLSearchParams(), "full")).toBe("full");
-    expect(reviewPageOf(new URLSearchParams(), "tiles")).toBe("tiles");
-    expect(reviewPageOf(new URLSearchParams("view=tiles"), "full")).toBe("tiles");
-    expect(reviewPageOf(new URLSearchParams("view=full"), "tiles")).toBe("full");
-    expect(reviewPageOf(new URLSearchParams("view=grid"), "full")).toBe("full");
-  });
-
   it("is reported to the chat with the tab and the section read", () => {
-    const of = (query: string, page: "full" | "tiles" = "full") =>
-      pageContextOf(new URLSearchParams(query), () => undefined, "", page);
+    const of = (query: string) => pageContextOf(new URLSearchParams(query), () => undefined, "");
     const pr = "repository=acme%2Fdemo&pr=7";
-    expect(of(pr)).toEqual({ page: "pull_request", repository: "acme/demo", pull_request: 7 });
-    expect(of(pr, "tiles").focus).toEqual({ view: "tiles", tab: "overview" });
+    expect(of(pr).focus).toEqual({ view: "tiles", tab: "overview" });
     expect(of(`${pr}&view=tiles&pane=section&section=sec_retry`).focus).toEqual({
       view: "tiles",
       tab: "sections",
@@ -114,11 +103,6 @@ describe("the review page", () => {
       tab: "sections",
       tile: "dg_flow",
     });
-    expect(of("group=g1&pane=section&section=sec_a", "tiles")).toEqual({
-      page: "group",
-      group: "g1",
-      focus: { view: "tiles", tab: "sections", section: "sec_a" },
-    });
-    expect(of(`${pr}&view=full&pane=section&section=sec_a`, "tiles").focus).toBe(undefined);
+    expect(of("group=g1&pane=section&section=sec_a")).toEqual({ page: "group", group: "g1" });
   });
 });

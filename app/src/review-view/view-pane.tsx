@@ -10,6 +10,7 @@ import {
   reviewOf,
   sectionOfTile,
   selectionOf,
+  servedReview,
   shownFile,
   viewFiles,
   type ReviewV2,
@@ -54,10 +55,20 @@ export function ViewPane({
     }),
     [files, context],
   );
+  // A baum.review/1 version keeps its own Summary and section pages (the
+  // viewer's), in this rail; the Files changed list is the same for both.
+  const builtIn = servedReview(snapshot) === null && place.tab !== "code";
   return (
     <ReviewFilesProvider files={reviewFiles}>
       <div className="@container min-w-0 flex-1">
-        {place.tab === "overview" ? (
+        {builtIn ? (
+          context.builtInPane(
+            snapshot,
+            historical,
+            place.tab === "sections" ? { kind: "section", id: place.section } : { kind: "summary" },
+            selectionOf({ tab: "code", file: null }),
+          )
+        ) : place.tab === "overview" ? (
           <OverviewTab
             document={snapshot}
             review={review}

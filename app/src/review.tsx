@@ -44,8 +44,8 @@ import {
   backTo,
   request,
   selector,
-  documentRequest,
   tiledDocument,
+  shellRequest,
   tilesRequest,
   addedTileRequest,
   type TilesAnswer,
@@ -108,15 +108,8 @@ import {
 import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
 import { readSelection } from "@baum/viewer/review-selection";
-import { useArrangedTiles, useReviewPage } from "./tiles/view";
 import { useViewPlaces } from "./review-view/places";
-import {
-  commentSelection,
-  isArranged,
-  reviewOf,
-  servedReview,
-  withReview,
-} from "./review-view/model";
+import { commentSelection, reviewOf, servedReview, withReview } from "./review-view/model";
 import { activeTile } from "./review-view/view-tile";
 import { TileHostContext, type TileHost } from "./tiles/host";
 import { addedTilesKey, useAddedTilesEvents } from "./tiles/added-events";
@@ -302,14 +295,9 @@ export function LocalReview({
 }) {
   const pr = entry.pull_request;
   const url = useUrlState();
-  // The tiles page reads each version with its tile document; the full
-  // review reads the review alone.
-  const chosenTiles = useReviewPage() === "tiles";
-  // With tile reviews on and no page chosen, the page reads the tiles too and
-  // shows them for a version whose tiles were arranged.
-  const arranged = useArrangedTiles();
-  const tilesPage = chosenTiles || arranged;
-  const readDocument = tilesPage ? tilesRequest : documentRequest;
+  // The page reads a baum.review/2 version with its tile document, and a
+  // baum.review/1 one as stored.
+  const readDocument = shellRequest;
   const places = useViewPlaces();
   const back = backTo(url.search);
   // The refresh key works on every state of the page, also where the button
@@ -444,7 +432,7 @@ export function LocalReview({
     // question.
     if (event.key === "a") {
       event.preventDefault();
-      const card = onView && viewedDocument ? activeTile() : null;
+      const card = viewedDocument ? activeTile() : null;
       const tile = card ? reviewOf(viewedDocument!).tiles.find((t) => t.id === card) : undefined;
       ask(tile ? { kind: "tile", id: tile.id, title: tile.title } : null);
       return;
@@ -501,7 +489,7 @@ export function LocalReview({
       event.preventDefault();
       // A tile under the keys takes the comment, placed on the code it
       // cites; elsewhere it is on what is being read.
-      const card = onView && viewedDocument ? activeTile() : null;
+      const card = viewedDocument ? activeTile() : null;
       const tiled = card && reviewOf(viewedDocument!).tiles.some((t) => t.id === card);
       setComposer({
         kind: "new",
@@ -520,7 +508,7 @@ export function LocalReview({
   // the versions on screen again: an added tile stands on every version.
   const [tilesGeneration, setTilesGeneration] = useState(0);
   const loadVersion = useVersionLoader(
-    `${clone}:${pr.number}:${tilesPage ? "tiles" : "full"}:${tilesGeneration}`,
+    `${clone}:${pr.number}:${tilesGeneration}`,
     (version) => readDocument(clone, pr.number, version),
     doc?.review.version,
   );
@@ -546,22 +534,20 @@ export function LocalReview({
     }
     const abort = new AbortController();
     request<Partial<TilesAnswer>>(
-      `api/jobs/${encodeURIComponent(job.id)}/draft${tilesPage ? "?tiles=1" : ""}`,
+      `api/jobs/${encodeURIComponent(job.id)}/draft?tiles=1`,
       undefined,
       "GET",
       abort.signal,
     )
       .then((body) => {
         if (abort.signal.aborted || !Array.isArray(body.document?.sections)) return;
-        setDraft(
-          tilesPage ? tiledDocument(body as TilesAnswer) : (body.document as ReviewDocument),
-        );
+        setDraft(tiledDocument(body as TilesAnswer));
       })
       .catch(() => {
         /* The draft is gone, or the next one is on its way. */
       });
     return () => abort.abort();
-  }, [job?.id, draftCount, tilesPage, tilesGeneration]);
+  }, [job?.id, draftCount, tilesGeneration]);
   // A page without a review shows the draft as soon as there is one; one with
   // a saved version keeps showing that version until the new one is saved.
   const showingDraft = draft !== null && !doc && entry.version_count === 0;
@@ -587,18 +573,9 @@ export function LocalReview({
     [showingDraft, draft, retrying, doc, failedSections],
   );
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
-  // The review page's tabs (the Overview, How it works and Code) draw their
-  // places when the page was chosen, or, with tile reviews on, for a version
-  // with more than its review alone (`isArranged` on the baum.review/2
-  // document it was served with).
-  const onView =
-    tilesPage && Boolean(shownDocument) && (chosenTiles || isArranged(servedReview(shownDocument)));
   // What c comments on: the section, risk, file or tile being read; on the
   // review page's Code tab, the file open there.
-  const commentOn = commentTarget(
-    viewedDocument ?? null,
-    onView ? commentSelection(selection) : selection,
-  );
+  const commentOn = commentTarget(viewedDocument ?? null, commentSelection(selection));
   // The tiles the person added, and those being made in the session panel,
   // are read again when they change, from the session panel, the page or
   // another window.
@@ -606,9 +583,10 @@ export function LocalReview({
   const reloadTiles = useRef(async () => {});
   reloadTiles.current = async () => {
     setTilesGeneration((n) => n + 1);
-    if (doc) setDoc(await tilesRequest(clone, pr.number));
+    // Added tiles stand on baum.review/2 versions only.
+    if (doc && servedReview(doc)) setDoc(await tilesRequest(clone, pr.number));
   };
-  useAddedTilesEvents(addedTilesKey(pr.repository, pr.number), onView, () => {
+  useAddedTilesEvents(addedTilesKey(pr.repository, pr.number), () => {
     void reloadTiles.current().catch(() => undefined);
   });
   const historyRetry = useRef(history.retry);
@@ -617,8 +595,7 @@ export function LocalReview({
   useEffect(() => {
     if (tilesGeneration > 0 && history.selection) historyRetry.current();
   }, [tilesGeneration]);
-  // Rebuilt only when what the tiles read of it changes, and never on the
-  // full review, which has no tiles.
+  // Rebuilt only when what the tiles read of it changes.
   const latestHost = useRef({ viewedDocument, canReview, showingDraft });
   latestHost.current = { viewedDocument, canReview, showingDraft };
   // A custom tile's frame that never answered: read the tile route of every
@@ -804,7 +781,7 @@ export function LocalReview({
         if (!abort.signal.aborted) setHistoryFailed(true);
       });
     return () => abort.abort();
-  }, [clone, pr.number, latestQuery, revision, retry, tilesPage]);
+  }, [clone, pr.number, latestQuery, revision, retry]);
   const refreshSessions = useRef<(() => void) | null>(null);
   useVisibleInterval(() => refreshSessions.current?.(), 30_000);
   useEffect(() => {
@@ -1038,7 +1015,7 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
-                places={onView ? places : undefined}
+                places={shownDocument ? places : undefined}
                 detailsChecks={(shown) =>
                   liveDetailsChecks(
                     shown,

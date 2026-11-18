@@ -13,14 +13,19 @@ import type { Selection } from "@baum/viewer/review-selection";
 import {
   CONTEXT_ID,
   defaultSection,
+  groupFiles,
   listedSections,
   placeOf,
   reviewOf,
   selectionOf,
   shownFile,
   viewFiles,
+  type FileGrouping,
+  type ListedSection,
+  type ViewFile,
   type ViewPlace,
 } from "./model";
+import { readFileGrouping } from "./file-grouping";
 import { ViewPane } from "./view-pane";
 
 export const TAB_LABEL = {
@@ -203,7 +208,12 @@ function stepsOf(
   const step = (stop: (typeof stops)[number] | undefined) =>
     stop ? { label: stop.label, go: () => context.select(selectionOf(stop.place)) } : null;
   const sections = stops.filter((stop) => stop.key.startsWith("section:")).length;
+  // On Files changed, j and k open the next and previous file of the list in
+  // the order it shows (the grouping on the page; a file listed under several
+  // sections, by its first), and stop at its ends.
+  const item = place.tab === "code" ? fileItemSteps(files, place.file, list, context) : undefined;
   return {
+    ...(item ? { item } : {}),
     label:
       place.tab === "sections"
         ? (list.find((section) => section.id === place.section)?.title ?? TAB_LABEL.sections)
@@ -221,5 +231,44 @@ function stepsOf(
     next: at >= 0 ? step(stops[at + 1]) : null,
     railKey: railKey(place),
     sectionId: place.tab === "sections" && place.section !== CONTEXT_ID ? place.section : undefined,
+  };
+}
+
+/** The changed files in the order the file list shows them, each once. */
+export function listedFiles(
+  files: ViewFile[],
+  grouping: FileGrouping,
+  list: ListedSection[],
+): ViewFile[] {
+  const seen = new Set<string>();
+  return groupFiles(files, grouping, list)
+    .flatMap((group) => group.files)
+    .filter((file) => !seen.has(file.path) && seen.add(file.path));
+}
+
+/** The steps are read when a key is pressed, so a grouping switched on the
+ *  page orders them without the viewer drawing again. */
+function fileItemSteps(
+  files: ViewFile[],
+  open: string | null,
+  list: ListedSection[],
+  context: ReviewPlaceContext,
+): NonNullable<ReviewPlaceSteps["item"]> {
+  const around = (offset: -1 | 1, label: string) => {
+    const ordered = listedFiles(files, readFileGrouping(), list);
+    const shown = shownFile(files, open);
+    const at = shown ? ordered.findIndex((file) => file.path === shown.path) : -1;
+    const file = at < 0 ? undefined : ordered[at + offset];
+    return file
+      ? { label, go: () => context.select(selectionOf({ tab: "code", file: file.path })) }
+      : null;
+  };
+  return {
+    get previous() {
+      return around(-1, "Previous file");
+    },
+    get next() {
+      return around(1, "Next file");
+    },
   };
 }

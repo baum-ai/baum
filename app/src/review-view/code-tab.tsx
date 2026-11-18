@@ -1,5 +1,5 @@
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import pluralize from "pluralize";
 import { CodeDiff, type CodeDiffFile, type CodeDiffHunk } from "@baum/viewer/components/code-diff";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
@@ -12,6 +12,7 @@ import { Button, SegmentedControl } from "@baum/viewer/components/ui";
 import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import { hunkUrl, type IndexedHunk, type ReviewDocument } from "@baum/viewer/review-document";
 import { LoadingStatus } from "../nine-dots";
+import { useFileGrouping } from "./file-grouping";
 import type { ReviewV2 } from "./document";
 import {
   FILE_GROUPINGS,
@@ -27,31 +28,6 @@ import {
 
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 const folder = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
-
-const GROUPING_KEY = "baum.review.fileGrouping";
-
-/** The grouping of the file list, kept in this browser so it is the same on
- *  the next pull request. Storage can be missing or refuse a write; the
- *  choice then holds for the page alone. */
-export function useFileGrouping(): [FileGrouping, (next: FileGrouping) => void] {
-  const [grouping, setGrouping] = useState<FileGrouping>(() => {
-    try {
-      const saved = localStorage.getItem(GROUPING_KEY);
-      return FILE_GROUPINGS.find((each) => each.value === saved)?.value ?? "type";
-    } catch {
-      return "type";
-    }
-  });
-  const choose = (next: FileGrouping) => {
-    setGrouping(next);
-    try {
-      localStorage.setItem(GROUPING_KEY, next);
-    } catch {
-      // Not remembered; the choice stands for this page.
-    }
-  };
-  return [grouping, choose];
-}
 
 /** Files changed: every changed file, grouped by type, folder or feature, in a
  *  list beside the one open, whose diff carries the notes on each hunk (the
@@ -77,13 +53,28 @@ export function CodeTab({
   const notes = useMemo(() => notesByHunk(review), [review]);
   const [grouping, setGrouping] = useFileGrouping();
   const [generatedOpen, setGeneratedOpen] = useState(file?.group === "Generated");
+  // A generated file opened by the keys shows its row.
+  const generatedShown = file?.group === "Generated";
+  useEffect(() => {
+    if (generatedShown) setGeneratedOpen(true);
+  }, [generatedShown]);
   const groups = useMemo(() => groupFiles(files, grouping, list), [files, grouping, list]);
   const open = (path: string) => context.select(selectionOf({ tab: "code", file: path }));
+  // The open file's row stays in view in the list, as the keys step through
+  // the files.
+  const fileList = useRef<HTMLElement>(null);
+  const openPath = file?.path;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the open file's change moves the marked row
+  useEffect(() => {
+    fileList.current
+      ?.querySelector<HTMLElement>('[aria-pressed="true"]')
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [openPath, grouping, generatedOpen]);
   if (files.length === 0)
     return <p className="text-base text-secondary">This pull request changes no files.</p>;
   return (
     <div className="grid min-w-0 gap-6 @3xl:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]">
-      <nav aria-label="Changed files" className="min-w-0 space-y-3">
+      <nav ref={fileList} aria-label="Changed files" className="min-w-0 space-y-3">
         <SegmentedControl<FileGrouping>
           label="Group files by"
           value={grouping}

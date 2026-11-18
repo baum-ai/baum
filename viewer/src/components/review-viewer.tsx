@@ -319,6 +319,18 @@ export type ReviewPlaceContext = {
   /** The generation state of the document being read, as the head shows it
    *  (with the host's `header.generation` applied); null without a document. */
   generation: ReturnType<typeof reviewGeneration> | null;
+  /** The viewer's own Summary page (`{ kind: "summary" }`) or section page
+   *  (`{ kind: "section", id }`) for one snapshot, drawn as it draws them
+   *  without `places`: a host that shows a review version its own places do
+   *  not draw (a baum.review/1 one, say) puts this in its pane. Call it as a
+   *  function while rendering. `files` is where the Summary's Files link
+   *  goes, when the host has its own files place. */
+  builtInPane: (
+    snapshot: ReviewDocument,
+    historical: boolean,
+    shown: { kind: "summary" } | { kind: "section"; id: string },
+    files?: Selection,
+  ) => ReactNode;
 };
 
 /** What the navigator bar, the pane's foot and the host's keys know of the
@@ -333,6 +345,12 @@ export type ReviewPlaceSteps = {
   position?: string;
   previous: ReviewStep | null;
   next: ReviewStep | null;
+  /** What the item keys (j and k, ↓ and ↑) do on the place, in place of
+   *  marking the next block (`[data-review-block]`) of the pane: a place whose
+   *  items are its own list (the host's list of files) answers with the items
+   *  either side of the open one. A null side does nothing, so the keys stop
+   *  at the ends. Absent, the keys mark blocks. */
+  item?: { previous: ReviewStep | null; next: ReviewStep | null };
   /** The key, in `railRows`, of the rail row the place sits on. */
   railKey: string;
   /** The section the place is about, for the side pane's context and
@@ -1164,6 +1182,11 @@ function ReviewWorkspace<F extends ReviewFile>({
     }),
     [],
   );
+  const builtInRef = useRef<ReviewPlaceContext["builtInPane"]>(() => null);
+  const builtInPane = useCallback<ReviewPlaceContext["builtInPane"]>(
+    (snapshot, historical, shown, files) => builtInRef.current(snapshot, historical, shown, files),
+    [],
+  );
   const placeGeneration = useMemo(
     () => (document ? reviewGeneration(document, header?.generation) : null),
     [document, header?.generation],
@@ -1185,6 +1208,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       onRetryDetails,
       contextPending,
       generation: placeGeneration,
+      builtInPane,
     }),
     [
       selection,
@@ -1201,8 +1225,19 @@ function ReviewWorkspace<F extends ReviewFile>({
       onRetryDetails,
       contextPending,
       placeGeneration,
+      builtInPane,
     ],
   );
+  builtInRef.current = (snapshot, historical, shown, files) =>
+    renderSummaryOrSection(
+      snapshot,
+      historical,
+      shown.kind === "section" ? shown.id : null,
+      (destination) => {
+        if (destination === "files" && files) setSelection(files);
+        else navigateFromSummary(destination);
+      },
+    );
   const hostSteps =
     places && PLACE_KINDS.has(selection.kind) ? places.steps(selection, hostContext) : null;
   const hostFolds = places?.railFolded?.(selection) ?? false;
@@ -1585,7 +1620,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     stepsRef.current = {
       previous: previousStep,
       next: nextStep,
-      item: { previous: blockStep(-1), next: blockStep(1) },
+      item: hostSteps?.item ?? { previous: blockStep(-1), next: blockStep(1) },
       rail: {
         previous: railAt > 0 ? railRows[railAt - 1]! : null,
         next: railAt >= 0 ? (railRows[railAt + 1] ?? null) : null,
@@ -2829,17 +2864,34 @@ function ReviewWorkspace<F extends ReviewFile>({
           }
         />
       );
-    if (selection.kind !== "section" && selection.kind !== "risk") {
+    return renderSummaryOrSection(
+      snapshot,
+      historical,
+      selection.kind === "section" || selection.kind === "risk" ? sectionId : null,
+      navigateFromSummary,
+    );
+  }
+
+  /** The viewer's own Summary (no section) or section page for a snapshot. */
+  function renderSummaryOrSection(
+    snapshot: ReviewDocument,
+    historical: boolean,
+    shownSection: string | null,
+    navigate: (destination: SummaryDestination) => void,
+  ) {
+    const selectSnapshotSection = (id: string, item?: string) =>
+      selectSection(id, item, snapshot.review.version);
+    if (shownSection === null) {
       return (
         <ReviewSummary
           document={snapshot}
           onSelectSection={selectSnapshotSection}
-          onNavigate={historical ? undefined : navigateFromSummary}
+          onNavigate={historical ? undefined : navigate}
           contextPending={!historical && contextPending}
         />
       );
     }
-    const section = snapshot.sections.find((item) => item.id === sectionId);
+    const section = snapshot.sections.find((item) => item.id === shownSection);
     if (!section) {
       return (
         <p className="text-base text-secondary">

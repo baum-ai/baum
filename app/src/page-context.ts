@@ -1,8 +1,6 @@
 import { agentName, appURL, type ChatFocus } from "./api";
 import { PAGES } from "./pages";
-import type { ReviewPageChoice } from "./preferences";
 import { framesAllowedHere } from "./tiles/custom/environment";
-import { reviewPageOf } from "./tiles/view";
 import { CODE_PLACE } from "./review-view/model";
 import { readSelection } from "@baum/viewer/review-selection";
 
@@ -99,13 +97,11 @@ function filtersOf(search: URLSearchParams): Record<string, string> | undefined 
 /** The page context of the app's address, the one place the app derives it:
  *  the inverse of the MCP server's `link`. `cloneRepository` names the
  *  repository of a clone id, for a pull request's address that names its
- *  clone. `reviewPage` is the reader's review page setting, which the
- *  address's `view` overrides. */
+ *  clone. */
 export function pageContextOf(
   search: URLSearchParams,
   cloneRepository: (clone: string) => string | undefined = () => undefined,
   hash = "",
-  reviewPage: ReviewPageChoice = "full",
 ): PageContext {
   const requested = search.get("page") ?? "inbox";
   // A subject is named only as the MCP server takes it: a field of at most
@@ -119,7 +115,7 @@ export function pageContextOf(
   const clone = subject("clone");
   const repository = subject("repository") ?? (clone ? cloneRepository(clone) : undefined);
   if ((requested === "inbox" || requested === "pulls") && number > 0 && repository) {
-    const focus: Record<string, string> = tilesFocus(search, reviewPage);
+    const focus: Record<string, string> = tilesFocus(search);
     const anchor = hash.replace(/^#/, "");
     if (anchor) focus.anchor = anchor.slice(0, 512);
     // A desktop shell that mounts no tile frames cannot show a tile made in
@@ -134,8 +130,7 @@ export function pageContextOf(
   }
   const group = subject("group");
   if ((requested === "inbox" || requested === "pulls") && group) {
-    const focus = tilesFocus(search, reviewPage);
-    return { page: "group", group, ...(Object.keys(focus).length > 0 ? { focus } : {}) };
+    return { page: "group", group };
   }
   const session = subject("session");
   if (requested === "sessions" && session) return { page: "session", session };
@@ -172,14 +167,12 @@ export function pageContextOf(
   return withFilters({ page }, search);
 }
 
-/** On the review page's tabs, the review's focus says so and names where the
+/** The review page's focus says so and names where the
  *  person is reading, so a tile made or added from chat stands there: the
  *  tab, and on How it works the section (`context` for Where this fits), or
- *  the tile a link opened; on Code the file open. The full review, the
- *  default, adds nothing. */
-function tilesFocus(search: URLSearchParams, reviewPage: ReviewPageChoice) {
+ *  the tile a link opened; on Code the file open. */
+function tilesFocus(search: URLSearchParams) {
   const focus: Record<string, string> = {};
-  if (reviewPageOf(search, reviewPage) !== "tiles") return focus;
   focus.view = "tiles";
   const fits = (value: string | null): value is string =>
     Boolean(value) && bytes(value!) <= MAX_PAGE_TEXT;

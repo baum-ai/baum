@@ -20,22 +20,13 @@ type Preferences = {
   /** Whether the sidebar stays open beside the page or folds to its glyphs,
    *  opening over the page under the pointer. */
   sidebar: SidebarChoice;
-  /** Which page a review opens on: the full review, or the tiles page. */
-  review_page: ReviewPageChoice;
-  /** Read only: tile reviews are on and the review page is the full
-   *  review, so a version whose tiles were arranged opens on the tiles page
-   *  anyway. */
-  arranged_tiles: boolean;
 };
 export type SidebarChoice = "pinned" | "folded";
-export type ReviewPageChoice = "full" | "tiles";
 const defaults: Preferences = {
   theme: "system",
   key_hints: true,
   page_modifier: "",
   sidebar: "pinned",
-  review_page: "full",
-  arranged_tiles: false,
 };
 const PreferencesContext = createContext({
   preferences: defaults,
@@ -57,8 +48,6 @@ function normalize(saved: Partial<Preferences>): Preferences {
         ? saved.page_modifier
         : "",
     sidebar: saved.sidebar === "folded" ? "folded" : "pinned",
-    review_page: saved.review_page === "tiles" ? "tiles" : "full",
-    arranged_tiles: saved.arranged_tiles === true,
   };
 }
 
@@ -67,9 +56,7 @@ function samePreferences(a: Preferences, b: Preferences) {
     a.theme === b.theme &&
     a.key_hints === b.key_hints &&
     a.page_modifier === b.page_modifier &&
-    a.sidebar === b.sidebar &&
-    a.review_page === b.review_page &&
-    a.arranged_tiles === b.arranged_tiles
+    a.sidebar === b.sidebar
   );
 }
 

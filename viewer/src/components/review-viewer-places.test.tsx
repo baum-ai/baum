@@ -753,6 +753,41 @@ describe("ReviewViewer places: keys and chips in earlier versions", () => {
     expect(pane()).toBe("Place home");
   });
 
+  it("hands the item keys to the host's item steps, and keeps its own without them", async () => {
+    const steps = { current: null } as NonNullable<ReviewViewerProps["steps"]>;
+    const went = vi.fn();
+    const item = {
+      previous: null,
+      next: { label: "Next file", go: went },
+    };
+    const container = await render(
+      <Host initial="pane=tile&tile=tile-a">
+        {viewer({
+          steps,
+          places: dummyPlaces({
+            steps: (selection, context) => {
+              const base = dummyPlaces().steps(selection, context);
+              return base ? { ...base, item } : null;
+            },
+          }),
+        })}
+      </Host>,
+    );
+    expect(container.querySelector("#review-section")).not.toBeNull();
+    expect(steps.current?.item?.next).toBe(item.next);
+    expect(steps.current?.item?.previous).toBeNull();
+    steps.current?.item?.next?.go();
+    expect(went).toHaveBeenCalledOnce();
+  });
+
+  it("marks blocks with the item keys when the host's steps have no item steps", async () => {
+    const steps = { current: null } as NonNullable<ReviewViewerProps["steps"]>;
+    await render(
+      <Host initial="pane=tile&tile=tile-a">{viewer({ steps, places: dummyPlaces() })}</Host>,
+    );
+    expect(steps.current?.item?.next?.label).toBe("Next item");
+  });
+
   it.each([
     ["alone", "review=2"],
     ["compared", "review=2&compare=1"],

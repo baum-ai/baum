@@ -18,6 +18,9 @@ async function open(
   answer: Record<string, unknown> = { document: REVIEW_1303 },
 ) {
   await page.route(/\/api\/tiles\?/, (route) => route.fulfill({ json: answer }));
+  // The page reads a version as stored first: a baum.review/2 document goes
+  // on to the tile route, a baum.review/1 one is drawn as it is.
+  await page.route(/\/api\/document\?/, (route) => route.fulfill({ json: answer.document }));
   await signedIn(page, search);
 }
 
@@ -383,77 +386,35 @@ test("Files changed names the open file once, in its diff's header", async ({ pa
   await expect(file.getByText("oss/internal/uiserver/remote.go", { exact: true })).toHaveCount(1);
 });
 
-test("the setting chooses the review page", async ({ page }) => {
-  await page.route(/\/api\/tiles\?/, (route) => route.fulfill({ json: { document: REVIEW_1303 } }));
+test("every pull request opens on the rail, with no setting to choose a page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, "repository=acme%2Fdemo&pr=7");
+  await expect(tilesRail(page)).toBeVisible();
+  // An address a risk's link wrote lands on its section in How it works.
+  await signedIn(
+    page,
+    "repository=acme%2Fdemo&pr=7&pane=risk&risk_section=sec_allowlist&risk_id=rsk_always_allow",
+  );
+  await expect(railRow(page, "What a phone can do")).toHaveAttribute("aria-pressed", "true");
   await signedIn(page, "page=settings");
-  const select = page.locator("#review-page");
-  await expect(select).toHaveValue("full");
-  await select.selectOption("tiles");
-  try {
-    await signedIn(page, "repository=acme%2Fdemo&pr=7");
-    await expect(tilesRail(page)).toBeVisible();
-    // An address the full review wrote lands on the same place: a risk opens
-    // How it works on its section.
-    await signedIn(
-      page,
-      "repository=acme%2Fdemo&pr=7&pane=risk&risk_section=sec_allowlist&risk_id=rsk_always_allow",
-    );
-    await expect(railRow(page, "What a phone can do")).toHaveAttribute("aria-pressed", "true");
-  } finally {
-    await signedIn(page, "page=settings");
-    await page.locator("#review-page").selectOption("full");
-  }
-  await signedIn(page, "repository=acme%2Fdemo&pr=7");
-  await expect(page.getByRole("heading", { name: "Summary", level: 2 })).toBeVisible();
-  await expect(tilesRail(page)).toHaveCount(0);
+  await expect(page.locator("#review-page")).toHaveCount(0);
 });
 
-test("with tile reviews on, an arranged version opens on its rail", async ({ page }) => {
+test("a version that was not arranged opens on the rail too", async ({ page }) => {
   // The fixture's acme/demo#12 was generated with a composition; #7 was not.
   await signedIn(page, "repository=acme%2Fdemo&pr=12");
-  const labs = (on: boolean) =>
-    page.evaluate(
-      (tile_reviews) =>
-        fetch("api/settings/labs", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tile_reviews }),
-        }).then((r) => r.status),
-      on,
-    );
-  const tabs = tilesRail(page);
-  // Off, it opens on the full review, as the setting says.
-  await expect(page.getByText("An arranged fixture review").first()).toBeVisible();
-  await expect(tabs).toHaveCount(0);
-  expect(await labs(true)).toBe(200);
-  try {
-    await signedIn(page, "repository=acme%2Fdemo&pr=12");
-    await expect(tabs).toBeVisible();
-    // The address still picks the full review.
-    await signedIn(page, "repository=acme%2Fdemo&pr=12&view=full");
-    await expect(page.getByText("An arranged fixture review").first()).toBeVisible();
-    await expect(tabs).toHaveCount(0);
-    // A version that was not arranged opens on the full review.
-    await signedIn(page, "repository=acme%2Fdemo&pr=7");
-    await expect(page.getByText("Local fixture review version 2").first()).toBeVisible();
-    await expect(tabs).toHaveCount(0);
-  } finally {
-    expect(await labs(false)).toBe(200);
-  }
+  await expect(tilesRail(page)).toBeVisible();
+  await signedIn(page, "repository=acme%2Fdemo&pr=7");
+  await expect(tilesRail(page)).toBeVisible();
 });
 
-// TEMPORARY, with src/review-view/from-v1.ts: until the daemon answers
-// baum.review/2 for every version, it answers with a baum.review/1 document
-// and its view, which the page converts.
-test("a baum.review/1 answer with its view draws the same page", async ({ page }) => {
+test("a baum.review/1 version draws its own Summary and sections in the rail", async ({ page }) => {
   const errors = watchErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, PR7, legacyAnswer1303());
-  await expect(page.getByRole("heading", { name: "How a phone reaches the daemon" })).toBeVisible();
-  await expect(page.getByLabel("Before merging")).toContainText("Decide whether phones keep it.");
+  await expect(tilesRail(page)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Summary", level: 2 })).toBeVisible();
   await open(page, `${PR7}&pane=section&section=sec_allowlist`, legacyAnswer1303());
-  await expect(page.getByRole("heading", { name: "What a phone can reach" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "The writes a phone may make" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What a phone can do" })).toBeVisible();
   expect(errors).toEqual([]);
 });

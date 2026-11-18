@@ -53,21 +53,6 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const isString = (value: unknown): value is string => typeof value === "string";
 
-/** Whether a version has more than its review alone: tiles, or an overview
- *  part the model wrote, or it was written by the three levels. */
-export function isArranged(review: ReviewV2 | null): boolean {
-  if (!review) return false;
-  const { overview, summary } = review;
-  return (
-    review.tiles.length > 0 ||
-    review.generation !== undefined ||
-    Boolean(summary.risk_why || overview.diagram) ||
-    (summary.verdict?.points.length ?? 0) > 0 ||
-    overview.screenshots.length > 0 ||
-    overview.intent.length > 0
-  );
-}
-
 /** The quiet note under an added tile's title: where its data is from while
  *  it is filled, or nothing. */
 export function addedNote(tile: Pick<ViewTile, "from" | "filling">): string | null {
@@ -99,13 +84,17 @@ const converted = new WeakMap<ReviewDocument, ReviewV2>();
 
 /** The baum.review/2 document the tabs read for a review: the one it was
  *  served with, else the review converted on its own (no tiles, no overview
- *  parts beyond the review). */
+ *  parts beyond the review). A converted one is the rail's and the file
+ *  list's model only: the version's Summary and sections are drawn from the
+ *  baum.review/1 document itself (`ViewPane`). */
 export function reviewOf(document: ReviewDocument): ReviewV2 {
   const served = servedReview(document);
   if (served) return served;
   let review = converted.get(document);
   if (!review) {
-    review = fromV1(document);
+    // A baum.review/1 version's context is part of its Summary, which the
+    // viewer draws: no "Where this fits" place of its own.
+    review = { ...fromV1(document), context: null };
     converted.set(document, review);
   }
   return review;

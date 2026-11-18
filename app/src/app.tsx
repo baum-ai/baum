@@ -1,7 +1,7 @@
 import { SavedStateNotice } from "./ui-state";
 import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
 import { TileCheckPage } from "./tiles/custom/check-runner";
-import { PreferencesProvider, usePreferences } from "./preferences";
+import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
@@ -367,7 +367,6 @@ function Application() {
   );
 }
 function Workspace({ url }: { url: UrlState }) {
-  const { preferences } = usePreferences();
   const [clones, setClones] = useState<Clone[]>([]);
   const [picked, setPicked] = useState<Repository[]>([]);
   const [attached, setAttached] = useState<FoundClones["attached"]>([]);
@@ -1348,12 +1347,11 @@ function Workspace({ url }: { url: UrlState }) {
           url.search,
           (id) => clones.find((clone) => clone.id === id)?.repository,
           location.hash,
-          preferences.review_page,
         ),
         panel.ask,
       ),
     // The hash is a pull request's anchor: read again whenever the page draws.
-    [url.search, clones, location.hash, panel.ask, preferences.review_page],
+    [url.search, clones, location.hash, panel.ask],
   );
   const pageTitle =
     pageContext.page === "pull_request"

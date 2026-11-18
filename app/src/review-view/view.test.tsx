@@ -1,7 +1,7 @@
 import { act, type ReactNode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { ReviewViewer } from "@baum/viewer/components/review-viewer";
+import { ReviewViewer, type ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { type SearchUpdate, UrlStateProvider } from "@baum/viewer/navigation";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import { fixtureTile } from "../tiles/fixture-test-helper";
@@ -10,6 +10,7 @@ import type { TileContext } from "../tiles/types";
 import { tiledDocument } from "../api";
 import type { ReviewV2 } from "./document";
 import { legacyAnswer1303, REVIEW_1303, review1303 } from "./fixture-1303";
+import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
 import { drawnAs, ViewTileCard } from "./view-tile";
@@ -50,6 +51,8 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   document.body.replaceChildren();
+  // Forget a grouping held for the page while storage was refused.
+  setFileGrouping("type");
   localStorage.clear();
 });
 
@@ -67,9 +70,12 @@ function Host({ initial = "", children }: { initial?: string; children: ReactNod
   return <UrlStateProvider value={{ search: state, update }}>{children}</UrlStateProvider>;
 }
 
+let steps: { current: ReviewSteps | null } = { current: null };
+
 function Page({ document }: { document: ReviewDocument }) {
   const places = useViewPlaces();
-  return <ReviewViewer document={document} places={places} />;
+  steps = { current: null };
+  return <ReviewViewer document={document} places={places} steps={steps} />;
 }
 
 async function render(node: ReactNode) {
@@ -1037,5 +1043,75 @@ describe("a section's body", () => {
     expect(more.textContent).toContain("A secret is made.");
     await click(boxes[0]!);
     expect(more.textContent).not.toContain("A secret is made.");
+  });
+});
+
+describe("j and k on Files changed", () => {
+  const nav = (container: HTMLElement) =>
+    pane(container).querySelector<HTMLElement>('nav[aria-label="Changed files"]')!;
+  /** The files in the order the list shows them, a file under several
+   *  headings at its first. */
+  const listed = (container: HTMLElement) => [
+    ...new Set(
+      [...nav(container).querySelectorAll<HTMLElement>("li[title]")].map(
+        (row) => row.getAttribute("title")!,
+      ),
+    ),
+  ];
+  const openFile = (container: HTMLElement) =>
+    pane(container).querySelector("#review-view-file")?.getAttribute("aria-label");
+  const key = (direction: "next" | "previous") =>
+    act(async () => {
+      steps.current?.item?.[direction]?.go();
+    });
+
+  it.each(["Type", "Folder", "Feature"])(
+    "steps through the files in %s order and stops at the ends",
+    async (mode) => {
+      const container = await page("pane=tile&tile=code");
+      await click(button(nav(container).querySelector<HTMLElement>('[role="group"]')!, mode));
+      // Generated files are in the order too, and open with their group.
+      const generated = [...nav(container).querySelectorAll<HTMLElement>("button")].find((each) =>
+        each.textContent?.startsWith("Generated"),
+      );
+      if (generated) await click(generated);
+      const order = listed(container);
+      expect(order.length).toBeGreaterThan(3);
+      // Open the first file as a click on its row does.
+      await click(nav(container).querySelector<HTMLElement>(`li[title="${order[0]}"] button`)!);
+      expect(openFile(container)).toBe(order[0]);
+      await key("previous");
+      expect(openFile(container)).toBe(order[0]);
+      for (const path of order.slice(1)) {
+        await key("next");
+        expect(openFile(container)).toBe(path);
+        // Its row is marked.
+        expect(
+          nav(container).querySelector(`li[title="${path}"] button`)?.getAttribute("aria-pressed"),
+        ).toBe("true");
+      }
+      await key("next");
+      expect(openFile(container)).toBe(order.at(-1));
+      await key("previous");
+      expect(openFile(container)).toBe(order.at(-2));
+    },
+  );
+
+  it("follows a grouping switched on the page", async () => {
+    const container = await page("pane=tile&tile=code");
+    const type = listed(container);
+    await click(nav(container).querySelector<HTMLElement>(`li[title="${type[0]}"] button`)!);
+    await click(button(nav(container).querySelector<HTMLElement>('[role="group"]')!, "Folder"));
+    const folder = listed(container);
+    expect(folder).not.toEqual(type);
+    await click(nav(container).querySelector<HTMLElement>(`li[title="${folder[1]}"] button`)!);
+    await key("next");
+    expect(openFile(container)).toBe(folder[2]);
+  });
+
+  it("keeps marking blocks on a section", async () => {
+    await page("pane=section&section=sec_pairing");
+    expect(steps.current?.item?.next?.label).toBe("Next item");
+    expect(steps.current?.item?.previous?.label).toBe("Previous item");
   });
 });

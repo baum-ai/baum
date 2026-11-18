@@ -1216,6 +1216,22 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     signal,
   ).then(readableDocument);
 }
+/** A version of the review as the review page reads it. A baum.review/1
+ *  version is read as stored (its own document, which the viewer's Summary
+ *  and section pages draw in the page's shell); a baum.review/2 one through
+ *  the tile route, with the tiles the person added. */
+export function shellRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
+  return request<ReviewDocument | ReviewV2 | Record<string, unknown>>(
+    `api/document?${selector(clone, pr, version)}`,
+    undefined,
+    "GET",
+    signal,
+  ).then((doc) =>
+    (doc as { schema?: unknown }).schema === REVIEW_V2
+      ? tilesRequest(clone, pr, version, signal)
+      : validDocument(doc as ReviewDocument),
+  );
+}
 /** A version of the review as the review page's tabs read it: the review the
  *  page's chrome reads, carrying the baum.review/2 document the tabs read. */
 export function tilesRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {

@@ -29,14 +29,14 @@ export function publishAddedTilesResync() {
 }
 
 /** Calls `reread` on each `added_tiles` event for the pull request `key`,
- *  and after a reconnection, while `enabled`. */
-export function useAddedTilesEvents(key: string, enabled: boolean, reread: () => void) {
-  const latest = useRef({ key, enabled, reread });
-  latest.current = { key, enabled, reread };
+ *  and after a reconnection. */
+export function useAddedTilesEvents(key: string, reread: () => void) {
+  const latest = useRef({ key, reread });
+  latest.current = { key, reread };
   useEffect(() => {
     const listener = (event: Event) => {
       const pr = (event as CustomEvent<string | null>).detail;
-      if (!latest.current.enabled || (pr !== null && pr !== latest.current.key)) return;
+      if (pr !== null && pr !== latest.current.key) return;
       latest.current.reread();
     };
     bus.addEventListener("added_tiles", listener);

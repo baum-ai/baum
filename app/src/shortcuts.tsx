@@ -436,7 +436,8 @@ export function openActiveBlock(): boolean {
 }
 
 /** Where a key moves a review page, as the navigator does: j and k (↓ ↑)
- *  through the blocks of the section being read; Shift+J and Shift+K
+ *  through the blocks of the section being read, or the files of Files
+ *  changed (the place's `item` steps); Shift+J and Shift+K
  *  (Shift+↓ ↑), or → and ←, to the next or previous section. */
 export function reviewKeyStep(event: KeyboardEvent, steps: ReviewSteps | null) {
   if (!steps) return null;
@@ -931,10 +932,10 @@ function shortcutGroups(
       rows: [
         {
           keys: ["j", "ArrowDown"],
-          label: "Next item in the section, or tile on the tiles page's summary",
+          label: "Next item in the section; on Files changed, the next file",
           short: "move",
         },
-        { keys: ["k", "ArrowUp"], label: "Previous item, or tile", short: "move" },
+        { keys: ["k", "ArrowUp"], label: "Previous item, or file", short: "move" },
         {
           keys: MAC ? ["⇧J", "⇧↓", "ArrowRight"] : ["Shift+J", "Shift+↓", "ArrowRight"],
           label: "Next section, or tile",
