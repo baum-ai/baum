@@ -223,7 +223,11 @@ async function type(input: HTMLInputElement, value: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
-const posted = () => requests.filter((r) => r.method !== "GET");
+// The session panel reports the open page (`PUT api/console/page`) on every
+// navigation, at a time that depends on render timing; it is not what these
+// tests check.
+const posted = () =>
+  requests.filter((r) => r.method !== "GET" && r.path !== "api/console/page");
 
 it("creates a group from the selected rows and opens its page", async () => {
   entries = [entry(1), entry(2)];
