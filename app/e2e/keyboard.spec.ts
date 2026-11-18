@@ -137,19 +137,27 @@ test("Tab stays inside a dialog and goes through its controls", async ({ page })
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(sheet).toBeVisible();
   const close = sheet.getByRole("button", { name: "Close", exact: true });
+  const search = sheet.getByRole("searchbox", { name: "Search the shortcuts" });
   const heading = sheet.getByRole("heading", { name: "Keyboard shortcuts", exact: true });
+  const list = sheet.locator("#shortcuts-list");
   const headingTop = (await heading.boundingBox())!.y;
-  await sheet.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
-  await expect.poll(() => sheet.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  // It opens on the list, which the arrow and page keys scroll under the
+  // title and the search field.
+  await expect(list).toBeFocused();
+  await page.keyboard.press("End");
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await expect.poll(async () => (await heading.boundingBox())!.y).toBeCloseTo(headingTop, 0);
   await expect(close).toBeInViewport();
+  await expect(search).toBeInViewport();
+  // Typing searches.
+  await page.keyboard.type("merge");
+  await expect(search).toHaveValue("merge");
+  await expect(sheet.locator("dd").first()).toContainText("Merge");
+  // Its controls: Tab and Shift+Tab go round the close button and the field.
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
-  // Its only control: Tab and Shift+Tab stay on it.
   await page.keyboard.press("Tab");
-  await expect(close).toBeFocused();
+  await expect(search).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(close).toBeFocused();
   await page.keyboard.press("Enter");

@@ -8,6 +8,7 @@ import {
   INBOX_SHORTCUTS,
   isGitHubKey,
   KeyBar,
+  shortcutMatches,
   listKeys,
   MAC,
   moveFocus,
@@ -646,6 +647,41 @@ it("lists exactly the keys that work in the sheet", async () => {
     "t",
     "r",
   ]);
+});
+
+it("finds keys in the sheet by what they do or by the key", async () => {
+  expect(shortcutMatches({ keys: ["m"], label: "Merge, where offered" }, "MERGE")).toBe(true);
+  expect(shortcutMatches({ keys: ["m"], label: "Merge, where offered" }, "merge fix")).toBe(false);
+  expect(shortcutMatches({ keys: ["ArrowDown"], label: "Next row" }, "↓")).toBe(true);
+  expect(shortcutMatches({ keys: ["Escape"], label: "Clear the row focus" }, "esc")).toBe(true);
+  await act(async () => root.render(<ShortcutsSheet close={() => {}} />));
+  const sheet = node.querySelector("dialog")!;
+  // It opens on the list, for reading; a typed key moves to the search field.
+  expect(document.activeElement?.id).toBe("shortcuts-list");
+  const input = sheet.querySelector("input")!;
+  await act(async () => {
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "m", bubbles: true }),
+    );
+  });
+  expect(document.activeElement).toBe(input);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "merge");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(Array.from(sheet.querySelectorAll("h3")).map((h) => h.textContent)).toEqual([
+    "Inbox",
+    "Pull requests",
+    "A pull request or group",
+  ]);
+  expect(
+    Array.from(sheet.querySelectorAll("dd")).every((dd) => /merge/i.test(dd.textContent!)),
+  ).toBe(true);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "zzz");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(sheet.textContent).toContain("Nothing matches “zzz”.");
 });
 
 it("lists the keys of where the sheet was opened first", async () => {

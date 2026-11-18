@@ -3,6 +3,7 @@ import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { CloseButton } from "@baum/viewer/components/ui";
+import { SectionLabel } from "@baum/viewer/components/section-label";
 import { PAGES, type Page } from "./pages";
 import { openExternal } from "./api";
 
@@ -1139,8 +1140,19 @@ export function KeyBar({ place, className }: { place: ShortcutsPlace; className?
   );
 }
 
-/** Every key of the app, grouped by where it works, as a small native dialog
- *  like the others. `?` opens it from any page. */
+/** Whether a row of the sheet matches `query`: every word of it is in the
+ *  row's description or names one of its keys, ignoring case. */
+export function shortcutMatches(row: Shortcut, query: string) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const keys = row.keys.flatMap((key) => [key, KEY_NAMES[key] ?? key]).join(" ");
+  const text = `${row.label} ${keys}`.toLowerCase();
+  return words.every((word) => text.includes(word));
+}
+
+/** Every key of the app, grouped by where it works, as Go to draws its
+ *  places: a native dialog with a search field over a list that scrolls.
+ *  `?` opens it from any page, and Go to has it too. It opens on the list,
+ *  for reading; typing (or `/`) goes to the search field. */
 export function ShortcutsSheet({
   close,
   current = "anywhere",
@@ -1150,55 +1162,76 @@ export function ShortcutsSheet({
   current?: ShortcutsPlace;
 }) {
   const dialog = useModal();
-  const title = useRef<HTMLHeadingElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
   useEffect(() => {
-    // The list scrolls; it opens at its top, on the current page's keys,
-    // rather than on its close control.
-    title.current?.focus({ preventScroll: true });
-    if (dialog.current) dialog.current.scrollTop = 0;
+    // The list takes the focus, so the arrow and page keys scroll it.
+    body.current?.focus({ preventScroll: true });
   }, []);
   const groups = shortcutGroups(usePreferences().preferences.page_modifier);
   const ordered = [
     ...groups.filter((group) => group.place === current),
     ...groups.filter((group) => group.place !== current),
-  ];
+  ]
+    .map((group) => ({ ...group, rows: group.rows.filter((row) => shortcutMatches(row, query)) }))
+    .filter((group) => group.rows.length > 0);
   return (
     <dialog
       ref={dialog}
       data-shortcuts-sheet=""
       onCancel={close}
       aria-labelledby="shortcuts-title"
-      className="shortcuts-sheet"
+      onKeyDown={(event) => {
+        if (event.target === search.current) return;
+        if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+        // `?` closes the sheet and Space scrolls it. Another character lands
+        // in the search field, and `/` only moves there.
+        if (event.key === "?" || event.key === " ") return;
+        if (event.key === "/") event.preventDefault();
+        search.current?.focus();
+      }}
+      className="go-to shortcuts-sheet"
     >
-      <div className="local-dialog-head shortcuts-head">
-        <h2
-          ref={title}
-          id="shortcuts-title"
-          tabIndex={-1}
-          className="text-lg font-semibold outline-none"
-        >
+      <div className="shortcuts-head">
+        <h2 id="shortcuts-title" className="text-lg font-semibold">
           Keyboard shortcuts
         </h2>
         <CloseButton onClick={close} />
       </div>
-      <div className="shortcuts-body">
-        {ordered.map((group) => (
-          <section key={group.place} aria-label={group.title} className="shortcuts-group">
-            <h3>{group.title}</h3>
-            <dl className="shortcuts-list">
-              {group.rows.map((row) => (
-                <div key={row.keys.join()}>
-                  <dt>
-                    {row.keys.map((key) => (
-                      <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
-                    ))}
-                  </dt>
-                  <dd>{row.label}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        ))}
+      <input
+        ref={search}
+        type="search"
+        aria-label="Search the shortcuts"
+        aria-controls="shortcuts-list"
+        placeholder="Search the shortcuts…"
+        spellCheck={false}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        className="go-to-input"
+      />
+      <div ref={body} id="shortcuts-list" tabIndex={-1} className="shortcuts-body">
+        {ordered.length === 0 ? (
+          <p className="go-to-empty">Nothing matches “{query}”.</p>
+        ) : (
+          ordered.map((group) => (
+            <section key={group.place} aria-label={group.title} className="shortcuts-group">
+              <SectionLabel>{group.title}</SectionLabel>
+              <dl className="shortcuts-list">
+                {group.rows.map((row) => (
+                  <div key={row.keys.join()}>
+                    <dt>
+                      {row.keys.map((key) => (
+                        <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
+                      ))}
+                    </dt>
+                    <dd>{row.label}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))
+        )}
       </div>
     </dialog>
   );

@@ -2853,6 +2853,26 @@ it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
 });
+it("opens the shortcuts sheet from Go to", async () => {
+  entries = [entry(1)];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  await act(async () => root.render(<App />));
+  await press("k", { ctrlKey: true });
+  const option = Array.from(
+    node.querySelectorAll<HTMLElement>('[data-go-to] [role="option"]'),
+  ).find((one) => one.textContent?.startsWith("Keyboard shortcuts"))!;
+  expect(option.textContent).toBe("Keyboard shortcuts?Action");
+  await act(async () => option.click());
+  expect(node.querySelector("[data-go-to]")).toBeNull();
+  expect(node.querySelector("[data-shortcuts-sheet]")?.textContent).toContain(
+    "Refresh from GitHub",
+  );
+});
 it("folds the sidebar opened under the mouse when the pointer or focus leaves the window", async () => {
   entries = [entry(1)];
   // A narrow window always folds the sidebar.

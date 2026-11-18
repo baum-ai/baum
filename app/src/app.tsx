@@ -1407,6 +1407,15 @@ function Workspace({ url }: { url: UrlState }) {
         href: "",
         run: () => sessionPanel.toggle(),
       },
+      {
+        id: "shortcuts",
+        kind: "Action" as const,
+        label: "Keyboard shortcuts",
+        detail: "?",
+        keywords: "keys keybindings hotkeys help",
+        href: "",
+        run: () => setShortcuts(true),
+      },
       ...(inboxes.available
         ? [
             ...inboxes.inboxes.map((one) => ({
