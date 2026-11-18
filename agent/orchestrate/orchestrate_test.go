@@ -526,6 +526,31 @@ func TestLevelTimeShares(t *testing.T) {
 	}
 }
 
+func TestMapTimeFloor(t *testing.T) {
+	start := time.Date(2026, 11, 18, 14, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name  string
+		limit time.Duration
+		level string
+		want  time.Duration
+	}{
+		// 20% of ten minutes is two; the map gets MinMapTime.
+		{"map floor", 10 * time.Minute, LevelMap, MinMapTime},
+		// The later levels keep their shares' ends.
+		{"sections unchanged", 10 * time.Minute, LevelSections, 6*time.Minute + 30*time.Second},
+		{"overview unchanged", 10 * time.Minute, LevelOverview, 10 * time.Minute},
+		// A long limit's share is above the floor.
+		{"map share", 30 * time.Minute, LevelMap, 6 * time.Minute},
+		// A short limit caps the map at the end of the sections' share.
+		{"map capped", 5 * time.Minute, LevelMap, 3*time.Minute + 15*time.Second},
+	} {
+		got := levelEnd(start, start.Add(c.limit), c.level).Sub(start)
+		if got.Round(time.Millisecond) != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
+	}
+}
+
 type slowFake struct {
 	*fake
 	slow string
