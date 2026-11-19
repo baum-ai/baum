@@ -414,3 +414,48 @@ test("tweaking a custom theme twice updates it in place and adds no theme", asyn
     expect(now.themes.find((t) => t.id === id)?.tokens["--color-paper"]).toBe(colour);
   }
 });
+
+test("switches to a built-in theme from a review page and saves it to the slot in use", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
+  await expect(html(page)).toHaveAttribute("data-theme", "light");
+  const slots = () =>
+    page.evaluate(async () => {
+      const answer = (await (await fetch("api/settings/appearance")).json()) as Appearance;
+      return { light: answer.light_theme, dark: answer.dark_theme, mode: answer.theme };
+    });
+  // The fixture's mode is System, so the slot in use is the light one here.
+  const before = await slots();
+  expect(before).toMatchObject({ light: "default-light", dark: "default-dark" });
+
+  await page.keyboard.press("Control+`");
+  const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
+  await expect(composer).toBeFocused();
+  await composer.fill("Please switch theme to pine");
+  await composer.press("Enter");
+
+  // The card says which slot it is for, shows the thumbnail and previews Pine,
+  // a dark theme, on the review page.
+  const proposal = panel(page).getByRole("article", { name: "Proposal" });
+  await expect(proposal).toContainText(/Use Pine for the (light|dark) theme \(in use\)/);
+  await expect(proposal.getByTestId("theme-mini")).toBeVisible();
+  await expect(html(page)).toHaveAttribute("data-theme", "dark");
+  await expect.poll(() => paper(page)).not.toBe("");
+  const slot = (await proposal.textContent())!.match(/for the (light|dark) theme/)![1]!;
+
+  // Save sends the slot in use: it persists there and nowhere else.
+  await proposal.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(proposal).toHaveCount(0);
+  await expect.poll(async () => (await slots())[slot as "light" | "dark"]).toBe("pine");
+  const after = await slots();
+  expect(slot === "light" ? after.dark : after.light).toBe(
+    slot === "light" ? "default-dark" : "default-light",
+  );
+  expect(after.mode).toBe("system");
+  await expect(html(page)).toHaveAttribute("data-theme", "dark");
+});

@@ -23,14 +23,15 @@ import (
 // The targets, by page:
 //
 //   - settings: TargetAppearance and TargetPlanUsage+provider (General),
-//     TargetThemeChoice (Appearance),
 //     TargetReviews and TargetDecisions (Reviews), TargetFixes (Fixes),
 //     TargetTimeLimits, TargetJobConcurrency, TargetCodexApprovals and
 //     TargetAgentEnv+NAME (This computer), TargetPrompt+id (Prompts, the
 //     global prompts).
-//   - any page (ProposalAnywhere, not a page): TargetTheme, a colour theme the
-//     app previews at once and the person saves into a slot from wherever
-//     they are. Every page lists propose_theme.
+//   - any page (ProposalAnywhere, not a page): TargetTheme, a colour theme
+//     (new, or an edit of one of the person's) and TargetThemeChoice, a switch
+//     to an existing theme and/or the theme mode, which the app previews at
+//     once and the person saves from wherever they are. Every page lists
+//     propose_theme and propose_theme_choice.
 //   - repositories, showing a repository: RepositoryTarget(repository,
 //     TargetRepositorySettings) (Reviews), RepositoryTarget(repository,
 //     TargetPrompt+id) (Prompts).
@@ -95,7 +96,7 @@ func ParsePullRequestTarget(target string) (repository string, number int, ok bo
 var (
 	// proposePageTools are the propose_* tools of each page.
 	proposePageTools = map[string][]string{
-		PageSettings:     {"propose_appearance", "propose_theme_choice", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
+		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
 		PageRepositories: {"propose_repository_settings", "propose_prompt", "propose_prompt_reset"},
 		PageInbox:        {"propose_inbox"},
 		PageGroup:        {"propose_group"},
@@ -106,7 +107,6 @@ var (
 	// section's tools.
 	settingsSectionProposals = map[string][]string{
 		"general":    {"propose_appearance", "propose_plan_usage"},
-		"appearance": {"propose_theme_choice"},
 		"reviews":    {"propose_reviews", "propose_decision_capture", "propose_labs"},
 		"fixes":      {"propose_fixes"},
 		"computer":   {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
@@ -206,6 +206,69 @@ func proposeThemeTool() Tool {
 	}
 }
 
+// themeChoiceAnswer is what propose_theme_choice answers: the receipt and
+// status, and which slot the theme goes in.
+type themeChoiceAnswer struct {
+	proposed
+	AppliesTo string `json:"applies_to,omitempty"`
+}
+
+func proposeThemeChoiceTool() Tool {
+	return Tool{
+		Name: "propose_theme_choice",
+		Description: "Proposes switching the baum app to an existing colour theme (a built-in or one of the person's own, by id from settings_appearance) and/or changing the theme mode (theme: system, light or dark). Works on any page. The theme goes in the slot in use right now (the light or the dark theme, whichever the app shows); omit slot unless the person names the other mode, for example \"change my dark theme while I'm in light mode\", and then pass slot dark or light. " +
+			"The app previews the switch at once when it changes what the app shows; nothing is saved until the person saves it, and the preview ends when they dismiss it. A newer theme proposal replaces this one. To make a new theme or change one use propose_theme. You get its id and which slot it is for, never the current values.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+			`"theme_id":{"type":"string","minLength":1,"maxLength":64,"description":"The id of an existing colour theme, from settings_appearance's themes (default-light and default-dark are the built-in defaults)."},` +
+			`"slot":{"type":"string","enum":["light","dark"],"description":"The slot to set. Omit for the slot in use."},` +
+			`"theme":{"type":"string","enum":["system","light","dark"],"description":"The theme mode."}},` +
+			`"additionalProperties":false}`),
+		Proposes: true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				ThemeID string `json:"theme_id,omitempty"`
+				Slot    string `json:"slot,omitempty"`
+				Theme   string `json:"theme,omitempty"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			if a.ThemeID == "" && a.Theme == "" {
+				return "", errors.New("pass a theme_id, a theme mode, or both")
+			}
+			if a.ThemeID == "" && a.Slot != "" {
+				return "", errors.New("slot needs a theme_id")
+			}
+			// Recorded as the slot in use when omitted; the app resolves it.
+			// When the mode is light or dark the answer can name it.
+			applies := ""
+			if a.ThemeID != "" {
+				switch {
+				case a.Slot != "":
+					applies = "the " + a.Slot + " theme"
+				case a.Theme == "light" || a.Theme == "dark":
+					applies = "the " + a.Theme + " theme (the slot in use)"
+				default:
+					applies = "the slot in use"
+				}
+				if a.Slot == "" {
+					a.Slot = SlotInUse
+				}
+			}
+			text, err := propose(ctx, c, ProposalAnywhere, TargetThemeChoice, a)
+			if err != nil {
+				return "", err
+			}
+			var receipt proposed
+			if err := json.Unmarshal([]byte(text), &receipt); err != nil {
+				return "", err
+			}
+			out, err := json.Marshal(themeChoiceAnswer{receipt, applies})
+			return string(out), err
+		},
+	}
+}
+
 // strictArgs decodes a tool's arguments, which its schema already checked.
 func strictArgs(args json.RawMessage, v any) error {
 	d := json.NewDecoder(strings.NewReader(string(args)))
@@ -271,26 +334,6 @@ func proposeTools() []Tool {
 				return "", err
 			}
 			return propose(ctx, c, PageSettings, TargetAppearance, a)
-		},
-	}, {
-		Name:        "propose_theme_choice",
-		Description: "Proposes a change to the Settings page's Appearance section: the theme mode (theme: system, light or dark) and which colour theme the light and dark slots use (light_theme, dark_theme: theme ids from settings_appearance; to make a new theme use propose_theme). The person must have Settings open at Appearance. Nothing changes until the person saves the proposal; you get its id, never the current values.",
-		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
-			`"theme":{"type":"string","maxLength":16,"description":"system, light or dark."},` +
-			`"light_theme":{"type":"string","maxLength":64,"description":"The id of the colour theme for the light slot, from settings_appearance's themes; empty is the built-in default."},` +
-			`"dark_theme":{"type":"string","maxLength":64,"description":"The id of the colour theme for the dark slot, from settings_appearance's themes; empty is the built-in default."}},` +
-			`"minProperties":1,"additionalProperties":false}`),
-		Proposes: true,
-		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-			var a struct {
-				Theme      *string `json:"theme,omitempty"`
-				LightTheme *string `json:"light_theme,omitempty"`
-				DarkTheme  *string `json:"dark_theme,omitempty"`
-			}
-			if err := strictArgs(args, &a); err != nil {
-				return "", err
-			}
-			return propose(ctx, c, PageSettings, TargetThemeChoice, a)
 		},
 	}, {
 		Name:        "propose_plan_usage",
@@ -615,7 +658,7 @@ func proposeTools() []Tool {
 			}
 			return propose(ctx, c, PagePullRequest, PullRequestTarget(c.Page.Repository, c.Page.PullRequest), a)
 		},
-	}, proposeThemeTool()}
+	}, proposeThemeTool(), proposeThemeChoiceTool()}
 }
 
 // AgentEnvChange is the After of an agent environment proposal: a name to

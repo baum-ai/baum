@@ -17,10 +17,10 @@ import (
 
 // commonToolNames are the tools offered on every page: they act on the app as
 // a whole, not on what one page shows (search, link, app_help, daemon_status)
-// or propose an app-wide change (propose_theme, a proposal under the
+// or propose an app-wide change (propose_theme and propose_theme_choice, proposals under the
 // ProposalAnywhere "app" sentinel rather than a page). New adds them to the
 // tools of every page, and RegisterPage to those of each page registered later.
-var commonToolNames = []string{"search", "link", "app_help", "daemon_status", "propose_theme"}
+var commonToolNames = []string{"search", "link", "app_help", "daemon_status", "propose_theme", "propose_theme_choice"}
 
 // withCommonTools is names followed by the common tools, each once.
 func withCommonTools(names []string) []string {

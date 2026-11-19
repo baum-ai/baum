@@ -525,6 +525,13 @@
 .session-panel-warnings {
   color: var(--status-caution);
 }
+.session-panel-choice {
+  display: grid;
+  gap: 0.5rem;
+}
+.session-panel-choice-thumb {
+  width: min(12rem, 100%);
+}
 .session-panel-theme-save {
   grid-template-columns: auto 1fr;
   align-items: center;

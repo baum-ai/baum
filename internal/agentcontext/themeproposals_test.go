@@ -222,3 +222,65 @@ func TestProposeThemeToolKeepsThemeID(t *testing.T) {
 		t.Errorf("the description does not explain theme_id: %s", d)
 	}
 }
+
+// propose_theme_choice records an omitted slot as in use and names the slot
+// in its answer when the mode is light or dark.
+func TestProposeThemeChoiceTool(t *testing.T) {
+	rec := &takeAll{}
+	s := New(Options{API: http.NotFoundHandler(), Proposers: map[string]Proposer{ProposalAnywhere: rec}})
+	token, id := chat(t, s)
+	args := map[string]any{"theme_id": "pine"}
+	if text, failed := data(t, s, token, "propose_theme_choice", args); !failed {
+		t.Fatalf("proposed with no page open: %s", text)
+	}
+	for _, tt := range []struct {
+		page    PageContext
+		args    map[string]any
+		after   string
+		applies string
+	}{
+		{PageContext{Page: PageInbox}, map[string]any{"theme_id": "pine"}, `{"theme_id":"pine","slot":"in_use"}`, "the slot in use"},
+		{PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 3}, map[string]any{"theme_id": "pine", "theme": "dark"}, `{"theme_id":"pine","slot":"in_use","theme":"dark"}`, "the dark theme (the slot in use)"},
+		{PageContext{Page: PageSettings, Section: "fixes"}, map[string]any{"theme_id": "pine", "theme": "system"}, `{"theme_id":"pine","slot":"in_use","theme":"system"}`, "the slot in use"},
+		{PageContext{Page: PageInbox}, map[string]any{"theme_id": "pine", "slot": "light", "theme": "dark"}, `{"theme_id":"pine","slot":"light","theme":"dark"}`, "the light theme"},
+		{PageContext{Page: PageInbox}, map[string]any{"theme": "light"}, `{"theme":"light"}`, ""},
+	} {
+		setPage(t, s, id, tt.page)
+		text, failed := data(t, s, token, "propose_theme_choice", tt.args)
+		if failed {
+			t.Fatalf("%v: %s", tt.args, text)
+		}
+		var got struct {
+			ID        string `json:"id"`
+			Page      string `json:"page"`
+			Target    string `json:"target"`
+			Status    string `json:"status"`
+			AppliesTo string `json:"applies_to"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); err != nil || got.ID == "" || got.Page != ProposalAnywhere || got.Target != TargetThemeChoice ||
+			got.Status != proposedStatus || got.AppliesTo != tt.applies || strings.Contains(text, "current") {
+			t.Fatalf("answer %s: %v", text, err)
+		}
+		open := s.Proposals.List(id)
+		if len(open) != 1 || !sameJSON(open[0].After, json.RawMessage(tt.after)) {
+			t.Fatalf("recorded %+v, want %s", open, tt.after)
+		}
+	}
+	for name, a := range map[string]map[string]any{
+		"nothing":     {},
+		"slot only":   {"slot": "dark"},
+		"bad slot":    {"theme_id": "pine", "slot": "in_use"},
+		"bad mode":    {"theme": "neon"},
+		"empty id":    {"theme_id": ""},
+		"old field":   {"light_theme": "pine"},
+		"wrong types": {"theme_id": 1},
+	} {
+		if text, failed := data(t, s, token, "propose_theme_choice", a); !failed {
+			t.Errorf("%s was proposed: %s", name, text)
+		}
+	}
+	d := proposeThemeChoiceTool().Description
+	if !strings.Contains(d, "omit slot unless the person names the other mode") || strings.Contains(d, "Appearance") {
+		t.Errorf("description: %s", d)
+	}
+}

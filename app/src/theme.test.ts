@@ -4,6 +4,8 @@ import {
   activeTheme,
   applyTheme,
   builtinThemes,
+  choicePreview,
+  choiceSlot,
   THEME_TOKENS,
   tileThemeMessage,
   type Theme,
@@ -101,4 +103,58 @@ it("builds the tile theme message with the allowlisted tokens", () => {
   });
   expect(tileThemeMessage({ ...sand, tokens: { "--nope": "#fff" } }).tokens).toEqual({});
   expect(tileThemeMessage(builtinThemes[1]!)).toMatchObject({ theme: "dark", tokens: {} });
+});
+
+it("resolves a choice's slot in use across the modes and the desktop's appearance", () => {
+  const choice = { theme_id: "c-1", slot: "in_use" as const };
+  for (const [mode, dark, want] of [
+    ["light", false, "light"],
+    ["light", true, "light"],
+    ["dark", false, "dark"],
+    ["dark", true, "dark"],
+    ["system", false, "light"],
+    ["system", true, "dark"],
+  ] as const)
+    expect(choiceSlot({ theme: mode }, choice, dark)).toBe(want);
+  // An omitted slot is the slot in use too, and an explicit one is kept.
+  expect(choiceSlot({ theme: "system" }, { theme_id: "c-1" }, true)).toBe("dark");
+  expect(choiceSlot({ theme: "light" }, { theme_id: "c-1", slot: "dark" }, false)).toBe("dark");
+  // The choice's own mode decides the slot in use: dark mode picks the dark slot.
+  expect(choiceSlot({ theme: "light" }, { theme_id: "c-1", theme: "dark" }, false)).toBe("dark");
+  // A mode alone is for no slot.
+  expect(choiceSlot({ theme: "light" }, { theme: "dark" }, false)).toBeNull();
+});
+
+it("previews a choice only for the active slot, or when the mode changes", () => {
+  const inUse = { theme_id: "c-1", slot: "in_use" as const };
+  // The slot in use is previewed with the chosen theme.
+  expect(choicePreview(prefs({ theme: "light" }), inUse, true)).toBe(dusk);
+  expect(choicePreview(prefs({ theme: "system" }), inUse, true)).toBe(dusk);
+  // The other slot shows nothing while the mode stays.
+  expect(
+    choicePreview(prefs({ theme: "light" }), { theme_id: "c-1", slot: "dark" }, false),
+  ).toBeNull();
+  expect(
+    choicePreview(prefs({ theme: "system" }), { theme_id: "c-1", slot: "light" }, true),
+  ).toBeNull();
+  // The active slot named explicitly is previewed.
+  expect(choicePreview(prefs({ theme: "dark" }), { theme_id: "c-1", slot: "dark" }, false)).toBe(
+    dusk,
+  );
+  // A mode change previews the slot the new mode shows: the chosen theme when
+  // that is its slot, else the saved theme of that slot.
+  expect(choicePreview(prefs({ theme: "light" }), { theme_id: "c-1", theme: "dark" }, false)).toBe(
+    dusk,
+  );
+  expect(
+    choicePreview(
+      prefs({ theme: "light" }),
+      { theme_id: "c-2", slot: "light", theme: "dark" },
+      false,
+    ),
+  ).toBe(builtinThemes[1]);
+  expect(choicePreview(prefs({ theme: "light" }), { theme: "dark" }, false)).toBe(builtinThemes[1]);
+  // An unknown theme, or no change at all, shows nothing.
+  expect(choicePreview(prefs({ theme: "light" }), { theme_id: "c-gone" }, false)).toBeNull();
+  expect(choicePreview(prefs({ theme: "dark" }), { theme: "dark" }, false)).toBeNull();
 });

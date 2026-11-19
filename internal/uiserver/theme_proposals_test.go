@@ -185,60 +185,142 @@ func TestThemeProposalRefusals(t *testing.T) {
 	}
 }
 
-func TestAppearanceProposalSetsThemeSlots(t *testing.T) {
-	f := newProposalFixture(t)
-	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "appearance"})
-	f.must("POST", "/api/settings/appearance/themes", `{"name":"Mine","base":"dark","tokens":{}}`)
-	id := f.appearance().Themes[6].ID
-	p, err := f.propose("propose_theme_choice", map[string]any{"dark_theme": id})
+// proposeChoice proposes a theme choice through the tool, which must accept it.
+func (f *proposalFixture) proposeChoice(args map[string]any) agentcontext.Proposal {
+	f.t.Helper()
+	p, err := f.propose("propose_theme_choice", args)
 	if err != nil {
+		f.t.Fatalf("propose_theme_choice %v: %v", args, err)
+	}
+	return p
+}
+
+// The theme choice is valid from any page, records an omitted slot as in use
+// and keeps an explicit one; the save takes the slot the app resolved.
+func TestThemeChoiceWorksFromAnyPage(t *testing.T) {
+	f := newProposalFixture(t)
+	id := f.addCustom("Mine", "dark", "")
+	for _, page := range []agentcontext.PageContext{
+		{Page: agentcontext.PageInbox},
+		{Page: agentcontext.PageGroup, Group: f.group},
+		{Page: agentcontext.PageSettings, Section: "general"},
+		{Page: agentcontext.PageSettings, Section: "appearance"},
+	} {
+		f.page(page)
+		p := f.proposeChoice(map[string]any{"theme_id": "pine"})
+		if p.Page != agentcontext.ProposalAnywhere || p.Target != agentcontext.TargetThemeChoice || string(p.After) != `{"theme_id":"pine","slot":"in_use"}` {
+			t.Fatalf("%+v recorded %s %s %s", page, p.Page, p.Target, p.After)
+		}
+	}
+	// An omitted slot is recorded as in use and saved with the app's slot,
+	// from a page that is not Settings; the explicit slot is kept as it is.
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	p := f.proposeChoice(map[string]any{"theme_id": "pine"})
+	if err := f.save(p, agentcontext.SaveInput{}); err == nil {
+		t.Error("saved a slot in use without the app resolving it")
+	}
+	if err := f.save(p, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Slot: "light"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.save(p, agentcontext.SaveInput{}); err != nil || f.appearance().DarkTheme != id {
+	if got := f.appearance(); got.LightTheme != "pine" || got.DarkTheme != "default-dark" || got.Theme != "system" {
+		t.Fatalf("saved %+v", got)
+	}
+	q := f.proposeChoice(map[string]any{"theme_id": id, "slot": "dark"})
+	if string(q.After) != `{"theme_id":"`+id+`","slot":"dark"}` {
+		t.Fatalf("recorded %s", q.After)
+	}
+	// The app's slot does not override an explicit one.
+	if err := f.save(q, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Slot: "light"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.appearance(); got.DarkTheme != id || got.LightTheme != "pine" {
+		t.Fatalf("saved %+v", got)
+	}
+	// The mode alone, and with a theme.
+	r := f.proposeChoice(map[string]any{"theme": "dark"})
+	if string(r.After) != `{"theme":"dark"}` {
+		t.Fatalf("recorded %s", r.After)
+	}
+	if err := f.save(r, agentcontext.SaveInput{}); err != nil || f.appearance().Theme != "dark" {
 		t.Fatalf("%v %+v", err, f.appearance())
 	}
-	// An id the preferences do not hold is refused when proposed.
-	if _, err := f.propose("propose_theme_choice", map[string]any{"light_theme": "c-nope"}); err == nil {
-		t.Error("proposed an unknown theme for a slot")
+	both := f.proposeChoice(map[string]any{"theme_id": "ember", "theme": "light"})
+	if err := f.save(both, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Slot: "light"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.appearance(); got.Theme != "light" || got.LightTheme != "ember" {
+		t.Fatalf("saved %+v", got)
 	}
 }
 
-// The appearance preferences are proposed in two halves, as Settings shows
-// them in two sections: General's keys, Appearance's theme mode and slots.
-func TestThemeChoiceAndAppearanceProposalsAreSeparateSections(t *testing.T) {
+func TestThemeChoiceRefusals(t *testing.T) {
 	f := newProposalFixture(t)
 	ctx := context.Background()
-	// The theme choice is Appearance's, and the appearance proposal General's.
-	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
-	_, err := f.propose("propose_theme_choice", map[string]any{"theme": "dark"})
-	if err == nil || !strings.Contains(err.Error(), "Appearance") || !strings.Contains(err.Error(), "General") {
-		t.Errorf("a theme choice on General: %v", err)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	for name, args := range map[string]map[string]any{
+		"unknown id":   {"theme_id": "c-nope"},
+		"nothing":      {},
+		"slot only":    {"slot": "dark"},
+		"bad slot":     {"theme_id": "pine", "slot": "system"},
+		"bad mode":     {"theme": "neon"},
+		"extra fields": {"theme_id": "pine", "light_theme": "pine"},
+	} {
+		if _, err := f.propose("propose_theme_choice", args); err == nil {
+			t.Errorf("proposed %s", name)
+		}
 	}
-	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings})
-	if _, err := f.propose("propose_theme_choice", map[string]any{"theme": "dark"}); err == nil {
-		t.Error("a theme choice with no section open, which shows General")
+	// The unknown id is refused with a way forward, from the proposer too.
+	_, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere, Target: agentcontext.TargetThemeChoice,
+		After: json.RawMessage(`{"theme_id":"c-nope","slot":"in_use"}`)})
+	if err == nil || !strings.Contains(err.Error(), "settings_appearance") {
+		t.Errorf("unknown id: %v", err)
 	}
-	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "appearance"})
-	if _, err := f.propose("propose_appearance", map[string]any{"key_hints": false}); err == nil {
-		t.Error("an appearance proposal on Appearance")
+	if len(f.mcp.Proposals.List(f.id)) != 0 {
+		t.Error("a refused choice was recorded")
 	}
-	p, err := f.propose("propose_theme_choice", map[string]any{"theme": "dark"})
-	if err != nil || p.Target != agentcontext.TargetThemeChoice {
-		t.Fatalf("%v %+v", err, p)
+	// The exception stays the theme targets': nothing else is proposed
+	// anywhere, and the choice is not proposed under a page.
+	for _, proposal := range []agentcontext.Proposal{
+		{Page: agentcontext.PageSettings, Target: agentcontext.TargetThemeChoice, After: json.RawMessage(`{"theme":"dark"}`)},
+		{Page: agentcontext.ProposalAnywhere, Target: agentcontext.TargetAppearance, After: json.RawMessage(`{"theme":"dark"}`)},
+	} {
+		if _, err := f.mcp.Proposals.Propose(ctx, f.id, proposal); !errors.Is(err, agentcontext.ErrNoProposer) {
+			t.Errorf("%s under %s: %v", proposal.Target, proposal.Page, err)
+		}
 	}
-	if err := f.save(p, agentcontext.SaveInput{}); err != nil || f.appearance().Theme != "dark" {
-		t.Fatalf("%v %+v", err, f.appearance())
-	}
-	// Each target refuses the other's fields, as a proposal made without the tool's schema.
-	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "appearance"})
-	if _, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageSettings, Target: agentcontext.TargetThemeChoice, After: json.RawMessage(`{"key_hints":false}`)}); err == nil {
-		t.Error("a theme choice took key_hints")
-	}
+	// General's appearance proposal does not take the theme fields.
 	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
 	for _, after := range []string{`{"theme":"dark"}`, `{"light_theme":""}`, `{"dark_theme":""}`} {
 		if _, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageSettings, Target: agentcontext.TargetAppearance, After: json.RawMessage(after)}); err == nil {
 			t.Errorf("General's appearance proposal took %s", after)
 		}
+	}
+}
+
+// A newer theme proposal replaces an open one of either target.
+func TestThemeChoiceAndThemeProposalsReplaceEachOther(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	f.proposeChoice(map[string]any{"theme_id": "pine"})
+	f.proposeTheme("Midnight", "dark")
+	open := f.mcp.Proposals.List(f.id)
+	if len(open) != 1 || open[0].Target != agentcontext.TargetTheme {
+		t.Fatalf("the theme did not replace the choice: %+v", open)
+	}
+	f.proposeChoice(map[string]any{"theme_id": "ember"})
+	f.proposeChoice(map[string]any{"theme": "dark"})
+	open = f.mcp.Proposals.List(f.id)
+	if len(open) != 1 || open[0].Target != agentcontext.TargetThemeChoice || string(open[0].After) != `{"theme":"dark"}` {
+		t.Fatalf("the newest choice is not the only one open: %+v", open)
+	}
+	// Other pages' proposals are left alone.
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
+	if _, err := f.propose("propose_appearance", map[string]any{"key_hints": false}); err != nil {
+		t.Fatal(err)
+	}
+	f.proposeChoice(map[string]any{"theme_id": "birch"})
+	if open := f.mcp.Proposals.List(f.id); len(open) != 2 {
+		t.Fatalf("proposals %+v", open)
 	}
 }
 

@@ -54,13 +54,20 @@ type Proposal struct {
 	Operation *OperationProposal `json:"operation,omitempty"`
 }
 
-// ProposalAnywhere is a sentinel page name, not a page: the one kind of
-// proposal that is not about the page the person has open (a colour theme,
-// TargetTheme, which the app previews wherever they are and the person saves
-// from anywhere). Propose and Save skip the same-page check for it, and no
-// other target may use it: its proposer refuses any but the theme target, and
-// the theme target refuses any real page.
+// ProposalAnywhere is a sentinel page name, not a page: the proposals that
+// are not about the page the person has open, the two colour theme targets
+// (TargetTheme, a custom theme, and TargetThemeChoice, switching to an
+// existing one), which the app previews wherever they are and the person
+// saves from anywhere. Propose and Save skip the same-page check for it, and
+// no other target may use it: its proposer refuses any but the theme targets,
+// and the theme targets refuse any real page.
 const ProposalAnywhere = "app"
+
+// isAnywhereTarget reports whether target is one of the theme targets, the
+// only ones proposed under ProposalAnywhere.
+func isAnywhereTarget(target string) bool {
+	return target == TargetTheme || target == TargetThemeChoice
+}
 
 // Proposer is how one page takes proposals. Every method gets the page
 // context the proposal was made on, so it can refuse a target that does not
@@ -89,7 +96,8 @@ type SaveInput struct {
 	Value *string `json:"value,omitempty"`
 	// Theme is what the person chose when saving a colour theme proposal: its
 	// name, the slot it goes in and whether it updates the theme it names or
-	// is saved as new. Empty fields take the proposal's own.
+	// is saved as new. Empty fields take the proposal's own. For a theme
+	// choice only Slot is read: the slot in use, which the app resolves.
 	Theme *ThemeSave `json:"theme,omitempty"`
 }
 
@@ -103,10 +111,13 @@ type ThemeSave struct {
 	Mode string `json:"mode,omitempty"`
 }
 
-// The modes of a theme save (ThemeSave.Mode).
+// The modes of a theme save (ThemeSave.Mode), and the slot a theme choice
+// records when the agent named none (SlotInUse): the daemon cannot see the
+// operating system's appearance, so the app resolves it.
 const (
 	ThemeModeUpdate = "update"
 	ThemeModeNew    = "new"
+	SlotInUse       = "in_use"
 )
 
 // String, GoString and LogValue never print the value, so neither a log line
@@ -218,12 +229,12 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	}
 	proposal.Kind = ProposalDiff
 	page, ok := p.registry.Page(consumer)
-	// The exception is for the theme target alone, and the theme target is
-	// proposed under it alone.
-	if (proposal.Page == ProposalAnywhere) != (proposal.Target == TargetTheme) {
+	// The exception is for the theme targets alone, and they are proposed
+	// under it alone.
+	if (proposal.Page == ProposalAnywhere) != isAnywhereTarget(proposal.Target) {
 		return Proposal{}, ErrNoProposer
 	}
-	// The theme proposal is the one exception: it is not about a page, so
+	// The theme proposals are the exception: they are not about a page, so
 	// whatever page is open will do.
 	if !ok || (proposal.Page != ProposalAnywhere && page.Page != proposal.Page) {
 		return Proposal{}, ErrNotCurrentPage
@@ -257,12 +268,13 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	if !p.registry.live(consumer) {
 		return Proposal{}, ErrUnknownConsumer
 	}
-	// A new colour theme replaces the open ones before it: only the newest is
-	// previewed and saved, and an older one must not resurface when the newest
-	// is saved or dismissed. A replaced proposal is dropped like a dismissed one.
-	if proposal.Page == ProposalAnywhere && proposal.Target == TargetTheme {
+	// A new colour theme or theme choice replaces the open ones of either
+	// before it: only the newest is previewed and saved, and an older one must
+	// not resurface when the newest is saved or dismissed. A replaced proposal
+	// is dropped like a dismissed one.
+	if proposal.Page == ProposalAnywhere {
 		p.open[consumer] = slices.DeleteFunc(slices.Clone(p.open[consumer]), func(open Proposal) bool {
-			return open.Page == ProposalAnywhere && open.Target == TargetTheme
+			return open.Page == ProposalAnywhere && isAnywhereTarget(open.Target)
 		})
 	}
 	if len(p.open[consumer]) >= maxProposals {

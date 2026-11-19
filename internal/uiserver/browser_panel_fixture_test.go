@@ -174,6 +174,12 @@ const panelTheme = `{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#e8e
 // "tweak theme <id>" edits that custom theme (theme_id), with a new text colour
 // each time it is asked; "as <name>" names it, else the name stays "Mine".
 func (a *panelAgent) proposeTheme(ctx context.Context, r agent.Request) {
+	// "switch theme to <id>" switches to an existing theme for the slot in
+	// use (propose_theme_choice) instead.
+	if i := strings.Index(strings.ToLower(r.Prompt), "switch theme to "); i >= 0 {
+		a.proposeThemeChoice(ctx, r, strings.Fields(r.Prompt[i+len("switch theme to "):])[0])
+		return
+	}
 	status, text := "completed", "Proposed the theme; the person saves it in the panel."
 	err := errors.New("the turn has no MCP server")
 	if a.mcp != nil && r.MCP != nil {
@@ -212,6 +218,29 @@ func (a *panelAgent) proposeTheme(ctx context.Context, r agent.Request) {
 	}
 	if r.Transcript != nil {
 		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_theme", Tool: "mcp__baum__propose_theme", Title: "propose_theme", Status: status, Text: text})
+	}
+}
+
+// proposeThemeChoice proposes the existing theme id for the slot in use from
+// whatever page is open, as the agent's propose_theme_choice call would.
+func (a *panelAgent) proposeThemeChoice(ctx context.Context, r agent.Request, id string) {
+	status, text := "completed", "Proposed the theme for the slot in use; the person saves it in the panel."
+	err := errors.New("the turn has no MCP server")
+	if a.mcp != nil && r.MCP != nil {
+		consumer, ok := a.mcp.Registry.Authenticate(r.MCP.Token)
+		if !ok {
+			err = errors.New("the turn's MCP token is not known")
+		} else {
+			after, _ := json.Marshal(map[string]string{"theme_id": id, "slot": agentcontext.SlotInUse})
+			_, err = a.mcp.Proposals.Propose(ctx, consumer.ID, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere,
+				Target: agentcontext.TargetThemeChoice, After: after})
+		}
+	}
+	if err != nil {
+		status, text = "failed", err.Error()
+	}
+	if r.Transcript != nil {
+		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_theme_choice", Tool: "mcp__baum__propose_theme_choice", Title: "propose_theme_choice", Status: status, Text: text})
 	}
 }
 

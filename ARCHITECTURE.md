@@ -1297,8 +1297,8 @@ change and delete a theme: `PATCH` takes `name`, or `base` and `tokens` together
 (with or without a `name`) and replaces them in place through `editTheme`, which
 keeps the id and the slots and validates the theme as `POST` does (the same
 `themes.Validate` and caps; built-ins are refused with 400, a missing id is 404). Settings › Appearance shows the mode and slots as thumbnails (the
-agent reads them with `settings_appearance` and proposes them with
-`propose_theme_choice`); its thumbnails are `[data-theme-scope]`
+agent reads them with `settings_appearance` and switches them with
+`propose_theme_choice`, from any page); its thumbnails are `[data-theme-scope]`
 elements of `palette.css`, which the tile kit's generated `tokens.css` carries
 too, though a tile frame has no such elements. A pending review comment may target a tile (`kind` `tile`, `id` the
 tile's ID); a comment on a section keeps its `section` target. After a
@@ -7591,7 +7591,7 @@ random bytes, an opaque consumer id and a revoke function, and refuses any
 consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
 repository and a pull request number. Nothing about tokens is persisted or
 logged. A chat may read any page and propose changes to the page it has
-open; an action only reads, within its repository: its tools default to its
+open (and, from any page, a colour theme or a switch of theme); an action only reads, within its repository: its tools default to its
 pull request and may read the repository's other pull requests. `SetPage(id, PageContext)` records a chat's
 page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
 `jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
@@ -8021,12 +8021,12 @@ after, the target's revision and the page context it was made on. A
 saves it (`Apply`), each given the page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
 one and a page with no proposer, with one exception: `ProposalAnywhere`
-(`"app"`, a sentinel and not a page) is for a colour theme, which is not about
-the page the person has open. For it `Propose` and `Save` skip the same-page
-check (some page must still be open), its proposer is `Options.Proposers["app"]`
-(the sentinel is never registered as a page), `Propose` refuses any target but
-`theme` under it and `theme` under any real page, and its proposer resolves
-`theme` alone; it reads the target's value and revision
+(`"app"`, a sentinel and not a page) is for the two colour theme targets, `theme`
+and `theme_choice`, which are not about the page the person has open. For them
+`Propose` and `Save` skip the same-page check (some page must still be open),
+the proposer is `Options.Proposers["app"]` (the sentinel is never registered as
+a page), `Propose` refuses any target but those two under it and either of them
+under any real page, and the proposer resolves those two alone; it reads the target's value and revision
 itself, ignoring the agent's revision, refuses with the bare
 `ErrNotRecorded` a `Before` the agent sent that no longer matches, and
 records the proposal; nothing changes. A tool gets only a `Receipt` (id,
@@ -8053,7 +8053,8 @@ refuses one. `SaveInput.Theme` (`{name, slot, mode}`, `slot` "", `light` or `dar
 proposal: the name they gave it, the slot a new theme goes in and whether the
 save updates the theme the proposal names or adds a new one, each defaulting to
 the proposal's name, its base and, for `mode`, `update` when the proposal has a
-`theme_id` and `new` otherwise.
+`theme_id` and `new` otherwise. For a `theme_choice` only `slot` is read: the
+slot in use, which the app resolved (see the table).
 It is not secret, but like the value it reaches `Apply` alone; only the theme
 proposer takes one (`target.takesTheme`) and refuses a `Value`, and every other
 proposer refuses a `Theme`.
@@ -8061,8 +8062,9 @@ proposer refuses a `Theme`.
 The `propose_*` tools record proposals. Each is global (an action neither
 lists nor calls one), reads nothing, names its page and target, passes the
 change asked for as `After`, and answers the receipt and a fixed status
-(a new `propose_theme` proposal drops the conversation's earlier open theme
-proposals, as a dismiss does, so only the newest is previewed and an older one
+(a new `propose_theme` or `propose_theme_choice` proposal drops the
+conversation's earlier open ones of either target, as a dismiss does, so only
+the newest is previewed and an older one
 never resurfaces when it is saved or dismissed; `propose_theme` adds `contrast_warnings`, the pairs of the proposed colours
 under 4.5:1, which it works out from its own arguments with
 `themes.Contrast`; it reads no state). A
@@ -8075,8 +8077,8 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | Page (section) | Tool | Target | Saved as |
 | --- | --- | --- | --- |
 | `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (key hints, page modifier, review page; a `theme`, `light_theme` or `dark_theme` is refused, as `propose_theme_choice`'s) |
-| `settings` (`appearance`) | `propose_theme_choice` | `theme_choice` | `PUT /api/settings/appearance` (the `theme` mode and the `light_theme` and `dark_theme` slots, which must name a theme the preferences hold; key hints, page modifier and review page are refused, as `propose_appearance`'s) |
 | any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme`, a common tool listed on every page | `theme` | A new theme: `POST /api/settings/appearance/themes` (`addTheme`) with the name and slot from `SaveInput.Theme`, else the proposal's name and its base's slot; the id is made once outside the transaction. With a `theme_id` in `After` (it must name an existing custom theme: a built-in or unknown id is refused when proposed, with guidance to omit it) the default save is an update, `PATCH /api/settings/appearance/themes/{id}` (`editTheme`) replacing the base and tokens, and the name if `SaveInput.Theme` gives one, keeping the id and slots; if the theme was deleted since, the update fails with "the theme this edits was deleted: save it as a new theme instead" and `mode: new` still adds it. The revision is a constant, so changes to the slots or themes during the preview do not make the save stale. Its "before" is the names of the light and dark slots' themes. |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme_choice`, a common tool listed on every page | `theme_choice` | `PUT /api/settings/appearance` of `{theme_id, slot, theme}`: `theme_id` is any existing built-in or custom theme (an unknown one is refused when proposed, naming `settings_appearance`), `slot` is `light`, `dark` or, when the agent omitted it, `in_use` (`agentcontext.SlotInUse`), and `theme` is the mode (system, light or dark); one of `theme_id` and `theme` is required and `slot` needs a `theme_id`. The daemon cannot see the operating system's appearance, so `in_use` is for the app to resolve (as `activeSlot` does, using the proposal's mode when it has one); the app always saves `SaveInput.Theme.Slot` as `light` or `dark`, which fills `light_theme` or `dark_theme` (an explicit `slot` in the proposal wins; a save with `in_use` and no slot is refused). The tool answers the receipt and `applies_to`: the slot's name when the mode is light or dark, "the slot in use" otherwise. The revision is a constant, as for `theme`; its "before" is the mode and the names of the slots' themes. The Settings page no longer has a theme proposal: `propose_appearance` still refuses `theme`, `light_theme` and `dark_theme`. |
 | `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
 | `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
 | `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |

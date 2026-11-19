@@ -1351,3 +1351,135 @@ it("shows why an update failed and keeps Save as new theme", async () => {
   expect(node.querySelectorAll("article").length).toBe(1);
   expect(rootStyle().getPropertyValue("--color-paper")).toBe("#223344");
 });
+
+// A theme choice is for no page: it switches to an existing theme, for the
+// slot in use unless the agent named one.
+const pineTheme = {
+  id: "pine",
+  name: "Pine",
+  base: "dark",
+  tokens: { "--color-paper": "#cfe8d8" },
+  builtin: true,
+};
+const choiceProposal = (after: Record<string, unknown>, id = "k1"): Proposal => ({
+  id,
+  kind: "diff",
+  page: "app",
+  target: "theme_choice",
+  before: { theme: "light", light_theme: "Default light", dark_theme: "Mine" },
+  after,
+  revision: "theme",
+  context: { page: "inbox" },
+});
+
+/** Opens the proposals `open` with these saved preferences and the desktop in
+ *  dark mode or not. */
+async function openChoice(
+  prefs: { theme: string },
+  open: Proposal[],
+  osDark = false,
+  saved: () => void = () => {},
+) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: osDark && query.includes("dark"),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+  let list = open;
+  await openThemes(
+    () => list,
+    () => {
+      saved();
+      list = [];
+    },
+  );
+  const base = answer;
+  answer = (call) => {
+    if (call.path === "api/settings/appearance")
+      return Response.json({ ...editPrefs, ...prefs, themes: [...editPrefs.themes, pineTheme] });
+    return base(call);
+  };
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await proposalsChanged();
+}
+const cardText = () => node.querySelector("article")?.textContent ?? "";
+
+it.each([
+  ["light", false, "light"],
+  ["light", true, "light"],
+  ["dark", false, "dark"],
+  ["dark", true, "dark"],
+  ["system", false, "light"],
+  ["system", true, "dark"],
+] as const)(
+  "names the slot in use for mode %s with the desktop dark %s: %s",
+  async (theme, osDark, slot) => {
+    await openChoice({ theme }, [choiceProposal({ theme_id: "pine", slot: "in_use" })], osDark);
+    await until(() => expect(cardText()).toContain(`Use Pine for the ${slot} theme (in use)`));
+    // The thumbnail of the theme is shown.
+    expect(node.querySelector("article [data-testid='theme-mini']")).not.toBeNull();
+    expect(button("Save")).toBeDefined();
+    expect(button("Dismiss")).toBeDefined();
+  },
+);
+
+it("previews a choice for the slot in use and a mode change, and not the other slot", async () => {
+  // Dark mode, slot in use: Pine shows now.
+  await openChoice({ theme: "dark" }, [choiceProposal({ theme_id: "pine", slot: "in_use" })]);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#cfe8d8"));
+  expect(document.documentElement.dataset.theme).toBe("dark");
+});
+
+it("does not preview a choice for the other slot, and says which slot it is for", async () => {
+  await openChoice({ theme: "dark" }, [choiceProposal({ theme_id: "pine", slot: "light" })]);
+  await until(() => expect(cardText()).toContain("Use Pine for the light theme"));
+  expect(cardText()).not.toContain("(in use)");
+  expect(cardText()).toContain("not the one in use");
+  expect(node.querySelector("article [data-testid='theme-mini']")).not.toBeNull();
+  // The saved dark theme (Mine) still shows: Pine is not previewed.
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#111111");
+  expect(document.documentElement.dataset.theme).toBe("dark");
+});
+
+it("previews a mode change that comes with a choice for the other slot", async () => {
+  // Light mode now; the choice switches to dark mode and sets the dark slot.
+  await openChoice({ theme: "light" }, [
+    choiceProposal({ theme_id: "pine", slot: "dark", theme: "dark" }),
+  ]);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#cfe8d8"));
+  await until(() => expect(cardText()).toContain("Switch the theme mode to dark"));
+});
+
+it("saves a choice with an explicit slot, resolving the slot in use", async () => {
+  // System mode on a dark desktop: the slot in use is dark.
+  await openChoice(
+    { theme: "system" },
+    [choiceProposal({ theme_id: "pine", slot: "in_use" })],
+    true,
+  );
+  await until(() => expect(cardText()).toContain("(in use)"));
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#cfe8d8"));
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/k1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/k1/save"))!.body).toEqual({
+    theme: { slot: "dark" },
+  });
+  // The preview ends once the choice is saved: the saved dark theme shows again.
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#111111"));
+});
+
+it("saves a choice that names the other slot with that slot, and a mode alone with none", async () => {
+  await openChoice({ theme: "light" }, [choiceProposal({ theme_id: "pine", slot: "dark" })]);
+  await until(() => expect(button("Save")).toBeDefined());
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/k1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/k1/save"))!.body).toEqual({
+    theme: { slot: "dark" },
+  });
+  calls.length = 0;
+  await openChoice({ theme: "light" }, [choiceProposal({ theme: "dark" })]);
+  await until(() => expect(cardText()).toContain("Switch the theme mode to dark"));
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/k1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/k1/save"))!.body).toEqual({});
+});

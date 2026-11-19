@@ -229,7 +229,6 @@ func afterKeys(after json.RawMessage) map[string]bool {
 // settingsSections; an open page without a section shows General).
 var settingsTargetSections = []struct{ prefix, section string }{
 	{agentcontext.TargetAppearance, "general"},
-	{agentcontext.TargetThemeChoice, "appearance"},
 	{agentcontext.TargetPlanUsage, "general"},
 	{agentcontext.TargetReviews, "reviews"},
 	{agentcontext.TargetDecisions, "reviews"},
@@ -275,9 +274,7 @@ func (p *Proposers) settingsTarget(page agentcontext.PageContext, name string) (
 	}
 	switch {
 	case name == agentcontext.TargetAppearance:
-		return p.appearanceTarget(false), nil
-	case name == agentcontext.TargetThemeChoice:
-		return p.appearanceTarget(true), nil
+		return p.appearanceTarget(), nil
 	case strings.HasPrefix(name, agentcontext.TargetPlanUsage):
 		return p.planUsageTarget(strings.TrimPrefix(name, agentcontext.TargetPlanUsage)), nil
 	case name == agentcontext.TargetReviews:
@@ -338,12 +335,16 @@ func (p *Proposers) prefsTarget(value, state func(repos.Preferences) any, valida
 }
 
 // anywhereTarget resolves the targets proposed under
-// agentcontext.ProposalAnywhere, which is not a page: the theme alone.
+// agentcontext.ProposalAnywhere, which is not a page: the colour theme and
+// the choice of theme.
 func (p *Proposers) anywhereTarget(_ agentcontext.PageContext, name string) (*target, error) {
-	if name != agentcontext.TargetTheme {
-		return nil, fmt.Errorf("only a colour theme is proposed from any page; %q is a change to a page", name)
+	switch name {
+	case agentcontext.TargetTheme:
+		return p.themeTarget(), nil
+	case agentcontext.TargetThemeChoice:
+		return p.themeChoiceTarget(), nil
 	}
-	return p.themeTarget(), nil
+	return nil, fmt.Errorf("only a colour theme is proposed from any page; %q is a change to a page", name)
 }
 
 // themeChange is a theme proposal's After. ThemeID, when set, names the
@@ -500,30 +501,120 @@ func (p *Proposers) themeTarget() *target {
 	}
 }
 
-// appearanceTarget is the saved appearance preferences, in two halves that
-// the Settings page shows in two sections: General's key hints, page modifier
-// and review page (TargetAppearance), and Appearance's theme mode and theme
-// slots (TargetThemeChoice, which is themeChoice). Each refuses the other's
-// fields.
-func (p *Proposers) appearanceTarget(themeChoice bool) *target {
+// themeChoiceChange is a theme choice's After: an existing theme for a slot,
+// and/or the theme mode. Slot is light, dark or agentcontext.SlotInUse, which
+// the daemon cannot resolve (it cannot see the operating system's
+// appearance): the app does, and saves with an explicit slot.
+type themeChoiceChange struct {
+	ThemeID string `json:"theme_id,omitempty"`
+	Slot    string `json:"slot,omitempty"`
+	Theme   string `json:"theme,omitempty"`
+}
+
+// themeChoiceTarget switches the app to an existing theme (built-in or
+// custom) in a slot and/or sets the theme mode, saved as PUT
+// /api/settings/appearance is. Like the theme target its revision is a
+// constant: the save writes onto the preferences as they are.
+func (p *Proposers) themeChoiceTarget() *target {
+	decode := func(after json.RawMessage, prefs *repos.Preferences) (themeChoiceChange, error) {
+		var in themeChoiceChange
+		if err := decodeAfter(after, &in); err != nil {
+			return in, err
+		}
+		if in.ThemeID == "" && in.Theme == "" {
+			return in, errors.New("propose a theme_id, a theme mode, or both")
+		}
+		if in.Theme != "" {
+			if err := (appearanceInput{Theme: &in.Theme}).check(); err != nil {
+				return in, err
+			}
+		}
+		if in.ThemeID == "" {
+			if in.Slot != "" {
+				return in, errors.New("slot needs a theme_id")
+			}
+			return in, nil
+		}
+		if in.Slot != "" && in.Slot != "light" && in.Slot != "dark" && in.Slot != agentcontext.SlotInUse {
+			return in, errors.New("slot must be light, dark or omitted for the slot in use")
+		}
+		if prefs != nil && !themeKnown(*prefs, in.ThemeID) {
+			return in, fmt.Errorf("unknown theme %q: use an id from settings_appearance", in.ThemeID)
+		}
+		return in, nil
+	}
+	return &target{
+		takesTheme: true,
+		read: func(ctx context.Context) (any, any, error) {
+			appearance, name, err := p.readThemeSlots(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			return struct {
+				Theme      string `json:"theme"`
+				LightTheme string `json:"light_theme"`
+				DarkTheme  string `json:"dark_theme"`
+			}{appearance.Theme, name(appearance.LightTheme), name(appearance.DarkTheme)}, themeTargetState, nil
+		},
+		validate: func(ctx context.Context, after json.RawMessage) error {
+			prefs, err := p.API.Registry.Preferences(ctx)
+			if err != nil {
+				return errors.New("the settings could not be read")
+			}
+			_, err = decode(after, &prefs)
+			return err
+		},
+		apply: func(ctx context.Context, after json.RawMessage, unchanged func(any) error, input agentcontext.SaveInput) error {
+			in, err := decode(after, nil)
+			if err != nil {
+				return err
+			}
+			change := appearanceInput{}
+			if in.Theme != "" {
+				change.Theme = &in.Theme
+			}
+			if in.ThemeID != "" {
+				slot := in.Slot
+				if slot == "" || slot == agentcontext.SlotInUse {
+					slot = ""
+					if input.Theme != nil {
+						slot = input.Theme.Slot
+					}
+				}
+				switch slot {
+				case "light":
+					change.LightTheme = &in.ThemeID
+				case "dark":
+					change.DarkTheme = &in.ThemeID
+				default:
+					return errors.New("the slot in use is the app's to resolve: save with slot light or dark")
+				}
+			}
+			_, err = p.API.updatePreferences(ctx, func(prefs repos.Preferences) error {
+				if err := unchanged(themeTargetState); err != nil {
+					return err
+				}
+				return change.checkThemes(prefs)
+			}, change.edit)
+			return err
+		},
+	}
+}
+
+// appearanceTarget is General's appearance preferences: key hints, page
+// modifier and review page. The theme mode and theme slots are the theme
+// choice's (themeChoiceTarget), which any page takes.
+func (p *Proposers) appearanceTarget() *target {
 	decode := func(after json.RawMessage) (appearanceInput, error) {
 		var in appearanceInput
 		if err := decodeAfter(after, &in); err != nil {
 			return in, err
 		}
 		if in == (appearanceInput{}) {
-			if themeChoice {
-				return in, errors.New("propose a theme, light_theme or dark_theme")
-			}
 			return in, errors.New("propose key_hints, page_modifier or review_page")
 		}
-		general := in.KeyHints != nil || in.PageModifier != nil || in.Sidebar != nil || in.ReviewPage != nil
-		choice := in.Theme != nil || in.LightTheme != nil || in.DarkTheme != nil
-		if themeChoice && general {
-			return in, errors.New("key_hints, page_modifier and review_page are General's: propose them with propose_appearance")
-		}
-		if !themeChoice && choice {
-			return in, errors.New("theme, light_theme and dark_theme are Appearance's: propose them with propose_theme_choice")
+		if in.Theme != nil || in.LightTheme != nil || in.DarkTheme != nil {
+			return in, errors.New("theme, light_theme and dark_theme are the theme choice's: propose them with propose_theme_choice")
 		}
 		return in, in.check()
 	}

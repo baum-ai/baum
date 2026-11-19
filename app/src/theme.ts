@@ -79,6 +79,48 @@ export function activeSlot(prefs: Pick<ThemePrefs, "theme">, systemDark: boolean
   return prefs.theme === "system" ? (systemDark ? "dark" : "light") : prefs.theme;
 }
 
+/** What the agent's theme choice (`propose_theme_choice`) holds: an existing
+ *  theme, the slot it is for (`in_use` when the agent named none: the daemon
+ *  cannot see the operating system's appearance, so the app resolves it) and
+ *  the theme mode. */
+export type ThemeChoice = {
+  theme_id?: string;
+  slot?: ThemeBase | "in_use";
+  theme?: ThemePrefs["theme"];
+};
+
+/** The slot a theme choice is for: the one it names, else the slot in use,
+ *  which is the active slot once the choice's mode (when it has one) is
+ *  applied. Null when it names no theme. */
+export function choiceSlot(
+  prefs: Pick<ThemePrefs, "theme">,
+  choice: ThemeChoice,
+  systemDark: boolean,
+): ThemeBase | null {
+  if (!choice.theme_id) return null;
+  if (choice.slot === "light" || choice.slot === "dark") return choice.slot;
+  return activeSlot({ theme: choice.theme ?? prefs.theme }, systemDark);
+}
+
+/** The theme to show while a choice is previewed: the chosen theme when its
+ *  slot is the one in use, else (when the choice changes the mode) the saved
+ *  theme of the slot the new mode shows. Null when the choice changes nothing
+ *  on screen: its slot is the other one and the mode is the same. */
+export function choicePreview(
+  prefs: ThemePrefs,
+  choice: ThemeChoice,
+  systemDark: boolean,
+): Theme | null {
+  const mode = choice.theme ?? prefs.theme;
+  const active = activeSlot({ theme: mode }, systemDark);
+  const chosen = choice.theme_id
+    ? prefs.themes.find((theme) => theme.id === choice.theme_id)
+    : undefined;
+  if (chosen && choiceSlot(prefs, choice, systemDark) === active) return chosen;
+  if (mode !== prefs.theme) return slotTheme(prefs, active);
+  return null;
+}
+
 /** The theme to apply: the preview when there is one, else the theme in the
  *  active slot. A slot naming a theme that is gone gets its built-in. */
 export function activeTheme(prefs: ThemePrefs, systemDark: boolean, preview?: Theme | null): Theme {

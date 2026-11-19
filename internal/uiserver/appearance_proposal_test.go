@@ -27,15 +27,15 @@ func TestAppearanceProposalChecksThemeSlots(t *testing.T) {
 	if err != nil || len(prefs.Appearance.Themes) != 1 {
 		t.Fatalf("seed: %v", err)
 	}
-	target := (&Proposers{API: LocalAPI{Registry: registry}}).appearanceTarget(true)
+	target := (&Proposers{API: LocalAPI{Registry: registry}}).themeChoiceTarget()
 	unchanged := func(any) error { return nil }
 
-	for _, after := range []string{`{"dark_theme":"c-nope"}`, `{"light_theme":"c-nope"}`} {
+	for _, after := range []string{`{"theme_id":"c-nope","slot":"dark"}`, `{"theme_id":"c-nope","slot":"light"}`, `{"theme_id":"c-nope"}`} {
 		raw := json.RawMessage(after)
 		if err := target.validate(ctx, raw); err == nil {
 			t.Errorf("validate accepted %s", after)
 		}
-		if err := target.apply(ctx, raw, unchanged, agentcontext.SaveInput{}); err == nil {
+		if err := target.apply(ctx, raw, unchanged, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Slot: "dark"}}); err == nil {
 			t.Errorf("apply accepted %s", after)
 		}
 	}
@@ -43,11 +43,19 @@ func TestAppearanceProposalChecksThemeSlots(t *testing.T) {
 		t.Fatalf("a refused proposal saved: %+v", got.Appearance)
 	}
 
-	good := json.RawMessage(`{"dark_theme":"c-dusk","light_theme":"default-dark"}`)
+	good := json.RawMessage(`{"theme_id":"c-dusk","slot":"dark"}`)
 	if err := target.validate(ctx, good); err != nil {
 		t.Fatal(err)
 	}
 	if err := target.apply(ctx, good, unchanged, agentcontext.SaveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	// A slot in use is the app's to resolve: saved with none, it is refused.
+	inUse := json.RawMessage(`{"theme_id":"default-dark","slot":"in_use"}`)
+	if err := target.apply(ctx, inUse, unchanged, agentcontext.SaveInput{}); err == nil {
+		t.Error("saved a slot in use without the app's slot")
+	}
+	if err := target.apply(ctx, inUse, unchanged, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Slot: "light"}}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := registry.Preferences(ctx)

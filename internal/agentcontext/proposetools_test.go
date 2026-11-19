@@ -46,7 +46,6 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 		after  string
 	}{
 		{settings("general"), "propose_appearance", map[string]any{"key_hints": false}, TargetAppearance, `{"key_hints":false}`},
-		{settings("appearance"), "propose_theme_choice", map[string]any{"theme": "dark", "light_theme": "default-light"}, TargetThemeChoice, `{"theme":"dark","light_theme":"default-light"}`},
 		{settings("general"), "propose_plan_usage", map[string]any{"provider": "codex", "shown": nil}, TargetPlanUsage + "codex", `{"shown":null}`},
 		{settings("reviews"), "propose_reviews", map[string]any{"enabled": false, "model": "m"}, TargetReviews, `{"enabled":false,"model":"m"}`},
 		{settings("reviews"), "propose_decision_capture", map[string]any{"effort": "low"}, TargetDecisions, `{"effort":"low"}`},
@@ -98,7 +97,7 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 	before := len(s.Proposals.List(id))
 	setPage(t, s, id, PageContext{Page: PageInbox})
 	for tool, args := range map[string]map[string]any{
-		"propose_appearance": {"key_hints": false}, "propose_theme_choice": {"theme": "dark"}, "propose_prompt": {"id": "fix", "text": "t"}, "propose_group": {"name": "x"},
+		"propose_appearance": {"key_hints": false}, "propose_prompt": {"id": "fix", "text": "t"}, "propose_group": {"name": "x"},
 		"propose_repository_settings": {"automatic": true}, "propose_review_comment": {"body": "b"},
 	} {
 		if text, failed := data(t, s, token, tool, args); !failed {

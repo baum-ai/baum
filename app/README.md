@@ -1741,7 +1741,19 @@ them, and the desktop app's cached screens get a built-in's tokens from the app
 like any other theme's.
 The app sends a rename or delete in turn with its settings saves (after any
 `PUT` in flight), so an older answer never brings a deleted theme back.
-The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
+The agent's `propose_theme_choice` proposal (page `app` too: valid from any page,
+not only Appearance) switches to an existing theme and/or the theme mode. Its
+`after` is `{theme_id, slot, theme}` with `slot` `in_use` when the agent named
+none. The app resolves `in_use` with `activeSlot` (`choiceSlot` in `src/theme.ts`,
+using the proposal's mode when it has one, else the saved mode, and the desktop's
+dark mode for System), for the preview and on save, and always sends an explicit
+`{theme: {slot}}` (nothing for a mode alone). The preview (`choicePreview`) shows
+the chosen theme only when its slot is the one in use, or the saved theme of the slot
+a mode change brings; for the other slot nothing changes on screen, and the card says
+which slot it is for. The card reads "Use <theme> for the light/dark theme (in use)",
+shows the theme's thumbnail (`ThemeMiniature`, shared with Appearance) and has Save and
+Dismiss; a mode shows as "Switch the theme mode to ...". A newer theme or choice proposal
+replaces it (the daemon drops the older). The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
 is previewed on the whole app while it is open in the session panel (the
 daemon drops the conversation's earlier theme proposals when a new one is
 recorded, so there is one); the console proposals listing adds
