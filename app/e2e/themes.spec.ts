@@ -206,6 +206,101 @@ test("lists the six built-in themes in order and applies Pine in the dark slot",
   expect(refused).toEqual([400, 400]);
 });
 
+test("shows a custom thumbnail's menu on hover and focus, rings it in page colours, and opens it by right click and Ctrl+.", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(await launchURL());
+  await expect(page.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
+  await page.evaluate(() =>
+    fetch("api/settings/appearance/themes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Dusk",
+        base: "dark",
+        tokens: { "--color-paper": "#e8eef4", "--color-shadow": "#10202e" },
+        slot: "",
+      }),
+    }),
+  );
+  await page.reload();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Appearance/ }).click();
+
+  const light = page.getByRole("radiogroup", { name: "Light theme", exact: true });
+  const option = (name: string) =>
+    light.locator(".theme-option").filter({ has: page.locator(`label[title="${name}"]`) });
+  const dots = page.getByRole("button", { name: "Actions for Dusk in light theme" });
+  const opacity = () => dots.evaluate((el) => getComputedStyle(el).opacity);
+
+  // All six built-ins fit one row at 1440, with the custom theme wrapping after them.
+  const tops = await light
+    .locator(".theme-option")
+    .evaluateAll((all) => all.slice(0, 6).map((el) => Math.round(el.getBoundingClientRect().top)));
+  expect(new Set(tops).size).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  // Playwright counts opacity: 0 as visible, so read the computed value.
+  await page.mouse.move(0, 0);
+  expect(await opacity()).toBe("0");
+  await option("Dusk").hover();
+  await expect.poll(opacity).toBe("1");
+  await page.mouse.move(0, 0);
+  await expect.poll(opacity).toBe("0");
+  await light.getByRole("radio", { name: "Dusk" }).focus();
+  await expect.poll(opacity).toBe("1");
+  await light.getByRole("radio", { name: "Dusk" }).blur();
+  // The chip has a background of its own, so it reads over a dark thumbnail.
+  expect(await dots.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(
+    "rgba(0, 0, 0, 0)",
+  );
+
+  // The selected ring is drawn in the page's colour, whatever the theme in the thumbnail.
+  await page
+    .getByRole("group", { name: "Theme mode" })
+    .getByRole("button", { name: "Light", exact: true })
+    .click();
+  for (const name of [
+    "Default light",
+    "Default dark",
+    "Birch",
+    "Parchment",
+    "Pine",
+    "Ember",
+    "Dusk",
+  ]) {
+    await light.locator(`label[title="${name}"]`).click();
+    const ring = await option(name).evaluate((el) => {
+      const frame = el.querySelector(".theme-mini-frame") as HTMLElement;
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-primary)";
+      el.append(probe);
+      const page = getComputedStyle(probe).color;
+      probe.remove();
+      const outline = getComputedStyle(frame);
+      return { color: outline.outlineColor, width: outline.outlineWidth, page };
+    });
+    expect(ring.width).toBe("2px");
+    expect(ring.color).toBe(ring.page);
+  }
+  // Selecting Dusk made the page dark; the ring follows the page, not the thumbnail.
+
+  // Right click opens the menu; Escape closes it; Ctrl+. on the focused radio does too.
+  await option("Dusk").locator(".theme-mini").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Rename" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await light.getByRole("radio", { name: "Dusk" }).focus();
+  await page.keyboard.press("Control+.");
+  await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  // A built-in has neither: Ctrl+. opens nothing.
+  await light.getByRole("radio", { name: "Birch" }).focus();
+  await page.keyboard.press("Control+.");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
 test("previews a proposed theme, restores it on dismiss and saves it with a name and slot", async ({
   page,
 }) => {

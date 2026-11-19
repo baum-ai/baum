@@ -183,7 +183,26 @@ function ThemeRow({
       </p>
       <div role="radiogroup" aria-label={title} className="theme-strip">
         {preferences.themes.map((theme) => (
-          <div key={theme.id} className="theme-option">
+          <div
+            key={theme.id}
+            className="theme-option"
+            // The ⋯ shows by the row-menu rule. A custom theme's menu opens
+            // from a right click too, and from ⌘. on its radio (the host
+            // marks where `useActionsKey` sends the event); a built-in has
+            // none, so the browser's own menu stays.
+            data-list-row=""
+            data-actions-target={theme.builtin ? undefined : ""}
+            onContextMenu={
+              theme.builtin
+                ? undefined
+                : (event) =>
+                    actions.menu.open(
+                      event,
+                      actions.items(theme)(),
+                      `${theme.name} in ${title.toLowerCase()}`,
+                    )
+            }
+          >
             <label className="theme-option-label" title={theme.name}>
               <input
                 type="radio"
@@ -195,7 +214,9 @@ function ThemeRow({
                 disabled={!ready}
                 onChange={() => choose(theme.id)}
               />
-              <ThemeMiniature theme={theme} />
+              <span className="theme-mini-frame">
+                <ThemeMiniature theme={theme} />
+              </span>
               <span className="theme-option-name">
                 <span className="theme-option-text">{theme.name}</span>
                 <CheckIcon size={14} className="theme-option-check" />
@@ -249,9 +270,9 @@ export function AppearanceSection(): ReactNode {
             label="Theme mode"
             value={preferences.theme}
             items={[
-              { value: "system", label: "System" },
-              { value: "light", label: "Light" },
-              { value: "dark", label: "Dark" },
+              { value: "system", label: "System", disabled: !ready },
+              { value: "light", label: "Light", disabled: !ready },
+              { value: "dark", label: "Dark", disabled: !ready },
             ]}
             onChange={(theme) => update({ theme })}
           />

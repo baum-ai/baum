@@ -1508,6 +1508,98 @@ it("chooses a theme for each slot with swatches, any base in either, and renames
   ]);
 });
 
+it("disables the theme mode and the thumbnails until the preferences are ready", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness();
+  const answer = vi.mocked(fetch).getMockImplementation()!;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    if (String(args[0]).includes("api/settings/appearance")) await gate;
+    return answer(...args);
+  });
+  await act(async () => root.render(<App />));
+  expect(modeButton("Light").disabled).toBe(true);
+  expect(modeButton("Dark").disabled).toBe(true);
+  expect(radios("Light theme").every((r) => r.disabled)).toBe(true);
+  await act(async () => release());
+  expect(modeButton("Light").disabled).toBe(false);
+  expect(radios("Light theme").every((r) => !r.disabled)).toBe(true);
+});
+
+it("opens a custom theme's menu with a right click and with Ctrl+. on its radio, and a built-in's with neither", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  const sent = appearanceHarness();
+  await act(async () => root.render(<App />));
+  const option = (group: string, name: string) =>
+    radio(group, name).closest<HTMLElement>(".theme-option")!;
+  const menuItems = () =>
+    [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map((i) => i.textContent);
+  const closeMenu = () =>
+    act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+  // A right click on a built-in keeps the browser's menu.
+  const builtin = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => {
+    option("Light theme", "Default dark").querySelector(".theme-mini")!.dispatchEvent(builtin);
+  });
+  expect(builtin.defaultPrevented).toBe(false);
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+
+  // On a custom one it opens the ⋯ menu's choices.
+  const custom = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => {
+    option("Light theme", "Dusk").querySelector(".theme-mini")!.dispatchEvent(custom);
+  });
+  expect(custom.defaultPrevented).toBe(true);
+  expect(menuItems()).toEqual(["Rename", "Delete"]);
+  expect(document.querySelector('[role="menu"]')!.getAttribute("aria-label")).toBe(
+    "Actions for Dusk in light theme",
+  );
+  await closeMenu();
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+
+  // Ctrl+. with the focus on the radio inside the label.
+  const ctrlDot = () =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: ".", ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+  radio("Dark theme", "Default light").focus();
+  await ctrlDot();
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  radio("Dark theme", "Dusk").focus();
+  await ctrlDot();
+  expect(menuItems()).toEqual(["Rename", "Delete"]);
+  // Choosing Delete from it asks first.
+  const choose = (name: string) =>
+    act(async () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((i) => i.textContent === name)!
+        .click(),
+    );
+  await choose("Delete");
+  expect(document.querySelector("dialog")?.textContent).toContain("Delete Dusk?");
+  expect(sent.some((request) => request.method === "DELETE")).toBe(false);
+});
+
+it("shows the ⋯ chip's own rules, and rings the thumbnail outside its theme scope", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness();
+  await act(async () => root.render(<App />));
+  const option = radio("Light theme", "Dusk").closest<HTMLElement>(".theme-option")!;
+  // The option is a row the shared ⋯ rule keys on, and the ⋯ is not in the label.
+  expect(option.hasAttribute("data-list-row")).toBe(true);
+  expect(option.querySelector(".row-menu-button")).not.toBeNull();
+  // The ring's frame is outside the thumbnail's data-theme-scope.
+  const frame = option.querySelector(".theme-mini-frame")!;
+  expect(frame.closest("[data-theme-scope]")).toBeNull();
+  expect(frame.querySelector("[data-theme-scope]")).not.toBeNull();
+});
+
 it("marks the slot in use by the theme mode and the system's mode", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
   vi.stubGlobal("matchMedia", (query: string) => ({

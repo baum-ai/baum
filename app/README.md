@@ -1695,7 +1695,7 @@ action, text bars and a diff with an added and a removed line) with the theme's
 name under it. The thumbnail is the choice: the row is a radio group labelled
 with the slot's title, each thumbnail a visually hidden native radio, so the
 arrow keys move within a row (Settings' own keys leave the arrows alone there),
-and the chosen one has a check mark and a focus-token outline. A choice applies
+and the chosen one has a check mark and an outline in the page's text colour. The outline and the focus ring are drawn on a frame outside the thumbnail's theme scope, so they take the page's colours, not the theme's. A choice applies
 at once and saves like any preference, through the same update path. Each
 thumbnail is a `data-theme-scope` element with `data-theme` set to the theme's
 base and its allowlisted tokens inline (`themeScope` in `src/theme.ts`), so it
@@ -1704,7 +1704,12 @@ shows its own theme whatever the page's mode is (see
 with palette roles only and hidden from assistive technology. A custom theme's
 thumbnail has a ⋯ menu in its corner, outside the radio's label, to rename it
 (typed in a row below the strips) or delete it (a delete asks first and resets a
-slot that used it).
+slot that used it). It follows the row-menu pattern: the option is a
+`data-list-row`, so the ⋯ shows on hover, focus within or an open menu and
+always on touch, as a chip in the page's colours; a right click on the thumbnail
+and ⌘. (Ctrl+.) with the radio focused open the same menu
+(`data-actions-target` makes `useActionsKey` count the radio's focus). Built-ins
+have no menu. The six built-ins fit one row at the usual desktop width.
 Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is

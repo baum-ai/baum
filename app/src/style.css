@@ -2669,7 +2669,17 @@ dialog.local-dialog-wide {
 }
 .theme-option {
   position: relative;
-  width: 9rem;
+  width: 7rem;
+}
+/* Six built-ins fit one row at the usual desktop width. */
+.settings-content > .settings-section:has(.theme-strip) {
+  max-width: 900px;
+}
+/* The selection and focus rings sit on this frame, outside the thumbnail's
+   [data-theme-scope], so they take the page's colours, not the theme's. */
+.theme-mini-frame {
+  display: block;
+  border-radius: var(--radius-md);
 }
 .theme-option-label {
   display: grid;
@@ -2701,11 +2711,11 @@ dialog.local-dialog-wide {
 .theme-option-label:has(input:checked) .theme-option-check {
   display: block;
 }
-.theme-option-label:has(input:checked) .theme-mini {
-  outline: 2px solid var(--border-focus);
+.theme-option-label:has(input:checked) .theme-mini-frame {
+  outline: 2px solid var(--text-primary);
   outline-offset: 2px;
 }
-.theme-option-label:has(input:focus-visible) .theme-mini {
+.theme-option-label:has(input:focus-visible) .theme-mini-frame {
   box-shadow: var(--focus-ring);
 }
 .theme-option-label:has(input:checked) .theme-option-text {
@@ -2715,6 +2725,20 @@ dialog.local-dialog-wide {
   position: absolute;
   top: 0.25rem;
   right: 0.25rem;
+}
+/* The ⋯ sits over the thumbnail, so it is a chip in the page's colours that
+   reads on a dark or a light thumbnail alike. */
+.theme-option .theme-option-menu .row-menu-button {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--border-default);
+  background: var(--surface-popup);
+  color: var(--text-primary);
+}
+.theme-option .theme-option-menu .row-menu-button:hover,
+.theme-option .theme-option-menu .row-menu-button[aria-expanded="true"] {
+  background: var(--surface-popup);
+  border-color: var(--text-secondary);
 }
 .theme-rename {
   display: flex;
