@@ -1724,9 +1724,10 @@ palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
 `light_theme` and `dark_theme` (set by the thumbnails) and refuses an unknown id.
 `POST api/settings/appearance/themes` (`{name, base, tokens, slot}`; `slot` is
 `light`, `dark` or empty) creates a theme under a new `c-` id and may put it in
-a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`) renames it, and
+a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`, or `{base, tokens}` with or
+without a `name`, which replaces them in place and keeps the id and slots) changes it, and
 `DELETE` removes it and resets a slot that used it; all answer with the
-appearance document, and the built-ins can be neither renamed nor deleted.
+appearance document, and the built-ins can be neither changed nor deleted.
 The built-ins are, in order, **Default light** and **Default dark** (`default-light`
 and `default-dark`: the palette as it ships, no tokens), **Birch** (`birch`,
 light: cool blue-grey with teal), **Parchment** (`parchment`, light: warm cream
@@ -1747,7 +1748,13 @@ recorded, so there is one); the console proposals listing adds
 `contrast_warnings` to the proposal's `after` (the stored proposal is
 unchanged), and the card shows swatches of its colours, those warnings, a name
 field and a Light or Dark select (always sent on save, defaulting to the
-theme's base), and the preview ends on dismiss, when the conversation closes
+theme's base). A proposal that names a custom theme the person has (`theme_id`:
+the agent is tweaking it) shows **Update <name>** as its primary action and
+**Save as new theme** as the secondary one, with the name prefilled and no slot
+select (the note names the slots the theme is in; Update keeps them, and Save as
+new adds a copy in the base's slot). They send `{theme: {name, mode: "update"}}`
+and `{theme: {name, slot, mode: "new"}}`; if the theme was deleted meanwhile
+the update's error shows and Save as new theme stays. The preview ends on dismiss, when the conversation closes
 or the panel goes away, and on save once the preferences hold the saved theme
 (a refresh asked during a settings save waits for the save, then fetches). A
 slot naming a theme the list lacks shows the slot's built-in. **Plan usage** below them has a switch per plan

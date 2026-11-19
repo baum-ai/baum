@@ -88,16 +88,26 @@ type Proposer interface {
 type SaveInput struct {
 	Value *string `json:"value,omitempty"`
 	// Theme is what the person chose when saving a colour theme proposal: its
-	// name and the slot it goes in. Empty fields take the proposal's own.
+	// name, the slot it goes in and whether it updates the theme it names or
+	// is saved as new. Empty fields take the proposal's own.
 	Theme *ThemeSave `json:"theme,omitempty"`
 }
 
 // ThemeSave is the person's choices when saving a theme proposal. Slot is
-// "light", "dark" or empty for the theme's base.
+// "light", "dark" or empty for the theme's base. Mode is ThemeModeUpdate or
+// ThemeModeNew, or empty for update when the proposal names a theme
+// (propose_theme's theme_id) and new otherwise.
 type ThemeSave struct {
-	Name string `json:"name"`
-	Slot string `json:"slot"`
+	Name string `json:"name,omitempty"`
+	Slot string `json:"slot,omitempty"`
+	Mode string `json:"mode,omitempty"`
 }
+
+// The modes of a theme save (ThemeSave.Mode).
+const (
+	ThemeModeUpdate = "update"
+	ThemeModeNew    = "new"
+)
 
 // String, GoString and LogValue never print the value, so neither a log line
 // nor an error formatted with an input can carry it.

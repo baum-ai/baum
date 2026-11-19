@@ -37,6 +37,8 @@ type panelAgent struct {
 	turns map[string][]string
 	// answers are each session's answers so far, by turn.
 	answers map[string][]string
+	// tweaks counts the theme edits proposed, so each has its own colour.
+	tweaks int
 }
 
 // panelStep is how long each of a turn's steps takes: long enough for the
@@ -168,7 +170,9 @@ func (a *panelAgent) proposeComment(ctx context.Context, r agent.Request) {
 const panelTheme = `{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#e8eef4","--color-shadow":"#10202e","--brand-green-600":"#5aa9e6"}}`
 
 // proposeTheme proposes a colour theme from whatever page is open, as the
-// agent's propose_theme tool call would; the app previews it.
+// agent's propose_theme tool call would; the app previews it. A prompt with
+// "tweak theme <id>" edits that custom theme (theme_id), with a new text colour
+// each time it is asked; "as <name>" names it, else the name stays "Mine".
 func (a *panelAgent) proposeTheme(ctx context.Context, r agent.Request) {
 	status, text := "completed", "Proposed the theme; the person saves it in the panel."
 	err := errors.New("the turn has no MCP server")
@@ -181,6 +185,23 @@ func (a *panelAgent) proposeTheme(ctx context.Context, r agent.Request) {
 			if i := strings.Index(strings.ToLower(r.Prompt), "theme named "); i >= 0 {
 				name := strings.TrimSpace(r.Prompt[i+len("theme named "):])
 				after, _ = json.Marshal(map[string]any{"name": name, "base": "light", "tokens": map[string]string{"--color-paper": "#fdf6e3"}})
+			}
+			if fields := strings.Fields(r.Prompt); strings.Contains(strings.ToLower(r.Prompt), "tweak theme ") {
+				for i, word := range fields {
+					if strings.EqualFold(word, "tweak") && i+2 < len(fields) {
+						a.mu.Lock()
+						a.tweaks++
+						n := a.tweaks
+						a.mu.Unlock()
+						name := "Mine"
+						if as := strings.Index(r.Prompt, " as "); as >= 0 {
+							name = strings.TrimSpace(r.Prompt[as+len(" as "):])
+						}
+						after, _ = json.Marshal(map[string]any{"theme_id": fields[i+2], "name": name, "base": "dark",
+							"tokens": map[string]string{"--color-paper": fmt.Sprintf("#e8ee%02x", n)}})
+						break
+					}
+				}
 			}
 			_, err = a.mcp.Proposals.Propose(ctx, consumer.ID, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere,
 				Target: agentcontext.TargetTheme, After: after})

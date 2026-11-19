@@ -69,7 +69,7 @@ func TestSaveInputThemeReachesApplyAndIsRedacted(t *testing.T) {
 	if err := s.Proposals.Save(ctx, id, p.ID, SaveInput{Theme: &ThemeSave{Name: "Dusk", Slot: "dark"}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.inputs) != 1 || rec.inputs[0].Theme == nil || *rec.inputs[0].Theme != (ThemeSave{"Dusk", "dark"}) {
+	if len(rec.inputs) != 1 || rec.inputs[0].Theme == nil || *rec.inputs[0].Theme != (ThemeSave{Name: "Dusk", Slot: "dark"}) {
 		t.Fatalf("Apply got %v", rec.inputs)
 	}
 	var in SaveInput
@@ -200,5 +200,25 @@ func TestNewThemeProposalReplacesOpenThemes(t *testing.T) {
 	}
 	if slices.Contains(changes, "") || len(changes) != 4 {
 		t.Errorf("changes %v", changes)
+	}
+}
+
+// propose_theme keeps theme_id in the proposal's After, and the tool says
+// what it is for.
+func TestProposeThemeToolKeepsThemeID(t *testing.T) {
+	rec := &takeAll{}
+	s := New(Options{API: http.NotFoundHandler(), Proposers: map[string]Proposer{ProposalAnywhere: rec}})
+	token, id := chat(t, s)
+	setPage(t, s, id, PageContext{Page: PageInbox})
+	text, failed := data(t, s, token, "propose_theme", map[string]any{"theme_id": "c-1", "name": "Dusk", "base": "dark", "tokens": map[string]string{}})
+	if failed {
+		t.Fatal(text)
+	}
+	open := s.Proposals.List(id)
+	if len(open) != 1 || !sameJSON(open[0].After, json.RawMessage(`{"theme_id":"c-1","name":"Dusk","base":"dark","tokens":{}}`)) {
+		t.Fatalf("proposals %+v", open)
+	}
+	if d := proposeThemeTool().Description; !strings.Contains(d, "pass its id as theme_id") || !strings.Contains(d, "Omit theme_id") {
+		t.Errorf("the description does not explain theme_id: %s", d)
 	}
 }

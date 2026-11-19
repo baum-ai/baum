@@ -1293,7 +1293,10 @@ tokens) and the person's own, kept in `AppearancePreferences` and validated by `
 allowlist of palette tokens, each a plain colour, and the contrast check that
 evaluates the palette's recipes from the tile kit's generated `tokens.css`).
 `POST`, `PATCH` and `DELETE /api/settings/appearance/themes[/{id}]` create,
-rename and delete a theme. Settings › Appearance shows the mode and slots as thumbnails (the
+change and delete a theme: `PATCH` takes `name`, or `base` and `tokens` together
+(with or without a `name`) and replaces them in place through `editTheme`, which
+keeps the id and the slots and validates the theme as `POST` does (the same
+`themes.Validate` and caps; built-ins are refused with 400, a missing id is 404). Settings › Appearance shows the mode and slots as thumbnails (the
 agent reads them with `settings_appearance` and proposes them with
 `propose_theme_choice`); its thumbnails are `[data-theme-scope]`
 elements of `palette.css`, which the tile kit's generated `tokens.css` carries
@@ -8045,9 +8048,12 @@ proposals only through the Go API for now.
 never through an agent: the value of an agent environment variable the agent
 proposed adding. It goes to `Apply` alone, is never kept in the proposal, and
 prints and logs as withheld. Every proposer but the agent environment's
-refuses one. `SaveInput.Theme` (`{name, slot}`, `slot` "", `light` or `dark`)
-is what the person chose when saving a theme proposal: the name they gave it
-and the slot it goes in, each defaulting to the proposal's name and its base.
+refuses one. `SaveInput.Theme` (`{name, slot, mode}`, `slot` "", `light` or `dark`,
+`mode` "", `update` or `new`) is what the person chose when saving a theme
+proposal: the name they gave it, the slot a new theme goes in and whether the
+save updates the theme the proposal names or adds a new one, each defaulting to
+the proposal's name, its base and, for `mode`, `update` when the proposal has a
+`theme_id` and `new` otherwise.
 It is not secret, but like the value it reaches `Apply` alone; only the theme
 proposer takes one (`target.takesTheme`) and refuses a `Value`, and every other
 proposer refuses a `Theme`.
@@ -8070,7 +8076,7 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | --- | --- | --- | --- |
 | `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (key hints, page modifier, review page; a `theme`, `light_theme` or `dark_theme` is refused, as `propose_theme_choice`'s) |
 | `settings` (`appearance`) | `propose_theme_choice` | `theme_choice` | `PUT /api/settings/appearance` (the `theme` mode and the `light_theme` and `dark_theme` slots, which must name a theme the preferences hold; key hints, page modifier and review page are refused, as `propose_appearance`'s) |
-| any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme`, a common tool listed on every page | `theme` | `POST /api/settings/appearance/themes` (`addTheme`) with the name and slot from `SaveInput.Theme`, else the proposal's name and its base's slot; the id is made once outside the transaction. The revision is a constant, so changes to the slots or themes during the preview do not make the save stale. Its "before" is the names of the light and dark slots' themes. |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme`, a common tool listed on every page | `theme` | A new theme: `POST /api/settings/appearance/themes` (`addTheme`) with the name and slot from `SaveInput.Theme`, else the proposal's name and its base's slot; the id is made once outside the transaction. With a `theme_id` in `After` (it must name an existing custom theme: a built-in or unknown id is refused when proposed, with guidance to omit it) the default save is an update, `PATCH /api/settings/appearance/themes/{id}` (`editTheme`) replacing the base and tokens, and the name if `SaveInput.Theme` gives one, keeping the id and slots; if the theme was deleted since, the update fails with "the theme this edits was deleted: save it as a new theme instead" and `mode: new` still adds it. The revision is a constant, so changes to the slots or themes during the preview do not make the save stale. Its "before" is the names of the light and dark slots' themes. |
 | `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
 | `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
 | `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |

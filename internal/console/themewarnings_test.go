@@ -35,6 +35,15 @@ func TestWithContrastWarnings(t *testing.T) {
 	if w := warnings(got[1]); w == nil || len(w) != 0 {
 		t.Errorf("a readable theme carries %v, want an empty list", w)
 	}
+	// An edit of a theme keeps its theme_id.
+	edit := withContrastWarnings([]agentcontext.Proposal{{Page: agentcontext.ProposalAnywhere, Target: agentcontext.TargetTheme,
+		After: json.RawMessage(`{"theme_id":"c-1","name":"E","base":"light","tokens":{}}`)}})
+	var kept struct {
+		ThemeID string `json:"theme_id"`
+	}
+	if err := json.Unmarshal(edit[0].After, &kept); err != nil || kept.ThemeID != "c-1" {
+		t.Errorf("theme_id lost: %s", edit[0].After)
+	}
 	if string(got[2].After) != string(other) {
 		t.Errorf("another proposal changed: %s", got[2].After)
 	}

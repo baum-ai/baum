@@ -160,10 +160,12 @@ func themeSeedList() string { return strings.Join(themes.Seeds, ", ") }
 func proposeThemeTool() Tool {
 	return Tool{
 		Name: "propose_theme",
-		Description: "Proposes a custom colour theme for the baum app: a name, a base (light or dark) and colour overrides of the app's palette tokens. Works on any page. The app previews the proposal at once; nothing is saved until the person saves it, choosing its name and whether it is for the light or the dark slot (the slot the theme's base names unless they pick the other), and the preview ends when they dismiss it. " +
+		Description: "Proposes a custom colour theme for the baum app: a name, a base (light or dark) and colour overrides of the app's palette tokens. Works on any page. The app previews the proposal at once; nothing is saved until the person saves it, and the preview ends when they dismiss it. A new theme is saved with the name and the light or dark slot the person chooses (the slot the theme's base names unless they pick the other). " +
+			"When you are changing a custom theme the person already has, pass its id as theme_id (from settings_appearance; usually the custom theme in the slot in use): saving then updates that theme in place, keeping its slots, instead of adding another, and name should be its current name unless you are renaming it. Omit theme_id when the person asks for a new theme, or when you start from a built-in theme, which cannot change: a built-in or unknown theme_id is refused. " +
 			"Use settings_appearance to read the person's themes, the tokens a theme may set (theme_tokens) and what each resolves to by default (theme_defaults) in the light and dark themes. Prefer to change seeds, which the rest of the palette derives from: " + themeSeedList() + ". On a dark base the text colour comes from --color-paper (the text ramp mixes it toward --color-shadow) and the surfaces from --color-shadow, so set --color-paper to a light colour; --color-ink does not colour dark-theme text, so setting it there does nothing for text. On a light base --color-ink is the text and --color-paper the page. Set a role (the other tokens) only where a seed cannot reach. Each value is one colour: #rgb, #rrggbb, #rrggbbaa, rgb(), hsl() or oklch(). " +
 			"The answer lists contrast_warnings, the pairs of text and background colours under 4.5:1 contrast; propose again with different colours to fix them.",
 		InputSchema: json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{`+
+			`"theme_id":{"type":"string","maxLength":64,"description":"The id of the custom theme this changes, from settings_appearance. Omit for a new theme."},`+
 			`"name":{"type":"string","maxLength":%d,"description":"The theme's name, as the person will see it in their themes."},`+
 			`"base":{"type":"string","enum":["light","dark"],"description":"The built-in palette the tokens change: light or dark."},`+
 			`"tokens":{"type":"object","maxProperties":%d,"additionalProperties":{"type":"string","maxLength":%d},"description":"Palette token to colour, for example {\"--color-paper\":\"#fdf6e3\"}. Only the tokens settings_appearance lists in theme_tokens."}},`+
@@ -171,9 +173,10 @@ func proposeThemeTool() Tool {
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct {
-				Name   string            `json:"name"`
-				Base   string            `json:"base"`
-				Tokens map[string]string `json:"tokens"`
+				ThemeID string            `json:"theme_id,omitempty"`
+				Name    string            `json:"name"`
+				Base    string            `json:"base"`
+				Tokens  map[string]string `json:"tokens"`
 			}
 			if err := strictArgs(args, &a); err != nil {
 				return "", err

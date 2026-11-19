@@ -1249,3 +1249,105 @@ it("keeps the preview after Save until the saved preferences arrive", async () =
   await act(async () => releasePrefs());
   await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
 });
+
+// A theme proposal that names one of the person's custom themes updates it.
+const mineTheme = {
+  id: "c-mine",
+  name: "Mine",
+  base: "dark",
+  tokens: { "--color-paper": "#111111" },
+};
+const editPrefs = {
+  theme: "dark",
+  light_theme: "default-light",
+  dark_theme: "c-mine",
+  themes: [
+    { id: "default-light", name: "Default light", base: "light", tokens: {}, builtin: true },
+    { id: "default-dark", name: "Default dark", base: "dark", tokens: {}, builtin: true },
+    mineTheme,
+  ],
+};
+const editProposal = (id = "e1") =>
+  themeProposal(id, {
+    after: {
+      theme_id: "c-mine",
+      name: "Mine",
+      base: "dark",
+      tokens: { "--color-paper": "#223344" },
+      contrast_warnings: [],
+    },
+  });
+
+/** Opens a theme edit whose saves are answered by `saved`. */
+async function openEdit(saved: (call: Call) => Response | undefined = () => undefined) {
+  let open = [editProposal()];
+  await openThemes(
+    () => open,
+    () => {
+      open = [];
+    },
+  );
+  const base = answer;
+  answer = (call) => {
+    if (call.path === "api/settings/appearance") return Response.json(editPrefs);
+    if (call.path.endsWith("/save")) {
+      const given = saved(call);
+      if (given) return given;
+    }
+    return base(call);
+  };
+  // The preferences are read again (the window gaining focus does it).
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await proposalsChanged();
+  await until(() => expect(node.textContent).toContain("Saving updates Mine"));
+}
+
+it("offers Update and Save as new theme for a proposal that edits a custom theme", async () => {
+  await openEdit();
+  const card = node.querySelector("article")!;
+  expect(button("Update Mine")).toBeDefined();
+  expect(button("Save as new theme")).toBeDefined();
+  // The name is prefilled; the slot choice is not offered, the slots it is in are named.
+  expect(card.querySelector<HTMLInputElement>('input[type="text"]')!.value).toBe("Mine");
+  expect(card.querySelector("select")).toBeNull();
+  expect(card.textContent).toContain("your dark theme");
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#223344");
+});
+
+it("updates in place with no slot, and saves as new with the base's slot", async () => {
+  await openEdit();
+  await act(async () => button("Update Mine")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Mine", mode: "update" },
+  });
+  calls.length = 0;
+  await openEdit();
+  const name = node.querySelector<HTMLInputElement>('article input[type="text"]')!;
+  await type(name, "Copy");
+  await act(async () => button("Save as new theme")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Copy", slot: "dark", mode: "new" },
+  });
+});
+
+it("shows why an update failed and keeps Save as new theme", async () => {
+  await openEdit(() =>
+    Response.json(
+      {
+        code: "refused",
+        message: "the theme this edits was deleted: save it as a new theme instead",
+      },
+      { status: 422 },
+    ),
+  );
+  await act(async () => button("Update Mine")!.click());
+  await until(() => expect(node.querySelector('[role="alert"]')).not.toBeNull());
+  expect(node.querySelector('[role="alert"]')!.textContent).toContain("deleted");
+  const again = button("Save as new theme")!;
+  expect(again.disabled).toBe(false);
+  // The proposal is still open, and so is the preview.
+  expect(node.querySelectorAll("article").length).toBe(1);
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#223344");
+});

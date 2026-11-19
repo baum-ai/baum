@@ -126,11 +126,11 @@ func (s *Server) settingsTools() []Tool {
 		Projected: []string{"/api/settings/appearance"},
 		Call:      s.callSettingsGeneral,
 	}, {
-		Name: "settings_appearance",
+		Name:        "settings_appearance",
 		Description: "What the Settings page's Appearance section shows: the theme mode (theme: system, light or dark), the colour themes (the built-in and the person's own: id, name, base, tokens) and which one each slot uses (light_theme, dark_theme), the tokens a theme may set (theme_tokens) and what they resolve to (theme_defaults, slot_values).",
-		Scope:     ScopeGlobal,
-		Projected: []string{"/api/settings/appearance"},
-		Call:      callSettingsAppearance,
+		Scope:       ScopeGlobal,
+		Projected:   []string{"/api/settings/appearance"},
+		Call:        callSettingsAppearance,
 	}, {
 		Name: "settings_reviews",
 		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored), and whether new reviews are generated as tiles (tile_reviews, an experimental setting, off by default). " +
@@ -333,7 +333,7 @@ func callSettingsAppearance(ctx context.Context, c CallContext, _ json.RawMessag
 		ThemeTokens:   themeTokens{Seeds: themes.Seeds, Roles: themes.Roles()},
 		ThemeDefaults: map[string]map[string]string{"light": themeColours("light", nil), "dark": themeColours("dark", nil)},
 		SlotValues:    map[string]map[string]string{},
-		ThemeNote:     "The colours in use are the active slot's theme: the theme setting picks it (light uses the light slot, dark the dark slot, system follows the operating system). theme_defaults are the built-in light and dark colours, slot_values what each slot's theme resolves to. A theme sets some tokens over its base; the rest follow from them. On a light base --color-ink is the text and --color-paper the page; on a dark base --color-paper is the text colour (the surfaces come from --color-shadow) and --color-ink does not colour text."}
+		ThemeNote:     "The colours in use are the active slot's theme: the theme setting picks it (light uses the light slot, dark the dark slot, system follows the operating system). theme_defaults are the built-in light and dark colours, slot_values what each slot's theme resolves to. A theme sets some tokens over its base; the rest follow from them. On a light base --color-ink is the text and --color-paper the page; on a dark base --color-paper is the text colour (the surfaces come from --color-shadow) and --color-ink does not colour text. When you change a custom theme the person has (not a built-in), usually the custom theme in the slot in use, pass its id as propose_theme's theme_id so saving updates it in place instead of adding another; omit theme_id for a new theme or when starting from a built-in."}
 	for _, t := range appearance.Themes {
 		tokens := t.Tokens
 		if tokens == nil {

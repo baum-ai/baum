@@ -323,24 +323,26 @@ func withContrastWarnings(list []agentcontext.Proposal) []agentcontext.Proposal 
 		if p.Page != agentcontext.ProposalAnywhere || p.Target != agentcontext.TargetTheme {
 			continue
 		}
+		// Every field the proposal holds (theme_id too) is kept as it is.
+		var fields map[string]json.RawMessage
 		var in struct {
 			Name   string            `json:"name"`
 			Base   string            `json:"base"`
 			Tokens map[string]string `json:"tokens"`
 		}
-		if json.Unmarshal(p.After, &in) != nil {
+		if json.Unmarshal(p.After, &fields) != nil || json.Unmarshal(p.After, &in) != nil {
 			continue
 		}
 		warnings := themes.Contrast(themes.Theme{Name: in.Name, Base: in.Base, Tokens: in.Tokens})
 		if warnings == nil {
 			warnings = []themes.Warning{}
 		}
-		if raw, err := json.Marshal(struct {
-			Name             string            `json:"name"`
-			Base             string            `json:"base"`
-			Tokens           map[string]string `json:"tokens"`
-			ContrastWarnings []themes.Warning  `json:"contrast_warnings"`
-		}{in.Name, in.Base, in.Tokens, warnings}); err == nil {
+		raw, err := json.Marshal(warnings)
+		if err != nil {
+			continue
+		}
+		fields["contrast_warnings"] = raw
+		if raw, err := json.Marshal(fields); err == nil {
 			out[i].After = raw
 		}
 	}

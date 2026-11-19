@@ -222,6 +222,21 @@ func slotOf(slot string) error {
 	return nil
 }
 
+// cleanTheme validates t and returns it as it is stored: the name trimmed and
+// the colours without surrounding whitespace, as the validator read them.
+func cleanTheme(t repos.CustomTheme) (repos.CustomTheme, error) {
+	if err := themes.Validate(themes.Theme{ID: t.ID, Name: t.Name, Base: t.Base, Tokens: t.Tokens}); err != nil {
+		return t, errThemeInvalid{err}
+	}
+	t.Name = trimName(t.Name)
+	trimmed := make(map[string]string, len(t.Tokens))
+	for token, value := range t.Tokens {
+		trimmed[token] = strings.Trim(value, " \t\n\r\f")
+	}
+	t.Tokens = trimmed
+	return t, nil
+}
+
 // addTheme adds t, whose ID the caller chose, to p's custom themes and puts it
 // in the slot named ("light", "dark" or "" for neither).
 func addTheme(p repos.Preferences, t repos.CustomTheme, slot string) (repos.Preferences, error) {
@@ -231,20 +246,14 @@ func addTheme(p repos.Preferences, t repos.CustomTheme, slot string) (repos.Pref
 	if len(p.Appearance.Themes) >= themes.MaxThemes {
 		return p, themeInvalid("at most %d custom themes; delete one first", themes.MaxThemes)
 	}
-	if err := themes.Validate(themes.Theme{ID: t.ID, Name: t.Name, Base: t.Base, Tokens: t.Tokens}); err != nil {
-		return p, errThemeInvalid{err}
+	cleaned, err := cleanTheme(t)
+	if err != nil {
+		return p, err
 	}
 	if t.ID == "" || themeKnown(p, t.ID) {
 		return p, themeInvalid("theme id %q is taken", t.ID)
 	}
-	t.Name = trimName(t.Name)
-	// Keep the colours as the validator read them: without surrounding
-	// whitespace.
-	trimmed := make(map[string]string, len(t.Tokens))
-	for token, value := range t.Tokens {
-		trimmed[token] = strings.Trim(value, " \t\n\r\f")
-	}
-	t.Tokens = trimmed
+	t = cleaned
 	p.Appearance.Themes = append(slices.Clone(p.Appearance.Themes), t)
 	switch slot {
 	case "light":
@@ -255,20 +264,44 @@ func addTheme(p repos.Preferences, t repos.CustomTheme, slot string) (repos.Pref
 	return p, nil
 }
 
-// renameTheme renames a custom theme.
-func renameTheme(p repos.Preferences, id, name string) (repos.Preferences, error) {
+// themeEdit is a change to a custom theme: its name, or its base and tokens
+// (which go together), or both. A nil field is left as it is.
+type themeEdit struct {
+	Name   *string
+	Base   *string
+	Tokens map[string]string
+}
+
+// editTheme changes a custom theme in place: its id and the slots that use it
+// stay. The theme as changed is validated as a new one is, with the same
+// limits.
+func editTheme(p repos.Preferences, id string, edit themeEdit) (repos.Preferences, error) {
 	if themes.IsBuiltin(id) {
-		return p, themeInvalid("built-in themes cannot be renamed")
+		return p, themeInvalid("built-in themes cannot be changed")
 	}
-	if err := themes.ValidateName(name); err != nil {
-		return p, errThemeInvalid{err}
+	if edit.Name == nil && edit.Base == nil && edit.Tokens == nil {
+		return p, themeInvalid("name, or base and tokens, is required")
+	}
+	if (edit.Base == nil) != (edit.Tokens == nil) {
+		return p, themeInvalid("base and tokens go together")
 	}
 	i := slices.IndexFunc(p.Appearance.Themes, func(t repos.CustomTheme) bool { return t.ID == id })
 	if i < 0 {
 		return p, errThemeNotFound
 	}
+	t := p.Appearance.Themes[i]
+	if edit.Name != nil {
+		t.Name = *edit.Name
+	}
+	if edit.Base != nil {
+		t.Base, t.Tokens = *edit.Base, edit.Tokens
+	}
+	t, err := cleanTheme(t)
+	if err != nil {
+		return p, err
+	}
 	list := slices.Clone(p.Appearance.Themes)
-	list[i].Name = trimName(name)
+	list[i] = t
 	p.Appearance.Themes = list
 	return p, nil
 }
@@ -357,16 +390,27 @@ func (a LocalAPI) postTheme(w http.ResponseWriter, r *http.Request) {
 	a.saveTheme(w, r, func(p repos.Preferences) (repos.Preferences, error) { return addTheme(p, theme, input.Slot) })
 }
 
-// patchTheme is PATCH /api/settings/appearance/themes/{id}: it renames.
+// patchTheme is PATCH /api/settings/appearance/themes/{id}: it renames, or
+// replaces the base and tokens (with a name or not), keeping the id and the
+// slots that use the theme.
 func (a LocalAPI) patchTheme(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name string `json:"name"`
+		Name   *string            `json:"name"`
+		Base   *string            `json:"base"`
+		Tokens *map[string]string `json:"tokens"`
 	}
 	if !decodeThemeBody(w, r, &input) {
 		return
 	}
+	edit := themeEdit{Name: input.Name, Base: input.Base}
+	if input.Tokens != nil {
+		edit.Tokens = *input.Tokens
+		if edit.Tokens == nil {
+			edit.Tokens = map[string]string{}
+		}
+	}
 	id := r.PathValue("id")
-	a.saveTheme(w, r, func(p repos.Preferences) (repos.Preferences, error) { return renameTheme(p, id, input.Name) })
+	a.saveTheme(w, r, func(p repos.Preferences) (repos.Preferences, error) { return editTheme(p, id, edit) })
 }
 
 // deleteTheme is DELETE /api/settings/appearance/themes/{id}.

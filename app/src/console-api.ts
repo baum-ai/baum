@@ -161,9 +161,17 @@ export async function listProposals(id: string): Promise<Proposal[]> {
 const proposalPath = (id: string, proposal: string, action: string) =>
   `${conversationPath(id)}/proposals/${encodeURIComponent(proposal)}/${action}`;
 
-/** What the person chose when saving a colour theme: its name and the slot
- *  it goes in, always one of the two. */
-export type ThemeSave = { name: string; slot: "light" | "dark" };
+/** What the person chose when saving a colour theme: its name and, for a new
+ *  theme, the slot it goes in (light or dark; the app always sends one, the
+ *  daemon reads an empty one differently). `mode` says whether the proposal
+ *  updates the theme it names (`update`, which keeps its slots and takes no
+ *  slot) or adds a new one; omitted, the daemon updates when the proposal
+ *  names a theme and adds otherwise. */
+export type ThemeSave = {
+  name?: string;
+  slot?: "light" | "dark";
+  mode?: "update" | "new";
+};
 
 /** Saves a change; `value` is what the person typed, when it takes one, and
  *  `theme` what they chose for a colour theme. */

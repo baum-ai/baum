@@ -34,6 +34,8 @@ Repositories lists the picked repositories and lets the person add more from Git
 
 Settings has eight sections: General (keyboard and plan usage), Appearance (the theme mode and the light and dark colour themes, with a thumbnail of each), Reviews (the review agent and automation), Fixes (the fix agent), Connections (GitHub and agent hooks), This computer (diagnostics, command line, updates, environment), Prompts (the prompts baum sends agents, customisable) and Tile library (the person's saved tile types). The 1 to 8 keys go to a section.
 
+The agent can propose a colour theme from any page with propose_theme, which the app previews at once and the person saves or dismisses in the session panel. When it names a custom theme the person has (theme_id), saving updates that theme in place, keeping its id and slots, and the card also offers Save as new theme; without theme_id saving adds a new custom theme.
+
 The Tile library section lists the tile types the person saved, each marked Custom, with where it came from (made in chat or imported), its use-when line, the repositories it is pinned to and when a review last used it. A type opens in a pane (the page context's focus then names it as type): previews of its samples, its fill instructions, paths and versions. The person renames a type (its title only), pins it to repositories (a pinned type is always filled in that repository's generated reviews), restores an earlier version, exports it as a file, imports one and deletes it with Undo, all on the page. Edit in chat opens the session panel about the open type: read it with tile_type, change it with propose_tile_type, which the person saves.
 
 ## pull_request

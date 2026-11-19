@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -345,21 +346,47 @@ func (p *Proposers) anywhereTarget(_ agentcontext.PageContext, name string) (*ta
 	return p.themeTarget(), nil
 }
 
-// themeChange is a theme proposal's After.
+// themeChange is a theme proposal's After. ThemeID, when set, names the
+// custom theme it edits.
 type themeChange struct {
-	Name   string            `json:"name"`
-	Base   string            `json:"base"`
-	Tokens map[string]string `json:"tokens"`
+	ThemeID string            `json:"theme_id,omitempty"`
+	Name    string            `json:"name"`
+	Base    string            `json:"base"`
+	Tokens  map[string]string `json:"tokens"`
 }
 
-// themeTargetState is the constant its revision is: a theme proposal adds a
-// new theme, so nothing the person changes while previewing it (the slots, the
-// other themes) makes the save stale.
+// themeTargetState is the constant its revision is: a theme proposal adds or
+// edits a theme, so nothing the person changes while previewing it (the
+// slots, the other themes) makes the save stale.
 const themeTargetState = "theme"
 
-// themeTarget is a new custom colour theme, saved as POST
-// /api/settings/appearance/themes is: the name and slot the person chose when
-// saving (SaveInput.Theme), else the proposal's name and its base's slot.
+// errThemeGone is a theme proposal that edits a theme deleted since.
+var errThemeGone = errors.New("the theme this edits was deleted: save it as a new theme instead")
+
+// readThemeSlots reads the preferences for a theme target's "before".
+func (p *Proposers) readThemeSlots(ctx context.Context) (appearanceSettings, func(id string) string, error) {
+	prefs, err := p.API.Registry.Preferences(ctx)
+	if err != nil {
+		return appearanceSettings{}, nil, errors.New("the settings could not be read")
+	}
+	appearance := appearanceOf(prefs)
+	name := func(id string) string {
+		for _, t := range appearance.Themes {
+			if t.ID == id {
+				return t.Name
+			}
+		}
+		return id
+	}
+	return appearance, name, nil
+}
+
+// themeTarget is a colour theme: a new custom theme, saved as POST
+// /api/settings/appearance/themes is, or, when the proposal names a custom
+// theme (theme_id), that theme replaced in place as PATCH
+// /api/settings/appearance/themes/{id} does. The person's save picks which
+// (SaveInput.Theme.Mode, update when theme_id is set else new), the name and,
+// for a new theme, the slot; else the proposal's name and its base's slot.
 func (p *Proposers) themeTarget() *target {
 	decode := func(after json.RawMessage) (themeChange, error) {
 		var in themeChange
@@ -371,31 +398,41 @@ func (p *Proposers) themeTarget() *target {
 	return &target{
 		takesTheme: true,
 		read: func(ctx context.Context) (any, any, error) {
-			prefs, err := p.API.Registry.Preferences(ctx)
+			appearance, name, err := p.readThemeSlots(ctx)
 			if err != nil {
-				return nil, nil, errors.New("the settings could not be read")
-			}
-			appearance := appearanceOf(prefs)
-			name := func(id string) string {
-				for _, t := range appearance.Themes {
-					if t.ID == id {
-						return t.Name
-					}
-				}
-				return id
+				return nil, nil, err
 			}
 			return struct {
 				LightTheme string `json:"light_theme"`
 				DarkTheme  string `json:"dark_theme"`
 			}{name(appearance.LightTheme), name(appearance.DarkTheme)}, themeTargetState, nil
 		},
-		validate: func(_ context.Context, after json.RawMessage) error { _, err := decode(after); return err },
+		validate: func(ctx context.Context, after json.RawMessage) error {
+			in, err := decode(after)
+			if err != nil || in.ThemeID == "" {
+				return err
+			}
+			if themes.IsBuiltin(in.ThemeID) {
+				return fmt.Errorf("theme_id %q is a built-in theme, which cannot be changed: omit theme_id to propose a new theme", in.ThemeID)
+			}
+			prefs, err := p.API.Registry.Preferences(ctx)
+			if err != nil {
+				return errors.New("the settings could not be read")
+			}
+			if !slices.ContainsFunc(prefs.Appearance.Themes, func(t repos.CustomTheme) bool { return t.ID == in.ThemeID }) {
+				return fmt.Errorf("theme_id %q is not one of the person's custom themes: omit theme_id to propose a new theme", in.ThemeID)
+			}
+			return nil
+		},
 		apply: func(ctx context.Context, after json.RawMessage, unchanged func(any) error, input agentcontext.SaveInput) error {
 			in, err := decode(after)
 			if err != nil {
 				return err
 			}
-			name, slot := in.Name, in.Base
+			name, slot, mode := in.Name, in.Base, agentcontext.ThemeModeNew
+			if in.ThemeID != "" {
+				mode = agentcontext.ThemeModeUpdate
+			}
 			if input.Theme != nil {
 				if input.Theme.Name != "" {
 					name = input.Theme.Name
@@ -403,9 +440,43 @@ func (p *Proposers) themeTarget() *target {
 				if input.Theme.Slot != "" {
 					slot = input.Theme.Slot
 				}
+				if input.Theme.Mode != "" {
+					mode = input.Theme.Mode
+				}
 				if err := themes.ValidateName(name); err != nil {
 					return err
 				}
+			}
+			switch mode {
+			case agentcontext.ThemeModeNew:
+			case agentcontext.ThemeModeUpdate:
+				if in.ThemeID == "" {
+					return errors.New("this proposal does not edit a theme: save it as a new theme")
+				}
+				edit := themeEdit{Name: &name, Base: &in.Base, Tokens: in.Tokens}
+				if edit.Tokens == nil {
+					edit.Tokens = map[string]string{}
+				}
+				change := func(prefs repos.Preferences) (repos.Preferences, error) {
+					prefs, err := editTheme(prefs, in.ThemeID, edit)
+					if errors.Is(err, errThemeNotFound) {
+						return prefs, errThemeGone
+					}
+					return prefs, err
+				}
+				_, err := p.API.updatePreferences(ctx, func(prefs repos.Preferences) error {
+					if err := unchanged(themeTargetState); err != nil {
+						return err
+					}
+					_, err := change(prefs)
+					return err
+				}, func(prefs repos.Preferences) repos.Preferences {
+					prefs, _ = change(prefs)
+					return prefs
+				})
+				return err
+			default:
+				return errors.New("the mode of a theme save is update or new")
 			}
 			// The id is made once, outside the transaction, which may run
 			// its function again.

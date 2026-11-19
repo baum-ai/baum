@@ -35,8 +35,14 @@ func (f *proposalFixture) appearance() themeAppearance {
 // proposeTheme proposes a theme through the tool and returns the proposal.
 func (f *proposalFixture) proposeTheme(name, base string) agentcontext.Proposal {
 	f.t.Helper()
-	text, failed := (&readFixture{mcp: f.mcp}).callTool(f.t, f.token, "propose_theme", map[string]any{
-		"name": name, "base": base, "tokens": map[string]string{"--color-paper": "#e8eef4"}})
+	return f.proposeThemeWith(map[string]any{"name": name, "base": base, "tokens": map[string]string{"--color-paper": "#e8eef4"}})
+}
+
+// proposeThemeWith proposes a theme with these arguments, which must be
+// accepted.
+func (f *proposalFixture) proposeThemeWith(args map[string]any) agentcontext.Proposal {
+	f.t.Helper()
+	text, failed := (&readFixture{mcp: f.mcp}).callTool(f.t, f.token, "propose_theme", args)
 	if failed {
 		f.t.Fatalf("propose_theme: %s", text)
 	}
@@ -233,5 +239,145 @@ func TestThemeChoiceAndAppearanceProposalsAreSeparateSections(t *testing.T) {
 		if _, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageSettings, Target: agentcontext.TargetAppearance, After: json.RawMessage(after)}); err == nil {
 			t.Errorf("General's appearance proposal took %s", after)
 		}
+	}
+}
+
+// addCustom adds a custom theme through the route and returns its id.
+func (f *proposalFixture) addCustom(name, base, slot string) string {
+	f.t.Helper()
+	f.must("POST", "/api/settings/appearance/themes", `{"name":"`+name+`","base":"`+base+`","tokens":{"--color-paper":"#111111"},"slot":"`+slot+`"}`)
+	themes := f.appearance().Themes
+	return themes[len(themes)-1].ID
+}
+
+func (f *proposalFixture) customTheme(id string) (name, base, paper string, ok bool) {
+	for _, t := range f.appearance().Themes {
+		if t.ID == id {
+			return t.Name, t.Base, t.Tokens["--color-paper"], true
+		}
+	}
+	return "", "", "", false
+}
+
+// A theme proposal that names a custom theme updates it on save: its id and
+// slots stay, its base, tokens and (when given) name change.
+func TestThemeProposalWithThemeIDUpdatesInPlace(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	id := f.addCustom("Mine", "dark", "dark")
+	f.addCustom("Other", "light", "light")
+	count := len(f.appearance().Themes)
+	p := f.proposeThemeWith(map[string]any{"theme_id": id, "name": "Mine", "base": "light", "tokens": map[string]string{"--color-paper": "#e8eef4"}})
+	if !strings.Contains(string(p.After), `"theme_id":"`+id+`"`) {
+		t.Fatalf("the proposal lost its theme_id: %s", p.After)
+	}
+	// Saved with no input, the proposal is an update.
+	if err := f.save(p, agentcontext.SaveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.appearance()
+	name, base, paper, ok := f.customTheme(id)
+	if !ok || name != "Mine" || base != "light" || paper != "#e8eef4" || len(got.Themes) != count || got.DarkTheme != id {
+		t.Fatalf("updated %+v", got)
+	}
+	// Tweaked again, with a new name and the update chosen explicitly: the
+	// count is the same, the slot too, and the slot input is ignored.
+	q := f.proposeThemeWith(map[string]any{"theme_id": id, "name": "Mine", "base": "dark", "tokens": map[string]string{"--color-paper": "#222222"}})
+	if err := f.save(q, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Name: " Renamed ", Slot: "light", Mode: agentcontext.ThemeModeUpdate}}); err != nil {
+		t.Fatal(err)
+	}
+	got = f.appearance()
+	name, base, paper, _ = f.customTheme(id)
+	if name != "Renamed" || base != "dark" || paper != "#222222" || len(got.Themes) != count || got.DarkTheme != id || got.LightTheme == id {
+		t.Fatalf("updated %+v", got)
+	}
+}
+
+func TestThemeProposalSaveAsNewKeepsTheOriginal(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	id := f.addCustom("Mine", "dark", "dark")
+	count := len(f.appearance().Themes)
+	p := f.proposeThemeWith(map[string]any{"theme_id": id, "name": "Mine", "base": "dark", "tokens": map[string]string{"--color-paper": "#e8eef4"}})
+	if err := f.save(p, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Name: "Copy", Slot: "light", Mode: agentcontext.ThemeModeNew}}); err != nil {
+		t.Fatal(err)
+	}
+	got := f.appearance()
+	_, _, paper, _ := f.customTheme(id)
+	last := got.Themes[len(got.Themes)-1]
+	if len(got.Themes) != count+1 || paper != "#111111" || last.ID == id || last.Name != "Copy" || got.LightTheme != last.ID || got.DarkTheme != id {
+		t.Fatalf("saved %+v", got)
+	}
+	// A proposal without a theme_id cannot be an update.
+	q := f.proposeTheme("Plain", "dark")
+	if err := f.save(q, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Mode: agentcontext.ThemeModeUpdate}}); err == nil {
+		t.Error("updated with no theme to update")
+	}
+	if err := f.save(q, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Mode: "replace"}}); err == nil {
+		t.Error("saved with an unknown mode")
+	}
+}
+
+func TestThemeProposalRefusesBuiltinAndUnknownThemeID(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	for _, id := range []string{"default-dark", "c-nope"} {
+		text, failed := (&readFixture{mcp: f.mcp}).callTool(f.t, f.token, "propose_theme", map[string]any{
+			"theme_id": id, "name": "N", "base": "dark", "tokens": map[string]string{}})
+		if !failed || !strings.Contains(text, "omit theme_id") {
+			t.Errorf("%s: %v %s", id, failed, text)
+		}
+	}
+	if len(f.mcp.Proposals.List(f.id)) != 0 {
+		t.Error("a refused theme_id was recorded")
+	}
+}
+
+func TestThemeProposalUpdateOfADeletedThemeErrors(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	id := f.addCustom("Mine", "dark", "dark")
+	p := f.proposeThemeWith(map[string]any{"theme_id": id, "name": "Mine", "base": "dark", "tokens": map[string]string{"--color-paper": "#e8eef4"}})
+	f.must("DELETE", "/api/settings/appearance/themes/"+id, "")
+	count := len(f.appearance().Themes)
+	err := f.save(p, agentcontext.SaveInput{})
+	if err == nil || !strings.Contains(err.Error(), "save it as a new theme") {
+		t.Fatalf("update of a deleted theme: %v", err)
+	}
+	if len(f.appearance().Themes) != count || len(f.mcp.Proposals.List(f.id)) != 1 {
+		t.Error("the failed update changed something")
+	}
+	// Save as new still works and closes the proposal.
+	if err := f.save(p, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Mode: agentcontext.ThemeModeNew}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.appearance().Themes) != count+1 {
+		t.Error("save as new did not add the theme")
+	}
+}
+
+// PATCH takes base and tokens, with the validation of a new theme.
+func TestPatchThemeReplacesBaseAndTokens(t *testing.T) {
+	f := newProposalFixture(t)
+	id := f.addCustom("Mine", "dark", "dark")
+	f.must("PATCH", "/api/settings/appearance/themes/"+id, `{"base":"light","tokens":{"--color-paper":"#e8eef4"}}`)
+	name, base, paper, _ := f.customTheme(id)
+	if name != "Mine" || base != "light" || paper != "#e8eef4" || f.appearance().DarkTheme != id {
+		t.Errorf("patched %s %s %s", name, base, paper)
+	}
+	f.must("PATCH", "/api/settings/appearance/themes/"+id, `{"name":"New","base":"dark","tokens":{}}`)
+	if name, base, _, _ := f.customTheme(id); name != "New" || base != "dark" {
+		t.Errorf("patched %s %s", name, base)
+	}
+	for _, body := range []string{`{}`, `{"base":"dark"}`, `{"tokens":{}}`, `{"base":"blue","tokens":{}}`, `{"base":"dark","tokens":{"--nope":"#fff"}}`, `{"name":""}`} {
+		if code, _ := f.do("PATCH", "/api/settings/appearance/themes/"+id, body); code != 400 {
+			t.Errorf("%s: %d", body, code)
+		}
+	}
+	if code, _ := f.do("PATCH", "/api/settings/appearance/themes/default-dark", `{"base":"dark","tokens":{}}`); code != 400 {
+		t.Errorf("a built-in was patched: %d", code)
+	}
+	if code, _ := f.do("PATCH", "/api/settings/appearance/themes/c-nope", `{"base":"dark","tokens":{}}`); code != 404 {
+		t.Errorf("an unknown theme: %d", code)
 	}
 }

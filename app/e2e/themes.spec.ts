@@ -361,3 +361,56 @@ test("previews a proposed theme, restores it on dismiss and saves it with a name
   expect(saved.dark).toBe(theme!.id);
   expect(saved.light).toBe("default-light");
 });
+
+test("tweaking a custom theme twice updates it in place and adds no theme", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(await launchURL());
+  await expect(html(page)).toHaveAttribute("data-theme", "light");
+  const read = () =>
+    page.evaluate(async () => {
+      const answer = (await (await fetch("api/settings/appearance")).json()) as Appearance & {
+        themes: { id: string; name: string; tokens: Record<string, string> }[];
+      };
+      return answer;
+    });
+  const id = await page.evaluate(async () => {
+    const answer = await (
+      await fetch("api/settings/appearance/themes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Mine",
+          base: "dark",
+          tokens: { "--color-paper": "#111111" },
+          slot: "light",
+        }),
+      })
+    ).json();
+    return answer.themes.find((t: { name: string }) => t.name === "Mine").id as string;
+  });
+  const before = await read();
+  await page.reload();
+  await page.keyboard.press("Control+`");
+  const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
+  await expect(composer).toBeFocused();
+  const proposal = panel(page).getByRole("article", { name: "Proposal" });
+
+  for (const colour of ["#e8ee01", "#e8ee02"]) {
+    await expect(panel(page).getByText("Working", { exact: true })).toHaveCount(0);
+    await composer.fill(`Tweak theme ${id}`);
+    await composer.press("Enter");
+    // The card updates the theme it edits; the slot choice is not offered.
+    await expect(proposal.getByRole("button", { name: "Update Mine" })).toBeVisible();
+    await expect(proposal.getByRole("button", { name: "Save as new theme" })).toBeVisible();
+    await expect(proposal.getByLabel("Use it as")).toHaveCount(0);
+    await expect.poll(() => paper(page)).toBe(colour);
+    await proposal.getByRole("button", { name: "Update Mine" }).click();
+    await expect(proposal).toHaveCount(0);
+    // The saved theme is what the page shows now: the preview ended on it.
+    await expect.poll(() => paper(page)).toBe(colour);
+    const now = await read();
+    expect(now.themes.length).toBe(before.themes.length);
+    expect(now.light_theme).toBe(id);
+    expect(now.themes.find((t) => t.id === id)?.tokens["--color-paper"]).toBe(colour);
+  }
+});
