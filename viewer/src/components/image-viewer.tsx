@@ -205,7 +205,11 @@ export function ImageViewer({
         // Keep the width as drawn: the browser's resizer writes the
         // pointer's width, past the cap, and a later window resize lifts
         // the cap.
-        const drawn = target.offsetWidth;
+        let drawn = target.offsetWidth;
+        // Where the dialog's height squeezed the frame (the header wrapped
+        // during the drag), the width follows the height it was given.
+        if (size && target.offsetHeight)
+          drawn = Math.min(drawn, Math.floor((target.offsetHeight * size.width) / size.height));
         target.style.removeProperty("max-width");
         target.style.width = `${drawn}px`;
         if (drawn !== start) dragged.current = true;
