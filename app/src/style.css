@@ -5352,51 +5352,57 @@ dialog.go-to {
   padding: 1rem;
   color: var(--text-secondary);
 }
-.shortcuts-sheet {
-  width: 28rem;
-  padding: 0;
+/* The shortcuts sheet: Go to's dialog, with a title over its search field
+   and a list that scrolls below them, read more often than searched. */
+dialog.shortcuts-sheet[open] {
+  display: flex;
+  flex-direction: column;
+  max-height: min(40rem, 76vh);
 }
 .shortcuts-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  margin-bottom: 0;
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-popup);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem 0;
+}
+.shortcuts-sheet .go-to-input {
+  padding-top: 0.5rem;
+  font-size: var(--text-base);
 }
 .shortcuts-body {
-  padding: 0 1.5rem 1.5rem;
+  flex: 1;
+  min-height: 0;
+  padding: 0 0.35rem 0.75rem;
+  overflow-y: auto;
+  outline: none;
 }
 .shortcuts-group h3 {
-  margin: 1.125rem 0 0;
-  color: var(--text-tertiary);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  margin: 1rem 0.65rem 0.25rem;
 }
-/* One grid for every row, so the descriptions share a column right after
-   the widest keys instead of a fixed gutter. */
+/* A row as a Go to option: what it does, then its keys at the right. */
 .shortcuts-list {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0.45rem 1rem;
-  margin: 0.5rem 0 0;
+  margin: 0;
 }
 .shortcuts-list > div {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: subgrid;
+  display: flex;
   align-items: baseline;
+  gap: 1rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: var(--radius-sm);
 }
 .shortcuts-list dt {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  order: 1;
+  max-width: 45%;
   gap: 0.25rem;
+  margin-left: auto;
 }
 .shortcuts-list dd {
   margin: 0;
+  color: var(--text-primary);
 }
 /* A place's keys in one line (`KeyBar`), shown with the hints while Alt is
    held: along the foot of the page's panel, over what scrolls under it, or
