@@ -339,7 +339,7 @@ func TestRepositoryAndReportToolsCarryNoPathOrEnvironment(t *testing.T) {
 		t.Fatalf("the route's target %q: %v", target.Dir, err)
 	}
 	text, failed = f.callTool(t, chat, "clone_target", map[string]any{"repository": "owner/new"})
-	if failed || !strings.Contains(text, `"folder":"~`+strings.TrimPrefix(target.Dir, f.home)+`"`) {
+	if failed || !strings.Contains(text, `"folder":"~`+filepath.ToSlash(strings.TrimPrefix(target.Dir, f.home))+`"`) {
 		t.Errorf("clone_target %q: %v %s", target.Dir, failed, text)
 	}
 	noPaths("clone_target", text)
