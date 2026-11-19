@@ -1081,7 +1081,7 @@ describe("a section's body", () => {
     expect(container.querySelectorAll(".flow li")[1]?.querySelector("button")).toBeNull();
     expect(boxes.map((each) => each.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
     const more = container.querySelector<HTMLElement>("[data-flow-more]")!;
-    expect(more.textContent).toContain("Point at a step");
+    expect(more.textContent).toContain("Click a step");
     await click(boxes[1]!);
     expect(boxes[1]!.getAttribute("aria-pressed")).toBe("true");
     expect(more.textContent).toContain("Pair");

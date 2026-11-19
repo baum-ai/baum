@@ -3,6 +3,7 @@ import {
   type PointerEvent,
   type ReactNode,
   type RefObject,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -203,7 +204,7 @@ const head = (x: number, y: number, down: boolean) =>
  *  drawn plainly (moved left of their step, or another lane in the way),
  *  which name their step in words instead. */
 function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
-  const [drawn, setDrawn] = useState<{ wires: Wire[]; unlinked: number[] }>(NOTHING_DRAWN);
+  const [drawn, setDrawn] = useState<Drawn>(NOTHING_DRAWN);
   useLayoutEffect(() => {
     const element = root.current;
     if (!element) return;
@@ -289,7 +290,7 @@ function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
           kind: "branch",
         });
       });
-      setDrawn({ wires: next, unlinked });
+      setDrawn({ grid: true, wires: next, unlinked });
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -300,13 +301,18 @@ function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
   return drawn;
 }
 
-const NOTHING_DRAWN = { wires: [] as Wire[], unlinked: [] as number[] };
+/** `grid`: the lanes are rows of the grid, where the wires replace the
+ *  arrows' text. */
+type Drawn = { grid: boolean; wires: Wire[]; unlinked: number[] };
+const NOTHING_DRAWN: Drawn = { grid: false, wires: [], unlinked: [] };
 
 export function FlowDiagram({ data }: { data: FlowData }) {
   // The step whose detail shows under the flow, as [lane, step]: the one
   // the mouse is over, else the one clicked.
   const [picked, setPicked] = useState<[number, number] | null>(null);
   const [peeked, setPeeked] = useState<[number, number] | null>(null);
+  // A new flow may have no step where the mouse was.
+  useEffect(() => setPeeked(null), [data]);
   const shown = peeked ?? picked;
   const opened = shown ? data.lanes[shown[0]]?.steps[shown[1]] : undefined;
   const root = useRef<HTMLDivElement>(null);
@@ -326,12 +332,12 @@ export function FlowDiagram({ data }: { data: FlowData }) {
     const steps = data.lanes[at]?.steps.length ?? 1;
     return from ? Math.max(1, Math.min(from + 1, columns - steps + 1)) : 1;
   };
-  const { wires, unlinked } = useWires(data, root);
+  const { grid: measured, wires, unlinked } = useWires(data, root);
   const grid = (
     <div
       ref={root}
       className="flow"
-      data-drawn={wires.length ? "" : undefined}
+      data-drawn={measured ? "" : undefined}
       data-wide={widthFor(columns * 8.5) ?? WIDTHS[WIDTHS.length - 1]}
       data-wider={labelled ? widthFor(columns * 9 + 6) : undefined}
       style={{ "--flow-columns": columns } as CSSProperties}
@@ -452,9 +458,7 @@ export function FlowDiagram({ data }: { data: FlowData }) {
             <InlineMarkdown className="block">{opened.more}</InlineMarkdown>
           </div>
         ) : (
-          <p className="text-xs text-tertiary">
-            Point at a step for its detail; click it to keep it open.
-          </p>
+          <p className="text-xs text-tertiary">Click a step for its detail, or hover over it.</p>
         )}
       </div>
     </div>
