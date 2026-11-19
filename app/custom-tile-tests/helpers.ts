@@ -102,7 +102,10 @@ export async function frameReady(page: Page, tile: string) {
               .frameState ?? "absent"
           );
         }, tile),
-      { timeout: 20000 },
+      // Every 100ms: a frame that misbehaves on purpose (the focus probe) is
+      // ready only for about a second before the page takes it down, which
+      // the default backoff to 1s checks can step over.
+      { timeout: 20000, intervals: [100] },
     )
     .toBe("ready");
 }
