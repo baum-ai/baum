@@ -225,9 +225,14 @@ type cloneChanged struct {
 
 var errBadParameter = errors.New("a parameter is missing or malformed")
 
-// cloneOf finds the registered clone clone= names; an unknown one is 404.
+// cloneOf finds the registered clone clone= names, as cloneByID.
 func (a LocalAPI) cloneOf(w http.ResponseWriter, r *http.Request) (repos.Clone, bool) {
-	id := r.URL.Query().Get("clone")
+	return a.cloneByID(w, r, r.URL.Query().Get("clone"))
+}
+
+// cloneByID finds the registered clone id names: a missing id is 400 and an
+// unknown one 404.
+func (a LocalAPI) cloneByID(w http.ResponseWriter, r *http.Request, id string) (repos.Clone, bool) {
 	if id == "" {
 		cloneError(w, http.StatusBadRequest, "invalid", "clone is required")
 		return repos.Clone{}, false

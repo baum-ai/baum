@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -26,6 +25,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 )
 
 // ErrNotFound reports a clone or picked repository the registry does not hold.
@@ -53,20 +53,9 @@ type Settings struct {
 	Tiles *TileSettings `json:"tiles,omitempty"`
 }
 
-// MaxPinnedTileTypes is how many saved tile types a repository can pin.
-const MaxPinnedTileTypes = MaxTileTypes
-
-// tileTypeName is a saved tile type's name, as the tile library takes it.
-var tileTypeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-
-// ErrTooManyPins reports a repository that already pins MaxPinnedTileTypes
+// ErrTooManyPins reports a repository that already pins MaxTileTypes
 // tile types.
-var ErrTooManyPins = fmt.Errorf("%w: a repository pins at most %d tile types", ErrInvalidSettings, MaxPinnedTileTypes)
-
-// empty reports settings that choose nothing: every field is empty.
-func (t TileSettings) empty() bool {
-	return len(t.Types) == 0
-}
+var ErrTooManyPins = fmt.Errorf("%w: a repository pins at most %d tile types", ErrInvalidSettings, MaxTileTypes)
 
 // PinnedTileTypes is the tile types the settings pin, never nil.
 func (s Settings) PinnedTileTypes() []string {
@@ -1233,29 +1222,8 @@ func cloneStamp(clone Clone) (string, bool) {
 	return b.String(), true
 }
 
-// Update replaces shared repository settings without needing an available clone.
-func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
-	s, e := s.Checked()
-	if e != nil {
-		return e
-	}
-	data, e := json.Marshal(s)
-	if e != nil {
-		return e
-	}
-	res, e := r.db.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=(SELECT repository FROM clones WHERE id=?)`, string(data), id)
-	if e != nil {
-		return e
-	}
-	n, e := res.RowsAffected()
-	if e == nil && n == 0 {
-		return ErrNotFound
-	}
-	return e
-}
-
 // UpdateIf is UpdateRepositoryIf for the repository of a registered clone,
-// named by the clone's id: it needs no available clone, as Update does not.
+// named by the clone's id: it needs no available clone.
 func (r *Registry) UpdateIf(ctx context.Context, id string, edit func(Settings) (Settings, error)) (Settings, error) {
 	var repository string
 	e := r.db.QueryRowContext(ctx, `SELECT repository FROM clones WHERE id=?`, id).Scan(&repository)
@@ -1265,31 +1233,7 @@ func (r *Registry) UpdateIf(ctx context.Context, id string, edit func(Settings) 
 	if e != nil {
 		return Settings{}, e
 	}
-	tx, e := r.db.BeginTx(ctx, nil)
-	if e != nil {
-		return Settings{}, e
-	}
-	defer func() { _ = tx.Rollback() }()
-	var raw string
-	e = tx.QueryRowContext(ctx, `SELECT settings FROM repositories WHERE identity=?`, repository).Scan(&raw)
-	if errors.Is(e, sql.ErrNoRows) {
-		return Settings{}, ErrNotFound
-	}
-	if e != nil {
-		return Settings{}, e
-	}
-	var current Settings
-	if e = json.Unmarshal([]byte(raw), &current); e != nil {
-		return Settings{}, e
-	}
-	next, e := edit(current)
-	if e != nil {
-		return Settings{}, e
-	}
-	if _, e = tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), repository); e != nil {
-		return Settings{}, e
-	}
-	return next, tx.Commit()
+	return r.UpdateRepositoryIf(ctx, repository, edit)
 }
 
 // RepositorySettings reads one repository's shared settings without probing
@@ -1589,11 +1533,11 @@ func (r *Registry) UpdateRepositoryIf(ctx context.Context, repository string, ed
 // SetTileTypePins pins the saved tile type name to exactly the picked
 // repositories listed and unpins it from every other one, in one
 // transaction. A listed repository that is not picked is ErrNotFound, and
-// one that already pins MaxPinnedTileTypes other types is ErrTooManyPins
+// one that already pins MaxTileTypes other types is ErrTooManyPins
 // (wrapped with its name); either writes nothing. A repository's other
 // settings, and its other pins in their order, are kept.
 func (r *Registry) SetTileTypePins(ctx context.Context, name string, repositories []string) error {
-	if !tileTypeName.MatchString(name) {
+	if !tilelibrary.ValidName(name) {
 		return errors.New("a pinned tile type is named by its name")
 	}
 	want := map[string]bool{}
@@ -1636,7 +1580,7 @@ func (r *Registry) SetTileTypePins(ctx context.Context, name string, repositorie
 		has := slices.Contains(types, name)
 		switch {
 		case want[p.identity] && !has:
-			if len(types) >= MaxPinnedTileTypes {
+			if len(types) >= MaxTileTypes {
 				return fmt.Errorf("%s: %w", p.identity, ErrTooManyPins)
 			}
 			types = append(types, name)
@@ -1661,7 +1605,7 @@ func (r *Registry) SetTileTypePins(ctx context.Context, name string, repositorie
 			tiles.Types = types
 		}
 		next.Tiles = &tiles
-		if tiles.empty() {
+		if len(tiles.Types) == 0 {
 			next.Tiles = nil
 		}
 		if _, e := tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), p.identity); e != nil {

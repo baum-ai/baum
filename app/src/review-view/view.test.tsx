@@ -1090,7 +1090,7 @@ describe("a section's body", () => {
     expect(rows[1]!.querySelector("button")).toBeNull();
   });
 
-  it("reads an older document's summary and steps as the same blocks", async () => {
+  it("draws a section's prose and points blocks", async () => {
     const container = await page("pane=section&section=sec_allowlist");
     const body = panel(container).querySelector<HTMLElement>("[data-section-body]")!;
     expect(

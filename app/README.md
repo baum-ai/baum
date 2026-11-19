@@ -1737,8 +1737,7 @@ extraction** has the same Agent and Model rows, its agent "Same as reviews
 Reviews ends with **Generate reviews as tiles (experimental)** (`TileReviewsRow`),
 off by default: read with `GET api/settings/labs` and saved with `PUT
 api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
-and says why. It applies to reviews that start after the change. While it is
-on, a running review's `arranging` phase reads "Arranging the page…". A pull
+and says why. It applies to reviews that start after the change. A pull
 request's page is the same whether it is on or off.
 
 While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
@@ -2782,11 +2781,12 @@ has its types): the summary with its `verdict` and `risk_why`, the
 with their `gist`, `body` (blocks: `prose`, `points`, `note`, or a `tile` naming a tile the section owns), `risks` and `details`, and every tile
 placed by its `owner` (`overview`, `context` or a section). `parseReviewV2`
 reads it, dropping a malformed item (a section, step, risk, tile or intent row)
-rather than the page. A section without a `body` (a document written before
-bodies, with a `summary` and `steps`) reads as one, as the daemon's `BodyOf`
-does: a prose block, a points block, then its tiles; tiles the body does not
-place (a person's own among them) follow it, and a tile block naming a missing
-or another section's tile is ignored. The page reads only this document. The review viewer
+rather than the page. Tiles a section's body does not place (a person's own
+among them) follow it, and a tile block naming a missing or another section's
+tile is ignored. The daemon completes every served document (the stats, each
+section's `derived`, a code tile's `text`), so the page reads them as served;
+a `baum.review/1` version's summary and steps become a prose and a points
+block in `review-view/from-v1.ts`. The page reads only this document. The review viewer
 around them (the head, history, side pane, comments, selection and keys) and
 the viewer's parts they draw (citation chips, images, diffs) read a
 `baum.review/1` review, which `chromeOf` makes from the document: what

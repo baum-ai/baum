@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://static.usebaum.com/schemas/review/2.json",
   "title": "baum.review/2",
-  "description": "The desktop app's review of a pull request, shaped like its page: an overview, the sections with their steps, risks and tiles, and where the change fits. The model writes only judgement (explanations, groupings, risks, diagrams and choices); the host writes the header, index, stats, risk score, reading time and each section's state across versions. The review header, stats, index, risk score, section derived facts and anchors are baum.review/1's (review-1.json), merged into $defs. This schema is the document's shape; the limits on each text are the model-facing checks of the host (oss/reviewv2), since baum.review/1 versions converted to this shape carry longer text.",
+  "description": "The desktop app's review of a pull request, shaped like its page: an overview, the sections with their bodies, risks and tiles, and where the change fits. The model writes only judgement (explanations, groupings, risks, diagrams and choices); the host writes the header, index, stats, risk score, reading time and each section's state across versions. The review header, stats, index, risk score, section derived facts and anchors are baum.review/1's (review-1.json), merged into $defs. This schema is the document's shape; the limits on each text are the model-facing checks of the host (oss/reviewv2), since baum.review/1 versions converted to this shape carry longer text.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "review", "summary", "overview", "context", "sections", "tiles", "stats", "index"],
@@ -159,22 +159,6 @@
           "maxItems": 24,
           "description": "The blocks the page draws between the section's gist and its risks, in order: the section agent composes them (prose, points, note), and a tile block places one of the document's tiles that the section owns. The host leaves every section with one, and a tile the section owns but the body does not place is placed at the end.",
           "items": { "$ref": "#/$defs/v2Block" }
-        },
-        "summary": { "type": "string", "description": "Only in a document written before bodies: read as a prose block of the body. Never written now." },
-        "steps": {
-          "type": "array",
-          "description": "Only in a document written before bodies: read as a points block of the body. Never written now.",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["id", "title", "text", "cites"],
-            "properties": {
-              "id": { "type": "string", "pattern": "^st_[a-z0-9_]+$", "maxLength": 128 },
-              "title": { "type": "string" },
-              "text": { "type": "string" },
-              "cites": { "type": "array", "items": { "$ref": "#/$defs/anchor" } }
-            }
-          }
         },
         "risks": {
           "type": "array",

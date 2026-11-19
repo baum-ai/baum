@@ -1054,7 +1054,7 @@ saved; try again" and publishes nothing.
 A tile added from the session panel goes on the section the tool names, else
 the one the person is reading (the page context's `section`), else, for a
 tile with data, the current section whose hunks its data cites most, else
-`context` (`view.SectionFor`); a library tile added without data keeps no
+`context` (`reviewv2.OwnerFor`); a library tile added without data keeps no
 section and is placed when served. On a version, `view.Build` puts an added
 tile on its section when the version has that current section (or it is
 `context`), else on the section whose hunks it covers most, else on
@@ -1244,9 +1244,7 @@ version, an older one or a draft; a tile's data never enters the document.
   registry and skip the checks), `Cross-Origin-Resource-Policy: same-origin`
   and `Vary` on the three fetch metadata headers; the query and `Range` are
   ignored. `SECURITY.md` ("Custom tiles") gives the reasons for each check.
-- **Library.** `GET /api/tile-library` lists the built-in library types
-  (`tileview.Library`), as `{"types": [{name, title, use_when, glance, sizes,
-  kit, digest}]}`, never their source. The daemon registers their frame
+- **Library.** The daemon registers the built-in library types' frame
   documents at start-up (`tileview.Warm`), and the tile routes register a
   stored tile's definition as they serve it, so a version whose library tile
   embeds an earlier definition keeps serving it under its own digest. The tile
@@ -1975,7 +1973,7 @@ level of the generation writes it (the orchestration is
 
 **Schema.** `schema/review-2.json` is closed. It reuses `review-1.json`'s
 review header, index, stats, risk score, section derived facts, anchors and
-IDs, merged into its `$defs` (`schema.MergedReview2`, `CompileReview2`,
+IDs, merged into its `$defs` (`schema.CompileReview2`,
 `ValidateReview2`); its revision is `$defs/v2SchemaRevision/const`
 (`Review2Revision`), recorded in `review.generator.schema_revision`. Native
 tile types have their data shape: `flow`, `columns`, `sequence` and `table`
@@ -1996,17 +1994,13 @@ with `cites` and an optional `more` of at most 450 characters shown when the
 line is opened), `note` (`text`, at most 240 characters) and `tile`, which
 places one of the document's tiles that the section owns (`tile`, by ID).
 A body has at most 6 blocks (`MaxBlocks`) and a block an optional `title` of
-at most 60 characters; text is inline markdown, bold and code only. A
-document written before bodies has `summary` and `steps` on its sections
-instead: `reviewv2.BodyOf` reads them as a body (a prose block from the
-summary, a points block from the steps, each point `**Title.** Text` with the
-step's cites, then a tile block for each tile the section owns), and
-`reviewv2.EnsureBodies` gives every section a body, without a tile block that
+at most 60 characters; text is inline markdown, bold and code only. `reviewv2.EnsureBodies` gives every section a body, without a tile block that
 names a tile that does not exist, belongs to another section or repeats an
 earlier one, and with a tile block at the end for each owned tile the body
-does not place; it clears `summary` and `steps` so they are never written
-again. `Complete`, `Read`, `FromV1` and the tile routes (`/api/tiles`, for a
-version stored before bodies) all apply it.
+does not place. `FromV1` writes a section's body from the baum.review/1
+summary (a prose block) and behaviour steps (a points block, each point
+`**Title.** Text` with the step's cites). `Complete`, `Read`, `FromV1` and the
+tile routes (`/api/tiles`) all apply `EnsureBodies`.
 
 A flow step has an optional `more` (at most 300 characters: the detail shown
 when the step is opened) and a table cell is either a string or

@@ -2,14 +2,21 @@
 // list read (`reviewOf`). The version's Summary and sections are drawn from the
 // baum.review/1 document itself, so only what the rail needs is built here.
 
-import type { BehaviorStep, Block, ReviewDocument, Section } from "@baum/viewer/review-document";
+import type {
+  Anchor,
+  BehaviorStep,
+  Block,
+  ReviewDocument,
+  Section,
+} from "@baum/viewer/review-document";
 import {
   firstSentence,
   REVIEW_V2,
-  sectionBody,
   type ReviewV2,
+  type V2Block,
   type V2Context,
   type V2ContextPart,
+  type V2Point,
   type V2Section,
 } from "./document";
 
@@ -17,6 +24,29 @@ function behaviourSteps(section: Section): BehaviorStep[] {
   return section.blocks.flatMap((block) =>
     block.kind === "behavior" ? ((block as Extract<Block, { kind: "behavior" }>).steps ?? []) : [],
   );
+}
+
+/** A section's body from baum.review/1's text: its summary as a prose block
+ *  and its steps as a points block, each point "**Title.** text". */
+export function bodyOfSteps(
+  summary: string,
+  steps: { id: string; title: string; text: string; cites: Anchor[] }[],
+): V2Block[] {
+  const body: V2Block[] = [];
+  if (summary.trim()) body.push({ type: "prose", text: summary.trim() });
+  const items = steps.flatMap((step): V2Point[] => {
+    if (!step.text.trim()) return [];
+    const title = step.title.trim();
+    return [
+      {
+        id: step.id,
+        text: title ? `**${/[.!?]$/.test(title) ? title : `${title}.`}** ${step.text}` : step.text,
+        cites: step.cites,
+      },
+    ];
+  });
+  if (items.length > 0) body.push({ type: "points", items });
+  return body;
 }
 
 function contextPart(
@@ -40,19 +70,15 @@ function sectionOf(section: Section): V2Section {
       text: reason.text,
       cites: reason.anchors ?? [],
     })),
-    // The section's summary and behaviour steps read as its body, as a
-    // document written before bodies does.
-    body: sectionBody(
-      {
-        summary: section.summary?.text ?? "",
-        steps: behaviourSteps(section).map((step) => ({
-          id: step.id,
-          title: step.title ?? "",
-          text: step.after?.trim() || step.text,
-          cites: step.anchors ?? [],
-        })),
-      },
-      [],
+    // The section's summary and behaviour steps read as its body.
+    body: bodyOfSteps(
+      section.summary?.text ?? "",
+      behaviourSteps(section).map((step) => ({
+        id: step.id,
+        title: step.title ?? "",
+        text: step.after?.trim() || step.text,
+        cites: step.anchors ?? [],
+      })),
     ),
     risks: section.risks.map((risk) => ({
       id: risk.id,

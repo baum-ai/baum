@@ -196,7 +196,7 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 		t.Fatalf("sections: %d", len(doc.Sections))
 	}
 	for _, s := range doc.Sections {
-		if s.Details != "" || len(s.Body) == 0 || s.Summary != "" || len(s.Steps) != 0 {
+		if s.Details != "" || len(s.Body) == 0 {
 			t.Errorf("section %s: details %q body %+v", s.ID, s.Details, s.Body)
 		}
 	}

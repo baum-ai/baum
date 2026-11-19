@@ -145,10 +145,6 @@ type Section struct {
 	// body (title, gist, views, risks); the body is the model's to compose.
 	Body  []Block `json:"body"`
 	Risks []Risk  `json:"risks"`
-	// Summary and Steps are what documents written before Body carried;
-	// a section without a body is read as one (BodyOf). Never written now.
-	Summary string `json:"summary,omitempty"`
-	Steps   []Step `json:"steps,omitempty"`
 	// Details is "pending" while the section agent writes, "failed" when it
 	// did not finish, "" once written. Host.
 	Details string `json:"details,omitempty"`
@@ -200,15 +196,6 @@ type Block struct {
 type Point struct {
 	Text  string   `json:"text"`
 	More  string   `json:"more,omitempty"`
-	Cites []Anchor `json:"cites"`
-}
-
-// Step is one thing the section does, one sentence, with what it rests on.
-// Only documents written before Body carry steps.
-type Step struct {
-	ID    string   `json:"id"`
-	Title string   `json:"title"`
-	Text  string   `json:"text"`
 	Cites []Anchor `json:"cites"`
 }
 

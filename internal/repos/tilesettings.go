@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/baum-ai/baum/internal/tilelibrary"
 )
 
 // MaxTileTypes is the most tile types a repository pins.
@@ -34,7 +36,7 @@ func checkedTiles(t *TileSettings) (*TileSettings, error) {
 	var out TileSettings
 	for _, name := range t.Types {
 		name = strings.TrimSpace(name)
-		if name != "" && !tileTypeName.MatchString(name) {
+		if name != "" && !tilelibrary.ValidName(name) {
 			return nil, fmt.Errorf("%w: %q is not a saved tile type's name: a lowercase letter, then lowercase letters, digits and underscores", ErrInvalidSettings, name)
 		}
 		if name != "" && !slices.Contains(out.Types, name) {
@@ -71,18 +73,11 @@ func mergedTiles(stored, got *TileSettings, sent json.RawMessage) *TileSettings 
 	if json.Unmarshal(sent, &members) != nil || members == nil {
 		return nil
 	}
-	var out TileSettings
-	if stored != nil {
-		out = *stored
+	if _, ok := members["types"]; !ok {
+		return stored
 	}
-	if got == nil {
-		got = &TileSettings{}
-	}
-	if _, ok := members["types"]; ok {
-		out.Types = got.Types
-	}
-	if len(out.Types) == 0 {
+	if got == nil || len(got.Types) == 0 {
 		return nil
 	}
-	return &out
+	return &TileSettings{Types: got.Types}
 }

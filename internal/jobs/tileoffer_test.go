@@ -49,7 +49,7 @@ func TestReviewsOfferSavedTypesAndRecordTheirUse(t *testing.T) {
 	savedType(t, lib, "pinned_type", []string{"*.sql"})
 	savedType(t, lib, "go_type", []string{"**/*.go"})
 	savedType(t, lib, "sql_type", []string{"*.sql"})
-	if err := registry.Update(ctx, clone.ID, repos.Settings{Tiles: &repos.TileSettings{Types: []string{"pinned_type"}}}); err != nil {
+	if err := registry.UpdateRepository(ctx, clone.Repository, repos.Settings{Tiles: &repos.TileSettings{Types: []string{"pinned_type"}}}); err != nil {
 		t.Fatal(err)
 	}
 	l := &Local{Registry: registry, TileLibrary: lib}

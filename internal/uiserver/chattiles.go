@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
@@ -104,7 +105,7 @@ func (s shownVersion) asked(section string) (string, error) {
 	if section == "" || section == view.ContextSection {
 		return section, nil
 	}
-	if got := view.SectionFor(s.Review, section, nil); got != section {
+	if got := reviewv2.OwnerFor(s.Review, section, nil); got != section {
 		return "", fmt.Errorf("The review has no section %s; name one of its sections, or context for Where this fits", section)
 	}
 	return section, nil

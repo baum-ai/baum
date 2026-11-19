@@ -238,7 +238,7 @@ func (g *V2Generator) DocumentMetrics(document []byte) (map[string]float64, erro
 		if s.Details == "failed" {
 			m[MetricV2SectionsFailed]++
 		}
-		body := reviewv2.BodyOf(s, doc.Tiles)
+		body := s.Body
 		m[MetricV2Blocks] += float64(len(body))
 		for _, b := range body {
 			m[MetricV2Points] += float64(len(b.Items))

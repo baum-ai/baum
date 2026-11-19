@@ -201,7 +201,7 @@ func TestChatTilesWithRealAgents(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			page := agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: c.repository, PullRequest: c.number, Focus: json.RawMessage(`{"view":"tiles"}`)}
+			page := agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: c.repository, PullRequest: c.number}
 			if err := env.mcp.Registry.SetPage(id, page); err != nil {
 				t.Error(err)
 				return

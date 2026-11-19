@@ -1,14 +1,8 @@
 import type { Anchor, ReviewDocument, Section } from "@baum/viewer/review-document";
 import example from "../../../schema/review-example.json" with { type: "json" };
 import { chromeOf } from "./chrome";
-import {
-  parseReviewV2,
-  REVIEW_V2,
-  type ReviewV2,
-  type V2Risk,
-  type V2Section,
-  sectionBody,
-} from "./document";
+import { parseReviewV2, REVIEW_V2, type ReviewV2, type V2Risk, type V2Section } from "./document";
+import { bodyOfSteps } from "./from-v1";
 import { HUNKS } from "./fixture-1303-hunks";
 import { withReview } from "./model";
 
@@ -55,7 +49,7 @@ function section(
     gist,
     level: extra.review_score ?? null,
     level_reasons: [],
-    body: sectionBody({ summary, steps }, []),
+    body: bodyOfSteps(summary, steps),
     risks,
     derived: {
       risk_tier: risks[0]?.tier ?? "unrated",
