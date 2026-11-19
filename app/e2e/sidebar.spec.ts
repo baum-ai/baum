@@ -79,8 +79,8 @@ test("folds the sidebar, opens it under the pointer and pins it again", async ({
   await expect.poll(() => width(page, ".local-rail")).toBe(244);
   await expect(lane(page)).toHaveAttribute("data-keyboard-focus", "");
   // A menu it shows takes the focus without opening it: the menu hangs where
-  // its button was. (Focus a script moves after the keys is keyboard focus
-  // too; the app's own Tab order does not reach Help from where it came in.)
+  // its button was. (Help is focused by a script, as the app's arrow keys
+  // move focus in the sidebar; after the keys, that is keyboard focus too.)
   const help = rail(page).getByRole("button", { name: "Help" });
   await help.focus();
   await expect(lane(page)).toHaveAttribute("data-keyboard-focus", "");

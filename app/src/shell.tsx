@@ -161,24 +161,28 @@ function usePeek(folded: boolean) {
 /** Keyboard focus in the sidebar, outside the menus it shows. */
 const KEYBOARD_FOCUS = ":focus-visible:not(.context-menu *)";
 
-/** Whether the element holds keyboard focus (`KEYBOARD_FOCUS`), which opens
- *  the folded sidebar. The page's CSS read this with `:has()` before, but
- *  WebKitGTK re-checked that selector on every element added anywhere in the
- *  page, so a large diff took seconds to show. It is read again on focus and
- *  key events in the element, on every render of its owner (which may have
- *  removed the focused element without a blur), and when the window gains or
- *  loses focus: `:focus-visible` does not match in a window in the
- *  background, and WebKit tells the element only with `focus` and `blur`,
+/** Marks the element `data-keyboard-focus` while it holds keyboard focus
+ *  (`KEYBOARD_FOCUS`), which opens the folded sidebar. The page's CSS read
+ *  this with `:has()` before, but WebKitGTK re-checked that selector on every
+ *  element added anywhere in the page, so a large diff took seconds to show.
+ *  The attribute is set on the element itself, not through React state, so it
+ *  changes within the event, at the same moments the selector did: on focus
+ *  and key events in the element, after every render of its owner (which may
+ *  have removed the focused element without a blur), and when the window
+ *  gains or loses focus, since `:focus-visible` does not match in a window in
+ *  the background and WebKit tells the element only with `focus` and `blur`,
  *  which do not bubble. A child that removes the focused element in a render
  *  of its own is not seen until the next of these. */
 function useKeyboardFocusWithin<T extends HTMLElement>() {
   const ref = useRef<T>(null);
-  const [focused, setFocused] = useState(false);
   const sync = useCallback(() => {
-    setFocused(!!ref.current?.querySelector(KEYBOARD_FOCUS));
+    const element = ref.current;
+    element?.toggleAttribute("data-keyboard-focus", !!element.querySelector(KEYBOARD_FOCUS));
   }, []);
   useLayoutEffect(sync);
   useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
     let frame = 0;
     // The window's activation may land after its `focus` event.
     const later = () => {
@@ -186,17 +190,21 @@ function useKeyboardFocusWithin<T extends HTMLElement>() {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(sync);
     };
+    for (const type of ["focusin", "focusout", "keydown", "keyup"])
+      element.addEventListener(type, sync);
     window.addEventListener("focus", later);
     window.addEventListener("blur", sync);
     document.addEventListener("visibilitychange", later);
     return () => {
       cancelAnimationFrame(frame);
+      for (const type of ["focusin", "focusout", "keydown", "keyup"])
+        element.removeEventListener(type, sync);
       window.removeEventListener("focus", later);
       window.removeEventListener("blur", sync);
       document.removeEventListener("visibilitychange", later);
     };
   }, [sync]);
-  return { ref, focused, sync };
+  return ref;
 }
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
@@ -256,7 +264,7 @@ export function Sidebar({
   }, [ready, preferences.sidebar]);
   const pinned = choice === "pinned" && !narrow;
   const peek = usePeek(!pinned);
-  const keyboard = useKeyboardFocusWithin<HTMLDivElement>();
+  const keyboardFocus = useKeyboardFocusWithin<HTMLDivElement>();
   const nested = inboxes && inboxes.list.length > 0;
   // A right click on Inbox makes or manages inboxes.
   const inboxMenu = useContextMenu();
@@ -341,13 +349,9 @@ export function Sidebar({
   };
   return (
     <div
-      ref={keyboard.ref}
+      ref={keyboardFocus}
       className="local-rail-lane"
       data-rail={pinned ? "pinned" : peek.peeking ? "open" : "folded"}
-      data-keyboard-focus={keyboard.focused ? "" : undefined}
-      onFocus={keyboard.sync}
-      onBlur={keyboard.sync}
-      onKeyUp={keyboard.sync}
       onPointerEnter={peek.over}
       onPointerMove={peek.over}
       onPointerLeave={peek.leave}
