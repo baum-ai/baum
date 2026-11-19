@@ -1703,6 +1703,8 @@ palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
 a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`) renames it, and
 `DELETE` removes it and resets a slot that used it; all answer with the
 appearance document, and the built-ins can be neither renamed nor deleted.
+The app sends a rename or delete in turn with its settings saves (after any
+`PUT` in flight), so an older answer never brings a deleted theme back.
 The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
 is previewed on the whole app while it is open in the session panel (the
 daemon drops the conversation's earlier theme proposals when a new one is

@@ -149,3 +149,62 @@ it("fetches after a save in flight instead of dropping the refresh", async () =>
   expect(gets).toBe(1);
   expect(api.preferences.light_theme).toBe("c-1");
 });
+
+it("deletes a theme only after a save in flight, so its older answer cannot bring it back", async () => {
+  await mount();
+  let releasePut!: () => void;
+  const gate = new Promise<void>((resolve) => (releasePut = resolve));
+  const sent: string[] = [];
+  const afterDelete = { ...saved, dark_theme: "default-dark", themes: [] };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      sent.push(method);
+      if (method === "PUT") {
+        await gate;
+        // The PUT's answer was read before the delete: it still lists Dusk.
+        return Response.json({ ...saved, theme: "light" });
+      }
+      if (method === "DELETE") return Response.json({ ...afterDelete, theme: "light" });
+      return Response.json({ ...afterDelete, theme: "light" });
+    }),
+  );
+  await act(async () => {
+    void api.update({ theme: "light" });
+  });
+  let deleted = false;
+  let refreshed = false;
+  await act(async () => {
+    void api.deleteTheme("c-1").then(() => (deleted = true));
+    void Promise.resolve(api.refresh()).then(() => (refreshed = true));
+  });
+  expect(sent).toEqual(["PUT"]);
+  expect(deleted).toBe(false);
+  await act(async () => releasePut());
+  await vi.waitFor(() => expect(deleted).toBe(true));
+  await vi.waitFor(() => expect(refreshed).toBe(true));
+  expect(sent).toEqual(["PUT", "DELETE", "GET"]);
+  expect(api.preferences.themes.map((theme) => theme.id)).not.toContain("c-1");
+  expect(api.preferences.dark_theme).toBe("default-dark");
+  expect(api.preferences.theme).toBe("light");
+});
+
+it("rejects a failed rename without stopping the saves queued after it", async () => {
+  await mount();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") return Response.json({ error: "name taken" }, { status: 400 });
+      return Response.json({ ...saved, theme: "light" });
+    }),
+  );
+  let failure: unknown;
+  await act(async () => {
+    void api.renameTheme("c-1", "Dawn").catch((cause) => (failure = cause));
+    void api.update({ theme: "light" });
+  });
+  await vi.waitFor(() => expect(failure).toBeInstanceOf(Error));
+  await vi.waitFor(() => expect(api.saving).toBe(false));
+  expect(api.preferences.theme).toBe("light");
+});

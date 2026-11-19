@@ -36,6 +36,23 @@ type Preferences = {
   /** The built-in themes and the person's own. */
   themes: Theme[];
 };
+/** A save waiting its turn: changed settings, or a theme rename or delete. */
+type QueuedSave =
+  | { patch: Partial<Preferences> }
+  | {
+      path: string;
+      body: unknown;
+      method: string;
+      resolve: () => void;
+      reject: (cause: unknown) => void;
+    };
+/** The settings changed but not yet saved, laid over each answer. */
+function unsaved(queue: QueuedSave[]): Partial<Preferences> {
+  return queue.reduce<Partial<Preferences>>(
+    (patch, save) => ("patch" in save ? { ...patch, ...save.patch } : patch),
+    {},
+  );
+}
 export type SidebarChoice = "pinned" | "folded";
 const defaults: Preferences = {
   theme: "system",
@@ -119,7 +136,7 @@ function samePreferences(a: Preferences, b: Preferences) {
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const revision = useRef(0);
   const busy = useRef(false);
-  const queued = useRef<Partial<Preferences> | null>(null);
+  const queue = useRef<QueuedSave[]>([]);
   const confirmed = useRef<Preferences>(defaults);
   const [preferences, setPreferences] = useState(defaults);
   const [ready, setReady] = useState(false);
@@ -195,54 +212,69 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       }
     })();
   }, [preferences, ready]);
+  // Saves run one at a time, in order: a PUT of changed settings, or a theme
+  // rename or delete. Each answers the whole preferences, so running them in
+  // turn means no older answer lands after a newer one. Settings changed while
+  // a PUT waits join it.
+  const drain = useCallback(async () => {
+    busy.current = true;
+    setSaving(true);
+    setError("");
+    try {
+      for (let save = queue.current.shift(); save; save = queue.current.shift()) {
+        if ("patch" in save) {
+          try {
+            const saved = await request<Preferences>("api/settings/appearance", save.patch, "PUT");
+            confirmed.current = normalize(saved);
+            setPreferences({ ...confirmed.current, ...unsaved(queue.current) });
+          } catch (cause) {
+            setPreferences({ ...confirmed.current, ...unsaved(queue.current) });
+            setError(cause instanceof Error ? cause.message : "Local request failed.");
+          }
+        } else {
+          try {
+            const saved = await request<Preferences>(save.path, save.body, save.method);
+            ++revision.current;
+            confirmed.current = normalize(saved);
+            setPreferences({ ...confirmed.current, ...unsaved(queue.current) });
+            save.resolve();
+          } catch (cause) {
+            save.reject(cause);
+          }
+        }
+      }
+    } finally {
+      busy.current = false;
+      setSaving(false);
+      const waiting = afterSave.current;
+      afterSave.current = [];
+      if (waiting.length) void refresh().finally(() => waiting.forEach((resolve) => resolve()));
+    }
+  }, [refresh]);
   const update = useCallback(
     async (patch: Partial<Preferences>) => {
       if (!ready) return;
       setPreferences((current) => ({ ...current, ...patch }));
       ++revision.current;
-      if (busy.current) {
-        // A save is in flight: coalesce this change and send it once that save finishes.
-        queued.current = { ...queued.current, ...patch };
-        return;
-      }
-      busy.current = true;
-      setSaving(true);
-      setError("");
-      // Changes made while a save is in flight land in `queued`; read it through a function.
-      const pending = (): Partial<Preferences> | null => queued.current;
-      let next: Partial<Preferences> | null = patch;
-      try {
-        while (next) {
-          queued.current = null;
-          try {
-            const saved = await request<Preferences>("api/settings/appearance", next, "PUT");
-            confirmed.current = normalize(saved);
-            setPreferences({ ...confirmed.current, ...pending() });
-          } catch (cause) {
-            setPreferences({ ...confirmed.current, ...pending() });
-            setError(cause instanceof Error ? cause.message : "Local request failed.");
-          }
-          next = pending();
-        }
-      } finally {
-        busy.current = false;
-        setSaving(false);
-        const waiting = afterSave.current;
-        afterSave.current = [];
-        if (waiting.length) void refresh().finally(() => waiting.forEach((resolve) => resolve()));
-      }
+      const last = queue.current.at(-1);
+      if (last && "patch" in last) last.patch = { ...last.patch, ...patch };
+      else queue.current.push({ patch });
+      if (!busy.current) await drain();
     },
-    [ready, refresh],
+    [ready, drain],
   );
   const reload = useCallback(() => refresh(), [refresh]);
   // Renaming and deleting a theme answer the preferences as they now are.
-  const changeTheme = useCallback(async (path: string, body: unknown, method: string) => {
-    const saved = await request<Preferences>(path, body, method);
-    const next = normalize(saved);
-    ++revision.current;
-    confirmed.current = next;
-    setPreferences(next);
-  }, []);
+  // They wait behind any save in flight, so its answer cannot undo them.
+  const changeTheme = useCallback(
+    (path: string, body: unknown, method: string) =>
+      new Promise<void>((resolve, reject) => {
+        ++revision.current;
+        queue.current.push({ path, body, method, resolve, reject });
+        if (!busy.current) void drain();
+      }),
+    [drain],
+  );
   const renameTheme = useCallback(
     (id: string, name: string) =>
       changeTheme(`api/settings/appearance/themes/${encodeURIComponent(id)}`, { name }, "PATCH"),
