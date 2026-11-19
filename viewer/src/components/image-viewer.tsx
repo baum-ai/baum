@@ -173,35 +173,43 @@ export function ImageViewer({
     element.style.left = `${at.left}px`;
     bound(element);
     // Past the height the window allows, a wider frame would only add bars
-    // beside the image, so the drag stops there.
-    // The cap is in pixels so the dialog sizes to it too, and allows for
-    // the header falling back to one row as the image widens.
+    // beside the image, so the drag stops there. The cap is in pixels so the
+    // dialog sizes to it too. It counts the header as one row, as it was at
+    // fit time, since the caption returns beside the controls as the image
+    // widens; if capping narrows the frame enough to wrap the header, it is
+    // worked out again with the taller header.
     const size = fitted.current;
     const target = event.currentTarget;
     if (size) {
-      const headerHeight = header.current?.offsetHeight ?? 0;
-      const around =
-        element.offsetHeight -
-        target.offsetHeight -
-        headerHeight +
-        Math.min(headerHeight, fittedHeader.current || headerHeight);
-      const room = window.innerHeight - at.top - 16 - around;
-      const across =
-        Number.parseFloat(element.style.maxWidth) - (element.offsetWidth - target.offsetWidth);
-      const widest = Math.max(64, Math.floor(Math.min((room * size.width) / size.height, across)));
-      target.style.maxWidth = `${widest}px`;
+      const cap = (headerHeight: number) => {
+        const current = header.current?.offsetHeight ?? 0;
+        const around = element.offsetHeight - target.offsetHeight - current + headerHeight;
+        const room = window.innerHeight - at.top - 16 - around;
+        const across =
+          Number.parseFloat(element.style.maxWidth) - (element.offsetWidth - target.offsetWidth);
+        const widest = Math.max(
+          64,
+          Math.floor(Math.min((room * size.width) / size.height, across)),
+        );
+        target.style.maxWidth = `${widest}px`;
+      };
+      const before = header.current?.offsetHeight ?? 0;
+      const used = Math.min(before, fittedHeader.current || before);
+      cap(used);
+      const after = header.current?.offsetHeight ?? 0;
+      if (target.offsetWidth < start && after > used) cap(after);
     }
     window.addEventListener(
       "pointerup",
       () => {
-        // Keep the width as drawn, so a later window resize, which lifts
-        // the cap, does not bring back the width dragged past it.
+        // Keep the width as drawn: the browser's resizer writes the
+        // pointer's width, past the cap, and a later window resize lifts
+        // the cap.
         const drawn = target.offsetWidth;
         target.style.removeProperty("max-width");
-        if (drawn !== start) {
-          dragged.current = true;
-          target.style.width = `${drawn}px`;
-        } else if (!dragged.current) element.removeAttribute("style");
+        target.style.width = `${drawn}px`;
+        if (drawn !== start) dragged.current = true;
+        else if (!dragged.current) element.removeAttribute("style");
       },
       { once: true },
     );
