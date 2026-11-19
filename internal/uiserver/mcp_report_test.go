@@ -247,7 +247,7 @@ func TestRepositoryAndReportToolsCarryNoPathOrEnvironment(t *testing.T) {
 	chat, _ := f.tokens(t)
 	noPaths := func(what, text string) {
 		t.Helper()
-		for _, leak := range []string{f.home, f.clonePath, reportHome, reportEnv, "common_dir", `"path"`, "DETAIL", "FIX", "report_issue", "organization_access"} {
+		for _, leak := range []string{f.home, f.clonePath, jsonText(f.home), jsonText(f.clonePath), reportHome, reportEnv, "common_dir", `"path"`, "DETAIL", "FIX", "report_issue", "organization_access"} {
 			if strings.Contains(text, leak) {
 				t.Errorf("%s carries %q: %s", what, leak, text)
 			}
@@ -257,7 +257,7 @@ func TestRepositoryAndReportToolsCarryNoPathOrEnvironment(t *testing.T) {
 	// The registry's repositories: the route has the clone's paths, the tool
 	// does not.
 	routeText := string(f.route(t, "/api/repositories"))
-	if !strings.Contains(routeText, f.clonePath) {
+	if !strings.Contains(routeText, jsonText(f.clonePath)) {
 		t.Fatalf("the route has no path to leave out: %s", routeText)
 	}
 	text, failed := f.callTool(t, chat, "repositories", nil)
