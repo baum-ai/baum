@@ -700,6 +700,54 @@ describe("the native tiles", () => {
     expect(container.querySelector('[data-tone="good"]')?.textContent).toContain(
       "Encrypted answers",
     );
+    // Numbered, wide and narrow, and a message to itself is a loop on its lifeline.
+    expect(lists[0]?.querySelector("li")?.textContent).toContain("Phone to Daemon: 1");
+    expect(lists[1]?.querySelector("li")?.textContent?.startsWith("1")).toBe(true);
+    expect(container.querySelector("[data-self]")?.textContent).toContain("No keys");
+    // A legend of the marks it uses: green, red, a check within one actor.
+    const legend = container.querySelector('[aria-label="Legend"]')?.textContent ?? "";
+    expect(legend).toContain("works or is allowed");
+    expect(legend).toContain("fails or is refused");
+    expect(legend).toContain("a check within one actor");
+    expect(legend).not.toContain("a reply");
+  });
+
+  it("marks what a sequence's pull request added or changed, and can show only that", async () => {
+    const tile = tileOf("dg_encryption");
+    const data = tile.data as { steps: Record<string, unknown>[] };
+    const steps = data.steps.map((step, at) =>
+      at === 1
+        ? { ...step, tone: undefined, change: "changed", was: "Plaintext and a token" }
+        : at === 0
+          ? step // tone "new": read as added
+          : { ...step, tone: undefined },
+    );
+    const container = await card({ ...tile, data: { ...data, steps } });
+    // Each message is drawn twice: wide and narrow.
+    const rows = (change: string) => container.querySelectorAll(`li[data-change="${change}"]`);
+    expect(rows("added")).toHaveLength(2);
+    expect(rows("changed")).toHaveLength(2);
+    expect(rows("changed")[0]?.querySelector("del")?.textContent).toBe("Plaintext and a token");
+    expect(container.textContent).toContain("added by this pull request");
+    expect(container.textContent).toContain("changed by this pull request");
+    const only = container.querySelector<HTMLInputElement>('input[role="switch"]');
+    expect(only?.checked).toBe(false);
+    await click(only as HTMLElement);
+    expect(only?.checked).toBe(true);
+    const quiet = container.querySelectorAll("li[data-faded]");
+    // Three untouched messages, wide and narrow.
+    expect(quiet).toHaveLength(6);
+  });
+
+  it("draws a sequence's reply dashed", async () => {
+    const tile = tileOf("dg_encryption");
+    const data = tile.data as { steps: { reply?: boolean }[] };
+    const steps = data.steps.map((step, at) => (at === 4 ? { ...step, reply: true } : step));
+    const container = await card({ ...tile, data: { ...data, steps } });
+    const replies = container.querySelectorAll("[data-reply]");
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.textContent).toContain("Encrypted answers");
+    expect(replies[0]?.querySelector(".border-dashed")).not.toBeNull();
   });
 
   it("draws a table", async () => {

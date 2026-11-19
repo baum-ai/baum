@@ -103,13 +103,21 @@ type SequenceData struct {
 	Steps   []SequenceStep `json:"steps"`
 }
 
-// SequenceStep is one message of a sequence.
+// SequenceStep is one message of a sequence. Reply marks an answer to an
+// earlier message, drawn dashed. Change marks what the pull request does to
+// it (Changes); Was is a changed message's text before it.
 type SequenceStep struct {
-	From int    `json:"from"`
-	To   int    `json:"to"`
-	Text string `json:"text"`
-	Tone string `json:"tone,omitempty"`
+	From   int    `json:"from"`
+	To     int    `json:"to"`
+	Text   string `json:"text"`
+	Tone   string `json:"tone,omitempty"`
+	Reply  bool   `json:"reply,omitempty"`
+	Change string `json:"change,omitempty"`
+	Was    string `json:"was,omitempty"`
 }
+
+// Changes are what a pull request does to a sequence's message.
+var Changes = []string{"added", "changed"}
 
 // TableData is a table; every row is as long as Columns.
 type TableData struct {
@@ -361,6 +369,11 @@ func (n *nativeCheck) sequence(raw json.RawMessage) any {
 		}
 		s.Text = n.text(s.Text, MaxSequenceText, true, "a step's text")
 		s.Tone = oneOf(s.Tone, Tones)
+		s.Change = oneOf(s.Change, Changes)
+		if s.Change != "changed" {
+			s.Was = ""
+		}
+		s.Was = n.text(s.Was, MaxSequenceText, false, "a step's earlier text")
 	}
 	return d
 }

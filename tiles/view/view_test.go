@@ -346,7 +346,7 @@ const sampleReply = `{"overview": {"risk_summary": "Retries can pile up.", "verd
   {"id": "dg_cols", "type": "columns", "title": "Before and after", "caption": null, "source": [],
    "columns": [{"label": "Before", "tone": "muted", "items": [{"title": "One try", "note": null}]}, {"label": "After", "tone": null, "items": [{"title": "Up to five tries", "note": null}]}]},
   {"id": "dg_seq", "type": "sequence", "title": "A delivery", "caption": "The remote answers 503.", "source": ["h_000000000002"],
-   "actors": ["Worker", "Remote"], "steps": [{"from": 0, "to": 1, "text": "deliver", "tone": null}, {"from": 1, "to": 0, "text": "503", "tone": "bad"}]},
+   "actors": ["Worker", "Remote"], "steps": [{"from": 0, "to": 1, "text": "deliver", "tone": null, "reply": null, "change": null, "was": null}, {"from": 1, "to": 0, "text": "503", "tone": "bad", "reply": true, "change": "changed", "was": "500"}]},
   {"id": "dg_table", "type": "table", "title": "Waits", "caption": null, "source": ["h_000000000001"], "columns": ["Try", "Wait"], "rows": [["1", "1 s"], ["2", "2 s"]]}]}`
 
 func TestParseReplyReportsOnlyWhatItCannotRead(t *testing.T) {

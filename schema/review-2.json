@@ -367,7 +367,10 @@
               "from": { "type": "integer", "minimum": 0, "maximum": 3 },
               "to": { "type": "integer", "minimum": 0, "maximum": 3 },
               "text": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "tone": { "$ref": "#/$defs/v2Tone" }
+              "tone": { "$ref": "#/$defs/v2Tone" },
+              "reply": { "type": "boolean", "description": "An answer to an earlier message, drawn dashed." },
+              "change": { "enum": ["added", "changed"], "description": "What the pull request does to this message." },
+              "was": { "type": "string", "minLength": 1, "maxLength": 80, "description": "A changed message's text before the change." }
             }
           }
         }

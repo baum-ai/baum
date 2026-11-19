@@ -83,10 +83,13 @@ type replyItem struct {
 }
 
 type replySeqStep struct {
-	From int     `json:"from"`
-	To   int     `json:"to"`
-	Text string  `json:"text"`
-	Tone *string `json:"tone"`
+	From   int     `json:"from"`
+	To     int     `json:"to"`
+	Text   string  `json:"text"`
+	Tone   *string `json:"tone"`
+	Reply  *bool   `json:"reply"`
+	Change *string `json:"change"`
+	Was    *string `json:"was"`
 }
 
 func str(s *string) string {
@@ -232,9 +235,10 @@ func diagramSchema(kind string, withID bool) string {
 	case TypeSequence:
 		return diagram(fmt.Sprintf(`"actors": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
             "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-              "type": "object", "additionalProperties": false, "required": ["from", "to", "text", "tone"],
-              "properties": {"from": {"type": "integer", "minimum": 0, "maximum": %d}, "to": {"type": "integer", "minimum": 0, "maximum": %d}, "text": %s, "tone": %s}
-            }}`, MinActors, MaxActors, text(MaxActor), MaxSequence, MaxActors-1, MaxActors-1, text(MaxSequenceText), tone), `"actors", "steps"`)
+              "type": "object", "additionalProperties": false, "required": ["from", "to", "text", "tone", "reply", "change", "was"],
+              "properties": {"from": {"type": "integer", "minimum": 0, "maximum": %d}, "to": {"type": "integer", "minimum": 0, "maximum": %d}, "text": %s, "tone": %s, "reply": {"type": ["boolean", "null"]},
+                "change": {"type": ["string", "null"], "enum": ["added", "changed", null]}, "was": %s}
+            }}`, MinActors, MaxActors, text(MaxActor), MaxSequence, MaxActors-1, MaxActors-1, text(MaxSequenceText), tone, nullable(MaxSequenceText)), `"actors", "steps"`)
 	case TypeTable:
 		return diagram(fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
             "rows": {"type": "array", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"anyOf": [{"type": "string", "maxLength": %d}, {
@@ -362,7 +366,7 @@ func diagramData(d ReplyDiagram) (any, bool) {
 		}
 		out := SequenceData{Caption: caption, Source: source, Actors: d.Actors}
 		for _, s := range d.Steps {
-			out.Steps = append(out.Steps, SequenceStep{From: s.From, To: s.To, Text: s.Text, Tone: str(s.Tone)})
+			out.Steps = append(out.Steps, SequenceStep{From: s.From, To: s.To, Text: s.Text, Tone: str(s.Tone), Reply: s.Reply != nil && *s.Reply, Change: str(s.Change), Was: str(s.Was)})
 		}
 		return out, true
 	case TypeTable:
