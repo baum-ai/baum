@@ -761,8 +761,8 @@ describe("the native tiles", () => {
     expect(rows("added")).toHaveLength(2);
     expect(rows("changed")).toHaveLength(2);
     expect(rows("changed")[0]?.querySelector("del")?.textContent).toBe("Plaintext and a token");
-    expect(container.textContent).toContain("added by this pull request");
-    expect(container.textContent).toContain("changed by this pull request");
+    // The pills explain themselves: the legend leaves them out.
+    expect(container.textContent).not.toContain("by this pull request");
     const only = container.querySelector<HTMLInputElement>('input[role="switch"]');
     expect(only?.checked).toBe(false);
     await click(only as HTMLElement);
@@ -1124,6 +1124,35 @@ describe("a section's body", () => {
     expect(more.textContent).toContain("A secret is made.");
     await click(boxes[0]!);
     expect(more.textContent).not.toContain("A secret is made.");
+  });
+  it("marks a flow's new steps with a pill and can show only them", async () => {
+    const flow = tileOf("dg_pairing");
+    const container = await card({
+      ...flow,
+      data: {
+        lanes: [
+          {
+            steps: [
+              { title: "Offer", tone: "new" },
+              { title: "Scan", tone: "good" },
+              { title: "Pair" },
+            ],
+          },
+        ],
+        source: [],
+      },
+    });
+    const steps = [...container.querySelectorAll<HTMLElement>(".flow li")];
+    expect(steps[0]?.textContent).toContain("New");
+    expect(steps[1]?.textContent).not.toContain("New");
+    const legend = container.querySelector('[aria-label="Legend"]')?.textContent ?? "";
+    expect(legend).toContain("works or is allowed");
+    expect(legend).not.toContain("by this pull request");
+    const only = container.querySelector<HTMLInputElement>('input[role="switch"]');
+    expect(only?.checked).toBe(false);
+    await click(only as HTMLElement);
+    expect(only?.checked).toBe(true);
+    expect(container.querySelectorAll(".flow li[data-faded]")).toHaveLength(2);
   });
 });
 

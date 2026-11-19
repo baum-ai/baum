@@ -4,11 +4,34 @@
    label: every step is a column of the same width, so a lane's steps line
    up with the steps above them, and a branch sits under the steps that
    follow the one it leaves after. With room for the labels too
-   (data-wider), they move to a column of their own. Colours are the
-   boxes' own (Tailwind tokens). */
+   (data-wider), they move to a column of their own. In the grid, the
+   arrows are lines drawn over it (.flow-wires). Colours are the boxes' own
+   (Tailwind tokens). */
 .flow {
+  position: relative;
   display: grid;
   gap: 0.75rem;
+}
+/* The connectors drawn over the grid once it is laid out (useWires): under
+   the boxes, which replace the arrows' text. */
+.flow-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.flow[data-drawn] .flow-step {
+  z-index: 1;
+}
+.flow[data-drawn] .flow-join {
+  visibility: hidden;
 }
 .flow-lane {
   display: grid;
