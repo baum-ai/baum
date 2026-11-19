@@ -201,7 +201,7 @@ function readRefs(refs) {
 // (parse.go), with the same grammar and regular expressions; a shared test
 // file keeps the two agreeing. Whitespace is ASCII only.
 
-const CSS_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+const CSS_NUMBER = /^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/;
 const COLOR_FUNCTION = /^(rgba?|hsla?|oklch)\(([^()]*)\)$/;
 const ASCII_SPACE = /[ \t\n\r\f]+/;
 const trimASCII = (text) => text.replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, "");

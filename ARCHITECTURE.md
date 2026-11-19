@@ -1389,7 +1389,11 @@ value at most 64 bytes and a hex, `rgb()`, `hsl()` or `oklch()` colour by the
 same grammar, ported from `parse.go`. A message with any bad token is dropped
 whole, as one with a bad `theme` is. A Go test keeps the allowlist equal to
 `themes.Tokens`, and `internal/themes/testdata/validate.json` is run against
-both validators.
+both validators. Because tokens are set
+inline on the tile's root and a later message that omits a token removes it, a
+tile script that sets an allowlisted custom property inline on `<html>` itself
+can be overwritten or removed by theme messages; tiles should set such
+properties on their own elements.
 A detail frame keeps a 4px inset on every side for focus rings and draws
 nothing else around its content; the host pads the pane, places the frame in
 the pane's content column where a built-in detail's body goes, and sets it

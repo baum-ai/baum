@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { frame, manifest, tick, type Frame } from "./harness";
 
 let frames: Frame[] = [];
@@ -536,13 +536,22 @@ describe("theme tokens", () => {
     const f = open(TILE);
     f.init({ data: { text: "x" } });
     await f.next("ready");
+    const setProperty = vi.spyOn(style(f), "setProperty");
     for (const { token, value, ok } of cases) {
+      setProperty.mockClear();
       f.send({ ...THEME, tokens: { [token]: value } });
-      const applied = style(f).getPropertyValue(token) !== "";
-      expect({ token, value, applied }).toEqual({ token, value, applied: ok });
+      // Accepted: the one token is set to the value. Rejected: the whole
+      // message is dropped, so nothing is set at all.
+      const calls = setProperty.mock.calls.map(([name, v]) => [name, v]);
+      expect({ token, value, calls }).toEqual({
+        token,
+        value,
+        calls: ok ? [[token, value]] : [],
+      });
       f.send(THEME);
       expect(style(f).getPropertyValue(token)).toBe("");
     }
+    setProperty.mockRestore();
   });
 
   it("sets tokens from init", async () => {

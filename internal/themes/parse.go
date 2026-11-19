@@ -20,7 +20,7 @@ import (
 // hue is a number with an optional deg, grad, rad or turn unit. Whitespace is
 // ASCII space, tab, line feed, carriage return and form feed only.
 var (
-	cssNumber = regexp.MustCompile(`^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$`)
+	cssNumber = regexp.MustCompile(`^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$`)
 	function  = regexp.MustCompile(`^(rgba?|hsla?|oklch)\(([^()]*)\)$`)
 )
 
