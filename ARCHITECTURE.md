@@ -1370,8 +1370,8 @@ text; the only markup it parses is the static parts of an author's
 bootstrap hears only its parent, only plain JSON values within its limits
 (1.5 million characters, 200,000 values, 64 deep), and drops anything
 malformed. It sends `hello {kit, registered}` once the author's scripts ran;
-takes one `init {face, size, theme, lang, data, refs, check?}`, then `update
-{data, refs}` (a fresh `#baum-root` each time) and `theme {theme}`; and sends
+takes one `init {face, size, theme, lang, data, refs, check?, tokens?}`, then `update
+{data, refs}` (a fresh `#baum-root` each time) and `theme {theme, tokens?}`; and sends
 `ready {metrics}` two frames after a render (with the fonts loaded), `resize
 {height}` for a detail once per frame (stopped, with a `layout_loop` error,
 when it grows ten times in a second by the same amount), `error {code,
@@ -1380,6 +1380,16 @@ message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
 `render_failed`, `timeout`, `layout_loop`; at most 10 of each), `jump {key}`, `ask`,
 `open`, and `key {key, shift}` for Escape, u, j, k, the arrows, `[`, `]` and
 `?` from a detail when the tile did not handle them and no field has focus.
+The optional `tokens` (`{"--token": "colour"}`) are a custom colour theme's
+overrides: the bootstrap sets each on the frame's root element and a later
+`theme` message replaces them (tokens it omits are removed, so omitting
+`tokens` clears them). They are checked like `themes.ValidateToken` in
+`internal/themes`: the token must be on the allowlist (`THEME_TOKENS`), the
+value at most 64 bytes and a hex, `rgb()`, `hsl()` or `oklch()` colour by the
+same grammar, ported from `parse.go`. A message with any bad token is dropped
+whole, as one with a bad `theme` is. A Go test keeps the allowlist equal to
+`themes.Tokens`, and `internal/themes/testdata/validate.json` is run against
+both validators.
 A detail frame keeps a 4px inset on every side for focus rings and draws
 nothing else around its content; the host pads the pane, places the frame in
 the pane's content column where a built-in detail's body goes, and sets it

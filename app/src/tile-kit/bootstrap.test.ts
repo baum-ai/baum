@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { frame, manifest, tick, type Frame } from "./harness";
 
@@ -514,6 +516,80 @@ describe("window.baum", () => {
       const factory = element.created_by.replace(/^baum\./, "");
       const made = f.window.baum[factory]({ type: "risk", id: "x" }) as HTMLElement;
       expect(made.localName).toBe(element.name);
+    }
+  });
+});
+
+describe("theme tokens", () => {
+  const THEME = { protocol: "baum.tile/1", kind: "theme", theme: "light" };
+  const style = (f: Frame) => f.document.documentElement.style;
+
+  // The Go validator's cases (internal/themes), so the two agree.
+  const cases = JSON.parse(
+    readFileSync(
+      resolve(import.meta.dirname, "../../../internal/themes/testdata/validate.json"),
+      "utf8",
+    ),
+  ) as { token: string; value: string; ok: boolean }[];
+
+  it("applies a token value iff the Go validator accepts it", async () => {
+    const f = open(TILE);
+    f.init({ data: { text: "x" } });
+    await f.next("ready");
+    for (const { token, value, ok } of cases) {
+      f.send({ ...THEME, tokens: { [token]: value } });
+      const applied = style(f).getPropertyValue(token) !== "";
+      expect({ token, value, applied }).toEqual({ token, value, applied: ok });
+      f.send(THEME);
+      expect(style(f).getPropertyValue(token)).toBe("");
+    }
+  });
+
+  it("sets tokens from init", async () => {
+    const f = open(TILE);
+    f.init({ data: { text: "x" }, tokens: { "--surface-page": "#102030" } });
+    await f.next("ready");
+    expect(style(f).getPropertyValue("--surface-page")).toBe("#102030");
+  });
+
+  it("drops an init whose tokens are invalid, leaving the frame unstarted", async () => {
+    const f = open(TILE);
+    f.init({ data: { text: "x" }, tokens: { "--surface-page": "red" } });
+    await tick(50);
+    expect(kinds(f)).not.toContain("ready");
+    f.init({ data: { text: "x" } });
+    await f.next("ready");
+  });
+
+  it("clears earlier tokens a later message leaves out", async () => {
+    const f = open(TILE);
+    f.init({ data: { text: "x" } });
+    await f.next("ready");
+    f.send({ ...THEME, tokens: { "--surface-page": "#111111", "--text-primary": "#eeeeee" } });
+    expect(style(f).getPropertyValue("--surface-page")).toBe("#111111");
+    f.send({ ...THEME, tokens: { "--text-primary": "#dddddd" } });
+    expect(style(f).getPropertyValue("--surface-page")).toBe("");
+    expect(style(f).getPropertyValue("--text-primary")).toBe("#dddddd");
+    f.send({ ...THEME, theme: "dark" });
+    expect(style(f).getPropertyValue("--text-primary")).toBe("");
+    expect(f.document.documentElement.dataset.theme).toBe("dark");
+  });
+
+  it("drops the whole message for a bad token set", async () => {
+    const f = open(TILE);
+    f.init({ data: { text: "x" }, tokens: { "--surface-page": "#111111" } });
+    await f.next("ready");
+    for (const tokens of [
+      { "--surface-page": "#222222", "--not-a-token": "#333333" },
+      { "--surface-page": "#222222", "--text-primary": "var(--x)" },
+      { "--surface-page": 5 },
+      ["--surface-page"],
+      "#222222",
+      null,
+    ]) {
+      f.send({ ...THEME, theme: "dark", tokens });
+      expect(f.document.documentElement.dataset.theme).toBe("light");
+      expect(style(f).getPropertyValue("--surface-page")).toBe("#111111");
     }
   });
 });

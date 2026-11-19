@@ -814,6 +814,17 @@ const KEYS=new Set(["Escape","u","j","k","ArrowLeft","ArrowRight","[","]","?"]);
 const FACES=new Set(["glance","detail"]);
 const SIZES=new Set(["full","half","third"]);
 const THEMES=new Set(["light","dark"]);
+const THEME_TOKENS=new Set([
+"--color-ink","--color-paper","--color-shadow","--brand-forest","--brand-sand-100",
+"--brand-green-600","--color-critical","--color-blue","--series-1","--series-2",
+"--series-3","--series-4","--series-5","--series-6","--series-7","--series-8",
+"--series-caramel","--series-sage","--series-espresso","--surface-page","--surface-card",
+"--surface-canvas","--surface-popup","--text-primary","--text-secondary",
+"--text-inverse","--border-default","--border-focus","--action-primary",
+"--action-primary-hover","--nav-hover","--nav-selected","--status-positive",
+"--status-caution","--status-critical",
+]);
+const MAX_TOKEN_VALUE=64;
 const LANG = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,4}$/;
 const host=window.parent;
 const framed=host!==window;
@@ -943,13 +954,120 @@ map.set(key,payload);
 }
 return map;
 }
-function applyTheme(theme){
+const CSS_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+const COLOR_FUNCTION = /^(rgba?|hsla?|oklch)\(([^()]*)\)$/;
+const ASCII_SPACE = /[ \t\n\r\f]+/;
+const trimASCII = (text) => text.replace(/^[ \t\n\r\f]+|[ \t\n\r\f]+$/g, "");
+const fieldsASCII=(text)=>text.split(ASCII_SPACE).filter((part)=>part!=="");
+function cssFloat(text){
+if(!CSS_NUMBER.test(text))return null;
+const value=Number(text);
+return Number.isFinite(value)?value:null;
+}
+function cssNumberOrPercent(text,full){
+if(!text.endsWith("%"))return cssFloat(text);
+const value=cssFloat(text.slice(0,-1));
+if(value===null)return null;
+const scaled = (value / 100) * full;
+return Number.isFinite(scaled)?scaled:null;
+}
+function cssPercent(text){
+if(!text.endsWith("%"))return null;
+const value=cssFloat(text.slice(0,-1));
+if(value===null)return null;
+const scaled = value / 100;
+return Number.isFinite(scaled)?scaled:null;
+}
+function cssHue(text){
+let scale=1;
+if(text.endsWith("deg"))text=text.slice(0,-3);
+else if(text.endsWith("grad"))(text=text.slice(0,-4)),(scale=0.9);
+else if(text.endsWith("turn"))(text=text.slice(0,-4)),(scale=360);
+else if (text.endsWith("rad")) (text = text.slice(0, -3)), (scale = 180 / Math.PI);
+const value=cssFloat(text);
+return value!==null&&Number.isFinite(value*scale);
+}
+function isColor(text){
+text=trimASCII(text).toLowerCase();
+if(text.startsWith("#")){
+return /^(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(text.slice(1));
+}
+const match=COLOR_FUNCTION.exec(text);
+if(!match)return false;
+const name=match[1];
+const body=trimASCII(match[2]);
+let fields;
+let alpha="";
+const legacy=body.includes(",");
+if(legacy){
+if (body.includes("/") || name === "oklch") return false;
+fields=[];
+for(let part of body.split(",")){
+part=trimASCII(part);
+if(part===""||fieldsASCII(part).length!==1)return false;
+fields.push(part);
+}
+if(fields.length===4)alpha=fields.pop();
+}else{
+let colour=body;
+const slash = body.indexOf("/");
+if(slash>=0){
+colour=body.slice(0,slash);
+alpha=trimASCII(body.slice(slash+1));
+if(alpha===""||fieldsASCII(alpha).length!==1)return false;
+}
+fields=fieldsASCII(colour);
+}
+if(fields.length!==3)return false;
+if(alpha!==""&&cssNumberOrPercent(alpha,1)===null)return false;
+if(name==="rgb"||name==="rgba"){
+let percents=0;
+for(const field of fields){
+if(field.endsWith("%"))percents++;
+if(cssNumberOrPercent(field,255)===null)return false;
+}
+return!(legacy&&percents!==0&&percents!==3);
+}
+if(name==="hsl"||name==="hsla"){
+return cssHue(fields[0])&&cssPercent(fields[1])!==null&&cssPercent(fields[2])!==null;
+}
+return(
+cssNumberOrPercent(fields[0],1)!==null&&
+cssNumberOrPercent(fields[1],0.4)!==null&&
+cssHue(fields[2])
+);
+}
+function readTokens(tokens){
+if(!isRecord(tokens))return null;
+const entries=[];
+for(const token of Object.keys(tokens)){
+const value=tokens[token];
+if(!THEME_TOKENS.has(token)||typeof value!=="string")return null;
+if(value.length>MAX_TOKEN_VALUE||!isColor(value))return null;
+entries.push([token,value]);
+}
+return entries;
+}
+let themeTokens=[];
+function applyTheme(theme,tokens){
 state.theme=theme;
-docGet("documentElement").dataset.theme=theme;
-docGet("documentElement").style.colorScheme=theme;
+const root=docGet("documentElement");
+root.dataset.theme=theme;
+root.style.colorScheme=theme;
+const next=table({});
+for(const[token,value]of tokens){
+root.style.setProperty(token,value);
+next[token]=true;
+}
+for(const token of themeTokens){
+if(!next[token])root.style.removeProperty(token);
+}
+themeTokens=tokens.map(([token])=>token);
 }
 function onInit(message){
 const{face,size,theme,lang,data,refs,check}=message;
+const tokens=message.tokens===undefined?[]:readTokens(message.tokens);
+if(tokens===null)return;
 if(started||!FACES.has(face)||!SIZES.has(size)||!THEMES.has(theme))return;
 if(typeof lang!=="string"||!LANG.test(lang)||!("data"in message)||!isRecord(refs))return;
 if(check!==undefined&&!(isRecord(check)&&typeof check.id==="string"))return;
@@ -959,9 +1077,14 @@ const root=docGet("documentElement");
 root.lang=lang;
 root.dataset.face=face;
 root.dataset.size=size;
-applyTheme(theme);
+applyTheme(theme,tokens);
 if(face==="detail")watchHeight();
 if(spec)render();
+}
+function onTheme(message){
+if(!started||!THEMES.has(message.theme))return;
+const tokens=message.tokens===undefined?[]:readTokens(message.tokens);
+if(tokens!==null)applyTheme(message.theme,tokens);
 }
 function onUpdate(message){
 if(!started||!("data"in message)||!isRecord(message.refs))return;
@@ -975,7 +1098,7 @@ const message=event.data;
 if(!isRecord(message)||message.protocol!==PROTOCOL||!plainJSON(message))return;
 if(message.kind==="init")onInit(message);
 else if(message.kind==="update")onUpdate(message);
-else if(message.kind==="theme"&&started&&THEMES.has(message.theme))applyTheme(message.theme);
+else if(message.kind==="theme")onTheme(message);
 });
 const TIMEOUT=Symbol("timeout");
 function frames(count){
