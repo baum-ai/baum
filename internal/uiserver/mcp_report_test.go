@@ -104,6 +104,7 @@ func newReportFixture(t *testing.T) *reportFixture {
 	registry, clone := readRegistry(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := appdbtest.TempDir(t)
 	ui := &uistate.Store{Path: filepath.Join(dir, "ui.sqlite")}
 	store, err := decisionlog.Open(filepath.Join(dir, "decisions.sqlite"), decisionlog.OpenOptions{})
@@ -247,7 +248,7 @@ func TestRepositoryAndReportToolsCarryNoPathOrEnvironment(t *testing.T) {
 	chat, _ := f.tokens(t)
 	noPaths := func(what, text string) {
 		t.Helper()
-		for _, leak := range []string{f.home, f.clonePath, reportHome, reportEnv, "common_dir", `"path"`, "DETAIL", "FIX", "report_issue", "organization_access"} {
+		for _, leak := range []string{f.home, f.clonePath, jsonText(f.home), jsonText(f.clonePath), reportHome, reportEnv, "common_dir", `"path"`, "DETAIL", "FIX", "report_issue", "organization_access"} {
 			if strings.Contains(text, leak) {
 				t.Errorf("%s carries %q: %s", what, leak, text)
 			}
@@ -257,7 +258,7 @@ func TestRepositoryAndReportToolsCarryNoPathOrEnvironment(t *testing.T) {
 	// The registry's repositories: the route has the clone's paths, the tool
 	// does not.
 	routeText := string(f.route(t, "/api/repositories"))
-	if !strings.Contains(routeText, f.clonePath) {
+	if !strings.Contains(routeText, jsonText(f.clonePath)) {
 		t.Fatalf("the route has no path to leave out: %s", routeText)
 	}
 	text, failed := f.callTool(t, chat, "repositories", nil)
@@ -338,7 +339,7 @@ func TestRepositoryAndReportToolsCarryNoPathOrEnvironment(t *testing.T) {
 		t.Fatalf("the route's target %q: %v", target.Dir, err)
 	}
 	text, failed = f.callTool(t, chat, "clone_target", map[string]any{"repository": "owner/new"})
-	if failed || !strings.Contains(text, `"folder":"~`+strings.TrimPrefix(target.Dir, f.home)+`"`) {
+	if failed || !strings.Contains(text, `"folder":"~`+filepath.ToSlash(strings.TrimPrefix(target.Dir, f.home))+`"`) {
 		t.Errorf("clone_target %q: %v %s", target.Dir, failed, text)
 	}
 	noPaths("clone_target", text)

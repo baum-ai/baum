@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -181,15 +182,42 @@ func (d *dataset) addCaseJSON(t *testing.T, id string, facts map[string]any, bun
 }
 
 // snapshot lists every file of dir with its size, to prove nothing wrote there.
-func snapshot(t *testing.T, dir string) string {
+// It stats each file rather than reading the listing's DirEntry.Info: on
+// NTFS a listing returns a cached size and time, which opening the file to
+// read it refreshes.
+func snapshot(t *testing.T, dir string) []string {
 	t.Helper()
 	var lines []string
-	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(path string, _ os.DirEntry, err error) error {
 		if err == nil {
-			info, _ := entry.Info()
+			info, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
 			lines = append(lines, path+" "+info.ModTime().String()+" "+fmt.Sprint(info.Size()))
 		}
 		return nil
 	})
-	return strings.Join(lines, "\n")
+	return lines
+}
+
+// unchanged fails the test when dir no longer matches the snapshot before.
+func unchanged(t *testing.T, dir string, before []string) {
+	t.Helper()
+	after := snapshot(t, dir)
+	if slices.Equal(after, before) {
+		return
+	}
+	var gone, added []string
+	for _, line := range before {
+		if !slices.Contains(after, line) {
+			gone = append(gone, line)
+		}
+	}
+	for _, line := range after {
+		if !slices.Contains(before, line) {
+			added = append(added, line)
+		}
+	}
+	t.Errorf("the dataset changed:\nbefore:\n%s\nafter:\n%s", strings.Join(gone, "\n"), strings.Join(added, "\n"))
 }
