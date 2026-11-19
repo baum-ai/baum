@@ -158,6 +158,24 @@ function usePeek(folded: boolean) {
   return { peeking, over, leave, fold };
 }
 
+/** Keyboard focus in the sidebar, outside the menus it shows. */
+const KEYBOARD_FOCUS = ":focus-visible:not(.context-menu *)";
+
+/** Whether the element holds keyboard focus (`KEYBOARD_FOCUS`), which opens
+ *  the folded sidebar. The page's CSS read this with `:has()` before, but
+ *  WebKitGTK re-checked that selector on every element added anywhere in the
+ *  page, so a large diff took seconds to show. Focus and key events, and any
+ *  render that may have removed the focused element, read it again. */
+function useKeyboardFocusWithin<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [focused, setFocused] = useState(false);
+  const sync = useCallback(() => {
+    setFocused(!!ref.current?.querySelector(KEYBOARD_FOCUS));
+  }, []);
+  useLayoutEffect(sync);
+  return { ref, focused, sync };
+}
+
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
  *  panel, with what is left of the agents' plans above the foot. Each
@@ -215,6 +233,7 @@ export function Sidebar({
   }, [ready, preferences.sidebar]);
   const pinned = choice === "pinned" && !narrow;
   const peek = usePeek(!pinned);
+  const keyboard = useKeyboardFocusWithin<HTMLDivElement>();
   const nested = inboxes && inboxes.list.length > 0;
   // A right click on Inbox makes or manages inboxes.
   const inboxMenu = useContextMenu();
@@ -299,8 +318,13 @@ export function Sidebar({
   };
   return (
     <div
+      ref={keyboard.ref}
       className="local-rail-lane"
       data-rail={pinned ? "pinned" : peek.peeking ? "open" : "folded"}
+      data-keyboard-focus={keyboard.focused ? "" : undefined}
+      onFocus={keyboard.sync}
+      onBlur={keyboard.sync}
+      onKeyUp={keyboard.sync}
       onPointerEnter={peek.over}
       onPointerMove={peek.over}
       onPointerLeave={peek.leave}
