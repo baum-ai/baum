@@ -957,6 +957,12 @@ blocks cite an attachment ID. Old description-image records remain valid.
 Identical image bytes can retain both PR-description URLs and several session
 origins while sharing one stored image.
 
+An indexed attachment whose `content_type` is `video/…` (local desktop reviews
+only) draws as a muted `<video>` with native controls that loads only its
+metadata and plays when clicked, sized by its `width` and `height`, with no
+full-size dialog. A clip that fails to load is marked unavailable and can be
+retried like an image.
+
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and
 `local-transcript` parsers for the local server’s redacted answers.

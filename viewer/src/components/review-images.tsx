@@ -50,7 +50,7 @@ export function ReviewImages({
   // it back, so focus follows to whichever control replaces the focused one.
   const focusNext = useRef<string | null>(null);
   const idPrefix = useId();
-  const takeFocus = (target: string) => (element: HTMLButtonElement | null) => {
+  const takeFocus = (target: string) => (element: HTMLElement | null) => {
     if (element && focusNext.current === target) {
       focusNext.current = null;
       element.focus();
@@ -146,13 +146,16 @@ export function ReviewImages({
           >
             {row.map(({ index, width }) => {
               const item = shown[index] as Shown;
-              const label = item.text ?? `image ${item.attachment.position}`;
+              // The desktop app also places description videos. They play in
+              // place, where their own controls offer full screen.
+              const video = item.attachment.content_type.startsWith("video/");
+              const label = item.text ?? `${video ? "video" : "image"} ${item.attachment.position}`;
               return (
                 <figure key={item.key} className="min-w-0 max-w-full space-y-1.5" style={{ width }}>
                   {failed.has(item.attachment.id) ? (
                     <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-default bg-surface-sunken p-3 text-center text-base text-tertiary">
                       <span id={`${idPrefix}-${item.key}`} role="status">
-                        Image unavailable
+                        {video ? "Video" : "Image"} unavailable
                       </span>
                       <Button
                         ref={takeFocus(`retry:${item.key}`)}
@@ -164,6 +167,25 @@ export function ReviewImages({
                         Retry
                       </Button>
                     </div>
+                  ) : video ? (
+                    <video
+                      ref={takeFocus(`view:${item.key}`)}
+                      src={source(item.attachment.id)}
+                      aria-label={label}
+                      width={item.attachment.width}
+                      height={item.attachment.height}
+                      controls
+                      muted
+                      playsInline
+                      preload="metadata"
+                      onError={(event) => {
+                        if (globalThis.document.activeElement === event.currentTarget) {
+                          focusNext.current = `retry:${item.key}`;
+                        }
+                        setFailed((current) => new Set(current).add(item.attachment.id));
+                      }}
+                      className="block h-auto w-full rounded-md border border-default bg-surface-sunken"
+                    />
                   ) : (
                     <button
                       type="button"
