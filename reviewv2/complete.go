@@ -478,7 +478,7 @@ func Read(document []byte) (Document, error) {
 		EnsureBodies(&d)
 		return d, nil
 	case schema.Name:
-		return FromV1(document, nil)
+		return FromV1(document)
 	}
 	return Document{}, fmt.Errorf("reviewv2: the document's schema is %q", head.Schema)
 }

@@ -213,10 +213,7 @@ func encodeBlocks(t *testing.T, blocks []Block) []byte {
 // A section converted from baum.review/1 has a body: prose from its summary,
 // points from its behaviour steps, and a tile block for each tile it owns.
 func TestFromV1Body(t *testing.T) {
-	d, err := FromV1(readFile(t, "v1.review.json"), readFile(t, "v1.composition.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := fromV1WithComposition(t, readFile(t, "v1.review.json"), readFile(t, "v1.composition.json"))
 	tilesOf := map[string][]string{}
 	for _, tile := range d.Tiles {
 		tilesOf[tile.Owner] = append(tilesOf[tile.Owner], tile.ID)

@@ -252,14 +252,8 @@ func (l *Local) FillTile(ctx context.Context, r addedtiles.FillRequest) (json.Ra
 		return nil, nil, cost, fmt.Errorf("the fill was dropped: %s", result.Reason)
 	}
 	// The data cites the version shown: the assembled diff is its diff.
-	normalized, err := review.NormalizeStored(latest.Document)
-	if err != nil {
-		return nil, nil, cost, err
-	}
-	if doc, err := tiles.FromReview(normalized, tiles.Options{}); err == nil {
-		if problems := library.CheckAddedFill(tiles.NewValidator(), entry, result.Data, library.DiffOf(doc)); len(problems) > 0 {
-			return nil, nil, cost, fmt.Errorf("the fill does not fit the saved version: %s", problems[0])
-		}
+	if problems := library.CheckAddedFill(tiles.NewValidator(), entry, result.Data, addedtiles.DiffOfStored(latest.Document)); len(problems) > 0 {
+		return nil, nil, cost, fmt.Errorf("the fill does not fit the saved version: %s", problems[0])
 	}
 	return entry.Encoded, result.Data, cost, nil
 }

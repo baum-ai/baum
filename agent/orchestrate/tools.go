@@ -63,11 +63,9 @@ func toolsSection(mcp bool) string {
 		for _, t := range ReviewTools {
 			b.WriteString("- `" + t.Name + "`: " + t.Use + "\n")
 		}
-		b.WriteString("\nThe file tools read the checkout in the run directory: `head/` and `merge-base/`. `bundle.json` there holds the same pull request as one JSON document.\n")
 		return b.String()
 	}
 	b.WriteString("The file tools, over the run directory:\n\n" +
-		"- `bundle.json`: the whole pull request as one JSON document: `pull_request` (with its `commits`), `diff` (every hunk with its `patch`), `checks`, `conversation`, `threads`, `sessions` (prompts, command events, decisions), `references`, `attachments`, `review_config` and, on a new version, `previous`. Search it for a hunk's ID to read its patch.\n" +
-		"- `head/` and `merge-base/`: the checkout of the head and of the base.\n")
+		"- `bundle.json`: the whole pull request as one JSON document: `pull_request` (with its `commits`), `diff` (every hunk with its `patch`), `checks`, `conversation`, `threads`, `sessions` (prompts, command events, decisions), `references`, `attachments`, `review_config` and, on a new version, `previous`. Search it for a hunk's ID to read its patch.\n")
 	return b.String()
 }

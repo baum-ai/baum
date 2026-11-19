@@ -13,6 +13,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
@@ -84,7 +85,22 @@ func TestReviewsOfferSavedTypesAndRecordTheirUse(t *testing.T) {
 	if err != nil || got.UsedAt == "" || got.UsedIn[clone.Repository] == "" {
 		t.Errorf("use not recorded: %v %+v", err, got.UsedIn)
 	}
-	if other, _ := lib.Get(ctx, "go_type"); other.UsedAt != "" || !slices.Equal(tilelibrary.UsedTypes(composition), []string{"pinned_type"}) {
+	if other, _ := lib.Get(ctx, "go_type"); other.UsedAt != "" || !slices.Equal(tilelibrary.UsedTypes(composition, nil), []string{"pinned_type"}) {
 		t.Error("a type the version did not fill was recorded")
+	}
+
+	// A baum.review/2 version, which carries no composition, records the
+	// ready tiles that embed a definition.
+	doc, _ := json.Marshal(map[string]any{"schema": reviewv2.Name, "tiles": []reviewv2.Tile{
+		{ID: "tl_a", Type: "go_type", State: reviewv2.TileReady, Definition: json.RawMessage(`{"name":"go_type"}`)},
+		{ID: "tl_b", Type: "sql_type", State: reviewv2.TilePending, Definition: json.RawMessage(`{"name":"sql_type"}`)},
+		{ID: "tl_c", Type: "diagram", State: reviewv2.TileReady},
+	}})
+	l.recordTileUse(ctx, clone.Repository, generate.Result{Document: doc})
+	if got, _ := lib.Get(ctx, "go_type"); got.UsedIn[clone.Repository] == "" {
+		t.Errorf("v2 use not recorded: %+v", got.UsedIn)
+	}
+	if got, _ := lib.Get(ctx, "sql_type"); got.UsedAt != "" {
+		t.Errorf("a pending tile was recorded")
 	}
 }

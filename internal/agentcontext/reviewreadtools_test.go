@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,17 @@ var reviewVersions = map[string]string{
 	  "validation":[{"id":"v1","session":"s2","method":"go test ./search/...","checked":"the search tests","outcome":"passed","evidence_class":"ran","commit_label":{"state":"head","reason":"no edits after"},"event_ids":["e1"]}],
 	  "sessions":[{"id":"s2","vendor":"claude","restricted":false,"not_verified":[{"what":"the UI"}],"events":[{"id":"e1","at":"t","verb":"ran","summary":"go test"},{"id":"e2","at":"t","verb":"read","summary":"read a.go"}]},
 	   {"id":"s3","vendor":"codex","restricted":true}]}}`,
+}
+
+func init() {
+	reviewVersions["4"] = `{"schema":"baum.review/2","review":{"head":"h14a","base":"b13","merge_base":"m13","version":4},
+	 "summary":{"verdict":{"decision":"look_first","text":"x","points":[]},"risk_score":{"status":"scored","score":50}},
+	 "sections":[{"id":"s-api","title":"API","kind":"logical","hunks":["h1"],"risks":[{"id":"r1","tier":"high","text":"Breaks clients","state":"open"}]}],
+	 "index":{"hunks":[{"id":"h1","path":"a.go"}]}}`
+	reviewVersions["5"] = `{"schema":"baum.review/2","review":{"head":"h14","base":"b13","merge_base":"m13","version":5},
+	 "summary":{"verdict":{"decision":"approve","text":"y","points":[]},"risk_score":{"status":"scored","score":10}},
+	 "sections":[{"id":"s-api","title":"API","kind":"logical","hunks":["h1"],"risks":[{"id":"r1","tier":"high","text":"Breaks clients","state":"mitigated","mitigated_version":5}]}],
+	 "index":{"hunks":[{"id":"h1","path":"a.go"}]}}`
 }
 
 const reviewTranscript = `{"session":{"working_dir":"/home/dev/secret","user_email":"dev@example.com","prompts":[
@@ -151,6 +163,10 @@ func TestReviewReadToolsAnswer(t *testing.T) {
 			`"risks_mitigated":[{"section":"s-api","id":"r1"`, `"risks_removed":[{"section":"s-old","id":"r9"`,
 			`"recommendation":{"from":"look_first","to":"approve"}`, `"risk_score":{"from":40,"to":20}`}},
 		{tool: "review_version_diff", args: map[string]any{"from": 3}, failed: "before 3"},
+		// A baum.review/2 pair compares the verdict, and a v1 to v2 pair reads both.
+		{tool: "review_version_diff", args: map[string]any{"from": 4, "to": 5}, want: []string{`"versions":[4,5]`, `"recommendation":{"from":"look_first","to":"approve"}`,
+			`"risk_score":{"from":50,"to":10}`, `"risks_mitigated":[{"section":"s-api","id":"r1"`}},
+		{tool: "review_version_diff", args: map[string]any{"from": 3, "to": 4}, want: []string{`"schemas":["baum.review/1","baum.review/2"]`}},
 		// The checks its sessions ran.
 		{tool: "validation_runs", want: []string{`"method":"go test ./search/..."`, `"outcome":"passed"`, `"commit_label":{"state":"head"`, `"not_verified":[{"what":"the UI"}]`,
 			`"cited_events":[{"id":"e1"`, `"version":3`, `"from":"review"`}, not: []string{`"s3"`, `read a.go`}},
@@ -262,5 +278,39 @@ func TestActionsReadTheNewRoutesOfTheirRepositoryOnly(t *testing.T) {
 				t.Errorf("%s read %s", tt.tool, request)
 			}
 		}
+	}
+}
+
+func TestSnippetOfSlicesTheTextItSearched(t *testing.T) {
+	// U+023A lowers to a character two bytes longer, so offsets found in a
+	// lowered copy would run past the original's.
+	text := strings.Repeat("\u023a", 300) + " needle " + strings.Repeat("x", 300)
+	got, ok := snippetOf(text, []string{"needle"})
+	if !ok || !strings.Contains(got, "needle") {
+		t.Fatalf("snippet %q, %v", got, ok)
+	}
+	if _, ok := snippetOf(strings.Repeat("\u023a", 10), []string{"needle"}); ok {
+		t.Error("a match in text without one")
+	}
+}
+
+// A baum.review/1 section that went stale is still in the version: the diff
+// does not report it, or its risks, as removed.
+func TestVersionDiffKeepsStaleSections(t *testing.T) {
+	v1 := func(version int, derived string) []byte {
+		return []byte(`{"schema":"baum.review/1","review":{"version":` + strconv.Itoa(version) + `,"head":"h"},"summary":{"text":"S"},"relations":[],"index":{"hunks":[{"id":"h_1","path":"a.go"}]},` +
+			`"sections":[{"id":"sec_a","title":"A","kind":"logical","hunks":["h_1"],"summary":{"text":"A."},"risks":[{"id":"rk_a","tier":"medium","category":"correctness","text":"R","anchors":[]}],"blocks":[],"derived":{"state":"` + derived + `"}}]}`)
+	}
+	from, err := readVersionShape(v1(1, "new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, err := readVersionShape(v1(2, "stale"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := diffVersions(from, to)
+	if len(d.SectionsRemoved) != 0 || len(d.RisksRemoved) != 0 {
+		t.Errorf("a stale section reads as removed: %+v %+v", d.SectionsRemoved, d.RisksRemoved)
 	}
 }

@@ -194,12 +194,12 @@ func TestRecordUse(t *testing.T) {
 		{Definition: builtin.Encoded, Data: json.RawMessage(`{}`)},
 		{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`)},
 	}})
-	used := tilelibrary.UsedTypes(composition)
+	used := tilelibrary.UsedTypes(composition, nil)
 	if !slices.Equal(used, []string{"migrations"}) {
 		t.Fatalf("used %v", used)
 	}
 	pending, _ := json.Marshal(view.Composition{Schema: view.CompositionName, Library: []tiles.LibraryTile{{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`), Pending: true}}})
-	if got := tilelibrary.UsedTypes(pending); len(got) != 0 {
+	if got := tilelibrary.UsedTypes(pending, nil); len(got) != 0 {
 		t.Errorf("a pending tile counts as used: %v", got)
 	}
 	if err := s.RecordUse(ctx, "o/r", append(used, "unknown")); err != nil {

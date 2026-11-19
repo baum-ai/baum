@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
 )
@@ -16,19 +17,19 @@ import (
 // most recent ones are kept.
 const MaxUsedIn = 50
 
-// UsedTypes are the names of the saved types a stored review view
-// composition holds a ready fill of: its library tiles that are not pending
-// and not built in, each once. A composition that does not parse holds
-// none.
-func UsedTypes(composition json.RawMessage) []string {
+// UsedTypes are the names of the saved types a stored review holds a ready
+// fill of, each once: the ready tiles of a baum.review/2 document that embed
+// a definition, and the library tiles of a baum.review/1 view composition
+// that are not pending and not built in. Either may be empty.
+func UsedTypes(composition json.RawMessage, document []byte) []string {
+	names := reviewv2.ReadyTypes(document)
 	if len(composition) == 0 {
-		return nil
+		return names
 	}
 	c, err := view.Parse(composition)
 	if err != nil {
-		return nil
+		return names
 	}
-	var names []string
 	for _, lib := range c.Library {
 		if lib.Pending || library.IsBuiltin(lib.Definition) {
 			continue

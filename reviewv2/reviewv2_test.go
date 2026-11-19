@@ -12,6 +12,8 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/goldentest"
 	"github.com/baum-ai/baum/schema"
+	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 var fixtureNow = time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
@@ -168,13 +170,60 @@ func TestCompleteAfterV1(t *testing.T) {
 	}
 }
 
-// The converted baum.review/1 example keeps its text and gets its tiles
-// from its composition, owned where the composition placed them.
-func TestFromV1Example(t *testing.T) {
-	d, err := FromV1(readFile(t, "v1.review.json"), readFile(t, "v1.composition.json"))
+// fromV1WithComposition is FromV1 with the tiles and overview of the review
+// view built from the composition, its library and authored tiles unchecked:
+// what a host serving the converted document replaces them with after
+// checking them.
+func fromV1WithComposition(t *testing.T, document, composition []byte) Document {
+	t.Helper()
+	d, err := FromV1(document)
 	if err != nil {
 		t.Fatal(err)
 	}
+	r, err := view.ParseReview(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := view.Parse(composition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var extras []tiles.Tile
+	for _, lib := range c.Library {
+		var def struct {
+			Name  string `json:"name"`
+			Title string `json:"title"`
+		}
+		_ = json.Unmarshal(lib.Definition, &def)
+		if def.Name == "" {
+			continue
+		}
+		state := tiles.StateReady
+		if lib.Pending {
+			state = tiles.StatePending
+		}
+		title := def.Title
+		if title == "" {
+			title = def.Name
+		}
+		extras = append(extras, tiles.Tile{ID: tiles.LibraryTileID(def.Name), Type: tiles.TypeCustom, Title: title, Data: lib.Data, State: state, Definition: lib.Definition})
+	}
+	for _, a := range c.Authored {
+		kind, _, _ := strings.Cut(a.ID, "_")
+		extras = append(extras, tiles.Tile{ID: a.ID, Type: kind, Title: a.Title, Data: a.Data, State: tiles.StateReady})
+	}
+	v := view.Build(r, c, extras, nil)
+	d.Tiles = TilesOfView(v)
+	d.Overview = OverviewOfView(v)
+	d.Summary.RiskWhy = v.Overview.RiskSummary
+	EnsureBodies(&d)
+	return d
+}
+
+// The converted baum.review/1 example keeps its text and gets its tiles
+// from its composition, owned where the composition placed them.
+func TestFromV1Example(t *testing.T) {
+	d := fromV1WithComposition(t, readFile(t, "v1.review.json"), readFile(t, "v1.composition.json"))
 	goldentest.Golden(t, filepath.Join("testdata", "v1.v2.golden.json"), d)
 	if err := schema.ValidateReview2(encode(t, d)); err != nil {
 		t.Fatalf("the converted example does not validate: %v", err)
@@ -205,7 +254,7 @@ func TestFromV1Example(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	withVerdict, err := FromV1(recommended, readFile(t, "v1.composition.json"))
+	withVerdict, err := FromV1(recommended)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +274,7 @@ func TestFromV1Example(t *testing.T) {
 	}
 
 	// Without a composition there are no tiles and no overview parts.
-	bare, err := FromV1(readFile(t, "v1.review.json"), nil)
+	bare, err := FromV1(readFile(t, "v1.review.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,5 +492,20 @@ func TestSubstrate(t *testing.T) {
 	doc := Substrate(d)
 	if len(doc.Changes) != 3 || len(doc.Risks) != 1 || doc.Risks[0].Change != "sec_retry_policy" {
 		t.Fatalf("substrate = %+v", doc)
+	}
+}
+
+// FromV1 converts a document alone: a library tile (a saved type's HTML
+// definition) only reaches a document after the host that serves it has
+// checked it, never from the conversion.
+func TestFromV1CarriesNoLibraryTiles(t *testing.T) {
+	d, err := FromV1(readFile(t, "v1.review.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tile := range d.Tiles {
+		if len(tile.Definition) != 0 || tile.Type == tiles.TypeCustom {
+			t.Errorf("tile %s carries a definition", tile.ID)
+		}
 	}
 }

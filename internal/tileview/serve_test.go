@@ -120,6 +120,31 @@ func TestServeV2WithAddedTiles(t *testing.T) {
 	}
 }
 
+// An added tile cites hunks of a stale section no more than of a current
+// one: it is owned by a current section, else context.
+func TestServeV2AddedTileSkipsStaleSections(t *testing.T) {
+	stored, err := os.ReadFile(filepath.Join("..", "..", "reviewv2", "testdata", "v2.golden.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc reviewv2.Document
+	if err := json.Unmarshal(stored, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for i := range doc.Sections {
+		if doc.Sections[i].ID == "sec_delivery_errors" {
+			doc.Sections[i].Derived = json.RawMessage(`{"state":"stale"}`)
+		}
+	}
+	stale, _ := json.Marshal(doc)
+	for _, section := range []string{"", "sec_delivery_errors"} {
+		d := servedDocument(t, Serve(stale, nil, []AddedTile{addedAPI(t, "h_a00000000002", section)}, tiles.Options{}))
+		if tile := servedTile(d, "api_change"); tile == nil || tile.Owner == "sec_delivery_errors" {
+			t.Errorf("added on %q: tile %+v on a stale section", section, tile)
+		}
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
