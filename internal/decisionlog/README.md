@@ -236,7 +236,8 @@ diff and each decision's title, summary, rationale, stored evidence, files
 and superseded flag. It reads no full session transcript. File overlap,
 branch, date and session membership alone cannot establish relevance;
 file-less human decisions remain eligible. Input is capped at 384 KiB and
-output at 4,096 tokens. A batch has three minutes including Git reads, and
+output at 4,096 tokens plus 300 per decision in the batch, so a full batch's
+reply is not cut off before it is submitted. A batch has three minutes including Git reads, and
 the model call has two. It uses the configured extraction backend/model and
 gate, with no hosted-service dependency. One validated result per supplied
 decision ID is required: `relevant`, `unrelated` or `uncertain`, with a short
