@@ -9,7 +9,16 @@ import {
   type ReactNode,
 } from "react";
 import { request } from "./api";
-import { activeTheme, applyTheme, builtinThemes, type Theme, type ThemeBase } from "./theme";
+import { invoke } from "./desktop/native";
+import {
+  activeTheme,
+  allowedTokens,
+  applyTheme,
+  builtinThemes,
+  slotTheme,
+  type Theme,
+  type ThemeBase,
+} from "./theme";
 
 /** The key held with 1 to 8 for the sidebar's pages; "" is the platform's
  *  command key (⌘ on a Mac, Ctrl elsewhere). */
@@ -54,6 +63,10 @@ const PreferencesContext = createContext({
   renameTheme: async (_id: string, _name: string): Promise<void> => {},
   deleteTheme: async (_id: string): Promise<void> => {},
 });
+
+function isDesktopApp() {
+  return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
 
 function normalizeThemes(saved: unknown): Theme[] {
   const list: Theme[] = [];
@@ -152,6 +165,28 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     dark?.addEventListener("change", apply);
     return () => dark?.removeEventListener("change", apply);
   }, [preferences, preview]);
+  // The desktop app keeps what the saved theme resolves to for its own
+  // screens, which cannot ask the daemon. A preview is never sent.
+  const sentTheme = useRef("");
+  useEffect(() => {
+    if (!ready || !isDesktopApp()) return;
+    const palette = (slot: ThemeBase) => {
+      const theme = slotTheme(preferences, slot);
+      return { base: theme.base, tokens: allowedTokens(theme) };
+    };
+    const args = { mode: preferences.theme, light: palette("light"), dark: palette("dark") };
+    const key = JSON.stringify(args);
+    if (key === sentTheme.current) return;
+    sentTheme.current = key;
+    void (async () => {
+      try {
+        await invoke("save_theme", args);
+      } catch {
+        // Retry the next time the theme changes or the page loads.
+        if (sentTheme.current === key) sentTheme.current = "";
+      }
+    })();
+  }, [preferences, ready]);
   const update = useCallback(
     async (patch: Partial<Preferences>) => {
       if (!ready) return;

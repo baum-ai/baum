@@ -1,13 +1,13 @@
 import { createRoot } from "react-dom/client";
 import { Setup } from "./setup";
-import { followSystemTheme } from "./system-theme";
+import { followTheme } from "./follow-theme";
 import "./screen.css";
 import "./setup.css";
 import { blockBrowserMenu } from "../native-menu";
 import { trackHidden } from "../visible-interval";
 import { installTextHistory } from "../text-history";
 import { openOutsideLinksInBrowser } from "../outside-links";
-followSystemTheme();
+followTheme();
 blockBrowserMenu();
 trackHidden();
 installTextHistory();

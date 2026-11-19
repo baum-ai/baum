@@ -63,6 +63,7 @@ connecting to the daemon:
 | `setup` | first-run completion and installed CLI command records |
 | `notifications` | notification-kind toggles and the OS permission answer |
 | `window` | the page zoom level |
+| `theme` | the colour theme the native screens apply: the mode and the theme in each slot |
 | `updates` | versions whose automatic installation failed |
 
 Every change reads the latest document and replaces only its section, under
@@ -87,9 +88,19 @@ Its rail uses the app sidebar's canvas and Stumpy mark. UI colors come from
 `../viewer/src/palette.css`; Stumpy's fixed colors live with the illustration in
 `../viewer/src/components/stumpy-artwork.ts`. Native SVG icon templates reuse
 both sources, resolved by `scripts/prepare-icons.mjs` before rasterization.
-Setup, connecting and tray screens follow the system's appearance, including
-changes while they are open; the app's saved theme preference applies to its
-daemon-served pages.
+Setup, connecting and tray screens follow the active colour theme, including
+changes while they are open. They cannot ask the daemon (their CSP allows only
+`ipc:`, and `localStorage` is not shared with the daemon's changing loopback
+origin), so the app caches what the saved theme resolves to (`src/theme.rs`):
+the daemon pages report it with `save_theme` and the screens read it with
+`theme_state`. The app checks only its shape (token names `--[a-z0-9-]{1,40}`, at
+most 40 tokens per theme, values of at most 64 bytes, at most 32 KiB, mode
+`system`, `light` or `dark`, base `light` or `dark`) and refuses anything else
+without changing what is stored. An initialization script on the main window and
+the tray panel applies the saved theme before the first paint; it is built when
+the window is created, so after a change a later page load paints the theme saved
+at startup until the page applies the current one. Without a saved theme the
+screens follow the system's light or dark.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
@@ -801,7 +812,7 @@ doing anything (`src/zoom.rs`).
   button opens, which changes nothing and returns only the chosen folder. The
   page registers it through the daemon's own API. It also allows the zoom
   commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
-  offered levels, and the updater's (`update_state`, `check_for_updates`,
+  offered levels, `save_theme` (shape-checked, see First run), and the updater's (`update_state`, `check_for_updates`,
   `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
   read the state, start a check, install only an update the app has already
   downloaded and verified, and record that a notice was closed. It also

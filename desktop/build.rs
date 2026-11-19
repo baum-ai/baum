@@ -25,6 +25,8 @@ fn main() {
         "zoom_state",
         "set_zoom",
         "step_zoom",
+        "theme_state",
+        "save_theme",
         "update_state",
         "check_for_updates",
         "install_update",

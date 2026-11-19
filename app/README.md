@@ -54,8 +54,8 @@ chunk.
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
-connecting and tray screens use the viewer palette that the local app uses,
-following the system's light or dark appearance.
+connecting and tray screens use the viewer palette that the local app uses and
+follow the active colour theme (`src/desktop/follow-theme.ts`, below).
 Setup has a decorative leaf banner just above its step label, using the
 transparent Discord artwork in both themes. Its width is capped so leaves stay
 visible on large screens, and it follows the form on tall windows. It is static,
@@ -87,6 +87,14 @@ A theme the agent proposes is previewed the same way, and `tileThemeMessage`
 builds the tile protocol's `theme` message for a theme. `../viewer/src/themes/custom.css`
 stays empty for a build that wants fixed overrides; see
 [custom color themes](../viewer/README.md#custom-color-themes).
+The desktop app's native screens (setup, connecting, tray panel) cannot ask the
+daemon, so in the desktop app `PreferencesProvider` reports the saved theme (the
+mode and the theme in each slot, with its base and allowlisted tokens) to the
+app with `save_theme` whenever it changes, never for a preview. The screens call
+`followTheme()`, which reads it with `theme_state`, applies it through
+`applyTheme`, follows the system's appearance in system mode, and reads again
+when the window gets the focus or becomes visible (the tray panel is one window
+that stays open). Without the state it follows the system's light or dark.
 
 `pnpm lint:palette` runs the color rule by itself; `pnpm lint` and `pnpm check`
 include it, so the normal CI app check enforces it. It scans app sources, shared

@@ -77,7 +77,11 @@ export function activeSlot(prefs: Pick<ThemePrefs, "theme">, systemDark: boolean
  *  active slot. A slot naming a theme that is gone gets its built-in. */
 export function activeTheme(prefs: ThemePrefs, systemDark: boolean, preview?: Theme | null): Theme {
   if (preview) return preview;
-  const slot = activeSlot(prefs, systemDark);
+  return slotTheme(prefs, activeSlot(prefs, systemDark));
+}
+
+/** The theme a slot names; a slot naming a theme that is gone gets its built-in. */
+export function slotTheme(prefs: ThemePrefs, slot: ThemeBase): Theme {
   const id = (slot === "dark" ? prefs.dark_theme : prefs.light_theme) || `default-${slot}`;
   return (
     prefs.themes.find((theme) => theme.id === id) ??
@@ -103,10 +107,20 @@ export function applyTheme(root: HTMLElement, theme: Theme) {
 /** The tile protocol's `theme` message (baum.tile/1) for a theme: its base and
  *  its allowlisted tokens. A tile frame replaces its tokens with these. */
 export function tileThemeMessage(theme: Theme) {
+  return {
+    protocol: "baum.tile/1",
+    kind: "theme",
+    theme: theme.base,
+    tokens: allowedTokens(theme),
+  };
+}
+
+/** The theme's allowlisted tokens that hold a string. */
+export function allowedTokens(theme: Theme): Record<string, string> {
   const tokens: Record<string, string> = {};
   for (const token of THEME_TOKENS) {
     const value = Object.hasOwn(theme.tokens, token) ? theme.tokens[token] : undefined;
     if (typeof value === "string") tokens[token] = value;
   }
-  return { protocol: "baum.tile/1", kind: "theme", theme: theme.base, tokens };
+  return tokens;
 }
