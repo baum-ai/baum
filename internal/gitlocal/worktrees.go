@@ -38,19 +38,33 @@ type Worktree struct {
 // the read environment (no system or global configuration, no GIT_ variable
 // of the caller's, a home directory with nothing in it). Listing worktrees
 // reads no object, runs no hook, filter or helper, and never contacts a
-// remote. It needs git 2.36 or newer, for -z.
+// remote. A git older than 2.36 has no -z: the list is then read one
+// attribute per line, which misreads only a path holding a newline
+// (trustedWorktrees drops such a linked worktree; a main one is cut short).
 func Worktrees(ctx context.Context, dir string) ([]Worktree, error) {
 	common, err := CommonDir(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	out, err := run(ctx, runSpec{dir: common, env: worktreeEnv(common), limit: maxWorktreeListBytes, timeout: DefaultCommandTimeout},
-		"worktree", "list", "--porcelain", "-z")
+	spec := runSpec{dir: common, env: worktreeEnv(common), limit: maxWorktreeListBytes, timeout: DefaultCommandTimeout}
+	out, err := run(ctx, spec, "worktree", "list", "--porcelain", "-z")
+	separator := "\x00"
+	if noNULOption(err) {
+		out, err = run(ctx, spec, "worktree", "list", "--porcelain")
+		separator = "\n"
+	}
 	if err != nil {
 		return nil, err
 	}
 	home, _ := os.UserHomeDir()
-	return trustedWorktrees(parseWorktrees(out), common, home), nil
+	return trustedWorktrees(parseWorktrees(out, separator), common, home), nil
+}
+
+// noNULOption reports git refusing worktree list's -z, as git before 2.36
+// does: "error: unknown switch `z'".
+func noNULOption(err error) bool {
+	var gitErr *Error
+	return errors.As(err, &gitErr) && strings.Contains(gitErr.Stderr, "unknown switch `z'")
 }
 
 // CommonDir is the absolute, cleaned git directory shared by every working
@@ -213,10 +227,10 @@ func worktreeEnv(gitDir string) []string {
 	return append(mirrorEnv(gitDir), "GIT_CONFIG_GLOBAL="+os.DevNull)
 }
 
-// parseWorktrees reads git worktree list --porcelain -z: one record per
-// worktree, attributes separated by NUL and records by an empty attribute.
-// The first record is the main worktree.
-func parseWorktrees(out []byte) []Worktree {
+// parseWorktrees reads git worktree list --porcelain: one record per
+// worktree, attributes separated by separator (NUL with -z, else a newline)
+// and records by an empty attribute. The first record is the main worktree.
+func parseWorktrees(out []byte, separator string) []Worktree {
 	var worktrees []Worktree
 	var current *Worktree
 	bare := false
@@ -227,7 +241,7 @@ func parseWorktrees(out []byte) []Worktree {
 		current, bare = nil, false
 	}
 	first := true
-	for _, field := range strings.Split(string(out), "\x00") {
+	for _, field := range strings.Split(string(out), separator) {
 		if field == "" {
 			flush()
 			continue
