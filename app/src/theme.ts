@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 /** Custom colour themes: which theme is active, and putting it on the page.
  *  Pure functions; preferences.tsx runs them in an effect. */
 
@@ -102,6 +104,23 @@ export function applyTheme(root: HTMLElement, theme: Theme) {
       root.style.setProperty(token, value);
     else root.style.removeProperty(token);
   }
+}
+
+/** The attributes that show a theme on one element, not the page, for a
+ *  preview: `data-theme-scope` makes the palette's recipes apply to the
+ *  element (oss/viewer/src/palette.css), `data-theme` picks the base whatever
+ *  the page's mode is, and the theme's allowlisted tokens are set inline, as
+ *  `applyTheme` sets them on the root. */
+export function themeScope(theme: Theme): {
+  "data-theme-scope": "";
+  "data-theme": ThemeBase;
+  style: CSSProperties;
+} {
+  return {
+    "data-theme-scope": "",
+    "data-theme": theme.base,
+    style: { colorScheme: theme.base, ...allowedTokens(theme) } as CSSProperties,
+  };
 }
 
 /** The tile protocol's `theme` message (baum.tile/1) for a theme: its base and

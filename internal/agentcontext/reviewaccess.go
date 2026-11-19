@@ -45,7 +45,7 @@ var reviewReadTools = []string{
 	"decisions", "decision", "features", "feature", "feature_build", "file_history", "timeline_transcript",
 	// Analytics, and Settings as the app shows them (reads, never saves).
 	"analytics", "plan_usage", "diagnostics_summary",
-	"settings_general", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer",
+	"settings_general", "settings_appearance", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer",
 	"prompts", "prompt", "repository_reviews", "repository_prompts", "repository_registration",
 }
 

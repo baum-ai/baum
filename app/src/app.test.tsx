@@ -1331,7 +1331,7 @@ it("opens on General and marks sections needing attention", async () => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic(demoClone, automaticOverview, { backend: "anthropic", model: "claude-opus-5-5" });
   await act(async () => root.render(<App />));
-  expect(node.querySelector("#preferred-theme")).not.toBeNull();
+  expect(node.querySelector("#page-modifier")).not.toBeNull();
   const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("General");
   const fixes = nav.querySelector<HTMLButtonElement>('[data-section="fixes"]')!;
@@ -1346,8 +1346,7 @@ const appearanceThemes = [
   { id: "default-dark", name: "Default dark", base: "dark", builtin: true, tokens: {} },
   { id: "c-1", name: "Dusk", base: "dark", tokens: { "--color-paper": "#e8eef4" } },
 ];
-it("chooses a theme for each slot, any base in either, and renames and deletes custom ones", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
+const appearanceHarness = (over: Record<string, unknown> = {}) => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic();
   const stubbed = vi.mocked(fetch).getMockImplementation()!;
@@ -1358,6 +1357,7 @@ it("chooses a theme for each slot, any base in either, and renames and deletes c
     light_theme: "default-light",
     dark_theme: "default-dark",
     themes: appearanceThemes,
+    ...over,
   };
   const sent: { method: string; path: string; body: unknown }[] = [];
   vi.mocked(fetch).mockImplementation((...args) => {
@@ -1385,31 +1385,86 @@ it("chooses a theme for each slot, any base in either, and renames and deletes c
     }
     return stubbed(...args);
   });
+  return sent;
+};
+const radios = (group: string) => [
+  ...node.querySelectorAll<HTMLInputElement>(
+    `[role="radiogroup"][aria-label="${group}"] input[type="radio"]`,
+  ),
+];
+const radio = (group: string, name: string) =>
+  radios(group).find((input) => input.getAttribute("aria-label") === name)!;
+const row = (slot: string) => node.querySelector<HTMLElement>(`.theme-row[data-slot="${slot}"]`)!;
+const modeButton = (name: string) =>
+  [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Theme mode"] button')].find(
+    (button) => button.textContent === name,
+  )!;
+
+it("has an Appearance section after General, and General holds no theme controls", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  appearanceHarness();
   await act(async () => root.render(<App />));
-  const light = node.querySelector<HTMLSelectElement>("#light-theme")!;
-  const dark = node.querySelector<HTMLSelectElement>("#dark-theme")!;
-  expect([...light.options].map((o) => o.text)).toEqual(["Default light", "Default dark", "Dusk"]);
-  expect(light.value).toBe("default-light");
+  const sections = [
+    ...node.querySelectorAll<HTMLElement>('nav[aria-label="Settings sections"] [data-section]'),
+  ].map((item) => item.dataset.section);
+  expect(sections.slice(0, 2)).toEqual(["general", "appearance"]);
+  expect(node.querySelector("#preferred-theme, #light-theme, #dark-theme")).toBeNull();
+  expect(node.querySelector(".theme-row, [aria-label='Theme mode']")).toBeNull();
+  const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
+  await act(async () =>
+    nav.querySelector<HTMLButtonElement>('[data-section="appearance"]')!.click(),
+  );
+  expect(location.search).toBe("?page=settings&section=appearance");
+  expect(node.querySelector("[aria-label='Theme mode']")).not.toBeNull();
+  expect(node.querySelector("#page-modifier")).toBeNull();
+  expect(row("light")).not.toBeNull();
+});
+
+it("chooses a theme for each slot with swatches, any base in either, and renames and deletes custom ones", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  const sent = appearanceHarness();
+  await act(async () => root.render(<App />));
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toEqual([
+    "Default light",
+    "Default dark",
+    "Dusk",
+  ]);
+  expect(radio("Light theme", "Default light").checked).toBe(true);
   // A dark theme in the light slot gives a dark page while the light slot is in use.
-  await choose(light, "c-1");
+  await act(async () => radio("Light theme", "Dusk").click());
   expect(sent).toContainEqual({
     method: "PUT",
     path: "api/settings/appearance",
     body: { light_theme: "c-1" },
   });
+  expect(radio("Light theme", "Dusk").checked).toBe(true);
   expect(document.documentElement.dataset.theme).toBe("dark");
   expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
-  await choose(light, "default-light");
+  await act(async () => radio("Light theme", "Default light").click());
   expect(document.documentElement.dataset.theme).toBe("light");
   expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("");
-  await choose(dark, "c-1");
+  await act(async () => radio("Dark theme", "Dusk").click());
   expect(sent).toContainEqual({
     method: "PUT",
     path: "api/settings/appearance",
     body: { dark_theme: "c-1" },
   });
-  // The custom theme is listed with a menu to rename and delete it.
-  const menuButton = node.querySelector<HTMLButtonElement>('[aria-label="Actions for Dusk"]')!;
+  await act(async () => modeButton("Dark").click());
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { theme: "dark" },
+  });
+  // The custom theme's thumbnail has a menu to rename and delete it, outside its radio's label.
+  const menuButton = node.querySelector<HTMLButtonElement>(
+    '[aria-label="Actions for Dusk in light theme"]',
+  )!;
+  expect(menuButton.closest("label")).toBeNull();
+  expect(row("light").querySelectorAll('[aria-label^="Actions for"]')).toHaveLength(1);
+  expect(row("dark").querySelectorAll('[aria-label^="Actions for"]')).toHaveLength(1);
+  expect(
+    row("light").querySelector('[aria-label="Actions for Default light in light theme"]'),
+  ).toBeNull();
   await act(async () => menuButton.click());
   const item = (name: string) =>
     [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((i) =>
@@ -1430,9 +1485,11 @@ it("chooses a theme for each slot, any base in either, and renames and deletes c
     path: "api/settings/appearance/themes/c-1",
     body: { name: "Midnight" },
   });
-  expect([...light.options].map((o) => o.text)).toContain("Midnight");
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toContain("Midnight");
   await act(async () =>
-    node.querySelector<HTMLButtonElement>('[aria-label="Actions for Midnight"]')!.click(),
+    node
+      .querySelector<HTMLButtonElement>('[aria-label="Actions for Midnight in light theme"]')!
+      .click(),
   );
   await act(async () => item("Delete").click());
   await act(async () =>
@@ -1445,7 +1502,48 @@ it("chooses a theme for each slot, any base in either, and renames and deletes c
     path: "api/settings/appearance/themes/c-1",
     body: {},
   });
-  expect([...light.options].map((o) => o.text)).toEqual(["Default light", "Default dark"]);
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toEqual([
+    "Default light",
+    "Default dark",
+  ]);
+});
+
+it("marks the slot in use by the theme mode and the system's mode", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("dark"),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+  const inUse = () => ["light", "dark"].filter((slot) => row(slot).textContent?.includes("in use"));
+  appearanceHarness({ theme: "system" });
+  await act(async () => root.render(<App />));
+  expect(inUse()).toEqual(["dark"]);
+  expect(row("dark").hasAttribute("data-in-use")).toBe(true);
+  await act(async () => modeButton("Light").click());
+  expect(inUse()).toEqual(["light"]);
+  expect(row("light").querySelector("h3")!.textContent).toBe("Light theme · in use");
+  expect(row("dark").querySelector("h3")!.textContent).toBe("Dark theme");
+});
+
+it("draws each theme's miniature on a scoped element with its own base and tokens", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness({ theme: "light", light_theme: "c-1" });
+  await act(async () => root.render(<App />));
+  const mini = (group: string, name: string) =>
+    radio(group, name).closest("label")!.querySelector<HTMLElement>(".theme-mini")!;
+  // Every thumbnail is aria-hidden and scoped to its theme, the chosen one too.
+  const dusk = mini("Light theme", "Dusk");
+  expect(dusk.hasAttribute("data-theme-scope")).toBe(true);
+  expect(dusk.dataset.theme).toBe("dark");
+  expect(dusk.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
+  expect(dusk.getAttribute("aria-hidden")).toBe("true");
+  expect(radio("Light theme", "Dusk").checked).toBe(true);
+  const builtin = mini("Light theme", "Default light");
+  expect(builtin.dataset.theme).toBe("light");
+  expect(builtin.style.getPropertyValue("--color-paper")).toBe("");
+  expect(mini("Dark theme", "Default dark").dataset.theme).toBe("dark");
+  expect(radio("Dark theme", "Dusk").closest("label")!.title).toBe("Dusk");
 });
 it("summarises the prompts in the section list and marks outdated ones", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=prompts");
@@ -1502,9 +1600,11 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
     });
   // Shift+J and Shift+K move through the sections.
   await key("J", true);
+  expect(location.search).toBe("?page=settings&section=appearance");
+  await key("J", true);
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
-  await key("4");
+  await key("5");
   expect(location.search).toBe("?page=settings&section=connections");
   await key("K", true);
   await key("ArrowUp", true);

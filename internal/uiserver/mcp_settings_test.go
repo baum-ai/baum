@@ -218,8 +218,13 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 	var appearance map[string]any
 	_ = json.Unmarshal(f.route(t, "/api/settings/appearance"), &appearance)
 	text := call(chat, "settings_general", nil)
-	for _, key := range []string{"theme", "key_hints", "page_modifier", "review_page", "light_theme", "dark_theme"} {
+	for _, key := range []string{"key_hints", "page_modifier", "review_page"} {
 		readSameJSON(t, "settings_general "+key, readField(t, text, key), mustJSON(t, appearance[key]))
+	}
+	// Appearance: the theme mode, the slots and the themes.
+	themeText := call(chat, "settings_appearance", nil)
+	for _, key := range []string{"theme", "light_theme", "dark_theme"} {
+		readSameJSON(t, "settings_appearance "+key, readField(t, themeText, key), mustJSON(t, appearance[key]))
 	}
 	if f.fetches.Load() != 0 || !strings.Contains(text, `"provider":"claude"`) {
 		t.Errorf("settings_general read %d plans: %s", f.fetches.Load(), text)
@@ -353,7 +358,7 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 			t.Errorf("an action's %s of another repository: %v %s", tool, failed, text)
 		}
 	}
-	for _, tool := range []string{"settings_general", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"} {
+	for _, tool := range []string{"settings_general", "settings_appearance", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"} {
 		params, _ := json.Marshal(map[string]any{"name": tool, "arguments": map[string]any{}})
 		r := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":`+string(params)+`}`))
 		r.Header.Set("Content-Type", "application/json")

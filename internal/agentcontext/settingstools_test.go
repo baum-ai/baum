@@ -165,7 +165,7 @@ func runDirect(t *testing.T, s *Server, consumer Consumer, page *PageContext, na
 	return tool.Call(context.Background(), c, b)
 }
 
-var settingsToolNames = []string{"settings_general", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"}
+var settingsToolNames = []string{"settings_general", "settings_appearance", "settings_reviews", "settings_fixes", "settings_connections", "settings_computer", "prompts", "prompt", "diagnostics_summary"}
 var repositoryToolNames = []string{"repository_reviews", "repository_prompts", "repository_registration"}
 
 // Every Settings and repository page tool, called as a chat with and without
@@ -180,9 +180,10 @@ func TestSettingsToolsCarryNoSecret(t *testing.T) {
 		want []string
 		page *PageContext
 	}{
-		{"settings_general", nil, []string{`"theme":"dark"`, `"key_hints":false`, `"page_modifier":"alt"`, `"review_page":"tiles"`, `"light_theme":"default-light"`, `"dark_theme":"c-1"`,
-			`{"id":"c-1","name":"Midnight","base":"dark","tokens":{"--color-paper":"#101820"},"builtin":false}`, `"theme_tokens":{"seeds":["--color-ink"`, `"roles":["--action-primary"`, `"theme_defaults":{"dark":{`, `"slot_values":{"dark":{`, `"--color-paper":"#101820"`, `"theme_note":`,
+		{"settings_general", nil, []string{`"key_hints":false`, `"page_modifier":"alt"`, `"review_page":"tiles"`,
 			`{"provider":"claude","name":"Claude Code","shown":true,"default":true,"explicit":false}`, `{"provider":"codex","name":"Codex","shown":false,"default":false,"explicit":true}`}, nil},
+		{"settings_appearance", nil, []string{`"theme":"dark"`, `"light_theme":"default-light"`, `"dark_theme":"c-1"`,
+			`{"id":"c-1","name":"Midnight","base":"dark","tokens":{"--color-paper":"#101820"},"builtin":false}`, `"theme_tokens":{"seeds":["--color-ink"`, `"roles":["--action-primary"`, `"theme_defaults":{"dark":{`, `"slot_values":{"dark":{`, `"--color-paper":"#101820"`, `"theme_note":`}, nil},
 		{"settings_reviews", nil, []string{`"automatic":{"enabled":true,"pull_requests":"authored"}`, `"backend":"claude","model":"opus","effort":"high"`, `"decision_capture":{"enabled":true,"backend":"","model":"","effort":"","effective_backend":"claude","backend_undetermined":false,"effective_model":"haiku","model_ignored":false}`, `"tile_reviews":true`}, nil},
 		{"settings_fixes", nil, []string{`{"backend":"codex","model":"gpt-5","effort":"low","same_as_reviews":false}`}, nil},
 		{"settings_connections", nil, []string{`"state":"pending"`, `"host":"other host"`, `"login":"octo"`, `"source":"environment"`, `"override":true`, `"saved":true`, `"workflow":true`, `"error":"auth_request_failed"`, `"organizations_not_reachable":["acme-corp"]`, `"codex_hooks":{"state":"untrusted","checked_at":"2026-11-12T09:30:00Z"}`}, nil},
@@ -220,6 +221,16 @@ func TestSettingsToolsCarryNoSecret(t *testing.T) {
 			t.Errorf("%s: %s", what, text)
 		}
 		absent(t, what, text, settingsLeaks...)
+	}
+	// General no longer carries the theme settings, which are Appearance's.
+	general, err := runDirect(t, s, Consumer{Kind: Chat}, nil, "settings_general", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"theme"`, `"light_theme"`, `"dark_theme"`, `"themes"`, `"theme_tokens"`, `"theme_defaults"`, `"slot_values"`, `"theme_note"`} {
+		if strings.Contains(general, field) {
+			t.Errorf("settings_general carries %s: %s", field, general)
+		}
 	}
 	// The settings were read through the routes the tools declare and never
 	// through the plan usage, Codex hooks or sign-in routes that would fetch,

@@ -1680,13 +1680,32 @@ shows one section at a time, listed on the left with a line on where each
 stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
-straight to Connections. **General**, the default, offers System, Light and Dark
-as the **Preferred theme**, under it a **Light theme** and a **Dark theme** select
-(the built-in and custom themes, whatever their base, in either slot) and the
-custom themes with a menu to rename or delete each (a delete asks first and
-resets a slot that used it), the modifier
+straight to Connections. **General**, the default, offers the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
-elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
+elsewhere) shows keyboard shortcut hints; each names only the platform's key. **Appearance**
+(next, `src/settings-appearance.tsx`) has the **Theme mode** segmented control
+(System, Light or Dark, with a hint: System follows the operating system,
+otherwise the mode names which slot is used), then a row for each slot, **Light
+theme** and **Dark theme**. The row of the slot in use, by the mode and the
+operating system's mode and ignoring any proposal preview, says "· in use" after
+its heading. A row is a wrapping strip of thumbnails, one per theme (the
+built-ins, then the person's own), each a small sketch of baum's own layout
+(the sidebar on the canvas, the page's panel with its header line and primary
+action, text bars and a diff with an added and a removed line) with the theme's
+name under it. The thumbnail is the choice: the row is a radio group labelled
+with the slot's title, each thumbnail a visually hidden native radio, so the
+arrow keys move within a row (Settings' own keys leave the arrows alone there),
+and the chosen one has a check mark and a focus-token outline. A choice applies
+at once and saves like any preference, through the same update path. Each
+thumbnail is a `data-theme-scope` element with `data-theme` set to the theme's
+base and its allowlisted tokens inline (`themeScope` in `src/theme.ts`), so it
+shows its own theme whatever the page's mode is (see
+[custom color themes](../viewer/README.md#custom-color-themes)); it is drawn
+with palette roles only and hidden from assistive technology. A custom theme's
+thumbnail has a ⋯ menu in its corner, outside the radio's label, to rename it
+(typed in a row below the strips) or delete it (a delete asks first and resets a
+slot that used it).
+Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
 `full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
@@ -1697,7 +1716,7 @@ either, and an empty or vanished id is `default-light` or `default-dark`), and
 `themes` lists the built-ins first (`builtin: true`, no tokens) and then the
 person's own (`{id, name, base, tokens}`, at most 32; a token is one of the
 palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
-`light_theme` and `dark_theme` and refuses an unknown id.
+`light_theme` and `dark_theme` (set by the thumbnails) and refuses an unknown id.
 `POST api/settings/appearance/themes` (`{name, base, tokens, slot}`; `slot` is
 `light`, `dark` or empty) creates a theme under a new `c-` id and may put it in
 a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`) renames it, and

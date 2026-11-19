@@ -23,6 +23,7 @@ import (
 // The targets, by page:
 //
 //   - settings: TargetAppearance and TargetPlanUsage+provider (General),
+//     TargetThemeChoice (Appearance),
 //     TargetReviews and TargetDecisions (Reviews), TargetFixes (Fixes),
 //     TargetTimeLimits, TargetJobConcurrency, TargetCodexApprovals and
 //     TargetAgentEnv+NAME (This computer), TargetPrompt+id (Prompts, the
@@ -39,6 +40,7 @@ import (
 //     pending review of the pull request the page shows.
 const (
 	TargetAppearance         = "appearance"
+	TargetThemeChoice        = "theme_choice"
 	TargetTheme              = "theme"
 	TargetPlanUsage          = "plan_usage/"
 	TargetReviews            = "reviews"
@@ -93,7 +95,7 @@ func ParsePullRequestTarget(target string) (repository string, number int, ok bo
 var (
 	// proposePageTools are the propose_* tools of each page.
 	proposePageTools = map[string][]string{
-		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
+		PageSettings:     {"propose_appearance", "propose_theme_choice", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
 		PageRepositories: {"propose_repository_settings", "propose_prompt", "propose_prompt_reset"},
 		PageInbox:        {"propose_inbox"},
 		PageGroup:        {"propose_group"},
@@ -104,6 +106,7 @@ var (
 	// section's tools.
 	settingsSectionProposals = map[string][]string{
 		"general":    {"propose_appearance", "propose_plan_usage"},
+		"appearance": {"propose_theme_choice"},
 		"reviews":    {"propose_reviews", "propose_decision_capture", "propose_labs"},
 		"fixes":      {"propose_fixes"},
 		"computer":   {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
@@ -158,12 +161,12 @@ func proposeThemeTool() Tool {
 	return Tool{
 		Name: "propose_theme",
 		Description: "Proposes a custom colour theme for the baum app: a name, a base (light or dark) and colour overrides of the app's palette tokens. Works on any page. The app previews the proposal at once; nothing is saved until the person saves it, choosing its name and whether it is for the light or the dark slot (the slot the theme's base names unless they pick the other), and the preview ends when they dismiss it. " +
-			"Use settings_general to read the person's themes, the tokens a theme may set (theme_tokens) and what each resolves to by default (theme_defaults) in the light and dark themes. Prefer to change seeds, which the rest of the palette derives from: " + themeSeedList() + ". On a dark base the text colour comes from --color-paper (the text ramp mixes it toward --color-shadow) and the surfaces from --color-shadow, so set --color-paper to a light colour; --color-ink does not colour dark-theme text, so setting it there does nothing for text. On a light base --color-ink is the text and --color-paper the page. Set a role (the other tokens) only where a seed cannot reach. Each value is one colour: #rgb, #rrggbb, #rrggbbaa, rgb(), hsl() or oklch(). " +
+			"Use settings_appearance to read the person's themes, the tokens a theme may set (theme_tokens) and what each resolves to by default (theme_defaults) in the light and dark themes. Prefer to change seeds, which the rest of the palette derives from: " + themeSeedList() + ". On a dark base the text colour comes from --color-paper (the text ramp mixes it toward --color-shadow) and the surfaces from --color-shadow, so set --color-paper to a light colour; --color-ink does not colour dark-theme text, so setting it there does nothing for text. On a light base --color-ink is the text and --color-paper the page. Set a role (the other tokens) only where a seed cannot reach. Each value is one colour: #rgb, #rrggbb, #rrggbbaa, rgb(), hsl() or oklch(). " +
 			"The answer lists contrast_warnings, the pairs of text and background colours under 4.5:1 contrast; propose again with different colours to fix them.",
 		InputSchema: json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{`+
 			`"name":{"type":"string","maxLength":%d,"description":"The theme's name, as the person will see it in their themes."},`+
 			`"base":{"type":"string","enum":["light","dark"],"description":"The built-in palette the tokens change: light or dark."},`+
-			`"tokens":{"type":"object","maxProperties":%d,"additionalProperties":{"type":"string","maxLength":%d},"description":"Palette token to colour, for example {\"--color-paper\":\"#fdf6e3\"}. Only the tokens settings_general lists in theme_tokens."}},`+
+			`"tokens":{"type":"object","maxProperties":%d,"additionalProperties":{"type":"string","maxLength":%d},"description":"Palette token to colour, for example {\"--color-paper\":\"#fdf6e3\"}. Only the tokens settings_appearance lists in theme_tokens."}},`+
 			`"required":["name","base","tokens"],"additionalProperties":false}`, themes.MaxNameRunes, len(themes.Tokens), themes.MaxValue)),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -248,29 +251,43 @@ func proposeTools() []Tool {
 	effort := `{"type":"string","maxLength":32,"description":"The reasoning effort: low, medium, high, xhigh, max or ultra; empty for the harness's own."}`
 	return []Tool{{
 		Name:        "propose_appearance",
-		Description: "Proposes a change to the Settings page's General section appearance: the theme, whether key hints show, the modifier held with 1 to 8 for the sidebar's pages, the review page (the full review or tiles), and which colour theme the light and dark slots use (light_theme, dark_theme: theme ids from settings_general; to make a new theme use propose_theme). The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
+		Description: "Proposes a change to the Settings page's General section appearance: whether key hints show, the modifier held with 1 to 8 for the sidebar's pages, and the review page (the full review or tiles). The theme mode and colour themes are propose_theme_choice's. The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
-			`"theme":{"type":"string","maxLength":16,"description":"system, light or dark."},` +
 			`"key_hints":{"type":"boolean"},` +
 			`"page_modifier":{"type":"string","maxLength":16,"description":"meta, ctrl or alt; empty is the platform's command key."},` +
-			`"review_page":{"type":"string","maxLength":16,"description":"full or tiles: the page a review opens on."},` +
-			`"light_theme":{"type":"string","maxLength":64,"description":"The id of the colour theme for the light slot, from settings_general's themes; empty is the built-in default."},` +
-			`"dark_theme":{"type":"string","maxLength":64,"description":"The id of the colour theme for the dark slot, from settings_general's themes; empty is the built-in default."}},` +
+			`"review_page":{"type":"string","maxLength":16,"description":"full or tiles: the page a review opens on."}},` +
 			`"minProperties":1,"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct {
-				Theme        *string `json:"theme,omitempty"`
 				KeyHints     *bool   `json:"key_hints,omitempty"`
 				PageModifier *string `json:"page_modifier,omitempty"`
 				ReviewPage   *string `json:"review_page,omitempty"`
-				LightTheme   *string `json:"light_theme,omitempty"`
-				DarkTheme    *string `json:"dark_theme,omitempty"`
 			}
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
 			}
 			return propose(ctx, c, PageSettings, TargetAppearance, a)
+		},
+	}, {
+		Name:        "propose_theme_choice",
+		Description: "Proposes a change to the Settings page's Appearance section: the theme mode (theme: system, light or dark) and which colour theme the light and dark slots use (light_theme, dark_theme: theme ids from settings_appearance; to make a new theme use propose_theme). The person must have Settings open at Appearance. Nothing changes until the person saves the proposal; you get its id, never the current values.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+			`"theme":{"type":"string","maxLength":16,"description":"system, light or dark."},` +
+			`"light_theme":{"type":"string","maxLength":64,"description":"The id of the colour theme for the light slot, from settings_appearance's themes; empty is the built-in default."},` +
+			`"dark_theme":{"type":"string","maxLength":64,"description":"The id of the colour theme for the dark slot, from settings_appearance's themes; empty is the built-in default."}},` +
+			`"minProperties":1,"additionalProperties":false}`),
+		Proposes: true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				Theme      *string `json:"theme,omitempty"`
+				LightTheme *string `json:"light_theme,omitempty"`
+				DarkTheme  *string `json:"dark_theme,omitempty"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			return propose(ctx, c, PageSettings, TargetThemeChoice, a)
 		},
 	}, {
 		Name:        "propose_plan_usage",

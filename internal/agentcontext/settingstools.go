@@ -30,6 +30,7 @@ import (
 var (
 	settingsSectionTools = map[string][]string{
 		"general":     {"settings_general"},
+		"appearance":  {"settings_appearance"},
 		"reviews":     {"settings_reviews"},
 		"fixes":       {"settings_fixes"},
 		"connections": {"settings_connections"},
@@ -119,11 +120,17 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 func (s *Server) settingsTools() []Tool {
 	return []Tool{{
 		Name: "settings_general",
-		Description: "What the Settings page's General section shows: the theme (system, light or dark), the colour themes (the built-in and the person's own: id, name, base, tokens) and which one each slot uses (light_theme, dark_theme), the tokens a theme may set and what they resolve to, whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), the review page (full or tiles), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
-			"The plan choices are worked out from what the daemon already holds; nothing is fetched.",
+		Description: "What the Settings page's General section shows: whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), the review page (full or tiles), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
+			"The plan choices are worked out from what the daemon already holds; nothing is fetched. The theme and colour themes are in settings_appearance.",
 		Scope:     ScopeGlobal,
 		Projected: []string{"/api/settings/appearance"},
 		Call:      s.callSettingsGeneral,
+	}, {
+		Name: "settings_appearance",
+		Description: "What the Settings page's Appearance section shows: the theme mode (theme: system, light or dark), the colour themes (the built-in and the person's own: id, name, base, tokens) and which one each slot uses (light_theme, dark_theme), the tokens a theme may set (theme_tokens) and what they resolve to (theme_defaults, slot_values).",
+		Scope:     ScopeGlobal,
+		Projected: []string{"/api/settings/appearance"},
+		Call:      callSettingsAppearance,
 	}, {
 		Name: "settings_reviews",
 		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored), and whether new reviews are generated as tiles (tile_reviews, an experimental setting, off by default). " +
@@ -251,34 +258,70 @@ func themeColours(base string, tokens map[string]string) map[string]string {
 	return out
 }
 
-func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
+// appearanceRead is what the Settings tools read of GET /api/settings/appearance.
+type appearanceRead struct {
+	Theme        string `json:"theme"`
+	KeyHints     bool   `json:"key_hints"`
+	PageModifier string `json:"page_modifier"`
+	ReviewPage   string `json:"review_page"`
+	LightTheme   string `json:"light_theme"`
+	DarkTheme    string `json:"dark_theme"`
+	Themes       []struct {
+		ID      string            `json:"id"`
+		Name    string            `json:"name"`
+		Base    string            `json:"base"`
+		Builtin bool              `json:"builtin"`
+		Tokens  map[string]string `json:"tokens"`
+	} `json:"themes"`
+}
+
+func readAppearance(ctx context.Context, c CallContext) (appearanceRead, error) {
+	var appearance appearanceRead
 	body, _, err := c.get(ctx, "/api/settings/appearance", nil)
 	if err != nil {
-		return "", errors.New("the appearance settings are unavailable now")
-	}
-	var appearance struct {
-		Theme        string `json:"theme"`
-		KeyHints     bool   `json:"key_hints"`
-		PageModifier string `json:"page_modifier"`
-		ReviewPage   string `json:"review_page"`
-		LightTheme   string `json:"light_theme"`
-		DarkTheme    string `json:"dark_theme"`
-		Themes       []struct {
-			ID      string            `json:"id"`
-			Name    string            `json:"name"`
-			Base    string            `json:"base"`
-			Builtin bool              `json:"builtin"`
-			Tokens  map[string]string `json:"tokens"`
-		} `json:"themes"`
+		return appearance, errors.New("the appearance settings are unavailable now")
 	}
 	if json.Unmarshal(body, &appearance) != nil {
-		return "", errors.New("the appearance settings are not readable")
+		return appearance, errors.New("the appearance settings are not readable")
+	}
+	return appearance, nil
+}
+
+func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
+	appearance, err := readAppearance(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	out := struct {
+		KeyHints      bool         `json:"key_hints"`
+		PageModifier  string       `json:"page_modifier"`
+		ReviewPage    string       `json:"review_page"`
+		PlanUsage     []planChoice `json:"plan_usage"`
+		PlanUsageNote string       `json:"plan_usage_note,omitempty"`
+	}{KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, ReviewPage: appearance.ReviewPage, PlanUsage: []planChoice{}}
+	var choices []json.RawMessage
+	if s.planChoices != nil {
+		choices, err = s.planChoices(ctx)
+	}
+	if s.planChoices == nil || err != nil {
+		out.PlanUsageNote = "The plan usage choices are unavailable now."
+	}
+	for _, raw := range choices {
+		var p planChoice
+		if json.Unmarshal(raw, &p) == nil && p.Provider != "" {
+			out.PlanUsage = append(out.PlanUsage, p)
+		}
+	}
+	return compactJSON(out)
+}
+
+func callSettingsAppearance(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
+	appearance, err := readAppearance(ctx, c)
+	if err != nil {
+		return "", err
 	}
 	out := struct {
 		Theme         string                       `json:"theme"`
-		KeyHints      bool                         `json:"key_hints"`
-		PageModifier  string                       `json:"page_modifier"`
-		ReviewPage    string                       `json:"review_page"`
 		LightTheme    string                       `json:"light_theme"`
 		DarkTheme     string                       `json:"dark_theme"`
 		Themes        []themeInfo                  `json:"themes"`
@@ -286,10 +329,7 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 		ThemeDefaults map[string]map[string]string `json:"theme_defaults"`
 		SlotValues    map[string]map[string]string `json:"slot_values"`
 		ThemeNote     string                       `json:"theme_note"`
-		PlanUsage     []planChoice                 `json:"plan_usage"`
-		PlanUsageNote string                       `json:"plan_usage_note,omitempty"`
-	}{Theme: appearance.Theme, KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, ReviewPage: appearance.ReviewPage, PlanUsage: []planChoice{},
-		LightTheme: appearance.LightTheme, DarkTheme: appearance.DarkTheme, Themes: []themeInfo{},
+	}{Theme: appearance.Theme, LightTheme: appearance.LightTheme, DarkTheme: appearance.DarkTheme, Themes: []themeInfo{},
 		ThemeTokens:   themeTokens{Seeds: themes.Seeds, Roles: themes.Roles()},
 		ThemeDefaults: map[string]map[string]string{"light": themeColours("light", nil), "dark": themeColours("dark", nil)},
 		SlotValues:    map[string]map[string]string{},
@@ -309,19 +349,6 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 			}
 		}
 		out.SlotValues[slot] = themeColours(base, tokens)
-	}
-	var choices []json.RawMessage
-	if s.planChoices != nil {
-		choices, err = s.planChoices(ctx)
-	}
-	if s.planChoices == nil || err != nil {
-		out.PlanUsageNote = "The plan usage choices are unavailable now."
-	}
-	for _, raw := range choices {
-		var p planChoice
-		if json.Unmarshal(raw, &p) == nil && p.Provider != "" {
-			out.PlanUsage = append(out.PlanUsage, p)
-		}
 	}
 	return compactJSON(out)
 }

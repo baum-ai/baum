@@ -59,7 +59,7 @@ func (s *Server) commonTools() []Tool {
 			`"job":{"type":"string","description":"The job id, for job."},` +
 			`"feature":{"type":"string","description":"The feature id, for feature."},` +
 			`"inbox":{"type":"string","description":"A saved inbox's id from the inboxes tool, for inbox. Without it the inbox page opens on the person's first inbox."},` +
-			`"section":{"type":"string","description":"The settings section (general, reviews, fixes, connections, computer, prompts) or, with a repository, its section (reviews, prompts, registration)."},` +
+			`"section":{"type":"string","description":"The settings section (general, appearance, reviews, fixes, connections, computer, prompts, tiles) or, with a repository, its section (reviews, prompts, registration)."},` +
 			`"filters":{"type":"object","additionalProperties":{"type":"string"},"description":"Address parameters of a list page, such as {\"repo\":\"acme/web\"}."}},` +
 			`"required":["page"],"additionalProperties":false}`),
 		// It reads nothing, so an action may build addresses too, but not for
@@ -437,7 +437,7 @@ var requiredSubjects = map[string][]string{
 }
 
 var (
-	settingsSections   = []string{"general", "reviews", "fixes", "connections", "computer", "prompts", SectionTiles}
+	settingsSections   = []string{"general", "appearance", "reviews", "fixes", "connections", "computer", "prompts", SectionTiles}
 	repositorySections = []string{"reviews", "prompts", "registration"}
 	// reservedKeys are the address parameters that name a page or its subject:
 	// they are set by their own arguments, which are checked, never by a filter.

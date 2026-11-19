@@ -12,6 +12,7 @@ import (
 )
 
 type themeAppearance struct {
+	Theme      string `json:"theme"`
 	LightTheme string `json:"light_theme"`
 	DarkTheme  string `json:"dark_theme"`
 	Themes     []struct {
@@ -180,10 +181,10 @@ func TestThemeProposalRefusals(t *testing.T) {
 
 func TestAppearanceProposalSetsThemeSlots(t *testing.T) {
 	f := newProposalFixture(t)
-	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "appearance"})
 	f.must("POST", "/api/settings/appearance/themes", `{"name":"Mine","base":"dark","tokens":{}}`)
 	id := f.appearance().Themes[2].ID
-	p, err := f.propose("propose_appearance", map[string]any{"dark_theme": id})
+	p, err := f.propose("propose_theme_choice", map[string]any{"dark_theme": id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,46 @@ func TestAppearanceProposalSetsThemeSlots(t *testing.T) {
 		t.Fatalf("%v %+v", err, f.appearance())
 	}
 	// An id the preferences do not hold is refused when proposed.
-	if _, err := f.propose("propose_appearance", map[string]any{"light_theme": "c-nope"}); err == nil {
+	if _, err := f.propose("propose_theme_choice", map[string]any{"light_theme": "c-nope"}); err == nil {
 		t.Error("proposed an unknown theme for a slot")
+	}
+}
+
+// The appearance preferences are proposed in two halves, as Settings shows
+// them in two sections: General's keys, Appearance's theme mode and slots.
+func TestThemeChoiceAndAppearanceProposalsAreSeparateSections(t *testing.T) {
+	f := newProposalFixture(t)
+	ctx := context.Background()
+	// The theme choice is Appearance's, and the appearance proposal General's.
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
+	_, err := f.propose("propose_theme_choice", map[string]any{"theme": "dark"})
+	if err == nil || !strings.Contains(err.Error(), "Appearance") || !strings.Contains(err.Error(), "General") {
+		t.Errorf("a theme choice on General: %v", err)
+	}
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings})
+	if _, err := f.propose("propose_theme_choice", map[string]any{"theme": "dark"}); err == nil {
+		t.Error("a theme choice with no section open, which shows General")
+	}
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "appearance"})
+	if _, err := f.propose("propose_appearance", map[string]any{"key_hints": false}); err == nil {
+		t.Error("an appearance proposal on Appearance")
+	}
+	p, err := f.propose("propose_theme_choice", map[string]any{"theme": "dark"})
+	if err != nil || p.Target != agentcontext.TargetThemeChoice {
+		t.Fatalf("%v %+v", err, p)
+	}
+	if err := f.save(p, agentcontext.SaveInput{}); err != nil || f.appearance().Theme != "dark" {
+		t.Fatalf("%v %+v", err, f.appearance())
+	}
+	// Each target refuses the other's fields, as a proposal made without the tool's schema.
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "appearance"})
+	if _, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageSettings, Target: agentcontext.TargetThemeChoice, After: json.RawMessage(`{"key_hints":false}`)}); err == nil {
+		t.Error("a theme choice took key_hints")
+	}
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
+	for _, after := range []string{`{"theme":"dark"}`, `{"light_theme":""}`, `{"dark_theme":""}`} {
+		if _, err := f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageSettings, Target: agentcontext.TargetAppearance, After: json.RawMessage(after)}); err == nil {
+			t.Errorf("General's appearance proposal took %s", after)
+		}
 	}
 }

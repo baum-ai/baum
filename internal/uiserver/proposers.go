@@ -228,6 +228,7 @@ func afterKeys(after json.RawMessage) map[string]bool {
 // settingsSections; an open page without a section shows General).
 var settingsTargetSections = []struct{ prefix, section string }{
 	{agentcontext.TargetAppearance, "general"},
+	{agentcontext.TargetThemeChoice, "appearance"},
 	{agentcontext.TargetPlanUsage, "general"},
 	{agentcontext.TargetReviews, "reviews"},
 	{agentcontext.TargetDecisions, "reviews"},
@@ -241,7 +242,7 @@ var settingsTargetSections = []struct{ prefix, section string }{
 	{agentcontext.TargetTileType, agentcontext.SectionTiles},
 }
 
-var sectionTitles = map[string]string{"general": "General", "reviews": "Reviews", "fixes": "Fixes", "connections": "Connections",
+var sectionTitles = map[string]string{"general": "General", "appearance": "Appearance", "reviews": "Reviews", "fixes": "Fixes", "connections": "Connections",
 	"computer": "This computer", "prompts": "Prompts", "registration": "Registration", agentcontext.SectionTiles: "Tile library"}
 
 // checkSection refuses a target of another section than the one open, which
@@ -273,7 +274,9 @@ func (p *Proposers) settingsTarget(page agentcontext.PageContext, name string) (
 	}
 	switch {
 	case name == agentcontext.TargetAppearance:
-		return p.appearanceTarget(), nil
+		return p.appearanceTarget(false), nil
+	case name == agentcontext.TargetThemeChoice:
+		return p.appearanceTarget(true), nil
 	case strings.HasPrefix(name, agentcontext.TargetPlanUsage):
 		return p.planUsageTarget(strings.TrimPrefix(name, agentcontext.TargetPlanUsage)), nil
 	case name == agentcontext.TargetReviews:
@@ -426,14 +429,30 @@ func (p *Proposers) themeTarget() *target {
 	}
 }
 
-func (p *Proposers) appearanceTarget() *target {
+// appearanceTarget is the saved appearance preferences, in two halves that
+// the Settings page shows in two sections: General's key hints, page modifier
+// and review page (TargetAppearance), and Appearance's theme mode and theme
+// slots (TargetThemeChoice, which is themeChoice). Each refuses the other's
+// fields.
+func (p *Proposers) appearanceTarget(themeChoice bool) *target {
 	decode := func(after json.RawMessage) (appearanceInput, error) {
 		var in appearanceInput
 		if err := decodeAfter(after, &in); err != nil {
 			return in, err
 		}
 		if in == (appearanceInput{}) {
-			return in, errors.New("propose a theme, key_hints, page_modifier, review_page, light_theme or dark_theme")
+			if themeChoice {
+				return in, errors.New("propose a theme, light_theme or dark_theme")
+			}
+			return in, errors.New("propose key_hints, page_modifier or review_page")
+		}
+		general := in.KeyHints != nil || in.PageModifier != nil || in.Sidebar != nil || in.ReviewPage != nil
+		choice := in.Theme != nil || in.LightTheme != nil || in.DarkTheme != nil
+		if themeChoice && general {
+			return in, errors.New("key_hints, page_modifier and review_page are General's: propose them with propose_appearance")
+		}
+		if !themeChoice && choice {
+			return in, errors.New("theme, light_theme and dark_theme are Appearance's: propose them with propose_theme_choice")
 		}
 		return in, in.check()
 	}

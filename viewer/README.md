@@ -110,6 +110,16 @@ declarations beat both. Unlayered host styles beat the layers but not inline
 declarations. Keep component CSS from redeclaring palette tokens locally;
 consume the appropriate role, such as `--nav-hover`, instead.
 
+The recipes also apply to any element marked `data-theme-scope`: the light
+recipes to `:root, [data-theme-scope]` and the dark ones to
+`:root[data-theme="dark"], [data-theme-scope][data-theme="dark"]`, in the same
+layer. Such an element recomputes the whole palette from the seeds and tokens
+set on it, so a preview can show a theme whatever the page's mode is: set
+`data-theme="light"` or `"dark"` on it and the theme's tokens inline (the
+local app's Settings › Appearance does, for its theme thumbnails). A light
+scope inside a dark page gets the light recipes because it matches only the
+first block. The hosted UI and the viewer have no such elements.
+
 Put overrides on the document root. CSS variables resolve where they are
 defined: changing only a base on a child element does not recalculate recipes
 inherited from the root. Seed overrides affect every recipe using that seed;

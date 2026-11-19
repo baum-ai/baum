@@ -1284,15 +1284,19 @@ them.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,
-and the settings chat reads and proposes it with the other appearance
-settings. The same route carries the custom colour themes: `light_theme`
+and the settings chat reads and proposes it with General's other
+settings (`settings_general`, `propose_appearance`). The same route carries the custom colour themes: `light_theme`
 and `dark_theme` name the theme of each slot (the built-in `default-light` and
 `default-dark` when empty) and `themes` lists the built-ins and the person's
 own, kept in `AppearancePreferences` and validated by `internal/themes` (an
 allowlist of palette tokens, each a plain colour, and the contrast check that
 evaluates the palette's recipes from the tile kit's generated `tokens.css`).
 `POST`, `PATCH` and `DELETE /api/settings/appearance/themes[/{id}]` create,
-rename and delete a theme. A pending review comment may target a tile (`kind` `tile`, `id` the
+rename and delete a theme. Settings › Appearance shows the mode and slots as thumbnails (the
+agent reads them with `settings_appearance` and proposes them with
+`propose_theme_choice`); its thumbnails are `[data-theme-scope]`
+elements of `palette.css`, which the tile kit's generated `tokens.css` carries
+too, though a tile frame has no such elements. A pending review comment may target a tile (`kind` `tile`, `id` the
 tile's ID); a comment on a section keeps its `section` target. After a
 rollback to a release without `tile` targets, a daemon finds a saved review
 record that holds one invalid and reads the whole saved-reviews document
@@ -7690,7 +7694,7 @@ version and source, each scrubbed with `doctor.Scrub` as the public issue
 summary scrubs them; a GitHub Enterprise token check is `other host`, and the
 token and backend checks give no source; never `home`, a check's path, detail
 or fix, the environment or the issue the Report a problem dialog drafts), and
-the Settings tools below: `settings_general` with `/api/settings/appearance`,
+the Settings tools below: `settings_general` and `settings_appearance` with `/api/settings/appearance`,
 `settings_reviews` with `/api/settings` and `/api/settings/labs`, `settings_fixes` with `/api/settings`,
 `settings_connections` with `/api/github-auth`, `settings_computer` with
 `/api/settings` and `/api/diagnostics`, and `prompts` and `prompt` with
@@ -7948,7 +7952,8 @@ home folder:
 
 | Tool | Scope | Section | Reads |
 | --- | --- | --- | --- |
-| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier, review page, `light_theme` and `dark_theme`, `themes` as `{id, name, base, tokens, builtin}`) and `Options.PlanChoices` (each plan's shown, default and explicit). It adds `theme_tokens` (`themes.Seeds` and `themes.Roles()`), `theme_defaults` (`light` and `dark`: `themes.Resolve` with no overrides, allowlisted tokens as `#rrggbb` or `#rrggbbaa`), `slot_values` (the same for each slot's theme) and `theme_note` (the `theme` setting picks the active slot; system follows the operating system) |
+| `settings_general` | global | General | `/api/settings/appearance` (key hints, page shortcut modifier, review page) and `Options.PlanChoices` (each plan's shown, default and explicit) |
+| `settings_appearance` | global | Appearance | `/api/settings/appearance`: the `theme` mode, `light_theme` and `dark_theme`, `themes` as `{id, name, base, tokens, builtin}`. It adds `theme_tokens` (`themes.Seeds` and `themes.Roles()`), `theme_defaults` (`light` and `dark`: `themes.Resolve` with no overrides, allowlisted tokens as `#rrggbb` or `#rrggbbaa`), `slot_values` (the same for each slot's theme) and `theme_note` (the `theme` setting picks the active slot; system follows the operating system) |
 | `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences), and `tile_reviews` from `/api/settings/labs` |
 | `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
 | `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
@@ -8062,7 +8067,8 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 
 | Page (section) | Tool | Target | Saved as |
 | --- | --- | --- | --- |
-| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier, review page, and the `light_theme` and `dark_theme` slots, which must name a theme the preferences hold) |
+| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (key hints, page modifier, review page; a `theme`, `light_theme` or `dark_theme` is refused, as `propose_theme_choice`'s) |
+| `settings` (`appearance`) | `propose_theme_choice` | `theme_choice` | `PUT /api/settings/appearance` (the `theme` mode and the `light_theme` and `dark_theme` slots, which must name a theme the preferences hold; key hints, page modifier and review page are refused, as `propose_appearance`'s) |
 | any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme`, a common tool listed on every page | `theme` | `POST /api/settings/appearance/themes` (`addTheme`) with the name and slot from `SaveInput.Theme`, else the proposal's name and its base's slot; the id is made once outside the transaction. The revision is a constant, so changes to the slots or themes during the preview do not make the save stale. Its "before" is the names of the light and dark slots' themes. |
 | `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
 | `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |

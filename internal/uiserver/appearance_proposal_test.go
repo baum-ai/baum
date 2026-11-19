@@ -27,7 +27,7 @@ func TestAppearanceProposalChecksThemeSlots(t *testing.T) {
 	if err != nil || len(prefs.Appearance.Themes) != 1 {
 		t.Fatalf("seed: %v", err)
 	}
-	target := (&Proposers{API: LocalAPI{Registry: registry}}).appearanceTarget()
+	target := (&Proposers{API: LocalAPI{Registry: registry}}).appearanceTarget(true)
 	unchanged := func(any) error { return nil }
 
 	for _, after := range []string{`{"dark_theme":"c-nope"}`, `{"light_theme":"c-nope"}`} {

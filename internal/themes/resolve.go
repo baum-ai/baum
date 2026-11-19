@@ -42,11 +42,16 @@ func recipes() (light, dark map[string]string) {
 				continue
 			}
 			var into map[string]string
-			switch sel {
-			case ":root":
-				into = lightDecls
-			case `:root[data-theme="dark"]`:
-				into = darkDecls
+			// A rule may list more selectors than the root's: the palette also
+			// applies to [data-theme-scope] elements, which a theme's contrast
+			// does not concern.
+			for _, one := range strings.Split(sel, ",") {
+				switch strings.TrimSpace(one) {
+				case ":root":
+					into = lightDecls
+				case `:root[data-theme="dark"]`:
+					into = darkDecls
+				}
 			}
 			if into != nil {
 				for _, decl := range strings.Split(rest[:closing], ";") {

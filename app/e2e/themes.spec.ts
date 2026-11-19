@@ -61,44 +61,81 @@ test("puts a dark theme in the light slot and the page follows its base", async 
   );
   await page.reload();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Appearance/ }).click();
   await expect(html(page)).toHaveAttribute("data-theme", "light");
   expect(await paper(page)).toBe("");
 
-  const light = page.getByLabel("Light theme", { exact: true });
-  const dark = page.getByLabel("Dark theme", { exact: true });
-  await expect(light.locator("option")).toHaveText(["Default light", "Default dark", "Dusk"]);
+  const group = (name: string) => page.getByRole("radiogroup", { name, exact: true });
+  const thumb = (slot: string, theme: string) => group(slot).locator(`label[title="${theme}"]`);
+  const light = group("Light theme");
+  const dark = group("Dark theme");
+  const mode = (name: string) =>
+    page.getByRole("group", { name: "Theme mode" }).getByRole("button", { name, exact: true });
+  await expect(light.getByRole("radio")).toHaveCount(3);
+  await expect(light.getByRole("radio", { name: "Dusk" })).toBeAttached();
+  await expect(page.getByRole("heading", { name: "Light theme · in use" })).toBeVisible();
+
+  // A dark miniature on a light page computes a dark page colour, a light one a light colour.
+  const mini = (theme: string) =>
+    page.locator(`label[title="${theme}"]`).locator(".theme-mini").first();
+  const lightness = (theme: string) =>
+    mini(theme)
+      .locator(".theme-mini-panel")
+      .evaluate((element) => {
+        const [r, g, b] = getComputedStyle(element).backgroundColor.match(/\d+/g)!.map(Number);
+        return (r! + g! + b!) / 3;
+      });
+  expect(await lightness("Default light")).toBeGreaterThan(200);
+  expect(await lightness("Default dark")).toBeLessThan(80);
+  const surface = (theme: string) =>
+    mini(theme).evaluate((element) =>
+      getComputedStyle(element).getPropertyValue("--surface-page").trim(),
+    );
+  expect(await surface("Default dark")).not.toBe(await surface("Default light"));
+  await page.screenshot({ path: "test-results/appearance-light.png", animations: "disabled" });
+
   // Any base sits in either slot: the dark theme in the light slot gives a dark page.
-  await page.getByLabel("Preferred theme").selectOption("light");
-  await light.selectOption({ label: "Dusk" });
+  await mode("Light").click();
+  await thumb("Light theme", "Dusk").click();
+  await expect(light.getByRole("radio", { name: "Dusk" })).toBeChecked();
   await expect(html(page)).toHaveAttribute("data-theme", "dark");
   await expect.poll(() => paper(page)).toBe("#e8eef4");
   await page.screenshot({
     path: "test-results/themes-dark-in-light-slot.png",
     animations: "disabled",
   });
+  await page.screenshot({ path: "test-results/appearance-dark.png", animations: "disabled" });
 
-  // The dark slot is used when the preferred theme is dark.
-  await page.getByLabel("Preferred theme").selectOption("dark");
+  // Arrow keys move within a row of thumbnails, as native radios do.
+  await light.getByRole("radio", { name: "Dusk" }).focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(light.getByRole("radio", { name: "Default dark" })).toBeChecked();
+  await thumb("Light theme", "Dusk").click();
+
+  // The dark slot is used when the theme mode is dark.
+  await mode("Dark").click();
   await expect(html(page)).toHaveAttribute("data-theme", "dark");
   await expect.poll(() => paper(page)).toBe("");
-  await dark.selectOption({ label: "Dusk" });
+  await thumb("Dark theme", "Dusk").click();
   await expect.poll(() => paper(page)).toBe("#e8eef4");
-  await light.selectOption({ label: "Default light" });
-  await page.getByLabel("Preferred theme").selectOption("light");
+  await thumb("Light theme", "Default light").click();
+  await mode("Light").click();
   await expect(html(page)).toHaveAttribute("data-theme", "light");
   await expect.poll(() => paper(page)).toBe("");
+  await expect(dark.getByRole("radio", { name: "Dusk" })).toBeChecked();
 
   // The custom theme is renamed and deleted from its menu.
-  await page.getByRole("button", { name: "Actions for Dusk" }).click();
+  await page.getByRole("button", { name: "Actions for Dusk in light theme" }).click();
   await page.getByRole("menuitem", { name: "Rename" }).click();
   await page.getByLabel("Name of Dusk").fill("Midnight");
   await page.getByRole("button", { name: "Rename", exact: true }).click();
-  await expect(light.locator("option")).toHaveText(["Default light", "Default dark", "Midnight"]);
-  await page.getByRole("button", { name: "Actions for Midnight" }).click();
+  await expect(light.getByRole("radio")).toHaveCount(3);
+  await expect(light.getByRole("radio", { name: "Midnight" })).toBeAttached();
+  await page.getByRole("button", { name: "Actions for Midnight in light theme" }).click();
   await page.getByRole("menuitem", { name: "Delete" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
-  await expect(light.locator("option")).toHaveText(["Default light", "Default dark"]);
-  await expect(dark).toHaveValue("default-dark");
+  await expect(light.getByRole("radio")).toHaveCount(2);
+  await expect(dark.getByRole("radio", { name: "Default dark" })).toBeChecked();
 });
 
 test("previews a proposed theme, restores it on dismiss and saves it with a name and slot", async ({
