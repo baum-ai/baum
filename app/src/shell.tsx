@@ -164,8 +164,13 @@ const KEYBOARD_FOCUS = ":focus-visible:not(.context-menu *)";
 /** Whether the element holds keyboard focus (`KEYBOARD_FOCUS`), which opens
  *  the folded sidebar. The page's CSS read this with `:has()` before, but
  *  WebKitGTK re-checked that selector on every element added anywhere in the
- *  page, so a large diff took seconds to show. Focus and key events, and any
- *  render that may have removed the focused element, read it again. */
+ *  page, so a large diff took seconds to show. It is read again on focus and
+ *  key events in the element, on every render of its owner (which may have
+ *  removed the focused element without a blur), and when the window gains or
+ *  loses focus: `:focus-visible` does not match in a window in the
+ *  background, and WebKit tells the element only with `focus` and `blur`,
+ *  which do not bubble. A child that removes the focused element in a render
+ *  of its own is not seen until the next of these. */
 function useKeyboardFocusWithin<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   const [focused, setFocused] = useState(false);
@@ -173,6 +178,24 @@ function useKeyboardFocusWithin<T extends HTMLElement>() {
     setFocused(!!ref.current?.querySelector(KEYBOARD_FOCUS));
   }, []);
   useLayoutEffect(sync);
+  useEffect(() => {
+    let frame = 0;
+    // The window's activation may land after its `focus` event.
+    const later = () => {
+      sync();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(sync);
+    };
+    window.addEventListener("focus", later);
+    window.addEventListener("blur", sync);
+    document.addEventListener("visibilitychange", later);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("focus", later);
+      window.removeEventListener("blur", sync);
+      document.removeEventListener("visibilitychange", later);
+    };
+  }, [sync]);
   return { ref, focused, sync };
 }
 
