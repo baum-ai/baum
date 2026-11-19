@@ -318,9 +318,13 @@ func TestLocalAPIAgentEnvironment(t *testing.T) {
 		var body struct {
 			FixBackend *string `json:"fix_backend"`
 			FixModel   *string `json:"fix_model"`
+			FixNetwork *bool   `json:"fix_network"`
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.FixBackend == nil || body.FixModel == nil {
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.FixBackend == nil || body.FixModel == nil || body.FixNetwork == nil {
 			t.Fatal(rec.Body.String(), err)
+		}
+		if !*body.FixNetwork {
+			t.Fatal("fix network off by default: " + rec.Body.String())
 		}
 		return *body.FixBackend, *body.FixModel
 	}

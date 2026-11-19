@@ -101,15 +101,38 @@ func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result,
 
 // Fix runs Claude Code with write access to the request's directory, for a
 // fix a person asked for (agent.Fixer). It runs in restricted mode with the
-// file tools only (Read, Glob, Grep, Edit and Write), confined to the
-// directory: it cannot run a command, so it cannot run tests, git or anything
-// else, and the caller commits what it changed. Its final message is the
-// result's Document. Only the User profile fixes.
+// file tools and Bash, whose commands run in Claude Code's sandbox
+// (bubblewrap on Linux, Seatbelt on macOS; see fixArgs): they may write only
+// to the directory, the scratch directory and the agent's git directory,
+// cannot read credential files, and reach the network only when
+// request.Network is set. When the sandbox cannot start, Claude Code refuses
+// to (failIfUnavailable), and the fix runs again with the file tools alone,
+// as it did before the sandbox, logging why. The caller commits what it
+// changed. Its final message is the result's Document. Only the User profile
+// fixes.
 func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
 	if c.Profile != User {
 		return agent.Result{}, errors.New("claude: only the User profile runs fixes")
 	}
-	return c.run(ctx, request, c.fixArgs(request), nil, runFix)
+	result, err := c.run(ctx, request, c.fixArgs(request, true), nil, runFix)
+	var unavailable *sandboxUnavailableError
+	if !errors.As(err, &unavailable) {
+		return result, err
+	}
+	// Claude Code refused to start before any model call: the fix runs as it
+	// did before the sandbox, with the file tools alone.
+	if request.Logger != nil {
+		request.Logger.Warn("claude code's sandbox cannot start, so the fix agent runs with file tools only and no shell", "reason", unavailable.detail)
+	}
+	return c.run(ctx, request, c.fixArgs(request, false), nil, runFix)
+}
+
+// sandboxUnavailableError is Claude Code refusing to start a fix because its
+// sandbox cannot start (no bubblewrap or socat, an unsupported platform).
+type sandboxUnavailableError struct{ detail string }
+
+func (e *sandboxUnavailableError) Error() string {
+	return "claude code's sandbox is unavailable: " + e.detail
 }
 
 // Converse runs one turn of the person's own Claude Code session
@@ -199,6 +222,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		cmd.Env = append(c.converseEnvironment(), env...)
 	} else {
 		cmd.Env = append(c.environment(request.Directory, endpoint), env...)
+	}
+	if kind == runFix {
+		// The fix agent's commands run with this environment too: no token,
+		// and caches in the scratch directory.
+		cmd.Env = agent.FixEnvironment(cmd.Env, request.Scratch)
 	}
 	// The MCP token goes last and replaces any entry of the name, so the
 	// user's agent_env cannot override or remove it.
@@ -410,6 +438,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			Tools         []string `json:"tools"`
 			IsError       bool     `json:"is_error"`
 			Errors        []string `json:"errors"`
+			// StartupFailureReason says why Claude Code refused to start;
+			// "sandbox_required_unavailable" is a fix's sandbox that cannot
+			// start (failIfUnavailable).
+			StartupFailureReason string `json:"startup_failure_reason"`
 			// NumTurns is how many turns a result's run took.
 			NumTurns int `json:"num_turns"`
 			// APIErrorStatus is the HTTP status of the provider response
@@ -440,6 +472,15 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			Result string `json:"result"`
 		}
 		if err = json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			// A system notice may hold fields of other shapes than the other
+			// events' (a permission_denied notice's message is text); none
+			// carries anything a run reads.
+			var head struct{ Type string }
+			if json.Unmarshal(scanner.Bytes(), &head) == nil && head.Type == "system" {
+				err = nil
+				request.Activity.Progress()
+				continue
+			}
 			break
 		}
 		request.Activity.Progress()
@@ -551,6 +592,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			total()
 			if event.Subtype == "error_max_turns" {
 				err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
+				break
+			}
+			if event.StartupFailureReason == "sandbox_required_unavailable" {
+				record(agent.Event{Kind: "error", Status: "sandbox_unavailable"})
+				err = &sandboxUnavailableError{detail: firstLine(strings.Join(event.Errors, " "))}
 				break
 			}
 			if event.IsError || event.Subtype != "success" {

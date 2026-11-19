@@ -180,7 +180,7 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   await expect(page.getByText("Source screenshot request", { exact: true })).toBeVisible();
   await expect(page.locator('[aria-current="step"]')).toContainText("Source screenshot request");
   await page.goBack();
-  await page.getByRole("button", { name: "Summary", exact: true }).click();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
@@ -350,12 +350,25 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(pr).toBeVisible();
   await pr.click();
   await expect(page.getByText("No review yet", { exact: true })).toBeVisible();
+  // With no review yet the page is the review's own rail: the Overview says
+  // so, How it works has no sections yet, and the viewer's Summary and
+  // Changes are not drawn.
+  const rail = page.locator("#review-rail");
+  const railButton = (name: string) => rail.getByRole("button", { name: new RegExp(`^${name}`) });
+  await expect(railButton("Overview")).toHaveAttribute("aria-pressed", "true");
+  await expect(railButton("How it works")).toBeDisabled();
+  await expect(rail).toContainText("No sections yet.");
+  await expect(railButton("Summary")).toHaveCount(0);
+  await expect(railButton("Changes")).toHaveCount(0);
   // The fixture's discovery reports PR 10's new head once this marker exists.
   await writeFile(join(process.env.BAUM_APP_STATE_DIR ?? "", "push-10"), "");
   const progress = page.getByRole("region", { name: "Review generation", exact: true });
   await expect(
     progress.getByText(/Started automatically because new commits were pushed/),
   ).toBeVisible({ timeout: 15000 });
+  // Generating, the page keeps that rail.
+  await expect(railButton("Overview")).toHaveAttribute("aria-pressed", "true");
+  await expect(railButton("Changes")).toHaveCount(0);
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });
@@ -366,17 +379,17 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   ).toHaveCount(1);
   await openSettings(page, "Reviews");
   const automatic = page.getByRole("region", { name: "Reviews", exact: true });
-  const toggle = automatic.getByRole("switch", { name: /Review pull requests automatically/ });
-  // The switch saves as it changes.
-  await toggle.click();
+  const toggle = automatic.getByRole("combobox", { name: /Review pull requests automatically/ });
+  // The choice saves as it changes.
+  await toggle.selectOption("never");
   await expect(automatic.getByRole("status")).toHaveText("Saved");
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveValue("never");
   // The section is in the address, so a reload stays on it.
   await page.reload();
   // After a reload the section renders once the settings requests answer,
   // which can take a while on a busy CI runner.
   await expect(automatic).toBeVisible({ timeout: 15000 });
-  await expect(toggle).not.toBeChecked();
+  await expect(toggle).toHaveValue("never");
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
   await page.getByRole("link", { name: "Settings for acme/demo" }).click();
   const repository = page.getByRole("region", { name: "Repository acme/demo", exact: true });
@@ -385,9 +398,9 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("link", { name: "Settings for acme/demo" })).toBeVisible();
   await openSettings(page, "Reviews");
-  await toggle.click();
+  await toggle.selectOption("always");
   await expect(automatic.getByRole("status")).toHaveText("Saved");
-  await expect(toggle).toBeChecked();
+  await expect(toggle).toHaveValue("always");
   expect(errors).toEqual([]);
 });
 

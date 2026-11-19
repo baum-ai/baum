@@ -264,6 +264,7 @@ func (s *Server) callSettingsReviews(ctx context.Context, c CallContext, _ json.
 	type automatic struct {
 		Enabled      bool   `json:"enabled"`
 		PullRequests string `json:"pull_requests"`
+		Updates      string `json:"updates,omitempty"`
 	}
 	type capture struct {
 		Enabled             bool   `json:"enabled"`

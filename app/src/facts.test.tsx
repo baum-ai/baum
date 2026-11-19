@@ -215,10 +215,11 @@ async function render(current: Entry, revision = 0) {
 const factsRequests = () =>
   fetched.filter((path) => new URL(path, "http://local").pathname === "/s/test-ns/api/facts");
 
-const railGroups = () =>
+// The rail's rows: the review shell's, with no review yet.
+const railRows = () =>
   [
     ...node.querySelectorAll<HTMLButtonElement>(
-      'nav[aria-label="Review sections"] button[aria-expanded][aria-controls]',
+      'nav[aria-label="Review sections"] button[aria-pressed]',
     ),
   ].map((row) => row.textContent);
 
@@ -227,7 +228,19 @@ it("shows a pull request's facts beside the Generate review placeholder", async 
   expect(factsRequests()).toEqual(["/s/test-ns/api/facts?clone=selected-clone&pr=7&head=1111111"]);
   expect(node.textContent).toContain("No review yet");
   expect(node.textContent).toContain("Generate review");
-  expect(railGroups()).toEqual(["Changes0", "Files changed2", "Sessions1", "Commits1"]);
+  expect(railRows()).toEqual([
+    "Overview",
+    "How it works",
+    "Files changed2",
+    "Sessions1",
+    "Commits1",
+  ]);
+  // How it works waits for the review's sections.
+  const sections = [...node.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent === "How it works",
+  )!;
+  expect(sections.disabled).toBe(true);
+  expect(node.textContent).toContain("No sections yet.");
   // Facts are no version: no version menu.
   expect(node.textContent).not.toMatch(/Review v\d/);
 
@@ -287,7 +300,7 @@ it("asks for no facts once a review is saved or without a clone", async () => {
   await render({ ...entry, version_count: 1, status: "current" });
   await render({ ...entry, needs_clone: true }, 1);
   expect(factsRequests()).toEqual([]);
-  expect(railGroups()).not.toContain("Files changed2");
+  expect(railRows()).not.toContain("Files changed2");
 });
 
 it("says when the facts could not be read, and not when the daemon has none", async () => {
@@ -302,10 +315,10 @@ it("says when the facts could not be read, and not when the daemon has none", as
   await render(entry);
   expect(node.textContent).toContain("No review yet");
   expect(node.textContent).not.toContain("couldn't be read");
-  expect(railGroups()).toEqual(["Changes0"]);
+  expect(railRows()).toEqual(["Overview", "How it works"]);
 
   answer(503, "rate_limited");
   await render({ ...entry, pull_request: { ...entry.pull_request, head_sha: "5555555" } }, 1);
   expect(node.textContent).toContain("GitHub's rate limit is reached");
-  expect(railGroups()).toContain("Files changed");
+  expect(railRows()).toContain("Files changed");
 });

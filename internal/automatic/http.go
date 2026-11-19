@@ -25,7 +25,11 @@ type PreferencesInput struct {
 	FixModel     *string `json:"fix_model,omitempty"`
 	Effort       *string `json:"effort,omitempty"`
 	FixEffort    *string `json:"fix_effort,omitempty"`
+	FixNetwork   *bool   `json:"fix_network,omitempty"`
 	PullRequests *string `json:"pull_requests,omitempty"`
+	// Updates is how automatic reviews follow later pushes: always, on_open
+	// or on_change (repos.Preferences.Updates).
+	Updates *string `json:"updates,omitempty"`
 	// The Claude Code configuration directories of reviews and fixes; empty
 	// goes back to the environment's. The route checks each with
 	// agentdirs.Agent.Choose before the save.
@@ -75,6 +79,10 @@ func EditPreferences(p repos.Preferences, input PreferencesInput) (repos.Prefere
 			next.FixModel = nil
 		}
 	}
+	if input.FixNetwork != nil {
+		network := *input.FixNetwork
+		next.FixNetwork = &network
+	}
 	for _, e := range []struct{ input, target **string }{{&input.Effort, &next.Effort}, {&input.FixEffort, &next.FixEffort}} {
 		if *e.input == nil {
 			continue
@@ -102,6 +110,12 @@ func EditPreferences(p repos.Preferences, input PreferencesInput) (repos.Prefere
 		next.PullRequests = *input.PullRequests
 		if next.PullRequests == "both" {
 			next.PullRequests = ""
+		}
+	}
+	if input.Updates != nil {
+		next.Updates = *input.Updates
+		if next.Updates == repos.UpdatesAlways {
+			next.Updates = ""
 		}
 	}
 	if err := next.ValidateChange(p); err != nil {

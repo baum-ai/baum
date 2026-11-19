@@ -298,6 +298,7 @@ export function SideNavButton({
   count,
   busy = false,
   indicator,
+  disabled = false,
   onSelect,
 }: {
   label: string;
@@ -323,19 +324,23 @@ export function SideNavButton({
   busy?: boolean;
   /** Something in the pane is happening now: see `SideNavDisclosure`. */
   indicator?: "live" | "attention";
+  /** The row's place has nothing to show yet: drawn greyed, and not a
+   *  control. */
+  disabled?: boolean;
   onSelect: () => void;
 }) {
-  const state = active ? "active" : "idle";
+  const state = disabled ? "disabled" : active ? "active" : "idle";
   const descriptionId = useId();
   return (
     <button
       type="button"
+      disabled={disabled}
       aria-label={count === undefined ? undefined : `${label}, ${count}`}
       aria-pressed={active}
       aria-controls={controls}
       aria-describedby={description ? descriptionId : undefined}
       onClick={onSelect}
-      className={cn(rowClass(state, depth), "cursor-pointer")}
+      className={cn(rowClass(state, depth), !disabled && "cursor-pointer")}
     >
       <ActiveMark active={active} />
       {Icon ? <Icon className={glyphClass(state, tint)} /> : null}

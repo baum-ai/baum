@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -45,19 +46,22 @@ func (c *Backend) command(request agent.Request, endpoint *agent.Endpoint, fix b
 		}
 	}
 	var fixConfig []string
+	profile := false
 	if fix {
 		sandbox = "workspace-write"
-		fixConfig = []string{"-c", "sandbox_workspace_write.network_access=false",
-			"-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"}
+		c.mu.Lock()
+		profile = c.Profile == Local && runtime.GOOS != "windows" && compareVersions(cmp.Or(c.version, "0.0.0"), PermissionProfileVersion) >= 0
+		c.mu.Unlock()
+		if fixConfig, err = fixSandbox(request, env, profile); err != nil {
+			return nil, nil, cleanup, err
+		}
 		if request.Scratch != "" {
-			encoded, err := json.Marshal([]string{request.Scratch})
-			if err != nil {
-				return nil, nil, cleanup, err
-			}
-			fixConfig = append(fixConfig, "-c", "sandbox_workspace_write.writable_roots="+string(encoded))
 			env = slices.DeleteFunc(env, func(entry string) bool { return strings.HasPrefix(entry, "TMPDIR=") })
 			env = append(env, "TMPDIR="+request.Scratch)
 		}
+		// The fix agent's commands run with this environment too: no token,
+		// and caches in the scratch directory.
+		env = agent.FixEnvironment(env, request.Scratch)
 	}
 	// Without session options the argv is exactly the ephemeral one. A kept
 	// session omits --ephemeral. `exec resume` does not accept --sandbox, so
@@ -77,9 +81,13 @@ func (c *Backend) command(request agent.Request, endpoint *agent.Endpoint, fix b
 	// tier that standardSpeed records.
 	args = append(args, "--ignore-user-config", "--ignore-rules",
 		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent")
-	if request.ResumeSession != "" {
+	switch {
+	case profile:
+		// The permission profile in fixConfig is the sandbox; Codex refuses a
+		// sandbox mode beside it.
+	case request.ResumeSession != "":
 		args = append(args, "-c", "sandbox_mode="+strconv.Quote(sandbox))
-	} else {
+	default:
 		args = append(args, "--sandbox", sandbox)
 	}
 	args = append(args, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
@@ -201,4 +209,67 @@ func (c *Backend) converseBinary(ctx context.Context, access agent.Access) (stri
 		c.version, err = checkVersion(ctx, binary)
 	}
 	return binary, err
+}
+
+// PermissionProfileVersion is the first Codex whose permission profiles a fix
+// uses (fixSandbox): the release they were checked with. An older Codex runs
+// a fix in the workspace-write sandbox, which cannot deny reads.
+const PermissionProfileVersion = "0.170.0"
+
+// fixProfile names the permission profile a fix defines.
+const fixProfile = "baum_fix"
+
+// fixSandbox is the configuration of a fix's sandbox. Commands may write to
+// the checkout (request.Directory), the scratch directory and the agent's git
+// directory, and to nothing else, not /tmp or the caller's TMPDIR; they
+// reach the network only with request.Network.
+//
+// With profile, the sandbox is a permission profile: everything readable
+// ("/"), the credential paths (agent.FixCredentialPaths) unreadable ("none")
+// and the three directories writable. Without it, it is the workspace-write
+// sandbox, which reads everything the user can: an older Codex, or Windows.
+func fixSandbox(request agent.Request, environ []string, profile bool) ([]string, error) {
+	var writable []string
+	for _, dir := range []string{request.Scratch, request.GitDir} {
+		if dir != "" {
+			writable = append(writable, dir)
+		}
+	}
+	if !profile {
+		config := []string{"-c", "sandbox_workspace_write.network_access=" + strconv.FormatBool(request.Network),
+			"-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"}
+		if len(writable) > 0 {
+			encoded, err := json.Marshal(writable)
+			if err != nil {
+				return nil, err
+			}
+			config = append(config, "-c", "sandbox_workspace_write.writable_roots="+string(encoded))
+		}
+		return config, nil
+	}
+	var entries []string
+	entry := func(path, access string) error {
+		key, err := json.Marshal(path)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, string(key)+"="+strconv.Quote(access))
+		return nil
+	}
+	if err := entry("/", "read"); err != nil {
+		return nil, err
+	}
+	for _, path := range agent.FixCredentialPaths(agent.Home(environ), environ) {
+		if err := entry(path, "none"); err != nil {
+			return nil, err
+		}
+	}
+	for _, dir := range append([]string{request.Directory}, writable...) {
+		if err := entry(dir, "write"); err != nil {
+			return nil, err
+		}
+	}
+	return []string{"-c", "default_permissions=" + strconv.Quote(fixProfile),
+		"-c", "permissions." + fixProfile + ".filesystem={" + strings.Join(entries, ",") + "}",
+		"-c", "permissions." + fixProfile + ".network.enabled=" + strconv.FormatBool(request.Network)}, nil
 }

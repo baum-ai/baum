@@ -138,7 +138,7 @@ func TestIsolatedArgumentsAndEnvironmentAreStable(t *testing.T) {
 	}
 	// A chosen effort reaches reviews, fixes and the model after --model.
 	effort := &Backend{Model: "sonnet", Effort: "high"}
-	for _, args := range [][]string{effort.args(agent.Request{MaxCalls: 7}), effort.fixArgs(agent.Request{MaxCalls: 7})} {
+	for _, args := range [][]string{effort.args(agent.Request{MaxCalls: 7}), effort.fixArgs(agent.Request{MaxCalls: 7}, true)} {
 		if i := slices.Index(args, "--effort"); i < 0 || args[i+1] != "high" {
 			t.Errorf("effort args = %q", args)
 		}

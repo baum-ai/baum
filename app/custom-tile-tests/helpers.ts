@@ -4,10 +4,10 @@ import { launchURL } from "../e2e/inbox-helpers";
 /** Where pictures go, when they are asked for: CUSTOM_TILE_SHOTS=1. */
 export const SHOTS = process.env.CUSTOM_TILE_SHOTS ? "test-results/custom-tiles" : "";
 
-/** The review page's tabs of acme/demo#7, which the fixture serves with the
+/** The review page of acme/demo#7, which the fixture serves with the
  *  synthetic custom tiles when started with BAUM_APP_CUSTOM_TILES=1. The
  *  daemon places each on the How it works section whose hunks it cites. */
-export const PR7 = "repository=acme%2Fdemo&pr=7&view=tiles";
+export const PR7 = "repository=acme%2Fdemo&pr=7";
 
 /** Opens the app's address with `search`, signed in. */
 export async function open(page: Page, search: string) {
@@ -30,35 +30,59 @@ export const tileOn = (page: Page, tile: string) =>
  *  hunk and so stand on one section together. */
 const SYNTHETIC = /^(widget_health|newer_kit|escape_\w+)$/;
 
-/** A tile of the served view, as these suites change it. */
+/** A tile of the served document, as these suites change it. */
 export type ServedTile = { id: string; state: string; data: unknown };
 
-/** Serves acme/demo#7's tiles with only `keep` of the synthetic custom tiles
- *  in the view, so a hostile probe's frame never runs beside another's on
- *  the section they share; `change` may then edit each tile kept. */
-export async function showOnly(
-  page: Page,
-  keep: string[],
-  change: (tile: ServedTile) => void = () => {},
-) {
-  const kept = (id: string) => !SYNTHETIC.test(id) || keep.includes(id);
+/** What these suites read of the tile route's baum.review/2 document. */
+export type ServedDocument = {
+  tiles: ServedTile[];
+  sections?: { body?: { type: string; tile?: string }[] }[];
+};
+
+/** Changes every answer of the tile route (a version's, an earlier one's)
+ *  before the page reads it: `change` is given the served baum.review/2
+ *  document. */
+export async function serveTiles(page: Page, change: (document: ServedDocument) => void) {
   await page.route(
     (url) => url.pathname.endsWith("/api/tiles"),
     async (route) => {
       const response = await route.fetch();
       const body = await response.json();
-      const view = body.view as
-        | { tiles: ServedTile[]; sections: { id: string; tiles: string[] }[] }
-        | undefined;
-      if (view) {
-        view.tiles = view.tiles.filter((tile) => kept(tile.id));
-        for (const section of view.sections) section.tiles = section.tiles.filter(kept);
-        for (const tile of view.tiles) change(tile);
-      }
+      const document = body.document as ServedDocument | undefined;
+      if (Array.isArray(document?.tiles)) change(document);
       await route.fulfill({ response, json: body });
     },
   );
 }
+
+/** Serves acme/demo#7's tiles with only `keep` of the synthetic custom tiles
+ *  in the document, so a hostile probe's frame never runs beside another's
+ *  on the section they share; `change` may then edit each tile kept. */
+export async function showOnly(
+  page: Page,
+  keep: string[],
+  change: (tile: ServedTile) => void = () => {},
+) {
+  const kept = (id: string | undefined) => !id || !SYNTHETIC.test(id) || keep.includes(id);
+  await serveTiles(page, (document) => {
+    document.tiles = document.tiles.filter((tile) => kept(tile.id));
+    for (const section of document.sections ?? [])
+      if (section.body)
+        section.body = section.body.filter((block) => block.type !== "tile" || kept(block.tile));
+    for (const tile of document.tiles) change(tile);
+  });
+}
+
+/** The rail's row of the How it works section the reader is on: a link to
+ *  a tile opens the section it stands on. */
+export const sectionRow = (page: Page) =>
+  page.locator('#review-sections button[aria-pressed="true"]');
+
+/** One of the rail's own rows (Overview, Files changed), by its name. */
+export const railRow = (page: Page, name: string) =>
+  page
+    .getByRole("navigation", { name: "Review sections" })
+    .getByRole("button", { name: new RegExp(`^${name}`) });
 
 /** A custom tile's frame box, as the page draws it. */
 export const frameBox = (page: Page, tile: string) => page.locator(`[data-custom-tile="${tile}"]`);

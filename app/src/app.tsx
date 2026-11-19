@@ -151,6 +151,8 @@ import {
   filtered,
   rowKey,
   jobReasonText,
+  keptReview,
+  summaryLead,
   parseLive,
   parseAgentRequests,
   noAgentRequests,
@@ -2667,9 +2669,13 @@ const jobStates: Record<string, { label: string; tone: string }> = {
   interrupted: { label: "Interrupted", tone: "stopped" },
 };
 function JobState({ job }: { job: Job }) {
-  const state = jobStates[job.state] ?? { label: job.state, tone: "stopped" };
-  const Icon =
-    state.tone === "done"
+  const kept = keptReview(job);
+  const state = kept
+    ? { label: "Review still applies", tone: "waiting" }
+    : (jobStates[job.state] ?? { label: job.state, tone: "stopped" });
+  const Icon = kept
+    ? CircleDashedIcon
+    : state.tone === "done"
       ? CircleCheckIcon
       : state.tone === "failed" || state.tone === "stopped"
         ? CircleCrossIcon
@@ -2766,6 +2772,9 @@ function JobRow({
           <p role="status" className="local-job-meta">
             {jobReasonText(job.reason, job.kind)}
           </p>
+        ) : null}
+        {keptReview(job) && summaryLead(job.summary) ? (
+          <p className="local-job-meta">{summaryLead(job.summary)}</p>
         ) : null}
         {cancelling ? (
           <p role="status" className="local-job-meta">
