@@ -100,7 +100,6 @@
   --status-critical-bg: var(--red-100);
   --status-info: var(--accent-600);
   --status-info-bg: var(--accent-100);
-  --status-progress: var(--data-6);
   --status-neutral: var(--ink-600);
   --status-neutral-bg: var(--ink-100);
   --status-merged: var(--syntax-token-keyword);

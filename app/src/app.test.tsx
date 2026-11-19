@@ -306,13 +306,44 @@ it("shows actionable launch authorization failure", async () => {
   expect(node.textContent).toContain("Open this page from the baum desktop app");
   expect(node.textContent).not.toContain("Generate reviews");
 });
-it("keeps generating and failed indications without old generation columns", async () => {
-  entries = [entry(1, "outdated"), entry(2, "failed"), entry(3, "current"), entry(4, "generating")];
+it("puts a dot before each title for how its saved review stands, explained in a note", async () => {
+  entries = [
+    entry(1, "outdated"),
+    { ...entry(2, "failed"), failure_reason: "The backend timed out." },
+    entry(3, "current"),
+    entry(4, "generating"),
+    entry(5, "no_review"),
+  ];
   await act(async () => root.render(<App />));
   const inbox = node.querySelector(".local-inbox")!;
-  expect(inbox.textContent).toContain("Review failed");
-  expect(inbox.textContent).toContain("Generating review");
-  expect(inbox.textContent).not.toMatch(/outdated|current|Generated|Cost|v1|—/);
+  const dot = (n: number) =>
+    inbox
+      .querySelector(`input[aria-label="Select acme/demo #${n}"]`)!
+      .closest("li")!
+      .querySelector(".inbox-review-dot")!;
+  expect(dot(1).querySelector("button")!.textContent).toBe("Review outdated");
+  expect(dot(2).querySelector("button")!.textContent).toBe("Review failed");
+  expect(dot(3).querySelector("button")!.textContent).toBe("Review ready");
+  expect(dot(4).querySelector("button")!.textContent).toBe("Generating review");
+  expect(dot(4).querySelector(".nine-dots")).not.toBeNull();
+  // No saved review: an empty slot, so the titles still line up.
+  expect(dot(5).childElementCount).toBe(0);
+  // The note says what the dot means, and why a review failed.
+  const note = dot(2).querySelector('[role="tooltip"]')!;
+  expect(dot(2).querySelector("button")!.getAttribute("aria-describedby")).toBe(note.id);
+  expect(note.textContent).toBe(
+    "Review failed. The review could not be generated. The backend timed out.",
+  );
+  expect(dot(1).querySelector('[role="tooltip"]')!.textContent).toContain(
+    "There are changes since the review was written.",
+  );
+  // The dot comes before the title.
+  const row = dot(3).closest("li")!;
+  expect(
+    dot(3).compareDocumentPosition(row.querySelector(".inbox-pr-title")!) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(inbox.textContent).not.toMatch(/Generated|Cost|v1|—/);
 });
 it("shows GitHub states that ask for something, one merge status, and nothing for normal states", async () => {
   entries = [entry(1), entry(2), entry(3), entry(4), entry(5), entry(6)];

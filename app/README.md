@@ -1321,7 +1321,12 @@ then passing checks; its tooltip names both. GitHub state and unresolved
 thread counts also appear for pull requests without saved reviews. Normal or
 unknown states (no score, no estimate, no GitHub review, no unresolved
 threads, nothing reported) leave the cell empty and are read only by screen
-readers. A review being generated shows the nine-dots loader under the title.
+readers. A dot before the title says how baum's saved review stands (`src/review-dot.tsx`):
+the nine-dots loader while one is generating or queued, green when it is ready
+(it covers the head), amber when it is outdated and red when it failed. A pull
+request without a saved review, or one whose state is unknown, keeps an empty
+slot so titles line up. The dot's meaning, and why a review failed, opens in a
+note on hover with a mouse and on tap or Enter otherwise.
 Discovery fetches
 open pull requests with paginated GraphQL queries per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
@@ -1463,11 +1468,12 @@ historical). Its shown members leave the loose rows and nest under the group
 row, which is collapsed by default; members the current filter hides are not
 shown, bucket counts count the group once, and Select all covers loose rows and
 the members of expanded groups. The group row shows the group's risk, its name
-with a "Group of N" badge, "repository · #n, …" and, when it applies,
-"Generating group review", "Group review outdated" or "No group review yet". A
-stack group, which baum made for stacked pull requests, shows the hosted
-list's stack icon and member count before its name instead of the badge, its
-riskiest pull request's risk, and none of the group review lines.
+with a "Group of N" badge, "repository · #n, …", the group review's dot before
+its name (as a pull request row's: generating, ready or outdated) and "No
+group review yet" when there is none. A stack group, which baum made for
+stacked pull requests, shows the hosted list's stack icon and member count
+before its name instead of the badge, its riskiest pull request's risk, and
+neither the dot nor that line.
 A stack's page (`?group=<id>` of a stack group) is its overview, under a bar
 with its name, the way back and Refresh: the Stack chip, repository and count,
 "Stacked on", the size and review time summed, Risk, What changed and the

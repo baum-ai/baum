@@ -38,6 +38,7 @@ import {
   fixLabel,
   groupJob,
   isActiveJob,
+  reviewJob,
   jobHref,
   liveFor,
   navigate,
@@ -67,6 +68,7 @@ import {
   useLastRow,
   useShortcuts,
 } from "./shortcuts";
+import { ReviewDot, reviewDotState } from "./review-dot";
 import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
 import { SMALL } from "./action-classes";
 
@@ -442,6 +444,7 @@ export function Inbox({
       live={liveFor(live, entry.pull_request)}
       nested={nested}
       fixing={fixing(entry)}
+      reviewing={isActiveJob(reviewJob(entry, jobs))}
       peeked={peeked.has(rowKey(entry))}
       actions={<MenuButton label={rowName(entry)} items={() => actionsFor(entry)} menu={menu} />}
       savedReviews={savedReviews}
@@ -624,32 +627,14 @@ export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
     </span>
   );
 }
-/** The baum review's state, only when it asks for something: a review being
- *  generated, or one that failed. A current or outdated review needs nothing
- *  from the reader here; its risk is in the first column. */
+/** A review waits for a local clone; how a saved review stands is the dot
+ *  before the title (ReviewDot). */
 function ReviewActivity({ entry }: { entry: Entry }) {
   if (entry.needs_clone)
     return (
       <span className="inbox-activity text-status-caution">
         <WarningIcon size={12} className="flex-none" />
         Needs a local clone
-      </span>
-    );
-  if (entry.status === "generating")
-    return (
-      <span className="inbox-activity text-secondary">
-        <NineDots size={14} />
-        Generating review
-      </span>
-    );
-  if (entry.status === "failed")
-    return (
-      <span
-        className="inbox-activity text-status-critical"
-        title={entry.failure_reason ?? entry.store_error}
-      >
-        <WarningIcon size={14} className="flex-none" />
-        Review failed
       </span>
     );
   return null;
@@ -973,6 +958,20 @@ function GroupRow({
         <RiskCell risk={group.risk_score} />
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-2">
+            {/* A stack has no combined review, only its members' own. */}
+            <ReviewDot
+              state={
+                group.stack
+                  ? null
+                  : isActiveJob(job)
+                    ? "generating"
+                    : group.version_count === 0
+                      ? null
+                      : group.outdated
+                        ? "outdated"
+                        : "ready"
+              }
+            />
             {group.stack ? (
               // The hosted pull request list's mark for a stack.
               <span
@@ -996,14 +995,7 @@ function GroupRow({
           <p title={metadata} className="inbox-meta text-xs text-tertiary">
             {metadata}
           </p>
-          {isActiveJob(job) ? (
-            <span className="inbox-activity text-secondary">
-              <NineDots size={14} />
-              Generating group review
-            </span>
-          ) : group.stack ? null : group.outdated ? (
-            <span className="inbox-activity">Group review outdated</span>
-          ) : group.version_count === 0 ? (
+          {!group.stack && !isActiveJob(job) && group.version_count === 0 ? (
             <span className="inbox-activity">No group review yet</span>
           ) : null}
         </div>
@@ -1030,6 +1022,7 @@ function InboxRow({
   savedReviews,
   changed,
   generate,
+  reviewing,
 }: {
   rowId: string;
   /** The row the keyboard is on. */
@@ -1051,6 +1044,8 @@ function InboxRow({
   /** Its state changed in the latest read. */
   changed: boolean;
   generate?: () => void;
+  /** Its review is queued or running in the job queue. */
+  reviewing: boolean;
 }) {
   const pr = entry.pull_request;
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
@@ -1079,6 +1074,10 @@ function InboxRow({
       <RiskCell risk={entry.risk_score} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
+          <ReviewDot
+            state={reviewDotState(entry.status, reviewing)}
+            detail={entry.status === "failed" ? entry.failure_reason : undefined}
+          />
           <Link
             href={href}
             title={pr.title}
