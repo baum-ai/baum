@@ -146,8 +146,7 @@ export function ReviewImages({
           >
             {row.map(({ index, width }) => {
               const item = shown[index] as Shown;
-              // The desktop app also places description videos. They play in
-              // place, where their own controls offer full screen.
+              // The desktop app also places description videos; they play in place.
               const video = item.attachment.content_type.startsWith("video/");
               const label = item.text ?? `${video ? "video" : "image"} ${item.attachment.position}`;
               return (
@@ -176,7 +175,6 @@ export function ReviewImages({
                       height={item.attachment.height}
                       controls
                       muted
-                      playsInline
                       preload="metadata"
                       onError={(event) => {
                         if (globalThis.document.activeElement === event.currentTarget) {

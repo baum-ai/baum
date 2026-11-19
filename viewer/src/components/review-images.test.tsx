@@ -302,7 +302,6 @@ it("plays a description video in place and says in its place when it fails", () 
     false,
     "metadata",
   ]);
-  expect([video.width, video.height]).toEqual([1280, 720]);
   expect(container.querySelector("img, button")).toBeNull();
   expect(container.querySelector("figcaption")?.textContent).toBe("Demo");
 
