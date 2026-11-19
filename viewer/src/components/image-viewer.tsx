@@ -42,7 +42,6 @@ export function ImageViewer({
   // Whether this viewer holds the browser's full screen, so it only leaves
   // a full screen it entered.
   const holdsFullScreen = useRef(false);
-  const pressedBackdrop = useRef(false);
 
   const fit = (size: ImageSize) => {
     fitted.current = size;
@@ -97,6 +96,28 @@ export function ImageViewer({
     return () => globalThis.document.removeEventListener("fullscreenchange", follow);
   }, []);
 
+  // A click on the backdrop, outside the dialog's box, closes it; Escape is
+  // the keyboard's way out. The press must start there too, as a drag of
+  // the corner can end outside.
+  useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    let pressed = false;
+    const down = (event: globalThis.PointerEvent) => {
+      pressed = event.target === element && outside(element, event);
+    };
+    const click = (event: MouseEvent) => {
+      if (pressed && outside(element, event)) closeRef.current();
+      pressed = false;
+    };
+    element.addEventListener("pointerdown", down);
+    element.addEventListener("click", click);
+    return () => {
+      element.removeEventListener("pointerdown", down);
+      element.removeEventListener("click", click);
+    };
+  }, []);
+
   // Leaving the browser's full screen is asynchronous and moves focus, so a
   // close from full screen waits for it; the host can then restore focus.
   const close = async () => {
@@ -106,6 +127,8 @@ export function ImageViewer({
     }
     dialog.current?.close();
   };
+  const closeRef = useRef(close);
+  closeRef.current = close;
 
   const leaveFullScreen = () => {
     setFull(false);
@@ -160,16 +183,6 @@ export function ImageViewer({
       aria-label={label}
       aria-describedby={caption ? captionId : undefined}
       data-full={full || undefined}
-      // A click on the backdrop, outside the dialog's box, closes it. The
-      // press must start there too: a drag of the corner can end outside.
-      onPointerDown={(event) => {
-        pressedBackdrop.current =
-          event.target === event.currentTarget && outside(event.currentTarget, event);
-      }}
-      onClick={(event) => {
-        if (pressedBackdrop.current && outside(event.currentTarget, event)) close();
-        pressedBackdrop.current = false;
-      }}
       onCancel={(event) => {
         if (!full) return;
         event.preventDefault();
