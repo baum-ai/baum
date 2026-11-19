@@ -92,7 +92,7 @@ import {
 } from "./merge";
 import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { groupDotState, ReviewDot, reviewDotState } from "./review-dot";
+import { groupDotState, ReviewDot, reviewDotLabel, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
   KeyBar,
@@ -2080,6 +2080,11 @@ function ListRow({
     .filter(Boolean)
     .join(" · ");
   const hot = (row.entry.risk_score?.score ?? 0) >= 5;
+  // As a review row's panel says (why): a current review over data too old to
+  // trust covers an earlier commit.
+  const dot = reviewDotState(
+    row.entry.status === "current" && metadataStale(row.entry, now) ? "outdated" : row.entry.status,
+  );
   return (
     <button
       type="button"
@@ -2088,15 +2093,7 @@ function ListRow({
       aria-current={on || undefined}
       onClick={() => pick(row.key)}
     >
-      {/* As the panel says (why): a current review over data too old to trust
-          covers an earlier commit. */}
-      <ReviewDot
-        state={reviewDotState(
-          row.entry.status === "current" && metadataStale(row.entry, now)
-            ? "outdated"
-            : row.entry.status,
-        )}
-      />
+      <ReviewDot state={dot} detail={row.entry.failure_reason} labelled={false} />
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
         <span className="upnext-row-line">
@@ -2114,6 +2111,7 @@ function ListRow({
           </span>
         </span>
       </span>
+      {dot ? <span className="sr-only">, {reviewDotLabel(dot)}</span> : null}
       {hot ? (
         <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
       ) : null}
@@ -2163,6 +2161,7 @@ function GroupListRow({
 }) {
   const { group, members } = line;
   const hot = members.some((member) => (member.entry.risk_score?.score ?? 0) >= 5);
+  const groupDot = groupDotState(group, review?.state);
   return (
     <div className="upnext-group-line">
       <button
@@ -2183,7 +2182,7 @@ function GroupListRow({
         aria-expanded={open}
         onClick={() => pick(line.key)}
       >
-        <ReviewDot state={groupDotState(group, review?.state)} />
+        <ReviewDot state={groupDot} labelled={false} />
         <span className="upnext-row-text">
           <span className="upnext-row-title">
             {group.stack ? <StackIcon size={13} className="upnext-stack-icon" /> : null}
@@ -2193,6 +2192,7 @@ function GroupListRow({
             {[groupName(group), group.repository, memberKinds(members)].join(" · ")}
           </span>
         </span>
+        {groupDot ? <span className="sr-only">, {reviewDotLabel(groupDot)}</span> : null}
         {hot ? (
           <span
             className="upnext-hot"

@@ -864,8 +864,9 @@ ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
 clones hold it. Every row, a review group's too (a stack's has none), starts
 with the dot for how baum's review stands, as Pull requests draws it
-(`src/review-dot.tsx`); there a current review over pull request data too old
-to trust (`metadataStale`) reads outdated, as its panel says. After the groups, their own pull requests with nothing to do
+(`src/review-dot.tsx`), its label read after the title. Here, unlike Pull
+requests, a current review over pull request data too old to trust
+(`metadataStale`) reads outdated, as a review row's panel says. After the groups, their own pull requests with nothing to do
 (drafts, and those waiting on reviewers, checks or another GitHub blocker) are
 listed under **Waiting**, and every other open pull request (`others`: someone
 else's that neither asks for their review nor is assigned to them), oldest

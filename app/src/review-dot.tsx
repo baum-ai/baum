@@ -51,6 +51,11 @@ export function groupDotState(
   return group.outdated ? "outdated" : "ready";
 }
 
+/** What a dot says to a screen reader, for a row that reads it after its title. */
+export function reviewDotLabel(state: ReviewDotState | null): string | null {
+  return state ? DOTS[state].label : null;
+}
+
 const CLOSE_MS = 150;
 
 /** The dot before a row's title for how its review stands: filled when
@@ -64,10 +69,14 @@ const CLOSE_MS = 150;
 export function ReviewDot({
   state,
   detail,
+  labelled = true,
 }: {
   state: ReviewDotState | null;
   /** Why a failed review failed (`failure_reason`), said after its note. */
   detail?: string;
+  /** Reads its label where it stands; a row that is one button says it after
+   *  the title instead (`reviewDotLabel`), so the title is read first. */
+  labelled?: boolean;
 }) {
   const anchor = useRef<HTMLSpanElement>(null);
   const popup = useRef<HTMLSpanElement>(null);
@@ -81,9 +90,15 @@ export function ReviewDot({
     };
     window.addEventListener("scroll", hide, { capture: true, passive: true });
     window.addEventListener("resize", hide);
+    // Hover content must be dismissible without moving the pointer away.
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") hide();
+    };
+    window.addEventListener("keydown", escape);
     return () => {
       window.removeEventListener("scroll", hide, { capture: true });
       window.removeEventListener("resize", hide);
+      window.removeEventListener("keydown", escape);
     };
   }, [open]);
   useEffect(() => () => clearTimeout(closing.current), []);
@@ -133,7 +148,7 @@ export function ReviewDot({
             className={`block h-2 w-2 rounded-full ${state === "outdated" ? "border-[1.5px] border-current" : "bg-current"}`}
           />
         )}
-        <span className="sr-only">{dot.label}</span>
+        {labelled ? <span className="sr-only">{dot.label}</span> : null}
       </span>
       <span
         ref={popup}
