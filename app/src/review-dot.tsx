@@ -91,14 +91,19 @@ export function ReviewDot({
     window.addEventListener("scroll", hide, { capture: true, passive: true });
     window.addEventListener("resize", hide);
     // Hover content must be dismissible without moving the pointer away.
+    // Escape closes it and does nothing else, as a menu's does
+    // (context-menu.tsx): the page's own Escape waits for the next one.
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") hide();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      hide();
     };
-    window.addEventListener("keydown", escape);
+    window.addEventListener("keydown", escape, true);
     return () => {
       window.removeEventListener("scroll", hide, { capture: true });
       window.removeEventListener("resize", hide);
-      window.removeEventListener("keydown", escape);
+      window.removeEventListener("keydown", escape, true);
     };
   }, [open]);
   useEffect(() => () => clearTimeout(closing.current), []);
