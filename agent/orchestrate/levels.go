@@ -36,11 +36,15 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 			toWrite = append(toWrite, s)
 		}
 	}
+	mandatory := o.mandatoryTiles(sections)
 	tileCalls := 0
 	for _, t := range planned {
 		if !reused[t.Owner] && t.Type != TypeCode {
 			tileCalls++
 		}
+	}
+	for _, list := range mandatory {
+		tileCalls += len(list)
 	}
 	o.budget.expect(1, len(toWrite)+1)
 	o.budget.expect(2, tileCalls)
@@ -67,16 +71,22 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 		if s.Kind == "mechanical" && !reused[s.ID] {
 			startTiles(s.ID, ownedBy(s.ID))
 		}
+		// A reused section's text is in: its mandatory tiles start now.
+		if reused[s.ID] {
+			startTiles(s.ID, mandatory[s.ID])
+		}
 	}
+	// A written section's mandatory tiles start once its text is in, as its
+	// own do, but never pass through it: a section cannot drop them.
 	for _, s := range toWrite {
 		middle.Go(func() {
 			list := o.sectionLevel(ctx, s, ownedBy(s.ID))
-			startTiles(s.ID, list)
+			startTiles(s.ID, append(list, mandatory[s.ID]...))
 		})
 	}
 	middle.Go(func() {
 		o.contextLevel(ctx)
-		startTiles(reviewv2.OwnerContext, ownedBy(reviewv2.OwnerContext))
+		startTiles(reviewv2.OwnerContext, append(ownedBy(reviewv2.OwnerContext), mandatory[reviewv2.OwnerContext]...))
 	})
 	middle.Wait()
 	o.budget.close(1)
@@ -85,6 +95,76 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	}
 	tiles.Wait()
 	o.budget.close(2)
+}
+
+// mandatoryTiles adds a pending tile for each type of Run.Always that no
+// tile of the plan or of a reused section has, by owner. Each stands on
+// the logical section with the most hunks, resting on its hunks, or on the
+// context, resting on every hunk, when there is no such section. The map's
+// own tile of the type, where it planned one, is placed and briefed as the
+// map chose; these are the ones it left out.
+func (o *orchestration) mandatoryTiles(sections []reviewv2.Section) map[string][]reviewv2.Tile {
+	if len(o.run.Always) == 0 {
+		return nil
+	}
+	owner, hunks := reviewv2.OwnerContext, []string(nil)
+	for _, s := range sections {
+		if s.Kind == reviewv2.KindLogical && len(s.Hunks) > len(hunks) {
+			owner, hunks = s.ID, s.Hunks
+		}
+	}
+	if owner == reviewv2.OwnerContext {
+		hunks = o.facts.refs.HunkIDs()
+	}
+	o.mu.Lock()
+	planned := map[string]bool{}
+	for _, t := range o.tiles {
+		planned[t.Type] = true
+	}
+	o.mu.Unlock()
+	taken := o.tileIDs()
+	out := map[string][]reviewv2.Tile{}
+	for _, name := range o.run.Always {
+		kind, ok := o.registry.Get(name)
+		if !ok || !kind.Dedicated || planned[name] {
+			continue
+		}
+		planned[name] = true
+		t := reviewv2.Tile{ID: mandatoryTileID(name, taken), Type: name, Owner: owner, Cites: hunkAnchors(hunks), State: reviewv2.TilePending,
+			Shows: cut(kind.Title+" of this pull request, a tile filled on every review of it", MaxShows)}
+		taken[t.ID] = true
+		o.setTile(t)
+		out[owner] = append(out[owner], t)
+	}
+	if len(out) > 0 {
+		o.publish()
+	}
+	return out
+}
+
+// mandatoryTileID is tl_ and the type's name as a slug, made unique among
+// taken.
+func mandatoryTileID(name string, taken map[string]bool) string {
+	slug := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + 'a' - 'A'
+		}
+		return '_'
+	}, name)
+	if len(slug) > 50 {
+		slug = slug[:50]
+	}
+	if slug == "" {
+		slug = "tile"
+	}
+	id := "tl_" + slug
+	for n := 2; taken[id]; n++ {
+		id = fmt.Sprintf("tl_%s_%d", slug, n)
+	}
+	return id
 }
 
 // setSection changes a section under the lock.

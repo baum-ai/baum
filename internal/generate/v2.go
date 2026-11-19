@@ -88,7 +88,10 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 		return result, fail(CategoryBackend, err)
 	}
 	// The dedicated types: baum's library and the person's saved types.
+	// The pinned and added ones (Tiles.Always) are filled whatever the map
+	// answers.
 	entries := library.All()
+	var always []string
 	if o.Tiles != nil {
 		t := o.Tiles.withSaved(ctx, &b)
 		if t.Library != nil {
@@ -96,6 +99,9 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 		}
 		if t.NoLibrary {
 			entries = nil
+		}
+		for _, a := range t.Always {
+			always = append(always, a.Name)
 		}
 	}
 	version := v.PreviousVersion + 1
@@ -120,7 +126,7 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 	g := &agent.Generator{Backend: backend, Redactor: redactor}
 	run := orchestrate.Run{
 		Generator: g, Bundle: &b, EncodedBundle: assembled.JSON, Directory: runDir, Budgets: o.Budgets,
-		Prompts: prompts, FillPrompts: fills, Registry: orchestrate.NewRegistry(entries), Previous: v.Previous, NoReuse: v.NoReuse || o.NoReuse,
+		Prompts: prompts, FillPrompts: fills, Registry: orchestrate.NewRegistry(entries), Always: always, Previous: v.Previous, NoReuse: v.NoReuse || o.NoReuse,
 		Concurrency: v.Concurrency, Complete: v.Complete, CompleteInput: completeInput, Record: v.Record,
 		Step: func(text string) {
 			progress("%s", text)

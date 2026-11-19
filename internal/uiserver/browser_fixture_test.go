@@ -61,7 +61,7 @@ import (
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
-	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -277,24 +277,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if os.Getenv("BAUM_APP_BROWSER_FIXTURE") != "1" {
 		t.Skip("Playwright fixture process")
 	}
-	// With BAUM_APP_CUSTOM_TILES=1, the tile routes serve acme/demo#7's
-	// reviews with the synthetic custom tiles (tileviewtest.AddBrowserTiles:
-	// one well-behaved, escape probes that try to leave their frames, one
-	// unavailable),
-	// which no generation writes yet. It is decided when the process starts,
-	// so no kept tile answer is served without them, and only the browser
-	// suites that start the fixture with it see them.
-	if os.Getenv("BAUM_APP_CUSTOM_TILES") == "1" {
-		t.Cleanup(tileview.SetFixture(func(doc *tiles.Document) {
-			var header struct {
-				Repository  string `json:"repository"`
-				PullRequest int    `json:"pull_request"`
-			}
-			if json.Unmarshal(doc.Review, &header) == nil && header.Repository == "acme/demo" && header.PullRequest == 7 {
-				tileviewtest.AddBrowserTiles(doc)
-			}
-		}))
-	}
+	// With BAUM_APP_CUSTOM_TILES=1, acme/demo#7's versions and #13 are stored
+	// as baum.review/2 documents with their tiles, as a review written with
+	// tiles is: #7's with the synthetic custom tiles (one well-behaved, escape
+	// probes that try to leave their frames, one unavailable) on the section
+	// of its first hunk, #13's with its composition's library and authored
+	// tiles. Only the browser suites that start the fixture with it see them;
+	// the main suite keeps baum.review/1 versions.
+	customTiles := os.Getenv("BAUM_APP_CUSTOM_TILES") == "1"
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
 	home := appdbtest.TempDir(t)
@@ -349,7 +339,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var previous store.Version
+	var previous, previousStored store.Version
 	var screenshot bytes.Buffer
 	if err := png.Encode(&screenshot, image.NewRGBA(image.Rect(0, 0, 320, 240))); err != nil {
 		t.Fatal(err)
@@ -414,10 +404,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		document, _ := json.Marshal(doc)
 		next := store.Version{Metadata: store.Metadata{Version: n, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: screenshot.Bytes()}}}
-		if err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, previous, next); err != nil {
+		stored := next
+		if customTiles {
+			stored.Document = browserV2(t, document, nil, browserCustomTiles(t, document))
+		}
+		if err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, previousStored, stored); err != nil {
 			t.Fatal(err)
 		}
-		previous = next
+		previous, previousStored = next, stored
 	}
 	seedAskConversation(t, versions, previous.Metadata.Version)
 	// acme/demo#12, no longer listed, keeps one saved review whose tiles were
@@ -454,6 +448,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		document, _ := json.Marshal(doc)
 		generated := store.Version{Metadata: store.Metadata{Version: 1, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"},
 			Document: document, Attachments: previous.Attachments, Composition: tileviewtest.LibraryComposition(t, document)}
+		if customTiles {
+			generated.Document = browserV2(t, document, generated.Composition, nil)
+			generated.Composition = nil
+		}
 		if err := versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 13}, store.Version{}, generated); err != nil {
 			t.Fatal(err)
 		}
@@ -976,4 +974,60 @@ func seedTileLibrary(t *testing.T, path string, registry *repos.Registry) *tilel
 		t.Fatal(err)
 	}
 	return lib
+}
+
+// browserV2 converts a baum.review/1 fixture document to the baum.review/2
+// document a review written with tiles stores: with its composition's tiles
+// (reviewv2.FromV1) and extra, and every section's body.
+func browserV2(t *testing.T, document, composition []byte, extra []reviewv2.Tile) []byte {
+	t.Helper()
+	d, err := reviewv2.FromV1(document, composition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Tiles = append(d.Tiles, extra...)
+	reviewv2.EnsureBodies(&d)
+	encoded, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+// browserCustomTiles are the synthetic custom tiles and the escape probes
+// (tileviewtest.CustomTiles, EscapeProbeTiles), citing the document's first
+// hunk, on the section that holds it.
+func browserCustomTiles(t *testing.T, document []byte) []reviewv2.Tile {
+	t.Helper()
+	var doc struct {
+		Index struct {
+			Hunks []struct {
+				ID string `json:"id"`
+			} `json:"hunks"`
+		} `json:"index"`
+		Sections []struct {
+			ID    string   `json:"id"`
+			Hunks []string `json:"hunks"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(document, &doc); err != nil || len(doc.Index.Hunks) == 0 {
+		t.Fatalf("the fixture review has no hunk to cite: %v", err)
+	}
+	hunk := doc.Index.Hunks[0].ID
+	owner := reviewv2.OwnerContext
+	for _, section := range doc.Sections {
+		if slices.Contains(section.Hunks, hunk) {
+			owner = section.ID
+			break
+		}
+	}
+	var out []reviewv2.Tile
+	for _, tile := range append(tileviewtest.CustomTiles(hunk), tileviewtest.EscapeProbeTiles(hunk)...) {
+		var def struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(tile.Definition, &def)
+		out = append(out, reviewv2.Tile{ID: tile.ID, Type: def.Name, Owner: owner, Title: tile.Title, Data: tile.Data, State: tile.State, Definition: tile.Definition, Cites: []reviewv2.Anchor{}})
+	}
+	return out
 }

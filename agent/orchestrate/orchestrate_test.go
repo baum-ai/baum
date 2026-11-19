@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/reviewv2"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 const (
@@ -430,6 +432,76 @@ func TestDroppedAndProposedTiles(t *testing.T) {
 	}
 }
 
+// A pinned or added dedicated type the map leaves out is filled anyway, on
+// the logical section with the most hunks, where its section cannot drop
+// it; one the map planned is not added again, and a name that is not an
+// offered dedicated type is ignored.
+type testFillPrompts struct{}
+
+func (testFillPrompts) TileAnalysisInstructions(context.Context, string) (agent.TileAnalysisPrompt, error) {
+	return agent.TileAnalysisPrompt{Version: "test", Fill: "FILL", FillSubmit: "SUBMIT"}, nil
+}
+
+func TestAlwaysTypesAreFilledWhateverTheMapAnswers(t *testing.T) {
+	f := fullFake()
+	f.reply("section-sec-retry", sectionReplyJSON(`[{"id":"tl_backoff","shows":"x","cites":[],"drop":true,"reason":"It restates the steps."}]`))
+	run := testRun(t, f)
+	run.Registry, run.FillPrompts = NewRegistry(library.All()), testFillPrompts{}
+	run.Always = []string{"schema_change", "schema_change", "table", "not_a_type"}
+	out, doc, err := Generate(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.requests["tile-tl-schema-change"]; !ok {
+		t.Fatalf("the pinned type was not filled; calls: %v", slices.Collect(maps.Keys(f.requests)))
+	}
+	r, ok := out.Generation.Tiles["tl_schema_change"]
+	if !ok || r.Status != StatusFailed {
+		t.Errorf("the pinned type's record: %+v %v", r, ok)
+	}
+	added := 0
+	for _, tile := range doc.Tiles {
+		if tile.Type == "schema_change" {
+			added++
+			if tile.Owner != "sec_retry" || !slices.Equal(hunkCites(tile.Cites), []string{hunkA, hunkB}) {
+				t.Errorf("the pinned tile: %+v", tile)
+			}
+		}
+		if tile.Type == "table" {
+			t.Errorf("a native type was added: %+v", tile)
+		}
+	}
+	if added > 1 {
+		t.Errorf("%d tiles of the pinned type", added)
+	}
+
+	// The map planned the type itself: no second tile.
+	f = fullFake()
+	f.reply("map", strings.Replace(mapReplyJSON, `"id":"tl_backoff","type":"table"`, `"id":"tl_backoff","type":"schema_change"`, 1))
+	run = testRun(t, f)
+	run.Registry, run.FillPrompts = NewRegistry(library.All()), testFillPrompts{}
+	run.Always = []string{"schema_change"}
+	if _, _, err := Generate(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.requests["tile-tl-schema-change"]; ok {
+		t.Error("a type the map planned was filled twice")
+	}
+	if _, ok := f.requests["tile-tl-backoff"]; !ok {
+		t.Error("the map's own tile of the type was not filled")
+	}
+}
+
+func TestMandatoryTileID(t *testing.T) {
+	taken := map[string]bool{"tl_schema_change": true}
+	if got := mandatoryTileID("schema_change", taken); got != "tl_schema_change_2" {
+		t.Errorf("taken: %s", got)
+	}
+	if got := mandatoryTileID("Team-Owners", nil); got != "tl_team_owners" || !tileID.MatchString(got) {
+		t.Errorf("slug: %s", got)
+	}
+}
+
 func TestLevelTimeShares(t *testing.T) {
 	f := fullFake()
 	f.replies["section-sec-retry"] = nil
@@ -451,6 +523,31 @@ func TestLevelTimeShares(t *testing.T) {
 	}
 	if doc.Sections[0].Details != "failed" || out.Generation.Overview.Status != StatusRan {
 		t.Errorf("section %q, overview %+v", doc.Sections[0].Details, out.Generation.Overview)
+	}
+}
+
+func TestMapTimeFloor(t *testing.T) {
+	start := time.Date(2026, 11, 18, 14, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		name  string
+		limit time.Duration
+		level string
+		want  time.Duration
+	}{
+		// 20% of ten minutes is two; the map gets MinMapTime.
+		{"map floor", 10 * time.Minute, LevelMap, MinMapTime},
+		// The later levels keep their shares' ends.
+		{"sections unchanged", 10 * time.Minute, LevelSections, 6*time.Minute + 30*time.Second},
+		{"overview unchanged", 10 * time.Minute, LevelOverview, 10 * time.Minute},
+		// A long limit's share is above the floor.
+		{"map share", 30 * time.Minute, LevelMap, 6 * time.Minute},
+		// A short limit caps the map at the end of the sections' share.
+		{"map capped", 5 * time.Minute, LevelMap, 3*time.Minute + 15*time.Second},
+	} {
+		got := levelEnd(start, start.Add(c.limit), c.level).Sub(start)
+		if got.Round(time.Millisecond) != c.want {
+			t.Errorf("%s: %s, want %s", c.name, got, c.want)
+		}
 	}
 }
 

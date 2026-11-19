@@ -37,7 +37,7 @@ const (
 var CustomTileIDs = []string{WidgetHealth, EscapeProbe, NewerKit}
 
 // EscapeProbeModes are the escape probe's other modes, each a tile of its
-// own (ID "escape_" and the mode) that AddBrowserTiles adds: their hostile
+// own (ID "escape_" and the mode) that the browser fixture adds: their hostile
 // acts in a detail would take the page with them, so each has its own.
 var EscapeProbeModes = []string{"spoof", "flood", "leave_daemon", "leave_outside", "leave_early", "hello_again", "focus", "busy"}
 
@@ -116,13 +116,6 @@ func EscapeProbeTiles(hunk string) []tiles.Tile {
 // holds it. It has the signature tileview.SetFixture takes.
 func AddCustomTiles(doc *tiles.Document) {
 	add(doc, CustomTiles(firstHunk(doc)))
-}
-
-// AddBrowserTiles adds what AddCustomTiles adds and the escape probe's
-// other modes (EscapeProbeTiles), for the browser suite.
-func AddBrowserTiles(doc *tiles.Document) {
-	hunk := firstHunk(doc)
-	add(doc, append(CustomTiles(hunk), EscapeProbeTiles(hunk)...))
 }
 
 func firstHunk(doc *tiles.Document) string {

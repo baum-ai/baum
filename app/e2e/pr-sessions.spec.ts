@@ -37,12 +37,9 @@ test("a running session is one of the pull request's sessions, counted and liste
   expect(count).toBeGreaterThan(0);
   await group.click();
 
-  // The running session is a row of the rail's list and the first card of
-  // the pane, counted with the linked ones in the pane's heading.
-  const rail = page.locator("#review-sessions");
-  await expect(
-    rail.getByRole("button", { name: "Resolve the conflict with the base", exact: true }),
-  ).toBeVisible();
+  // The running session is the first card of the pane (the rail's Sessions
+  // row lists nothing under it), counted with the linked ones in the pane's
+  // heading.
   const card = page.locator("li#session-running-on-7");
   await expect(card).toContainText("Finished its turn");
   await expect(card).toContainText("feature");

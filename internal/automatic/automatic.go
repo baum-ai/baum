@@ -193,7 +193,10 @@ type Overview struct {
 	Enabled bool `json:"enabled"`
 	// PullRequests is which pull requests get automatic reviews: both,
 	// authored, requested or all.
-	PullRequests string   `json:"pull_requests"`
+	PullRequests string `json:"pull_requests"`
+	// Updates is how automatic reviews follow later pushes: always, on_open
+	// or on_change (repos.Preferences.ReviewUpdates).
+	Updates      string   `json:"updates"`
 	Repositories []Status `json:"repositories"`
 }
 
@@ -825,6 +828,10 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	}
 }
 
+// errReviewedOnce is submit's answer for a pull request that already has a
+// saved review while automatic reviews are set to review on open only.
+var errReviewedOnce = errors.New("already reviewed once")
+
 type outcome int
 
 const (
@@ -842,9 +849,15 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 	}
 	var err error
 	var job jobs.Job
-	if head, rerr := reviewed(ctx, w.repo.clone, w.number); rerr == nil && head == w.head {
+	head, rerr := reviewed(ctx, w.repo.clone, w.number)
+	switch {
+	case rerr == nil && head == w.head:
 		err = jobs.ErrDuplicate
-	} else {
+	case rerr == nil && head != "" && v.prefs.ReviewUpdates() == repos.UpdatesOnOpen:
+		// Reviewed once already: on open, later heads and requests are
+		// not reviewed automatically.
+		err = errReviewedOnce
+	default:
 		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger})
 		queued = err == nil
 	}
@@ -869,7 +882,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 		s.log().Info("queued an automatic review", "repository", w.name, "pr", w.number, "job", job.ID, "trigger", w.trigger)
 		pr.Done, pr.Pending, pr.Trigger = w.head, "", ""
 		notice = ""
-	case errors.Is(err, jobs.ErrDuplicate):
+	case errors.Is(err, jobs.ErrDuplicate) || errors.Is(err, errReviewedOnce):
 		pr.Done, pr.Pending, pr.Trigger = w.head, "", ""
 	case errors.Is(err, jobs.ErrBusy):
 		// Its running job's completion wakes the next pass. (A waiting
@@ -943,7 +956,7 @@ func (s *Scheduler) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	o := Overview{Enabled: v.prefs.Automatic, PullRequests: cmp.Or(v.prefs.PullRequests, "both"), Repositories: []Status{}}
+	o := Overview{Enabled: v.prefs.Automatic, PullRequests: cmp.Or(v.prefs.PullRequests, "both"), Updates: v.prefs.ReviewUpdates(), Repositories: []Status{}}
 	names := make([]string, 0, len(v.repos))
 	for name := range v.repos {
 		names = append(names, name)

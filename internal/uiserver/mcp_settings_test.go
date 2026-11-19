@@ -241,7 +241,7 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 	for _, key := range []string{"backend", "model", "effort"} {
 		readSameJSON(t, "settings_reviews "+key, readField(t, text, key), settings[key])
 	}
-	if !strings.Contains(text, `"automatic":{"enabled":true,"pull_requests":"authored"}`) || !strings.Contains(text, `"effective_backend":"claude"`) || !strings.Contains(text, `"effective_model":"haiku"`) {
+	if !strings.Contains(text, `"automatic":{"enabled":true,"pull_requests":"authored","updates":"always"}`) || !strings.Contains(text, `"effective_backend":"claude"`) || !strings.Contains(text, `"effective_model":"haiku"`) {
 		t.Errorf("settings_reviews: %s", text)
 	}
 	text = call(chat, "settings_fixes", nil)

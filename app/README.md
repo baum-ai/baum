@@ -925,7 +925,15 @@ nothing (`no_changes`, which is the agent's judgement, not a failure) says so
 in a neutral notice with the first paragraph of what the agent said, which
 says why, and **Read what the agent said**; its row says "last fix changed
 nothing". The PR page's fix notice and the job page say it the same way,
-without the failure icon. Agent sessions working on its
+without the failure icon. A review job that completed with
+`no_significant_change` (On change found nothing in the new commits that would
+alter the saved review) is neutral too: the Jobs list says "Review still
+applies" with the first paragraph of the agent's one-line reason, and the job
+page says "Review still applies" without a check or a cross; no new review is
+shown. The index lists such a review as `current` at the new head with its
+`kept` head and reason, so the PR page does not mark it outdated and says
+"Still applies to the newer commits" under the title, the agent's reason in
+its tooltip. Agent sessions working on its
 branch are counted at the foot of the panel, as a link to Sessions
 (`?page=sessions&peek=<agent:id>`) that opens that session's card there, its
 peek and its reply where it takes one, as a click on it does (with several,
@@ -1699,7 +1707,12 @@ and puts the control back. **Fixes** chooses the agent that fixes: "Same as
 reviews (agent · model)" (the default) or Claude Code or Codex, then a model
 and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
 (`""` returns to the reviews', effort included) and reported by `GET
-api/settings`. A chosen fix agent applies in every repository. **Data
+api/settings`. A chosen fix agent applies in every repository. A
+**Network access** switch (on by default) is sent alone as `fix_network` and
+reported as a plain boolean; it applies with or without a chosen fix agent and
+is kept when the agent returns to the reviews'. On, the fix agent's commands
+can install dependencies and fetch what builds and tests need; off, its
+sandbox allows no connection, so it can't install dependencies. **Data
 extraction** has the same Agent and Model rows, its agent "Same as reviews
 (agent)" by default.
 
@@ -1760,11 +1773,22 @@ object clears the app's value). `GET api/settings` returns `agent_env` and
 `agent_env_source` (`app`, or `file` while the config file's `[agent_env]`
 applies, which the section notes). `~` and `$VARS` are expanded; the values
 are stored on this computer, so no secrets belong there.
-Automatic reviews are on by default. The global switch is a master switch (the
-desktop tray's pause sets it): off stops automatic generation everywhere. Each
+Automatic reviews are on by default. "Review pull requests automatically" is a
+choice of four: Never, On open, On change and Always (default). Never is the
+master switch (the desktop tray's pause sets it): it stops automatic generation
+everywhere, and a paused state reads as Never. The others set `enabled` and
+`updates` through `PUT api/automatic`: On open reviews a pull request once on
+its own and gives later pushes no new automatic review; On change reviews once,
+then on each push has the agent read what changed since the saved review and
+write a new one only if the change would make a difference; Always writes a new
+review on every push. The row's detail says what the selected choice does, and
+"Which pull requests" shows whenever the choice is not Never. A daemon that
+sends no `updates` reads as Always. The desktop setup step offers the same four
+as a segmented choice. Each
 repository chooses "Global setting", "On" or "Off" (`automatic`: `null`,
-`true`, `false`); only "Off" differs while the global switch is on, and while
-it is off a repository set to "On" is shown as paused by the global switch.
+`true`, `false`); only "Off" differs while the global choice is not Never, and
+while it is Never a repository set to "On" is shown as paused by the global
+switch.
 Repositories lists picked GitHub repositories and their clones. Add repositories
 opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any
@@ -2329,15 +2353,20 @@ draws the same page.
 Custom tiles on the review page: `pnpm test:custom-tiles`
 (`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
-each opening a tile's place (`pane=tile&tile=<id>`, How it works on the
-section the view places it on): the well-behaved tile at 1440, 900 and
+each opening a tile's place (`pane=tile&tile=<id>`, the rail's row of the
+How it works section the tile stands on). With that variable the fixture
+stores acme/demo#7's versions and #13 as `baum.review/2` documents with
+their tiles (`browserV2`): #7's with the synthetic custom tiles on the
+section of its first hunk, #13's with its composition's library and
+authored tiles. The well-behaved tile at 1440, 900 and
 390px in light and dark (pictures into `test-results/custom-tiles` with
 `CUSTOM_TILE_SHOTS=1`), a review generated with library and authored tiles
 (`library-tiles.spec.ts`, acme/demo#13, with the same widths, themes and
 pictures), and the escape probes on the real frame route
 (`tile-frames.spec.ts`), with a server on port 4170 that must hear nothing.
-The synthetic tiles share a section, so each test serves the view with only
-the ones it drives (`showOnly`). `just local_app::e2e-webkit`
+The synthetic tiles share a section, so each test serves the document with
+only the ones it drives (`showOnly`, which drops the others' tiles and tile
+blocks). `just local_app::e2e-webkit`
 runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
 macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
 The main suite starts the fixture without custom tiles.
@@ -2673,21 +2702,40 @@ transcript.
 
 Every single pull request's review opens on the viewer's rail
 (`src/review-view/`, drawn through the viewer's places seam by `useViewPlaces`,
-with the viewer's `flatRail` and `ownFiles`); there is no other page, and no
-setting for it (the stored `review_page` and `arranged_tiles` appearance
-values are ignored). Only the content of the Overview and of a section
-depends on the version shown: a `baum.review/2` version draws the Overview and
-section bodies below, and a `baum.review/1` version draws the viewer's own
-Summary and section pages (every block they show: behaviour steps, evidence,
-intent, entities, risks, agent findings, attention, and so on) inside the same
-rail, side pane and keys. The rail's How it works rows come from the version's
-own sections ("Where this fits" only for a version that has one: a
-`baum.review/1` context is part of its Summary), and Files changed, Decisions,
-Sessions and Commits are the same for both. `shellRequest` reads a version
-from `GET api/document` and, when it is `baum.review/2`, again from
-`api/tiles`; a `baum.review/1` version is kept as stored, drawn through the
-viewer's `ReviewPlaceContext.builtInPane`. Each version of a history or a
-comparison is drawn by its own version's pages. A group's or a stack's page keeps the viewer's own places. The
+with the viewer's `flatRail` and `ownFiles`) in every state; there is no other
+layout, and no setting for it (the stored `review_page` and `arranged_tiles`
+appearance values are ignored). The page always passes its places, with or
+without a document:
+
+- **No review yet** (none asked for, queued, being written with no draft
+  yet, failed, needing a clone, or still loading): the rail has Overview, How
+  it works greyed with "No sections yet." under it, and Files changed with the
+  pull request's file count when its facts are read (left out when the facts
+  are unavailable), then Decisions, Sessions and Commits from the facts. The
+  Overview is current and its pane is the page's placeholder: "Review
+  queued", "Generating the review" (with Cancel), the failed job's outcome
+  with Try again, "No review yet" with Generate review, "Needs a local
+  clone", or "Loading review…". Files changed opens the viewer's own files
+  pane on the facts (`pane=files`, `pane=file`); once a review lands, that
+  address becomes the review's Files changed (`pane=tile&tile=code`, with the
+  open file), replacing the history entry. The side pane starts folded.
+- **A draft** and **every saved version** are drawn in the same rail, side
+  pane and keys. Only the content of the Overview and of a section depends
+  on the version shown: a `baum.review/2` version (and a draft) draws the
+  Overview and section bodies below, and a `baum.review/1` version draws the
+  viewer's own Summary and section pages (every block they show: behaviour
+  steps, evidence, images, intent, entities, risks, agent findings,
+  attention, and so on) in the pane, through the viewer's
+  `ReviewPlaceContext.builtInPane`. The rail's How it works rows come from
+  the version's own sections ("Where this fits" only for a version that has
+  one: a `baum.review/1` context is part of its Summary), and Files changed,
+  Decisions, Sessions and Commits are the same for both. `shellRequest`
+  reads a version from `GET api/document` and, when it is `baum.review/2`,
+  again from `api/tiles`; a `baum.review/1` version is kept as stored.
+- **An earlier version** read alone or compared is drawn the same way, each
+  by its own version's pages.
+
+A group's or a stack's page (`src/group.tsx`) keeps the viewer's own places. The
 head, the version menu, history, Compare, the side pane, the Decisions,
 Sessions and Commits panes and the review dialog are the viewer's own. The rail
 lists, in order:
@@ -2708,8 +2756,8 @@ lists, in order:
   reader leaves it. Where the panes stack, the rail is a sheet opened from the
   navigator bar, which also steps through the places.
 
-The page reads each version from `GET api/tiles` (a draft's from
-`api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
+The page reads each `baum.review/2` version from `GET api/tiles` (a draft's
+from `api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
 `baum.review/2` document (`oss/reviewv2/document.go`; `review-view/document.ts`
 has its types): the summary with its `verdict` and `risk_why`, the
 `overview` (`screenshots`, `diagram`, `intent`), the `context`, the sections

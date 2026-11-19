@@ -612,6 +612,13 @@ function FrameView(props: FrameViewProps) {
     const fail = (failure: FrameFailure) => {
       if (done) return;
       stop();
+      // Until the page draws the failure in its place, the frame stays
+      // mounted with nothing left to take the keyboard back from it: its
+      // document is unloaded at once, so it runs no more, and the reader
+      // goes on typing where they were.
+      iframe.inert = true;
+      iframe.src = "about:blank";
+      if (document.activeElement === iframe) release(iframe);
       latest.current.onFail(failure);
     };
     const send = (message: { kind: string }) => {
