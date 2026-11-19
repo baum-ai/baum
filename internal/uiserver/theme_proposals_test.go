@@ -375,6 +375,21 @@ func TestThemeProposalWithThemeIDUpdatesInPlace(t *testing.T) {
 	}
 }
 
+// The update sets the name to the proposal's name, which may differ from the
+// stored one: with no name in SaveInput, that renames the theme.
+func TestThemeProposalUpdateRenamesToTheProposalName(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	id := f.addCustom("Mine", "dark", "dark")
+	p := f.proposeThemeWith(map[string]any{"theme_id": id, "name": "Dusk", "base": "dark", "tokens": map[string]string{"--color-paper": "#e8eef4"}})
+	if err := f.save(p, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Mode: agentcontext.ThemeModeUpdate}}); err != nil {
+		t.Fatal(err)
+	}
+	if name, _, _, ok := f.customTheme(id); !ok || name != "Dusk" {
+		t.Fatalf("name %q, want Dusk", name)
+	}
+}
+
 func TestThemeProposalSaveAsNewKeepsTheOriginal(t *testing.T) {
 	f := newProposalFixture(t)
 	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})

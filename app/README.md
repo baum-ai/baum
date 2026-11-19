@@ -1762,9 +1762,12 @@ unchanged), and the card shows swatches of its colours, those warnings, a name
 field and a Light or Dark select (always sent on save, defaulting to the
 theme's base). A proposal that names a custom theme the person has (`theme_id`:
 the agent is tweaking it) shows **Update <name>** as its primary action and
-**Save as new theme** as the secondary one, with the name prefilled and no slot
-select (the note names the slots the theme is in; Update keeps them, and Save as
-new adds a copy in the base's slot). They send `{theme: {name, mode: "update"}}`
+**Save as new theme** as the secondary one, with the name prefilled and the slot
+select, which is for Save as new (the note names the slots the theme is in;
+Update keeps them, and the copy goes in the slot picked, by default the slot the
+edited theme holds that is in use, else one it holds, else the base's). Update
+sets the theme's name to the name field, and reads **Update and rename to <new>**
+when the field differs from the stored name. They send `{theme: {name, mode: "update"}}`
 and `{theme: {name, slot, mode: "new"}}`; if the theme was deleted meanwhile
 the update's error shows and Save as new theme stays. The preview ends on dismiss, when the conversation closes
 or the panel goes away, and on save once the preferences hold the saved theme

@@ -402,7 +402,7 @@ test("tweaking a custom theme twice updates it in place and adds no theme", asyn
     // The card updates the theme it edits; the slot choice is not offered.
     await expect(proposal.getByRole("button", { name: "Update Mine" })).toBeVisible();
     await expect(proposal.getByRole("button", { name: "Save as new theme" })).toBeVisible();
-    await expect(proposal.getByLabel("Use it as")).toHaveCount(0);
+    await expect(proposal.getByLabel("Save as new theme, use it as")).toHaveCount(1);
     await expect.poll(() => paper(page)).toBe(colour);
     await proposal.getByRole("button", { name: "Update Mine" }).click();
     await expect(proposal).toHaveCount(0);

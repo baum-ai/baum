@@ -51,3 +51,12 @@ func TestWithContrastWarnings(t *testing.T) {
 		t.Errorf("the recorded proposal changed: %s", list[0].After)
 	}
 }
+
+// A JSON null After has no fields to add to: it is left as it is.
+func TestWithContrastWarningsSkipsNullAfter(t *testing.T) {
+	got := withContrastWarnings([]agentcontext.Proposal{{Page: agentcontext.ProposalAnywhere, Target: agentcontext.TargetTheme,
+		After: json.RawMessage(`null`)}})
+	if string(got[0].After) != "null" {
+		t.Errorf("a null after changed: %s", got[0].After)
+	}
+}

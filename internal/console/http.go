@@ -330,7 +330,7 @@ func withContrastWarnings(list []agentcontext.Proposal) []agentcontext.Proposal 
 			Base   string            `json:"base"`
 			Tokens map[string]string `json:"tokens"`
 		}
-		if json.Unmarshal(p.After, &fields) != nil || json.Unmarshal(p.After, &in) != nil {
+		if json.Unmarshal(p.After, &fields) != nil || fields == nil || json.Unmarshal(p.After, &in) != nil {
 			continue
 		}
 		warnings := themes.Contrast(themes.Theme{Name: in.Name, Base: in.Base, Tokens: in.Tokens})

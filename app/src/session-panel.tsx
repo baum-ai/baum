@@ -1747,7 +1747,9 @@ export function ProposalCard({
   const themed = isThemeProposal(proposal);
   const proposedColours = themed ? proposedTheme(proposal) : null;
   const [themeName, setThemeName] = useState(proposedColours?.name ?? "");
-  const [slot, setSlot] = useState<"light" | "dark">(proposedColours?.base ?? "light");
+  // The person's own pick of slot; until then the default below stands.
+  const [pickedSlot, setSlot] = useState<"light" | "dark" | null>(null);
+  const systemDark = useSystemDark();
   // A proposal that edits a custom theme updates it; Save as new theme adds a
   // copy. The theme it names may be gone by now: Update then fails with the
   // daemon's reason, and Save as new theme stays.
@@ -1756,10 +1758,22 @@ export function ProposalCard({
     ? preferences.themes.find((t) => t.id === editedId && !t.builtin)
     : undefined;
   const editedSlots = editedId ? slotsOf(preferences, editedId) : [];
+  // Save as new defaults to the slot the edited theme holds that is in use,
+  // else any slot it holds, else the proposal's base.
+  const inUseSlot = activeSlot(preferences, systemDark);
+  const defaultSlot: "light" | "dark" = editedSlots.includes(inUseSlot)
+    ? inUseSlot
+    : editedSlots.length
+      ? (editedSlots[0] as "light" | "dark")
+      : (proposedColours?.base ?? "light");
+  const slot = pickedSlot ?? defaultSlot;
+  // The update sets the theme's name to the name field, prefilled from the
+  // proposal; it says so when that is a rename.
+  const trimmedName = themeName.trim();
+  const renaming = !!edited && !!trimmedName && trimmedName !== edited.name;
   // A theme choice is for no page either; it saves the slot the app resolved.
   const choiced = isChoiceProposal(proposal);
   const choice = choiced ? proposedChoice(proposal) : null;
-  const systemDark = useSystemDark();
   // The theme a choice names may be gone by now: the daemon would refuse it.
   const choiceGone =
     !!choice?.theme_id && !preferences.themes.some((theme) => theme.id === choice.theme_id);
@@ -1780,15 +1794,16 @@ export function ProposalCard({
     try {
       if (action === "dismiss") await dismissProposal(conversation, proposal.id);
       else if (proposal.kind === "diff") {
-        // A new theme always sends its slot: the daemon reads an empty one
-        // differently. An update keeps the theme's slots and sends none.
+        // A new theme (a copy included) always sends its slot: the daemon
+        // reads an empty one differently. An update keeps the theme's slots
+        // and sends none.
         const name = themeName.trim();
         const themeSave: ThemeSave | undefined = !themed
           ? undefined
           : mode === "update"
             ? { name, mode }
             : editedId
-              ? { name, slot: proposedColours?.base ?? slot, mode: "new" }
+              ? { name, slot, mode: "new" }
               : { name, slot };
         // A choice always sends an explicit slot, the one the app resolved
         // for "in use", which the daemon cannot see.
@@ -1876,26 +1891,23 @@ export function ProposalCard({
             value={themeName}
             onChange={(event) => setThemeName(event.target.value)}
           />
-          {editedId ? (
-            editedSlots.length ? (
-              <p className="session-panel-note">
-                Updating keeps it as your {editedSlots.join(" and ")} theme.
-              </p>
-            ) : null
-          ) : (
-            <>
-              <label htmlFor={`${valueId}-slot`}>Use it as</label>
-              <select
-                id={`${valueId}-slot`}
-                className="local-field"
-                value={slot}
-                onChange={(event) => setSlot(event.target.value as "light" | "dark")}
-              >
-                <option value="light">Light theme</option>
-                <option value="dark">Dark theme</option>
-              </select>
-            </>
-          )}
+          {editedId && editedSlots.length ? (
+            <p className="session-panel-note">
+              Updating keeps it as your {editedSlots.join(" and ")} theme.
+            </p>
+          ) : null}
+          <label htmlFor={`${valueId}-slot`}>
+            {editedId ? "Save as new theme, use it as" : "Use it as"}
+          </label>
+          <select
+            id={`${valueId}-slot`}
+            className="local-field"
+            value={slot}
+            onChange={(event) => setSlot(event.target.value as "light" | "dark")}
+          >
+            <option value="light">Light theme</option>
+            <option value="dark">Dark theme</option>
+          </select>
         </div>
       ) : null}
       {needsValue ? (
@@ -1953,7 +1965,9 @@ export function ProposalCard({
           {proposal.kind === "operation"
             ? "Confirm"
             : editedId
-              ? `Update ${edited?.name ?? proposedColours?.name ?? "theme"}`
+              ? renaming
+                ? `Update and rename to ${trimmedName}`
+                : `Update ${edited?.name ?? proposedColours?.name ?? "theme"}`
               : "Save"}
         </Button>
         {editedId ? (

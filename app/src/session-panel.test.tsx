@@ -1309,7 +1309,7 @@ it("offers Update and Save as new theme for a proposal that edits a custom theme
   expect(button("Save as new theme")).toBeDefined();
   // The name is prefilled; the slot choice is not offered, the slots it is in are named.
   expect(card.querySelector<HTMLInputElement>('input[type="text"]')!.value).toBe("Mine");
-  expect(card.querySelector("select")).toBeNull();
+  expect(card.querySelector("select")).not.toBeNull();
   expect(card.textContent).toContain("your dark theme");
   expect(rootStyle().getPropertyValue("--color-paper")).toBe("#223344");
 });
@@ -1329,6 +1329,36 @@ it("updates in place with no slot, and saves as new with the base's slot", async
   await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
   expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
     theme: { name: "Copy", slot: "dark", mode: "new" },
+  });
+});
+
+it("defaults Save as new to the slot in use and sends a changed slot", async () => {
+  // Mode dark (desktop light): the edited theme is in the dark slot in use.
+  await openEdit();
+  const select = node.querySelector<HTMLSelectElement>("article select")!;
+  expect(select.value).toBe("dark");
+  await act(async () => {
+    select.value = "light";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => button("Save as new theme")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Mine", slot: "light", mode: "new" },
+  });
+});
+
+it("labels the update as a rename when the name field differs from the stored name", async () => {
+  await openEdit();
+  expect(button("Update Mine")).toBeDefined();
+  const name = node.querySelector<HTMLInputElement>('article input[type="text"]')!;
+  await type(name, "Dusk");
+  expect(button("Update and rename to Dusk")).toBeDefined();
+  expect(button("Update Mine")).toBeUndefined();
+  await act(async () => button("Update and rename to Dusk")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Dusk", mode: "update" },
   });
 });
 
