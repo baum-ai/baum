@@ -317,11 +317,6 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 		o.publish()
 		return planned
 	}
-	o.claimProposal(&result)
-	o.setSection(s.ID, func(sec *reviewv2.Section) {
-		sec.Body, sec.Risks, sec.Details = result.Body, result.Risks, ""
-	})
-	o.record(LevelSections, s.ID, StatusRan, "")
 	var out []reviewv2.Tile
 	for _, t := range planned {
 		if why, dropped := result.Dropped[t.ID]; dropped {
@@ -339,6 +334,12 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 		o.setTile(t)
 		out = append(out, t)
 	}
+	// The section's drops free their places before its proposal claims one.
+	o.claimProposal(&result)
+	o.setSection(s.ID, func(sec *reviewv2.Section) {
+		sec.Body, sec.Risks, sec.Details = result.Body, result.Risks, ""
+	})
+	o.record(LevelSections, s.ID, StatusRan, "")
 	if extra := result.Propose; extra != nil {
 		o.budget.expect(2, 1)
 		out = append(out, *extra)

@@ -2,6 +2,7 @@ package uiserver_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -64,6 +65,7 @@ import (
 	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // browserDiscovery serves fixed pull requests. Once pushed reports true (the
@@ -977,9 +979,36 @@ func seedTileLibrary(t *testing.T, path string, registry *repos.Registry) *tilel
 	return lib
 }
 
+// compositionTiles are a composition's library and authored tiles with
+// their stored definitions and data.
+func compositionTiles(c *view.Composition) []tiles.Tile {
+	var out []tiles.Tile
+	for _, lib := range c.Library {
+		var def struct {
+			Name  string `json:"name"`
+			Title string `json:"title"`
+		}
+		_ = json.Unmarshal(lib.Definition, &def)
+		if def.Name == "" {
+			continue
+		}
+		state := tiles.StateReady
+		if lib.Pending {
+			state = tiles.StatePending
+		}
+		title := cmp.Or(def.Title, def.Name)
+		out = append(out, tiles.Tile{ID: tiles.LibraryTileID(def.Name), Type: tiles.TypeCustom, Title: title, Data: lib.Data, State: state, Definition: lib.Definition})
+	}
+	for _, a := range c.Authored {
+		kind, _, _ := strings.Cut(a.ID, "_")
+		out = append(out, tiles.Tile{ID: a.ID, Type: kind, Title: a.Title, Data: a.Data, State: tiles.StateReady})
+	}
+	return out
+}
+
 // browserV2 converts a baum.review/1 fixture document to the baum.review/2
 // document a review written with tiles stores: with its composition's tiles
-// (tileview.Serve) and extra, and every section's body.
+// (compositionTiles) and extra, and every section's body.
 func browserV2(t *testing.T, document, composition []byte, extra []reviewv2.Tile) []byte {
 	t.Helper()
 	d, err := reviewv2.FromV1(document)
@@ -987,9 +1016,20 @@ func browserV2(t *testing.T, document, composition []byte, extra []reviewv2.Tile
 		t.Fatal(err)
 	}
 	if len(composition) > 0 {
-		if err := json.Unmarshal(tileview.Serve(document, composition, nil, tiles.Options{}).Document, &d); err != nil {
+		// A review written with tiles stores its tiles' definitions whole,
+		// so they are taken from the composition, not from a served answer.
+		r, err := view.ParseReview(document)
+		if err != nil {
 			t.Fatal(err)
 		}
+		c, err := view.Parse(composition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := view.Build(r, c, compositionTiles(c), nil)
+		d.Tiles = reviewv2.TilesOfView(v)
+		d.Overview = reviewv2.OverviewOfView(v)
+		d.Summary.RiskWhy = v.Overview.RiskSummary
 	}
 	d.Tiles = append(d.Tiles, extra...)
 	reviewv2.EnsureBodies(&d)

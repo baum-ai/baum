@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -290,5 +291,26 @@ func TestSnippetOfSlicesTheTextItSearched(t *testing.T) {
 	}
 	if _, ok := snippetOf(strings.Repeat("\u023a", 10), []string{"needle"}); ok {
 		t.Error("a match in text without one")
+	}
+}
+
+// A baum.review/1 section that went stale is still in the version: the diff
+// does not report it, or its risks, as removed.
+func TestVersionDiffKeepsStaleSections(t *testing.T) {
+	v1 := func(version int, derived string) []byte {
+		return []byte(`{"schema":"baum.review/1","review":{"version":` + strconv.Itoa(version) + `,"head":"h"},"summary":{"text":"S"},"relations":[],"index":{"hunks":[{"id":"h_1","path":"a.go"}]},` +
+			`"sections":[{"id":"sec_a","title":"A","kind":"logical","hunks":["h_1"],"summary":{"text":"A."},"risks":[{"id":"rk_a","tier":"medium","category":"correctness","text":"R","anchors":[]}],"blocks":[],"derived":{"state":"` + derived + `"}}]}`)
+	}
+	from, err := readVersionShape(v1(1, "new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, err := readVersionShape(v1(2, "stale"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := diffVersions(from, to)
+	if len(d.SectionsRemoved) != 0 || len(d.RisksRemoved) != 0 {
+		t.Errorf("a stale section reads as removed: %+v %+v", d.SectionsRemoved, d.RisksRemoved)
 	}
 }

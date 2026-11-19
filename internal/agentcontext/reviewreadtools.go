@@ -803,9 +803,27 @@ func readVersionShape(body []byte) (versionShape, error) {
 		return versionShape{}, err
 	}
 	var head struct {
-		Schema string `json:"schema"`
+		Schema   string `json:"schema"`
+		Sections []struct {
+			ID      string          `json:"id"`
+			Title   string          `json:"title"`
+			Hunks   []string        `json:"hunks"`
+			Risks   []reviewv2.Risk `json:"risks"`
+			Derived struct {
+				State string `json:"state"`
+			} `json:"derived"`
+		} `json:"sections"`
 	}
 	_ = json.Unmarshal(body, &head)
+	// Reading a baum.review/1 version leaves out its stale sections, which
+	// the version still holds: a section that went stale is not removed.
+	if head.Schema != reviewv2.Name {
+		for _, s := range head.Sections {
+			if s.Derived.State == "stale" {
+				doc.Sections = append(doc.Sections, reviewv2.Section{ID: s.ID, Title: s.Title, Hunks: s.Hunks, Risks: s.Risks})
+			}
+		}
+	}
 	return versionShape{Schema: head.Schema, Header: header, Doc: doc}, nil
 }
 
