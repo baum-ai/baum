@@ -678,6 +678,39 @@ describe("the native tiles", () => {
     expect(lanes[3]?.querySelector('[data-join="branch"]')).toBeNull();
   });
 
+  it("gives a branch longer than the first lane a column for every step", async () => {
+    const container = await card({
+      ...tileOf("dg_pairing"),
+      data: {
+        source: [],
+        lanes: [
+          { label: "Newer", steps: [{ title: "Ask" }, { title: "Split" }, { title: "Keep" }] },
+          {
+            label: "Older",
+            from: 1,
+            steps: [
+              { title: "Refused" },
+              { title: "Ask again" },
+              { title: "Split" },
+              { title: "Keep" },
+            ],
+          },
+        ],
+      },
+    });
+    const flow = container.querySelector<HTMLElement>(".flow")!;
+    expect(flow.style.getPropertyValue("--flow-columns")).toBe("4");
+    const lanes = [...container.querySelectorAll("[data-lane]")].map((lane) =>
+      [...lane.querySelectorAll<HTMLElement>("li")].map((li) =>
+        li.style.getPropertyValue("--flow-column"),
+      ),
+    );
+    expect(lanes).toEqual([
+      ["1", "2", "3"],
+      ["1", "2", "3", "4"],
+    ]);
+  });
+
   it("draws columns under their labels", async () => {
     const container = await card(tileOf("dg_allowlist"));
     const columns = [...container.querySelectorAll<HTMLElement>("section[aria-label]")];

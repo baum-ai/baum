@@ -163,12 +163,10 @@ export function FlowDiagram({ data }: { data: FlowData }) {
   const clickable = data.lanes.some((lane) => lane.steps.some((step) => step.more?.trim()));
   const labelled = data.lanes.some((lane) => lane.label);
   const branches = data.lanes.map((_, at) => branchOf(data, at));
-  // As many columns as the longest lane that is not a branch; a branch
-  // starts after its step and moves left if it would run past the end.
-  const columns = Math.max(
-    1,
-    ...data.lanes.map((lane, at) => (branches[at] ? 0 : lane.steps.length)),
-  );
+  // As many columns as the longest lane, so every step has a cell of its
+  // own; a branch starts after its step and moves left if it would run past
+  // the end.
+  const columns = Math.max(1, ...data.lanes.map((lane) => lane.steps.length));
   const startOf = (at: number) => {
     const from = branches[at] ?? 0;
     const steps = data.lanes[at]?.steps.length ?? 1;
@@ -209,7 +207,7 @@ export function FlowDiagram({ data }: { data: FlowData }) {
                   className="flow-step"
                   style={
                     {
-                      "--flow-column": Math.min(startOf(at) + position, columns),
+                      "--flow-column": startOf(at) + position,
                     } as CSSProperties
                   }
                 >
