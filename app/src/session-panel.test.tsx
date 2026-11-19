@@ -18,6 +18,7 @@ import {
   shown,
   useSessionPanel,
 } from "./session-panel";
+import { PreferencesProvider } from "./preferences";
 import { SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
 
@@ -1012,4 +1013,167 @@ it("opens from the foot while the window is too narrow for a side panel beside t
   } finally {
     await resize(wide);
   }
+});
+
+// A colour theme is proposed under the "app" page, which is no page's: the
+// panel previews the newest open one on the whole app.
+const themeProposal = (id: string, over: Partial<Proposal> = {}): Proposal => ({
+  id,
+  kind: "diff",
+  page: "app",
+  target: "theme",
+  before: { light_theme: "Default light", dark_theme: "Default dark" },
+  after: {
+    name: `Theme ${id}`,
+    base: "dark",
+    tokens: { "--color-paper": "#e8eef4", "--brand-green-600": "#5aa9e6" },
+    contrast_warnings: [{ foreground: "--text-primary", background: "--surface-page", ratio: 3.2 }],
+  },
+  revision: "theme",
+  context: { page: "inbox" },
+  ...over,
+});
+const rootStyle = () => document.documentElement.style;
+
+async function themedHost(page: PageContext = { page: "inbox" }) {
+  await act(async () =>
+    root.render(
+      <PreferencesProvider>
+        <ToastProvider>
+          <div className="local-frame">
+            <SessionPanelHost page={page} liveTick={0} go={() => {}} />
+          </div>
+        </ToastProvider>
+      </PreferencesProvider>,
+    ),
+  );
+}
+
+/** Opens the panel on conversation c1, whose open proposals are `list()`. */
+async function openThemes(list: () => Proposal[], saved: () => void = () => {}) {
+  conversation = made();
+  sessionPanel.select("c1");
+  answer = (call) => {
+    if (call.path.endsWith("/proposals")) return Response.json({ proposals: list() });
+    if (call.path.endsWith("/save") || call.path.endsWith("/dismiss")) {
+      saved();
+      return Response.json({});
+    }
+    return undefined;
+  };
+  await themedHost();
+  await act(async () => sessionPanel.show());
+}
+const proposalsChanged = () =>
+  act(async () =>
+    publishConsoleEvent(JSON.stringify({ conversation: "c1", kind: "proposals", state: "idle" })),
+  );
+
+it("previews the newest open theme proposal and a newer one replaces it", async () => {
+  let open = [themeProposal("t1")];
+  await openThemes(() => open);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  open = [
+    themeProposal("t1"),
+    themeProposal("t2", {
+      after: { name: "Sand", base: "light", tokens: { "--color-paper": "#fdf6e3" } },
+    }),
+  ];
+  await proposalsChanged();
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#fdf6e3"));
+  expect(document.documentElement.dataset.theme).toBe("light");
+  // The first theme's other colours did not stay behind.
+  expect(rootStyle().getPropertyValue("--brand-green-600")).toBe("");
+});
+
+it("previews only a proposal for the app, and never calls one elsewhere", async () => {
+  const other: Proposal = { ...themeProposal("t9"), page: "settings", target: "appearance" };
+  await openThemes(() => [other, themeProposal("t1")]);
+  await until(() => expect(node.querySelectorAll("article").length).toBe(2));
+  const cards = [...node.querySelectorAll("article")];
+  const themeCard = cards.find((c) => c.querySelector(".session-panel-swatches"))!;
+  expect(themeCard.textContent).not.toContain("open it to save");
+  expect(themeCard.querySelector(".session-panel-swatch")).not.toBeNull();
+  expect(themeCard.textContent).toContain("--text-primary");
+  expect(themeCard.textContent).toContain("3.2:1");
+  const name = themeCard.querySelector<HTMLInputElement>('input[type="text"]')!;
+  expect(name.value).toBe("Theme t1");
+  expect(themeCard.querySelector<HTMLSelectElement>("select")!.value).toBe("dark");
+});
+
+it("restores the saved theme when the proposal is dismissed", async () => {
+  let open = [themeProposal("t1")];
+  await openThemes(
+    () => open,
+    () => {
+      open = [];
+    },
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  await act(async () => button("Dismiss")!.click());
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(calls.some((c) => c.path.endsWith("/proposals/t1/dismiss"))).toBe(true);
+});
+
+it("saves a theme with the name and an explicit slot, then ends the preview", async () => {
+  let open = [themeProposal("t1")];
+  await openThemes(
+    () => open,
+    () => {
+      open = [];
+    },
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  const name = node.querySelector<HTMLInputElement>('article input[type="text"]')!;
+  await type(name, "Midnight");
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/t1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/t1/save"))!.body).toEqual({
+    theme: { name: "Midnight", slot: "dark" },
+  });
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+});
+
+it("sends the slot the person chose, and the default slot when they did not", async () => {
+  await openThemes(() => [themeProposal("t1")]);
+  await until(() => expect(node.querySelector("article select")).not.toBeNull());
+  const slot = node.querySelector<HTMLSelectElement>("article select")!;
+  await act(async () => {
+    slot.value = "light";
+    slot.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/save"))!.body).toEqual({
+    theme: { name: "Theme t1", slot: "light" },
+  });
+});
+
+it("restores the saved theme when the conversation closes and when the panel goes away", async () => {
+  const open = [themeProposal("t1")];
+  await openThemes(() => open);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  conversation = made({ state: "closed" });
+  await proposalsChanged();
+  await act(async () =>
+    publishConsoleEvent(JSON.stringify({ conversation: "c1", kind: "state", state: "closed" })),
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+  conversation = made();
+  await act(async () =>
+    publishConsoleEvent(JSON.stringify({ conversation: "c1", kind: "state", state: "idle" })),
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  // The panel goes away while its proposal is still open.
+  await act(async () =>
+    root.render(
+      <PreferencesProvider>
+        <ToastProvider>{null}</ToastProvider>
+      </PreferencesProvider>,
+    ),
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+  expect(document.documentElement.dataset.theme).toBe("light");
 });

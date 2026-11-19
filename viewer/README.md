@@ -77,37 +77,36 @@ so a host that sets the variable never fetches them.
 
 ### Custom color themes
 
-Edit `src/themes/custom.css` to customize the desktop app. It is loaded by the
-main app, setup, connecting and tray screens. Outside this repository, import
-`@baum/viewer/theme.css` for the same theme entry point without Tailwind.
+A custom theme is a base, `light` or `dark`, and overrides of palette tokens.
+The desktop app keeps the person's themes and puts the active one on the
+document root: `data-theme` and `color-scheme` follow the theme's base, and its
+tokens are set as inline custom properties, which win over both cascade layers
+and the app's stylesheet. The app has a light slot and a dark slot, each holding
+any theme, and the `theme` setting (system, light or dark) picks the slot in
+use; a dark-base theme in the light slot gives `data-theme="dark"`. Outside the
+app, import `@baum/viewer/theme.css` for the same palette without Tailwind and
+set the same properties on the root yourself.
 
-There are two levels of customization. Set a base color to recalculate its
-dependent shades, or set any derived token to replace just that result:
+Each theme has one base, so it overrides one mode: a theme meant for both modes
+is two themes, one in each slot. Set a seed to recalculate its dependent shades,
+or set a role token to replace just that result. The tokens a theme may set are
+the seeds below and the roles listed after them; the app refuses any other name
+and any value that is not a plain colour (`#rrggbb`, `rgb()`, `hsl()` or
+`oklch()`):
 
 ```css
-/* In src/themes/custom.css; this file is already in the baum-theme layer. */
+/* What the app sets for a light theme, as inline declarations on :root. */
 :root {
   --brand-green-600: #2574a9;
   --brand-sand-100: #dbe8f4;
-
-  /* Direct exceptions to the default recipes. */
-  --surface-selected: color-mix(in srgb, var(--brand-green-600) 12%, var(--surface-page));
-  --border-focus: var(--brand-green-600);
-}
-
-:root[data-theme="dark"] {
-  --surface-page: #14202a;
-  --surface-card: var(--surface-page);
-  --text-secondary: #bdd0dd;
+  --border-focus: #2574a9;
 }
 ```
 
-`theme.css` orders the layers as `baum-palette`, then `baum-theme`. A custom
-declaration therefore wins over the defaults even when the default selector is
-more specific, such as the dark-mode selector. No `!important` is needed.
-Unlayered host styles intentionally take precedence over both layers. Keep
-component CSS from redeclaring palette tokens locally; consume the appropriate
-role, such as `--nav-hover`, instead.
+`theme.css` orders the layers as `baum-palette`, then `baum-theme`, and inline
+declarations beat both. Unlayered host styles beat the layers but not inline
+declarations. Keep component CSS from redeclaring palette tokens locally;
+consume the appropriate role, such as `--nav-hover`, instead.
 
 Put overrides on the document root. CSS variables resolve where they are
 defined: changing only a base on a child element does not recalculate recipes
@@ -116,11 +115,12 @@ direct role overrides affect that role and aliases depending on it. For example,
 `--surface-page` and `--surface-card` are independent roles, so set both when
 they should share a custom fill. Changing `--paper-0` changes both defaults.
 
-Common roles are `--surface-page`, `--surface-card`, `--surface-canvas`,
-`--surface-popup`, `--text-primary`, `--text-secondary`, `--border-default`,
-`--border-focus`, `--action-primary`, `--action-primary-hover`, `--nav-hover`,
-`--nav-selected`, `--status-positive`, `--status-caution` and `--status-critical`.
-The full default file is the reference for derived roles and base dependencies.
+Roles a theme may set are `--surface-page`, `--surface-card`, `--surface-canvas`,
+`--surface-popup`, `--text-primary`, `--text-secondary`, `--text-inverse`,
+`--border-default`, `--border-focus`, `--action-primary`, `--action-primary-hover`,
+`--nav-hover`, `--nav-selected`, `--status-positive`, `--status-caution` and
+`--status-critical`. The full default file is the reference for derived roles
+and base dependencies.
 
 | Base tokens | What they control |
 | --- | --- |
@@ -131,17 +131,14 @@ The full default file is the reference for derived roles and base dependencies.
 | `--series-caramel`, `--series-sage`, `--series-espresso` | The local Analytics charts' warm series |
 
 Dark mode uses different mixing recipes, so a seed can affect the two modes
-differently. Use mode-specific role overrides when the default recipe is not
-suitable for a custom theme.
+differently: on a dark base the text comes from `--color-paper` and the surfaces
+from `--color-shadow`. Use role overrides when the default recipe is not
+suitable for a theme.
 
-For multiple named themes, scope declarations to
-`:root[data-color-theme="ocean"]` and mode-specific exceptions to
-`:root[data-color-theme="ocean"][data-theme="dark"]`. Select the theme with
-`document.documentElement.dataset.colorTheme = "ocean"`. `data-theme` remains
-the light/dark mode managed by appearance preferences; it does not overwrite
-the separate theme identity. This CSS interface does not add a theme picker or
-persist custom theme selection. Stumpy, native artwork and vendor identities retain their fixed
-colors independently of the UI theme.
+`src/themes/custom.css` is a build-time hook, empty by default, for overrides a
+build wants to ship in the `baum-theme` layer; the person's themes override it.
+Stumpy, native artwork and vendor identities retain their fixed colors
+independently of the UI theme.
 
 ## Host seams
 

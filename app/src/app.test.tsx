@@ -1338,6 +1338,113 @@ it("opens on General and marks sections needing attention", async () => {
   expect(node.querySelector("#fix-agent")).not.toBeNull();
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
 });
+const appearanceThemes = [
+  { id: "default-light", name: "Default light", base: "light", builtin: true, tokens: {} },
+  { id: "default-dark", name: "Default dark", base: "dark", builtin: true, tokens: {} },
+  { id: "c-1", name: "Dusk", base: "dark", tokens: { "--color-paper": "#e8eef4" } },
+];
+it("chooses a theme for each slot, any base in either, and renames and deletes custom ones", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  let appearance = {
+    theme: "light",
+    key_hints: true,
+    sidebar: "pinned",
+    review_page: "full",
+    light_theme: "default-light",
+    dark_theme: "default-dark",
+    themes: appearanceThemes,
+  };
+  const sent: { method: string; path: string; body: unknown }[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const init = args[1] as RequestInit | undefined;
+    const path = String(args[0]);
+    if (path.includes("api/settings/appearance")) {
+      const method = init?.method ?? "GET";
+      if (method !== "GET") {
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        sent.push({ method, path: path.slice(path.indexOf("api/")), body });
+        if (method === "PUT") appearance = { ...appearance, ...body };
+        if (method === "PATCH")
+          appearance = {
+            ...appearance,
+            themes: appearance.themes.map((t) => (t.id === "c-1" ? { ...t, name: body.name } : t)),
+          };
+        if (method === "DELETE")
+          appearance = {
+            ...appearance,
+            dark_theme: "default-dark",
+            themes: appearance.themes.filter((t) => t.id !== "c-1"),
+          };
+      }
+      return Promise.resolve(Response.json(appearance));
+    }
+    return stubbed(...args);
+  });
+  await act(async () => root.render(<App />));
+  const light = node.querySelector<HTMLSelectElement>("#light-theme")!;
+  const dark = node.querySelector<HTMLSelectElement>("#dark-theme")!;
+  expect([...light.options].map((o) => o.text)).toEqual(["Default light", "Default dark", "Dusk"]);
+  expect(light.value).toBe("default-light");
+  // A dark theme in the light slot gives a dark page while the light slot is in use.
+  await choose(light, "c-1");
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { light_theme: "c-1" },
+  });
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
+  await choose(light, "default-light");
+  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("");
+  await choose(dark, "c-1");
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { dark_theme: "c-1" },
+  });
+  // The custom theme is listed with a menu to rename and delete it.
+  const menuButton = node.querySelector<HTMLButtonElement>('[aria-label="Actions for Dusk"]')!;
+  await act(async () => menuButton.click());
+  const item = (name: string) =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((i) =>
+      i.textContent?.startsWith(name),
+    )!;
+  await act(async () => item("Rename").click());
+  const field = node.querySelector<HTMLInputElement>('input[aria-label="Name of Dusk"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      field,
+      "Midnight",
+    );
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => field.form!.requestSubmit());
+  expect(sent).toContainEqual({
+    method: "PATCH",
+    path: "api/settings/appearance/themes/c-1",
+    body: { name: "Midnight" },
+  });
+  expect([...light.options].map((o) => o.text)).toContain("Midnight");
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('[aria-label="Actions for Midnight"]')!.click(),
+  );
+  await act(async () => item("Delete").click());
+  await act(async () =>
+    [...document.querySelectorAll<HTMLButtonElement>("dialog button")]
+      .find((b) => b.textContent === "Delete")!
+      .click(),
+  );
+  expect(sent).toContainEqual({
+    method: "DELETE",
+    path: "api/settings/appearance/themes/c-1",
+    body: {},
+  });
+  expect([...light.options].map((o) => o.text)).toEqual(["Default light", "Default dark"]);
+});
 it("chooses the review page in General, the full review by default", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
@@ -1354,6 +1461,9 @@ it("chooses the review page in General, the full review by default", async () =>
           key_hints: true,
           sidebar: "pinned",
           review_page: "tiles",
+          light_theme: "default-light",
+          dark_theme: "default-dark",
+          themes: appearanceThemes,
         }),
       );
     }

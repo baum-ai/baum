@@ -68,6 +68,7 @@ import {
   useCloneActions,
 } from "./repositories";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { ConfirmDialog } from "./group-dialogs";
 import { ListSection } from "./list";
 import { GitHubConnectionSection } from "./github-connection";
 import { OrganizationAccessNotice } from "./organization-access";
@@ -3383,6 +3384,123 @@ function hasFolderPicker() {
   return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }
 
+/** The custom themes, each with a menu to rename or delete it. A rename is
+ *  typed in the row; a delete asks first. */
+function CustomThemes() {
+  const { preferences, renameTheme, deleteTheme } = usePreferences();
+  const menu = useContextMenu();
+  const custom = preferences.themes.filter((theme) => !theme.builtin);
+  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [deleting, setDeleting] = useState<{ id: string; name: string } | null>(null);
+  const [pending, setPending] = useState(false);
+  const [problem, setProblem] = useState("");
+  const run = async (action: () => Promise<void>) => {
+    setPending(true);
+    setProblem("");
+    try {
+      await action();
+      return true;
+    } catch (cause) {
+      setProblem(cause instanceof Error ? cause.message : "Local request failed.");
+      return false;
+    } finally {
+      setPending(false);
+    }
+  };
+  if (!custom.length) return null;
+  return (
+    <SettingRow
+      label="Custom themes"
+      detail="Themes you saved from the agent's proposals. Choose them in the light or dark theme above."
+    >
+      <ul className="settings-themes" aria-label="Custom themes">
+        {custom.map((theme) => (
+          <li key={theme.id} className="settings-theme" data-list-row="">
+            {renaming?.id === theme.id ? (
+              <form
+                className="settings-theme-rename"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const name = renaming.name.trim();
+                  if (!name) return;
+                  void run(() => renameTheme(theme.id, name)).then((ok) => {
+                    if (ok) setRenaming(null);
+                  });
+                }}
+              >
+                <input
+                  type="text"
+                  className="local-field"
+                  aria-label={`Name of ${theme.name}`}
+                  autoFocus
+                  maxLength={60}
+                  value={renaming.name}
+                  onChange={(event) => setRenaming({ id: theme.id, name: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.stopPropagation();
+                      setRenaming(null);
+                    }
+                  }}
+                />
+                <Button type="submit" size="compact" disabled={pending || !renaming.name.trim()}>
+                  Rename
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="compact"
+                  onClick={() => setRenaming(null)}
+                >
+                  Cancel
+                </Button>
+              </form>
+            ) : (
+              <>
+                <span className="settings-theme-name">{theme.name}</span>
+                <Badge size="compact">{theme.base === "dark" ? "Dark" : "Light"}</Badge>
+                <MenuButton
+                  label={theme.name}
+                  menu={menu}
+                  items={() => [
+                    {
+                      label: "Rename",
+                      onSelect: () => setRenaming({ id: theme.id, name: theme.name }),
+                    },
+                    {
+                      label: "Delete",
+                      danger: true,
+                      onSelect: () => setDeleting({ id: theme.id, name: theme.name }),
+                    },
+                  ]}
+                />
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      {problem ? <Alert>{problem}</Alert> : null}
+      {menu.menu}
+      {deleting ? (
+        <ConfirmDialog
+          title={`Delete ${deleting.name}?`}
+          action="Delete"
+          danger
+          pending={pending}
+          close={() => setDeleting(null)}
+          confirm={() =>
+            void run(() => deleteTheme(deleting.id)).then((ok) => {
+              if (ok) setDeleting(null);
+            })
+          }
+        >
+          A slot using this theme goes back to the default.
+        </ConfirmDialog>
+      ) : null}
+    </SettingRow>
+  );
+}
+
 function GeneralSection() {
   const { preferences, update, ready, error, refresh } = usePreferences();
   return (
@@ -3414,6 +3532,45 @@ function GeneralSection() {
             <option value="dark">Dark</option>
           </select>
         </SettingRow>
+        <SettingRow
+          label="Light theme"
+          htmlFor="light-theme"
+          detail="The theme used when the preferred theme is light, or system on a light desktop."
+        >
+          <select
+            id="light-theme"
+            disabled={!ready}
+            className={cn(SELECT_FIELD, "settings-select")}
+            value={preferences.light_theme}
+            onChange={(event) => update({ light_theme: event.target.value })}
+          >
+            {preferences.themes.map((theme) => (
+              <option key={theme.id} value={theme.id}>
+                {theme.name}
+              </option>
+            ))}
+          </select>
+        </SettingRow>
+        <SettingRow
+          label="Dark theme"
+          htmlFor="dark-theme"
+          detail="The theme used when the preferred theme is dark, or system on a dark desktop."
+        >
+          <select
+            id="dark-theme"
+            disabled={!ready}
+            className={cn(SELECT_FIELD, "settings-select")}
+            value={preferences.dark_theme}
+            onChange={(event) => update({ dark_theme: event.target.value })}
+          >
+            {preferences.themes.map((theme) => (
+              <option key={theme.id} value={theme.id}>
+                {theme.name}
+              </option>
+            ))}
+          </select>
+        </SettingRow>
+        <CustomThemes />
         <SettingRow
           label="Review page"
           htmlFor="review-page"

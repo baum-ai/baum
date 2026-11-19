@@ -83,6 +83,9 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	if strings.Contains(strings.ToLower(r.Prompt), "comment") {
 		a.proposeComment(ctx, r)
 	}
+	if strings.Contains(strings.ToLower(r.Prompt), "theme") {
+		a.proposeTheme(ctx, r)
+	}
 	answer := panelAnswer(r.Prompt)
 	words := strings.SplitAfter(answer, " ")
 	for i, part := range [][]string{words[:len(words)/3], words[len(words)/3 : 2*len(words)/3], words[2*len(words)/3:]} {
@@ -131,6 +134,39 @@ func (a *panelAgent) proposeComment(ctx context.Context, r agent.Request) {
 	}
 	if r.Transcript != nil {
 		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_comment", Tool: "mcp__baum__propose_review_comment", Title: "propose_review_comment", Status: status, Text: text})
+	}
+}
+
+// panelTheme is the colour theme the panel agent proposes: a dark theme, so a
+// browser test can see a dark base in the light slot. The proposal's name is
+// the prompt's last word after "theme named", when it has one, so a later
+// proposal replaces the preview with a different one.
+const panelTheme = `{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#e8eef4","--color-shadow":"#10202e","--brand-green-600":"#5aa9e6"}}`
+
+// proposeTheme proposes a colour theme from whatever page is open, as the
+// agent's propose_theme tool call would; the app previews it.
+func (a *panelAgent) proposeTheme(ctx context.Context, r agent.Request) {
+	status, text := "completed", "Proposed the theme; the person saves it in the panel."
+	err := errors.New("the turn has no MCP server")
+	if a.mcp != nil && r.MCP != nil {
+		consumer, ok := a.mcp.Registry.Authenticate(r.MCP.Token)
+		if !ok {
+			err = errors.New("the turn's MCP token is not known")
+		} else {
+			after := json.RawMessage(panelTheme)
+			if i := strings.Index(strings.ToLower(r.Prompt), "theme named "); i >= 0 {
+				name := strings.TrimSpace(r.Prompt[i+len("theme named "):])
+				after, _ = json.Marshal(map[string]any{"name": name, "base": "light", "tokens": map[string]string{"--color-paper": "#fdf6e3"}})
+			}
+			_, err = a.mcp.Proposals.Propose(ctx, consumer.ID, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere,
+				Target: agentcontext.TargetTheme, After: after})
+		}
+	}
+	if err != nil {
+		status, text = "failed", err.Error()
+	}
+	if r.Transcript != nil {
+		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_theme", Tool: "mcp__baum__propose_theme", Title: "propose_theme", Status: status, Text: text})
 	}
 }
 

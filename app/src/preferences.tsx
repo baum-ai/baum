@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { request } from "./api";
+import { activeTheme, applyTheme, builtinThemes, type Theme, type ThemeBase } from "./theme";
 
 /** The key held with 1 to 8 for the sidebar's pages; "" is the platform's
  *  command key (⌘ on a Mac, Ctrl elsewhere). */
@@ -22,6 +23,11 @@ type Preferences = {
   sidebar: SidebarChoice;
   /** Which page a review opens on: the full review, or the tiles page. */
   review_page: ReviewPageChoice;
+  /** The theme of each slot, by id: the `theme` setting picks the slot in use. */
+  light_theme: string;
+  dark_theme: string;
+  /** The built-in themes and the person's own. */
+  themes: Theme[];
 };
 export type SidebarChoice = "pinned" | "folded";
 export type ReviewPageChoice = "full" | "tiles";
@@ -31,6 +37,9 @@ const defaults: Preferences = {
   page_modifier: "",
   sidebar: "pinned",
   review_page: "full",
+  light_theme: "default-light",
+  dark_theme: "default-dark",
+  themes: builtinThemes,
 };
 const PreferencesContext = createContext({
   preferences: defaults,
@@ -38,8 +47,32 @@ const PreferencesContext = createContext({
   saving: false,
   error: "",
   update: (_patch: Partial<Preferences>) => {},
-  refresh: () => {},
+  refresh: (): void | Promise<void> => {},
+  /** A theme shown in place of the saved one until it is set to null. */
+  preview: null as Theme | null,
+  setPreview: (_theme: Theme | null) => {},
+  renameTheme: async (_id: string, _name: string): Promise<void> => {},
+  deleteTheme: async (_id: string): Promise<void> => {},
 });
+
+function normalizeThemes(saved: unknown): Theme[] {
+  const list: Theme[] = [];
+  if (Array.isArray(saved))
+    for (const item of saved as Partial<Theme>[]) {
+      if (!item || typeof item.id !== "string" || typeof item.name !== "string") continue;
+      const base: ThemeBase = item.base === "dark" ? "dark" : "light";
+      const tokens: Record<string, string> = {};
+      if (item.tokens && typeof item.tokens === "object")
+        for (const [token, value] of Object.entries(item.tokens))
+          if (typeof value === "string") tokens[token] = value;
+      list.push({ id: item.id, name: item.name, base, tokens, builtin: item.builtin === true });
+    }
+  // The built-ins are always there, first, whatever an older daemon answers.
+  return [
+    ...builtinThemes,
+    ...list.filter((theme) => !builtinThemes.some((builtin) => builtin.id === theme.id)),
+  ];
+}
 
 function normalize(saved: Partial<Preferences>): Preferences {
   return {
@@ -53,6 +86,9 @@ function normalize(saved: Partial<Preferences>): Preferences {
         : "",
     sidebar: saved.sidebar === "folded" ? "folded" : "pinned",
     review_page: saved.review_page === "tiles" ? "tiles" : "full",
+    light_theme: saved.light_theme || "default-light",
+    dark_theme: saved.dark_theme || "default-dark",
+    themes: normalizeThemes(saved.themes),
   };
 }
 
@@ -62,7 +98,10 @@ function samePreferences(a: Preferences, b: Preferences) {
     a.key_hints === b.key_hints &&
     a.page_modifier === b.page_modifier &&
     a.sidebar === b.sidebar &&
-    a.review_page === b.review_page
+    a.review_page === b.review_page &&
+    a.light_theme === b.light_theme &&
+    a.dark_theme === b.dark_theme &&
+    JSON.stringify(a.themes) === JSON.stringify(b.themes)
   );
 }
 
@@ -75,6 +114,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [preview, setPreview] = useState<Theme | null>(null);
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (busy.current) return;
     const current = ++revision.current;
@@ -103,14 +143,15 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
   useEffect(() => {
     const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
-    const apply = () => {
-      document.documentElement.dataset.theme =
-        preferences.theme === "system" ? (dark?.matches ? "dark" : "light") : preferences.theme;
-    };
+    const apply = () =>
+      applyTheme(
+        document.documentElement,
+        activeTheme(preferences, dark?.matches === true, preview),
+      );
     apply();
     dark?.addEventListener("change", apply);
     return () => dark?.removeEventListener("change", apply);
-  }, [preferences.theme]);
+  }, [preferences, preview]);
   const update = useCallback(
     async (patch: Partial<Preferences>) => {
       if (!ready) return;
@@ -147,10 +188,40 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     },
     [ready],
   );
-  const reload = useCallback(() => void refresh(), [refresh]);
+  const reload = useCallback(() => refresh(), [refresh]);
+  // Renaming and deleting a theme answer the preferences as they now are.
+  const changeTheme = useCallback(async (path: string, body: unknown, method: string) => {
+    const saved = await request<Preferences>(path, body, method);
+    const next = normalize(saved);
+    ++revision.current;
+    confirmed.current = next;
+    setPreferences(next);
+  }, []);
+  const renameTheme = useCallback(
+    (id: string, name: string) =>
+      changeTheme(`api/settings/appearance/themes/${encodeURIComponent(id)}`, { name }, "PATCH"),
+    [changeTheme],
+  );
+  const deleteTheme = useCallback(
+    (id: string) =>
+      // The daemon takes only JSON requests, so a delete carries an empty body.
+      changeTheme(`api/settings/appearance/themes/${encodeURIComponent(id)}`, {}, "DELETE"),
+    [changeTheme],
+  );
   const value = useMemo(
-    () => ({ preferences, ready, saving, error, update, refresh: reload }),
-    [preferences, ready, saving, error, update, reload],
+    () => ({
+      preferences,
+      ready,
+      saving,
+      error,
+      update,
+      refresh: reload,
+      preview,
+      setPreview,
+      renameTheme,
+      deleteTheme,
+    }),
+    [preferences, ready, saving, error, update, reload, preview, renameTheme, deleteTheme],
   );
   return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }

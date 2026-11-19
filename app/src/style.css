@@ -2459,6 +2459,34 @@ dialog.local-dialog-wide {
 .settings-select {
   width: 15rem;
 }
+.settings-themes {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  width: 15rem;
+  max-width: 100%;
+}
+.settings-theme {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.settings-theme-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-theme-rename {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+}
 .settings-model {
   display: grid;
   gap: 0.5rem;

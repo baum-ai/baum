@@ -73,13 +73,20 @@ and Tailwind color utilities outside the UI palette,
 `../viewer/src/themes/*.css` and those two artwork modules.
 The default UI palette has nineteen explicit base colors shared by light and dark mode;
 its neutral ramps, status backgrounds and interaction shades are derived mixes.
-Custom colors go in `../viewer/src/themes/custom.css`, loaded by every desktop
-screen after the default palette in a higher-priority cascade layer. Override
-bases to recalculate shades, or any semantic token to replace a derived color.
-Put overrides on `:root`, with optional `:root[data-theme="dark"]` exceptions;
-components consume those values without redefining them. See
-[custom color themes](../viewer/README.md#custom-color-themes) for examples and
-named theme selection separate from the light/dark appearance preference.
+A custom colour theme is a base (`light` or `dark`) and overrides of the
+palette tokens in the allowlist in `src/theme.ts` (the same list as
+`themes.Tokens` in `internal/themes`; seeds such as `--color-paper` recalculate
+the shades built on them, roles such as `--surface-page` replace one result).
+The light and dark slots each name a theme (the built-in default when none is
+chosen) and the `theme` setting picks the slot in use, System following the
+operating system. `src/theme.ts` applies the active theme to the document root:
+`data-theme` and `color-scheme` follow the theme's base (so a dark theme in the
+light slot gives `data-theme="dark"`), and its tokens are set inline, which beats
+the palette layers and `style.css`; tokens the previous theme set are removed.
+A theme the agent proposes is previewed the same way, and `tileThemeMessage`
+builds the tile protocol's `theme` message for a theme. `../viewer/src/themes/custom.css`
+stays empty for a build that wants fixed overrides; see
+[custom color themes](../viewer/README.md#custom-color-themes).
 
 `pnpm lint:palette` runs the color rule by itself; `pnpm lint` and `pnpm check`
 include it, so the normal CI app check enforces it. It scans app sources, shared
@@ -1660,7 +1667,10 @@ stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
 straight to Connections. **General**, the default, offers System, Light and Dark
-themes, the review page a pull request opens on (**Full review**, the
+as the **Preferred theme**, under it a **Light theme** and a **Dark theme** select
+(the built-in and custom themes, whatever their base, in either slot) and the
+custom themes with a menu to rename or delete each (a delete asks first and
+resets a slot that used it), the review page a pull request opens on (**Full review**, the
 default, or **Tiles (preview)**; see [Tiles page](#tiles-page)), the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
 elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
@@ -1679,7 +1689,13 @@ palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
 `light`, `dark` or empty) creates a theme under a new `c-` id and may put it in
 a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`) renames it, and
 `DELETE` removes it and resets a slot that used it; all answer with the
-appearance document, and the built-ins can be neither renamed nor deleted. **Plan usage** below them has a switch per plan
+appearance document, and the built-ins can be neither renamed nor deleted.
+The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
+is previewed on the whole app while it is the newest open one in the session
+panel; the card shows swatches of its colours, the contrast warnings, a name
+field and a Light or Dark select (always sent on save, defaulting to the
+theme's base), and the preview ends on save, dismiss, when the conversation
+closes or the panel goes away. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
 reviews', the fixes' and decision capture's (Auto counts the first plan it can
