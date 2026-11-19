@@ -2806,7 +2806,8 @@ sections.
   open to a detail and the files they cite, a note with a left rule, and tile
   blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
   label; a table cell `{text, was}` strikes the old value, and a flow whose
-  steps have `more` makes them buttons that show the step's detail below; "Writing
+  steps have `more` shows a step's detail below while the mouse is over it
+  and makes them buttons that keep it open; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
   migration hunks, file by file, drawn as Files changed draws them with the
   section's own steps and risks pinned to the hunks they cite, and its
@@ -2837,14 +2838,20 @@ sections.
 - **Tiles** always show their title. Flows, columns, sequences and tables are
   drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
   caption and citations, and lay themselves out by the room they have: lanes
-  wrap and then stack, columns stack, and a sequence becomes a list. A wide
+  wrap and then stack, columns stack, and a sequence becomes a list. While a
+  flow's lanes are rows, lines join its steps, a branch drops from the step
+  it leaves after into its first step, and a dashed rule sets off a later
+  lane that is a path of its own. A step in the `new` tone has the
+  sequence's New pill and bar, and a legend under the flow explains only the
+  other marks it uses. A wide
   sequence draws each actor as a lifeline under its name and each message,
   numbered, as an arrow between two lifelines: dashed for a reply, ending in
   a cross when it is `bad`; a message an actor sends itself is a loop on its
   lifeline. A message the pull request adds or changes (`change`, or the
   `new` tone) has a New or Changed pill and a bar at its row's edge, with a
   changed message's earlier text (`was`) struck through. A legend under the
-  sequence explains only the marks it uses, and when some messages changed
+  sequence explains only the marks it uses, apart from the pills, which say
+  what they mean, and when some messages changed
   and some did not, a "Show only changes" switch fades the rest. A code
   tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
   in that range. Exhibits draw as the generic tiles do, and library and
