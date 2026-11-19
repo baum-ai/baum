@@ -73,3 +73,46 @@ it("sends nothing outside the desktop app", async () => {
   await mount();
   expect(api.ready).toBe(true);
 });
+
+it("shows the slot's built-in when a slot names a theme that is gone", async () => {
+  saved = { theme: "dark", light_theme: "c-gone", dark_theme: "c-gone", themes: [dusk] };
+  await mount();
+  expect(api.preferences.light_theme).toBe("default-light");
+  expect(api.preferences.dark_theme).toBe("default-dark");
+  saved = { theme: "dark", light_theme: "default-dark", dark_theme: "c-1", themes: [dusk] };
+  await act(async () => void (await api.refresh()));
+  expect(api.preferences.light_theme).toBe("default-dark");
+  expect(api.preferences.dark_theme).toBe("c-1");
+});
+
+it("fetches after a save in flight instead of dropping the refresh", async () => {
+  saved = { theme: "dark", light_theme: "default-light", dark_theme: "c-1", themes: [dusk] };
+  await mount();
+  let releasePut!: () => void;
+  const gate = new Promise<void>((resolve) => (releasePut = resolve));
+  let gets = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        await gate;
+        return Response.json({ ...saved, theme: "light" });
+      }
+      gets++;
+      return Response.json({ ...saved, theme: "light", light_theme: "c-1" });
+    }),
+  );
+  let refreshed = false;
+  await act(async () => {
+    void api.update({ theme: "light" });
+  });
+  await act(async () => {
+    void Promise.resolve(api.refresh()).then(() => (refreshed = true));
+  });
+  expect(gets).toBe(0);
+  expect(refreshed).toBe(false);
+  await act(async () => releasePut());
+  await vi.waitFor(() => expect(refreshed).toBe(true));
+  expect(gets).toBe(1);
+  expect(api.preferences.light_theme).toBe("c-1");
+});

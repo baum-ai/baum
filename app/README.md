@@ -1699,11 +1699,16 @@ a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`) renames it, and
 `DELETE` removes it and resets a slot that used it; all answer with the
 appearance document, and the built-ins can be neither renamed nor deleted.
 The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
-is previewed on the whole app while it is the newest open one in the session
-panel; the card shows swatches of its colours, the contrast warnings, a name
+is previewed on the whole app while it is open in the session panel (the
+daemon drops the conversation's earlier theme proposals when a new one is
+recorded, so there is one); the console proposals listing adds
+`contrast_warnings` to the proposal's `after` (the stored proposal is
+unchanged), and the card shows swatches of its colours, those warnings, a name
 field and a Light or Dark select (always sent on save, defaulting to the
-theme's base), and the preview ends on save, dismiss, when the conversation
-closes or the panel goes away. **Plan usage** below them has a switch per plan
+theme's base), and the preview ends on dismiss, when the conversation closes
+or the panel goes away, and on save once the preferences hold the saved theme
+(a refresh asked during a settings save waits for the save, then fetches). A
+slot naming a theme the list lacks shows the slot's built-in. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
 reviews', the fixes' and decision capture's (Auto counts the first plan it can

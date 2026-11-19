@@ -46,7 +46,7 @@ let root: Root;
 let node: HTMLDivElement;
 let calls: Call[];
 /** The fake daemon's answer to one request, or undefined for its default. */
-let answer: (call: Call) => Response | Promise<Response> | undefined;
+let answer: (call: Call) => Response | Promise<Response | undefined> | undefined;
 let conversation: Conversation | null;
 let available: boolean;
 /** The conversation's transcript: its prompts and each one's replies. */
@@ -1176,4 +1176,76 @@ it("restores the saved theme when the conversation closes and when the panel goe
   );
   await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
   expect(document.documentElement.dataset.theme).toBe("light");
+});
+
+const sandAfter = {
+  name: "Sand",
+  base: "light" as const,
+  tokens: { "--color-paper": "#fdf6e3" },
+};
+
+it.each(["Save", "Dismiss"])(
+  "does not preview an older open theme proposal after %s of the newest",
+  async (label) => {
+    // The daemon closes the older proposal when the newer is recorded, so a
+    // list that still holds both is only what an older daemon answers; the
+    // preview shows the newest, and neither resurfaces once it is gone.
+    let open = [themeProposal("t1"), themeProposal("t2", { after: sandAfter })];
+    await openThemes(
+      () => open,
+      () => {
+        open = [];
+      },
+    );
+    await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#fdf6e3"));
+    const cards = [...node.querySelectorAll("article")];
+    expect(cards.length).toBe(2);
+    const second = cards[1]!;
+    const press = [...second.querySelectorAll("button")].find((b) => b.textContent === label)!;
+    await act(async () => press.click());
+    await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+    await proposalsChanged();
+    expect(rootStyle().getPropertyValue("--color-paper")).toBe("");
+  },
+);
+
+it("keeps the preview after Save until the saved preferences arrive", async () => {
+  let open = [themeProposal("t1")];
+  let releaseSave!: () => void;
+  let releasePrefs!: () => void;
+  const saveGate = new Promise<void>((resolve) => (releaseSave = resolve));
+  const prefsGate = new Promise<void>((resolve) => (releasePrefs = resolve));
+  let prefsHeld = false;
+  conversation = made();
+  sessionPanel.select("c1");
+  answer = async (call) => {
+    if (call.path.endsWith("/proposals")) return Response.json({ proposals: open });
+    if (call.path.endsWith("/save")) {
+      // The daemon publishes the change before it answers the save.
+      open = [];
+      await proposalsChanged();
+      await saveGate;
+      return Response.json({});
+    }
+    if (call.path === "api/settings/appearance" && prefsHeld) {
+      await prefsGate;
+      return Response.json({ theme: "light", themes: [] });
+    }
+    return undefined;
+  };
+  await themedHost();
+  await act(async () => sessionPanel.show());
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  prefsHeld = true;
+  await act(async () => button("Save")!.click());
+  await until(() => expect(node.querySelectorAll("article").length).toBe(0));
+  // The list is empty and the save is unanswered: the preview stays.
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4");
+  await act(async () => releaseSave());
+  await until(() =>
+    expect(calls.filter((c) => c.path === "api/settings/appearance").length).toBeGreaterThan(0),
+  );
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4");
+  await act(async () => releasePrefs());
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
 });

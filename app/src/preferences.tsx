@@ -88,6 +88,10 @@ function normalizeThemes(saved: unknown): Theme[] {
 }
 
 function normalize(saved: Partial<Preferences>): Preferences {
+  const themes = normalizeThemes(saved.themes);
+  // A slot naming a theme that is gone shows the slot's built-in.
+  const slotId = (id: string | undefined, slot: ThemeBase) =>
+    id && themes.some((theme) => theme.id === id) ? id : `default-${slot}`;
   return {
     theme: saved.theme === "light" || saved.theme === "dark" ? saved.theme : "system",
     key_hints: saved.key_hints !== false,
@@ -99,9 +103,9 @@ function normalize(saved: Partial<Preferences>): Preferences {
         : "",
     sidebar: saved.sidebar === "folded" ? "folded" : "pinned",
     review_page: saved.review_page === "tiles" ? "tiles" : "full",
-    light_theme: saved.light_theme || "default-light",
-    dark_theme: saved.dark_theme || "default-dark",
-    themes: normalizeThemes(saved.themes),
+    light_theme: slotId(saved.light_theme, "light"),
+    dark_theme: slotId(saved.dark_theme, "dark"),
+    themes,
   };
 }
 
@@ -128,8 +132,15 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<Theme | null>(null);
+  // Refreshes asked while a save is in flight, resolved after the fetch that
+  // follows the save.
+  const afterSave = useRef<Array<() => void>>([]);
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    if (busy.current) return;
+    if (busy.current) {
+      if (signal?.aborted) return;
+      await new Promise<void>((resolve) => afterSave.current.push(resolve));
+      return;
+    }
     const current = ++revision.current;
     try {
       const saved = await request<Preferences>("api/settings/appearance", undefined, "GET", signal);
@@ -219,9 +230,12 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       } finally {
         busy.current = false;
         setSaving(false);
+        const waiting = afterSave.current;
+        afterSave.current = [];
+        if (waiting.length) void refresh().finally(() => waiting.forEach((resolve) => resolve()));
       }
     },
-    [ready],
+    [ready, refresh],
   );
   const reload = useCallback(() => refresh(), [refresh]);
   // Renaming and deleting a theme answer the preferences as they now are.

@@ -6531,7 +6531,7 @@ routes answer as the local API does for a capability it lacks: a read with
 | `POST /api/console/conversations/{id}/cancel` | stops the running turn (none running is no error) and answers the conversation |
 | `POST /api/console/conversations/{id}/close` | closes it: stops its turn, revokes its token, drops its proposals |
 | `PUT /api/console/page` | the page context the person has open (`SetPage`), for every open conversation's token |
-| `GET /api/console/conversations/{id}/proposals` | `{"proposals":[...]}`: each `agentcontext.Proposal` as the MCP server keeps it: `id`, `kind` (`diff` or `operation`), `page`, `target`, a change's `before`, `after` and `revision`, an operation's `operation` (`name`, `request`, `summary` with `action`, `details` and their `quoted`, `multiline` and `by_agent` markers, `model`, `effort`, `paid`, `irreversible`, and the summary's `revision`), and `context` |
+| `GET /api/console/conversations/{id}/proposals` | `{"proposals":[...]}`: each `agentcontext.Proposal` as the MCP server keeps it: `id`, `kind` (`diff` or `operation`), `page`, `target`, a change's `before`, `after` and `revision`, an operation's `operation` (`name`, `request`, `summary` with `action`, `details` and their `quoted`, `multiline` and `by_agent` markers, `model`, `effort`, `paid`, `irreversible`, and the summary's `revision`), and `context`; a colour theme proposal's `after` also carries `contrast_warnings` (the pairs under `themes.MinContrast`, added by the listing alone: the stored proposal is unchanged) |
 | `POST .../proposals/{proposal}/save` | saves a change with `{"value"}`, what the person typed (an agent environment variable's value), never the agent |
 | `POST .../proposals/{proposal}/confirm` | runs an operation at `{"revision"}`, the summary's revision the panel showed; 200 `{"outcome":{"status","message"}}` (the operation route's answer), or 409 `operation_changed` with `proposal` holding the new summary, nothing run, for the person to read and confirm again |
 | `POST .../proposals/{proposal}/dismiss` | closes it without saving or running it |
@@ -7096,7 +7096,9 @@ proposer refuses a `Theme`.
 The `propose_*` tools record proposals. Each is global (an action neither
 lists nor calls one), reads nothing, names its page and target, passes the
 change asked for as `After`, and answers the receipt and a fixed status
-(`propose_theme` adds `contrast_warnings`, the pairs of the proposed colours
+(a new `propose_theme` proposal drops the conversation's earlier open theme
+proposals, as a dismiss does, so only the newest is previewed and an older one
+never resurfaces when it is saved or dismissed; `propose_theme` adds `contrast_warnings`, the pairs of the proposed colours
 under 4.5:1, which it works out from its own arguments with
 `themes.Contrast`; it reads no state). A
 tool's schema bounds types and sizes only, so a value the page refuses

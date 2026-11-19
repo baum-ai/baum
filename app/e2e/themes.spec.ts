@@ -123,19 +123,27 @@ test("previews a proposed theme, restores it on dismiss and saves it with a name
   await expect(proposal.getByLabel("Use it as")).toHaveValue("dark");
   await page.screenshot({ path: "test-results/themes-preview.png", animations: "disabled" });
 
-  // Dismissing restores the saved theme.
+  // A newer proposal replaces the open one: only Sand is left and previewed.
+  await expect(panel(page).getByText("Working", { exact: true })).toHaveCount(0);
+  await composer.fill("Propose a theme named Sand");
+  await composer.press("Enter");
+  await expect(proposal.getByLabel("Name")).toHaveValue("Sand");
+  await expect(proposal).toHaveCount(1);
+  await expect.poll(() => paper(page)).toBe("#fdf6e3");
+  await expect(proposal.getByLabel("Use it as")).toHaveValue("light");
+
+  // Dismissing it restores the saved theme; the replaced Dusk does not come back.
   await proposal.getByRole("button", { name: "Dismiss" }).click();
   await expect(proposal).toHaveCount(0);
   await expect(html(page)).toHaveAttribute("data-theme", "light");
   expect(await paper(page)).toBe("");
 
-  // A second proposal, once the first turn is over: a light theme, saved under another name in the dark slot.
+  // Another Sand, saved under a different name in the dark slot.
   await expect(panel(page).getByText("Working", { exact: true })).toHaveCount(0);
   await composer.fill("Propose a theme named Sand");
   await composer.press("Enter");
   await expect(proposal.getByLabel("Name")).toHaveValue("Sand");
   await expect.poll(() => paper(page)).toBe("#fdf6e3");
-  await expect(proposal.getByLabel("Use it as")).toHaveValue("light");
   await proposal.getByLabel("Name").fill("Warm paper");
   await proposal.getByLabel("Use it as").selectOption("dark");
   await proposal.getByRole("button", { name: "Save", exact: true }).click();

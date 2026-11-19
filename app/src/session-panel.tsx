@@ -53,7 +53,6 @@ import { Diff } from "./prompt-editor";
 import { AgentMark } from "./sessions";
 import { MESSAGE, POLL_RUNNING, TranscriptReader, useLiveTranscript } from "./session-transcript";
 import { isPanelKey, KeyBar, PANEL_KEY, PANEL_KEY_LABEL } from "./shortcuts";
-import type { Theme } from "./theme";
 import { useToast } from "./toast";
 import { useVisibleInterval } from "./visible-interval";
 import {
@@ -539,20 +538,34 @@ function SessionPanel({
   const { setPreview } = usePreferences();
   const previewed = closed ? undefined : newestTheme(proposals);
   const previewKey = previewed ? JSON.stringify([previewed.id, previewed.after]) : "";
+  // A save holds the preview until the preferences reflect it: the proposals
+  // change before the save answers, and the preview must not flicker back to
+  // the old theme meanwhile.
+  const [holding, setHolding] = useState(0);
+  const holdPreview = useCallback(async (until: Promise<unknown>) => {
+    setHolding((n) => n + 1);
+    try {
+      await until;
+    } finally {
+      setHolding((n) => n - 1);
+    }
+  }, []);
   useEffect(() => {
-    if (!previewKey) return;
+    if (!previewKey) {
+      if (holding === 0) setPreview(null);
+      return;
+    }
     const [id, after] = JSON.parse(previewKey) as [string, Proposal["after"]];
     const theme = proposedTheme({ after } as Proposal);
     if (!theme) return;
-    const shown: Theme = {
+    setPreview({
       id: `proposal:${id}`,
       name: theme.name,
       base: theme.base,
       tokens: theme.tokens,
-    };
-    setPreview(shown);
-    return () => setPreview(null);
-  }, [previewKey, setPreview]);
+    });
+  }, [previewKey, holding, setPreview]);
+  useEffect(() => () => setPreview(null), [setPreview]);
   // An id from an earlier window that the daemon no longer has opens a new
   // conversation instead.
   useEffect(() => {
@@ -985,6 +998,7 @@ function SessionPanel({
             page={page}
             go={go}
             changed={readProposals}
+            holdPreview={holdPreview}
           />
         ) : null}
       </FollowingBody>
@@ -1411,12 +1425,14 @@ function ProposalList({
   page,
   go,
   changed,
+  holdPreview,
 }: {
   conversation: string;
   proposals: Proposal[];
   page: PageContext;
   go: (href: string) => void;
   changed: () => void;
+  holdPreview: (until: Promise<unknown>) => Promise<unknown>;
 }) {
   return (
     <section aria-label="Proposals" className="session-panel-proposals">
@@ -1428,6 +1444,7 @@ function ProposalList({
           page={page}
           go={go}
           changed={changed}
+          holdPreview={holdPreview}
         />
       ))}
     </section>
@@ -1581,12 +1598,15 @@ export function ProposalCard({
   page,
   go,
   changed,
+  holdPreview,
 }: {
   conversation: string;
   proposal: Proposal;
   page: PageContext;
   go: (href: string) => void;
   changed: () => void;
+  /** Keeps the theme preview until the promise settles. */
+  holdPreview?: (until: Promise<unknown>) => Promise<unknown>;
 }) {
   // A confirm answered `operation_changed` replaces the summary shown.
   const [proposal, setProposal] = useState(given);
@@ -1622,14 +1642,18 @@ export function ProposalCard({
       if (action === "dismiss") await dismissProposal(conversation, proposal.id);
       else if (proposal.kind === "diff") {
         // The slot is always sent: the daemon reads an empty one differently.
-        await saveProposal(
+        const saved = saveProposal(
           conversation,
           proposal.id,
           needsValue ? value : undefined,
           themed ? { name: themeName.trim(), slot } : undefined,
         );
-        // The saved theme is in the preferences before the preview ends.
-        if (themed) await refreshPreferences();
+        // The saved theme is in the preferences before the preview ends: the
+        // proposals change as soon as the daemon records the save, before it
+        // answers.
+        const done = themed ? saved.then(() => refreshPreferences()) : saved;
+        if (themed && holdPreview) await holdPreview(done.catch(() => undefined));
+        await done;
       } else {
         const outcome = await confirmProposal(
           conversation,

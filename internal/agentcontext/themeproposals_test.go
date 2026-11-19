@@ -113,7 +113,8 @@ func TestProposeThemeTool(t *testing.T) {
 		}
 	}
 	open := s.Proposals.List(id)
-	if len(open) != 3 || open[0].Page != ProposalAnywhere || open[0].Target != TargetTheme || !sameJSON(open[0].After, json.RawMessage(`{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#e8eef4"}}`)) {
+	// Each theme replaced the one before it, so only the last is open.
+	if len(open) != 1 || open[0].Page != ProposalAnywhere || open[0].Target != TargetTheme || !sameJSON(open[0].After, json.RawMessage(`{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#e8eef4"}}`)) {
 		t.Fatalf("proposals %+v", open)
 	}
 	// A light theme whose page surface and primary text are both dark (#222222
@@ -156,5 +157,48 @@ func TestProposeThemeTool(t *testing.T) {
 	// Every page lists it.
 	if !slices.Contains(commonToolNames, "propose_theme") {
 		t.Error("propose_theme is not a common tool")
+	}
+}
+
+// A newer theme proposal closes the open ones before it, so an older one never
+// resurfaces when the newer is saved or dismissed; other proposals stay.
+func TestNewThemeProposalReplacesOpenThemes(t *testing.T) {
+	ctx := context.Background()
+	rec := &takeAll{}
+	s := New(Options{API: http.NotFoundHandler(), Proposers: map[string]Proposer{ProposalAnywhere: rec}})
+	_, id := chat(t, s)
+	_, other := chat(t, s)
+	setPage(t, s, id, PageContext{Page: PageInbox})
+	setPage(t, s, other, PageContext{Page: PageInbox})
+	propose := func(consumer, name string) Proposal {
+		t.Helper()
+		p, err := s.Proposals.Propose(ctx, consumer, Proposal{Page: ProposalAnywhere, Target: TargetTheme, After: json.RawMessage(`{"name":"` + name + `"}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	var changes []string
+	s.Proposals.OnChange(func(consumer string) { changes = append(changes, consumer) })
+	a := propose(id, "A")
+	elsewhere := propose(other, "Z")
+	b := propose(id, "B")
+	if open := s.Proposals.List(id); len(open) != 1 || open[0].ID != b.ID {
+		t.Fatalf("open after B: %+v", open)
+	}
+	if err := s.Proposals.Dismiss(id, a.ID); !errors.Is(err, ErrUnknownProposal) {
+		t.Errorf("A is still open: %v", err)
+	}
+	if open := s.Proposals.List(other); len(open) != 1 || open[0].ID != elsewhere.ID {
+		t.Errorf("another conversation's theme was closed: %+v", open)
+	}
+	if err := s.Proposals.Dismiss(id, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if open := s.Proposals.List(id); len(open) != 0 {
+		t.Errorf("A came back: %+v", open)
+	}
+	if slices.Contains(changes, "") || len(changes) != 4 {
+		t.Errorf("changes %v", changes)
 	}
 }

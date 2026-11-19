@@ -85,7 +85,9 @@ and the app's stylesheet. The app has a light slot and a dark slot, each holding
 any theme, and the `theme` setting (system, light or dark) picks the slot in
 use; a dark-base theme in the light slot gives `data-theme="dark"`. Outside the
 app, import `@baum/viewer/theme.css` for the same palette without Tailwind and
-set the same properties on the root yourself.
+set the same properties on the root yourself. Host CSS scoped by
+`:root[data-color-theme="…"]` in `custom.css` still works: the app never
+touches that attribute.
 
 Each theme has one base, so it overrides one mode: a theme meant for both modes
 is two themes, one in each slot. Set a seed to recalculate its dependent shades,

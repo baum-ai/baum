@@ -247,6 +247,14 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	if !p.registry.live(consumer) {
 		return Proposal{}, ErrUnknownConsumer
 	}
+	// A new colour theme replaces the open ones before it: only the newest is
+	// previewed and saved, and an older one must not resurface when the newest
+	// is saved or dismissed. A replaced proposal is dropped like a dismissed one.
+	if proposal.Page == ProposalAnywhere && proposal.Target == TargetTheme {
+		p.open[consumer] = slices.DeleteFunc(slices.Clone(p.open[consumer]), func(open Proposal) bool {
+			return open.Page == ProposalAnywhere && open.Target == TargetTheme
+		})
+	}
 	if len(p.open[consumer]) >= maxProposals {
 		return Proposal{}, errTooManyProposals
 	}
