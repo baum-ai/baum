@@ -49,6 +49,7 @@
     parent.postMessage({ probe: "escape_probe", mode, face, results }, "*");
   };
   const daemon = (path) => new URL(path, location.href).href;
+  let probed = null;
 
   function probe(outside, face) {
     attempt("origin", () => self.origin);
@@ -281,7 +282,11 @@
       return new Promise(() => {});
     }
     if (data.mode === "probe") {
-      await probe(data.outside, face);
+      // Once per frame: the kit draws again for each update the page sends,
+      // and every run takes the keyboard once, which past three steals would
+      // get the frame taken down before it reports.
+      probed ??= probe(data.outside, face);
+      await probed;
       report(data.mode, face);
     } else if (data.mode === "spoof") {
       // After the page has the frame's ready.
