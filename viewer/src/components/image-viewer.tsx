@@ -42,6 +42,7 @@ export function ImageViewer({
   // Whether this viewer holds the browser's full screen, so it only leaves
   // a full screen it entered.
   const holdsFullScreen = useRef(false);
+  const pressedBackdrop = useRef(false);
 
   const fit = (size: ImageSize) => {
     fitted.current = size;
@@ -71,14 +72,15 @@ export function ImageViewer({
   }, [src, width, height]);
 
   // A window that changes size, or a phone that turns, refits the image
-  // until the person has sized it themselves.
+  // until the person has sized it themselves, and re-centres a dialog
+  // pinned for a drag so it cannot be left outside the window.
   useEffect(() => {
     if (!src) return;
     const refit = () => {
+      dialog.current?.removeAttribute("style");
       if (!dragged.current && fitted.current) {
         fitFrame(frame.current, header.current, fitted.current);
       }
-      if (dialog.current?.style.top) bound(dialog.current);
     };
     window.addEventListener("resize", refit);
     return () => window.removeEventListener("resize", refit);
@@ -129,18 +131,27 @@ export function ImageViewer({
   // Dragging the corner of a centred dialog would move the corner at half
   // the pointer's speed, as the dialog re-centres; pinning the dialog where
   // it stands keeps the corner under the pointer. Only a press on the
-  // corner's grip counts, so a click on the image leaves the fit alone.
+  // corner's grip counts, so a click on the image leaves the fit alone,
+  // and a press that resizes nothing lets the dialog go again.
   const pin = (event: PointerEvent<HTMLDivElement>) => {
     const element = dialog.current;
     const box = event.currentTarget.getBoundingClientRect();
     const onGrip = event.clientX >= box.right - GRIP && event.clientY >= box.bottom - GRIP;
     if (!element || full || !onGrip) return;
-    dragged.current = true;
+    const start = event.currentTarget.offsetWidth;
     const at = element.getBoundingClientRect();
     element.style.margin = "0";
     element.style.top = `${at.top}px`;
     element.style.left = `${at.left}px`;
     bound(element);
+    window.addEventListener(
+      "pointerup",
+      () => {
+        if (frame.current && frame.current.offsetWidth !== start) dragged.current = true;
+        else if (!dragged.current) element.removeAttribute("style");
+      },
+      { once: true },
+    );
   };
 
   return (
@@ -149,6 +160,16 @@ export function ImageViewer({
       aria-label={label}
       aria-describedby={caption ? captionId : undefined}
       data-full={full || undefined}
+      // A click on the backdrop, outside the dialog's box, closes it. The
+      // press must start there too: a drag of the corner can end outside.
+      onPointerDown={(event) => {
+        pressedBackdrop.current =
+          event.target === event.currentTarget && outside(event.currentTarget, event);
+      }}
+      onClick={(event) => {
+        if (pressedBackdrop.current && outside(event.currentTarget, event)) close();
+        pressedBackdrop.current = false;
+      }}
       onCancel={(event) => {
         if (!full) return;
         event.preventDefault();
@@ -161,7 +182,7 @@ export function ImageViewer({
         onClose();
       }}
       className={cn(
-        "m-auto max-h-[calc(100dvh-2rem)] w-fit max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-default open:flex",
+        "m-auto max-h-[calc(100dvh-2rem)] w-fit min-w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-default open:flex",
         "bg-surface-card p-3 text-primary shadow-card",
         "backdrop:bg-surface-scrim",
         full && "inset-0! m-0! h-dvh max-h-none! w-screen max-w-none! rounded-none border-0",
@@ -172,10 +193,12 @@ export function ImageViewer({
           ref={content}
           className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 bg-surface-card [&:fullscreen]:p-3"
         >
-          {/* On a phone the caption takes its own row under the controls. */}
+          {/* On a phone the caption takes its own row under the controls. A
+              long caption wraps to the image's width rather than widening
+              the dialog past it. */}
           <div
             ref={header}
-            className="flex flex-none flex-col-reverse gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
+            className="flex flex-none [contain:inline-size] flex-col-reverse gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
           >
             <div id={captionId} className="min-w-0 pt-1 text-base text-secondary">
               {caption}
@@ -205,11 +228,11 @@ export function ImageViewer({
             data-image-frame=""
             onPointerDown={pin}
             className={cn(
-              // The frame shrinks with the dialog when the window does. The
-              // image keeps its proportions inside it, letterboxed on the
-              // sunken surface when the frame's differ.
+              // The frame takes the image's proportions, so dragging its
+              // corner scales the image. It shrinks with the dialog when the
+              // window does, letterboxing the image on the sunken surface.
               "min-h-0 min-w-0 max-w-full shrink self-center overflow-hidden rounded-md bg-surface-sunken",
-              full ? "h-auto! w-full! flex-1" : "resize",
+              full ? "aspect-auto! h-auto! w-full! flex-1" : "resize-x",
             )}
           >
             <img
@@ -232,6 +255,17 @@ export function ImageViewer({
   );
 }
 
+/** Whether a pointer event falls outside an element's box. */
+function outside(element: Element, event: { clientX: number; clientY: number }) {
+  const box = element.getBoundingClientRect();
+  return (
+    event.clientX < box.left ||
+    event.clientX > box.right ||
+    event.clientY < box.top ||
+    event.clientY > box.bottom
+  );
+}
+
 /** How far in from the frame's corner a press starts a resize: the
  *  browser's grip, with some slack. */
 const GRIP = 20;
@@ -245,14 +279,17 @@ function bound(dialog: HTMLElement) {
   dialog.style.maxHeight = `${Math.max(160, window.innerHeight - top - 16)}px`;
 }
 
-/** Sizes the image's frame to fill the screen below the header. */
+/** Sizes the image's frame to fill the screen below the header. The header
+ *  wraps to the frame's width, so the fit runs again at its new height. */
 function fitFrame(frame: HTMLElement | null, header: HTMLElement | null, size: ImageSize) {
   if (!frame || !size.width || !size.height) return;
-  const width = viewerImageWidth(
-    size,
-    { width: window.innerWidth, height: window.innerHeight },
-    header?.offsetHeight ?? 0,
-  );
-  frame.style.width = `${width}px`;
-  frame.style.height = `${Math.max(1, Math.round((width * size.height) / size.width))}px`;
+  frame.style.aspectRatio = `${size.width} / ${size.height}`;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const width = viewerImageWidth(
+      size,
+      { width: window.innerWidth, height: window.innerHeight },
+      header?.offsetHeight ?? 0,
+    );
+    frame.style.width = `${width}px`;
+  }
 }

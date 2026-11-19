@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { viewerImageWidth } from "../review-image-layout";
 import { ImageViewer, type ViewedImage } from "./image-viewer";
@@ -48,13 +48,19 @@ function mount(image: ViewedImage | null, onClose = () => {}) {
 
 const viewport = () => ({ width: innerWidth, height: innerHeight });
 
-/** Presses at a point of a frame laid out at 0,0–100,100; its resize grip
- *  is the bottom-right corner. */
-function press(frame: HTMLElement, x: number, y: number) {
+/** Presses at a point of a frame laid out at 0,0–100,100, whose resize grip
+ *  is the bottom-right corner, drags it to `width` and lets go. */
+function drag(frame: HTMLElement, x: number, y: number, width?: string) {
   frame.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+  Object.defineProperty(frame, "offsetWidth", {
+    configurable: true,
+    get: () => Number.parseFloat(frame.style.width) || 0,
+  });
   act(() => {
     frame.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: x, clientY: y }));
   });
+  if (width) frame.style.width = width;
+  act(() => window.dispatchEvent(new Event("pointerup")));
 }
 
 describe("ImageViewer", () => {
@@ -63,12 +69,11 @@ describe("ImageViewer", () => {
     expect(view.dialog.open).toBe(true);
     const width = viewerImageWidth({ width: 40, height: 20 }, viewport(), 0);
     expect(view.frame().style.width).toBe(`${width}px`);
-    expect(view.frame().style.height).toBe(`${width / 2}px`);
+    expect(view.frame().style.aspectRatio).toBe("40 / 20");
 
     // The person drags the corner; a host re-render with a fresh object
     // leaves their size alone.
-    press(view.frame(), 95, 95);
-    view.frame().style.width = "300px";
+    drag(view.frame(), 95, 95, "300px");
     view.render({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
     expect(view.frame().style.width).toBe("300px");
     // A window resize leaves it alone too.
@@ -79,8 +84,11 @@ describe("ImageViewer", () => {
 
   it("refits to a resized window until the person drags the corner", () => {
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
-    // A click on the image itself is not a resize.
-    press(view.frame(), 50, 50);
+    // A click on the image itself is not a resize, nor is a press on the
+    // grip that moves nothing.
+    drag(view.frame(), 50, 50);
+    expect(view.dialog.style.top).toBe("");
+    drag(view.frame(), 95, 95);
     expect(view.dialog.style.top).toBe("");
     const before = view.frame().style.width;
     const inner = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
@@ -104,13 +112,18 @@ describe("ImageViewer", () => {
     act(() => image.dispatchEvent(new Event("load")));
     const width = viewerImageWidth({ width: 30, height: 60 }, viewport(), 0);
     expect(view.frame().style.width).toBe(`${width}px`);
-    expect(view.frame().style.height).toBe(`${width * 2}px`);
+    expect(view.frame().style.aspectRatio).toBe("30 / 60");
   });
 
   it("goes full screen, and Escape leaves full screen before it closes", () => {
     const onClose = vi.fn();
     const requestFullscreen = vi.fn(() => Promise.resolve());
+    // jsdom has no Fullscreen API; the stub is removed after the test.
+    const original = HTMLElement.prototype.requestFullscreen;
     HTMLElement.prototype.requestFullscreen = requestFullscreen;
+    onTestFinished(() => {
+      HTMLElement.prototype.requestFullscreen = original;
+    });
     // jsdom has no Fullscreen API.
     Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 }, onClose);

@@ -181,12 +181,7 @@ function PromptImages({ images }: { images: TranscriptImage[] }) {
           </li>
         ))}
       </ul>
-      <ImageViewer
-        image={open}
-        label={open?.alt || "Image"}
-        caption={open?.alt}
-        onClose={() => setOpen(null)}
-      />
+      <ImageViewer image={open} label={open?.alt || "Image"} onClose={() => setOpen(null)} />
     </>
   );
 }
