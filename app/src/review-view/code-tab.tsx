@@ -65,8 +65,8 @@ export function CodeTab({
   // the files.
   const fileList = useRef<HTMLElement>(null);
   const openPath = file?.path;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the open file's change moves the marked row
   const shownPath = useRef<string | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the open file's change moves the marked row
   useEffect(() => {
     const row = fileList.current?.querySelector<HTMLElement>(':scope li [aria-pressed="true"]');
     const opened = shownPath.current !== openPath;
