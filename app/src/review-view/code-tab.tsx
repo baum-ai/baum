@@ -66,10 +66,14 @@ export function CodeTab({
   const fileList = useRef<HTMLElement>(null);
   const openPath = file?.path;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the open file's change moves the marked row
+  const shownPath = useRef<string | undefined>(undefined);
   useEffect(() => {
-    const row = fileList.current?.querySelector<HTMLElement>('li [aria-pressed="true"]');
-    // The first file takes the list back to its top, with its group's label.
-    if (row && row === fileList.current?.querySelector("li [aria-pressed]"))
+    const row = fileList.current?.querySelector<HTMLElement>(':scope li [aria-pressed="true"]');
+    const opened = shownPath.current !== openPath;
+    shownPath.current = openPath;
+    // Opening the first file takes the list back to its top, with its
+    // group's label; a regrouping or the Generated group opening does not.
+    if (opened && row && row === fileList.current?.querySelector(":scope li [aria-pressed]"))
       scrollerOf(row).scrollTo?.({ top: 0 });
     else row?.scrollIntoView?.({ block: "nearest" });
   }, [openPath, grouping, generatedOpen]);
