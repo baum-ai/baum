@@ -277,7 +277,7 @@ export function Inbox({
       ?.querySelector<HTMLElement>(".inbox-pr-title");
   // Focus goes to the row's own link, so a screen reader reads the row as it
   // moves, and the row scrolls into view.
-  useFocusRow(focusedKey, rowLink);
+  useFocusRow(focusedKey, rowLink, focusedKey !== null && focusedKey === items[0]?.id);
   useGitHubKey(focused?.entry?.pull_request.url || undefined);
   useShortcuts((event) => {
     if (event.key === "Escape") {

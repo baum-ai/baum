@@ -110,6 +110,7 @@ import { useToast } from "./toast";
 import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
 import { reviewable, type ReviewEvent } from "./pending-review-model";
 import { cn } from "@baum/viewer/components/classnames";
+import { scrollToTop } from "@baum/viewer/components/scroller";
 import { minutesText, RiskCard, StackOverview } from "./stack-overview";
 
 /** What the person does next about a pull request: read a review they were
@@ -1394,7 +1395,9 @@ export function UpNextPage({
     const element = Array.from(
       list.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [],
     ).find((element) => element.dataset.row === line.key);
-    element?.scrollIntoView?.({ block: "nearest" });
+    // The first row takes the list back to the top, with the page's bar.
+    if (line.key === rows[0]?.key) scrollToTop(element);
+    else element?.scrollIntoView?.({ block: "nearest" });
     if (list.current?.contains(document.activeElement))
       element?.querySelector<HTMLElement>(".upnext-row")?.focus({ preventScroll: true });
   }, [line?.key]);

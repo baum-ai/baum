@@ -418,3 +418,28 @@ test("a baum.review/1 version draws its own Summary and sections in the rail", a
   await expect(page.getByRole("heading", { name: "What a phone can do" })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("k back to the first block, and to the first place, shows the review's header again", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 480 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const blocks = page.locator("[data-review-block]");
+  await expect(blocks.first()).toBeVisible();
+  const top = () => page.evaluate(() => document.querySelector(".local-main")!.scrollTop);
+  const count = await blocks.count();
+  for (let i = 0; i < count; i++) await page.keyboard.press("j");
+  await expect.poll(top).toBeGreaterThan(0);
+  for (let i = 0; i < count; i++) await page.keyboard.press("k");
+  await expect.poll(top).toBe(0);
+  // Back through the places to the first, the page starts at its top too.
+  for (let i = 0; i < count; i++) await page.keyboard.press("j");
+  await expect.poll(top).toBeGreaterThan(0);
+  for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+K");
+  await expect.poll(top).toBe(0);
+  // On the first place already, Shift+K still takes a scrolled page back up.
+  await page.evaluate(() => document.querySelector(".local-main")!.scrollTo({ top: 200 }));
+  await expect.poll(top).toBeGreaterThan(0);
+  await page.keyboard.press("Shift+K");
+  await expect.poll(top).toBe(0);
+});

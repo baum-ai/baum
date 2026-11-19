@@ -13,6 +13,7 @@ import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import { hunkUrl, type IndexedHunk, type ReviewDocument } from "@baum/viewer/review-document";
 import { LoadingStatus } from "../nine-dots";
 import { useFileGrouping } from "./file-grouping";
+import { scrollerOf } from "@baum/viewer/components/scroller";
 import type { ReviewV2 } from "./document";
 import {
   FILE_GROUPINGS,
@@ -64,11 +65,18 @@ export function CodeTab({
   // the files.
   const fileList = useRef<HTMLElement>(null);
   const openPath = file?.path;
+  // Arriving on the tab is not opening a file: the place lands as any other.
+  const shownPath = useRef(openPath);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the open file's change moves the marked row
   useEffect(() => {
-    fileList.current
-      ?.querySelector<HTMLElement>('[aria-pressed="true"]')
-      ?.scrollIntoView?.({ block: "nearest" });
+    const row = fileList.current?.querySelector<HTMLElement>(':scope li [aria-pressed="true"]');
+    const opened = shownPath.current !== openPath;
+    shownPath.current = openPath;
+    // Opening the first file takes the list back to its top, with its
+    // group's label; a regrouping or the Generated group opening does not.
+    if (opened && row && row === fileList.current?.querySelector(":scope li [aria-pressed]"))
+      scrollerOf(row).scrollTo?.({ top: 0 });
+    else row?.scrollIntoView?.({ block: "nearest" });
   }, [openPath, grouping, generatedOpen]);
   if (files.length === 0)
     return <p className="text-base text-secondary">This pull request changes no files.</p>;

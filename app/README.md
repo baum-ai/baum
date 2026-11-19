@@ -747,6 +747,8 @@ page moves through them: the viewer's `data-review-block`; a
 block holding blocks, such as a session's card of decisions, is passed over for
 what it holds), bringing it into
 view, marking it and giving it the focus; a new section starts from its first.
+The first block, like a step back to the first place, scrolls the page to its
+top, so the review's header shows again (`scrollToTop` in the viewer).
 `Space` opens or closes the marked block's first fold (a behavior's excerpts, a
 risk's details, a decision; `toggleActiveBlock`), and still presses a focused
 button or link. `Enter` opens the marked block where it opens somewhere (its
