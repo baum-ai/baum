@@ -96,7 +96,9 @@ export function ReviewDot({
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      event.stopImmediatePropagation();
+      // Not stopImmediatePropagation: a second note still open in its close
+      // delay closes on the same Escape; the page's listeners bubble, and miss it.
+      event.stopPropagation();
       hide();
     };
     window.addEventListener("keydown", escape, true);
