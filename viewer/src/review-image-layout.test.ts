@@ -72,17 +72,15 @@ describe("image heights", () => {
     expect(sectionImageHeight(1200)).toBe(640);
   });
 
-  it("fits the viewer image below its header without enlarging it", () => {
+  it("fills the viewport below the viewer's header, enlarging a small image", () => {
     expect(viewerImageWidth(phone, { width: 390, height: 844 }, 120)).toBe(
-      Math.floor((844 - 54 - 120) * (1170 / 2532)),
+      Math.floor((844 - 66 - 120) * (1170 / 2532)),
     );
-    expect(viewerImageWidth(phone, { width: 1440, height: 900 }, 58)).toBe(
-      Math.floor((900 - 112) * (1170 / 2532)),
+    expect(viewerImageWidth(retina, { width: 1440, height: 900 }, 40)).toBe(
+      Math.floor((900 - 106) * 1.6),
     );
-    expect(viewerImageWidth(retina, { width: 1440, height: 900 }, 58)).toBe(
-      Math.floor((900 - 112) * 1.6),
-    );
-    expect(viewerImageWidth(retina, { width: 390, height: 844 }, 58)).toBe(330);
-    expect(viewerImageWidth(tiny, { width: 1440, height: 900 }, 58)).toBe(120);
+    expect(viewerImageWidth(retina, { width: 390, height: 844 }, 40)).toBe(390 - 58);
+    // A 120px image opens far larger than its own pixels.
+    expect(viewerImageWidth(tiny, { width: 1440, height: 900 }, 40)).toBeGreaterThan(600);
   });
 });

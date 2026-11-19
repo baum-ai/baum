@@ -32,6 +32,7 @@
     "./components/highlighted-text": "./src/components/highlighted-text.tsx",
     "./components/hunk-evidence": "./src/components/hunk-evidence.tsx",
     "./components/icons": "./src/components/icons.tsx",
+    "./components/image-viewer": "./src/components/image-viewer.tsx",
     "./components/jump-focus": "./src/components/jump-focus.ts",
     "./components/markdown": "./src/components/markdown.tsx",
     "./components/list-labels": "./src/components/list-labels.ts",

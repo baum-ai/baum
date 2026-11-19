@@ -8,6 +8,7 @@ import { BrandMark } from "./brand-logo";
 import { cn, FOCUS_RING } from "./classnames";
 import { useLogLayout } from "./conversation-layout";
 import { formatCompact, formatTime } from "./format";
+import { ImageViewer } from "./image-viewer";
 import { Markdown } from "./markdown";
 
 /** The pieces a session's conversation is drawn with, laid out like a
@@ -153,29 +154,10 @@ export function PromptBubble({
   );
 }
 
-const IMAGE_DIALOG = {
-  width: "auto",
-  maxWidth: "none",
-  maxHeight: "none",
-  padding: 0,
-  border: 0,
-  borderRadius: 0,
-  background: "transparent",
-  boxShadow: "none",
-  overflow: "visible",
-} as const;
-
-/** A prompt's images as thumbnails, each opening at full size in a dialog
- *  that a click on the image or Escape closes. */
+/** A prompt's images as thumbnails, each opening large in the shared
+ *  image viewer. */
 function PromptImages({ images }: { images: TranscriptImage[] }) {
   const [open, setOpen] = useState<TranscriptImage | null>(null);
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    const element = dialog.current;
-    if (!element) return;
-    if (open && !element.open) element.showModal();
-    if (!open && element.open) element.close();
-  }, [open]);
   return (
     <>
       <ul className="mt-2 flex flex-wrap gap-2">
@@ -199,31 +181,12 @@ function PromptImages({ images }: { images: TranscriptImage[] }) {
           </li>
         ))}
       </ul>
-      <dialog
-        ref={dialog}
-        aria-label={open?.alt}
+      <ImageViewer
+        image={open}
+        label={open?.alt || "Image"}
+        caption={open?.alt}
         onClose={() => setOpen(null)}
-        className="m-auto outline-none backdrop:bg-surface-scrim"
-        // Inline, so a host's own dialog box (its width, padding and card)
-        // cannot frame the image.
-        style={IMAGE_DIALOG}
-      >
-        {open ? (
-          // The image closes itself, as Escape does.
-          <button
-            type="button"
-            aria-label="Close image"
-            onClick={() => dialog.current?.close()}
-            className="block cursor-zoom-out border-0 bg-transparent p-0"
-          >
-            <img
-              src={open.src}
-              alt={open.alt}
-              className="block max-h-[90vh] max-w-[90vw] rounded-md object-contain shadow-lg"
-            />
-          </button>
-        ) : null}
-      </dialog>
+      />
     </>
   );
 }
