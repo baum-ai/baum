@@ -1380,9 +1380,11 @@ plugins (WebM: VP8, VP9, Opus), and the deb also depends on
 
 The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
 glibc, HarfBuzz and the other libraries linuxdeploy leaves out. It also
-carries the image's GStreamer and every plugin installed there (base, good
-and libav, `bundleMediaFramework` in `tauri.conf.json`), so the same videos
-play without any GStreamer on the system. The image
+carries the image's GStreamer with its base and good plugins
+(`bundleMediaFramework` in `tauri.conf.json`) and uses those instead of the
+system's, so WebM videos play without any GStreamer on the system. It
+carries no H.264 or AAC decoder (libav), so MP4 videos show as unavailable
+there. The image
 requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
 This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
 for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
