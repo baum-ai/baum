@@ -24,7 +24,9 @@ import (
 // and the Sessions page show it as they show a real session. A message that
 // mentions a comment has it propose one for the person's pending review
 // (propose_review_comment) through baum's MCP server, as the agent would
-// call the tool, before it answers.
+// call the tool, before it answers. A request about the tiles' layout
+// ("move the risks to the top", "make this wider", "remove this", "undo",
+// "reset") runs the layout tools over HTTP as the agent CLI would (layout).
 type panelAgent struct {
 	events *hookevents.Store
 	home   string
@@ -33,6 +35,8 @@ type panelAgent struct {
 
 	mu    sync.Mutex
 	turns map[string][]string
+	// answers are each session's answers so far, by turn.
+	answers map[string][]string
 }
 
 // panelStep is how long each of a turn's steps takes: long enough for the
@@ -59,9 +63,10 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	}
 	a.turns[id] = append(a.turns[id], r.Prompt)
 	prompts := append([]string(nil), a.turns[id]...)
+	answers := append([]string(nil), a.answers[id]...)
 	a.mu.Unlock()
 	// The prompt is in the transcript at once, its answer once the turn ends.
-	writePanelTranscript(path, id, r.Directory, prompts, false)
+	writePanelTranscript(path, id, r.Directory, prompts, answers, false)
 	a.hook(id, r.Directory, path, "user-prompt-submit")
 	wait := func() error {
 		select {
@@ -87,6 +92,17 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 		a.proposeTheme(ctx, r)
 	}
 	answer := panelAnswer(r.Prompt)
+	// A request to add a tile runs through the add tools.
+	if said, ok := a.tiles(ctx, r); ok {
+		answer = said
+	}
+	a.mu.Lock()
+	if a.answers == nil {
+		a.answers = map[string][]string{}
+	}
+	a.answers[id] = append(a.answers[id], answer)
+	answers = append([]string(nil), a.answers[id]...)
+	a.mu.Unlock()
 	words := strings.SplitAfter(answer, " ")
 	for i, part := range [][]string{words[:len(words)/3], words[len(words)/3 : 2*len(words)/3], words[2*len(words)/3:]} {
 		if r.TextDelta != nil {
@@ -98,9 +114,17 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 			}
 		}
 	}
-	writePanelTranscript(path, id, r.Directory, prompts, true)
+	writePanelTranscript(path, id, r.Directory, prompts, answers, true)
 	a.hook(id, r.Directory, path, "stop")
 	return agent.Result{Document: []byte(answer), SessionID: id, Calls: 1, Tokens: 120}, nil
+}
+
+// answerOf is a turn's answer, or panelAnswer for one with none recorded.
+func answerOf(answers []string, i int, prompt string) string {
+	if i < len(answers) {
+		return answers[i]
+	}
+	return panelAnswer(prompt)
 }
 
 // panelComment is the comment the panel agent proposes for the pending
@@ -189,8 +213,9 @@ func newSessionID() string {
 // writePanelTranscript replaces the Claude Code transcript at path with one
 // turn per prompt, in the lines Claude Code writes: the prompt, a Read of
 // docs/guide.md and its result, then the answer. The last turn's tool call
-// and answer are left out until answered is set.
-func writePanelTranscript(path, id, dir string, prompts []string, answered bool) {
+// and answer are left out until answered is set. answers are the turns'
+// answers, panelAnswer for a turn without one.
+func writePanelTranscript(path, id, dir string, prompts, answers []string, answered bool) {
 	var lines strings.Builder
 	write := func(v map[string]any) {
 		line, _ := json.Marshal(v)
@@ -231,7 +256,7 @@ func writePanelTranscript(path, id, dir string, prompts []string, answered bool)
 		reply := base("assistant", fmt.Sprintf("a-%d", i), fmt.Sprintf("r-%d", i), 20)
 		reply["requestId"] = fmt.Sprintf("req-%d", i)
 		reply["message"] = map[string]any{"id": fmt.Sprintf("msg-%d", i), "role": "assistant", "model": "claude-opus-5", "stop_reason": "end_turn", "usage": usage,
-			"content": []any{map[string]any{"type": "text", "text": panelAnswer(prompt)}}}
+			"content": []any{map[string]any{"type": "text", "text": answerOf(answers, i, prompt)}}}
 		write(reply)
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)

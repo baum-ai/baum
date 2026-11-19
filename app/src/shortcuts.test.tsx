@@ -8,6 +8,7 @@ import {
   INBOX_SHORTCUTS,
   isGitHubKey,
   KeyBar,
+  shortcutMatches,
   listKeys,
   MAC,
   moveFocus,
@@ -646,6 +647,67 @@ it("lists exactly the keys that work in the sheet", async () => {
     "t",
     "r",
   ]);
+});
+
+it("finds keys in the sheet by what they do or by the key", async () => {
+  expect(shortcutMatches({ keys: ["m"], label: "Merge, where offered" }, "MERGE")).toBe(true);
+  expect(shortcutMatches({ keys: ["m"], label: "Merge, where offered" }, "merge fix")).toBe(false);
+  expect(shortcutMatches({ keys: ["ArrowDown"], label: "Next row" }, "↓")).toBe(true);
+  expect(shortcutMatches({ keys: ["Escape"], label: "Clear the row focus" }, "esc")).toBe(true);
+  await act(async () => root.render(<ShortcutsSheet close={() => {}} />));
+  const sheet = node.querySelector("dialog")!;
+  // It opens on the list, for reading; a typed key moves to the search field.
+  expect(document.activeElement?.id).toBe("shortcuts-list");
+  const input = sheet.querySelector("input")!;
+  const list = document.activeElement as HTMLElement;
+  const keydown = (key: string) => {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    act(() => {
+      document.activeElement!.dispatchEvent(event);
+    });
+    return event;
+  };
+  // `?` (which closes the sheet) and Space (which scrolls it) stay on the list.
+  keydown("?");
+  keydown(" ");
+  expect(document.activeElement).toBe(list);
+  // `/` only moves to the field.
+  expect(keydown("/").defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(input);
+  list.focus();
+  // Another character goes to the field, not to the page's keys behind it.
+  const seen = vi.fn();
+  window.addEventListener("keydown", seen);
+  keydown("u");
+  expect(seen).not.toHaveBeenCalled();
+  // A key with a modifier still reaches the app's keys.
+  act(() => {
+    list.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+  });
+  window.removeEventListener("keydown", seen);
+  expect(seen).toHaveBeenCalledTimes(1);
+  expect(document.activeElement).toBe(input);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "merge");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(Array.from(sheet.querySelectorAll("h3")).map((h) => h.textContent)).toEqual([
+    "Inbox",
+    "Pull requests",
+    "A pull request or group",
+  ]);
+  expect(
+    Array.from(sheet.querySelectorAll("dd")).every((dd) => /merge/i.test(dd.textContent!)),
+  ).toBe(true);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "zzz");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(sheet.textContent).toContain("Nothing matches “zzz”.");
+  // ↓ from the field returns to the list.
+  input.focus();
+  expect(keydown("ArrowDown").defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(list);
 });
 
 it("lists the keys of where the sheet was opened first", async () => {

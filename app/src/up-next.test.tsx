@@ -803,6 +803,8 @@ it("says in the card why the daemon did not start the review, and on the PR page
   };
   vi.stubGlobal("ResizeObserver", observer);
   vi.stubGlobal("IntersectionObserver", observer);
+  // ...and brings a new place's pane into view, which jsdom cannot.
+  Element.prototype.scrollIntoView ??= () => {};
   entries = [requested(7)];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
@@ -824,6 +826,7 @@ it("says in the card why the daemon did not start the review, and on the PR page
   await settle();
   expect(node.querySelector("article.upnext-panel")).toBeNull();
   expect(node.textContent).toContain("the queue is full");
+  expect(node.textContent).not.toContain("could not be rendered");
 });
 
 it("lists what baum will do instead of the card when it needs a clone", async () => {

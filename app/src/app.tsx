@@ -1,5 +1,7 @@
 import { SavedStateNotice } from "./ui-state";
-import { PreferencesProvider, usePreferences } from "./preferences";
+import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
+import { TileCheckPage } from "./tiles/custom/check-runner";
+import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
@@ -119,6 +121,7 @@ import {
 } from "./session-panel";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
+import { publishAddedTilesEvent, publishAddedTilesResync } from "./tiles/added-events";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
 import {
   Notice,
@@ -348,7 +351,10 @@ function Application() {
       <ToastProvider>
         <SampleGuard />
         <ViewerLinkProvider link={LocalLink}>
-          {auth === "ready" ? (
+          {auth === "ready" && url.search.get("page") === "tile-check" ? (
+            // The desktop shell's hidden check window: the runner alone.
+            <TileCheckPage />
+          ) : auth === "ready" ? (
             <Workspace url={url} />
           ) : (
             <main className="local-connecting">
@@ -366,7 +372,6 @@ function Application() {
   );
 }
 function Workspace({ url }: { url: UrlState }) {
-  const { preferences } = usePreferences();
   const [clones, setClones] = useState<Clone[]>([]);
   const [picked, setPicked] = useState<Repository[]>([]);
   const [attached, setAttached] = useState<FoundClones["attached"]>([]);
@@ -698,6 +703,14 @@ function Workspace({ url }: { url: UrlState }) {
     // Like the other reads, not while the window is hidden.
     const resyncConsole = () => gate.run("console", publishConsoleResync);
     source.addEventListener("reset", resyncConsole);
+    // The open review page reads its tiles again when the tiles the person
+    // added, or those being made, changed, from the session panel or another
+    // window.
+    source.addEventListener("added_tiles", (event) =>
+      publishAddedTilesEvent(String((event as MessageEvent).data)),
+    );
+    const resyncAddedTiles = () => gate.run("added_tiles", publishAddedTilesResync);
+    source.addEventListener("reset", resyncAddedTiles);
     // Each kind of event reads what it can change, and what it may change
     // where that is unclear.
     source.addEventListener("index", () => markStale(indexParts));
@@ -715,6 +728,12 @@ function Workspace({ url }: { url: UrlState }) {
       }
     });
     source.addEventListener("automatic", () => markStale(automaticParts));
+    // The render check: open the check window, or draw in this page.
+    source.addEventListener("tile_check", (event) =>
+      onTileCheckEvent((event as MessageEvent).data),
+    );
+    // A new connection is not sent past checks: ask once what is waiting.
+    void checkWaitingJobs();
     source.addEventListener("reset", () => markStale(allReloadParts));
     const refreshTimeline = () => gate.run("timeline", () => setTimelineTick((n) => n + 1));
     source.addEventListener("timeline", refreshTimeline);
@@ -728,6 +747,7 @@ function Workspace({ url }: { url: UrlState }) {
         refreshLive();
         refreshTimeline();
         resyncConsole();
+        resyncAddedTiles();
       }
       connected = true;
     });
@@ -1332,12 +1352,11 @@ function Workspace({ url }: { url: UrlState }) {
           url.search,
           (id) => clones.find((clone) => clone.id === id)?.repository,
           location.hash,
-          preferences.review_page,
         ),
         panel.ask,
       ),
     // The hash is a pull request's anchor: read again whenever the page draws.
-    [url.search, clones, location.hash, panel.ask, preferences.review_page],
+    [url.search, clones, location.hash, panel.ask],
   );
   const pageTitle =
     pageContext.page === "pull_request"
@@ -1389,6 +1408,15 @@ function Workspace({ url }: { url: UrlState }) {
         keywords: "agent claude codex terminal console chat",
         href: "",
         run: () => sessionPanel.toggle(),
+      },
+      {
+        id: "shortcuts",
+        kind: "Action" as const,
+        label: "Keyboard shortcuts",
+        detail: "?",
+        keywords: "keys keybindings hotkeys help",
+        href: "",
+        run: () => setShortcuts(true),
       },
       ...(inboxes.available
         ? [
@@ -1505,11 +1533,12 @@ function Workspace({ url }: { url: UrlState }) {
         if (shortcuts) setShortcuts(false);
         else if (openHelp.current) openHelp.current();
         else setShortcuts(true);
+      } else if (shortcuts) {
+        // With the sheet open, no page key acts behind it.
       } else if (
         onList &&
         (VIEW_KEYS.previous.includes(event.key) || VIEW_KEYS.next.includes(event.key))
       ) {
-        if (shortcuts) return;
         // One view along, stopping at either end, as the tabs read.
         event.preventDefault();
         const index = tabKeys.indexOf(activeTab);
@@ -1717,8 +1746,19 @@ function Workspace({ url }: { url: UrlState }) {
               setSection={(section) =>
                 url.update((current) => {
                   current.set("page", "settings");
+                  current.delete("type");
                   if (section === "general") current.delete("section");
                   else current.set("section", section);
+                  return current;
+                })
+              }
+              tileType={url.search.get("type")}
+              openTileType={(type) =>
+                url.update((current) => {
+                  current.set("page", "settings");
+                  current.set("section", "tiles");
+                  if (type) current.set("type", type);
+                  else current.delete("type");
                   return current;
                 })
               }

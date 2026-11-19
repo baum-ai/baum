@@ -16,11 +16,10 @@ import (
 // Validator checks tile documents. Its failures come at two levels:
 //
 //   - A document-level failure rejects the document (a *DocumentError): the
-//     envelope and substrate shapes, unique change, risk, evidence, tile and
-//     group IDs, risks and evidence naming an existing change, the hunks of
-//     current changes being in the index, the layout placing every tile
-//     exactly once with known and contiguous groups, landing within the
-//     entries, and at most one tile of each single type.
+//     envelope and substrate shapes, unique change, risk, evidence and tile
+//     IDs, risks and evidence naming an existing change, the hunks of
+//     current changes being in the index, and at most one tile of each
+//     single type.
 //   - A tile-level failure marks only that tile unavailable, with its
 //     problems: a single tile not under its type's ID, data that does not
 //     have its type's shape (only a draft's pending context tile may have
@@ -135,7 +134,7 @@ func (v *Validator) CheckDocument(doc *Document) error {
 			seen[id] = true
 		}
 	}
-	var riskIDs, evidenceIDs, tileIDs, groupIDs []string
+	var riskIDs, evidenceIDs, tileIDs []string
 	for _, risk := range doc.Risks {
 		riskIDs = append(riskIDs, risk.ID)
 		if changes[risk.Change] == nil {
@@ -151,13 +150,9 @@ func (v *Validator) CheckDocument(doc *Document) error {
 	for _, tile := range doc.Tiles {
 		tileIDs = append(tileIDs, tile.ID)
 	}
-	for _, group := range doc.Layout.Groups {
-		groupIDs = append(groupIDs, group.ID)
-	}
 	unique("risk", riskIDs)
 	unique("evidence", evidenceIDs)
 	unique("tile", tileIDs)
-	unique("group", groupIDs)
 
 	indexed, err := indexHunks(doc.Index)
 	if err != nil {
@@ -183,58 +178,10 @@ func (v *Validator) CheckDocument(doc *Document) error {
 		}
 	}
 
-	problems = append(problems, layoutProblems(doc)...)
 	if len(problems) > 0 {
 		return &DocumentError{Problems: problems}
 	}
 	return nil
-}
-
-func layoutProblems(doc *Document) []string {
-	var problems []string
-	add := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
-	tiles := map[string]bool{}
-	for _, tile := range doc.Tiles {
-		tiles[tile.ID] = true
-	}
-	groups := map[string]bool{}
-	for _, group := range doc.Layout.Groups {
-		groups[group.ID] = true
-	}
-	placed := map[string]int{}
-	closed := map[string]bool{}
-	previous := ""
-	for _, entry := range doc.Layout.Entries {
-		placed[entry.Tile]++
-		if !tiles[entry.Tile] {
-			add("the layout places tile %s, which the document does not have", entry.Tile)
-		}
-		if entry.Group != "" && !groups[entry.Group] {
-			add("the layout names group %s, which it does not define", entry.Group)
-		}
-		if entry.Group != previous {
-			if previous != "" {
-				closed[previous] = true
-			}
-			if entry.Group != "" && closed[entry.Group] {
-				add("the members of group %s are not contiguous", entry.Group)
-			}
-		}
-		previous = entry.Group
-	}
-	for _, tile := range doc.Tiles {
-		switch placed[tile.ID] {
-		case 1:
-		case 0:
-			add("the layout does not place tile %s", tile.ID)
-		default:
-			add("the layout places tile %s more than once", tile.ID)
-		}
-	}
-	if doc.Layout.Landing > len(doc.Layout.Entries) {
-		add("landing %d is past the %d entries", doc.Layout.Landing, len(doc.Layout.Entries))
-	}
-	return problems
 }
 
 func indexHunks(index json.RawMessage) (map[string]bool, error) {

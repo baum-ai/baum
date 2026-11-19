@@ -43,7 +43,6 @@ func validate(t *testing.T, doc *tiles.Document) (*tiles.Document, error) {
 
 func addTile(doc *tiles.Document, tile tiles.Tile) {
 	doc.Tiles = append(doc.Tiles, tile)
-	doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: tile.ID, Size: tiles.SizeThird})
 }
 
 func TestValidateAcceptsConvertedDocument(t *testing.T) {
@@ -70,7 +69,6 @@ func TestValidateRejectsDocuments(t *testing.T) {
 		{"a malformed review header", "", func(doc *tiles.Document) { doc.Review = json.RawMessage(`{"repository":"acme/widgets"}`) }},
 		{"a tile ID with capitals", "", func(doc *tiles.Document) {
 			doc.Tiles[0].ID = "Overview"
-			doc.Layout.Entries[0].Tile = "Overview"
 		}},
 		{"a tile without a title", "", func(doc *tiles.Document) { doc.Tiles[0].Title = "" }},
 		{"a headline on two lines", "", func(doc *tiles.Document) { doc.Tiles[0].Headline = "One\nTwo" }},
@@ -91,28 +89,11 @@ func TestValidateRejectsDocuments(t *testing.T) {
 		{"a repeated tile", "tile evidence is not unique", func(doc *tiles.Document) {
 			doc.Tiles = append(doc.Tiles, *tileOf(doc, tiles.TypeEvidence))
 		}},
-		{"a repeated group", "group changes is not unique", func(doc *tiles.Document) {
-			doc.Layout.Groups = append(doc.Layout.Groups, doc.Layout.Groups[0])
-		}},
 		{"a risk of an unknown change", "names change sec_gone", func(doc *tiles.Document) { doc.Risks[0].Change = "sec_gone" }},
 		{"evidence of an unknown change", "names change sec_gone", func(doc *tiles.Document) { doc.Evidence[0].Change = "sec_gone" }},
 		{"a current hunk the index lacks", "which the index does not list", func(doc *tiles.Document) {
 			doc.Changes[0].Hunks = append(doc.Changes[0].Hunks, "h_00000000ffff")
 		}},
-		{"an entry for an unknown tile", "places tile ghost", func(doc *tiles.Document) {
-			doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: "ghost", Size: tiles.SizeThird})
-		}},
-		{"an unplaced tile", "does not place tile evidence", func(doc *tiles.Document) {
-			doc.Layout.Entries = removeEntry(doc.Layout.Entries, tiles.TypeEvidence)
-		}},
-		{"a tile placed twice", "places tile evidence more than once", func(doc *tiles.Document) {
-			doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: tiles.TypeEvidence, Size: tiles.SizeThird})
-		}},
-		{"an unknown group", "names group extra", func(doc *tiles.Document) { doc.Layout.Entries[0].Group = "extra" }},
-		{"a split group", "group changes are not contiguous", func(doc *tiles.Document) {
-			doc.Layout.Entries[len(doc.Layout.Entries)-1].Group = tiles.GroupChanges
-		}},
-		{"landing past the entries", "landing 11 is past the 10 entries", func(doc *tiles.Document) { doc.Layout.Landing = 11 }},
 		{"two tiles of a single type", "more than one evidence tile", func(doc *tiles.Document) {
 			addTile(doc, tiles.Tile{ID: "evidence_more", Type: tiles.TypeEvidence, Title: "More evidence", Data: json.RawMessage(`{}`), State: tiles.StateReady})
 		}},
@@ -130,16 +111,6 @@ func TestValidateRejectsDocuments(t *testing.T) {
 			}
 		})
 	}
-}
-
-func removeEntry(entries []tiles.Entry, tile string) []tiles.Entry {
-	var kept []tiles.Entry
-	for _, entry := range entries {
-		if entry.Tile != tile {
-			kept = append(kept, entry)
-		}
-	}
-	return kept
 }
 
 func customDefinition() json.RawMessage {
@@ -169,11 +140,6 @@ func TestValidateMarksTilesUnavailable(t *testing.T) {
 		{"a single tile under another ID", "proof", `a evidence tile's ID must be "evidence"`, func(doc *tiles.Document) {
 			tile := tileOf(doc, tiles.TypeEvidence)
 			tile.ID = "proof"
-			for i := range doc.Layout.Entries {
-				if doc.Layout.Entries[i].Tile == tiles.TypeEvidence {
-					doc.Layout.Entries[i].Tile = "proof"
-				}
-			}
 		}},
 		{"a change tile under another ID", "sec_retry_policy", "a change tile's ID must be its change's", func(doc *tiles.Document) {
 			var data tiles.ChangeData
@@ -194,7 +160,6 @@ func TestValidateMarksTilesUnavailable(t *testing.T) {
 					break
 				}
 			}
-			doc.Layout.Entries = removeEntry(doc.Layout.Entries, "sec_config_flag")
 			setData(doc, tiles.TypeEverythingElse, map[string]any{"change": "sec_config_flag", "unassigned": []string{}, "attention": nil, "blocks": []any{}})
 		}},
 		{"an unknown ranked risk", tiles.TypeRisks, "ranked risk rsk_gone is not in the document", func(doc *tiles.Document) {

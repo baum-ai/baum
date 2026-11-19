@@ -1,5 +1,6 @@
 import {
   Component,
+  type ErrorInfo,
   type ReactNode,
   useCallback,
   useEffect,
@@ -44,12 +45,14 @@ import {
   backTo,
   request,
   selector,
-  documentRequest,
   tiledDocument,
+  shellRequest,
   tilesRequest,
+  addedTileRequest,
   type TilesAnswer,
   type ChatFocus,
   type Entry,
+  type PR,
   type Job,
   isActiveJob,
   automaticLabel,
@@ -63,7 +66,7 @@ import {
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, FixRuns, type FixState, useDismissedFixes } from "./fix";
+import { FixNotice, FixRuns, type FixState, phases, useDismissedFixes } from "./fix";
 import { useArchive } from "./up-next";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
@@ -73,6 +76,7 @@ import { LiveSessionCard, liveSessionLabel } from "./sessions";
 import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
+  PullRequestDecisionsList,
   PullRequestDecisionsPane,
   usePullRequestDecisions,
   type PullRequestDecisionsRead,
@@ -105,12 +109,18 @@ import {
 import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
 import { readSelection, withSelection } from "@baum/viewer/review-selection";
-import { fullReviewPlace, useReviewPage, withView } from "./tiles/view";
-import { useTilePlaces } from "./tiles/use-tile-places";
+import { useViewPlaces } from "./review-view/places";
+import {
+  CODE_PLACE,
+  commentSelection,
+  reviewOf,
+  servedReview,
+  withReview,
+} from "./review-view/model";
+import { activeTile } from "./review-view/view-tile";
 import { TileHostContext, type TileHost } from "./tiles/host";
-import { commentCounts } from "./tiles/comments";
-import { activeCard, useBackToLanding } from "./tiles/keys";
-import { tileDocOf, tilesMissing, withPendingChanges, withTiles } from "./tiles/tile-document";
+import { addedTilesKey, useAddedTilesEvents } from "./tiles/added-events";
+import { useToast } from "./toast";
 
 /** `commitsSlot`'s loaders over the daemon's commit routes under `route`
  *  (`api` for a saved version, `api/facts` for the facts), with the page's
@@ -292,11 +302,10 @@ export function LocalReview({
 }) {
   const pr = entry.pull_request;
   const url = useUrlState();
-  // The tiles page reads each version with its tile document; the full
-  // review reads the review alone.
-  const tilesPage = useReviewPage() === "tiles";
-  const readDocument = tilesPage ? tilesRequest : documentRequest;
-  const places = useTilePlaces();
+  // The page reads a baum.review/2 version with its tile document, and a
+  // baum.review/1 one as stored.
+  const readDocument = shellRequest;
+  const places = useViewPlaces();
   const back = backTo(url.search);
   // The refresh key works on every state of the page, also where the button
   // is not drawn, as while the review loads.
@@ -431,10 +440,14 @@ export function LocalReview({
   useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
     // a asks an agent about the pull request: the session panel opens on its
-    // conversation with the keys in its composer.
+    // conversation with the keys in its composer. On the review page a tile
+    // under the keys is what it asks about, so "explain this" needs no
+    // question.
     if (event.key === "a") {
       event.preventDefault();
-      ask();
+      const card = viewedDocument ? activeTile() : null;
+      const tile = card ? reviewOf(viewedDocument!).tiles.find((t) => t.id === card) : undefined;
+      ask(tile ? { kind: "tile", id: tile.id, title: tile.title } : null);
       return;
     }
     // Space opens or closes the fold of the block j and k are on; on a
@@ -487,10 +500,13 @@ export function LocalReview({
       navigate(jobHref(watchable));
     } else if (event.key === "c" && canReview && !showingDraft) {
       event.preventDefault();
-      const card = onTiles && selection.kind === "summary" ? activeCard() : null;
+      // A tile under the keys takes the comment, placed on the code it
+      // cites; elsewhere it is on what is being read.
+      const card = viewedDocument ? activeTile() : null;
+      const tiled = card && reviewOf(viewedDocument!).tiles.some((t) => t.id === card);
       setComposer({
         kind: "new",
-        ...(card ? commentTarget(viewedDocument ?? null, { kind: "tile", id: card }) : commentOn),
+        ...(tiled ? commentTarget(viewedDocument ?? null, { kind: "tile", id: card }) : commentOn),
       });
       setRevealComments((n) => n + 1);
     } else if (event.key === "v") {
@@ -501,8 +517,11 @@ export function LocalReview({
       button.click();
     }
   });
+  // A change to the tiles the person added (or to those being made) reads
+  // the versions on screen again: an added tile stands on every version.
+  const [tilesGeneration, setTilesGeneration] = useState(0);
   const loadVersion = useVersionLoader(
-    `${clone}:${pr.number}:${tilesPage ? "tiles" : "full"}`,
+    `${clone}:${pr.number}:${tilesGeneration}`,
     (version) => readDocument(clone, pr.number, version),
     doc?.review.version,
   );
@@ -514,9 +533,7 @@ export function LocalReview({
       ? history.state.document
       : null
     : doc;
-  // What c comments on: the section, risk, file or tile being read.
   const selection = readSelection(url.search);
-  const commentOn = commentTarget(viewedDocument ?? null, selection);
   const query = selector(clone, pr.number, viewedVersion);
   const latestQuery = selector(clone, pr.number);
   // While the daemon writes a review in stages it holds a draft of it. It is
@@ -530,20 +547,20 @@ export function LocalReview({
     }
     const abort = new AbortController();
     request<Partial<TilesAnswer>>(
-      `api/jobs/${encodeURIComponent(job.id)}/draft${tilesPage ? "?tiles=1" : ""}`,
+      `api/jobs/${encodeURIComponent(job.id)}/draft?tiles=1`,
       undefined,
       "GET",
       abort.signal,
     )
       .then((body) => {
         if (abort.signal.aborted || !Array.isArray(body.document?.sections)) return;
-        setDraft(tilesPage ? tiledDocument(body as TilesAnswer) : body.document!);
+        setDraft(tiledDocument(body as TilesAnswer));
       })
       .catch(() => {
         /* The draft is gone, or the next one is on its way. */
       });
     return () => abort.abort();
-  }, [job?.id, draftCount, tilesPage]);
+  }, [job?.id, draftCount, tilesGeneration]);
   // A page without a review shows the draft as soon as there is one; one with
   // a saved version keeps showing that version until the new one is saved.
   const showingDraft = draft !== null && !doc && entry.version_count === 0;
@@ -569,46 +586,128 @@ export function LocalReview({
     [showingDraft, draft, retrying, doc, failedSections],
   );
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
-  // The tiles page draws its places once the document carries its tiles; a
-  // review the daemon could not convert is shown as the full review.
-  const onTiles = tilesPage && Boolean(tileDocOf(shownDocument));
-  // Escape or u inside a tile goes back to the landing page.
-  useBackToLanding(onTiles, url);
-  // Rebuilt only when what the tiles read of it changes, and never on the
-  // full review, which has no tiles.
-  const latestHost = useRef({ viewedDocument, canReview, showingDraft, search: url.search });
-  latestHost.current = { viewedDocument, canReview, showingDraft, search: url.search };
-  const counts = useMemo(
-    () => (onTiles ? commentCounts(viewedDocument ?? null, pending.value.comments) : NO_COUNTS),
-    [onTiles, viewedDocument, pending.value.comments],
-  );
+  // Before there is a review, Files changed lists the pull request's files
+  // in the viewer's own files pane; once one lands, the same place is the
+  // review's Files changed, in place of that address.
+  const factsFile =
+    shownDocument && (selection.kind === "files" || selection.kind === "file")
+      ? selection.kind === "file"
+        ? selection.id
+        : ""
+      : null;
+  useEffect(() => {
+    if (factsFile === null) return;
+    url.update(
+      (current) =>
+        withSelection(current, {
+          kind: "tile",
+          id: CODE_PLACE,
+          ...(factsFile ? { item: factsFile } : {}),
+        }),
+      { replace: true, preventScrollReset: true },
+    );
+  }, [factsFile, url]);
+  // What c comments on: the section, risk, file or tile being read; on the
+  // review page's Code tab, the file open there.
+  const commentOn = commentTarget(viewedDocument ?? null, commentSelection(selection));
+  // The tiles the person added, and those being made in the session panel,
+  // are read again when they change, from the session panel, the page or
+  // another window.
+  const toast = useToast();
+  const reloadTiles = useRef(async () => {});
+  reloadTiles.current = async () => {
+    setTilesGeneration((n) => n + 1);
+    // Added tiles stand on baum.review/2 versions only.
+    if (doc && servedReview(doc)) setDoc(await tilesRequest(clone, pr.number));
+  };
+  useAddedTilesEvents(addedTilesKey(pr.repository, pr.number), () => {
+    void reloadTiles.current().catch(() => undefined);
+  });
+  const historyRetry = useRef(history.retry);
+  historyRetry.current = history.retry;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a change to the added tiles reads the earlier version again
+  useEffect(() => {
+    if (tilesGeneration > 0 && history.selection) historyRetry.current();
+  }, [tilesGeneration]);
+  // Rebuilt only when what the tiles read of it changes.
+  const latestHost = useRef({ viewedDocument, canReview, showingDraft });
+  latestHost.current = { viewedDocument, canReview, showingDraft };
+  // A custom tile's frame that never answered: read the tile route of every
+  // version on screen again, which registers their frame documents again.
+  const rereadTiles = useRef<() => Promise<unknown>>(async () => undefined);
+  rereadTiles.current = () =>
+    Promise.all([
+      showingDraft && job
+        ? request(`api/jobs/${encodeURIComponent(job.id)}/draft?tiles=1`)
+        : tilesRequest(clone, pr.number),
+      ...(history.selection ? [tilesRequest(clone, pr.number, history.selection.version)] : []),
+    ]);
   const commenting = canReview && !showingDraft;
   const tileHost = useMemo<TileHost>(
     () => ({
       draft: showingDraft,
-      commentCounts: counts,
       comment: commenting
-        ? (tile, item) => {
+        ? (tile) => {
             setComposer({
               kind: "new",
               ...commentTarget(latestHost.current.viewedDocument ?? null, {
                 kind: "tile",
                 id: tile,
-                ...(item ? { item } : {}),
               }),
             });
             setRevealComments((n) => n + 1);
           }
         : undefined,
       ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
-      fullReview: (tile) =>
-        appURL(
-          `?${withView(withSelection(latestHost.current.search, fullReviewPlace(tile)), "full")}`,
-        ),
+      saveToLibrary: (tile) => {
+        ask({ kind: "tile", id: tile.id, title: tile.title });
+        sessionPanel.setDraft("Save this tile to my library");
+      },
+      removeDraft: (tile) => {
+        void request(
+          `api/tiles/drafts/${encodeURIComponent(tile)}?${new URLSearchParams({ clone, pr: String(pr.number) })}`,
+          {},
+          "DELETE",
+        ).catch(() => undefined);
+      },
+      // Remove takes an added tile off every version; the toast's Undo puts
+      // it back where it was.
+      removeAdded: showingDraft
+        ? undefined
+        : (tile) => {
+            const send = (action: "remove" | "restore") =>
+              addedTileRequest(clone, pr.number, tile.id, action).then(() =>
+                reloadTiles.current().catch(() => undefined),
+              );
+            send("remove").then(
+              () =>
+                toast({
+                  title: `Removed ${tile.title}`,
+                  action: {
+                    label: "Undo",
+                    run: () =>
+                      void send("restore").catch((error: unknown) =>
+                        toast({
+                          title: `${tile.title} couldn't be put back`,
+                          detail: error instanceof Error ? error.message : String(error),
+                          error: true,
+                        }),
+                      ),
+                  },
+                }),
+              (error: unknown) =>
+                toast({
+                  title: `${tile.title} wasn't removed`,
+                  detail: error instanceof Error ? error.message : String(error),
+                  error: true,
+                }),
+            );
+          },
+      reread: () => rereadTiles.current(),
     }),
     // `ask` reads the pull request, which keys the page; the rest is read
-    // through `latestHost` when called.
-    [showingDraft, counts, commenting],
+    // through `latestHost` and `reloadTiles` when called.
+    [showingDraft, commenting, toast],
   );
   // Why the last retry did not write the details, said until it is dismissed.
   const [headChanged, setHeadChanged] = useState(false);
@@ -716,7 +815,7 @@ export function LocalReview({
         if (!abort.signal.aborted) setHistoryFailed(true);
       });
     return () => abort.abort();
-  }, [clone, pr.number, latestQuery, revision, retry, tilesPage]);
+  }, [clone, pr.number, latestQuery, revision, retry]);
   const refreshSessions = useRef<(() => void) | null>(null);
   useVisibleInterval(() => refreshSessions.current?.(), 30_000);
   useEffect(() => {
@@ -950,7 +1049,7 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
-                places={onTiles ? places : undefined}
+                places={places}
                 detailsChecks={(shown) =>
                   liveDetailsChecks(
                     shown,
@@ -978,6 +1077,10 @@ export function LocalReview({
                     repository: pr.repository,
                     url: pr.url,
                     state: pr.state.toLowerCase(),
+                    ...(pr.head_ref && pr.base_ref
+                      ? { branches: { head: pr.head_ref, base: pr.base_ref } }
+                      : {}),
+                    ...pullRequestLines(pr, doc),
                   },
                   back: { href: back.href, label: back.label },
                   generation: { state: generationState, rewriting: generating && Boolean(doc) },
@@ -1167,23 +1270,6 @@ export function LocalReview({
                 )}
                 notices={
                   <>
-                    {tilesPage && tilesMissing(shownDocument) ? (
-                      <Notice
-                        action={
-                          <a
-                            href={appURL(`?${withView(url.search, "full")}`)}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              navigate(event.currentTarget.href);
-                            }}
-                          >
-                            Always use the full review here
-                          </a>
-                        }
-                      >
-                        This review can't be shown as tiles, so this is its full review.
-                      </Notice>
-                    ) : null}
                     {archivedNotice}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
@@ -1281,8 +1367,21 @@ export function LocalReview({
                   decisions
                     ? {
                         count: decisions.total,
-                        renderPane: () => (
-                          <PullRequestDecisionsPane read={decisions} live={running} heading />
+                        renderPane: (_actions, open) => (
+                          <PullRequestDecisionsPane
+                            read={decisions}
+                            live={running}
+                            heading
+                            open={open}
+                          />
+                        ),
+                        renderList: (actions, selected) => (
+                          <PullRequestDecisionsList
+                            read={decisions}
+                            live={running}
+                            selected={selected}
+                            onOpen={(id) => actions.select({ kind: "decisions", id })}
+                          />
                         ),
                       }
                     : undefined
@@ -1410,31 +1509,58 @@ export function LocalReview({
   );
 }
 
-/** The document with its failed sections, and their Change tiles, marked as
- *  being written while a retry of their details runs. */
+/** The size the head shows: GitHub's count of the pull request's lines, or,
+ *  from an older daemon that has none, the size of the diff the review
+ *  read. */
+function pullRequestLines(
+  pr: PR,
+  doc: ReviewDocument | null | undefined,
+): { lines?: { additions: number; deletions: number } } {
+  if ((pr.additions ?? 0) > 0 || (pr.deletions ?? 0) > 0)
+    return { lines: { additions: pr.additions ?? 0, deletions: pr.deletions ?? 0 } };
+  if (doc && (doc.stats.additions > 0 || doc.stats.deletions > 0))
+    return { lines: { additions: doc.stats.additions, deletions: doc.stats.deletions } };
+  return {};
+}
+
+/** The document with its failed sections marked as being written while a
+ *  retry of their details runs. */
 function retried(doc: ReviewDocument, ids: string[]): ReviewDocument {
-  const next = {
+  const copy: ReviewDocument = {
     ...doc,
     sections: doc.sections.map((s) =>
       ids.includes(s.id) ? { ...s, details: "pending" as const } : s,
     ),
   };
-  const tiles = tileDocOf(doc);
-  return tiles ? withTiles(next, withPendingChanges(tiles, ids)) : next;
+  // The baum.review/2 document the tabs read reads as being written too.
+  const review = servedReview(doc);
+  return review
+    ? withReview(copy, {
+        ...review,
+        sections: review.sections.map((s) =>
+          ids.includes(s.id) ? { ...s, details: "pending" as const } : s,
+        ),
+      })
+    : copy;
 }
 
-const NO_COUNTS: ReadonlyMap<string, number> = new Map();
-
-class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  override state = { failed: false };
-  static getDerivedStateFromError() {
-    return { failed: true };
+class ReviewBoundary extends Component<{ children: ReactNode }, { failed: boolean; why: string }> {
+  override state = { failed: false, why: "" };
+  static getDerivedStateFromError(error: unknown) {
+    // The first line of what threw, so the notice says more than that
+    // something did; the whole error, with its stack, goes to the console.
+    const why = error instanceof Error ? error.message : String(error);
+    return { failed: true, why: why.split("\n")[0]?.slice(0, 200) ?? "" };
+  }
+  override componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("The review page could not be drawn:", error, info.componentStack);
   }
   override render() {
     return this.state.failed ? (
       <Alert>
         The stored document could not be rendered.{" "}
-        <Button onClick={() => this.setState({ failed: false })}>Retry rendering</Button>
+        {this.state.why ? <span className="text-secondary">({this.state.why})</span> : null}{" "}
+        <Button onClick={() => this.setState({ failed: false, why: "" })}>Retry rendering</Button>
       </Alert>
     ) : (
       this.props.children
@@ -1601,7 +1727,7 @@ export function ReviewJob({
           {job.state === "queued" ? "New version queued" : "Generating a new version"}
           {/* The title already says it generates; another phase is news. */}
           {job.state === "running" && job.phase && job.phase !== "generating" ? (
-            <span className="font-normal text-tertiary"> · {job.phase}</span>
+            <span className="font-normal text-tertiary"> · {phases[job.phase] ?? job.phase}</span>
           ) : null}
         </p>
         {started || saved ? (

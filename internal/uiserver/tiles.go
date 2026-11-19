@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/tiles"
@@ -69,30 +71,26 @@ func (rr reviewRead) version(ctx context.Context, w http.ResponseWriter) (store.
 	return version, true
 }
 
-// libraryType is an entry of GET /api/tile-library.
-type libraryType struct {
-	Name    string       `json:"name"`
-	Title   string       `json:"title"`
-	UseWhen string       `json:"use_when"`
-	Sizes   []tiles.Size `json:"sizes"`
-	Kit     int          `json:"kit"`
-	Digest  string       `json:"digest"`
-}
-
-// tileLibrary serves GET /api/tile-library: the custom tile types this
-// version ships, which it lists as {"types": [...]}. It ships none yet.
+// tileLibrary serves GET /api/tile-library: the built-in library tile types
+// this version ships (tileview.Library), as {"types": [...]}, each with its
+// name, title, use-when line, glance line, sizes, kit and digest, never its
+// source. The review page names a custom tile whose digest is listed as
+// baum's own.
 func tileLibrary(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string][]libraryType{"types": {}})
+	writeJSON(w, map[string]any{"types": tileview.Library()})
 }
 
-// tilesHandler serves GET /api/tiles: the review document and the tile
-// document converted from it and composed with the version's stored
-// composition, if any, with the selectors, errors and no-store ETag of
-// GET /api/document. Answers are kept under the version's store revision,
-// which changes with every write to its row, composition included. Its
-// document is the normalised review (review.NormalizeStored), which differs
-// from the stored one on the plain route only where a stored-document rule
-// applies.
+// tilesHandler serves GET /api/tiles: the version as a baum.review/2
+// document (tileview.Serve: a baum.review/2 version as stored, a
+// baum.review/1 version converted with its stored composition, if any),
+// with the tiles the person added to the pull request (LocalAPI.Added)
+// merged into its tiles, as {"document", "problem"?, "drafts"?}, with the
+// selectors, errors and no-store ETag of GET /api/document. Answers are kept
+// under the version's store revision, which changes with every write to its
+// row, composition included, the added tiles' key (with their fills), which
+// changes with every add, remove and fill, and the pending cards of tiles
+// being made in the session panel (drafts, on the latest version only),
+// which change as the tile is checked.
 func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !acquire(r.Context(), slots) {
@@ -103,18 +101,49 @@ func (a LocalAPI) tilesHandler(slots chan struct{}, answers *tileview.Cache) htt
 		if !ok {
 			return
 		}
-		answer, found := answers.Get(read.revisionKey())
+		added, fills, addedKey := a.addedState(r.Context(), read.clone.Repository, read.key.Number)
+		// The latest version shows the pending cards of tiles being made in
+		// the session panel.
+		var drafts []tiledrafts.Draft
+		if read.n == 0 {
+			drafts = a.Drafts.List(addedtiles.Key(read.clone.Repository, read.key.Number))
+		}
+		draftsKey := tiledrafts.Key(drafts)
+		withAdded := func(key string) string {
+			if key == "" {
+				return key
+			}
+			if addedKey != "" {
+				key += "\x00added\x00" + addedKey
+			}
+			if draftsKey != "" {
+				key += "\x00drafts\x00" + draftsKey
+			}
+			return key
+		}
+		answer, found := answers.Get(withAdded(read.revisionKey()))
 		if !found {
 			version, ok := read.version(r.Context(), w)
 			if !ok {
 				return
 			}
+			latest := read.n == 0
+			if !latest {
+				if number, _, err := read.store.Revision(r.Context(), read.key, 0); err == nil {
+					latest = number == version.Metadata.Version
+				}
+			}
+			held := a.addedFor(r.Context(), read.clone, read.key.Number, version, latest, added, fills)
 			var err error
-			if answer, err = tileview.Encode(tileview.Build(version.Document, version.Composition, tiles.Options{})); err != nil {
+			response := tileview.Serve(version.Document, version.Composition, held, tiles.Options{})
+			if response.Problem == "" {
+				response.Drafts = drafts
+			}
+			if answer, err = tileview.Encode(response); err != nil {
 				apiError(w, err)
 				return
 			}
-			answers.Put(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision), answer)
+			answers.Put(withAdded(revisionKey(read.clone, read.store, read.key, version.Metadata.Version, version.Revision)), answer)
 		}
 		etagjson.Serve(w, r, answer.Body)
 	}

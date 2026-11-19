@@ -1,0 +1,13 @@
+<script>
+  // Loads an image from the network, which the frame's policy blocks
+  // (`csp_violation`). The address is built at run time, as lint reads only
+  // the literal text.
+  function draw({ data, root }) {
+    const image = document.createElement("img");
+    image.alt = "";
+    image.src = ["https:", "", "example.com", "pixel.png"].join("/");
+    root.append(image);
+    return baum.html`<p>${data.items.length} items</p>`;
+  }
+  baum.tile({ glance: draw, detail: draw });
+</script>

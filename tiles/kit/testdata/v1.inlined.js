@@ -11,6 +11,7 @@ check:null,
 emptyUsed:false,
 failed:false,
 unresolved:new Set(),
+renderMS:0,
 };
 const BUILT=Symbol("baum.built");
 const doc=document;
@@ -443,8 +444,10 @@ name.type="button";
 name.addEventListener("click",()=>post("jump",{key}));
 }
 const slash = path.lastIndexOf("/") + 1;
-name.append(el("span","",path.slice(0,slash)),el("span","",path.slice(slash)+(range?`:${range}`:"")));
-if(!path)name.lastChild.textContent=str(payload&&payload.label)||"Code";
+const file=el("span");
+file.append(el("span","",path.slice(slash)+(range?`:${range}`:"")));
+name.append(el("span","",path.slice(0,slash)),file);
+if(!path)file.firstChild.textContent=str(payload&&payload.label)||"Code";
 name.title=path+(range?`:${range}`:"");
 head.append(name);
 if(payload&&payload.status==="ok"&&int(payload.additions)!==null&&int(payload.deletions)!==null){
@@ -1099,6 +1102,7 @@ if(!isRecord(message)||message.protocol!==PROTOCOL||!plainJSON(message))return;
 if(message.kind==="init")onInit(message);
 else if(message.kind==="update")onUpdate(message);
 else if(message.kind==="theme")onTheme(message);
+else if(message.kind==="measure"&&state.check&&readySent)post("resize",{height:contentHeight()});
 });
 const TIMEOUT=Symbol("timeout");
 function frames(count){
@@ -1111,7 +1115,24 @@ left===0
 step(count);
 });
 }
+function turn(){
+if(typeof MessageChannel!=="function")return Promise.resolve();
+return new Promise((resolve)=>{
+const channel=new MessageChannel();
+channel.port1.onmessage=()=>{
+channel.port1.close();
+resolve();
+};
+channel.port2.postMessage(null);
+});
+}
 async function settle(){
+if(state.check){
+const fonts=docGet("fonts");
+if(fonts&&fonts.status==="loading")await fonts.ready;
+await turn();
+return;
+}
 await frames(2);
 const fonts=docGet("fonts");
 if(fonts&&fonts.status==="loading"){
@@ -1150,10 +1171,12 @@ failed:state.failed,
 unresolved:state.unresolved.size,
 overflow_x:html.scrollWidth>html.clientWidth+2,
 overflow_y:state.face==="glance"&&root.scrollHeight>root.clientHeight+2,
+render_ms:state.renderMS,
 };
 }
 async function render(){
 const seq=++renderSeq;
+const began=performance.now();
 Object.assign(state,{emptyUsed:false,failed:false,unresolved:new Set()});
 const root=el("div");
 root.id="baum-root";
@@ -1187,6 +1210,7 @@ if(seq!==renderSeq)return;
 if(result!==root&&!(result instanceof Node&&result.parentNode===root)){
 insert(root,null,result,0);
 }
+state.renderMS=Math.round(performance.now()-began);
 }catch(error){
 if(seq===renderSeq)report("script_error",describeError(error),stackPosition(error));
 return;

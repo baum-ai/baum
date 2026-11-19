@@ -41,6 +41,19 @@ type Task struct {
 	// PersistSession keeps the backend's session of every call, so the
 	// Outcome's SessionID can be resumed later (Request.PersistSession).
 	PersistSession bool
+	// ResumeSession, when set, continues that session (Request.ResumeSession)
+	// instead of starting a fresh one: the first pass resumes it, and each
+	// repair resumes the session the pass before it reported. The backend
+	// must keep sessions (SessionKeeper). A session that is gone fails the
+	// task with ErrSessionNotFound, having spent nothing.
+	ResumeSession string
+	// MCP, when set, gives every call of the task baum's MCP server
+	// (Request.MCP). Only a local User or Local profile run supports it.
+	MCP *MCPServer
+	// Shell and ReadDirs are every call's Request.Shell and
+	// Request.ReadDirs: commands that read, and more directories to read.
+	Shell    bool
+	ReadDirs []string
 	// Label, when set, names the task's files in the run directory
 	// (TaskSchemaFile), so that tasks running in one directory at once do not
 	// overwrite each other's: lowercase letters, digits and dashes. Empty
@@ -145,12 +158,13 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 	stalls := 0
 	budgets := task.Budgets
 	pass := TaskPass{Number: 1, Repairs: max(budgets.MaxRepairAttempts, 1)}
+	resume := task.ResumeSession
 	for ; ; pass.Number++ {
 		text, err := prompt(pass)
 		if err != nil {
 			return outcome, nil, err
 		}
-		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: task.Framing == TaskFraming, PersistSession: task.PersistSession, Stage: task.Label, Pass: pass.Number}, &outcome, &stalls)
+		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: task.Framing == TaskFraming, PersistSession: task.PersistSession, ResumeSession: resume, MCP: task.MCP, Shell: task.Shell, ReadDirs: task.ReadDirs, Stage: task.Label, Pass: pass.Number}, &outcome, &stalls)
 		if callErr != nil {
 			if pass.Number > 1 {
 				outcome.RejectedDocument = RetainedDocument(document)
@@ -162,6 +176,9 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 		// session of the call that produced the accepted document is
 		// self-contained.
 		outcome.SessionID = result.SessionID
+		if resume != "" && result.SessionID != "" {
+			resume = result.SessionID
+		}
 		verdict, err := accept(ctx, pass, result.Document, &outcome)
 		if err != nil {
 			return outcome, nil, err

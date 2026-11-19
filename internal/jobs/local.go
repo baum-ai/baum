@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/fix"
@@ -30,7 +32,10 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewrefs"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 type Local struct {
@@ -48,6 +53,20 @@ type Local struct {
 	// Log receives what a job's agent reports and keeps out of the job, such
 	// as a fix agent's provider error; nil logs nothing.
 	Log *slog.Logger
+	// Added holds the tiles people added to pull requests: a review of a
+	// pull request fills the library types the person added to it
+	// (generate.Tiles.Always). Nil adds none.
+	Added *addedtiles.Service
+	// TileLibrary is the person's saved tile types: a review fills the types
+	// pinned to its repository and offers others whose paths its diff
+	// matches (tilelibrary.Offer). Nil offers only the built-in types.
+	TileLibrary *tilelibrary.Store
+	// ReviewMCP gives a review's agent baum's MCP server, read-only and
+	// defaulting to the pull request reviewed (agentcontext.ReviewMCP.Attach):
+	// the server for agent.Request.MCP and the function that revokes its
+	// token once the run ends. A nil server, or a nil ReviewMCP, runs the
+	// review without one.
+	ReviewMCP func(repository string, number int) (*agent.MCPServer, func(), error)
 }
 
 type identityVersions struct {
@@ -139,7 +158,7 @@ func (l *Local) Prepare(ctx context.Context, item Item) (Prepared, string, error
 	}{cfg.Budgets, cfg.Caps, selected.Version, reader.CacheIdentity()})
 	digest := sha256.Sum256(fingerprint)
 	list := pricing.Active()
-	p := Prepared{account: accountOf(reader), MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
+	p := Prepared{account: accountOf(reader), MaxTokens: cfg.Budgets.MaxTokens, MaxCalls: cfg.Budgets.MaxCalls, ConfigDigest: hex.EncodeToString(digest[:]), PriceVersion: list.Version(), Item: item, Repository: c.Repository, HeadSHA: pr.Head, BaseSHA: pr.Base, Backend: selected.Backend.Name(), Model: selected.Model, RequiresIsolationConfirmation: pr.Untrusted, Draft: pr.Draft, Closed: pr.Closed, GroupName: group.name, Members: group.members, Awaiting: group.awaiting}
 	return p, list.Version(), nil
 }
 
@@ -225,13 +244,17 @@ type pull struct {
 	// Head and Base are the head commit and the base branch's commit.
 	Head, Base string
 	Draft      bool
+	// Closed: GitHub reports the pull request merged or closed. A person
+	// may still have it reviewed; automatic generation never does.
+	Closed bool
 	// Untrusted: the pull request comes from a fork or an author without
 	// known write access, so running an agent on it needs confirmation.
 	Untrusted bool
 }
 
-// readPull reads an open pull request's head, draft state and trust from
-// GitHub's REST API.
+// readPull reads a pull request's head, draft and closed state and trust
+// from GitHub's REST API. A merged or closed pull request keeps its head
+// commit on GitHub (refs/pull/<N>/head), so it can still be reviewed.
 func readPull(ctx context.Context, reader *github.RESTReader, repository github.Repository, number int) (pull, error) {
 	path := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
 	status, _, raw, e := reader.Read(ctx, fmt.Sprintf("%s/pulls/%d", path, number), "")
@@ -250,8 +273,8 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 		Base struct{ SHA string }
 		User struct{ Login string }
 	}
-	if e = json.Unmarshal(raw, &pr); e != nil || pr.Head.SHA == "" || pr.State != "open" || pr.User.Login == "" {
-		return pull{}, errors.New("open pull request evidence required")
+	if e = json.Unmarshal(raw, &pr); e != nil || pr.Head.SHA == "" || pr.User.Login == "" {
+		return pull{}, errors.New("pull request evidence required")
 	}
 	trusted := false
 	status, _, raw, e = reader.Read(ctx, path+"/collaborators/"+url.PathEscape(pr.User.Login)+"/permission", "")
@@ -261,13 +284,14 @@ func readPull(ctx context.Context, reader *github.RESTReader, repository github.
 			trusted = permission.Permission == "write" || permission.Permission == "maintain" || permission.Permission == "admin"
 		}
 	}
-	return pull{Head: pr.Head.SHA, Base: pr.Base.SHA, Draft: pr.Draft, Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
+	return pull{Head: pr.Head.SHA, Base: pr.Base.SHA, Draft: pr.Draft, Closed: pr.State != "open", Untrusted: !trusted || !strings.EqualFold(pr.Head.Repo.FullName, repository.Owner+"/"+repository.Name)}, nil
 }
 
 // confirmed rechecks a job's confirmed inputs. The price list is not one: a
 // job runs, and is priced, with whichever list is active when it runs. An
 // automatic job (RefuseDraft) whose pull request is a draft now is refused
-// with ReasonDraft; a confirmed run of a draft is not.
+// with ReasonDraft, and one whose pull request was merged or closed with
+// ReasonClosed; a confirmed run of either is not.
 //
 // A changed agent, model or limit is not a changed input: the run uses the
 // current settings, as one started now would. The GitHub account is one.
@@ -309,6 +333,9 @@ func (l *Local) confirmed(ctx context.Context, p Prepared) error {
 	if p.RefuseDraft && current.Draft {
 		return &NotAutomaticError{ReasonDraft}
 	}
+	if p.RefuseDraft && current.Closed {
+		return &NotAutomaticError{ReasonClosed}
+	}
 	return nil
 }
 
@@ -346,10 +373,11 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolve(ctx)
+	prefs, e := l.Registry.Preferences(ctx)
 	if e != nil {
 		return nil, e
 	}
+	cfg := prefs.Resolve(l.Config)
 	repository, e := github.ParseRepository(c.Repository)
 	if e != nil {
 		return nil, e
@@ -445,9 +473,28 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	}
 	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: limit, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
 		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), limit)}
+	// With tile reviews on, a new review of one pull request is arranged as
+	// tiles once it is written; a details retry keeps its version's layout.
+	if group == nil && p.Kind != KindDetails && prefs.Labs.TileReviewsOn() {
+		// The library types the person added to the pull request's review
+		// are filled, or their last data reused, in the new version.
+		options.Tiles = l.tilesFor(ctx, versions, key)
+		// It is written as a baum.review/2 document, in levels, in a git
+		// worktree of the clone at the head.
+		options.V2 = &generate.V2{Clone: c.Path, MCP: l.ReviewMCP, Step: backend.step}
+	}
+	// A details retry of a baum.review/2 version writes its failed
+	// sections again in levels (completeV2Details), whatever the setting is
+	// now.
+	if p.Kind == KindDetails && group == nil {
+		if latest, e := versions.Latest(ctx, key); e == nil && latest.Metadata.Schema == reviewv2.Name {
+			options.V2 = &generate.V2{Clone: c.Path, MCP: l.ReviewMCP, Step: backend.step}
+		}
+	}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
 	}
+	l.offerSaved(ctx, options.Tiles, versions, key, p.Repository)
 	if group == nil {
 		options.OnDraft = backend.draft
 		options.Stored = func(ctx context.Context, key store.Key, m store.Metadata) error {
@@ -470,6 +517,9 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 			return list.BackendOutcomeCost(name, r.Outcome.Model, r.Outcome)
 		})
 	}
+	if e == nil && group == nil {
+		l.recordTileUse(ctx, p.Repository, result)
+	}
 	backend.finish(result, e == nil && group == nil)
 	return list.BackendOutcomeCost(name, result.Outcome.Model, result.Outcome), e
 }
@@ -488,6 +538,9 @@ func (l *Local) completeDetails(ctx context.Context, versions *store.Store, mana
 	}
 	if latest.Metadata.Version != p.Version {
 		return generate.Result{}, ErrSuperseded
+	}
+	if o.V2 != nil {
+		return l.completeV2Details(ctx, versions, manager, key, p, o, latest)
 	}
 	// The version was reconciled with the one before it, and so is its
 	// completion.
@@ -578,17 +631,23 @@ type trackedBackend struct {
 	// "call" entry; marked counts them.
 	transcript func(agent.TranscriptEntry)
 	marked     int
+	// level is a tile review's level in words, the phase of its calls.
+	level string
 }
 
 // ConcurrentCalls forwards the backend's agent.ConcurrentCaller, so a staged
 // review runs its details and context at once where the backend allows it.
 func (b *trackedBackend) ConcurrentCalls() bool { return generate.ConcurrentCalls(b.Backend) }
 
+// KeepsSessions forwards the backend's agent.SessionKeeper, so a tile
+// review's overview resumes its map's session where the backend allows.
+func (b *trackedBackend) KeepsSessions() bool { return agent.KeepsSessions(b.Backend) }
+
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	b.mu.Lock()
 	b.runs++
 	run := b.runs
-	b.report("generating", nil)
+	b.report(cmp.Or(b.level, "generating"), nil)
 	id := ""
 	if b.transcript != nil && r.Transcript == nil {
 		b.marked++
@@ -662,9 +721,17 @@ func callName(r agent.Request) string {
 		name = "Details"
 	case agent.StageContext:
 		name = "Codebase context"
+	case agent.StageExhibits:
+		name = "Exhibits"
 	case "":
 	default:
 		name = r.Stage
+		if kind, ok := strings.CutPrefix(r.Stage, "fill-"); ok {
+			name = "Library tile · " + strings.ReplaceAll(kind, "-", "_")
+			if entry, found := library.Get(strings.ReplaceAll(kind, "-", "_")); found {
+				name = "Library tile · " + entry.Definition.Title
+			}
+		}
 	}
 	if r.Pass > 1 {
 		name += fmt.Sprintf(" · repair %d", r.Pass-1)
@@ -681,10 +748,74 @@ func (b *trackedBackend) repaired(repairs int) {
 }
 
 // draft is generate.Options.OnDraft: the draft goes with the counts so far.
-func (b *trackedBackend) draft(document []byte) {
+// step is the level a tile review is at, in words ("Mapping the pull
+// request"): the job's phase until the next level, which the app shows as
+// it is.
+func (b *trackedBackend) step(text string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.report(b.phase, document)
+	b.level = text
+	b.report(text, nil)
+}
+
+func (b *trackedBackend) draft(d generate.Draft) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.reportDraft(b.phase, d)
+}
+
+// CanComplete reports whether the backend can make a single structured call
+// (generate.CompleteChecker).
+func (b *trackedBackend) CanComplete() bool { return generate.CompleterOf(b.Backend) != nil }
+
+// Complete forwards a single structured call (agent.Completer), such as the
+// one that arranges a review's tiles, and reports it as the other calls are:
+// its calls, tokens and usage, and a "Composition" call in the transcript.
+// The job's phase is "arranging" while it runs.
+func (b *trackedBackend) Complete(ctx context.Context, r agent.CompleteRequest) (agent.Completion, error) {
+	completer := generate.CompleterOf(b.Backend)
+	if completer == nil {
+		return agent.Completion{}, generate.ErrCannotComplete
+	}
+	b.mu.Lock()
+	b.report("arranging", nil)
+	id, keep := "", b.transcript
+	if keep != nil {
+		b.marked++
+		id = fmt.Sprintf("call-%d", b.marked)
+	}
+	b.mu.Unlock()
+	if id != "" {
+		keep(agent.TranscriptEntry{Time: time.Now().UTC(), Kind: "call", ID: id, Title: "Composition", Status: "running"})
+	}
+	completion, e := completer.Complete(ctx, r)
+	if id != "" {
+		status := "completed"
+		if e != nil {
+			status = "failed"
+		}
+		keep(agent.TranscriptEntry{Time: time.Now().UTC(), Kind: "call", ID: id, Status: status})
+	}
+	usage := completion.Usage
+	if usage.IsZero() {
+		usage.Unreported = true
+	}
+	tokens := agent.ChargedTokens(int(usage.Input), int(usage.Output), int(usage.CacheCreate))
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls++
+	b.tokens += tokens
+	next := &agent.Accounting{}
+	if b.accounting != nil {
+		*next = *b.accounting
+		next.Attempts = append([]agent.UsageAttempt(nil), b.accounting.Attempts...)
+	}
+	next.Usage.Add(usage)
+	next.ChargedTokens += tokens
+	next.Attempts = append(next.Attempts, agent.UsageAttempt{Model: completion.Model, Usage: usage, Calls: 1, ChargedTokens: tokens, Failed: e != nil})
+	b.accounting = next
+	b.report("arranging", nil)
+	return completion, e
 }
 
 // finish reports the run's redacted outcome, and what a staged review was
@@ -708,6 +839,11 @@ func (b *trackedBackend) finish(result generate.Result, staged bool) {
 // report sends the counts so far, and a draft when one is given. The
 // caller holds mu.
 func (b *trackedBackend) report(phase string, draft []byte) {
+	b.reportDraft(phase, generate.Draft{Document: draft})
+}
+
+// reportDraft is report with the draft's layout. The caller holds mu.
+func (b *trackedBackend) reportDraft(phase string, d generate.Draft) {
 	if phase == "" {
 		phase = "generating"
 	}
@@ -724,7 +860,11 @@ func (b *trackedBackend) report(phase string, draft []byte) {
 			calls, tokens = calls+attempt.Calls, tokens+attempt.ChargedTokens
 		}
 	}
-	b.progress(Progress{Phase: phase, Calls: calls, Tokens: tokens, Repairs: b.repairs, Accounting: safe, CostUSD: cost, CostReason: reason, Draft: draft, HasTranscript: b.transcript != nil})
+	p := Progress{Phase: phase, Calls: calls, Tokens: tokens, Repairs: b.repairs, Accounting: safe, CostUSD: cost, CostReason: reason, Draft: d.Document, HasTranscript: b.transcript != nil}
+	if d.Document != nil {
+		p.DraftComposition = d.Composition
+	}
+	b.progress(p)
 }
 
 // liveUsageInterval is how often a run in progress reports its usage.
@@ -863,7 +1003,16 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 	if o.Group != nil {
 		o.Prompts = prompt.GroupPrompts{Overrides: overrides}
 	}
-	o.PromptSource = promptSourceOf(prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil), overrides, sources)
+	ids := prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil)
+	if o.Tiles != nil {
+		o.Tiles.Prompts = prompt.TilesPrompts{Overrides: overrides}
+		ids = append(ids, prompt.IDReviewView)
+	}
+	if o.V2 != nil {
+		o.V2.Prompts = prompt.V2Prompts{Overrides: overrides}
+		ids = prompt.V2ReviewIDs()
+	}
+	o.PromptSource = promptSourceOf(ids, overrides, sources)
 	return nil
 }
 
@@ -874,4 +1023,10 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 func groupReviewTimeout(review time.Duration, members int) time.Duration {
 	extra := min(max(members-1, 0), 4)
 	return review + time.Duration(extra)*review/2
+}
+
+// tilesFor is what a new review of the pull request adds to its page: the
+// library types the person added to it are always filled.
+func (l *Local) tilesFor(ctx context.Context, versions *store.Store, key store.Key) *generate.Tiles {
+	return &generate.Tiles{Always: l.alwaysTiles(ctx, versions, key)}
 }

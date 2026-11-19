@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static.usebaum.com/schemas/tile-type/1.json",
+  "title": "baum tile type file",
+  "description": "One saved tile type, as baum's Tile library exports it (<name>.baumtile.json, at most 3 MiB) and imports it. It maps one to one onto the built-in library's directory layout: type.json (the definition's name, title, use_when, sizes and kit, with glance and applies_with), fill.md, review_checks.md, schema.json, tile.html and samples/. The definition carries no digest: an import computes it, and never takes one or a built-in marking from the file. Samples are synthetic, in a made-up repository, so a file carries no review content. An import also checks everything this schema cannot: the definition's own checks (the data schema's dialect, a supported kit, UTF-8, no NUL), the kit's lint, the samples against the data schema with every citation resolving to the sample's own hunks and items, and the name rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "definition", "glance", "samples"],
+  "properties": {
+    "schema": { "const": "baum.tile-type/1" },
+    "definition": {
+      "description": "The tile type's definition (tiles.TypeDefinition) without its digest.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "title", "use_when", "fill", "data_schema", "kit", "sizes", "source"],
+      "properties": {
+        "name": {
+          "description": "The type's name, which is also its tiles' ID. An import renames a name already in the library with a numeric suffix.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "use_when": { "description": "When the type applies and when it does not, on one line.", "type": "string", "maxLength": 200 },
+        "fill": { "description": "The instructions given to the review agent when the type is filled.", "type": "string", "minLength": 1 },
+        "data_schema": { "description": "The schema of the tile's data, in the restricted dialect of custom tiles.", "type": "object" },
+        "kit": { "description": "The major version of the tile kit the component was written for.", "type": "integer", "minimum": 1 },
+        "sizes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "enum": ["full", "half", "third"] }
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "html"],
+          "properties": {
+            "format": { "const": "html" },
+            "html": { "description": "The component, at most 256 KiB.", "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "glance": { "description": "One line on what the glance shows, for the composer.", "type": "string", "minLength": 1, "maxLength": 200 },
+    "review_checks": { "description": "What the review should check when the type applies.", "type": "string", "maxLength": 1500 },
+    "applies_with": {
+      "description": "Top-level arrays of the data that show what the type is for.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "paths": {
+      "description": "Globs of the files the type is for; none means every pull request.",
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "samples": {
+      "description": "Synthetic samples, each with the hunks and items its data cites.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "data"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "data": { "type": "object" },
+          "hunks": { "type": "object" },
+          "items": { "type": "object" }
+        }
+      }
+    },
+    "exported": {
+      "description": "When and by which baum the file was written; informative only.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "baum": { "type": "string" }
+      }
+    }
+  }
+}

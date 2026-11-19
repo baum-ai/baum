@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
@@ -52,12 +53,16 @@ import (
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilechecks"
+	"github.com/baum-ai/baum/internal/tiledrafts"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
-	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/reviewv2"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // browserDiscovery serves fixed pull requests. Once pushed reports true (the
@@ -272,23 +277,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if os.Getenv("BAUM_APP_BROWSER_FIXTURE") != "1" {
 		t.Skip("Playwright fixture process")
 	}
-	// With BAUM_APP_CUSTOM_TILES=1, the tile routes serve acme/demo#7's
-	// reviews with the synthetic custom tiles (tileviewtest.CustomTileIDs: one
-	// well-behaved, one that tries to escape its frame, one unavailable),
-	// which no generation writes yet. It is decided when the process starts,
-	// so no kept tile answer is served without them, and only the browser
-	// suites that start the fixture with it see them.
-	if os.Getenv("BAUM_APP_CUSTOM_TILES") == "1" {
-		t.Cleanup(tileview.SetFixture(func(doc *tiles.Document) {
-			var header struct {
-				Repository  string `json:"repository"`
-				PullRequest int    `json:"pull_request"`
-			}
-			if json.Unmarshal(doc.Review, &header) == nil && header.Repository == "acme/demo" && header.PullRequest == 7 {
-				tileviewtest.AddCustomTiles(doc)
-			}
-		}))
-	}
+	// With BAUM_APP_CUSTOM_TILES=1, acme/demo#7's versions and #13 are stored
+	// as baum.review/2 documents with their tiles, as a review written with
+	// tiles is: #7's with the synthetic custom tiles (one well-behaved, escape
+	// probes that try to leave their frames, one unavailable) on the section
+	// of its first hunk, #13's with its composition's library and authored
+	// tiles. Only the browser suites that start the fixture with it see them;
+	// the main suite keeps baum.review/1 versions.
+	customTiles := os.Getenv("BAUM_APP_CUSTOM_TILES") == "1"
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
 	home := appdbtest.TempDir(t)
@@ -333,6 +329,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "renamed-folder"), []byte(renamed.Dir), 0600); err != nil {
 		t.Fatal(err)
 	}
+	tileLibrary := seedTileLibrary(t, filepath.Join(home, "app.sqlite"), registry)
 	timeline := browserTimeline(t, home, registry)
 	versions, err := store.Open(clone.CommonDir, "", true)
 	if err != nil {
@@ -342,7 +339,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var previous store.Version
+	var previous, previousStored store.Version
 	var screenshot bytes.Buffer
 	if err := png.Encode(&screenshot, image.NewRGBA(image.Rect(0, 0, 320, 240))); err != nil {
 		t.Fatal(err)
@@ -407,12 +404,58 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		document, _ := json.Marshal(doc)
 		next := store.Version{Metadata: store.Metadata{Version: n, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: screenshot.Bytes()}}}
-		if err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, previous, next); err != nil {
+		stored := next
+		if customTiles {
+			stored.Document = browserV2(t, document, nil, browserCustomTiles(t, document))
+		}
+		if err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, previousStored, stored); err != nil {
 			t.Fatal(err)
 		}
-		previous = next
+		previous, previousStored = next, stored
 	}
 	seedAskConversation(t, versions, previous.Metadata.Version)
+	// acme/demo#12, no longer listed, keeps one saved review whose tiles were
+	// arranged: it has a composition, which opens it on the tiles page while
+	// tile reviews are on.
+	{
+		var doc map[string]any
+		if err := json.Unmarshal(previous.Document, &doc); err != nil {
+			t.Fatal(err)
+		}
+		review := doc["review"].(map[string]any)
+		review["pull_request"], review["version"], review["previous_version"] = 12, 1, nil
+		doc["summary"].(map[string]any)["text"] = "An arranged fixture review"
+		document, _ := json.Marshal(doc)
+		composition := tileviewtest.ViewComposition(t)
+		arranged := store.Version{Metadata: store.Metadata{Version: 1, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"},
+			Document: document, Attachments: previous.Attachments, Composition: composition}
+		if err := versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 12}, store.Version{}, arranged); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// acme/demo#13, no longer listed, keeps one saved review generated with
+	// tile reviews on: its composition holds two library tiles (a schema
+	// change that drops a column, so it leads, and an interface change) and
+	// two authored tiles, a table and a code excerpt.
+	{
+		var doc map[string]any
+		if err := json.Unmarshal(previous.Document, &doc); err != nil {
+			t.Fatal(err)
+		}
+		review := doc["review"].(map[string]any)
+		review["pull_request"], review["version"], review["previous_version"] = 13, 1, nil
+		doc["summary"].(map[string]any)["text"] = "A fixture review with library and authored tiles"
+		document, _ := json.Marshal(doc)
+		generated := store.Version{Metadata: store.Metadata{Version: 1, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"},
+			Document: document, Attachments: previous.Attachments, Composition: tileviewtest.LibraryComposition(t, document)}
+		if customTiles {
+			generated.Document = browserV2(t, document, generated.Composition, nil)
+			generated.Composition = nil
+		}
+		if err := versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 13}, store.Version{}, generated); err != nil {
+			t.Fatal(err)
+		}
+	}
 	write := true
 	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AssignedToMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 11, HeadSHA: repo.Head, Title: "A branch behind its base", State: "OPEN", URL: "https://github.com/acme/demo/pull/11", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
 	prs[0].Review, prs[0].Checks, prs[0].Merge, prs[0].Unresolved = "approved", "passing", "ready", new(0)
@@ -692,7 +735,26 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		// The session panel's routes, once its service below is built on the
 		// MCP server, which reads through the API.
 		consoleRoutes := console.Unavailable()
-		localAPI := uiserver.LocalAPI{Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		// The render check, with a route only this fixture has to submit a
+		// candidate (tile-check.spec.ts) beside the session panel's tools
+		// that submit them.
+		tileChecks, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Database: filepath.Join(home, "app.sqlite"),
+			Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+			Subscribed: server.Subscribed})
+		if err != nil {
+			return daemon.App{}, err
+		}
+		// The tiles people add to a pull request's review page, which the
+		// session panel's add tools add and the page removes.
+		added := &addedtiles.Service{Path: filepath.Join(home, "app.sqlite"), Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
+		}}
+		runner.SetAdded(added.Added)
+		// The pending cards of tiles the session panel's agent makes.
+		drafts := &tiledrafts.Store{Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
+		}}
+		local := uiserver.LocalAPI{Drafts: drafts, TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Added: added, Fills: fixtureFiller{versions: versions, added: added}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -707,13 +769,14 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
 			},
 			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) }}
-		api := localAPI.Handler()
+		api := local.Handler()
 		// The session panel runs the real conversations service with a
 		// scripted agent (panelAgent): no agent CLI runs, and every
 		// conversation gets an empty directory, as without a clone.
 		// A pull request page takes the comments the agent proposes for the
 		// pending review, saved as the page saves one.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{API: localAPI, UIState: uiState}).Pages()})
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{API: local, UIState: uiState, TileTypes: tileLibrary}).Pages(), Added: uiserver.AddedTilesAPI{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary},
+			ChatTiles: &uiserver.ChatTiles{API: local, Checks: tileChecks, Drafts: drafts}})
 		panel := &panelAgent{events: events, home: home, mcp: mcp}
 		conversations, err := console.New(console.Options{Database: filepath.Join(home, "app.sqlite"), Root: filepath.Join(home, "console"),
 			Registry: mcp.Registry, Proposals: mcp.Proposals, MCPURL: func() string { return server.Origin() + "/api/mcp" },
@@ -733,9 +796,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		live.Panel = conversations.Owns
 		// The tour's sample project; tour.spec.ts walks it.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
-		return daemon.App{API: api, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() {
+		// The MCP route serves the panel's MCP server, which the scripted
+		// agent's layout requests reach over HTTP as an agent CLI's do.
+		return daemon.App{API: fixtureSubmit(api, tileChecks), MCP: mcp, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() {
 			sample.Close()
 			api.Close()
+			_ = tileChecks.Close()
 			_ = conversations.CloseStore()
 			_ = events.Close()
 			_ = groups.Close()
@@ -772,6 +838,30 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// fixtureSubmit serves POST /api/tile-checks/submit beside api: it submits
+// the candidate it is sent (tilechecks.Candidate) and answers the check's
+// result. Only the browser fixture has it.
+func fixtureSubmit(api http.Handler, checks *tilechecks.Checker) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/tile-checks/submit" {
+			api.ServeHTTP(w, r)
+			return
+		}
+		var candidate tilechecks.Candidate
+		if r.Method != http.MethodPost || json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&candidate) != nil {
+			http.Error(w, "a candidate is required", http.StatusBadRequest)
+			return
+		}
+		result, err := checks.Submit(r.Context(), candidate)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
+	})
 }
 
 // browserPlanUsage answers api/plan-usage with fixed readings: Claude's two
@@ -836,4 +926,108 @@ func seedAskConversation(t *testing.T, versions *store.Store, version int) {
 	if _, err := versions.SettleTurn(ctx, key, c.ID, 1, store.Settlement{State: store.TurnCompleted, Answer: answer, CostUSD: &cost, Finished: asked.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// seedTileLibrary saves two tile types into the fixture's library, as a
+// person's saved ones: "Migration steps", made in chat from baum's
+// schema_change and pinned to acme/demo, and "Interface changes", imported,
+// from api_change, each with its synthetic samples. The Tile library
+// page's browser tests list, preview, rename, pin, restore and delete them.
+func seedTileLibrary(t *testing.T, path string, registry *repos.Registry) *tilelibrary.Store {
+	t.Helper()
+	lib := &tilelibrary.Store{Path: path}
+	for _, seed := range []struct{ from, name, title, origin string }{
+		{"schema_change", "migration_steps", "Migration steps", tilelibrary.OriginChat},
+		{"api_change", "interface_changes", "Interface changes", tilelibrary.OriginImport},
+	} {
+		entry, ok := library.Get(seed.from)
+		if !ok {
+			t.Fatalf("no built-in type %s", seed.from)
+		}
+		def := entry.Definition
+		def.Name, def.Title = seed.name, seed.title
+		encoded, err := library.Seal(&def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := tilelibrary.Change{Definition: encoded, Glance: entry.Glance, ReviewChecks: entry.ReviewChecks, AppliesWith: entry.AppliesWith,
+			Paths: []string{"**/migrations/**", "**/*.sql"}, Origin: seed.origin}
+		if seed.from == "api_change" {
+			c.Paths = []string{"**/api/**"}
+		}
+		for _, sample := range entry.Samples {
+			if tilelibrary.IsSynthetic(sample) && len(c.Samples) < tilelibrary.MaxSamples {
+				c.Samples = append(c.Samples, sample)
+			}
+		}
+		if _, err := lib.Create(context.Background(), c, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The imported one has not had its render check yet.
+	if imported, err := lib.Get(context.Background(), "interface_changes"); err != nil {
+		t.Fatal(err)
+	} else if err := lib.MarkChecked(context.Background(), imported.Entry.Definition.Digest, tilelibrary.VerdictUnchecked); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.SetTileTypePins(context.Background(), "migration_steps", []string{"acme/demo"}); err != nil {
+		t.Fatal(err)
+	}
+	return lib
+}
+
+// browserV2 converts a baum.review/1 fixture document to the baum.review/2
+// document a review written with tiles stores: with its composition's tiles
+// (reviewv2.FromV1) and extra, and every section's body.
+func browserV2(t *testing.T, document, composition []byte, extra []reviewv2.Tile) []byte {
+	t.Helper()
+	d, err := reviewv2.FromV1(document, composition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Tiles = append(d.Tiles, extra...)
+	reviewv2.EnsureBodies(&d)
+	encoded, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+// browserCustomTiles are the synthetic custom tiles and the escape probes
+// (tileviewtest.CustomTiles, EscapeProbeTiles), citing the document's first
+// hunk, on the section that holds it.
+func browserCustomTiles(t *testing.T, document []byte) []reviewv2.Tile {
+	t.Helper()
+	var doc struct {
+		Index struct {
+			Hunks []struct {
+				ID string `json:"id"`
+			} `json:"hunks"`
+		} `json:"index"`
+		Sections []struct {
+			ID    string   `json:"id"`
+			Hunks []string `json:"hunks"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(document, &doc); err != nil || len(doc.Index.Hunks) == 0 {
+		t.Fatalf("the fixture review has no hunk to cite: %v", err)
+	}
+	hunk := doc.Index.Hunks[0].ID
+	owner := reviewv2.OwnerContext
+	for _, section := range doc.Sections {
+		if slices.Contains(section.Hunks, hunk) {
+			owner = section.ID
+			break
+		}
+	}
+	var out []reviewv2.Tile
+	for _, tile := range append(tileviewtest.CustomTiles(hunk), tileviewtest.EscapeProbeTiles(hunk)...) {
+		var def struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(tile.Definition, &def)
+		out = append(out, reviewv2.Tile{ID: tile.ID, Type: def.Name, Owner: owner, Title: tile.Title, Data: tile.Data, State: tile.State, Definition: tile.Definition, Cites: []reviewv2.Anchor{}})
+	}
+	return out
 }

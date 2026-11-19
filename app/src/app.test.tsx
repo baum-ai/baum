@@ -960,7 +960,8 @@ function stubAutomatic(
       if (
         path.endsWith("api/settings/agent-env") ||
         path.endsWith("api/settings/job-concurrency") ||
-        path.endsWith("api/settings/time-limits")
+        path.endsWith("api/settings/time-limits") ||
+        path.endsWith("api/settings/labs")
       )
         return Promise.resolve(Response.json(puts.at(-1)!.body));
       if (path.endsWith("api/settings/decisions")) {
@@ -978,6 +979,8 @@ function stubAutomatic(
       );
     if (path === "/s/test-ns/api/automatic") return Promise.resolve(Response.json(overview));
     if (path === "/s/test-ns/api/settings") return Promise.resolve(Response.json(settings));
+    if (path === "/s/test-ns/api/settings/labs")
+      return Promise.resolve(Response.json({ tile_reviews: false }));
     if (path === "/s/test-ns/api/settings/decisions")
       return Promise.resolve(
         Response.json({ decisions: (settings as { decisions?: unknown }).decisions }),
@@ -1352,7 +1355,6 @@ it("chooses a theme for each slot, any base in either, and renames and deletes c
     theme: "light",
     key_hints: true,
     sidebar: "pinned",
-    review_page: "full",
     light_theme: "default-light",
     dark_theme: "default-dark",
     themes: appearanceThemes,
@@ -1444,44 +1446,6 @@ it("chooses a theme for each slot, any base in either, and renames and deletes c
     body: {},
   });
   expect([...light.options].map((o) => o.text)).toEqual(["Default light", "Default dark"]);
-});
-it("chooses the review page in General, the full review by default", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings");
-  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
-  stubAutomatic();
-  const stubbed = vi.mocked(fetch).getMockImplementation()!;
-  const puts: unknown[] = [];
-  vi.mocked(fetch).mockImplementation((...args) => {
-    const init = args[1] as RequestInit | undefined;
-    if (String(args[0]).includes("api/settings/appearance") && init?.method === "PUT") {
-      puts.push(JSON.parse(String(init.body)));
-      return Promise.resolve(
-        Response.json({
-          theme: "system",
-          key_hints: true,
-          sidebar: "pinned",
-          review_page: "tiles",
-          light_theme: "default-light",
-          dark_theme: "default-dark",
-          themes: appearanceThemes,
-        }),
-      );
-    }
-    return stubbed(...args);
-  });
-  await act(async () => root.render(<App />));
-  const select = node.querySelector<HTMLSelectElement>("#review-page")!;
-  expect(select.value).toBe("full");
-  expect([...select.options].map((option) => option.text)).toEqual([
-    "Full review",
-    "Tiles (preview)",
-  ]);
-  await act(async () => {
-    select.value = "tiles";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-  expect(puts).toContainEqual({ review_page: "tiles" });
-  expect(select.value).toBe("tiles");
 });
 it("summarises the prompts in the section list and marks outdated ones", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=prompts");
@@ -1627,6 +1591,29 @@ it("edits the environment agents run with and shows server errors inline", async
   await act(async () => save().click());
   expect(section().textContent).toContain("GIT_DIR cannot be set");
 });
+it("turns tile reviews on, off by default, and puts the switch back when refused", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic();
+  await act(async () => root.render(<App />));
+  const toggle = () => node.querySelector<HTMLInputElement>("#review-tiles")!;
+  expect(toggle().checked).toBe(false);
+  await act(async () => toggle().click());
+  expect(puts).toContainEqual({
+    path: "/s/test-ns/api/settings/labs",
+    body: { tile_reviews: true },
+  });
+  expect(toggle().checked).toBe(true);
+  const accepted = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/labs")
+      ? Promise.resolve(Response.json({ message: "settings unavailable" }, { status: 500 }))
+      : accepted(...args),
+  );
+  await act(async () => toggle().click());
+  expect(toggle().checked).toBe(true);
+  expect(node.textContent).toContain("settings unavailable");
+});
 it("sets how many jobs run at once and puts it back when refused", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
@@ -1732,6 +1719,20 @@ it("shows a repository's decision capture turned off", async () => {
   await act(async () => root.render(<App />));
   const region = await openRepository();
   expect(region.querySelector<HTMLInputElement>('input[role="switch"]')!.checked).toBe(false);
+});
+it("keeps a repository's pinned tile types when another control saves", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic({
+    ...demoClone,
+    settings: { ...demoClone.settings, tiles: { types: ["schema_change"] } },
+  });
+  await act(async () => root.render(<App />));
+  const region = await openRepository();
+  expect(region.querySelector("#repository-tile-text")).toBeNull();
+  await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
+  // The daemon keeps the stored tile settings a save leaves out.
+  expect(puts.at(-1)!.body).toEqual({ automatic: null, decisions: false });
 });
 it("shows a saved extraction model the agent ignores, and lets it be replaced", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
@@ -2021,7 +2022,7 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   );
   await act(async () => root.render(<App />));
   const region = await openRepository();
-  expect(region.querySelector("select")).toBeNull();
+  expect(region.querySelector("#repository-automatic")).toBeNull();
   await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
@@ -3023,6 +3024,26 @@ it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
 });
+it("opens the shortcuts sheet from Go to", async () => {
+  entries = [entry(1)];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  await act(async () => root.render(<App />));
+  await press("k", { ctrlKey: true });
+  const option = Array.from(
+    node.querySelectorAll<HTMLElement>('[data-go-to] [role="option"]'),
+  ).find((one) => one.textContent?.startsWith("Keyboard shortcuts"))!;
+  expect(option.textContent).toBe("Keyboard shortcuts?Action");
+  await act(async () => option.click());
+  expect(node.querySelector("[data-go-to]")).toBeNull();
+  expect(node.querySelector("[data-shortcuts-sheet]")?.textContent).toContain(
+    "Refresh from GitHub",
+  );
+});
 it("folds the sidebar opened under the mouse when the pointer or focus leaves the window", async () => {
   entries = [entry(1)];
   // A narrow window always folds the sidebar.
@@ -3089,6 +3110,25 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
   expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
   await choose("Report a problem");
   expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
+});
+it("keeps the page's keys off the page behind the shortcuts sheet", async () => {
+  entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  history.replaceState(null, "", "/s/test-ns/?repository=acme%2Fdemo&pr=42");
+  await act(async () => root.render(<App />));
+  await press("?");
+  await act(async () => (document.activeElement as HTMLElement).click());
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
+  // With the focus outside the sheet, as after a click on its padding.
+  (document.activeElement as HTMLElement | null)?.blur();
+  await press("u");
+  expect(location.search).toContain("pr=42");
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
 });
 it("goes back to the inbox from a pull request page with u or Escape, keeping the filter", async () => {
   entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];

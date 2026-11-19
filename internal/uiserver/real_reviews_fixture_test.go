@@ -57,10 +57,13 @@ import (
 // The dataset is read only: stores and the app database are copied, and each
 // repository is cloned from its mirror with shared objects.
 const (
-	realReviewsEnv    = "BAUM_APP_REAL_REVIEWS"
-	realDefaultCount  = 14
-	realFixturePort   = 4169
-	realPicksFileName = "picks.json"
+	realReviewsEnv = "BAUM_APP_REAL_REVIEWS"
+	// realCompositionsEnv names a directory of compositions to serve in
+	// place of the saved ones (overrideCompositions).
+	realCompositionsEnv = "BAUM_APP_REAL_COMPOSITIONS"
+	realDefaultCount    = 14
+	realFixturePort     = 4169
+	realPicksFileName   = "picks.json"
 )
 
 // realPick is one review the fixture serves, written to picks.json for the
@@ -73,8 +76,7 @@ type realPick struct {
 	Versions   []int    `json:"versions"`
 	Clone      string   `json:"clone"`
 	Tags       []string `json:"tags,omitempty"`
-
-	machine string
+	machine    string
 }
 
 func (p realPick) id() string { return fmt.Sprintf("%s#%d", p.Repository, p.Number) }
@@ -151,16 +153,20 @@ func (d *realDataset) pullsWhere(keep func(realIndexPull) bool) []realIndexPull 
 }
 
 func (d *realDataset) store(machine, repository string) *store.Store {
+	return d.storeAt(machine + "/" + realSlug(repository) + ".versions.sqlite")
+}
+
+// storeAt opens a copy of the saved review store at reviews/<name>.
+func (d *realDataset) storeAt(name string) *store.Store {
 	d.t.Helper()
-	key := machine + "/" + repository
-	if s := d.stores[key]; s != nil {
+	if s := d.stores[name]; s != nil {
 		return s
 	}
-	dir := filepath.Join(d.work, "stores", machine, realSlug(repository))
+	dir := filepath.Join(d.work, "stores", strings.TrimSuffix(filepath.FromSlash(name), ".versions.sqlite"))
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		d.t.Fatal(err)
 	}
-	source := filepath.Join(d.root, "reviews", machine, realSlug(repository)+".versions.sqlite")
+	source := filepath.Join(d.root, "reviews", filepath.FromSlash(name))
 	for _, suffix := range []string{"", "-wal"} {
 		raw, err := os.ReadFile(source + suffix)
 		if errors.Is(err, os.ErrNotExist) || (err == nil && len(raw) == 0) {
@@ -173,12 +179,71 @@ func (d *realDataset) store(machine, repository string) *store.Store {
 			d.t.Fatal(err)
 		}
 	}
+	d.overrideCompositions(filepath.Join(dir, "versions.sqlite"))
 	s, err := store.Open("", dir, false)
 	if err != nil {
 		d.t.Fatal(err)
 	}
-	d.stores[key] = s
+	d.stores[name] = s
 	return s
+}
+
+// overrideCompositions writes the compositions of BAUM_APP_REAL_COMPOSITIONS
+// into a copied store, so a presentation made elsewhere (a replay run's
+// composition.json) is served with its saved review. Each file is named
+// <number>@<version>.json; <number>@<version>.document.json replaces that
+// version's review too (a replay run's review). A store without that version
+// is left alone.
+func (d *realDataset) overrideCompositions(path string) {
+	d.t.Helper()
+	dir := os.Getenv(realCompositionsEnv)
+	if dir == "" {
+		return
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*@*.json"))
+	if err != nil || len(files) == 0 {
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		return // the dataset has no such store
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		d.t.Fatal(err)
+	}
+	defer db.Close()
+	// A store saved before compositions has no column for them.
+	var has int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('versions') WHERE name='composition'`).Scan(&has); err != nil {
+		d.t.Fatal(err)
+	}
+	if has == 0 {
+		if _, err := db.Exec(`ALTER TABLE versions ADD COLUMN composition TEXT`); err != nil {
+			d.t.Fatal(err)
+		}
+	}
+	for _, file := range files {
+		var number, version int
+		column := "composition"
+		name := filepath.Base(file)
+		if base, ok := strings.CutSuffix(name, ".document.json"); ok {
+			column, name = "document", base+".json"
+		}
+		if _, err := fmt.Sscanf(name, "%d@%d.json", &number, &version); err != nil {
+			continue
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			d.t.Fatal(err)
+		}
+		value := any(string(raw))
+		if column == "document" {
+			value = raw
+		}
+		if _, err := db.Exec(`UPDATE versions SET `+column+`=? WHERE pr=? AND version=?`, value, number, version); err != nil {
+			d.t.Fatal(err)
+		}
+	}
 }
 
 // bestMachine is the machine that kept the most versions of a pull request.
@@ -445,7 +510,13 @@ func realPullRequests(t *testing.T, root string, picks []realPick, heads map[str
 			_ = db.Close()
 		}
 	}()
+	seen := map[string]bool{}
 	for _, p := range picks {
+		// A replay run shows one pull request in several clones.
+		if seen[p.id()] {
+			continue
+		}
+		seen[p.id()] = true
 		db := databases[p.machine]
 		if db == nil {
 			// Immutable, because the dataset is mounted read-only and may
@@ -515,6 +586,11 @@ func TestLocalAppRealReviews(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	registry, err := repos.Open(filepath.Join(home, "app.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
 	list := os.Getenv("BAUM_APP_REAL_PICK")
 	var picks []realPick
 	if strings.TrimSpace(list) != "" {
@@ -552,11 +628,6 @@ func TestLocalAppRealReviews(t *testing.T) {
 		t.Logf("pick %s %s", p.id(), strings.Join(p.Tags, " "))
 	}
 
-	registry, err := repos.Open(filepath.Join(home, "app.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = registry.Close() }()
 	clones := map[string]repos.Clone{}
 	stores := map[string]*store.Store{}
 	heads := map[string]string{}
@@ -632,7 +703,22 @@ func TestLocalAppRealReviews(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	disc := videoDiscovery(realPullRequests(t, root, picks, heads, titles))
+	serveRealReviews(t, home, state, registry, videoDiscovery(realPullRequests(t, root, picks, heads, titles)))
+}
+
+// realWiring adds to the real-reviews daemon's API before it is served:
+// given the server and the API, it returns what to add to the app once the
+// API's handler is built (the chat tile eval's MCP server), or nil.
+type realWiring func(server *uiserver.Server, local *uiserver.LocalAPI) func(api http.Handler, app *daemon.App)
+
+// serveRealReviews runs the real daemon on the registry's clones until it is
+// stopped (or ctx ends), with discovery answering from disc and no model or
+// GitHub; wire, when given, adds to its API.
+func serveRealReviews(t *testing.T, home, state string, registry *repos.Registry, disc videoDiscovery, wire ...realWiring) {
+	serveRealReviewsUntil(context.Background(), t, home, state, registry, disc, realFixturePort, wire...)
+}
+
+func serveRealReviewsUntil(ctx context.Context, t *testing.T, home, state string, registry *repos.Registry, disc videoDiscovery, port int, wire ...realWiring) {
 	cfg := config.Default()
 	cfg.Backend = config.BackendClaude
 	cfg.Model = "claude-sonnet-4-5"
@@ -645,7 +731,7 @@ func TestLocalAppRealReviews(t *testing.T) {
 	paths := daemon.Paths{State: state, Socket: filepath.Join(state, "daemon.sock")}
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	err = daemon.Run(runCtx, daemon.Options{Paths: paths, Version: "fixture", Port: realFixturePort, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
+	err := daemon.Run(runCtx, daemon.Options{Paths: paths, Version: "fixture", Port: port, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		groups, err := reviewgroups.Open(filepath.Join(home, "app.sqlite"))
 		if err != nil {
 			return daemon.App{}, err
@@ -668,13 +754,24 @@ func TestLocalAppRealReviews(t *testing.T) {
 		if _, err := uiState.Replace("tour", "", 0, "real-reviews-fixture:1", json.RawMessage(`{"seen":true}`)); err != nil {
 			return daemon.App{}, err
 		}
-		api := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil),
+		local := uiserver.LocalAPI{Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil),
 			Merge:  uiserver.MergeHandler(registry, client, func(ctx context.Context, repo github.Repository, _ int, _ string) { poll(ctx, repo) }, changed),
 			Update: uiserver.UpdateHandler(registry, prupdate.Service{Client: client}, poll, changed),
 			Index:  index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), UIState: uiState.Handler(),
 			Inboxes: (&inboxes.API{Store: inboxes.Open(filepath.Join(home, "app.sqlite"))}).Handler(),
-			Groups:  (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler()}.Handler()
-		return daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume}, nil
+			Groups:  (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: changed}).Handler()}
+		var after []func(http.Handler, *daemon.App)
+		for _, w := range wire {
+			if f := w(server, &local); f != nil {
+				after = append(after, f)
+			}
+		}
+		api := local.Handler()
+		app := daemon.App{API: api, Assets: localapp.Handler(), Shutdown: runner.Shutdown, Close: func() { api.Close(); _ = groups.Close() }, Drain: runner.Drain, Resume: runner.Resume}
+		for _, f := range after {
+			f(api, &app)
+		}
+		return app, nil
 	}})
 	if err != nil {
 		t.Fatal(err)

@@ -1,14 +1,18 @@
 // Package tiles holds the baum.tiles/1 tile document: its types, a validator,
 // the catalogue of built-in tile types, the contract of custom tile types
 // (TypeDefinition, the data schema dialect CheckDataSchema checks, the digest
-// and citations) and a lossless conversion from and to a stored
+// and citations), the checks of a review's extra tiles (library and
+// authored tiles) and a lossless conversion from and to a stored
 // baum.review/1 document.
 //
 // A tile document is a substrate, the parts of a review that are scored,
 // refreshed and cited (the review header, host facts, the change outline,
 // risks and evidence, in the same shapes as baum.review/1), plus tiles that
-// present it and a layout that orders them. Shapes the review schema defines
-// stay raw JSON here, so a document passes through without losing a field.
+// present it. It is never served: it is what the daemon checks custom,
+// library and authored tiles against (their citations resolve in it, and an
+// exhibit must not repeat what its tiles already say). Shapes the review
+// schema defines stay raw JSON here, so a document passes through without
+// losing a field.
 package tiles
 
 import (
@@ -38,7 +42,6 @@ type Document struct {
 	Risks          []Risk          `json:"risks"`
 	Evidence       []Evidence      `json:"evidence"`
 	Tiles          []Tile          `json:"tiles"`
-	Layout         Layout          `json:"layout"`
 }
 
 // Origin says where a document came from: converted from a stored
@@ -195,24 +198,8 @@ const (
 	StateUnavailable = "unavailable"
 )
 
-// Layout orders the tiles.
-type Layout struct {
-	// Entries places every tile once, in reading order.
-	Entries []Entry `json:"entries"`
-	Groups  []Group `json:"groups"`
-	// Landing is the number of leading entries on the landing page (Landing).
-	Landing int `json:"landing"`
-}
-
-// Entry places a tile.
-type Entry struct {
-	Tile  string `json:"tile"`
-	Size  Size   `json:"size"`
-	Group string `json:"group,omitempty"`
-	Pin   bool   `json:"pin,omitempty"`
-}
-
-// Size is a tile's width on the landing grid.
+// Size is a width a custom tile type's definition declares it can be drawn
+// at (TypeDefinition.Sizes).
 type Size string
 
 // The tile sizes: the whole grid, half of it and a third of it.
@@ -220,23 +207,6 @@ const (
 	SizeFull  Size = "full"
 	SizeHalf  Size = "half"
 	SizeThird Size = "third"
-)
-
-// Group is a run of contiguous entries under a heading. A group with
-// CollapseAfter shows that many members until it is expanded.
-type Group struct {
-	ID            string `json:"id"`
-	Title         string `json:"title"`
-	CollapseAfter *int   `json:"collapse_after,omitempty"`
-}
-
-// The groups the default layout uses.
-const (
-	GroupChanges  = "changes"
-	GroupObsolete = "obsolete"
-	// GroupHidden holds, last and collapsed, the tiles a reader hid from a
-	// generated review (CompositionLayout.Hidden).
-	GroupHidden = "hidden"
 )
 
 // OverviewData is the data of an overview tile.

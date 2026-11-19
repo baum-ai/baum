@@ -126,6 +126,8 @@ import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
+import { TileLibrarySection } from "./settings-tiles";
+import { tileLibrary } from "./tile-library";
 
 /** The settings' controls, in the shared field look; widths stay the page's
  *  (`settings-select`). */
@@ -185,6 +187,7 @@ export const settingsSections = [
   "connections",
   "computer",
   "prompts",
+  "tiles",
 ] as const;
 export type SettingsSection = (typeof settingsSections)[number];
 const sectionTitles: Record<SettingsSection, string> = {
@@ -194,6 +197,7 @@ const sectionTitles: Record<SettingsSection, string> = {
   connections: "Connections",
   computer: "This computer",
   prompts: "Prompts",
+  tiles: "Tile library",
 };
 
 /** The controls the keyboard steps through in the shown section, in reading
@@ -209,7 +213,7 @@ const SECTION_CONTROLS = [
 
 /** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
  *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
- *  previous section from anywhere, and 1 to 6 jump to one. j/↓ and k/↑ step
+ *  previous section from anywhere, and 1 to 7 jump to one. j/↓ and k/↑ step
  *  through the shown section's controls; from the section list j goes to its
  *  first control and k to its last, as Enter, l or → go to the first. Enter or
  *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
@@ -431,6 +435,7 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const waiting = useRef<Record<string, unknown> | null>(null);
   const busy = useRef(false);
+  const pending = () => busy.current || waiting.current !== null;
   useEffect(() => () => clearTimeout(timer.current), []);
   const drain = async () => {
     busy.current = true;
@@ -476,7 +481,32 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
       {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
     </p>
   );
-  return { save, error, status, failures };
+  return { save, pending, error, status, failures };
+}
+
+/** How many tile types the library holds, for the section list's line:
+ *  read when Settings opens and again whenever the Tile library's open type
+ *  changes (a change there goes back to the list or another type); null
+ *  until read or when it cannot be. */
+function useTileTypeCount(open: string | null | undefined) {
+  const [count, setCount] = useState<number | null>(null);
+  const [reads, setReads] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `open` and `reads` ask for a new read
+  useEffect(() => {
+    let live = true;
+    tileLibrary.list().then(
+      (list) => {
+        if (live) setCount(list.length);
+      },
+      () => {
+        if (live) setCount(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, reads]);
+  return { count, reload: () => setReads((n) => n + 1) };
 }
 
 /** The prompts baum uses, read once and kept in step with each save so the
@@ -1052,6 +1082,7 @@ function ReviewsSection({
           defaults={defaults}
           onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
         />
+        <TileReviewsRow />
       </div>
       <p className="settings-footnote">
         Changes save as you make them and apply to the next review in every repository.
@@ -1736,12 +1767,18 @@ export function SettingsPage({
   codexTrust,
   commandLine,
   updates,
+  tileType = null,
+  openTileType = () => {},
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
   github: GitHubConnection | null;
   section: SettingsSection;
   setSection: (section: SettingsSection) => void;
+  /** The tile type open in Settings › Tile library (`type` in the
+   *  address), and how to open another or go back to the list. */
+  tileType?: string | null;
+  openTileType?: (type: string | null) => void;
   changed: () => Promise<void>;
   problems: number;
   diagnosticsOpen: boolean;
@@ -1761,6 +1798,7 @@ export function SettingsPage({
   const noHooks = setup.desktop && hooksMissing(setup.view);
   const update = pendingUpdate(updates?.view ?? null);
   const prompts = usePrompts();
+  const tileTypes = useTileTypeCount(section === "tiles" ? tileType : undefined);
   // Only the desktop app can ask the agent CLIs whether they are signed in.
   const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
   const gh = githubHealth(github);
@@ -1825,6 +1863,15 @@ export function SettingsPage({
           ? "Unavailable"
           : "Reading…",
       tone: prompts.entries && promptsNeedAttention(prompts.entries) ? "caution" : undefined,
+    },
+    {
+      id: "tiles",
+      sub:
+        tileTypes.count === null
+          ? "Your saved tile types"
+          : tileTypes.count === 0
+            ? "No saved tile types"
+            : `${tileTypes.count} saved ${tileTypes.count === 1 ? "type" : "types"}`,
     },
   ];
   const keys = useSettingsKeys(
@@ -1980,6 +2027,20 @@ export function SettingsPage({
             )
           ) : section === "prompts" ? (
             <PromptsSection prompts={prompts} />
+          ) : section === "tiles" ? (
+            <TileLibrarySection
+              type={tileType}
+              open={openTileType}
+              onChanged={tileTypes.reload}
+              head={(status) => (
+                <SectionHead
+                  id="settings-tiles-heading"
+                  title="Tile library"
+                  detail="Your own tile types, made in the session panel and saved. A saved type is offered to later reviews where it applies; its code and instructions stay on this computer."
+                  status={status}
+                />
+              )}
+            />
           ) : section === "connections" ? (
             <section aria-labelledby="settings-connections-heading" className="settings-section">
               <SectionHead
@@ -2052,6 +2113,66 @@ export function SettingsPage({
 
 /** The most jobs the daemon runs at once (repos.MaxJobConcurrency). */
 const MAX_JOB_CONCURRENCY = 4;
+
+/** The labs switch that arranges new reviews as tiles: one more model call
+ *  after a review is written chooses which tiles lead. Off by default. */
+function TileReviewsRow() {
+  // Which page an arranged version opens on follows the switch.
+  const { refresh } = usePreferences();
+  const [on, setOn] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    request<{ tile_reviews?: boolean }>("api/settings/labs").then(
+      (labs) => setOn(labs.tile_reviews ?? false),
+      (e) => setError(errorText(e)),
+    );
+  }, []);
+  async function choose(next: boolean) {
+    if (saving) return;
+    const before = on;
+    setOn(next);
+    setSaving(true);
+    setError("");
+    try {
+      const answer = await request<{ tile_reviews: boolean }>(
+        "api/settings/labs",
+        { tile_reviews: next },
+        "PUT",
+      );
+      setOn(answer.tile_reviews);
+      refresh();
+    } catch (e) {
+      setOn(before);
+      setError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <SettingRow
+      label="Generate reviews as tiles (experimental)"
+      htmlFor="review-tiles"
+      detail={
+        error ? (
+          <Alert>{error}</Alert>
+        ) : (
+          "After a review is written, one more short call arranges its tile page: which tiles lead and how large they are."
+        )
+      }
+    >
+      <input
+        id="review-tiles"
+        type="checkbox"
+        role="switch"
+        className="local-switch"
+        disabled={on === null}
+        checked={on ?? false}
+        onChange={(event) => void choose(event.target.checked)}
+      />
+    </SettingRow>
+  );
+}
 
 /** How many reviews, fixes and feature builds run at once; questions to a
  *  review's agent run beside them. The daemon applies a change at once. */
@@ -2883,14 +3004,31 @@ function RepositoryReviews({
     decisions: clone.settings.decisions !== false,
   });
   const [draft, setDraft] = useState(stored);
+  // What the controls hold now.
+  const latest = useRef(draft);
   // A failed save puts the controls back to what is stored.
   // biome-ignore lint/correctness/useExhaustiveDependencies: only after a failure
   useEffect(() => {
-    if (saver.failures) setDraft(stored());
+    if (saver.failures) {
+      latest.current = stored();
+      setDraft(latest.current);
+    }
   }, [saver.failures]);
+  // Settings changed elsewhere (the assistant's saved proposal, another
+  // window) show here, unless this page is saving.
+  const storedKey = JSON.stringify(clone.settings);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only when the stored settings change
+  useEffect(() => {
+    if (saver.pending()) return;
+    latest.current = stored();
+    setDraft(latest.current);
+  }, [storedKey]);
   const change = (patch: Partial<ReturnType<typeof stored>>) => {
-    const next = { ...draft, ...patch };
+    const next = { ...latest.current, ...patch };
+    latest.current = next;
     setDraft(next);
+    // The daemon keeps the stored tile settings (the library types pinned
+    // to the repository) when a save leaves them out.
     saver.save({
       automatic: next.mode === "default" ? null : next.mode === "on",
       decisions: next.decisions ? null : false,
@@ -3571,24 +3709,6 @@ function GeneralSection() {
           </select>
         </SettingRow>
         <CustomThemes />
-        <SettingRow
-          label="Review page"
-          htmlFor="review-page"
-          detail="How a pull request's or a group's review opens. Tiles shows what matters on one screen, each part a tile to open."
-        >
-          <select
-            id="review-page"
-            disabled={!ready}
-            className="local-field settings-select"
-            value={preferences.review_page}
-            onChange={(event) =>
-              update({ review_page: event.target.value as typeof preferences.review_page })
-            }
-          >
-            <option value="full">Full review</option>
-            <option value="tiles">Tiles (preview)</option>
-          </select>
-        </SettingRow>
         <SettingRow
           label="Page shortcut modifier"
           htmlFor="page-modifier"

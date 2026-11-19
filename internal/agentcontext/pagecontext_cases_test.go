@@ -20,6 +20,10 @@ func TestAppPageContextsAreValid(t *testing.T) {
 			Query   string      `json:"query"`
 			Context PageContext `json:"context"`
 		} `json:"cases"`
+		Picked []struct {
+			Context PageContext `json:"context"`
+			Tile    string      `json:"tile"`
+		} `json:"picked"`
 	}
 	if err := json.Unmarshal(raw, &file); err != nil {
 		t.Fatal(err)
@@ -35,6 +39,23 @@ func TestAppPageContextsAreValid(t *testing.T) {
 		}
 		if _, err := linkOf(p.Page, p.Repository, p.PullRequest, p.Group, p.Session, p.Job, p.Feature, p.Section, "", p.Filters); err != nil {
 			t.Errorf("%q: %+v has no link: %v", c.Query, p, err)
+		}
+		// The section of the review page the person reads is where the add
+		// tools put a tile.
+		var focus struct {
+			Section string `json:"section"`
+		}
+		_ = json.Unmarshal(p.Focus, &focus)
+		if got := focusSection(CallContext{Page: p, HasPage: true}); got != focus.Section {
+			t.Errorf("%q: the focused section is %q, want %q", c.Query, got, focus.Section)
+		}
+	}
+	if len(file.Picked) == 0 {
+		t.Fatal("no picked cases")
+	}
+	for _, c := range file.Picked {
+		if err := c.Context.Validate(); err != nil {
+			t.Errorf("%+v refused: %v", c.Context, err)
 		}
 	}
 }

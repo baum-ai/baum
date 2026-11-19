@@ -34,7 +34,7 @@ func TestFlagsAreChecked(t *testing.T) {
 		"seed":              {[]string{"--dataset", dir, "--shuffle-seed", "x"}, "--shuffle-seed"},
 		"empty selection":   {[]string{"--dataset", dir, "--dry-run", "--case", "a", "--split", "calibration"}, "cannot be combined"},
 		"positional value":  {[]string{"--dataset", dir, "--with-images", "false", "--limit", "3", "--dry-run"}, `unexpected argument "false"`},
-		"unknown generator": {[]string{"--dataset", dir, "--generator", "tiles"}, "unknown generator"},
+		"unknown generator": {[]string{"--dataset", dir, "--generator", "layouts"}, "unknown generator"},
 		"generator option":  {[]string{"--dataset", dir, "--generator-option", "x"}, "KEY=VALUE"},
 		"review option":     {[]string{"--dataset", dir, "--generator-option", "x=y"}, "takes no --generator-option"},
 		"tri-state":         {[]string{"--dataset", dir, "--with-images=maybe"}, "use true or false"},
@@ -45,7 +45,7 @@ func TestFlagsAreChecked(t *testing.T) {
 		"from-run alone":    {[]string{"--dataset", dir, "--from-run", dir}, "goes with --compose-only"},
 		"compose-only run":  {[]string{"--dataset", dir, "--compose-only"}, "--from-run"},
 		"compose chain":     {[]string{"--dataset", dir, "--compose-from-store", "--chain"}, "does not take --chain"},
-		"compose override":  {[]string{"--dataset", dir, "--compose-only", "--from-run", dir, "--prompt-override", "review-staged-outline=" + empty}, "not the composition prompt"},
+		"view override":     {[]string{"--dataset", dir, "--compose-only", "--from-run", dir, "--prompt-override", "review-staged-outline=" + empty}, "not the view prompt"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := run(context.Background(), tc.args, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), tc.want) {

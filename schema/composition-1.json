@@ -70,6 +70,16 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "$ref": "#/$defs/tileId" }
+        },
+        "edited": {
+          "description": "Set only by the host, and never stored, when it applies a person's own layout edits (a layout overlay) before composing: the layout is the person's, so the guard rails leave it as it is.",
+          "type": "boolean"
+        },
+        "resized": {
+          "description": "Set only by the host with edited, never stored: the tiles the person resized, whose rows are not grown to fill.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/tileId" }
         }
       },
       "additionalProperties": false,

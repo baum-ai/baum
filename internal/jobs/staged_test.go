@@ -19,7 +19,7 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
-	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/reviewv2"
 )
 
 // draftExecutor reports a draft, then another, then what the review was
@@ -159,38 +159,27 @@ func TestQueueServesTheDraftAsTiles(t *testing.T) {
 	var as struct {
 		Draft    int            `json:"draft"`
 		Document map[string]any `json:"document"`
-		Tiles    *tiles.Document
 	}
-	if err := json.Unmarshal(plain, &as); err != nil || as.Draft != 1 || as.Document["schema"] != "baum.review/1" || as.Tiles != nil {
+	if err := json.Unmarshal(plain, &as); err != nil || as.Draft != 1 || as.Document["schema"] != "baum.review/1" {
 		t.Fatalf("without tiles=1: %v %+v", err, as)
 	}
-	if bytes.Contains(plain, []byte(`"tiles"`)) {
-		t.Fatalf("the plain draft has a tiles member: %.200s", plain)
+	if bytes.Contains(plain, []byte(`"view"`)) {
+		t.Fatalf("the plain draft has a view member: %.200s", plain)
 	}
 	code, tiled := get("?tiles=1")
 	var withTiles struct {
-		Draft    int            `json:"draft"`
-		Document map[string]any `json:"document"`
-		Tiles    *tiles.Document
-		Problem  string `json:"problem"`
+		Draft    int               `json:"draft"`
+		Document reviewv2.Document `json:"document"`
+		Problem  string            `json:"problem"`
 	}
-	if err := json.Unmarshal(tiled, &withTiles); err != nil || code != 200 || withTiles.Tiles == nil || withTiles.Problem != "" || withTiles.Draft != 1 {
+	if err := json.Unmarshal(tiled, &withTiles); err != nil || code != 200 || withTiles.Document.Schema != reviewv2.Name || withTiles.Problem != "" || withTiles.Draft != 1 {
 		t.Fatalf("with tiles=1: %d %v %s", code, err, tiled)
 	}
-	if withTiles.Document["schema"] != "baum.review/1" {
-		t.Fatalf("document %v", withTiles.Document["schema"])
+	if withTiles.Document.Schema != reviewv2.Name {
+		t.Fatalf("document %v", withTiles.Document.Schema)
 	}
-	var context string
-	for _, tile := range withTiles.Tiles.Tiles {
-		if tile.ID == "context" {
-			context = tile.State
-		}
-	}
-	if context != tiles.StatePending {
-		t.Fatalf("a draft without context has a %q context tile", context)
-	}
-	if got := tileStates(withTiles.Tiles, "change"); got != "pending" {
-		t.Fatalf("change tiles of an outline draft are %q", got)
+	if len(withTiles.Document.Sections) == 0 {
+		t.Fatalf("the draft's document lists no sections")
 	}
 	// Only the exact value 1 selects tiles.
 	for _, query := range []string{"?tiles=0", "?tiles=true", "?tiles=", "?tiles=1x"} {
@@ -534,19 +523,4 @@ func TestANewHeadSupersedesADetailsRetry(t *testing.T) {
 			}
 		})
 	}
-}
-
-// tileStates is the state every tile of a type shares, or "mixed".
-func tileStates(doc *tiles.Document, tileType string) string {
-	state := ""
-	for _, tile := range doc.Tiles {
-		if tile.Type != tileType {
-			continue
-		}
-		if state != "" && state != tile.State {
-			return "mixed"
-		}
-		state = tile.State
-	}
-	return state
 }

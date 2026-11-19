@@ -2,7 +2,6 @@ package tileview
 
 import (
 	"encoding/json"
-	"math/rand/v2"
 	"os"
 	"reflect"
 	"strings"
@@ -12,7 +11,8 @@ import (
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/tilestest"
+	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 func decode(t *testing.T, r Response) map[string]any {
@@ -28,78 +28,45 @@ func decode(t *testing.T, r Response) map[string]any {
 	return out
 }
 
-func TestBuildConvertsAReview(t *testing.T) {
+// The answer is the normalised review and its view; the tile document it
+// is checked against is never served.
+func TestBuildServesTheReviewAndItsView(t *testing.T) {
 	r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{})
-	if r.Tiles == nil || r.Problem != "" {
-		t.Fatalf("tiles %v, problem %q", r.Tiles != nil, r.Problem)
+	if r.View == nil || r.Problem != "" {
+		t.Fatalf("view %v, problem %q", r.View != nil, r.Problem)
 	}
 	out := decode(t, r)
-	if out["document"].(map[string]any)["schema"] != "baum.review/1" || out["tiles"].(map[string]any)["schema"] != "baum.tiles/1" {
+	if out["document"].(map[string]any)["schema"] != "baum.review/1" || out["view"].(map[string]any)["schema"] != view.Name {
 		t.Fatalf("schemas %v", out)
 	}
-	if _, ok := out["problem"]; ok {
-		t.Error("a converted review has a problem")
-	}
-	// The tile document converts exactly the document served beside it.
-	back, err := tiles.ToReview(r.Tiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if equal, err := tilestest.RoundTripEqual(r.Document, back); err != nil || !equal {
-		t.Fatalf("round trip: %v %v", equal, err)
-	}
-}
-
-func TestBuildDraftHasAPendingContext(t *testing.T) {
-	doc := tileviewtest.Base(t)
-	delete(doc["summary"].(map[string]any), "context")
-	raw := tileviewtest.Encode(t, doc)
-	for _, tc := range []struct {
-		draft bool
-		want  string
-	}{{false, ""}, {true, tiles.StatePending}} {
-		r := Build(raw, nil, tiles.Options{Draft: tc.draft})
-		var state string
-		for _, tile := range r.Tiles.Tiles {
-			if tile.ID == tiles.TypeContext {
-				state = tile.State
-			}
-		}
-		if state != tc.want {
-			t.Errorf("draft %v: context %q, want %q", tc.draft, state, tc.want)
+	for _, gone := range []string{"tiles", "added", "problem"} {
+		if _, ok := out[gone]; ok {
+			t.Errorf("the answer has %q", gone)
 		}
 	}
 }
 
-func TestBuildFailureLeavesTilesNullWithoutContent(t *testing.T) {
+func TestBuildFailureLeavesTheViewOutWithoutContent(t *testing.T) {
 	for _, document := range []string{
 		`{"review":{"repository":"acme/widgets"},"secret":"PRIVATE_TEXT"}`,
 		`{"schema":"baum.review/1","unknown_member":"PRIVATE_TEXT"}`,
 		`not json PRIVATE_TEXT`,
 	} {
 		r := Build([]byte(document), nil, tiles.Options{})
-		if r.Tiles != nil || r.Problem == "" || strings.Contains(r.Problem, "PRIVATE_TEXT") {
-			t.Errorf("%s: tiles %v, problem %q", document, r.Tiles != nil, r.Problem)
+		if r.View != nil || r.Problem == "" || strings.Contains(r.Problem, "PRIVATE_TEXT") {
+			t.Errorf("%s: view %v, problem %q", document, r.View != nil, r.Problem)
 		}
 		body, err := Encode(r)
-		if err != nil || !json.Valid(body.Body.Data) || !strings.Contains(string(body.Body.Data), `"tiles":null`) {
+		if err != nil || !json.Valid(body.Body.Data) || strings.Contains(string(body.Body.Data), `"view"`) {
 			t.Errorf("%s: %s %v", document, body.Body.Data, err)
 		}
 	}
 }
 
-func TestDraftOutlineConverts(t *testing.T) {
+func TestDraftOutlineBuilds(t *testing.T) {
 	r := Build(tileviewtest.Encode(t, tileviewtest.DraftOutline(t)), nil, tiles.Options{Draft: true})
-	if r.Tiles == nil || r.Problem != "" {
+	if r.View == nil || r.Problem != "" {
 		t.Fatalf("problem %q", r.Problem)
-	}
-	for _, tile := range r.Tiles.Tiles {
-		if tile.State == tiles.StateUnavailable {
-			t.Errorf("%s is unavailable: %v", tile.ID, tile.Problems)
-		}
-		if tile.ID == tiles.TypeContext && tile.State != tiles.StatePending {
-			t.Errorf("context is %s", tile.State)
-		}
 	}
 }
 
@@ -115,7 +82,7 @@ func TestWarm(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{}); r.Tiles == nil {
+	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{}); r.View == nil {
 		t.Fatal(r.Problem)
 	}
 }
@@ -152,9 +119,9 @@ func TestDraftOutlineMatchesTheGolden(t *testing.T) {
 	}
 }
 
-// With no composition, an empty one or one that chooses nothing, the answer
-// is the converted document's, byte for byte.
-func TestBuildWithoutACompositionIsUnchanged(t *testing.T) {
+// With no composition, an empty one, or one of another schema, the answer
+// is the empty view's, byte for byte.
+func TestBuildWithoutAViewCompositionIsTheEmptyView(t *testing.T) {
 	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
 	want, err := Encode(Build(raw, nil, tiles.Options{}))
 	if err != nil {
@@ -163,9 +130,9 @@ func TestBuildWithoutACompositionIsUnchanged(t *testing.T) {
 	for name, composition := range map[string][]byte{
 		"empty":      {},
 		"null":       []byte("null"),
-		"chooses":    []byte(`{"schema":"baum.composition/1","layout":{"entries":[]}}`),
+		"v1":         []byte(`{"schema":"baum.composition/1","layout":{"entries":[]}}`),
 		"unreadable": []byte(`{"schema":`),
-		"other":      []byte(`{"schema":"baum.composition/2","layout":{"entries":[]}}`),
+		"other":      []byte(`{"schema":"baum.composition/9","layout":{"entries":[]}}`),
 		"not json":   []byte(`PRIVATE_TEXT`),
 	} {
 		got, err := Encode(Build(raw, composition, tiles.Options{}))
@@ -178,84 +145,32 @@ func TestBuildWithoutACompositionIsUnchanged(t *testing.T) {
 	}
 }
 
-// A composition that cannot be used is ignored and counted, without a problem
-// for the reader and without quoting it.
+func ignoredCount() int64 { return workstats.Take().Counters["tileview.views_ignored"] }
+
+// A review view composition that cannot be read is ignored and counted,
+// without a problem for the reader and without quoting it.
 func TestBuildIgnoresAnUnusableCompositionAndCountsIt(t *testing.T) {
 	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
-	before := workstats.Take()
-	r := Build(raw, []byte(`{"schema":"baum.composition/9","secret":"PRIVATE_TEXT"}`), tiles.Options{})
-	if r.Tiles == nil || r.Problem != "" {
-		t.Fatalf("tiles %v, problem %q", r.Tiles != nil, r.Problem)
-	}
-	if got := workstats.Take().Counters["tileview.compositions_ignored"] - before.Counters["tileview.compositions_ignored"]; got != 1 {
-		t.Errorf("%d ignored compositions counted, want 1", got)
+	want, _ := Encode(Build(raw, nil, tiles.Options{}))
+	for name, composition := range map[string][]byte{
+		"unreadable": []byte(`{"schema":"baum.composition/2","sections":"PRIVATE_TEXT"}`),
+		"oversized":  []byte(`{"schema":"baum.composition/2","x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`),
+	} {
+		before := ignoredCount()
+		r := Build(raw, composition, tiles.Options{})
+		got, err := Encode(r)
+		if err != nil || r.Problem != "" || string(got.Body.Data) != string(want.Body.Data) || ignoredCount() != before+1 {
+			t.Errorf("%s: problem %q, changed %v, counted %d: %v", name, r.Problem, string(got.Body.Data) != string(want.Body.Data), ignoredCount()-before, err)
+		}
 	}
 }
 
-// A composition changes the layout as composed, and the document it gives
-// passes every check of a generated one.
-func TestBuildComposesTheLayout(t *testing.T) {
+// A review view composition changes the view.
+func TestBuildAppliesTheComposition(t *testing.T) {
 	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
-	plain := Build(raw, nil, tiles.Options{})
-	composition, pinned := tileviewtest.PinnedComposition(t, raw)
-	r := Build(raw, composition, tiles.Options{})
-	if r.Tiles == nil || r.Problem != "" {
-		t.Fatalf("problem %q", r.Problem)
-	}
-	if plain.Tiles.Layout.Entries[0].Tile == pinned || r.Tiles.Layout.Entries[0].Tile != pinned || !r.Tiles.Layout.Entries[0].Pin {
-		t.Fatalf("first tile %q, want %q pinned (plain: %q)", r.Tiles.Layout.Entries[0].Tile, pinned, plain.Tiles.Layout.Entries[0].Tile)
-	}
-	if r.Tiles.Origin.Kind != tiles.OriginGenerated {
-		t.Errorf("origin %q", r.Tiles.Origin.Kind)
-	}
-	parsed, err := tiles.ParseComposition(composition)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if failures := tilestest.CheckGenerated(r.Document, parsed, r.checked); len(failures) > 0 {
-		t.Fatalf("generated document: %v", failures)
-	}
-	// The review document served beside the tiles is the same.
-	if string(r.Document) != string(plain.Document) {
-		t.Error("the review document changed")
-	}
-	// It still round-trips to the review.
-	back, err := tiles.ToReview(r.Tiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if equal, err := tilestest.RoundTripEqual(r.Document, back); err != nil || !equal {
-		t.Fatalf("round trip: %v %v", equal, err)
-	}
-}
-
-// Seeded random compositions, hostile ones included, always give a checked
-// document.
-func TestBuildComposesRandomCompositions(t *testing.T) {
-	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
-	normalized, err := review.NormalizeStored(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	converted, err := tiles.FromReview(normalized, tiles.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for seed := range uint64(20) {
-		c := tilestest.RandomComposition(rand.New(rand.NewPCG(seed, 1)), converted, seed%2 == 1)
-		// What a store holds: the normalised composition.
-		normal, _ := tiles.NormalizeComposition(converted, c)
-		encoded, err := json.Marshal(normal)
-		if err != nil {
-			t.Fatal(err)
-		}
-		r := Build(raw, encoded, tiles.Options{})
-		if r.Tiles == nil || r.Problem != "" {
-			t.Fatalf("seed %d: problem %q", seed, r.Problem)
-		}
-		if failures := tilestest.CheckGenerated(r.Document, &normal, r.checked); len(failures) > 0 {
-			t.Fatalf("seed %d: %v", seed, failures)
-		}
+	r := Build(raw, tileviewtest.ViewComposition(t), tiles.Options{})
+	if r.View == nil || r.View.Overview.RiskSummary != tileviewtest.RiskSummary {
+		t.Fatalf("view %+v", r.View)
 	}
 }
 
@@ -266,93 +181,76 @@ func TestKeyNamesTheComposition(t *testing.T) {
 	}
 }
 
-func ignoredCount() int64 { return workstats.Take().Counters["tileview.compositions_ignored"] }
-
-// A composition over the size bound is ignored and counted, whatever it holds.
-func TestBuildIgnoresAnOversizedComposition(t *testing.T) {
-	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
-	want, _ := Encode(Build(raw, nil, tiles.Options{}))
-	huge := []byte(`{"schema":"baum.composition/1","layout":{"entries":[]},"x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`)
-	before := ignoredCount()
-	got, err := Encode(Build(raw, huge, tiles.Options{}))
-	if err != nil || string(got.Body.Data) != string(want.Body.Data) || ignoredCount() != before+1 {
-		t.Errorf("answer changed %v, counted %d: %v", string(got.Body.Data) != string(want.Body.Data), ignoredCount()-before, err)
+// addedAPI is the api_change library type added on section, its data
+// citing hunk.
+func addedAPI(t *testing.T, hunk, section string) AddedTile {
+	t.Helper()
+	entry, ok := library.Get("api_change")
+	if !ok {
+		t.Fatal("no api_change type")
 	}
+	data := json.RawMessage(`{"endpoints":[],"docs":null,"consumers":[{"label":"x","updated":true,"cites":[{"type":"hunk","id":"` + hunk + `"}]}]}`)
+	return AddedTile{Tile: tiles.LibraryTile{Definition: entry.Encoded, Data: data}, Section: section}
 }
 
-// A failure while composing, even a panic, serves the converted layout and is
-// counted.
-func TestBuildSurvivesAComposeFailure(t *testing.T) {
+// The tiles a person added are served in the view, marked added, on the
+// section they were added on, with the version their data is from; an
+// added tile whose type the composition already fills is shown once, as
+// the composition has it. AddedKey names them.
+func TestBuildServesAddedTiles(t *testing.T) {
 	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
-	composition, _ := tileviewtest.PinnedComposition(t, raw)
-	want, _ := Encode(Build(raw, nil, tiles.Options{}))
-	defer func(old func(*tiles.Document, *tiles.Composition) (*tiles.Document, error)) { applyComposition = old }(applyComposition)
-	applyComposition = func(*tiles.Document, *tiles.Composition) (*tiles.Document, error) { panic("PRIVATE_TEXT") }
-	before := ignoredCount()
-	r := Build(raw, composition, tiles.Options{})
-	got, err := Encode(r)
-	if err != nil || r.Problem != "" || string(got.Body.Data) != string(want.Body.Data) || ignoredCount() != before+1 {
-		t.Errorf("problem %q, changed %v, counted %d: %v", r.Problem, string(got.Body.Data) != string(want.Body.Data), ignoredCount()-before, err)
-	}
-}
-
-// A composition stored for a document that has since changed (a refresh or a
-// completion that removed a section, here) still gives a checked document.
-func TestBuildComposesAfterTheDocumentDrifted(t *testing.T) {
-	base := tileviewtest.Base(t)
-	original := tileviewtest.Encode(t, base)
-	normalized, err := review.NormalizeStored(original)
+	normalized, _ := review.NormalizeStored(raw)
+	r, err := view.ParseReview(normalized)
 	if err != nil {
 		t.Fatal(err)
 	}
-	converted, err := tiles.FromReview(normalized, tiles.Options{})
-	if err != nil {
-		t.Fatal(err)
+	first := r.Sections[0].Hunks[0]
+	added := addedAPI(t, first, "context")
+	added.From, added.Filling = 2, true
+	got := BuildWith(raw, nil, []AddedTile{added}, tiles.Options{})
+	if got.View == nil || len(got.View.Tiles) != 1 {
+		t.Fatalf("view %+v", got.View)
 	}
-	for seed := range uint64(6) {
-		c := tilestest.RandomComposition(rand.New(rand.NewPCG(seed, 9)), converted, false)
-		normal, _ := tiles.NormalizeComposition(converted, c)
-		stored, err := json.Marshal(normal)
-		if err != nil {
-			t.Fatal(err)
+	tile := got.View.Tiles[0]
+	if tile.ID != "api_change" || !tile.Added || tile.From != 2 || !tile.Filling || tile.State != tiles.StateReady || !strings.Contains(string(tile.Definition), `"bytes"`) {
+		t.Errorf("added tile %+v", tile)
+	}
+	if got.View.Sections[0].ID != view.ContextSection || !reflect.DeepEqual(got.View.Sections[0].Tiles, []string{"api_change"}) {
+		t.Errorf("sections %+v", got.View.Sections)
+	}
+	// Without a section, or on one the version no longer has, it goes where
+	// its hunks are.
+	for _, section := range []string{"", "sec_gone"} {
+		got = BuildWith(raw, nil, []AddedTile{addedAPI(t, first, section)}, tiles.Options{})
+		if got.View.Sections[1].ID != r.Sections[0].ID || !has(got.View.Sections[1].Tiles, "api_change") {
+			t.Errorf("section %q: sections %+v", section, got.View.Sections)
 		}
-		drifted := tileviewtest.Base(t)
-		// The last section goes; its hunks are unassigned, as a document
-		// refreshed against a moved head leaves them.
-		sections := drifted["sections"].([]any)
-		gone := sections[len(sections)-1].(map[string]any)
-		drifted["sections"] = sections[:len(sections)-1]
-		drifted["unassigned_hunks"] = append(drifted["unassigned_hunks"].([]any), gone["hunks"].([]any)...)
-		raw := tileviewtest.Encode(t, drifted)
-		r := Build(raw, stored, tiles.Options{})
-		if r.Tiles == nil || r.Problem != "" {
-			t.Fatalf("seed %d: tiles %v, problem %q", seed, r.Tiles != nil, r.Problem)
-		}
-		// Every change of the drifted document is placed, and the removed one
-		// is not.
-		for _, tile := range r.Tiles.Tiles {
-			if tile.ID == "sec_generated_client" {
-				t.Fatalf("seed %d: the removed section has a tile", seed)
+	}
+	// The composition's own api_change wins.
+	document := viewDocument(t)
+	with := BuildWith(document, viewComposition(t, document), []AddedTile{addedAPI(t, first, "context")}, tiles.Options{})
+	n := 0
+	for _, tile := range with.View.Tiles {
+		if tile.ID == "api_change" {
+			n++
+			if tile.Added {
+				t.Error("the composition's tile is marked added")
 			}
 		}
-		now, err := review.NormalizeStored(raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		again, err := tiles.FromReview(now, tiles.Options{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		applied, _ := tiles.NormalizeComposition(again, &normal)
-		if failures := tilestest.CheckGenerated(r.Document, &applied, r.checked); len(failures) > 0 {
-			t.Fatalf("seed %d: %v", seed, failures)
-		}
-		back, err := tiles.ToReview(r.Tiles)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if equal, err := tilestest.RoundTripEqual(r.Document, back); err != nil || !equal {
-			t.Fatalf("seed %d: round trip %v %v", seed, equal, err)
+	}
+	if n != 1 {
+		t.Errorf("api_change served %d times", n)
+	}
+	if AddedKey(nil) != "" || AddedKey([]AddedTile{added}) == "" || AddedKey([]AddedTile{added}) == AddedKey([]AddedTile{addedAPI(t, first, "context")}) {
+		t.Error("AddedKey does not name the added tiles")
+	}
+}
+
+func has(ids []string, id string) bool {
+	for _, have := range ids {
+		if have == id {
+			return true
 		}
 	}
+	return false
 }

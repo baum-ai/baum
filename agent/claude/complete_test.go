@@ -5,6 +5,8 @@ package claude
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,5 +80,51 @@ func TestCompleteReportsRejectedReplies(t *testing.T) {
 		agent.CompleteRequest{System: "s", User: "u", Schema: []byte(`{}`)})
 	if completion.Rejections != 1 || completion.RejectionDetail != "Output validation failed: choice" || !completion.Usage.Unreported {
 		t.Fatalf("%+v", completion)
+	}
+}
+
+func TestCompleteSendsImagesAsOneStreamJSONMessage(t *testing.T) {
+	out := t.TempDir()
+	script := filepath.Join(t.TempDir(), "claude")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + out + "/arguments.txt\ncat > " + out + "/prompt.txt\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"structured_output\":{\"verdict\":\"A\"},\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}'\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	image := filepath.Join(t.TempDir(), "a.png")
+	if err := os.WriteFile(image, []byte("picture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backend := &Backend{Binary: script, versionOK: true}
+	completion, err := backend.Complete(context.Background(), agent.CompleteRequest{System: "Judge.", User: "Compare A and B.", Schema: []byte(`{"type":"object"}`),
+		Images: []agent.CompleteImage{{Path: image, MediaType: "image/png"}}})
+	if err != nil || string(completion.Document) != `{"verdict":"A"}` {
+		t.Fatalf("%+v %v", completion, err)
+	}
+	if arguments, _ := os.ReadFile(filepath.Join(out, "arguments.txt")); !bytes.Contains(arguments, []byte("--input-format\nstream-json\n")) {
+		t.Fatalf("the prompt is not sent as stream-json: %s", arguments)
+	}
+	raw, _ := os.ReadFile(filepath.Join(out, "prompt.txt"))
+	var message struct {
+		Type    string `json:"type"`
+		Message struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type   string `json:"type"`
+				Text   string `json:"text"`
+				Source struct {
+					Type, MediaType, Data string
+				} `json:"source"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &message); err != nil || bytes.Count(raw, []byte("\n")) != 1 {
+		t.Fatalf("not one stream-json line: %q %v", raw, err)
+	}
+	content := message.Message.Content
+	if message.Type != "user" || message.Message.Role != "user" || len(content) != 2 || content[0].Type != "text" ||
+		!strings.HasPrefix(content[0].Text, sessions.GenerationRunMarker+"\n") || !strings.HasSuffix(content[0].Text, "Compare A and B.") ||
+		content[1].Type != "image" || content[1].Source.Data != base64.StdEncoding.EncodeToString([]byte("picture")) {
+		t.Fatalf("message = %s", raw)
 	}
 }

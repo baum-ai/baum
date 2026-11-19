@@ -285,7 +285,6 @@ func heavyDocument(t *testing.T, n int) *Document {
 		encoded, _ = json.Marshal(def)
 		id := fmt.Sprintf("heavy_%d", i)
 		doc.Tiles = append(doc.Tiles, Tile{ID: id, Type: TypeCustom, Title: "Heavy", Data: json.RawMessage(heavy.data), State: StateReady, Definition: encoded})
-		doc.Layout.Entries = append(doc.Layout.Entries, Entry{Tile: id, Size: SizeThird})
 	}
 	return &doc
 }

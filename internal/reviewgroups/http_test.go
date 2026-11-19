@@ -14,10 +14,6 @@ import (
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
-	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/internal/tileview"
-	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
-	"github.com/baum-ai/baum/tiles"
 )
 
 type fakeRegistry []repos.Repository
@@ -249,120 +245,6 @@ func TestPatchPicksTheMemberHoldingTheHunk(t *testing.T) {
 	reads := len(f.patches)
 	if status, raw = f.do(t, "GET", "/api/groups/"+g.ID+"/patch?path=vendor/x.go&hunk=hv", ""); status != http.StatusOK || !strings.Contains(string(raw), "+1,3") || len(f.patches) != reads+1 {
 		t.Fatalf("a vendored file: %d %s after %d reads", status, raw, len(f.patches)-reads)
-	}
-}
-
-// A group review's tile route answers as a pull request's does: the document
-// and the tile document, for the latest version or the one asked for.
-func TestTilesServeAGroupReviewVersions(t *testing.T) {
-	f := newAPI(t)
-	_, raw := f.do(t, "POST", "/api/groups", `{"name":"Release train","members":[{"repository":"acme/demo","number":8},{"repository":"acme/demo","number":7}]}`)
-	var created View
-	if err := json.Unmarshal(raw, &created); err != nil {
-		t.Fatal(err)
-	}
-	id := created.ID
-	if status, _ := f.do(t, "GET", "/api/groups/"+id+"/tiles", ""); status != http.StatusNotFound {
-		t.Fatalf("a group without a review served tiles: %d", status)
-	}
-	if status, _ := f.do(t, "GET", "/api/groups/nope/tiles", ""); status != http.StatusNotFound {
-		t.Fatalf("an unknown group: %d", status)
-	}
-	for n, title := range []string{"First train", "Second train"} {
-		doc := tileviewtest.Base(t)
-		doc["review"].(map[string]any)["version"] = n + 1
-		doc["review"].(map[string]any)["repository"] = "acme/demo"
-		doc["stack"] = map[string]any{"title": "Release train", "members": []any{
-			map[string]any{"number": 7, "head_sha": "aaaaaaa", "review_version": 1},
-			map[string]any{"number": 8, "head_sha": "bbbbbbb", "review_version": 1},
-		}}
-		doc["summary"].(map[string]any)["title"] = title
-		version := store.Version{Metadata: store.Metadata{Version: n + 1, Model: "stub-model"}, Document: tileviewtest.Encode(t, doc)}
-		if err := f.store.Put(context.Background(), id, n, version); err != nil {
-			t.Fatal(err)
-		}
-	}
-	read := func(query string) (title, converted string, header http.Header) {
-		t.Helper()
-		request, err := http.NewRequest("GET", f.server.URL+"/api/groups/"+id+"/tiles"+query, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = response.Body.Close() }()
-		var body struct {
-			Document struct {
-				Summary struct{ Title string } `json:"summary"`
-			} `json:"document"`
-			Tiles   *tiles.Document `json:"tiles"`
-			Problem string          `json:"problem"`
-		}
-		if err := json.NewDecoder(response.Body).Decode(&body); err != nil || response.StatusCode != 200 || body.Tiles == nil || body.Problem != "" {
-			t.Fatalf("%s: %d %v %+v", query, response.StatusCode, err, body)
-		}
-		return body.Document.Summary.Title, body.Tiles.Facts.Title, response.Header
-	}
-	if title, converted, header := read(""); title != "Second train" || converted != "Second train" || header.Get("Cache-Control") != "no-store" || header.Get("ETag") == "" {
-		t.Fatalf("latest: %q %q %v", title, converted, header)
-	}
-	if title, converted, _ := read("?version=1"); title != "First train" || converted != "First train" {
-		t.Fatalf("version 1: %q %q", title, converted)
-	}
-	if status, raw := f.do(t, "GET", "/api/groups/"+id+"/tiles?version=9", ""); status != http.StatusNotFound {
-		t.Fatalf("a missing version: %d %s", status, raw)
-	}
-	if status, raw := f.do(t, "GET", "/api/groups/"+id+"/tiles?version=x", ""); status != http.StatusBadRequest || code(raw) != CodeInvalid {
-		t.Fatalf("a bad version: %d %s", status, raw)
-	}
-}
-
-// A group version asked for again is answered from the kept answer; a new
-// version is converted, and so is a rewrite of the same number.
-func TestTilesConvertsAnUnchangedGroupVersionOnce(t *testing.T) {
-	f := newAPI(t)
-	_, raw := f.do(t, "POST", "/api/groups", `{"name":"Release train","members":[{"repository":"acme/demo","number":8},{"repository":"acme/demo","number":7}]}`)
-	var created View
-	if err := json.Unmarshal(raw, &created); err != nil {
-		t.Fatal(err)
-	}
-	put := func(previous int, title string) {
-		t.Helper()
-		doc := tileviewtest.Base(t)
-		doc["review"].(map[string]any)["version"] = previous + 1
-		doc["review"].(map[string]any)["repository"] = "acme/demo"
-		doc["summary"].(map[string]any)["title"] = title
-		doc["stack"] = map[string]any{"title": "Release train", "members": []any{
-			map[string]any{"number": 7, "head_sha": "aaaaaaa", "review_version": 1},
-			map[string]any{"number": 8, "head_sha": "bbbbbbb", "review_version": 1},
-		}}
-		version := store.Version{Metadata: store.Metadata{Version: previous + 1, Model: "stub-model"}, Document: tileviewtest.Encode(t, doc)}
-		if err := f.store.Put(context.Background(), created.ID, previous, version); err != nil {
-			t.Fatal(err)
-		}
-	}
-	put(0, "One")
-	before := tileview.Builds.Load()
-	for range 3 {
-		if status, _ := f.do(t, "GET", "/api/groups/"+created.ID+"/tiles", ""); status != 200 {
-			t.Fatal(status)
-		}
-		f.do(t, "GET", "/api/groups/"+created.ID+"/tiles?version=1", "")
-	}
-	if got := tileview.Builds.Load() - before; got != 1 {
-		t.Fatalf("%d conversions of an unchanged version", got)
-	}
-	put(1, "Two")
-	f.do(t, "GET", "/api/groups/"+created.ID+"/tiles", "")
-	f.do(t, "GET", "/api/groups/"+created.ID+"/tiles", "")
-	if got := tileview.Builds.Load() - before; got != 2 {
-		t.Fatalf("%d conversions after a new version", got)
-	}
-	f.do(t, "GET", "/api/groups/"+created.ID+"/tiles?version=1", "")
-	if got := tileview.Builds.Load() - before; got != 2 {
-		t.Fatalf("an older version was converted again: %d", got)
 	}
 }
 

@@ -279,7 +279,7 @@ const RISK_FILL: Record<Tone, string> = {
 
 /** Five segments filled up to the score. A lower bound outlines the
  *  segments above it, since the score may reach them. */
-function RiskMeter({
+export function RiskMeter({
   score,
   lowerBound,
   tone,

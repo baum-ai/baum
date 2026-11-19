@@ -656,54 +656,5 @@
       },
       "state": "ready"
     }
-  ],
-  "layout": {
-    "entries": [
-      {
-        "tile": "overview",
-        "size": "half"
-      },
-      {
-        "tile": "risks",
-        "size": "half"
-      },
-      {
-        "tile": "sec_retry_policy",
-        "size": "third",
-        "group": "changes"
-      },
-      {
-        "tile": "sec_config_flag",
-        "size": "third",
-        "group": "changes"
-      },
-      {
-        "tile": "evidence",
-        "size": "third"
-      },
-      {
-        "tile": "media",
-        "size": "third"
-      },
-      {
-        "tile": "intent",
-        "size": "third"
-      },
-      {
-        "tile": "context",
-        "size": "third"
-      },
-      {
-        "tile": "decisions",
-        "size": "third"
-      }
-    ],
-    "groups": [
-      {
-        "id": "changes",
-        "title": "Changes"
-      }
-    ],
-    "landing": 8
-  }
+  ]
 }

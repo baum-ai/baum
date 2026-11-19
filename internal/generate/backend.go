@@ -132,6 +132,9 @@ func (e explicitPath) Check(ctx context.Context) (string, error) {
 // ConcurrentCalls forwards the backend's agent.ConcurrentCaller.
 func (e explicitPath) ConcurrentCalls() bool { return ConcurrentCalls(e.CheckedBackend) }
 
+// KeepsSessions forwards the backend's agent.SessionKeeper.
+func (e explicitPath) KeepsSessions() bool { return agent.KeepsSessions(e.CheckedBackend) }
+
 // Fix forwards a fix (agent.Fixer) to a backend that can make one.
 func (e explicitPath) Fix(ctx context.Context, request agent.Request) (agent.Result, error) {
 	fixer, ok := e.CheckedBackend.(agent.Fixer)
@@ -153,6 +156,30 @@ func (e explicitPath) Complete(ctx context.Context, request agent.CompleteReques
 		return agent.Completion{}, fmt.Errorf("%s: %w", e.name, ErrCannotComplete)
 	}
 	return completer.Complete(ctx, request)
+}
+
+// CanComplete reports whether the wrapped backend can make a completion.
+func (e explicitPath) CanComplete() bool { return CompleterOf(e.CheckedBackend) != nil }
+
+// CompleteChecker is implemented by a wrapper of a backend that forwards
+// Complete (agent.Completer) whatever it wraps, to say whether the backend
+// it wraps can make one. A host's wrapper forwards both.
+type CompleteChecker interface {
+	CanComplete() bool
+}
+
+// CompleterOf returns backend as an agent.Completer, or nil when it cannot
+// make a single structured call: it does not implement Complete, or it is a
+// wrapper whose CanComplete says the backend it wraps does not.
+func CompleterOf(backend agent.Backend) agent.Completer {
+	completer, ok := backend.(agent.Completer)
+	if !ok {
+		return nil
+	}
+	if checker, ok := backend.(CompleteChecker); ok && !checker.CanComplete() {
+		return nil
+	}
+	return completer
 }
 
 // Selected is the backend a run uses.

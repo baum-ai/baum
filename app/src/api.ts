@@ -1,6 +1,9 @@
 import { formatUSD } from "@baum/viewer/components/format";
 import type { ReviewDocument } from "@baum/viewer/review-document";
-import { parseTileDocument, withTiles, type TiledDocument } from "./tiles/tile-document";
+import { chromeOf } from "./review-view/chrome";
+import { parseReviewV2, REVIEW_V2, type ReviewV2 } from "./review-view/document";
+import { fromV1 } from "./review-view/from-v1";
+import { withReview } from "./review-view/model";
 export type Clone = {
   id: string;
   path: string;
@@ -12,8 +15,14 @@ export type Clone = {
     /** Decision capture for this repository: false turns it off, null and
      *  true follow the global switches. Absent from an older daemon. */
     decisions?: boolean | null;
+    /** The saved tile types pinned to this repository, which its reviews
+     *  always fill (Settings › Tile library sets them); absent when none
+     *  are. */
+    tiles?: TileSettings | null;
   };
 };
+/** A repository's tile settings: the library types pinned to it. */
+export type TileSettings = { types?: string[] };
 export type Repository = {
   repository: string;
   settings: Clone["settings"];
@@ -1232,17 +1241,43 @@ function validDocument(doc: ReviewDocument) {
     throw Error("Invalid review document.");
   return doc;
 }
+/** A saved review or a draft as the app's lists, previews and chrome read
+ *  it: a baum.review/1 document as served, a baum.review/2 one as the review
+ *  it makes (its summary, risk and sections). */
+export function readableDocument(doc: ReviewDocument | ReviewV2 | Record<string, unknown>) {
+  if ((doc as { schema?: unknown }).schema === REVIEW_V2) {
+    const review = parseReviewV2(doc);
+    if (!review) throw Error("Invalid review document.");
+    return chromeOf(review);
+  }
+  return validDocument(doc as ReviewDocument);
+}
 export function documentRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
-  return request<ReviewDocument>(
+  return request<ReviewDocument | ReviewV2>(
     `api/document?${selector(clone, pr, version)}`,
     undefined,
     "GET",
     signal,
-  ).then(validDocument);
+  ).then(readableDocument);
 }
-/** A version of the review with its tile document, as the tiles page reads
- *  it: the review the page's chrome reads, carrying the tiles (or null where
- *  the daemon could not convert it). */
+/** A version of the review as the review page reads it. A baum.review/1
+ *  version is read as stored (its own document, which the viewer's Summary
+ *  and section pages draw in the page's shell); a baum.review/2 one through
+ *  the tile route, with the tiles the person added. */
+export function shellRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
+  return request<ReviewDocument | ReviewV2 | Record<string, unknown>>(
+    `api/document?${selector(clone, pr, version)}`,
+    undefined,
+    "GET",
+    signal,
+  ).then((doc) =>
+    (doc as { schema?: unknown }).schema === REVIEW_V2
+      ? tilesRequest(clone, pr, version, signal)
+      : validDocument(doc as ReviewDocument),
+  );
+}
+/** A version of the review as the review page's tabs read it: the review the
+ *  page's chrome reads, carrying the baum.review/2 document the tabs read. */
 export function tilesRequest(clone: string, pr: number, version?: number, signal?: AbortSignal) {
   return request<TilesAnswer>(
     `api/tiles?${selector(clone, pr, version)}`,
@@ -1251,22 +1286,55 @@ export function tilesRequest(clone: string, pr: number, version?: number, signal
     signal,
   ).then(tiledDocument);
 }
-export function groupTilesRequest(id: string, version?: number, signal?: AbortSignal) {
-  return request<TilesAnswer>(
-    `api/groups/${encodeURIComponent(id)}/tiles${version ? `?version=${version}` : ""}`,
-    undefined,
-    "GET",
-    signal,
-  ).then(tiledDocument);
+/** The daemon's answer for a review's tiles (and a draft's, `?tiles=1`): the
+ *  review as a baum.review/2 document, and the pending cards of tiles being
+ *  made in the session panel (latest version only). Until the daemon converts
+ *  every version, it answers with a baum.review/1 document and its `view`
+ *  instead. */
+export type TilesAnswer = {
+  document: ReviewDocument | ReviewV2 | Record<string, unknown>;
+  /** TEMPORARY: the review page's view (`baum.view/1`) beside a
+   *  baum.review/1 document; gone once the daemon answers baum.review/2. */
+  view?: unknown;
+  problem?: string;
+  drafts?: unknown;
+};
+/** The tile route's answer as both of the page's documents: the
+ *  baum.review/2 document the tabs read, and the review the chrome reads
+ *  (the served baum.review/1 one while the daemon still answers with it,
+ *  else one made from the baum.review/2 document). */
+export function tilesAnswer(body: TilesAnswer): { chrome: ReviewDocument; review: ReviewV2 } {
+  const served = body.document as { schema?: unknown } | undefined;
+  if (served?.schema === REVIEW_V2) {
+    const review = parseReviewV2(served, body.drafts);
+    if (!review) throw Error("Invalid review document.");
+    return { chrome: chromeOf(review), review };
+  }
+  // TEMPORARY: a baum.review/1 document and its view, converted here until
+  // the daemon converts them (delete with review-view/from-v1.ts).
+  const chrome = validDocument(body.document as ReviewDocument);
+  return { chrome, review: fromV1(chrome, body.view, body.drafts) };
 }
-/** The daemon's answer for a review's tiles: `tiles` is null, with a
- *  `problem`, when the review could not be converted. */
-export type TilesAnswer = { document: ReviewDocument; tiles: unknown; problem?: string };
-export function tiledDocument(body: TilesAnswer): TiledDocument {
-  return withTiles(
-    validDocument(body.document),
-    body.tiles === null ? null : parseTileDocument(body.tiles),
-  );
+/** The review the page's chrome reads, carrying the baum.review/2 document
+ *  the tabs read. */
+export function tiledDocument(body: TilesAnswer): ReviewDocument {
+  const { chrome, review } = tilesAnswer(body);
+  return withReview(chrome, review);
+}
+/** Removes a tile the person added from every version of a pull request, or
+ *  puts it back where it was. */
+export function addedTileRequest(
+  clone: string,
+  pr: number,
+  tile: string,
+  action: "remove" | "restore",
+) {
+  return request<{ tile: string; action: string }>("api/tiles/added", {
+    clone,
+    pr,
+    tile,
+    action,
+  });
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
   return request<ReviewDocument>(
@@ -1274,7 +1342,7 @@ export function groupDocumentRequest(id: string, version?: number, signal?: Abor
     undefined,
     "GET",
     signal,
-  ).then(validDocument);
+  ).then(readableDocument);
 }
 export function rowKey(row: Entry) {
   return `${row.clone_id ?? ""}:${row.pull_request.repository}:${row.pull_request.number}`;

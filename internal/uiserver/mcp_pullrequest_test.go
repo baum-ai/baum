@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +62,7 @@ func newPullFixture(t *testing.T) *pullFixture {
 	}
 	reviewed := store.Metadata{Version: 1, Head: reviewedHead, Base: "bbbbbbbb", MergeBase: "bbbbbbbb", Backend: "claude", Model: "opus", GeneratedAt: "2026-11-01T10:00:00Z", RecordedCostUSD: ptr(0.5),
 		Session: &store.ReviewSession{Backend: "claude", ID: "secret-session", Directory: "/home/dev/secret-run"}}
-	reviewDocument := []byte(`{"review":{"repository":"owner/repo","pull_request":8,"version":1,"head":"` + reviewedHead + `","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"summary":{"text":"Overview8","context":{"text":"Context8"},"change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},"sections":[{"id":"sec_1","title":"Search box","kind":"logic","hunks":["h_1"],"assessment":"Sound","summary":{"text":"DETAILS-SEC-1"},"risks":[],"derived":{"state":"fresh"}},{"id":"sec_2","title":"Docs","kind":"docs","hunks":["h_2"],"assessment":"Fine","details":"failed","summary":null,"risks":[]}],"relations":[],"index":{"hunks":[{"id":"h_1","path":"main.go","change":"modified","additions":2,"deletions":1},{"id":"h_2","path":"docs.md","change":"added","additions":9,"deletions":0}]}}`)
+	reviewDocument := []byte(`{"schema":"baum.review/1","review":{"repository":"owner/repo","pull_request":8,"version":1,"head":"` + reviewedHead + `","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"summary":{"title":"Search","text":"Overview8","context":{"area":{"text":"Context8","refs":[]}},"change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},"sections":[{"id":"sec_1","title":"Search box","kind":"logical","hunks":["h_1"],"assessment":{"level":2,"factors":[],"reasons":[{"text":"Sound","anchors":[]}]},"summary":{"text":"The search box is new. DETAILS-SEC-1"},"risks":[],"blocks":[],"derived":{"state":"new"}},{"id":"sec_2","title":"Docs","kind":"logical","hunks":["h_2"],"assessment":{"level":1,"factors":[],"reasons":[{"text":"Fine","anchors":[]}]},"details":"failed","summary":null,"risks":[],"blocks":[]}],"relations":[],"index":{"hunks":[{"id":"h_1","path":"main.go","change":"modified","additions":2,"deletions":1},{"id":"h_2","path":"docs.md","change":"added","additions":9,"deletions":0}]}}`)
 	if err := versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 8}, store.Version{}, store.Version{Metadata: reviewed, Document: reviewDocument}); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func newPullFixture(t *testing.T) *pullFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	groupReview := []byte(`{"review":{"repository":"owner/repo","version":1,"head":"gh","base":"gb"},"stack":{"title":"Search","members":[{"number":7,"head_sha":"aaaaaaaa","review_version":1}]},"summary":{"text":"GroupOverview","context":{"text":"GroupContext"},"change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},"sections":[{"id":"gsec_1","title":"Group section","kind":"logic","hunks":[],"assessment":"ok","summary":{"text":"GROUP-DETAILS"},"risks":[]}],"relations":[],"index":{"hunks":[]}}`)
+	groupReview := []byte(`{"schema":"baum.review/1","review":{"repository":"owner/repo","version":1,"head":"gh","base":"gb"},"stack":{"title":"Search","members":[{"number":7,"head_sha":"aaaaaaaa","review_version":1}]},"summary":{"title":"Group","text":"GroupOverview","context":{"area":{"text":"GroupContext","refs":[]}},"change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},"sections":[{"id":"gsec_1","title":"Group section","kind":"logical","hunks":[],"summary":{"text":"GROUP-DETAILS"},"risks":[],"blocks":[]}],"relations":[],"index":{"hunks":[]}}`)
 	if err := groups.Put(ctx, own.ID, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: "gh", Base: "gb", Backend: "claude", Model: "opus", GeneratedAt: "2026-11-01T10:00:00Z"}, Document: groupReview}); err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func fakeJobs(cloneID string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, map[string]any{"draft": job.Draft, "document": json.RawMessage(`{"review":{"version":2,"head":"` + job.HeadSHA + `"},"summary":{"text":"DraftOverview of ` + job.ID + `"},"sections":[{"id":"d1","title":"Draft one","kind":"logic","hunks":[],"assessment":"a","details":"pending","summary":null,"risks":[]}],"relations":[]}`)})
+		writeJSON(w, map[string]any{"draft": job.Draft, "document": json.RawMessage(`{"schema":"baum.review/1","review":{"version":2,"head":"` + job.HeadSHA + `"},"summary":{"text":"DraftOverview of ` + job.ID + `"},"sections":[{"id":"d1","title":"Draft one","kind":"logical","hunks":[],"details":"pending","summary":null,"risks":[]}],"relations":[]}`)})
 	})
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", func(http.ResponseWriter, *http.Request) { panic("cancelled by a read") })
 	return mux
@@ -522,8 +523,12 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 		// plan_usage reads the daemon's cache through an accessor, and the
 		// projected tools read one exact route each (ToolProjected). The
 		// propose tools read nothing: their proposers save, when the person
-		// does, through the pages' own saves.
-		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && !strings.HasPrefix(tool, "propose_") && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" && tool != "github_repositories" {
+		// does, through the pages' own saves. add_tile and tile_type add and
+		// read tiles through the added tiles API and the tile library, never
+		// the reader, and the tools that make a tile in chat through
+		// ChatTiles; the tile guide is the kit's own.
+		tileTool := slices.Contains([]string{"tile_type", "add_tile", "tile_guide", "start_tile", "check_tile", "add_custom_tile"}, tool)
+		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && !tileTool && !strings.HasPrefix(tool, "propose_") && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" && tool != "github_repositories" {
 			t.Errorf("%s declares no route", tool)
 		}
 		prefixes = append(prefixes, tp...)

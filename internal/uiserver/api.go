@@ -16,12 +16,15 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tiledrafts"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/sessions"
 )
@@ -62,6 +65,9 @@ type LocalAPI struct {
 	// failed workflow runs. With merging, submitting a review and a
 	// fix's push, they are the GitHub writes the app makes.
 	Update http.Handler
+	// GitHubReads serves /api/prs/threads, /api/prs/timeline and /api/issue:
+	// read-only GitHub answers for baum's MCP tools.
+	GitHubReads http.Handler
 	// Groups serves /api/groups: review groups and their combined reviews
 	// (internal/reviewgroups).
 	Groups http.Handler
@@ -75,6 +81,10 @@ type LocalAPI struct {
 	// Inbox serves /api/inbox: the queue the daemon builds, with which saved
 	// inboxes hold each pull request (internal/inboxqueue).
 	Inbox http.Handler
+	// TileChecks serves /api/tile-checks/: the render check's runner routes
+	// and the tiles page's first-show preflight (internal/tilechecks).
+	// Without it the routes report the capability unavailable.
+	TileChecks http.Handler
 	// UIState keeps inbox bookkeeping and review drafts across browser origins.
 	UIState http.Handler
 	// GitHubRepositories serves the account's repositories for picking
@@ -139,6 +149,29 @@ type LocalAPI struct {
 	// Version is this baum's version, named in the "Report a problem" link
 	// that /api/diagnostics returns.
 	Version string
+	// Added keeps the tiles each person added to a pull request's review
+	// page, which the tile route serves and POST /api/tiles/added removes
+	// and restores. Without it no tile is added and the route reports the
+	// capability unavailable.
+	Added *addedtiles.Service
+	// Fills fills the tiles a person added to a review that a version has
+	// no data for; nil leaves them pending.
+	Fills TileFiller
+	// TileTypes is the person's tile library, which GET
+	// /api/tile-types/{name}/preview draws a type from and the Tile library
+	// page's routes (tilelibrarypage.go) list and change. Without it only baum's
+	// own types preview and the library is empty.
+	TileTypes *tilelibrary.Store
+	// TileImportCheck runs the render check on an imported tile type's
+	// samples (tilechecks.Checker.ImportCheck). An import runs it and refuses
+	// a type that fails; with no runner, or nil, the type is saved "Not
+	// checked yet", and the check runs in the background on its first
+	// preview once a runner is there, marking it checked (Store.MarkChecked).
+	TileImportCheck tilelibrary.SampleCheck
+	// Drafts are the pending cards of tiles being made in the session panel,
+	// which the tile route serves beside the tiles and DELETE
+	// /api/tiles/drafts removes. Nil serves none.
+	Drafts *tiledrafts.Store
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -212,6 +245,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("GET /api/prs/rerun-checks-options", update)
 	mux.Handle("POST /api/prs/rerun-checks", update)
 	mux.Handle("GET /api/prs/review-threads", update)
+	reads := provider(a.GitHubReads, "github_reads_unavailable")
+	mux.Handle("GET /api/prs/threads", reads)
+	mux.Handle("GET /api/prs/timeline", reads)
+	mux.Handle("GET /api/issue", reads)
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
 	mux.Handle("GET /api/prs/checks", update)
@@ -238,6 +275,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
 	mux.Handle("/api/console/", provider(a.Console, "console_unavailable"))
 	mux.Handle("/api/inbox", provider(a.Inbox, "inbox_unavailable"))
+	mux.Handle("/api/tile-checks/", provider(a.TileChecks, "tile_checks_unavailable"))
 	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))
@@ -375,6 +413,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
+	mux.HandleFunc("GET /api/settings/labs", a.getLabs)
+	mux.HandleFunc("PUT /api/settings/labs", a.putLabs)
 	// Custom prompts; a run resolves them when it starts, so no change
 	// notification is needed.
 	mux.HandleFunc("GET /api/settings/prompts", func(w http.ResponseWriter, r *http.Request) {
@@ -558,6 +598,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
 	mux.HandleFunc("GET /api/tile-library", tileLibrary)
+	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
+	a.tileLibraryRoutes(mux)
+	a.addedRoutes(mux)
+	a.draftRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
@@ -566,6 +610,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/commit-patch", document)
 	mux.HandleFunc("GET /api/file", document)
 	a.factsRoutes(mux, cache)
+	a.cloneRoutes(mux)
 	mux.HandleFunc("GET /api/attachments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		c, key, n, ok := a.selector(w, r)
 		if !ok {

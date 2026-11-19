@@ -26,7 +26,7 @@ func TestServedDigests(t *testing.T) {
 	}
 	for i, store := range findStores(t, dir) {
 		for j, v := range readStore(t, i, store) {
-			body, err := tileview.Encode(tileview.Build(v.document, nil, tiles.Options{}))
+			body, err := tileview.Encode(tileview.Serve(v.document, nil, nil, tiles.Options{}))
 			if err != nil {
 				t.Fatalf("store %d version %d: %v", i, j, err)
 			}

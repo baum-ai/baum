@@ -161,22 +161,19 @@ func hasTile(doc *tiles.Document, id string) bool {
 	return slices.ContainsFunc(doc.Tiles, func(tile tiles.Tile) bool { return tile.ID == id })
 }
 
-func entryOrder(doc *tiles.Document) []string {
+func tileOrder(doc *tiles.Document) []string {
 	var order []string
-	for _, entry := range doc.Layout.Entries {
-		order = append(order, entry.Tile)
+	for _, tile := range doc.Tiles {
+		order = append(order, tile.ID)
 	}
 	return order
 }
 
-func TestDefaultLayout(t *testing.T) {
+func TestConvertedTiles(t *testing.T) {
 	_, doc := convert(t, fixtureNamed(t, "base"))
 	want := []string{"overview", "risks", "sec_retry_policy", "sec_config_flag", "evidence", "media", "intent", "context", "decisions", "everything_else"}
-	if got := entryOrder(doc); !slices.Equal(got, want) {
+	if got := tileOrder(doc); !slices.Equal(got, want) {
 		t.Errorf("order = %v, want %v", got, want)
-	}
-	if doc.Layout.Landing != 8 {
-		t.Errorf("landing = %d, want 8 (two halves, then two rows of thirds)", doc.Layout.Landing)
 	}
 	data := tileByID(t, doc, "sec_retry_policy").Data
 	var change tiles.ChangeData
@@ -188,9 +185,9 @@ func TestDefaultLayout(t *testing.T) {
 	}
 
 	_, stale := convert(t, fixtureNamed(t, "stale-without-hunks"))
-	order := entryOrder(stale)
+	order := tileOrder(stale)
 	if got := order[len(order)-2:]; !slices.Equal(got, []string{"sec_old_approach", "sec_old_formatting"}) {
-		t.Errorf("the layout ends with %v, want the obsolete changes", got)
+		t.Errorf("the tiles end with %v, want the obsolete changes", got)
 	}
 	var obsolete tiles.ChangeData
 	if err := json.Unmarshal(tileByID(t, stale, "sec_old_approach").Data, &obsolete); err != nil {
@@ -205,9 +202,9 @@ func TestDefaultLayout(t *testing.T) {
 
 	_, many := convert(t, fixtureNamed(t, "many-changes"))
 	var changes []string
-	for _, entry := range many.Layout.Entries {
-		if entry.Group == tiles.GroupChanges {
-			changes = append(changes, entry.Tile)
+	for _, tile := range many.Tiles {
+		if tile.Type == tiles.TypeChange {
+			changes = append(changes, tile.ID)
 		}
 	}
 	// Review score descending, attention first within a score, otherwise
@@ -216,28 +213,9 @@ func TestDefaultLayout(t *testing.T) {
 	if !slices.Equal(changes, wantChanges) {
 		t.Errorf("changes = %v, want %v", changes, wantChanges)
 	}
-	visible := tiles.Visible(many.Layout)
-	shown := 0
-	for i, entry := range many.Layout.Entries {
-		if entry.Group == tiles.GroupChanges && visible[i] {
-			shown++
-		}
-	}
-	// Nine changes fold: six show, two rows under the overview and risks,
-	// and the other three wait behind the group's control.
-	if group := many.Layout.Groups[0]; group.ID != tiles.GroupChanges || group.CollapseAfter == nil || *group.CollapseAfter != tiles.ChangesShown {
-		t.Errorf("the changes group of nine is %+v, want it folded after %d", group, tiles.ChangesShown)
-	}
-	if shown != 6 {
-		t.Errorf("%d changes are shown on the landing page, want 6", shown)
-	}
-	// Eight or fewer are never folded.
-	if group := doc.Layout.Groups[0]; group.CollapseAfter != nil {
-		t.Errorf("the changes group of two is folded after %d", *group.CollapseAfter)
-	}
 
 	_, unscored := convert(t, fixtureNamed(t, "unscored"))
-	if got := entryOrder(unscored)[2:4]; !slices.Equal(got, []string{"sec_retry_policy", "sec_config_flag"}) {
+	if got := tileOrder(unscored)[2:4]; !slices.Equal(got, []string{"sec_retry_policy", "sec_config_flag"}) {
 		t.Errorf("unscored changes are in order %v, want document order", got)
 	}
 }
@@ -480,16 +458,6 @@ func TestCheckConversionDetectsLoss(t *testing.T) {
 		}},
 		{"a changed risk score", "invariant 5", func(doc *tiles.Document) { doc.RiskScore = json.RawMessage(`{"rubric":"risk-v1"}`) }},
 		{"a recommendation that appeared", "invariant 5", func(doc *tiles.Document) { doc.Recommendation = json.RawMessage(`null`) }},
-		{"risks past the landing page", "invariant 6", func(doc *tiles.Document) {
-			entries := doc.Layout.Entries
-			risks := entries[1]
-			doc.Layout.Entries = append(append([]tiles.Entry{entries[0]}, entries[2:]...), risks)
-			doc.Layout.Landing = tiles.Landing(doc.Layout)
-		}},
-		{"a tile placed twice", "invariant 7", func(doc *tiles.Document) {
-			doc.Layout.Entries = append(doc.Layout.Entries, doc.Layout.Entries[0])
-		}},
-		{"a stale landing count", "invariant 7", func(doc *tiles.Document) { doc.Layout.Landing = 2 }},
 		{"an unavailable tile", "invariant 8", func(doc *tiles.Document) { tileOf(doc, tiles.TypeEvidence).State = tiles.StateUnavailable }},
 		{"a tile with bad data", "invariant 8", func(doc *tiles.Document) { tileOf(doc, tiles.TypeEvidence).Data = json.RawMessage(`{"x":1}`) }},
 		{"changed text", "invariant 9", func(doc *tiles.Document) { doc.Risks[0].Text += " Changed." }},

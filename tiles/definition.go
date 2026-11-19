@@ -32,7 +32,7 @@ type TypeDefinition struct {
 	// Kit is the major version of the tile kit the component was written
 	// for (KitSupported).
 	Kit int `json:"kit"`
-	// Sizes are the layout sizes the glance was made for, in order of
+	// Sizes are the widths the glance was made for, in order of
 	// preference.
 	Sizes  []Size     `json:"sizes"`
 	Source TypeSource `json:"source"`

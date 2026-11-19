@@ -507,6 +507,16 @@ func (p *Proposers) groupTarget(page agentcontext.PageContext, name string) (*ta
 	}, nil
 }
 
+// pullRequestTarget is a target of a pull request's page: a tile type to
+// save, or else a comment for the person's pending review of the pull
+// request.
+func (p *Proposers) pullRequestTarget(page agentcontext.PageContext, name string) (*target, error) {
+	if rest, ok := strings.CutPrefix(name, agentcontext.TargetTileType); ok {
+		return p.tileTypeTarget(rest)
+	}
+	return p.reviewCommentTarget(page, name)
+}
+
 // reviewCommentTarget is a comment added to the person's pending review of
 // the pull request the page shows: the ui-state "review" record the app
 // keeps it in. Its revision is the record's own; the save appends the

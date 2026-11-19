@@ -22,9 +22,12 @@ type Space = { pane: number | null; viewport: { width: number; height: number } 
 export function ReviewImages({
   document,
   block,
+  heading = "Images",
 }: {
   document: ReviewDocument;
   block: ImagesBlock;
+  /** The heading over the images. */
+  heading?: string;
 }) {
   const attachmentUrl = useAttachmentUrl();
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
@@ -134,7 +137,7 @@ export function ReviewImages({
   );
 
   return (
-    <Part label="Images">
+    <Part label={heading}>
       <div ref={setPane} className="space-y-4">
         {rows.map((row) => (
           <div

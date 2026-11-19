@@ -110,6 +110,13 @@ file, and without a ticket key.
 - Textless and omitted hunks still need a section.
 - Typical pull requests need one to six logical sections. A one-purpose
   change is one section. Do not split for the sake of it.
+- Group by behaviour, never by kind of file. The docs, tests, config and
+  small fixes that go with a behaviour belong in that behaviour's section:
+  a feature and the README paragraph that explains it are one section, not
+  "Add X" and "Document X". A section of only docs (or only tests) is right
+  only when that is what the pull request is about, or when the change
+  stands apart from every code change in it (a typo fixed in an unrelated
+  guide); then name it by what it says or checks, not "Document …".
 - **Regeneration.** If `previous` is present, keep every previous section
   first, in the same order, with the same `id`, and give it the hunks it now
   covers. A previous section whose hunks have all gone keeps its ID with

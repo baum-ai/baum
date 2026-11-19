@@ -1,7 +1,8 @@
 import { agentName, appURL, type ChatFocus } from "./api";
 import { PAGES } from "./pages";
-import type { ReviewPageChoice } from "./preferences";
-import { reviewPageOf } from "./tiles/view";
+import { framesAllowedHere } from "./tiles/custom/environment";
+import { CODE_PLACE } from "./review-view/model";
+import { readSelection } from "@baum/viewer/review-selection";
 
 /** The pages a page context names, as the MCP server knows them
  *  (`agentcontext` page names): the sidebar's lists, and the pages of one
@@ -64,7 +65,18 @@ const encoder = new TextEncoder();
 const bytes = (text: string) => encoder.encode(text).length;
 /** The sections the MCP server knows (`settingsSections`,
  *  `repositorySections`); another is left out. */
-const SETTINGS_SECTIONS = ["general", "reviews", "fixes", "connections", "computer", "prompts"];
+const SETTINGS_SECTIONS = [
+  "general",
+  "reviews",
+  "fixes",
+  "connections",
+  "computer",
+  "prompts",
+  "tiles",
+];
+/** A saved tile type's name (`tilelibrary`), which the Tile library
+ *  section's address names as `type`. */
+const TILE_TYPE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const REPOSITORY_SECTIONS = ["reviews", "prompts", "registration"];
 const LIST_PAGES: ContextPage[] = ["inbox", "pulls", "timeline", "sessions", "analytics", "jobs"];
 
@@ -85,13 +97,11 @@ function filtersOf(search: URLSearchParams): Record<string, string> | undefined 
 /** The page context of the app's address, the one place the app derives it:
  *  the inverse of the MCP server's `link`. `cloneRepository` names the
  *  repository of a clone id, for a pull request's address that names its
- *  clone. `reviewPage` is the reader's review page setting, which the
- *  address's `view` overrides. */
+ *  clone. */
 export function pageContextOf(
   search: URLSearchParams,
   cloneRepository: (clone: string) => string | undefined = () => undefined,
   hash = "",
-  reviewPage: ReviewPageChoice = "full",
 ): PageContext {
   const requested = search.get("page") ?? "inbox";
   // A subject is named only as the MCP server takes it: a field of at most
@@ -105,9 +115,12 @@ export function pageContextOf(
   const clone = subject("clone");
   const repository = subject("repository") ?? (clone ? cloneRepository(clone) : undefined);
   if ((requested === "inbox" || requested === "pulls") && number > 0 && repository) {
-    const focus: Record<string, string> = tilesFocus(search, reviewPage);
+    const focus: Record<string, string> = tilesFocus(search);
     const anchor = hash.replace(/^#/, "");
     if (anchor) focus.anchor = anchor.slice(0, 512);
+    // A desktop shell that mounts no tile frames cannot show a tile made in
+    // chat: the agent is told so before it starts one.
+    if (typeof window !== "undefined" && !framesAllowedHere()) focus.frames = "off";
     return {
       page: "pull_request",
       repository,
@@ -117,8 +130,7 @@ export function pageContextOf(
   }
   const group = subject("group");
   if ((requested === "inbox" || requested === "pulls") && group) {
-    const focus = tilesFocus(search, reviewPage);
-    return { page: "group", group, ...(Object.keys(focus).length > 0 ? { focus } : {}) };
+    return { page: "group", group };
   }
   const session = subject("session");
   if (requested === "sessions" && session) return { page: "session", session };
@@ -129,7 +141,14 @@ export function pageContextOf(
   if (requested === "settings" || requested === "diagnostics") {
     // As the Settings page opens it: an unknown section is General.
     const asked = requested === "diagnostics" ? "computer" : (search.get("section") ?? "general");
-    return { page: "settings", section: SETTINGS_SECTIONS.includes(asked) ? asked : "general" };
+    const section = SETTINGS_SECTIONS.includes(asked) ? asked : "general";
+    // The Tile library's open type is its focus, as the agent reads it.
+    const type = section === "tiles" ? search.get("type") : null;
+    return {
+      page: "settings",
+      section,
+      ...(type && TILE_TYPE_NAME.test(type) ? { focus: { type } } : {}),
+    };
   }
   if (requested === "repositories") {
     const name = subject("repository");
@@ -148,19 +167,43 @@ export function pageContextOf(
   return withFilters({ page }, search);
 }
 
-/** On the tiles page, the review's focus says so, and names the tile open
- *  and the item in it; the full review, the default, adds nothing. */
-function tilesFocus(search: URLSearchParams, reviewPage: ReviewPageChoice) {
+/** The review page's focus says so and names where the
+ *  person is reading, so a tile made or added from chat stands there: the
+ *  tab, and on How it works the section (`context` for Where this fits), or
+ *  the tile a link opened; on Code the file open. */
+function tilesFocus(search: URLSearchParams) {
   const focus: Record<string, string> = {};
-  if (reviewPageOf(search, reviewPage) !== "tiles") return focus;
   focus.view = "tiles";
-  const tile = search.get("pane") === "tile" ? search.get("tile") : null;
-  if (tile && bytes(tile) <= MAX_PAGE_TEXT) {
-    focus.tile = tile;
-    const item = search.get("tile_item");
-    if (item && bytes(item) <= MAX_PAGE_TEXT) focus.item = item;
+  const fits = (value: string | null): value is string =>
+    Boolean(value) && bytes(value!) <= MAX_PAGE_TEXT;
+  const selection = readSelection(search);
+  switch (selection.kind) {
+    case "tile":
+      // The Code tab is a place of the page's own, not a tile.
+      if (selection.id === CODE_PLACE) {
+        focus.tab = "code";
+        if (fits(selection.item ?? null)) focus.file = selection.item!;
+        return focus;
+      }
+      focus.tab = "sections";
+      if (fits(selection.id)) focus.tile = selection.id;
+      return focus;
+    case "section":
+      focus.tab = "sections";
+      if (fits(selection.id)) focus.section = selection.id;
+      return focus;
+    case "risk":
+      focus.tab = "sections";
+      if (fits(selection.section)) focus.section = selection.section;
+      if (fits(selection.id)) focus.item = selection.id;
+      return focus;
+    case "changes":
+      focus.tab = "sections";
+      return focus;
+    default:
+      focus.tab = "overview";
+      return focus;
   }
-  return focus;
 }
 
 function withFilters(context: PageContext, search: URLSearchParams): PageContext {
@@ -175,6 +218,7 @@ const SECTION_TITLES: Record<string, string> = {
   connections: "Connections",
   computer: "This computer",
   prompts: "Prompts",
+  tiles: "Tile library",
   registration: "Registration",
 };
 
@@ -196,8 +240,13 @@ export function pageLabel(context: PageContext, title?: string): string {
       return named("Job");
     case "feature":
       return named("Feature");
-    case "settings":
-      return `Settings · ${SECTION_TITLES[context.section ?? "general"] ?? context.section}`;
+    case "settings": {
+      const section = `Settings · ${SECTION_TITLES[context.section ?? "general"] ?? context.section}`;
+      const type = (context.focus as { type?: unknown } | undefined)?.type;
+      return context.section === "tiles" && typeof type === "string"
+        ? `${section} · ${title ?? type}`
+        : section;
+    }
     case "repositories":
       return context.repository
         ? `${context.repository} · ${SECTION_TITLES[context.section ?? "reviews"] ?? context.section}`
@@ -229,10 +278,14 @@ export function hrefOf(context: PageContext): string {
       query.set("page", "timeline");
       query.set("feature", context.feature ?? "");
       break;
-    case "settings":
+    case "settings": {
       query.set("page", "settings");
       if (context.section) query.set("section", context.section);
+      const type = (context.focus as { type?: unknown } | undefined)?.type;
+      if (context.section === "tiles" && typeof type === "string" && TILE_TYPE_NAME.test(type))
+        query.set("type", type);
       break;
+    }
     case "repositories":
       query.set("page", "repositories");
       if (context.repository) query.set("repository", context.repository);

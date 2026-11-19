@@ -390,6 +390,16 @@ export function ReviewHeader({
                 <BranchChip name={facts.branches.base} />
               </span>
             ) : null}
+            {facts.lines ? (
+              <span className="inline-flex items-center gap-2 tabular-nums">
+                <Dot />
+                <Lines
+                  additions={facts.lines.additions}
+                  deletions={facts.lines.deletions}
+                  format={formatLinesCompact}
+                />
+              </span>
+            ) : null}
             {reviewMinutes !== null ? (
               // The dot goes with the time, so a line never ends on it; on a
               // phone, where the time takes a line of its own, there is none.

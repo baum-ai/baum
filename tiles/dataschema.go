@@ -1,6 +1,7 @@
 package tiles
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -212,6 +213,66 @@ func compileDataSchema(raw json.RawMessage) (*compiledSchema, []string) {
 		return nil, []string{"the schema does not compile with the JSON Schema library"}
 	}
 	return &compiledSchema{root: node}, nil
+}
+
+// StandaloneDataSchema returns a data schema in the dialect with the
+// reserved definitions it refers to, directly or through one another,
+// merged into its $defs, so that a tool which knows nothing of tile schemas,
+// such as a model's structured output, can resolve it on its own. The
+// schema's own members are kept as they are. It fails for a schema that is
+// not in the dialect (CheckDataSchema).
+func StandaloneDataSchema(raw json.RawMessage) (json.RawMessage, error) {
+	if _, problems := compileDataSchema(raw); len(problems) > 0 {
+		return nil, fmt.Errorf("tiles: the data schema is not valid: %s", strings.Join(problems, "; "))
+	}
+	shared, err := reserved()
+	if err != nil {
+		return nil, err
+	}
+	value, err := decodeCanonical(raw)
+	if err != nil {
+		return nil, err
+	}
+	root := value.(map[string]any)
+	defs := map[string]any{}
+	if own, ok := root["$defs"].(map[string]any); ok {
+		for name, def := range own {
+			defs[name] = def
+		}
+	}
+	var visit func(any)
+	visit = func(node any) {
+		switch node := node.(type) {
+		case map[string]any:
+			if ref, ok := node["$ref"].(string); ok {
+				name := strings.TrimPrefix(ref, reservedDefsPointer)
+				if _, done := defs[name]; !done && slices.Contains(reservedDefinitions, name) {
+					defs[name] = shared.raw[name]
+					visit(shared.raw[name])
+				}
+			}
+			for _, child := range node {
+				visit(child)
+			}
+		case []any:
+			for _, child := range node {
+				visit(child)
+			}
+		}
+	}
+	visit(root)
+	merged := make(map[string]any, len(root)+1)
+	for key, member := range root {
+		merged[key] = member
+	}
+	merged["$defs"] = defs
+	var b bytes.Buffer
+	encoder := json.NewEncoder(&b)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(merged); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(bytes.TrimSpace(b.Bytes())), nil
 }
 
 // resolveWithLibrary resolves the schema with the reserved definitions

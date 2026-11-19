@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -47,15 +48,67 @@ func (c *Backend) args(request agent.Request) []string {
 		// the working directory and refuses bypassPermissions, so the
 		// read-only tools named here can never execute code, reach the
 		// network or escape the run's scratch directory.
-		"--restricted", "--tools", "Read,Glob,Grep", "--json-schema", string(request.Schema))
+		"--restricted", "--tools", reviewTools(request), "--json-schema", string(request.Schema))
+	for _, dir := range request.ReadDirs {
+		args = append(args, "--add-dir", dir)
+	}
 	if !request.KeepsSession() {
 		args = append(args, "--no-session-persistence")
 	}
 	if request.ResumeSession != "" {
 		args = append(args, "--resume", request.ResumeSession)
 	}
-	return append(append(args, "--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
+	return append(append(args, "--settings", reviewSettings(request),
 		"--setting-sources", ""), mcpArgs(request)...)
+}
+
+// shell reports whether a review or task gets the sandboxed Bash tool: it
+// asked for one (agent.Request.Shell) and the sandbox can be enforced here.
+func shell(request agent.Request) bool {
+	ok, _ := SandboxAvailable()
+	return request.Shell && ok
+}
+
+// reviewTools are a review's or task's tools: the read-only file tools, and
+// Bash when it may run commands that read. --restricted removes Bash unless
+// --tools names it.
+func reviewTools(request agent.Request) string {
+	if shell(request) {
+		return "Read,Glob,Grep,Bash"
+	}
+	return "Read,Glob,Grep"
+}
+
+// sandboxedSettings turn Claude Code's sandbox on for Bash: commands run
+// without asking, inside the sandbox only (no unsandboxed fallback), which
+// lets them write nowhere outside the working directory and reach no
+// network.
+const sandboxedSettings = `{"permissions":{"blockReadsOutsideWorkingDirectories":true},"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true,"allowUnsandboxedCommands":false}}`
+
+// reviewSettings are a review's or task's --settings.
+func reviewSettings(request agent.Request) string {
+	if shell(request) {
+		return sandboxedSettings
+	}
+	return `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`
+}
+
+// SandboxAvailable reports whether Claude Code's sandbox can be enforced on
+// this machine, and why not: it needs macOS's sandbox, or bubblewrap and
+// socat on Linux; Windows has none.
+func SandboxAvailable() (bool, string) {
+	switch runtime.GOOS {
+	case "darwin":
+		return true, ""
+	case "linux":
+		for _, tool := range []string{"bwrap", "socat"} {
+			if _, err := exec.LookPath(tool); err != nil {
+				return false, "Claude Code's sandbox needs " + tool + ", which is not installed"
+			}
+		}
+		return true, ""
+	}
+	return false, "Claude Code has no sandbox on " + runtime.GOOS
 }
 
 // fixSystemPrompt frames a fix (Backend.Fix) whose commands run in the

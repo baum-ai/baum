@@ -74,7 +74,7 @@ deterministically, and `--limit` cuts the list):
 | `--detector-report` | Write the case ids by kind of detector evidence; see [Detectors](#detectors). |
 | `--case-file <path>` | Case ids from a file, one per line; blank lines and `#` comments are ignored. Same as repeating `--case`, and not combined with filters. |
 | `--chain` | Replay each pull request's revisions in order; see [Chains](#chains). |
-| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the compose stage over reviews that already exist; see [Composing tiles](#composing-tiles). |
+| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the view call over reviews that already exist; see [Presenting reviews](#presenting-reviews). |
 | `--limit N`, `--shuffle-seed N` | Cut the selection, after a seeded shuffle if given. |
 
 Settings. The defaults are the desktop app's built-in ones: Claude Code, the
@@ -87,7 +87,7 @@ so a run does not depend on them; the backend is `claude` unless named.
 | `--backend claude\|codex`, `--model`, `--effort` | The agent. Empty model and effort are the agent's own. `--model` takes what the agent takes, such as an alias like `sonnet`. |
 | `--staged` (default), `--no-staged` | Write the review in stages, or in one pass. `--no-staged` wins over `--staged`. |
 | `--reuse` | See [Previous versions](#previous-versions). |
-| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. With the compose stage the only id is `review-tiles-compose`, which replaces the whole composition prompt. |
+| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. With the view call alone, or the `tiles` generator, `review-view` replaces the view call's prompt. |
 | `--time-limit 10m` | Time limit of one case. |
 | `--claude-config-dir`, `--codex-home`, `--agent-env KEY=VALUE` | The config fields the app sets for its agents (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `agent_env`); repeatable for `--agent-env`. Without them the agent runs with the ambient login. |
 | `--no-transcript` | Do not keep the agent's transcript. |
@@ -121,68 +121,150 @@ leaves no files, so `--resume` runs it again.
 `BAUM_REPLAY_OUT`), which is outside any repository. Outputs hold private
 content and are never committed.
 
-## Composing tiles
+## Presenting reviews
 
-The compose stage arranges a review's tiles (`agent.ComposeRun`): one call with
-no tools reads an inventory of the review and returns a layout, which the host
-normalises into a `baum.composition/1` composition, falling back to the change
-kind's template when the call fails. Two flags run that stage alone, through the
-`compose` generator, over reviews that already exist, so a composition prompt
-can be tried for a few cents a case without running the analysis again:
+The view call (`agent.ViewRun`) presents a review on its page: one call with
+no tools writes a `baum.composition/2` with the overview's verdict and risk
+summary, the diagrams and which tiles stand on each section, which the host
+checks, falling back to the tiles placed by their hunks when the call fails.
+Two flags run it alone, through the `view` generator, over reviews that
+already exist, so its prompt can be iterated on a frozen set for a few cents a
+case without running the analysis again; `--prompt-override
+review-view=<file>` replaces the prompt:
 
 ```sh
-oss/bin/replay --dataset <dir> --compose-from-store --split calibration --representative --limit 60 --max-cases 60 --model sonnet
-oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-run> --model sonnet
+oss/bin/replay --dataset <dir> --compose-from-store --case-file <file outside git> --model sonnet
+oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-tiles-run> --prompt-override review-view=<file> --model sonnet
 ```
 
-- `--compose-from-store` composes the dataset's saved reviews
+- `--compose-from-store` presents the dataset's saved reviews
   (`reviews/<machine>/<repository>.versions.sqlite`, with their write-ahead
   logs, copied to a temporary directory that is removed when the run ends,
-  and read read-only). Cases are selected as usual; each composes the saved version
-  generated from its bundle (its metadata's `bundle_digest`), else the latest
-  version at the case's head, else the pull request's latest version. The
-  record says which (`review.match`: `bundle`, `head` or `latest`). A pull
+  and read read-only). Cases are selected as usual; each presents the saved
+  version generated from its bundle (its metadata's `bundle_digest`), else the
+  latest version at the case's head, else the pull request's latest version.
+  The record says which (`review.match`: `bundle`, `head` or `latest`). A pull
   request with no saved review fails with reason `internal`.
-- `--compose-only --from-run <run>` composes the review documents an earlier
+- `--compose-only --from-run <run>` presents the review documents an earlier
   run generated (`<run>/cases/<id>/document.json`), so the same analysis can be
-  arranged by several prompts.
+  presented by several prompts. From a run of the `tiles` generator it places
+  that run's library fills and exhibits again.
 
-Saved reviews have no composition, so neither mode passes a previous
-composition; `--chain` is refused. Each case's `document.json` is a compose
-record (`replay.compose/1`): the composition, the template's, whether it fell
-back and why, whether the reply needed its repair, the normalisation fixes by
-kind, the landing tiles of both layouts, whether the layout differs from the
-template's, the featured changes and promotions, the inventory's size and cuts,
-and the stage's seconds. Beside it:
+Either flag runs the `view` generator whatever `--generator` names, and
+`--chain` is refused. Each case's `document.json` is a view record
+(`replay.view/1`: the composition, fallback and why, repair, the checks'
+fixes by kind and first problems, diagrams by type, which overview parts are
+set, placements, the input's size and cuts, seconds); beside it are
+`composition.json`, `view.json` (the view the tile route would serve),
+`input.txt` and `reply.json`. Validation checks the composition against its
+schema, that checking it again changes nothing, and that a view is served.
+`replay metrics` adds `view_fallback`, `view_repaired`, `view_fixes` and
+`view_fix_<kind>` (`view_fix_placed` counts the tiles the host placed and is
+not a fix), `view_diagrams` and `view_diagrams_<type>`,
+`view_overview_diagram`, `view_verdict`, `view_risk_summary`,
+`view_screenshots`, `view_intent`, `view_placed`, `view_sections_with_tiles`,
+`view_input_bytes`, `view_input_cut` and `view_seconds`. A call the run's
+interruption stopped is an interrupted case, never a fallback.
+
+### The whole pipeline with tiles
+
+`--generator tiles` generates each case as the desktop does with tile reviews
+on: the staged review with its tile analysis (library selection in the
+outline, a fill per selected library type and the exhibits call beside the
+details and the context), then the view call at its end, within the time
+it leaves (`generate.Options.Tiles`). `--generator-option library=off` offers
+no library type and `--generator-option exhibits=off` writes no authored
+tile; both off is the pipeline as it was before the analysis, a baseline for
+its cost, time and effect on the review.
+
+```sh
+oss/bin/replay --dataset <dir> --generator tiles --case-file <file outside git> --model sonnet
+```
+
+`--library-dir <dir>` loads the exported tile type files in a directory
+(`*.baumtile.json`, as Settings › Tile library exports them) as the person's
+saved types, each passing every check an import does, and offers them to
+each case as the desktop does (`tilelibrary.Offer`: those whose paths match
+the case's diff, at most six beside the built-in types). They have no record
+of use, so they rank by name, and none is pinned. The manifest's settings
+name each type with its digest (`saved_tile_types`), the per-type metrics
+include them, and `--library-dir` with another generator is refused. This
+measures whether a saved type is selected where it should be and whether its
+fills pass their checks:
+
+```sh
+oss/bin/replay --dataset <dir> --generator tiles --library-dir <types outside git> --case-file <file outside git> --model sonnet
+```
+
+The case's `document.json` is the review, as with the `review` generator, so
+the review metrics, `--chain` and `--reuse` apply; staged prompt overrides and
+`review-view` may both be given. `--no-staged` is refused. Beside the
+document:
 
 | File | Holds |
 | --- | --- |
-| `composition.json` | The normalised composition, with its generator (prompt, model, template, fallback, fixes). |
-| `tiles.json` | The tile document the composition gives (`tiles.Compose`). |
-| `template.json`, `template-tiles.json` | The change kind's template and its tile document, for comparison. |
-| `inventory.txt` | The user message the composer read. |
-| `reply.json` | The composer's last reply, masked. |
+| `compose.json` | A record of the view stage (`replay.compose/2`): its fallback and why, repair, fixes by kind, input size, `cost_usd` and seconds, and `problem` when the version would have no composition. |
+| `composition.json` | The review view composition the version would store. |
+| `view.json` | The view the tile route would serve (`tileview.Build`). |
+| `provisional.json` | The composition drafts showed while the review was written. |
+| `inventory.txt`, `reply.json` | What the view call read and answered. |
+| `analysis.json` | The tile analysis: the outline's selection, each fill's state, reason, repair, time, cost and place on the served page, the exhibits returned, dropped by reason, dropped as restating the review and kept with the section each stands on, how long the review waited for them, and the points a library or authored tile states that another tile states too (`view.Duplicates`). |
+| `outcome.json` details | `outline_repairs` and `outline_rejections`: the outline stage's validation repairs and schema rejections, which the tile parts of its schema could add (compare a run with both options off). |
+| `fills/<type>.json`, `exhibits.json` | Each fill as it ended, its data included, and the exhibits call's result. |
 
-Validation normalises the stored composition again (it must change nothing),
-checks the composed document with the tile validator, and asserts every
-invariant of a generated document (`tilestest.CheckGenerated`): exact coverage,
-the overview and any severe risk on the landing page, every item presented
-once, the round trip back to the review.
+Validation is the review's (`ValidateStored`) plus the composition's, as
+above. `replay metrics` adds the review metrics, from `compose.json`
+`compose_fallback`, `compose_repaired`, `compose_fixes`,
+`compose_inventory_bytes`, `compose_seconds`, `compose_cost_usd` (the stage's
+share of `cost_usd`) and `compose_no_composition`, and from
+`analysis.json`: `library_selected`, `library_ready`, `library_reused`,
+`library_on_section` (on one of the review's sections, not Where this fits)
+and per type `library_<type>_selected`, `_ready`, `_not_applies`, `_dropped`,
+`_repaired`, `_reused` and `_on_section`;
+`fills_cost_usd`, `fills_seconds_max`; `exhibits_candidates` (proposed by the
+outline), `exhibits_called`, `exhibits_reused`, `exhibits_returned`, `exhibits_kept`, `exhibits_on_section`,
+`exhibits_dropped_<reason>`, `exhibits_cost_usd`, `exhibits_seconds`;
+`extras_wait_seconds`; and `extras_duplicate_pairs` and
+`extras_has_duplicate`. In a chain each
+revision is offered the composition the one before it got, when the same run
+generated it.
 
-`replay metrics` adds, per case: `compose_fallback`, `compose_repaired`,
-`compose_fixes` and `compose_fix_<kind>`, `compose_differs_from_template`,
-`compose_landing_differs`, `compose_featured_changes`, `compose_promotions`,
-`compose_reasons`, `compose_landing_tiles`, `compose_inventory_bytes`,
-`compose_inventory_cut`, `compose_seconds`, `compose_wasted_rows` (landing
-rows left with empty units while a tile follows), `compose_quiet_risks_half`
-(a risks tile ranking nothing above low on half of the first row), both also
-for the template (`template_` prefix), and, on reviews with a breaking change
-only, `compose_breaking_featured` (a change is featured; a proxy for the one
-carrying it). Their sums are the run's counters (fallbacks, repaired replies,
-cases that differ from the template). A backend that cannot make a single
-call composes nothing: every case falls back with the reason that it cannot
-complete. A stage the run's interruption stopped is an interrupted case, never
-a fallback.
+### baum.review/2 in levels
+
+`--generator v2` writes each case as a baum.review/2 document, as the desktop
+does with tile reviews on once the levels land (`generate.Options.V2`,
+`agent/orchestrate`): the map, then the section agents and the context agent
+at once, each tile once its section is written, and the overview. Every
+section is written; nothing is reused. `--generator-option concurrency=N`
+bounds a case's calls at once (default 4). Prompt overrides take the ids
+`review-v2-shared`, `review-map`, `review-section`, `review-context-v2`,
+`review-tile` and `review-overview`.
+
+```sh
+oss/bin/replay --dataset <dir> --generator v2 --case <id> --name v2-first --max-cost-usd 20
+```
+
+A case has no clone and no daemon, so its calls run over the unpacked
+`head/` and `merge-base/` trees and `bundle.json`, without baum's MCP server:
+what a backend without MCP gets. Claude Code has its sandboxed shell where the
+machine can enforce the sandbox (bubblewrap and socat on Linux, macOS);
+`progress.log` says when it does not.
+
+The case's `document.json` is the completed document. Beside it:
+
+| File | Holds |
+| --- | --- |
+| `calls/<level>/<id>/prompt.md`, `input.txt` | A call's instructions (with the tools and workspace sections) and the data after them. The levels are `map`, `sections`, `context`, `tiles` and `overview`; the id is the section's or tile's. |
+| `calls/<level>/<id>/reply.json`, `reply-2.json`, `findings-N.txt` | Each pass's reply, masked, and what the host found in it when it sent it back. A library tile's reply is its fill's data. |
+| `levels.json` | A `replay.v2/1` record: calls, tokens, repairs, seconds and `cost_usd` per level, the calls that ran, failed, were reused or skipped, and the document's generation record. |
+
+Validation checks the schema and that every hunk is in a section.
+`replay metrics` reports, from the document, `v2_sections`,
+`v2_logical_sections`, `v2_sections_failed`, `v2_tiles`, `v2_tiles_ready`,
+`v2_tiles_failed`, `v2_tiles_type_<type>`, `v2_blocks`, `v2_points`, `v2_risks`,
+`v2_context_missing` and `v2_overview_failed`; from `levels.json`
+`v2_repairs` and per level `v2_<level>_calls`, `_tokens`, `_seconds`,
+`_failed` and `_cost_usd`. Chains are not replayed.
 
 ## Detectors
 
@@ -456,8 +538,8 @@ the directory, be one of the runner's files, be the same file as another name
 ignoring case, or be both a file and a directory that holds another artifact, or
 the case fails), and lists them
 in `outcome.json` under `artifacts`; a rerun of the case starts its directory over. A
-generator that produces more than one file, such as a layout next to the review
-it was composed from, returns the rest this way.
+generator that produces more than one file, such as a composition next to the review
+it presents, returns the rest this way.
 
 Two optional interfaces add what depends on the format:
 

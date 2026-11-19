@@ -28,6 +28,7 @@ import (
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/decisions"
+	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentdirs"
@@ -52,6 +53,7 @@ import (
 	"github.com/baum-ai/baum/internal/githooks"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
+	"github.com/baum-ai/baum/internal/githubreads"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
@@ -72,6 +74,9 @@ import (
 	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tilechecks"
+	"github.com/baum-ai/baum/internal/tiledrafts"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -492,7 +497,26 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Held until the application is wired below: a journaled feature
 		// build needs the feature log, and the queue's logger and usage
 		// events are set after it opens.
-		queue, err := jobs.OpenHeld(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
+		// The tiles each person added to a pull request's review page, served
+		// on every version and draft the tile routes serve; a write tells
+		// the app's open page to read its tiles again. Reviews fill the
+		// library types people added (jobs.Local.Added).
+		tileLibrary := &tilelibrary.Store{Path: database}
+		added := &addedtiles.Service{Path: database, Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
+		}}
+		if err := added.Sweep(ctx); err != nil {
+			log.Warn("the added tiles were not swept", "error", err)
+		}
+		// A review's agent reads baum's MCP server with a read-only review
+		// token; the server is built after the executor, which reviewMCP
+		// learns once it is (Serve, below).
+		reviewMCP := &agentcontext.ReviewMCP{}
+		executor := &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log, Added: added, TileLibrary: tileLibrary, ReviewMCP: reviewMCP.Attach}
+		// The tiles a person added that a version has no data for are
+		// filled beside the queue.
+		tileFills := &jobs.TileFills{Ctx: ctx, Filler: executor, Added: added, Log: log}
+		queue, err := jobs.OpenHeld(database, executor, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
 			if job.Phase == "finished" {
 				changed()
@@ -522,6 +546,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
+		queue.SetAdded(added.Added)
 		hookRefresh := &hookrefresh.Service{Registry: registry, Cached: discover.Cached, Refresh: worker.RefreshNow, Trigger: scheduler.Trigger, Changed: changed, Log: log}
 		// Subscribed before the spool drains or the socket serves, so no
 		// event arrives unseen.
@@ -788,7 +813,23 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				log.Warn("the tile checks could not be prepared", "error", err.Error())
 			}
 		}()
-		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		// The render check: the app's check runner draws candidate tile types
+		// and the tiles page's first-show preflights.
+		tileChecks, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Database: database, Log: log,
+			Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+			Subscribed: server.Subscribed})
+		if err != nil {
+			log.Warn("the render check could not keep its verdicts", "error", err.Error())
+			tileChecks, _ = tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Log: log,
+				Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
+				Subscribed: server.Subscribed})
+		}
+		// The pending cards of tiles being made in the session panel; a
+		// change tells the open page to read its tiles again.
+		drafts := &tiledrafts.Store{Changed: func(pr string) {
+			_ = server.Publish("added_tiles", map[string]any{"pr": pr})
+		}}
+		local := uiserver.LocalAPI{Drafts: drafts, TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
@@ -796,7 +837,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 			}
 			return cached
-		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), GitHubReads: uiserver.GitHubReadsHandler(registry, &githubreads.Service{Client: githubClient}), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
 			Inboxes:   inboxesAPI.Handler(),
 			Groups:    groupsAPI.Handler(),
@@ -825,13 +866,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			}),
-			Diagnostics: uiDiagnostics, Version: version()}
+			Diagnostics: uiDiagnostics, Version: version(), Added: added, Fills: tileFills, TileTypes: tileLibrary}
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		// What a chat proposes is saved, when the person saves it, through
 		// the pages' own saves.
-		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState}
+		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState, TileTypes: tileLibrary}
 		if requests != nil {
 			proposers.CodexApprovals = func() bool { return requests.Settings().CodexApprovals }
 			proposers.SetCodexApprovals = func(on bool, check func(bool) error) error {
@@ -841,7 +882,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Added: uiserver.AddedTilesAPI{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary, Checks: tileChecks}, ChatTiles: &uiserver.ChatTiles{API: local, Checks: tileChecks, Drafts: drafts}, PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
 			listing, loaded, err := pickList.Cached(ctx, query)
 			if err != nil {
 				return agentcontext.PickList{}, err
@@ -864,6 +905,15 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			return "", errors.New("unknown clone")
 		}})
+		// The app server listens after Start returns, so its origin is read
+		// whenever an agent run starts.
+		mcpURL := func() string {
+			if origin := server.Origin(); origin != "" {
+				return origin + "/api/mcp"
+			}
+			return ""
+		}
+		reviewMCP.Serve(mcp.Registry, mcpURL)
 		// The session panel's conversations run the person's own agent CLI
 		// with baum's MCP server; each holds a chat token of this server.
 		// A store that does not open leaves the panel off, not the daemon.
@@ -871,14 +921,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			// Before each turn a stale SSH agent socket is replaced, as
 			// before a fetch.
 			SSHAgent: daemonSSHAgent().Socket,
-			// The app server listens after Start returns, so its origin is
-			// read at each turn.
-			MCPURL: func() string {
-				if origin := server.Origin(); origin != "" {
-					return origin + "/api/mcp"
-				}
-				return ""
-			},
+			MCPURL:   mcpURL,
 			Defaults: func(ctx context.Context) (console.Defaults, error) {
 				prefs, err := registry.Preferences(ctx)
 				if err != nil {
@@ -1024,6 +1067,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Close: func() {
 				sample.Close()
 				api.Close()
+				_ = tileChecks.Close()
 				groupsAPI.Close()
 				unsubscribe()
 				unsubscribeClones()

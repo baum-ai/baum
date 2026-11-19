@@ -1,0 +1,98 @@
+{
+  "repository": "acme/widgets",
+  "pull_request": {
+    "number": 42,
+    "state": "open",
+    "draft": false,
+    "title": "Retry failed webhook deliveries",
+    "body": "Failed deliveries now retry with a doubling wait.",
+    "author_login": "octocat",
+    "author_association": "MEMBER",
+    "author_bot": false,
+    "base_ref": "main",
+    "base_sha": "1111111111111111111111111111111111111111",
+    "head_ref": "retry-deliveries",
+    "head_sha": "2222222222222222222222222222222222222222",
+    "merge_base_sha": "1111111111111111111111111111111111111111",
+    "requested_reviewers": ["hubot"],
+    "commits": []
+  },
+  "diff": [
+    {
+      "id": "h_a00000000001",
+      "path": "internal/delivery/retry.go",
+      "change": "added",
+      "role": "code",
+      "start_line": 1,
+      "line_count": 12,
+      "additions": 12,
+      "deletions": 0,
+      "diff_url": "https://github.com/acme/widgets/pull/42/files#diff-1",
+      "patch": "@@ -0,0 +1,12 @@\n+package delivery\n+\n+import \"time\"\n+\n+// Policy says how often a failed delivery is retried.\n+type Policy struct {\n+\tAttempts int\n+\tBase     time.Duration\n+}\n+\n+// Wait is the wait before attempt n: Base doubled n-1 times.\n+func (p Policy) Wait(n int) time.Duration { return p.Base << (n - 1) }\n"
+    },
+    {
+      "id": "h_a00000000002",
+      "path": "internal/delivery/deliver.go",
+      "change": "modified",
+      "role": "code",
+      "start_line": 39,
+      "line_count": 6,
+      "additions": 4,
+      "deletions": 1,
+      "diff_url": "https://github.com/acme/widgets/pull/42/files#diff-2",
+      "patch": "@@ -39,3 +39,6 @@\n \tresp, err := c.post(ctx, d)\n-\tif err != nil {\n+\tif err != nil && retryable(err) {\n+\t\treturn c.retry.Schedule(ctx, d, err)\n+\t}\n+\tif err != nil {\n \t\treturn err\n"
+    },
+    {
+      "id": "h_a00000000003",
+      "path": "internal/delivery/retry_test.go",
+      "change": "added",
+      "role": "test",
+      "start_line": 1,
+      "line_count": 5,
+      "additions": 5,
+      "deletions": 0,
+      "diff_url": "https://github.com/acme/widgets/pull/42/files#diff-3",
+      "patch": "@@ -0,0 +1,5 @@\n+package delivery\n+\n+func TestWaitDoubles(t *testing.T) {\n+\tif (Policy{Base: 1}).Wait(3) != 4 { t.Fatal(\"no doubling\") }\n+}\n"
+    },
+    {
+      "id": "h_a00000000004",
+      "path": "go.sum",
+      "change": "modified",
+      "role": "generated",
+      "start_line": 10,
+      "line_count": 2,
+      "additions": 2,
+      "deletions": 2,
+      "diff_url": "https://github.com/acme/widgets/pull/42/files#diff-4",
+      "patch": "@@ -10,2 +10,2 @@\n-example.com/a v1.0.0 h1:x\n-example.com/a v1.0.0/go.mod h1:y\n+example.com/a v1.1.0 h1:z\n+example.com/a v1.1.0/go.mod h1:w\n"
+    }
+  ],
+  "checks": [
+    {"id": "ci", "name": "CI", "kind": "check_run", "status": "completed", "conclusion": "success", "required": true, "url": "https://github.com/acme/widgets/actions/runs/1"}
+  ],
+  "conversation": [],
+  "threads": [],
+  "sessions": [
+    {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "vendor": "claude",
+      "restricted": false,
+      "models": ["acme-model-1"],
+      "title": "Retry deliveries",
+      "started_at": "2026-11-10T09:00:00Z",
+      "ended_at": "2026-11-10T10:00:00Z",
+      "outcome": "committed",
+      "prompts": [
+        {"at": "2026-11-10T09:00:00Z", "index": 1, "id": "prompt-1", "text": "Retry failed webhook deliveries with a doubling wait, and stop after a few attempts."}
+      ],
+      "command_events": [
+        {"id": "ev_tests", "time": "2026-11-10T09:40:00Z", "outcome": "success", "commands": [{"program": "go", "category": "test", "target": "./internal/delivery/..."}]}
+      ]
+    }
+  ],
+  "references": [],
+  "attachments": [
+    {"id": "att_ab12", "path": "att_ab12.png", "content_type": "image/png", "alt": "The delivery log with a retry", "position": 1, "width": 800, "height": 600}
+  ],
+  "sources": {"diff": true, "review_threads": true}
+}

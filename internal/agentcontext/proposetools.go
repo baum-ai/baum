@@ -46,6 +46,7 @@ const (
 	TargetFixes              = "fixes"
 	TargetTimeLimits         = "time_limits"
 	TargetJobConcurrency     = "job_concurrency"
+	TargetLabs               = "labs"
 	TargetCodexApprovals     = "codex_approvals"
 	TargetAgentEnv           = "agent_env/"
 	TargetPrompt             = "prompt/"
@@ -92,7 +93,7 @@ func ParsePullRequestTarget(target string) (repository string, number int, ok bo
 var (
 	// proposePageTools are the propose_* tools of each page.
 	proposePageTools = map[string][]string{
-		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
+		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
 		PageRepositories: {"propose_repository_settings", "propose_prompt", "propose_prompt_reset"},
 		PageInbox:        {"propose_inbox"},
 		PageGroup:        {"propose_group"},
@@ -102,11 +103,12 @@ var (
 	// propose_* tools of each section, which current_page lists with the
 	// section's tools.
 	settingsSectionProposals = map[string][]string{
-		"general":  {"propose_appearance", "propose_plan_usage"},
-		"reviews":  {"propose_reviews", "propose_decision_capture"},
-		"fixes":    {"propose_fixes"},
-		"computer": {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
-		"prompts":  {"propose_prompt", "propose_prompt_reset"},
+		"general":    {"propose_appearance", "propose_plan_usage"},
+		"reviews":    {"propose_reviews", "propose_decision_capture", "propose_labs"},
+		"fixes":      {"propose_fixes"},
+		"computer":   {"propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
+		"prompts":    {"propose_prompt", "propose_prompt_reset"},
+		SectionTiles: {"propose_tile_type"},
 	}
 	repositorySectionProposals = map[string][]string{
 		"reviews": {"propose_repository_settings"},
@@ -375,6 +377,20 @@ func proposeTools() []Tool {
 				return "", err
 			}
 			return propose(ctx, c, PageSettings, TargetTimeLimits, a)
+		},
+	}, {
+		Name:        "propose_labs",
+		Description: "Proposes turning the experimental setting that generates new reviews as tiles on or off (tile_reviews), on the Settings page's Reviews section: with it on, one more short model call after each new review of a pull request arranges its tile page, and a review may finish up to 90 seconds after its time limit. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"tile_reviews":{"type":"boolean"}},"required":["tile_reviews"],"additionalProperties":false}`),
+		Proposes:    true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				TileReviews bool `json:"tile_reviews"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			return propose(ctx, c, PageSettings, TargetLabs, a)
 		},
 	}, {
 		Name:        "propose_job_concurrency",

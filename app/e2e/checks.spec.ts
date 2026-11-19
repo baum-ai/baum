@@ -29,7 +29,12 @@ test("live checks keep their rows aligned in the review Activity pane", async ({
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
-  await page.getByRole("tab", { name: /^Activity/ }).click();
+  // The side pane starts folded on the page's own places; its strip's
+  // Activity button opens it on that tab.
+  await page
+    .getByRole("region", { name: "Side pane" })
+    .getByRole("button", { name: "Activity", exact: true })
+    .click();
   const checks = page.getByRole("list", { name: "Checks", exact: true });
   await expect(checks.getByRole("listitem")).toHaveCount(1);
   await page.getByRole("button", { name: "Show 2 other checks", exact: true }).click();
@@ -104,7 +109,12 @@ test("a failing check shows the end of its log, folded until asked for", async (
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
-  await page.getByRole("tab", { name: /^Activity/ }).click();
+  // The side pane starts folded on the page's own places; its strip's
+  // Activity button opens it on that tab.
+  await page
+    .getByRole("region", { name: "Side pane" })
+    .getByRole("button", { name: "Activity", exact: true })
+    .click();
   const show = page.getByRole("button", { name: "Show log", exact: true });
   await expect(show).toHaveAttribute("aria-expanded", "false");
   expect(logReads).toBe(0);

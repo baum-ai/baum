@@ -1,10 +1,16 @@
-import { Markdown } from "@baum/viewer/components/markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { HighlightedCode } from "@baum/viewer/components/markdown";
 import { AnchorChips, PROSE } from "@baum/viewer/components/review-parts";
 import { type Column, Table } from "@baum/viewer/components/table";
-import { CodeIcon, DiagramIcon, QuoteIcon, TableIcon } from "../icons";
-import { Fill, plainText } from "../parts";
-import type { CodeData, DiagramData, ProseData, TableData } from "../tile-document";
+import { type Lang, languageForFence, languageForPath } from "@baum/viewer/highlight";
+import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
+
+export type ProseData = { text: string; anchors: Anchor[] };
+export type TableData = { columns: string[]; rows: string[][]; source: Anchor[] };
+export type DiagramData = { format: string; content: string; source: Anchor[] };
+export type CodeData = { language: string; content: string; caption?: string; source: Anchor[] };
 
 /** The generic tiles a composer writes for a point no other tile fits:
  *  prose, a table, a diagram's source and a code excerpt. */
@@ -12,13 +18,31 @@ import { isRecord, type TileFaceProps, type TileType } from "../types";
 const strings = (value: unknown) =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
 
-function ProseGlance({ tile, ctx }: TileFaceProps) {
+/** What a prose tile's Markdown may draw: paragraphs, emphasis, code spans
+ *  and lists. Links read as their text, and raw HTML stays text (no HTML
+ *  plugin), as the text is model-written. */
+const PROSE_ELEMENTS = ["p", "strong", "em", "code", "ul", "ol", "li", "br", "a"];
+const PROSE_COMPONENTS: Components = {
+  a: ({ children }) => <>{children}</>,
+  code: ({ children }) => (
+    <code className="rounded-xs bg-code-fill px-1 py-px font-mono text-base text-primary">
+      {children}
+    </code>
+  ),
+};
+
+export function ProseText({ text }: { text: string }) {
   return (
-    <Fill min="4.5rem">
-      <p className="text-base leading-normal text-primary">
-        {plainText((tile.data as ProseData).text, ctx.labels)}
-      </p>
-    </Fill>
+    <div className={`space-y-2 ${PROSE}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        allowedElements={PROSE_ELEMENTS}
+        unwrapDisallowed
+        components={PROSE_COMPONENTS}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -26,7 +50,7 @@ function ProseDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as ProseData;
   return (
     <div className="space-y-3">
-      <Markdown className={PROSE}>{data.text}</Markdown>
+      <ProseText text={data.text} />
       <AnchorChips document={ctx.review} anchors={data.anchors} />
     </div>
   );
@@ -51,22 +75,6 @@ function TableView({ data, rows }: { data: TableData; rows: string[][] }) {
   );
 }
 
-const GLANCE_ROWS = 4;
-
-function TableGlance({ tile }: TileFaceProps) {
-  const data = tile.data as TableData;
-  return (
-    <div className="space-y-1.5">
-      <div className="pointer-events-none overflow-hidden">
-        <TableView data={data} rows={data.rows.slice(0, GLANCE_ROWS)} />
-      </div>
-      {data.rows.length > GLANCE_ROWS ? (
-        <p className="text-xs text-tertiary">{data.rows.length - GLANCE_ROWS} more rows</p>
-      ) : null}
-    </div>
-  );
-}
-
 function TableDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as TableData;
   return (
@@ -75,20 +83,6 @@ function TableDetail({ tile, ctx }: TileFaceProps) {
       <AnchorChips document={ctx.review} anchors={data.source} />
     </div>
   );
-}
-
-/** The first lines of a text block, as code. */
-function Excerpt({ content, lines }: { content: string; lines: number }) {
-  const all = content.split("\n");
-  return (
-    <pre className="overflow-hidden rounded-md bg-code-fill p-2.5 font-mono text-xs leading-[1.5] text-primary">
-      <code>{all.slice(0, lines).join("\n")}</code>
-    </pre>
-  );
-}
-
-function DiagramGlance({ tile }: TileFaceProps) {
-  return <Excerpt content={(tile.data as DiagramData).content} lines={8} />;
 }
 
 function DiagramDetail({ tile, ctx }: TileFaceProps) {
@@ -104,24 +98,33 @@ function DiagramDetail({ tile, ctx }: TileFaceProps) {
   );
 }
 
-function CodeGlance({ tile }: TileFaceProps) {
-  const data = tile.data as CodeData;
-  return (
-    <div className="space-y-1.5">
-      <Excerpt content={data.content} lines={8} />
-      {data.caption ? <p className="truncate text-xs text-tertiary">{data.caption}</p> : null}
-    </div>
-  );
+/** Text compared without its closing full stop and outer space. */
+const bare = (text: string | undefined) => (text ?? "").trim().replace(/\.$/, "");
+
+/** The language a code tile's excerpt is coloured in: the one it names, else
+ *  the one the path of the first hunk it cites names. */
+export function codeLanguage(data: CodeData, review: ReviewDocument): Lang | null {
+  const named = languageForFence(data.language);
+  if (named) return named;
+  for (const anchor of data.source ?? []) {
+    if (anchor.type !== "hunk") continue;
+    const hunk = review.index.hunks.find((each) => each.id === anchor.id);
+    const lang = hunk ? languageForPath(hunk.path) : null;
+    if (lang) return lang;
+  }
+  return null;
 }
 
 function CodeDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as CodeData;
+  // The caption is the tile's headline, which the detail's heading shows.
+  const caption = data.caption && bare(data.caption) !== bare(tile.headline) ? data.caption : "";
   return (
     <div className="space-y-2">
       <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
-        <code>{data.content}</code>
+        <HighlightedCode code={data.content} lang={codeLanguage(data, ctx.review)} />
       </pre>
-      {data.caption ? <p className="text-base text-tertiary">{data.caption}</p> : null}
+      {caption ? <p className="text-base text-tertiary">{caption}</p> : null}
       <AnchorChips document={ctx.review} anchors={data.source} />
     </div>
   );
@@ -129,44 +132,32 @@ function CodeDetail({ tile, ctx }: TileFaceProps) {
 
 export const proseTile: TileType = {
   type: "prose",
-  label: "Notes",
-  icon: QuoteIcon,
-  Glance: ProseGlance,
   Detail: ProseDetail,
   valid: (data) => isRecord(data) && typeof data.text === "string",
-  commentAnchors: (_ctx, tile) => (tile.data as ProseData).anchors ?? [],
+  commentAnchors: (tile) => (tile.data as ProseData).anchors ?? [],
 };
 
 export const tableTile: TileType = {
   type: "table",
-  label: "Table",
-  icon: TableIcon,
-  Glance: TableGlance,
   Detail: TableDetail,
   valid: (data) =>
     isRecord(data) &&
     strings(data.columns) &&
     Array.isArray(data.rows) &&
     data.rows.every((row) => strings(row)),
-  commentAnchors: (_ctx, tile) => (tile.data as TableData).source ?? [],
+  commentAnchors: (tile) => (tile.data as TableData).source ?? [],
 };
 
 export const diagramTile: TileType = {
   type: "diagram",
-  label: "Diagram",
-  icon: DiagramIcon,
-  Glance: DiagramGlance,
   Detail: DiagramDetail,
   valid: (data) => isRecord(data) && typeof data.content === "string",
-  commentAnchors: (_ctx, tile) => (tile.data as DiagramData).source ?? [],
+  commentAnchors: (tile) => (tile.data as DiagramData).source ?? [],
 };
 
 export const codeTile: TileType = {
   type: "code",
-  label: "Code",
-  icon: CodeIcon,
-  Glance: CodeGlance,
   Detail: CodeDetail,
   valid: (data) => isRecord(data) && typeof data.content === "string",
-  commentAnchors: (_ctx, tile) => (tile.data as CodeData).source ?? [],
+  commentAnchors: (tile) => (tile.data as CodeData).source ?? [],
 };

@@ -8,7 +8,6 @@ import type { Selection } from "@baum/viewer/review-selection";
 import type { PR } from "./api";
 import { uiState } from "./ui-state";
 import { tileCommentTarget } from "./tiles/comments";
-import { tileDocOf } from "./tiles/tile-document";
 
 /** Where a comment lands on GitHub: a line of the reviewed diff, or a range
  *  ending on it. */
@@ -158,19 +157,7 @@ export function commentTarget(
     }
   }
   if (selection.kind === "tile") {
-    // A Change tile is its section: a comment on it, or on a risk in it, is
-    // the full review's, placed as the full review places it.
-    const change = tileDocOf(document)?.tiles.find(
-      (tile) => tile.id === selection.id && tile.type === "change",
-    );
-    if (change)
-      return commentTarget(
-        document,
-        selection.item
-          ? { kind: "risk", section: change.id, id: selection.item }
-          : { kind: "section", id: change.id },
-      );
-    const tile = tileCommentTarget(document, selection.id, selection.item, firstSentence);
+    const tile = tileCommentTarget(document, selection.id);
     if (tile) return { target: tile.target, place: placeOf(tile.anchors, hunks), head };
   }
   if (selection.kind === "file") {

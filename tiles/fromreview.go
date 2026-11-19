@@ -393,13 +393,11 @@ func (c *converter) convert() (*Document, error) {
 	if err := c.substrate(); err != nil {
 		return nil, err
 	}
-	tiles, entries, err := c.tiles()
+	tiles, err := c.tiles()
 	if err != nil {
 		return nil, err
 	}
 	c.doc.Tiles = tiles
-	c.doc.Layout = Layout{Entries: entries, Groups: groupsOf(entries)}
-	Arrange(c.doc)
 	return c.doc, nil
 }
 
@@ -538,14 +536,10 @@ func withField(object json.RawMessage, key string, value any) (json.RawMessage, 
 	return json.Marshal(fields)
 }
 
-func (c *converter) tiles() ([]Tile, []Entry, error) {
+func (c *converter) tiles() ([]Tile, error) {
 	src := c.source
 	var tiles []Tile
-	var entries []Entry
-	place := func(tile Tile, size Size, group string) {
-		tiles = append(tiles, tile)
-		entries = append(entries, Entry{Tile: tile.ID, Size: size, Group: group})
-	}
+	place := func(tile Tile) { tiles = append(tiles, tile) }
 
 	overview, err := json.Marshal(OverviewData{
 		Text:           src.Summary.Text,
@@ -555,17 +549,17 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 		Attention:      src.Summary.Attention,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	place(Tile{ID: TypeOverview, Type: TypeOverview, Title: tileTitle(src.Summary.Title, TypeOverview), Headline: headline(src.Summary.Text), Data: overview, State: StateReady}, SizeHalf, "")
+	place(Tile{ID: TypeOverview, Type: TypeOverview, Title: tileTitle(src.Summary.Title, TypeOverview), Headline: headline(src.Summary.Text), Data: overview, State: StateReady})
 
 	order := reviewOrder(c.sections)
 	ranked := c.rankedRisks(order)
 	risks, err := json.Marshal(RisksData{Ranked: ranked})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	place(Tile{ID: TypeRisks, Type: TypeRisks, Title: "Risks", Headline: risksHeadline(c.doc.Risks, ranked), Data: risks, State: StateReady}, SizeHalf, "")
+	place(Tile{ID: TypeRisks, Type: TypeRisks, Title: "Risks", Headline: risksHeadline(c.doc.Risks, ranked), Data: risks, State: StateReady})
 
 	var mechanical *section
 	changeTiles := map[string]Tile{}
@@ -575,7 +569,7 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 		}
 		blocks, err := c.split(i, s)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		// The schema allows one mechanical section; should a review hold
 		// more, the first is everything else and the others are shown as
@@ -587,39 +581,39 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 		}
 		tile, err := changeTile(s, blocks)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		changeTiles[s.ID] = tile
 	}
 	for _, s := range order {
 		if tile, ok := changeTiles[s.ID]; ok {
-			place(tile, SizeThird, GroupChanges)
+			place(tile)
 		}
 	}
 
-	place(Tile{ID: TypeEvidence, Type: TypeEvidence, Title: "Evidence", Headline: evidenceHeadline(c.doc.Evidence), Data: json.RawMessage(`{}`), State: StateReady}, SizeThird, "")
+	place(Tile{ID: TypeEvidence, Type: TypeEvidence, Title: "Evidence", Headline: evidenceHeadline(c.doc.Evidence), Data: json.RawMessage(`{}`), State: StateReady})
 
 	if len(c.moved.media) > 0 {
 		data, err := json.Marshal(MediaData{Items: c.moved.media})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		place(Tile{ID: TypeMedia, Type: TypeMedia, Title: "Media", Headline: countHeadline(len(c.moved.media), "media block", "media blocks"), Data: data, State: StateReady}, SizeThird, "")
+		place(Tile{ID: TypeMedia, Type: TypeMedia, Title: "Media", Headline: countHeadline(len(c.moved.media), "media block", "media blocks"), Data: data, State: StateReady})
 	}
 
 	var implements []json.RawMessage
 	if err := json.Unmarshal(src.Summary.Implements, &implements); err != nil {
-		return nil, nil, fmt.Errorf("tiles: summary.implements: %w", err)
+		return nil, fmt.Errorf("tiles: summary.implements: %w", err)
 	}
 	if implements == nil {
-		return nil, nil, errors.New("tiles: summary.implements is not an array")
+		return nil, errors.New("tiles: summary.implements is not an array")
 	}
 	if len(implements) > 0 || len(c.moved.lines) > 0 {
 		data, err := json.Marshal(IntentData{Implements: src.Summary.Implements, Lines: nonNil(c.moved.lines)})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		place(Tile{ID: TypeIntent, Type: TypeIntent, Title: "Intent", Data: data, State: StateReady}, SizeThird, "")
+		place(Tile{ID: TypeIntent, Type: TypeIntent, Title: "Intent", Data: data, State: StateReady})
 	}
 
 	switch {
@@ -630,29 +624,29 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 			} `json:"area"`
 		}
 		if err := json.Unmarshal(src.Summary.Context, &context); err != nil {
-			return nil, nil, fmt.Errorf("tiles: summary.context: %w", err)
+			return nil, fmt.Errorf("tiles: summary.context: %w", err)
 		}
-		place(Tile{ID: TypeContext, Type: TypeContext, Title: "Context", Headline: headline(context.Area.Text), Data: src.Summary.Context, State: StateReady}, SizeThird, "")
+		place(Tile{ID: TypeContext, Type: TypeContext, Title: "Context", Headline: headline(context.Area.Text), Data: src.Summary.Context, State: StateReady})
 	case len(src.Summary.Context) > 0:
-		return nil, nil, errors.New("tiles: summary.context is null")
+		return nil, errors.New("tiles: summary.context is null")
 	case c.opts.Draft:
-		place(Tile{ID: TypeContext, Type: TypeContext, Title: "Context", Data: json.RawMessage(`{}`), State: StatePending}, SizeThird, "")
+		place(Tile{ID: TypeContext, Type: TypeContext, Title: "Context", Data: json.RawMessage(`{}`), State: StatePending})
 	}
 
 	if len(c.moved.decisions) > 0 {
 		data, err := json.Marshal(DecisionsData{Items: c.moved.decisions})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		place(Tile{ID: TypeDecisions, Type: TypeDecisions, Title: "Decisions", Headline: countHeadline(len(c.moved.decisions), "decision", "decisions"), Data: data, State: StateReady}, SizeThird, "")
+		place(Tile{ID: TypeDecisions, Type: TypeDecisions, Title: "Decisions", Headline: countHeadline(len(c.moved.decisions), "decision", "decisions"), Data: data, State: StateReady})
 	}
 
 	if mechanical != nil || len(src.UnassignedHunks) > 0 {
 		tile, err := everythingElseTile(mechanical, nonNil(src.UnassignedHunks))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		place(tile, SizeThird, "")
+		place(tile)
 	}
 
 	for _, s := range c.sections {
@@ -661,12 +655,12 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 		}
 		tile, err := changeTile(s, nonNil(s.Blocks))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		tile.Covers = nil
-		place(tile, SizeThird, GroupObsolete)
+		place(tile)
 	}
-	return nonNil(tiles), nonNil(entries), nil
+	return nonNil(tiles), nil
 }
 
 func changeTile(s *section, blocks []json.RawMessage) (Tile, error) {
@@ -735,35 +729,6 @@ func detailsState(s *section) string {
 		return StateFailed
 	}
 	return StateReady
-}
-
-// The Changes group shows every change up to ChangesShownAll; with more it
-// shows ChangesShown, two rows of thirds, and folds the rest behind its own
-// control, which then always holds at least three.
-const (
-	ChangesShown    = 6
-	ChangesShownAll = 8
-)
-
-func groupsOf(entries []Entry) []Group {
-	groups := []Group{}
-	present := map[string]bool{}
-	count := map[string]int{}
-	for _, entry := range entries {
-		present[entry.Group] = true
-		count[entry.Group]++
-	}
-	if present[GroupChanges] {
-		changes := Group{ID: GroupChanges, Title: "Changes"}
-		if count[GroupChanges] > ChangesShownAll {
-			changes.CollapseAfter = new(ChangesShown)
-		}
-		groups = append(groups, changes)
-	}
-	if present[GroupObsolete] {
-		groups = append(groups, Group{ID: GroupObsolete, Title: "Obsolete changes", CollapseAfter: new(0)})
-	}
-	return groups
 }
 
 // reviewOrder returns the sections in the order a reviewer reads them, as the

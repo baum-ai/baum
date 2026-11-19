@@ -44,6 +44,13 @@ type Generator interface {
 	Validate(document []byte, c Case) []string
 }
 
+// GeneratedValidator is implemented by a generator whose validation needs the
+// artifacts it wrote beside the document: the runner then calls
+// ValidateGenerated instead of Validate.
+type GeneratedValidator interface {
+	ValidateGenerated(g Generated, c Case) []string
+}
+
 // Chainer is implemented by a generator whose document can be the previous
 // version of the next revision of a pull request, which a chain run needs.
 type Chainer interface {
@@ -296,7 +303,11 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 			out.BundleDigest = generated.BundleDigest
 		}
 		out.Notes, out.Details = generated.Notes, generated.Details
-		out.ValidationFindings = r.generator.Validate(generated.Document, c)
+		if v, ok := r.generator.(GeneratedValidator); ok {
+			out.ValidationFindings = v.ValidateGenerated(generated, c)
+		} else {
+			out.ValidationFindings = r.generator.Validate(generated.Document, c)
+		}
 		out.DocumentValid = len(out.ValidationFindings) == 0
 		if !out.DocumentValid {
 			out.Status, out.Reason = "failed", string(generate.CategoryValidation)
@@ -403,6 +414,10 @@ type trackedBackend struct {
 // review runs its details and context at once where the backend allows.
 func (b *trackedBackend) ConcurrentCalls() bool { return generate.ConcurrentCalls(b.CheckedBackend) }
 
+// KeepsSessions forwards the backend's agent.SessionKeeper, so the overview
+// resumes the map's session where the backend allows.
+func (b *trackedBackend) KeepsSessions() bool { return agent.KeepsSessions(b.CheckedBackend) }
+
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	id := b.n.Add(1)
 	name := fmt.Sprintf("call-%d %s pass %d", id, r.Stage, r.Pass)
@@ -430,17 +445,15 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 	return result, err
 }
 
-// canComplete reports whether the backend can make a single structured call.
-func (b *trackedBackend) canComplete() bool {
-	_, ok := b.CheckedBackend.(agent.Completer)
-	return ok
-}
+// CanComplete reports whether the backend can make a single structured call
+// (generate.CompleteChecker).
+func (b *trackedBackend) CanComplete() bool { return generate.CompleterOf(b.CheckedBackend) != nil }
 
 // Complete forwards a single structured call (agent.Completer), logging it
 // as a call of the "compose" stage.
 func (b *trackedBackend) Complete(ctx context.Context, r agent.CompleteRequest) (agent.Completion, error) {
-	completer, ok := b.CheckedBackend.(agent.Completer)
-	if !ok {
+	completer := generate.CompleterOf(b.CheckedBackend)
+	if completer == nil {
 		return agent.Completion{}, generate.ErrCannotComplete
 	}
 	id := b.n.Add(1)

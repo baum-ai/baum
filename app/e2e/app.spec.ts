@@ -180,7 +180,7 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   await expect(page.getByText("Source screenshot request", { exact: true })).toBeVisible();
   await expect(page.locator('[aria-current="step"]')).toContainText("Source screenshot request");
   await page.goBack();
-  await page.getByRole("button", { name: "Summary", exact: true }).click();
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
@@ -350,12 +350,25 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(pr).toBeVisible();
   await pr.click();
   await expect(page.getByText("No review yet", { exact: true })).toBeVisible();
+  // With no review yet the page is the review's own rail: the Overview says
+  // so, How it works has no sections yet, and the viewer's Summary and
+  // Changes are not drawn.
+  const rail = page.locator("#review-rail");
+  const railButton = (name: string) => rail.getByRole("button", { name: new RegExp(`^${name}`) });
+  await expect(railButton("Overview")).toHaveAttribute("aria-pressed", "true");
+  await expect(railButton("How it works")).toBeDisabled();
+  await expect(rail).toContainText("No sections yet.");
+  await expect(railButton("Summary")).toHaveCount(0);
+  await expect(railButton("Changes")).toHaveCount(0);
   // The fixture's discovery reports PR 10's new head once this marker exists.
   await writeFile(join(process.env.BAUM_APP_STATE_DIR ?? "", "push-10"), "");
   const progress = page.getByRole("region", { name: "Review generation", exact: true });
   await expect(
     progress.getByText(/Started automatically because new commits were pushed/),
   ).toBeVisible({ timeout: 15000 });
+  // Generating, the page keeps that rail.
+  await expect(railButton("Overview")).toHaveAttribute("aria-pressed", "true");
+  await expect(railButton("Changes")).toHaveCount(0);
   await expect(
     page.getByText("Adds notes, settings and a renamed guide.", { exact: true }),
   ).toBeVisible({ timeout: 30000 });

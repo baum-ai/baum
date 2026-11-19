@@ -187,13 +187,6 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
-		// The frame route applies its own, stricter fetch-metadata checks and
-		// answers every refusal with the same 404, so it runs before the
-		// cross-site check below.
-		if strings.HasPrefix(r.URL.Path, framePrefix) {
-			serveFrame(w, r)
-			return
-		}
 		// Browsers label every request with where it came from. The app's own
 		// requests are same-origin and a typed or native navigation is none.
 		// Requests from inside a page or frame of another origin (fetch,
@@ -209,6 +202,10 @@ func (s *Server) Handler() http.Handler {
 				http.Error(w, "cross-site request refused", http.StatusForbidden)
 				return
 			}
+		}
+		if strings.HasPrefix(r.URL.Path, framePrefix) {
+			serveFrame(w, r)
+			return
 		}
 		if r.URL.Path == mcpPath {
 			s.serveMCP(w, r)
@@ -368,7 +365,7 @@ var errEventTooLarge = errors.New("event too large")
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" {
+	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" && kind != "added_tiles" && kind != "tile_check" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)
@@ -397,6 +394,10 @@ func (s *Server) Publish(kind string, data any) error {
 	return nil
 }
 
+// Subscribed reports whether the app's event stream is connected: whether
+// any page of the app is open to hear an event.
+func (s *Server) Subscribed() bool { return s.hasSubscribers() }
+
 // hasSubscribers reports whether an event stream is connected.
 func (s *Server) hasSubscribers() bool {
 	s.mu.Lock()
@@ -419,6 +420,13 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A connection with no cursor is a page loading: it is not sent the
+	// render check's events from before it connected (a check long over would
+	// open or close the check window again). The page asks the daemon what
+	// is waiting instead. A reconnection, which has a cursor, is replayed
+	// them.
+	fresh := r.Header.Get("Last-Event-ID") == ""
+	var skipChecksUpTo uint64
 	ch := make(chan struct{}, 1)
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
@@ -445,8 +453,15 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintf(w, "id: %d\nevent: reset\ndata: {}\n\n", latest)
 			after = latest
 		}
+		if fresh {
+			skipChecksUpTo, fresh = latest, false
+		}
 		for _, e := range events {
 			if e.ID > after {
+				if e.Kind == "tile_check" && e.ID <= skipChecksUpTo {
+					after = e.ID
+					continue
+				}
 				if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Kind, e.Data); err != nil {
 					return
 				}

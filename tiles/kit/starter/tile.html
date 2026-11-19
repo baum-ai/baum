@@ -1,0 +1,66 @@
+<style>
+  /* Only layout of your own here: colours, type, radii and spacing come
+     from the kit's classes and var(--…) tokens. */
+  .rows {
+    min-height: 0;
+    overflow: hidden;
+  }
+</style>
+<script>
+  // Status tones are for status only (kit-badge, kit-dot, kit-callout).
+  const TONE = { high: "critical", medium: "caution", low: "neutral" };
+  const RANK = { high: 0, medium: 1, low: 2 };
+  const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  const sorted = (items) => [...items].sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+
+  // The glance answers "do I need to open this?" and must fit its box:
+  // a lead line, a few rows, a foot. Nothing in it is interactive.
+  function glance({ data, size }) {
+    if (data.items.length === 0) return baum.empty("Nothing to show.");
+    const items = sorted(data.items);
+    const room = size === "third" ? 3 : 4;
+    const high = items.filter((item) => item.severity === "high").length;
+    return baum.html`<div class="kit-glance">
+      <div class="kit-row" data-wrap="no">
+        <span class="kit-lede kit-truncate kit-grow">${plural(items.length, "item")}</span>
+        ${high ? baum.html`<span class="kit-badge" data-tone="critical">${high} high</span>` : null}
+      </div>
+      <ul class="kit-list rows" data-gap="1">
+        ${items.slice(0, room).map(
+          (item) => baum.html`<li>
+            <span class="kit-dot" data-tone=${TONE[item.severity]}></span>
+            <span class="kit-truncate kit-grow">${item.title}</span>
+          </li>`,
+        )}
+      </ul>
+      ${items.length > room ? baum.html`<p class="kit-foot"><span>${items.length - room} more</span></p>` : null}
+    </div>`;
+  }
+
+  // The detail shows everything in the data; every item cites its code.
+  function detail({ data }) {
+    if (data.items.length === 0) return baum.empty("Nothing to show in this pull request.");
+    return baum.html`<div class="kit-stack" data-gap="6">
+      ${baum.md(data.summary)}
+      <section class="kit-section">
+        <h2 class="kit-heading">Items</h2>
+        ${sorted(data.items).map(
+          (item, i) => baum.html`<article class="kit-card kit-stack" data-tone=${item.severity === "high" ? "critical" : null}>
+            <div class="kit-row">
+              <span class="kit-strong kit-break kit-grow">${item.title}</span>
+              <span class="kit-badge" data-tone=${TONE[item.severity]}>${item.severity}</span>
+            </div>
+            ${item.text ? baum.md(item.text) : null}
+            <div class="kit-row">${item.cites.map((citation) => baum.cite(citation))}</div>
+            <details class="kit-details" open=${i < 3}>
+              <summary>Code</summary>
+              ${baum.diff(item.cites[0], { maxLines: 12 })}
+            </details>
+          </article>`,
+        )}
+      </section>
+    </div>`;
+  }
+
+  baum.tile({ glance, detail });
+</script>

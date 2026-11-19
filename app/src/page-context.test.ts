@@ -1,6 +1,14 @@
 import { beforeEach, expect, it } from "vitest";
 import shared from "../../internal/agentcontext/testdata/page-contexts.json";
-import { hrefOf, pageContextOf, pageLabel, samePage, type PageContext } from "./page-context";
+import type { ChatFocus } from "./api";
+import {
+  hrefOf,
+  pageContextOf,
+  pageLabel,
+  samePage,
+  withPicked,
+  type PageContext,
+} from "./page-context";
 
 // The cases the MCP server's own test checks too (TestAppPageContextsAreValid).
 const clones: Record<string, string> = shared.clones;
@@ -14,6 +22,21 @@ beforeEach(() => {
 it("derives the page context of every address the app opens", () => {
   for (const c of shared.cases as { query: string; hash?: string; context: PageContext }[])
     expect(of(c.query, c.hash), c.query).toEqual(c.context);
+});
+
+it("adds a tile an Ask picked to the focus, as the tile tools read it", () => {
+  const picked = shared.picked as {
+    query: string;
+    focus?: ChatFocus;
+    context: PageContext;
+  }[];
+  for (const c of picked) {
+    const context = of(c.query);
+    const pull = { repository: "acme/demo", pull_request: 7 };
+    expect(withPicked(context, c.focus ? { ...pull, focus: c.focus } : null), c.query).toEqual(
+      c.context,
+    );
+  }
 });
 
 it("names a subject only as the MCP server takes it", () => {
@@ -31,6 +54,10 @@ it("names the page as the panel's bar does, and links back to it", () => {
   expect(pageLabel(pr)).toBe("acme/demo #7");
   expect(pageLabel(pr, "Fix it")).toBe("Fix it · acme/demo #7");
   expect(pageLabel({ page: "settings", section: "fixes" })).toBe("Settings · Fixes");
+  expect(pageLabel({ page: "settings", section: "tiles" })).toBe("Settings · Tile library");
+  expect(
+    pageLabel({ page: "settings", section: "tiles", focus: { type: "migration_steps" } }),
+  ).toBe("Settings · Tile library · migration_steps");
   expect(pageLabel({ page: "pulls" })).toBe("Pull requests");
   expect(pageLabel({ page: "session", session: "codex:s1" })).toBe("Codex session");
   for (const query of [
@@ -40,6 +67,7 @@ it("names the page as the panel's bar does, and links back to it", () => {
     "page=jobs&job=j1",
     "page=timeline&feature=f1",
     "page=settings&section=fixes",
+    "page=settings&section=tiles&type=migration_steps",
     "page=repositories&repository=acme%2Fdemo&section=prompts",
     "page=pulls&filter=all",
   ]) {

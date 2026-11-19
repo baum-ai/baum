@@ -1,17 +1,42 @@
 <!--
-  A hostile tile: it tries every way out of its frame it can name, records
-  what each attempt did, draws the record and posts it to the page as
-  {probe: "escape_probe", results}. A browser test asserts that every way
-  is closed. Its data names the outside origin to aim at and whether to try
-  navigating the frame away (which ends the probe's own document).
+  A hostile tile. What it does depends on its data's mode:
+
+  - probe: tries every way out of its frame it can name, records what each
+    attempt did, draws the record and posts it to the page as
+    {probe: "escape_probe", mode, face, results}.
+  - spoof: posts the page messages it must not act on (wrong shapes, a huge
+    payload, a resize far past the bounds, jumps, asks and keys without the
+    reader's focus) and posts other frames messages pretending to be the page.
+  - flood: posts the page far more messages than it allows, for seconds.
+  - leave_daemon, leave_outside: navigates its own frame to a page of the
+    daemon, or to the outside origin (a meta refresh as well).
+  - leave_early: navigates its own frame to the daemon before it draws.
+  - hello_again: says hello again, well formed, after it drew.
+  - focus: takes the keyboard every 200ms for three seconds.
+  - busy: runs a busy loop of a second and a half after it drew.
+
+  Only the probe mode acts in a glance, and spoof's frame messages; the
+  others act in a detail, so the landing page stays usable. Its data names
+  the outside origin to aim at (a sink a browser test listens on), and a
+  hunk it cites. A browser test asserts that every way out is closed.
 -->
 <base href="http://outside.invalid/base/">
-<link rel="stylesheet" href="http://outside.invalid/link.css">
-<link rel="prefetch" href="http://outside.invalid/prefetch">
-<img src="http://outside.invalid/static-image" alt="">
-<form id="leak" action="http://outside.invalid/form" method="post"><input name="q" value="x"></form>
+<link rel="stylesheet" href="http://127.0.0.1:4170/static/link.css">
+<link rel="stylesheet" href="/static-daemon-link.css">
+<link rel="prefetch" href="http://127.0.0.1:4170/static/prefetch">
+<img src="http://127.0.0.1:4170/static/image" alt="">
+<img src="/static-daemon-image" alt="">
+<style>
+  @font-face { font-family: probe-outside; src: url("http://127.0.0.1:4170/static/font.woff2"); }
+  @font-face { font-family: probe-daemon; src: url("/static-daemon-font.woff2"); }
+  .probe-outside { font-family: probe-outside; background-image: url("http://127.0.0.1:4170/static/background"); }
+  .probe-daemon { font-family: probe-daemon; background-image: url("/static-daemon-background"); }
+</style>
+<form id="leak" action="http://127.0.0.1:4170/form" method="post"><input name="q" value="x"></form>
 <iframe src="/tile-frames/0000000000000000000000000000000000000000000000000000000000000000"></iframe>
+<iframe src="http://127.0.0.1:4170/static/frame"></iframe>
 <script>
+  const PROTOCOL = "baum.tile/1";
   const results = {};
   const attempt = (name, f) => {
     try {
@@ -20,38 +45,110 @@
       results[name] = `threw ${error && error.name}`;
     }
   };
-  const report = () => {
-    parent.postMessage({ probe: "escape_probe", results }, "*");
+  const report = (mode, face) => {
+    parent.postMessage({ probe: "escape_probe", mode, face, results }, "*");
   };
+  const daemon = (path) => new URL(path, location.href).href;
+  let probed = null;
 
-  function probe(outside) {
+  function probe(outside, face) {
     attempt("origin", () => self.origin);
     attempt("location", () => location.href);
     attempt("parent document", () => parent.document.title);
     attempt("top location", () => top.location.href);
+    attempt("parent location", () => parent.location.href);
     attempt("cookie", () => document.cookie);
     attempt("localStorage", () => localStorage.length);
     attempt("sessionStorage", () => sessionStorage.length);
     attempt("indexedDB", () => indexedDB.open("probe"));
+    const cacheRead = new Promise((resolve) => {
+      try {
+        caches.keys().then(
+          () => resolve((results.caches = "read")),
+          (error) => resolve((results.caches = `failed ${error && error.name}`)),
+        );
+      } catch (error) {
+        resolve((results.caches = `threw ${error && error.name}`));
+      }
+    });
     attempt("parent bridge", () => parent.__TAURI_INTERNALS__);
     attempt("webkit handlers", () => Object.keys((window.webkit && window.webkit.messageHandlers) || {}).join(","));
     attempt("window.open", () => window.open(`${outside}/open`));
+    attempt("window.open daemon", () => window.open(daemon("/open")));
+    for (const dialog of ["alert", "confirm", "prompt"]) {
+      attempt(dialog, () => {
+        const start = Date.now();
+        const answer = window[dialog]("probe");
+        return `${answer} after ${Date.now() - start}ms`;
+      });
+    }
     attempt("top navigation", () => {
       top.location.href = `${outside}/top`;
+      return "assigned";
+    });
+    attempt("parent navigation", () => {
+      parent.location = daemon("/");
       return "assigned";
     });
     attempt("form submit", () => {
       document.getElementById("leak").submit();
       return "submitted";
     });
-    attempt("RTCPeerConnection", () => typeof RTCPeerConnection === "function" && new RTCPeerConnection({ iceServers: [{ urls: "stun:outside.invalid:3478" }] }));
-    attempt("WebSocket", () => new WebSocket("ws://outside.invalid/socket"));
-    attempt("EventSource", () => new EventSource(`${outside}/events`));
-    attempt("sendBeacon", () => navigator.sendBeacon(`${outside}/beacon`, "data"));
+    attempt("nested frame", () => {
+      const frame = document.createElement("iframe");
+      frame.src = `${outside}/nested`;
+      document.body.append(frame);
+      const daemonFrame = document.createElement("iframe");
+      daemonFrame.src = daemon("/");
+      document.body.append(daemonFrame);
+      return "appended";
+    });
+    attempt("focus", () => {
+      const input = document.createElement("input");
+      input.setAttribute("aria-label", "probe");
+      document.body.append(input);
+      input.focus();
+      window.focus();
+      return `focused ${document.hasFocus()}`;
+    });
+    attempt("RTCPeerConnection", () =>
+      typeof RTCPeerConnection === "function"
+        ? Object.prototype.toString.call(new RTCPeerConnection({ iceServers: [{ urls: "stun:127.0.0.1:4171" }] }))
+        : "absent",
+    );
+    attempt("WebSocket outside", () => new WebSocket(`${outside.replace(/^http/, "ws")}/socket`));
+    attempt("WebSocket daemon", () => new WebSocket(daemon("/api/events").replace(/^http/, "ws")));
+    attempt("EventSource outside", () => new EventSource(`${outside}/events`));
+    attempt("EventSource daemon", () => new EventSource(daemon("/api/events")));
+    attempt("sendBeacon outside", () => navigator.sendBeacon(`${outside}/beacon`, "data"));
+    attempt("sendBeacon daemon", () => navigator.sendBeacon(daemon("/api/settings"), "data"));
     attempt("image", () => {
       new Image().src = `${outside}/image`;
+      new Image().src = daemon("/image");
       return "set";
     });
+    attempt("stylesheet", () => {
+      for (const href of [`${outside}/style.css`, daemon("/style.css")]) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        document.head.append(link);
+      }
+      const probes = document.createElement("div");
+      probes.innerHTML = '<span class="probe-outside">o</span><span class="probe-daemon">d</span>';
+      document.body.append(probes);
+      return "appended";
+    });
+    attempt("worker", () => new Worker(daemon("/worker.js")));
+    const font = (name, url) =>
+      new FontFace(name, `url(${url})`).load().then(
+        () => {
+          results[name] = "loaded";
+        },
+        (error) => {
+          results[name] = `failed ${error && error.name}`;
+        },
+      );
     const request = (name, url, init) =>
       fetch(url, init).then(
         async (response) => {
@@ -61,17 +158,18 @@
           results[name] = "failed";
         },
       );
-    const xhr = new Promise((resolve) => {
-      try {
-        const x = new XMLHttpRequest();
-        x.open("GET", "/api/settings");
-        x.onload = () => resolve((results.xhr = `read ${x.status}`));
-        x.onerror = () => resolve((results.xhr = "failed"));
-        x.send();
-      } catch (error) {
-        resolve((results.xhr = `threw ${error && error.name}`));
-      }
-    });
+    const xhr = (name, url) =>
+      new Promise((resolve) => {
+        try {
+          const x = new XMLHttpRequest();
+          x.open("GET", url);
+          x.onload = () => resolve((results[name] = `read ${x.status}`));
+          x.onerror = () => resolve((results[name] = "failed"));
+          x.send();
+        } catch (error) {
+          resolve((results[name] = `threw ${error && error.name}`));
+        }
+      });
     return Promise.all([
       request("read API", "/api/settings", { credentials: "include" }),
       request("write API", "/api/settings", {
@@ -82,35 +180,149 @@
       }),
       request("MCP", "/api/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
       request("frame route", location.pathname),
+      request("daemon root", "/"),
       request("outside", `${outside}/fetch`),
-      xhr,
-    ]);
+      request("outside no-cors", `${outside}/fetch-no-cors`, { mode: "no-cors" }),
+      xhr("xhr daemon", "/api/settings"),
+      xhr("xhr outside", `${outside}/xhr`),
+      font("font outside", `${outside}/font.woff2`),
+      font("font daemon", daemon("/font.woff2")),
+      cacheRead,
+    ]).then(() => new Promise((resolve) => setTimeout(resolve, 300)));
   }
 
-  function leave(outside) {
-    const refresh = document.createElement("meta");
-    refresh.httpEquiv = "refresh";
-    refresh.content = `0;url=${outside}/refresh`;
-    document.head.append(refresh);
-    location.href = `${outside}/navigate`;
+  /** Messages the page must not act on, and messages to every other frame
+   *  pretending to be the page. */
+  function spoof(face, cite) {
+    const sent = [];
+    const send = (name, message) => {
+      try {
+        parent.postMessage(message, "*");
+        sent.push(name);
+      } catch (error) {
+        sent.push(`${name}: threw ${error && error.name}`);
+      }
+    };
+    send("string", "hello");
+    send("array", [PROTOCOL, "hello"]);
+    send("no protocol", { kind: "jump", key: cite });
+    send("other protocol", { protocol: "baum.tile/2", kind: "jump", key: cite });
+    send("unknown kind", { protocol: PROTOCOL, kind: "navigate", url: "http://127.0.0.1:4170/spoof" });
+    send("hello again", { protocol: PROTOCOL, kind: "hello", kit: "1", registered: true });
+    send("resize as text", { protocol: PROTOCOL, kind: "resize", height: "999999" });
+    send("huge error", { protocol: PROTOCOL, kind: "error", code: "script_error", message: "x".repeat(4 * 1024 * 1024) });
+    send("huge unknown", { protocol: PROTOCOL, kind: "ready", metrics: { height: 10 }, padding: "y".repeat(4 * 1024 * 1024) });
+    send("jump uncited", { protocol: PROTOCOL, kind: "jump", key: JSON.stringify(["hunk", "h_000000000000", null]) });
+    send("jump cited", { protocol: PROTOCOL, kind: "jump", key: cite });
+    send("ask", { protocol: PROTOCOL, kind: "ask" });
+    send("open", { protocol: PROTOCOL, kind: "open" });
+    send("key", { protocol: PROTOCOL, kind: "key", key: "Escape", shift: false });
+    if (face === "detail") {
+      send("resize past the bounds", { protocol: PROTOCOL, kind: "resize", height: 1e9 });
+      send("ready past the bounds", { protocol: PROTOCOL, kind: "ready", metrics: { height: 1e9 } });
+    }
+    // The other frames of the page, told what to draw as if by the page.
+    let others = 0;
+    for (let index = 0; index < parent.length; index++) {
+      try {
+        const other = parent.frames[index];
+        if (other === window) continue;
+        other.postMessage({ protocol: PROTOCOL, kind: "update", data: { summary: "Spoofed by another tile", stores: [] }, refs: {} }, "*");
+        other.postMessage({ protocol: PROTOCOL, kind: "theme", theme: "dark" }, "*");
+        others++;
+      } catch {
+        // A frame that went away.
+      }
+    }
+    results.sent = sent.join(", ");
+    results.others = String(others);
   }
+
+  function flood() {
+    let count = 0;
+    const timer = setInterval(() => {
+      for (let i = 0; i < 4; i++) parent.postMessage({ protocol: PROTOCOL, kind: "resize", height: 200 + (count++ % 2) }, "*");
+      if (count > 4000) clearInterval(timer);
+    }, 20);
+  }
+
+  function leave(outside, where) {
+    if (where === "outside") {
+      const refresh = document.createElement("meta");
+      refresh.httpEquiv = "refresh";
+      refresh.content = `0;url=${outside}/refresh`;
+      document.head.append(refresh);
+      location.href = `${outside}/navigate`;
+    } else location.href = daemon("/");
+  }
+
+  function busy() {
+    const end = Date.now() + 1500;
+    while (Date.now() < end) {
+      // Nothing: the frame holds the thread.
+    }
+  }
+
+  function takeFocus() {
+    const input = document.createElement("input");
+    input.setAttribute("aria-label", "taker");
+    document.body.append(input);
+    const timer = setInterval(() => {
+      input.focus();
+      window.focus();
+    }, 200);
+    setTimeout(() => clearInterval(timer), 3000);
+  }
+
+  async function act(face, data) {
+    const cite = JSON.stringify(["hunk", data.cite.id, null]);
+    if (face === "detail" && data.mode === "leave_early") {
+      // Before it drew: the page never hears its ready.
+      leave(data.outside, "daemon");
+      return new Promise(() => {});
+    }
+    if (data.mode === "probe") {
+      // Once per frame: the kit draws again for each update the page sends,
+      // and every run takes the keyboard once, which past three steals would
+      // get the frame taken down before it reports.
+      probed ??= probe(data.outside, face);
+      await probed;
+      report(data.mode, face);
+    } else if (data.mode === "spoof") {
+      // After the page has the frame's ready.
+      setTimeout(() => {
+        spoof(face, cite);
+        report(data.mode, face);
+      }, 500);
+    } else if (face === "detail") {
+      // After the page has the frame's ready.
+      setTimeout(() => {
+        if (data.mode === "flood") flood();
+        else if (data.mode === "leave_daemon") leave(data.outside, "daemon");
+        else if (data.mode === "leave_outside") leave(data.outside, "outside");
+        else if (data.mode === "busy") busy();
+        else if (data.mode === "hello_again") parent.postMessage({ protocol: PROTOCOL, kind: "hello", kit: 1, registered: true }, "*");
+        else if (data.mode === "focus") takeFocus();
+        report(data.mode, face);
+      }, 500);
+    }
+  }
+
+  const table = () =>
+    baum.html`<table class="kit-table">
+      <tbody>
+        ${Object.entries(results).map(([name, result]) => baum.html`<tr><td>${name}</td><td class="kit-mono">${result.slice(0, 200)}</td></tr>`)}
+      </tbody>
+    </table>`;
 
   baum.tile({
     async glance({ data }) {
-      await probe(data.outside);
-      report();
-      if (data.leave) leave(data.outside);
-      return baum.html`<p class="kit-muted">${Object.keys(results).length} attempts</p>`;
+      await act("glance", data);
+      return baum.html`<p class="kit-muted">${data.mode}: ${Object.keys(results).length} attempts</p>`;
     },
     async detail({ data }) {
-      await probe(data.outside);
-      report();
-      if (data.leave) leave(data.outside);
-      return baum.html`<table class="kit-table">
-        <tbody>
-          ${Object.entries(results).map(([name, result]) => baum.html`<tr><td>${name}</td><td class="kit-mono">${result}</td></tr>`)}
-        </tbody>
-      </table>`;
+      await act("detail", data);
+      return baum.html`<div class="kit-stack"><p>${data.mode}</p>${baum.cite(data.cite)}${table()}</div>`;
     },
   });
 </script>

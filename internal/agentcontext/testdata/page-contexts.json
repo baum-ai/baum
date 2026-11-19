@@ -17,7 +17,12 @@
     { "query": "page=jobs", "context": { "page": "jobs" } },
     {
       "query": "repository=acme%2Fdemo&pr=7",
-      "context": { "page": "pull_request", "repository": "acme/demo", "pull_request": 7 }
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tab": "overview" }
+      }
     },
     {
       "query": "clone=c1&pr=7",
@@ -26,7 +31,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "anchor": "sec_rest" }
+        "focus": { "view": "tiles", "tab": "overview", "anchor": "sec_rest" }
       }
     },
     { "query": "page=pulls&clone=gone&pr=7", "context": { "page": "pulls" } },
@@ -42,6 +47,13 @@
     { "query": "page=settings", "context": { "page": "settings", "section": "general" } },
     { "query": "page=settings&section=fixes", "context": { "page": "settings", "section": "fixes" } },
     { "query": "page=settings&section=unknown", "context": { "page": "settings", "section": "general" } },
+    { "query": "page=settings&section=tiles", "context": { "page": "settings", "section": "tiles" } },
+    {
+      "query": "page=settings&section=tiles&type=migration_steps",
+      "context": { "page": "settings", "section": "tiles", "focus": { "type": "migration_steps" } }
+    },
+    { "query": "page=settings&section=tiles&type=Not%20a%20name", "context": { "page": "settings", "section": "tiles" } },
+    { "query": "page=settings&section=fixes&type=migration_steps", "context": { "page": "settings", "section": "fixes" } },
     { "query": "page=diagnostics", "context": { "page": "settings", "section": "computer" } },
     { "query": "page=repositories", "context": { "page": "repositories" } },
     {
@@ -55,6 +67,49 @@
     {
       "query": "page=pulls&Bad=1&ok_key=1&inbox=a",
       "context": { "page": "pulls", "filters": { "ok_key": "1" } }
+    },
+    {
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles&pane=tile&tile=risks",
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tab": "sections", "tile": "risks" }
+      }
+    },
+    {
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles&pane=section&section=context",
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tab": "sections", "section": "context" }
+      }
+    }
+  ],
+  "picked": [
+    {
+      "description": "An Ask about a part of the review page puts it in the focus.",
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles",
+      "focus": { "kind": "tile", "id": "sec_api", "title": "API changes" },
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tab": "overview", "kind": "tile", "id": "sec_api", "title": "API changes" }
+      },
+      "tile": "sec_api"
+    },
+    {
+      "description": "A tile open on the review page is the focus when none was picked.",
+      "query": "repository=acme%2Fdemo&pr=7&view=tiles&pane=tile&tile=context",
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "view": "tiles", "tab": "sections", "tile": "context" }
+      },
+      "tile": "context"
     }
   ]
 }

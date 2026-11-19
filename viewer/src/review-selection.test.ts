@@ -69,6 +69,7 @@ describe("withSelection", () => {
       { kind: "risks" as const },
       { kind: "section" as const, id: "sec_a" },
       { kind: "section" as const, id: "sec_a", decision: "dec_choice" },
+      { kind: "section" as const, id: "sec_a", view: "tests" },
       { kind: "risk" as const, section: "sec_a", id: "rsk_1" },
       { kind: "files" as const },
       { kind: "file" as const, id: "file_1" },
@@ -110,6 +111,16 @@ describe("withSelection", () => {
     });
     expect(withSelection(focused, { kind: "section", id: "sec_b" }).has("decision")).toBe(false);
     expect(withSelection(focused, { kind: "session", id: "run_1" }).has("decision")).toBe(false);
+  });
+  it("keeps a section's view as section_view, cleared with the section", () => {
+    const tests = withSelection(new URLSearchParams(), {
+      kind: "section",
+      id: "sec_a",
+      view: "tests",
+    });
+    expect(tests.toString()).toBe("pane=section&section=sec_a&section_view=tests");
+    expect(withSelection(tests, { kind: "section", id: "sec_b" }).has("section_view")).toBe(false);
+    expect(sameSelection(readSelection(tests), { kind: "section", id: "sec_a" })).toBe(false);
   });
 });
 

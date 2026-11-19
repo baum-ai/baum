@@ -54,10 +54,10 @@ func groupFor(ctx context.Context, c CallContext, repository, id string) (string
 	if err != nil {
 		return "", nil, err
 	}
-	if id == "" && c.Consumer.Kind != Action && c.HasPage {
+	if id == "" && !c.bound() && c.HasPage {
 		id = c.Page.Group
 	}
-	if id == "" && c.Consumer.Kind == Action {
+	if id == "" && c.bound() {
 		// An action's group is the one its pull request is in, when it is in
 		// exactly one.
 		groups, err := c.groupsOf(ctx, repository, c.Consumer.PullRequest)

@@ -1,0 +1,8 @@
+/* The app's own stylesheet, so the diagrams get the review page's tokens,
+   radii and type, plus this page's sources for Tailwind. */
+@import "../src/style.css";
+@source ".";
+
+body {
+  background: var(--surface-page);
+}

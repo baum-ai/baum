@@ -16,6 +16,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/tilestest"
@@ -173,8 +174,6 @@ func TestFrameRouteRefusesWithOneAnswer(t *testing.T) {
 		{"typed address", "GET", path, map[string]string{"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "none"}},
 		{"top-level from the app", "GET", path, map[string]string{"Sec-Fetch-Dest": "document"}},
 		{"site none", "GET", path, map[string]string{"Sec-Fetch-Site": "none"}},
-		{"same-site", "GET", path, map[string]string{"Sec-Fetch-Site": "same-site"}},
-		{"cross-site", "GET", path, map[string]string{"Sec-Fetch-Site": "cross-site"}},
 		{"embed", "GET", path, map[string]string{"Sec-Fetch-Dest": "embed", "Sec-Fetch-Mode": "no-cors"}},
 		{"object", "GET", path, map[string]string{"Sec-Fetch-Dest": "object", "Sec-Fetch-Mode": "no-cors"}},
 		{"frame", "GET", path, map[string]string{"Sec-Fetch-Dest": "frame"}},
@@ -191,6 +190,16 @@ func TestFrameRouteRefusesWithOneAnswer(t *testing.T) {
 		}
 		if len(w.Result().Cookies()) != 0 {
 			t.Errorf("%s: set a cookie", tc.name)
+		}
+	}
+	// Another site's request is refused before any route, the same for every
+	// digest, registered or not (the server's cross-site refusal).
+	for _, site := range []string{"same-site", "cross-site"} {
+		for _, target := range []string{path, framePrefix + strings.Repeat("0", 64)} {
+			w := frameRequest(t, s, "GET", target, map[string]string{"Sec-Fetch-Site": site})
+			if w.Code != http.StatusForbidden || strings.TrimSpace(w.Body.String()) != "cross-site request refused" || len(w.Result().Cookies()) != 0 {
+				t.Errorf("%s %s: %d %q", site, target, w.Code, w.Body.String())
+			}
 		}
 	}
 	// A request without any fetch metadata is counted, for a webview that
@@ -299,15 +308,20 @@ func TestCustomTileFromTheTilesRouteLoadsItsFrame(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+s.launch)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
-	body := decodeTiles(t, w)
+	var body struct {
+		Document reviewv2.Document `json:"document"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
 	if bytes.Contains(w.Body.Bytes(), []byte("baum.tile(")) {
 		t.Fatal("the tile route sent a tile's HTML")
 	}
 	for _, id := range tileviewtest.CustomTileIDs {
-		var tile *tiles.Tile
-		for i := range body.Tiles.Tiles {
-			if body.Tiles.Tiles[i].ID == id {
-				tile = &body.Tiles.Tiles[i]
+		var tile *reviewv2.Tile
+		for i := range body.Document.Tiles {
+			if body.Document.Tiles[i].ID == id {
+				tile = &body.Document.Tiles[i]
 			}
 		}
 		if tile == nil {
@@ -338,15 +352,5 @@ func TestCustomTileFromTheTilesRouteLoadsItsFrame(t *testing.T) {
 				t.Errorf("%s: %s %v, frame %d", id, tile.State, tile.Problems, frame.Code)
 			}
 		}
-	}
-}
-
-// The library lists the types this version ships: none yet.
-func TestTileLibraryIsEmpty(t *testing.T) {
-	f := newTilesFixture(t)
-	w := httptest.NewRecorder()
-	f.handler.ServeHTTP(w, httptest.NewRequest("GET", "http://local/api/tile-library", nil))
-	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"types":[]}` {
-		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 }

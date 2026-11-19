@@ -738,11 +738,20 @@ button.baum-diff-path:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The directory gives way first, then the file name from its start. */
 .baum-diff-path > span:first-child {
-  flex: 0 1 auto;
+  flex: 0 1000 auto;
+  min-width: 0;
 }
 .baum-diff-path > span:last-child {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+}
+.baum-diff-path > span:last-child > span {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 .baum-diff-stat {
   flex: none;

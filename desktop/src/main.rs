@@ -27,6 +27,7 @@ mod panel;
 mod settings;
 mod status;
 mod theme;
+mod tile_files;
 mod tray;
 mod updater;
 mod zoom;
@@ -401,6 +402,7 @@ fn main() {
             updater::install_update,
             updater::cancel_update,
             updater::dismiss_update_notice,
+            tile_files::save_tile_type,
         ])
         .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
@@ -509,7 +511,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They get only the folder
-    /// picker and CLI/hook management, on loopback; the bundled screens get
+    /// picker, CLI/hook management and the tile type save dialog, on loopback; the bundled screens get
     /// exactly their commands and no remote URL, and the tray panel's page
     /// only its own, in its own window. The check window's daemon page gets
     /// no command at all. Every page in the main window gets the zoom
@@ -518,7 +520,7 @@ mod tests {
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
             "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom", "allow-theme-state"],
-            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom", "allow-save-theme", "allow-update-state", "allow-check-for-updates", "allow-install-update", "allow-cancel-update", "allow-dismiss-update-notice", "allow-open-check-window", "allow-close-check-window"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom", "allow-save-theme", "allow-update-state", "allow-check-for-updates", "allow-install-update", "allow-cancel-update", "allow-dismiss-update-notice", "allow-save-tile-type", "allow-open-check-window", "allow-close-check-window"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",

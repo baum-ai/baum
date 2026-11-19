@@ -407,6 +407,10 @@ func proposalCases() []proposalCase {
 		},
 		change: fixed("PUT", "/api/settings/time-limits", `{"review_time_limit_minutes":20,"run_time_limit_minutes":20}`),
 	}, {
+		name: "labs", page: settingsAt("reviews"), tool: "propose_labs", args: map[string]any{"tile_reviews": true},
+		route:  fixed("PUT", "/api/settings/labs", `{"tile_reviews":true}`),
+		change: fixed("PUT", "/api/settings/labs", `{"tile_reviews":true}`),
+	}, {
 		name: "job concurrency", page: settingsAt("computer"), tool: "propose_job_concurrency", args: map[string]any{"job_concurrency": 2},
 		route:  fixed("PUT", "/api/settings/job-concurrency", `{"job_concurrency":2}`),
 		change: fixed("PUT", "/api/settings/job-concurrency", `{"job_concurrency":3}`),

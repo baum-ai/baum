@@ -13,6 +13,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -49,6 +50,32 @@ type Settings struct {
 	// the global switches (see DecisionsEnabled): nil and true follow them,
 	// false turns the repository off.
 	Decisions *bool `json:"decisions,omitempty"`
+	// Tiles are the repository's standing preferences for the tile pages of
+	// its reviews (TileSettings); nil is none.
+	Tiles *TileSettings `json:"tiles,omitempty"`
+}
+
+// MaxPinnedTileTypes is how many saved tile types a repository can pin.
+const MaxPinnedTileTypes = MaxTileTypes
+
+// tileTypeName is a saved tile type's name, as the tile library takes it.
+var tileTypeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+// ErrTooManyPins reports a repository that already pins MaxPinnedTileTypes
+// tile types.
+var ErrTooManyPins = fmt.Errorf("%w: a repository pins at most %d tile types", ErrInvalidSettings, MaxPinnedTileTypes)
+
+// empty reports settings that choose nothing: every field is empty.
+func (t TileSettings) empty() bool {
+	return len(t.Types) == 0
+}
+
+// PinnedTileTypes is the tile types the settings pin, never nil.
+func (s Settings) PinnedTileTypes() []string {
+	if s.Tiles == nil || s.Tiles.Types == nil {
+		return []string{}
+	}
+	return slices.Clone(s.Tiles.Types)
 }
 
 // AutomaticEnabled reports whether the daemon generates reviews of this
@@ -229,7 +256,21 @@ type Preferences struct {
 	// Panel is what the session panel opens a conversation with
 	// (ResolvePanel).
 	Panel PanelPreferences `json:"panel,omitzero"`
+	// Labs are experimental features, each off until turned on.
+	Labs LabsPreferences `json:"labs,omitzero"`
 }
+
+// LabsPreferences turn experimental features on. Each is off by default.
+type LabsPreferences struct {
+	// TileReviews arranges each new review of a single pull request as tiles
+	// after it is written (generate.Options.Tiles): one more model call,
+	// without tools, chooses which tiles lead and their sizes, and the
+	// layout is stored with the version.
+	TileReviews *bool `json:"tile_reviews,omitempty"`
+}
+
+// TileReviewsOn reports whether reviews are arranged as tiles.
+func (l LabsPreferences) TileReviewsOn() bool { return l.TileReviews != nil && *l.TileReviews }
 
 // PanelPreferences are the session panel's defaults. An empty Agent follows
 // the fix agent, model included; a nil Model is the fix agent's model when
@@ -1249,6 +1290,10 @@ func cloneStamp(clone Clone) (string, bool) {
 
 // Update replaces shared repository settings without needing an available clone.
 func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
+	s, e := s.Checked()
+	if e != nil {
+		return e
+	}
 	data, e := json.Marshal(s)
 	if e != nil {
 		return e
@@ -1262,6 +1307,44 @@ func (r *Registry) Update(ctx context.Context, id string, s Settings) error {
 		return ErrNotFound
 	}
 	return e
+}
+
+// UpdateIf is UpdateRepositoryIf for the repository of a registered clone,
+// named by the clone's id: it needs no available clone, as Update does not.
+func (r *Registry) UpdateIf(ctx context.Context, id string, edit func(Settings) (Settings, error)) (Settings, error) {
+	var repository string
+	e := r.db.QueryRowContext(ctx, `SELECT repository FROM clones WHERE id=?`, id).Scan(&repository)
+	if errors.Is(e, sql.ErrNoRows) {
+		return Settings{}, ErrNotFound
+	}
+	if e != nil {
+		return Settings{}, e
+	}
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return Settings{}, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	var raw string
+	e = tx.QueryRowContext(ctx, `SELECT settings FROM repositories WHERE identity=?`, repository).Scan(&raw)
+	if errors.Is(e, sql.ErrNoRows) {
+		return Settings{}, ErrNotFound
+	}
+	if e != nil {
+		return Settings{}, e
+	}
+	var current Settings
+	if e = json.Unmarshal([]byte(raw), &current); e != nil {
+		return Settings{}, e
+	}
+	next, e := edit(current)
+	if e != nil {
+		return Settings{}, e
+	}
+	if _, e = tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), repository); e != nil {
+		return Settings{}, e
+	}
+	return next, tx.Commit()
 }
 
 // RepositorySettings reads one repository's shared settings without probing
@@ -1549,14 +1632,109 @@ func (r *Registry) UpdateRepositoryIf(ctx context.Context, repository string, ed
 	if e != nil {
 		return Settings{}, e
 	}
+	if next, e = next.Checked(); e != nil {
+		return Settings{}, e
+	}
 	if _, e = tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), identity); e != nil {
 		return Settings{}, e
 	}
 	return next, tx.Commit()
 }
 
+// SetTileTypePins pins the saved tile type name to exactly the picked
+// repositories listed and unpins it from every other one, in one
+// transaction. A listed repository that is not picked is ErrNotFound, and
+// one that already pins MaxPinnedTileTypes other types is ErrTooManyPins
+// (wrapped with its name); either writes nothing. A repository's other
+// settings, and its other pins in their order, are kept.
+func (r *Registry) SetTileTypePins(ctx context.Context, name string, repositories []string) error {
+	if !tileTypeName.MatchString(name) {
+		return errors.New("a pinned tile type is named by its name")
+	}
+	want := map[string]bool{}
+	for _, repository := range repositories {
+		want[strings.ToLower(repository)] = true
+	}
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, e := tx.QueryContext(ctx, `SELECT r.identity, r.settings FROM repositories r WHERE `+r.pickedSQL())
+	if e != nil {
+		return e
+	}
+	type picked struct {
+		identity string
+		settings Settings
+	}
+	var all []picked
+	for rows.Next() {
+		var p picked
+		var raw string
+		if e := rows.Scan(&p.identity, &raw); e != nil {
+			_ = rows.Close()
+			return e
+		}
+		if e := json.Unmarshal([]byte(raw), &p.settings); e != nil {
+			_ = rows.Close()
+			return e
+		}
+		all = append(all, p)
+	}
+	if e := errors.Join(rows.Err(), rows.Close()); e != nil {
+		return e
+	}
+	found := 0
+	for _, p := range all {
+		types := p.settings.PinnedTileTypes()
+		has := slices.Contains(types, name)
+		switch {
+		case want[p.identity] && !has:
+			if len(types) >= MaxPinnedTileTypes {
+				return fmt.Errorf("%s: %w", p.identity, ErrTooManyPins)
+			}
+			types = append(types, name)
+		case !want[p.identity] && has:
+			types = slices.DeleteFunc(types, func(t string) bool { return t == name })
+		default:
+			if want[p.identity] {
+				found++
+			}
+			continue
+		}
+		if want[p.identity] {
+			found++
+		}
+		next := p.settings
+		tiles := TileSettings{}
+		if p.settings.Tiles != nil {
+			tiles = *p.settings.Tiles
+		}
+		tiles.Types = nil
+		if len(types) > 0 {
+			tiles.Types = types
+		}
+		next.Tiles = &tiles
+		if tiles.empty() {
+			next.Tiles = nil
+		}
+		if _, e := tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), p.identity); e != nil {
+			return e
+		}
+	}
+	if found != len(want) {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
 // UpdateRepository replaces a picked repository's shared settings by identity.
 func (r *Registry) UpdateRepository(ctx context.Context, repository string, s Settings) error {
+	s, e := s.Checked()
+	if e != nil {
+		return e
+	}
 	res, e := r.db.ExecContext(ctx, `UPDATE repositories AS r SET settings=? WHERE r.identity=? AND (`+r.pickedSQL()+`)`, mustJSON(s), strings.ToLower(repository))
 	if e != nil {
 		return e

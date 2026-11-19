@@ -88,8 +88,11 @@ func (e errFailed) Error() string {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) > 0 && args[0] == "metrics" {
-		return runMetrics(args[1:], stdout, stderr)
+	if len(args) > 0 {
+		switch args[0] {
+		case "metrics":
+			return runMetrics(args[1:], stdout, stderr)
+		}
 	}
 	fs := flag.NewFlagSet("replay", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -126,9 +129,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		generatorName          = fs.String("generator", "review", "what to generate: "+strings.Join(replay.GeneratorNames(), ", "))
 		detectorReport         = fs.Bool("detector-report", false, "write the case ids by kind of detector evidence into <out>/<name>/detectors (for labelling a sample)")
 		chain                  = fs.Bool("chain", false, "replay each pull request's revisions in order, each reading the previous one's generated document as its previous version")
-		composeFromStore       = fs.Bool("compose-from-store", false, "run only the compose stage over the dataset's saved reviews of the selected cases (the compose generator)")
-		composeOnly            = fs.Bool("compose-only", false, "run only the compose stage over the review documents of --from-run (the compose generator)")
-		fromRun                = fs.String("from-run", "", "with --compose-only, the earlier run directory whose cases/<id>/document.json are composed")
+		composeFromStore       = fs.Bool("compose-from-store", false, "run only the view call over the dataset's saved reviews of the selected cases (the view generator)")
+		composeOnly            = fs.Bool("compose-only", false, "run only the view call over the review documents of --from-run (the view generator)")
+		fromRun                = fs.String("from-run", "", "with --compose-only, the earlier run directory whose cases/<id>/document.json are presented")
+		libraryDir             = fs.String("library-dir", "", "with --generator tiles, a directory of exported tile type files (*.baumtile.json) offered as the person's saved types")
 		images, threads, prev  triState
 	)
 	fs.Var(&images, "with-images", "keep cases whose bundle has images (--with-images=false: has none)")
@@ -138,7 +142,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs.Var(&sizes, "size", "size bucket xs, s, m, l or xl; repeatable or comma separated")
 	fs.Var(&agentEnv, "agent-env", "KEY=VALUE set for the agent, as the app's agent_env does; repeatable")
 	fs.Var(&genOptions, "generator-option", "KEY=VALUE for the generator; repeatable (the review generator takes none)")
-	fs.Var(&overrides, "prompt-override", "<id>=<file> replaces a staged prompt, or with the compose stage the composition prompt; repeatable. ids: "+promptIDs())
+	fs.Var(&overrides, "prompt-override", "<id>=<file> replaces a staged prompt, or with the view generator the view prompt; repeatable. ids: "+promptIDs())
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -180,7 +184,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 		sel.ShuffleSeed = &n
 	}
-	genConfig := replay.GeneratorConfig{Staged: *staged, Reuse: *reuse}
+	genConfig := replay.GeneratorConfig{Staged: *staged, Reuse: *reuse, LibraryDir: *libraryDir}
 	settings := replay.Settings{Backend: config.Backend(*backend), Model: *model, Effort: *effort, TimeLimit: *timeLimit, NoTranscript: *noTranscript,
 		ClaudeConfigDir: *claudeDir, CodexHome: *codexHome}
 	for _, kv := range agentEnv {
@@ -224,12 +228,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("--from-run goes with --compose-only")
 	case *composeFromStore || *composeOnly:
 		if *chain {
-			return errors.New("the compose stage runs on reviews that exist; it does not take --chain")
+			return errors.New("the view call runs on reviews that exist; it does not take --chain")
 		}
 		if len(genConfig.Options) > 0 {
 			return errors.New("--compose-from-store and --compose-only set the generator's options themselves")
 		}
-		*generatorName = "compose"
+		*generatorName = "view"
 		genConfig.Options = map[string]string{"source": replay.ComposeFromStore, "dataset": *dataset}
 		if *composeOnly {
 			genConfig.Options = map[string]string{"source": replay.ComposeFromRun, "run": *fromRun}
@@ -266,7 +270,7 @@ func noPositional(fs *flag.FlagSet, args []string) error {
 
 func promptIDs() string {
 	var ids []string
-	for _, id := range append(prompt.ReviewIDs(false, true), prompt.IDReviewTilesCompose) {
+	for _, id := range append(prompt.ReviewIDs(false, true), prompt.IDReviewView) {
 		ids = append(ids, string(id))
 	}
 	return strings.Join(ids, ", ")

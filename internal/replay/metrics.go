@@ -37,6 +37,13 @@ type Deriver interface {
 	Derived(sums map[string]float64) map[string]float64
 }
 
+// ArtifactMeter is implemented by a Meter that also measures the artifacts a
+// generator wrote beside a case's document (Generated.Artifacts): read
+// returns one by name.
+type ArtifactMeter interface {
+	ArtifactMetrics(read func(name string) ([]byte, error)) (map[string]float64, error)
+}
+
 // Definer is implemented by a Meter that says what each of its metrics
 // means; the report prints the definitions of the metrics it shows.
 type Definer interface {
@@ -220,15 +227,24 @@ func infoOf(m Manifest) RunInfo {
 		GeneratorSettings: string(settings), Backend: m.Backend, Model: m.Model, Effort: m.Effort}
 }
 
-// ReadMetrics reads a finished run directory and measures it. It calls no model.
-func ReadMetrics(dir string) (RunMetrics, error) {
+// ReadManifest reads a run directory's manifest.json.
+func ReadManifest(dir string) (Manifest, error) {
 	var manifest Manifest
 	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
 	if err != nil {
-		return RunMetrics{}, fmt.Errorf("%s is not a replay run: %w", dir, err)
+		return manifest, fmt.Errorf("%s is not a replay run: %w", dir, err)
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return RunMetrics{}, fmt.Errorf("%s: manifest.json: %w", dir, err)
+		return manifest, fmt.Errorf("%s: manifest.json: %w", dir, err)
+	}
+	return manifest, nil
+}
+
+// ReadMetrics reads a finished run directory and measures it. It calls no model.
+func ReadMetrics(dir string) (RunMetrics, error) {
+	manifest, err := ReadManifest(dir)
+	if err != nil {
+		return RunMetrics{}, err
 	}
 	meter := MeterFor(manifest.Generator)
 	m := RunMetrics{Run: manifest.Run, Generator: manifest.Generator, Info: infoOf(manifest)}
@@ -305,6 +321,19 @@ func readCase(dir, id string, manifest Manifest, meter Meter) CaseMetrics {
 			c.Problem = err.Error()
 		} else {
 			maps.Copy(c.Values, values)
+		}
+		if am, ok := meter.(ArtifactMeter); ok && c.Problem == "" {
+			read := func(name string) ([]byte, error) {
+				if !filepath.IsLocal(name) {
+					return nil, fmt.Errorf("artifact %q is not below the case directory", name)
+				}
+				return os.ReadFile(filepath.Join(dir, name))
+			}
+			if values, err := am.ArtifactMetrics(read); err != nil {
+				c.Problem = err.Error()
+			} else {
+				maps.Copy(c.Values, values)
+			}
 		}
 	}
 	return c

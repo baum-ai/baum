@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from "react";
+import { type ReactNode, type Ref, useContext } from "react";
 
 import { cn, FOCUS_RING } from "./classnames";
 import {
@@ -9,10 +9,42 @@ import {
   type IconProps,
   TeamChatIcon,
 } from "./icons";
+import { type ReviewAside, ReviewAsideContext } from "./review-aside-context";
 import { IconButton } from "./ui";
 
 /** A place the reader can step to from the one they are on. */
 export type ReviewStep = { label: string; go: () => void };
+
+function AsideButton({ aside, className }: { aside: ReviewAside; className?: string }) {
+  return (
+    <IconButton
+      label={aside.alert ? `${aside.label}: ${aside.alert}` : aside.label}
+      aria-expanded={aside.expanded}
+      aria-controls="review-aside"
+      onClick={aside.onOpen}
+      className={cn("relative h-10 w-9 text-secondary", className)}
+    >
+      {aside.label === "Conversation" ? <TeamChatIcon /> : <ChecksIcon />}
+      {aside.alert ? (
+        <span
+          aria-hidden
+          className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-status-critical"
+        />
+      ) : null}
+    </IconButton>
+  );
+}
+
+/** The way to the side pane's sheet where the panes stack (below `wide`), for
+ *  a host whose places draw no rail and so no navigator bar
+ *  (`ReviewPlaces.noRail`), drawn in the host's own head. Hidden once wide,
+ *  where the side pane is a column with its own fold, and outside a review
+ *  page. */
+export function ReviewSidePaneButton({ className }: { className?: string }) {
+  const aside = useContext(ReviewAsideContext);
+  if (!aside) return null;
+  return <AsideButton aside={aside} className={cn("flex-none wide:hidden", className)} />;
+}
 
 /** The bar that stands in for the rail where the panes stack (below `wide`):
  *  where the reader is, a way to every other place, and the previous and next
@@ -50,10 +82,8 @@ export function ReviewNavigator({
   expanded: boolean;
   onOpen: () => void;
   /** The side pane, which below `wide` is a sheet this bar opens rather than
-   *  a second page under the review: its name ("Conversation", or "Details"
-   *  without one), what its tabs flag in words, if anything, and whether it
-   *  is open. */
-  aside: { label: string; alert: string | null; expanded: boolean; onOpen: () => void };
+   *  a second page under the review. */
+  aside: ReviewAside;
 }) {
   return (
     <div
@@ -96,21 +126,7 @@ export function ReviewNavigator({
         <ChevronRightIcon />
       </IconButton>
       <span aria-hidden className="mx-0.5 h-6 w-px flex-none bg-(--border-subtle)" />
-      <IconButton
-        label={aside.alert ? `${aside.label}: ${aside.alert}` : aside.label}
-        aria-expanded={aside.expanded}
-        aria-controls="review-aside"
-        onClick={aside.onOpen}
-        className="relative h-10 w-9 text-secondary"
-      >
-        {aside.label === "Conversation" ? <TeamChatIcon /> : <ChecksIcon />}
-        {aside.alert ? (
-          <span
-            aria-hidden
-            className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-status-critical"
-          />
-        ) : null}
-      </IconButton>
+      <AsideButton aside={aside} />
     </div>
   );
 }

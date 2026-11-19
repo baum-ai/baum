@@ -240,6 +240,50 @@ export function SideNavDisclosure({
   );
 }
 
+/** A row of a list in the side pane that opens its item in the pane beside
+ *  it: a title of up to two lines and a line of small print under it, such
+ *  as a session's agent and time. The whole row is the one control. */
+export function SideNavEntry({
+  title,
+  meta,
+  active,
+  indicator,
+  controls,
+  onSelect,
+}: {
+  title: string;
+  meta?: ReactNode;
+  active: boolean;
+  /** Something happening now, as on a rail row: see `RowIndicator`. */
+  indicator?: "live" | "attention";
+  controls?: string;
+  onSelect: () => void;
+}) {
+  const state = active ? "active" : "idle";
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      aria-controls={controls}
+      onClick={onSelect}
+      className={cn(rowClass(state, 0), "cursor-pointer items-start active:translate-y-px")}
+    >
+      <ActiveMark active={active} />
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="line-clamp-2 leading-snug [overflow-wrap:anywhere]" title={title}>
+          {title}
+        </span>
+        {meta ? <span className="truncate text-xs font-normal text-tertiary">{meta}</span> : null}
+      </span>
+      {indicator ? (
+        <span className="mt-1 flex flex-none">
+          <RowIndicator indicator={indicator} />
+        </span>
+      ) : null}
+    </button>
+  );
+}
+
 /** A row that switches what the pane beside it shows. */
 export function SideNavButton({
   label,
@@ -251,6 +295,10 @@ export function SideNavButton({
   aside,
   description,
   wrap,
+  count,
+  busy = false,
+  indicator,
+  disabled = false,
   onSelect,
 }: {
   label: string;
@@ -269,22 +317,41 @@ export function SideNavButton({
   aside?: ReactNode;
   /** What the aside says that the label does not, for assistive technology. */
   description?: string;
+  /** How many items the pane the row opens lists, at the row's end and in
+   *  the row's name. */
+  count?: number;
+  /** The pane's items are being fetched right now. */
+  busy?: boolean;
+  /** Something in the pane is happening now: see `SideNavDisclosure`. */
+  indicator?: "live" | "attention";
+  /** The row's place has nothing to show yet: drawn greyed, and not a
+   *  control. */
+  disabled?: boolean;
   onSelect: () => void;
 }) {
-  const state = active ? "active" : "idle";
+  const state = disabled ? "disabled" : active ? "active" : "idle";
   const descriptionId = useId();
   return (
     <button
       type="button"
+      disabled={disabled}
+      aria-label={count === undefined ? undefined : `${label}, ${count}`}
       aria-pressed={active}
       aria-controls={controls}
       aria-describedby={description ? descriptionId : undefined}
       onClick={onSelect}
-      className={cn(rowClass(state, depth), "cursor-pointer")}
+      className={cn(rowClass(state, depth), !disabled && "cursor-pointer")}
     >
       <ActiveMark active={active} />
       {Icon ? <Icon className={glyphClass(state, tint)} /> : null}
       <Label wrap={wrap}>{label}</Label>
+      {indicator ? <RowIndicator indicator={indicator} /> : null}
+      {busy ? <Spinner size={11} className="text-tertiary" /> : null}
+      {count === undefined ? null : (
+        <span aria-hidden className="flex-none text-xs tabular-nums text-tertiary">
+          {count}
+        </span>
+      )}
       {aside ? (
         <span aria-hidden className="flex flex-none items-center">
           {aside}

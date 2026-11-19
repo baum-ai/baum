@@ -1,0 +1,151 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["engine", "migrations", "tables", "data_changes", "readers"],
+  "properties": {
+    "engine": {
+      "enum": ["postgres", "sqlite", "mysql", "other", "unknown"],
+      "description": "The database the changed schema belongs to, from the driver, the SQL dialect or the migration tool; unknown when the diff does not say."
+    },
+    "migrations": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Each place that changes the schema: a migration file, DDL embedded in code, a schema dump, an ORM model or a query file.",
+      "items": { "$ref": "#/$defs/migration" }
+    },
+    "tables": {
+      "type": "array",
+      "maxItems": 30,
+      "description": "Each table the pull request creates, alters, drops or renames. Empty when only queries change.",
+      "items": { "$ref": "#/$defs/table" }
+    },
+    "data_changes": {
+      "type": "array",
+      "maxItems": 10,
+      "description": "Statements that change rows rather than the schema: backfills, UPDATE or DELETE in a migration, copies between tables.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "cites"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1, "maxLength": 300, "description": "What the statement does to existing rows, in one sentence." },
+          "cites": { "$ref": "#/$defs/cites" }
+        }
+      }
+    },
+    "readers": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "Code that reads or writes a changed table: queries, generated code, models. Cite it when this pull request changes it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "updated", "cites"],
+        "properties": {
+          "label": { "type": "string", "minLength": 1, "maxLength": 160, "description": "The function, query or file, as code names it." },
+          "updated": { "type": ["boolean", "null"], "description": "true when this pull request changes it for the new schema; false when it still uses the old one; null when unknown." },
+          "cites": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/hunk" } }
+        }
+      }
+    },
+    "related": {
+      "type": "array",
+      "maxItems": 12,
+      "description": "Written by the host, never by a fill: the review's risks and evidence whose code this tile cites.",
+      "items": { "$ref": "#/$defs/itemRef" }
+    }
+  },
+  "$defs": {
+    "hunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "description": "A hunk of the diff, optionally narrowed to lines of the new file inside it.",
+      "properties": {
+        "type": { "const": "hunk" },
+        "id": { "$ref": "#/$defs/hunkId" },
+        "lines": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "integer", "minimum": 1 },
+          "description": "[first, last] line of the new file, inside the hunk's new range."
+        }
+      }
+    },
+    "cites": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "description": "The hunks that show it; the first is the one a reader should see.",
+      "items": { "$ref": "#/$defs/hunk" }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label", "applies", "reversible", "idempotent", "cites"],
+      "properties": {
+        "kind": {
+          "enum": ["migration_file", "embedded", "schema_dump", "orm_model", "query_file"],
+          "description": "migration_file: a numbered or timestamped migration; embedded: DDL inside application code; schema_dump: a generated schema file; orm_model: a model that defines columns; query_file: queries only (such as sqlc)."
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The file name, or the function that runs the DDL." },
+        "applies": {
+          "enum": ["on_deploy", "on_start", "manual", "unknown"],
+          "description": "on_deploy: a migration tool runs it when the release deploys; on_start: the program runs it when it opens the database; manual: someone must run it."
+        },
+        "reversible": { "type": ["boolean", "null"], "description": "true when a down migration or rollback undoes it; false when there is none or it cannot restore data; null when the tool has no such notion." },
+        "idempotent": { "type": ["boolean", "null"], "description": "true when running it twice is safe (IF NOT EXISTS, guarded ALTER); false when a second run fails or changes data again; null when the tool records what ran." },
+        "cites": { "$ref": "#/$defs/cites" }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "change", "renamed_from", "columns", "indexes", "cites"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The table's name after the change, as the DDL writes it." },
+        "change": { "enum": ["created", "altered", "dropped", "renamed"] },
+        "renamed_from": { "type": ["string", "null"], "maxLength": 120, "description": "The old name of a renamed table; otherwise null." },
+        "columns": {
+          "type": "array",
+          "maxItems": 60,
+          "description": "Every column of a created table; the added, removed, altered and renamed columns of any other.",
+          "items": { "$ref": "#/$defs/column" }
+        },
+        "indexes": {
+          "type": "array",
+          "maxItems": 20,
+          "description": "Indexes and constraints added, removed or altered on the table: indexes, unique constraints, foreign keys, checks, triggers.",
+          "items": { "$ref": "#/$defs/index" }
+        },
+        "cites": { "$ref": "#/$defs/cites" }
+      }
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "change", "before", "after", "destructive", "note"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "change": { "enum": ["added", "removed", "altered", "renamed"] },
+        "before": { "type": ["string", "null"], "maxLength": 160, "description": "The column's definition before (type and constraints as written; for a rename, its old name first); null for an added column." },
+        "after": { "type": ["string", "null"], "maxLength": 160, "description": "The column's definition after, as written; null for a removed column." },
+        "destructive": { "type": "boolean", "description": "true when existing rows can lose data or start failing: a removed column, a narrowed type, NOT NULL added without a default, a rename old code still reads." },
+        "note": { "type": ["string", "null"], "maxLength": 200, "description": "A fact the definition does not show, such as what the default fills in for existing rows; otherwise null." }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "change", "definition", "unique", "online"],
+      "properties": {
+        "name": { "type": ["string", "null"], "maxLength": 120, "description": "The index or constraint's name; null when it has none." },
+        "change": { "enum": ["added", "removed", "altered"] },
+        "definition": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Its columns and kind, as written, such as \"(repository, pr, created)\" or \"FOREIGN KEY (widget_id) REFERENCES widgets(id)\"." },
+        "unique": { "type": "boolean" },
+        "online": { "type": ["boolean", "null"], "description": "Whether building it leaves the table writable: true with CONCURRENTLY or on a table this pull request creates, false for a plain build on an existing Postgres or MySQL table, null when it does not matter (SQLite) or is unknown." }
+      }
+    }
+  }
+}

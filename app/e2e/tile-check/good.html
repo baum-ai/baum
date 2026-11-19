@@ -1,0 +1,24 @@
+<style>
+  .rows { min-height: 0; overflow: hidden; }
+</style>
+<script>
+  // A tile that passes: it fits its glance, wraps what it shows and draws
+  // every item in its detail.
+  function glance({ data, size }) {
+    if (data.items.length === 0) return baum.empty("Nothing to show.");
+    const room = size === "full" ? 2 : 3;
+    return baum.html`<div class="kit-glance">
+      <p class="kit-lede kit-truncate">${data.items.length} items</p>
+      <ul class="kit-list rows" data-gap="1">
+        ${data.items.slice(0, room).map((item) => baum.html`<li><span class="kit-truncate kit-grow">${item}</span></li>`)}
+      </ul>
+    </div>`;
+  }
+  function detail({ data }) {
+    if (data.items.length === 0) return baum.empty("Nothing to show.");
+    return baum.html`<ul class="kit-list" data-divided>
+      ${data.items.map((item) => baum.html`<li><span class="kit-break">${item}</span></li>`)}
+    </ul>`;
+  }
+  baum.tile({ glance, detail });
+</script>

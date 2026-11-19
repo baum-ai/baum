@@ -1,7 +1,8 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
+import { capture, inspect, settle, type Issue } from "./review-screens";
 
 // Pictures of real saved reviews, taken only on request
 // (REAL_REVIEW_SCREENSHOTS=1) against the real-reviews fixture daemon
@@ -11,9 +12,8 @@ import { launchURL } from "./inbox-helpers";
 //
 // Per review, size and theme it opens the review page and takes each of STATES,
 // as a viewport picture and a full-page one. Settings, all optional:
-//   REAL_REVIEW_VIEW     the review page: full (default) or tiles
-//   REAL_REVIEW_TILE     a selector for the tiles of the tiles page; the
-//                        "detail" state opens the first one
+//   REAL_REVIEW_VIEW     the review page: full (default) or tiles (the
+//                        Overview / How it works / Files changed rail)
 //   REAL_REVIEW_ONLY     only the reviews whose repo#number contains this text
 //   REAL_REVIEW_MINUTES  the time one review may take before it is left and
 //                        recorded as a problem (default 8)
@@ -21,7 +21,6 @@ import { launchURL } from "./inbox-helpers";
 test.skip(!process.env.REAL_REVIEW_SCREENSHOTS, "screenshots are taken on request");
 
 const VIEW = process.env.REAL_REVIEW_VIEW || "full";
-const TILE = process.env.REAL_REVIEW_TILE || "[data-tile-id]";
 const OUT = "test-results/real-reviews";
 const BUDGET_MS = Number(process.env.REAL_REVIEW_MINUTES || 8) * 60_000;
 const FULL_PAGE = process.env.REAL_REVIEW_FULL !== "0";
@@ -65,52 +64,90 @@ type State = {
 };
 
 export const STATES: State[] = [
+  // The full review's summary, or the Overview.
   { name: "landing", open: async () => true },
   {
-    // The first section; with the tiles page, the first tile.
+    // The first section: on the tiles page, How it works opened on it.
     name: "detail",
     open: async ({ page, address, firstSection }) => {
-      if (VIEW === "tiles") {
-        const tile = page.locator(TILE).first();
-        if ((await tile.count()) === 0) return false;
-        await tile.click();
-        // The pointer would otherwise rest on whatever the page drew under
-        // it, such as a rail row, and the picture show that row hovered. The
-        // page's title is a neutral place: the window's corner would open the
-        // folded app sidebar over a phone's page.
-        const title = await page.locator("main h1").first().boundingBox();
-        if (title) await page.mouse.move(title.x + 8, title.y + title.height / 2);
-      } else {
-        if (!firstSection) return false;
-        await page.goto(address({ pane: "section", section: firstSection }));
-      }
+      if (!firstSection) return false;
+      await page.goto(address({ pane: "section", section: firstSection }));
     },
   },
   {
-    // The tiles page with every tile and every group shown, where the
-    // landing page holds some back.
-    name: "more",
+    // "Where this fits", the review's context.
+    name: "context",
     views: ["tiles"],
     open: async ({ page, address }) => {
-      await page.goto(address());
-      await steady(page, "more");
-      if ((await page.getByRole("button", { name: /^Show \d+ more / }).count()) === 0) return false;
-      await page.goto(address({ more: "1", expand: "changes,obsolete" }));
+      await page.goto(address({ pane: "section", section: "context" }));
     },
   },
   {
-    name: "risks",
+    // The first section's Code view, and then its Tests view when it has
+    // tests: the section's own hunks with their notes.
+    name: "section-code",
     views: ["tiles"],
-    open: async ({ page, address }) => {
-      await page.goto(address({ pane: "tile", tile: "risks" }));
+    open: async ({ page, address, firstSection }) => {
+      if (!firstSection) return false;
+      await page.goto(address({ pane: "section", section: firstSection, section_view: "code" }));
     },
   },
   {
-    name: "everything-else",
+    name: "section-tests",
     views: ["tiles"],
-    open: async ({ page, address }) => {
-      await page.goto(address({ pane: "tile", tile: "everything_else" }));
+    open: async ({ page, address, firstSection }) => {
+      if (!firstSection) return false;
+      await page.goto(address({ pane: "section", section: firstSection, section_view: "tests" }));
+      const tests = page
+        .getByRole("tablist", { name: "Section views" })
+        .getByRole("tab", { name: /^Tests/ });
+      if (
+        !(await tests.waitFor().then(
+          () => tests.isEnabled(),
+          () => false,
+        ))
+      )
+        return false;
     },
+  },
+  {
+    // Files changed on its first file, grouped by type.
+    name: "code",
+    views: ["tiles"],
+    open: async (c) => openFiles(c, "type"),
+  },
+  {
+    // The same list grouped by folder.
+    name: "code-folder",
+    views: ["tiles"],
+    open: async (c) => openFiles(c, "folder"),
+  },
+  {
+    // The same list grouped by feature (the sections).
+    name: "code-feature",
+    views: ["tiles"],
+    open: async (c) => openFiles(c, "feature"),
+  },
+  {
+    // The rail's Sessions row: the pane listing the sessions.
+    name: "sessions",
+    views: ["tiles"],
+    open: async (c) => openList(c, "Sessions"),
+  },
+  {
+    // The first session of that list, opened in the review pane.
+    name: "session",
+    views: ["tiles"],
+    open: async (c) => {
+      if (!(await openList(c, "Sessions", true))) return false;
+      await c.page.locator("#review-section").getByRole("button").first().click();
+    },
+  },
+  {
+    // The rail's Commits row: the pane listing the commits.
+    name: "commits",
+    views: ["tiles"],
+    open: async (c) => openList(c, "Commits"),
   },
   {
     // The first hunk excerpt of the detail, opened to code.
@@ -124,164 +161,60 @@ export const STATES: State[] = [
   },
 ];
 
-/** A problem a picture does not show clearly. `truncated` names a full-page
- *  picture that does not hold the whole page. */
-type Issue = { where: string; what: string; truncated?: string };
-
-/** Waits until the page has stopped changing: nothing spins, fonts and images
- *  have loaded, no excerpt is loading. What did not settle is returned. */
-async function settle(page: Page, where: string): Promise<Issue[]> {
-  const issues: Issue[] = [];
-  // What is still going on, as names; empty once the page has settled.
-  const pending = () =>
-    page.evaluate(() => {
-      const what: string[] = [];
-      if (document.querySelector(".animate-spin")) what.push("a spinner");
-      if (/Loading (excerpt|historical)/.test(document.body.innerText)) what.push("an excerpt");
-      // A lazy image below the window loads only once scrolled to, so it is
-      // not waited for: the window's picture does not show it.
-      const below = (i: HTMLImageElement) =>
-        i.loading === "lazy" && i.getBoundingClientRect().top > innerHeight;
-      if ([...document.images].some((i) => !i.complete && !below(i))) what.push("an image");
-      return what;
-    });
-  await page.evaluate(() => document.fonts.ready);
-  try {
-    await expect.poll(pending, { timeout: 20_000 }).toEqual([]);
-  } catch {
-    issues.push({
-      where,
-      what: `the page did not settle: ${(await pending()).join(", ")} still loading`,
-    });
-  }
-  issues.push(...(await steady(page, where)));
-  return issues;
+/** Files changed, grouped the way the reader chose last (kept in the browser). */
+async function openFiles({ page, address }: Context, grouping: string) {
+  await page.goto(address({ pane: "tile", tile: "code" }));
+  await page.evaluate((value) => localStorage.setItem("baum.review.fileGrouping", value), grouping);
+  await page.reload();
+  const by = page.getByRole("group", { name: "Group files by" });
+  if (
+    !(await by.waitFor().then(
+      () => true,
+      () => false,
+    ))
+  )
+    return false;
+  await expect(by.getByRole("button", { name: new RegExp(`^${grouping}$`, "i") })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 }
 
-/** Waits until the review pane holds its content (the review page's own
- *  loading status gone; on the tiles page, the landing page's band or a
- *  tile's heading drawn), every finite animation has finished, and its
- *  layout is the same twice running: the first picture of a run was taken
- *  while the pane was still arriving. */
-async function steady(page: Page, where: string): Promise<Issue[]> {
-  const layout = () =>
-    page.evaluate((tiles) => {
-      const pane = document.querySelector("#review-section");
-      if (!pane || pane.querySelector(".loading-status")) return "loading";
-      if (tiles && !pane.querySelector('[aria-label="Review at a glance"], h2:not(.sr-only)'))
-        return "no content";
-      const moving = document
-        .getAnimations()
-        .some(
-          (animation) =>
-            animation.playState === "running" &&
-            animation.effect?.getComputedTiming().iterations !== Infinity,
-        );
-      if (moving) return "animating";
-      return [pane, ...pane.querySelectorAll("article, h2, h3, section")]
-        .slice(0, 40)
-        .map((element) => {
-          const box = element.getBoundingClientRect();
-          return `${Math.round(box.x)},${Math.round(box.y)},${Math.round(box.width)},${Math.round(box.height)}`;
-        })
-        .join(";");
-    }, VIEW === "tiles");
-  const deadline = Date.now() + 20_000;
-  let previous = "";
-  while (Date.now() < deadline) {
-    const now = await layout();
-    if (now === previous && !["loading", "no content", "animating"].includes(now)) {
-      // Transitions after the last change.
-      await page.waitForTimeout(200);
-      return [];
-    }
-    previous = now;
-    await page.waitForTimeout(250);
-  }
-  return [{ where, what: `the review pane did not settle (${previous.split(";")[0]})` }];
-}
-
-/** What is wrong with a settled page that a picture would not show clearly. */
-async function inspect(page: Page, where: string): Promise<Issue[]> {
-  const found = await page.evaluate(() => {
-    const what: string[] = [];
-    for (const alert of document.querySelectorAll("[role='alert']")) {
-      const text = (alert as HTMLElement).innerText.trim();
-      if (text) what.push(`notice: ${text.slice(0, 160)}`);
-    }
-    const body = document.body.innerText;
-    // An excerpt of a binary file is unavailable by nature: there is no text
-    // to show. Said apart, so it is not taken for a missing commit.
-    const unavailable = [...body.matchAll(/Excerpt unavailable\s*·\s*View (\S+)/g)].map(
-      (match) => match[1]!,
-    );
-    const binary = /\.(png|jpe?g|gif|webp|ico|mp4|webm|mov|pdf|zip|gz|woff2?|ttf|otf|sqlite)$/i;
-    if (unavailable.some((path) => !binary.test(path))) what.push("an excerpt is unavailable");
-    else if (unavailable.length > 0)
-      what.push("an excerpt of a binary file has no text (expected)");
-    if ([...document.images].some((i) => i.complete && i.naturalWidth === 0 && i.currentSrc))
-      what.push("an image failed to load");
-    if (document.documentElement.scrollWidth > innerWidth + 1)
-      what.push("the page scrolls sideways");
-    return what;
-  });
-  return found.map((what) => ({ where, what }));
-}
-
-/** The tallest scrolling region and how far it scrolls: the app keeps its
- *  panes in regions of their own, so a full-page picture is a viewport as
- *  tall as the content. */
-function scrollExtra(page: Page): Promise<number> {
-  return page.evaluate(() => {
-    let extra = document.documentElement.scrollHeight - innerHeight;
-    for (const el of document.querySelectorAll<HTMLElement>("*")) {
-      const overflow = getComputedStyle(el).overflowY;
-      if ((overflow === "auto" || overflow === "scroll") && el.clientHeight > innerHeight / 3)
-        extra = Math.max(extra, el.scrollHeight - el.clientHeight);
-    }
-    return Math.max(extra, 0);
-  });
-}
-
-// Chromium cannot draw a picture much taller than this.
-const MAX_HEIGHT = 16000;
-
-async function capture(
-  page: Page,
-  base: string,
-  size: { width: number; height: number },
-  issues: Issue[],
-) {
-  await page.screenshot({ path: `${base}.png`, animations: "disabled" });
-  if (!FULL_PAGE) return;
-  // Growing the viewport can lengthen the content (regions that render what
-  // fits), so grow until it all fits. A region whose overflow does not shrink
-  // as the viewport grows (it is sized to the viewport) is not more content.
-  let height = size.height;
-  let previous = Number.POSITIVE_INFINITY;
-  let truncated = false;
-  for (let round = 0; ; round++) {
-    const extra = await scrollExtra(page);
-    if (extra === 0 || extra >= previous) break;
-    if (round === 6 || height >= MAX_HEIGHT) {
-      truncated = true;
-      break;
-    }
-    previous = extra;
-    height = Math.min(height + extra, MAX_HEIGHT);
-    await page.setViewportSize({ width: size.width, height });
-    issues.push(...(await settle(page, `${base} (full page)`)));
-  }
-  if (height === size.height) return;
-  if (truncated)
-    issues.push({
-      where: base,
-      what: "the full-page picture is truncated (the page kept growing or hit the height limit)",
-      truncated: `${basename(base)}-full.png`,
-    });
-  await page.screenshot({ path: `${base}-full.png`, animations: "disabled" });
-  await page.setViewportSize(size);
-  await page.waitForTimeout(200);
+/** The pane the rail's Sessions, Commits or Decisions row opens. False when
+ *  the pull request has no such row or nothing in it. */
+async function openList({ page, address }: Context, name: string, withItems = false) {
+  await page.goto(address());
+  // Where the panes stack the rail is a sheet, opened from the navigator bar.
+  await page.locator("#review-rail").waitFor({ state: "attached" });
+  const opener = page.locator('button[aria-controls="review-rail"]').first();
+  if (!(await page.locator("#review-rail").isVisible()) && (await opener.count()))
+    await opener.click();
+  const row = page.locator("#review-rail").getByRole("button", { name: new RegExp(`^${name}`) });
+  // The pull request's lists arrive after the page: give them a moment.
+  if (
+    !(await row
+      .first()
+      .waitFor({ timeout: 10_000 })
+      .then(
+        () => true,
+        () => false,
+      ))
+  )
+    return false;
+  await page
+    .waitForFunction(
+      (label) =>
+        [...document.querySelectorAll("#review-rail button")].some(
+          (each) => each.textContent?.startsWith(label) && /\d$/.test(each.textContent),
+        ),
+      name,
+      { timeout: 10_000 },
+    )
+    .catch(() => undefined);
+  const shown = (await row.first().textContent()) ?? "";
+  if (!/\d$/.test(shown) || (withItems && /(^|\D)0$/.test(shown))) return false;
+  await row.first().click();
+  return true;
 }
 
 const slugOf = (pick: Pick) =>
@@ -331,7 +264,7 @@ test("pictures of real saved reviews", async ({ page }) => {
       try {
         await page.setViewportSize(SIZES[0]!);
         await page.goto(address());
-        issues.push(...(await settle(page, "first load")));
+        issues.push(...(await settle(page, "first load", VIEW === "tiles")));
         const document = await page.evaluate(
           async ({ clone, pr, version }) => {
             const query = new URLSearchParams({
@@ -366,12 +299,15 @@ test("pictures of real saved reviews", async ({ page }) => {
               over();
               const name = `${VIEW}-${s.name}-${size.width}-${theme}`;
               if ((await s.open(context)) === false) continue;
-              issues.push(...(await settle(page, name)));
+              issues.push(...(await settle(page, name, VIEW === "tiles")));
               const dark = await page.evaluate(() => document.documentElement.dataset.theme);
               if (dark !== theme)
                 issues.push({ where: name, what: `the page is in the ${dark} theme` });
               issues.push(...(await inspect(page, name)));
-              await capture(page, join(dir, name), size, issues);
+              await capture(page, join(dir, name), size, issues, {
+                fullPage: FULL_PAGE,
+                tiles: VIEW === "tiles",
+              });
             }
           }
         }

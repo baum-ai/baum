@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "build:profile": "vite build --mode profile",
+    "gallery": "vite --config vite.gallery.config.ts",
     "lint:palette": "node scripts/check-palette.mjs",
     "tile-kit": "node scripts/build-tile-kit.mjs",
     "tile-kit:check": "node scripts/build-tile-kit.mjs --check",
@@ -22,6 +23,7 @@
     "test:e2e": "playwright test",
     "test:desktop": "node ../desktop/tests/onboarding.cjs",
     "test:development": "playwright test --config playwright.development.config.ts",
+    "test:custom-tiles": "playwright test --config playwright.custom-tiles.config.ts",
     "check": "pnpm lint && pnpm format:check && pnpm tile-kit:check && pnpm typecheck && pnpm test:unit"
   },
   "devDependencies": {

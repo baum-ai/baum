@@ -70,6 +70,8 @@ func (d *settingsDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(`{"backend":"claude","model":"opus","budgets":{"ReviewTimeout":"SENTINEL_BUDGET"},"caps":{"SENTINEL_CAP":1},
 "agent_env":{"ZED_TOKEN":%q,"API_KEY":%q,"OTHER":"%s/SENTINEL_ENV_PATH","bad name SENTINEL_NAME":"x"},"agent_env_source":"app",
 "fix_backend":"codex","fix_model":"gpt-5","effort":"high","fix_effort":"low","job_concurrency":3,"review_time_limit_minutes":20,"run_time_limit_minutes":45}`, sentinelEnv, sentinelToken, sentinelHome)
+	case "/api/settings/labs":
+		reply(`{"tile_reviews":true,"extra":"SENTINEL_LABS"}`)
 	case "/api/settings/appearance":
 		reply(`{"theme":"dark","key_hints":false,"page_modifier":"alt","review_page":"tiles","extra":"SENTINEL_APPEARANCE",
 "light_theme":"default-light","dark_theme":"c-1","themes":[{"id":"default-light","name":"Default light","base":"light","builtin":true,"tokens":{}},{"id":"default-dark","name":"Default dark","base":"dark","builtin":true,"tokens":{}},{"id":"c-1","name":"Midnight","base":"dark","tokens":{"--color-paper":"#101820"}}]}`)
@@ -181,7 +183,7 @@ func TestSettingsToolsCarryNoSecret(t *testing.T) {
 		{"settings_general", nil, []string{`"theme":"dark"`, `"key_hints":false`, `"page_modifier":"alt"`, `"review_page":"tiles"`, `"light_theme":"default-light"`, `"dark_theme":"c-1"`,
 			`{"id":"c-1","name":"Midnight","base":"dark","tokens":{"--color-paper":"#101820"},"builtin":false}`, `"theme_tokens":{"seeds":["--color-ink"`, `"roles":["--action-primary"`, `"theme_defaults":{"dark":{`, `"slot_values":{"dark":{`, `"--color-paper":"#101820"`, `"theme_note":`,
 			`{"provider":"claude","name":"Claude Code","shown":true,"default":true,"explicit":false}`, `{"provider":"codex","name":"Codex","shown":false,"default":false,"explicit":true}`}, nil},
-		{"settings_reviews", nil, []string{`"automatic":{"enabled":true,"pull_requests":"authored"}`, `"backend":"claude","model":"opus","effort":"high"`, `"decision_capture":{"enabled":true,"backend":"","model":"","effort":"","effective_backend":"claude","backend_undetermined":false,"effective_model":"haiku","model_ignored":false}`}, nil},
+		{"settings_reviews", nil, []string{`"automatic":{"enabled":true,"pull_requests":"authored"}`, `"backend":"claude","model":"opus","effort":"high"`, `"decision_capture":{"enabled":true,"backend":"","model":"","effort":"","effective_backend":"claude","backend_undetermined":false,"effective_model":"haiku","model_ignored":false}`, `"tile_reviews":true`}, nil},
 		{"settings_fixes", nil, []string{`{"backend":"codex","model":"gpt-5","effort":"low","same_as_reviews":false}`}, nil},
 		{"settings_connections", nil, []string{`"state":"pending"`, `"host":"other host"`, `"login":"octo"`, `"source":"environment"`, `"override":true`, `"saved":true`, `"workflow":true`, `"error":"auth_request_failed"`, `"organizations_not_reachable":["acme-corp"]`, `"codex_hooks":{"state":"untrusted","checked_at":"2026-11-12T09:30:00Z"}`}, nil},
 		{"settings_computer", nil, []string{`"job_concurrency":3`, `"review_time_limit_minutes":20`, `"run_time_limit_minutes":45`, `"agent_env_names":["API_KEY","OTHER","ZED_TOKEN"]`, `"agent_env_source":"app"`, `"codex_approvals":true`,
@@ -441,7 +443,7 @@ func TestCurrentPageNamesTheSectionsTools(t *testing.T) {
 	if page.Section != "computer" || !slices.Equal(page.SectionTools, []string{"settings_computer", "diagnostics_summary", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"}) {
 		t.Errorf("settings: %+v", page)
 	}
-	settingsPage := slices.Concat(settingsToolNames, commonToolNames, proposePageTools[PageSettings])
+	settingsPage := slices.Concat(settingsToolNames, commonToolNames, proposePageTools[PageSettings], tileTypePageTools)
 	for _, tool := range settingsPage {
 		if !slices.Contains(page.Tools, tool) {
 			t.Errorf("settings lacks %s: %v", tool, page.Tools)

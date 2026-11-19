@@ -83,6 +83,10 @@ func (l *Local) prepareGroup(ctx context.Context, c repos.Clone, reader *github.
 		if err != nil {
 			return groupInputs{}, fmt.Errorf("pull request #%d: %w", number, err)
 		}
+		// A group's combined review is of open pull requests only.
+		if pr.Closed {
+			return groupInputs{}, fmt.Errorf("pull request #%d: open pull request evidence required", number)
+		}
 		if i == 0 {
 			out.Head = pr.Head
 		}

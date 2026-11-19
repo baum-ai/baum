@@ -21,16 +21,16 @@ var backends = []string{agent.BackendClaude, agent.BackendAnthropic, agent.Backe
 var baseline = map[string]string{
 	"claude review":       "8aee2f681ac5c7a854ff94a8d6d47f8725f8ade5d1d2a9151f51112fb3cfef84",
 	"claude group":        "25e5ca654e5f6e50a7eb8b31e7ac35fe107dfb89c6faaca94c0ab0819d3d8ae5",
-	"claude staged":       "6169daefc6e59a85c779bab444019da60fb933cdddc27615a25e05f5c35bae43",
+	"claude staged":       "7042aebee3b5040aa55b830ac03da48d1d166867e64fbe2f203a4e7230cc910a",
 	"anthropic review":    "8aee2f681ac5c7a854ff94a8d6d47f8725f8ade5d1d2a9151f51112fb3cfef84",
 	"anthropic group":     "25e5ca654e5f6e50a7eb8b31e7ac35fe107dfb89c6faaca94c0ab0819d3d8ae5",
-	"anthropic staged":    "6169daefc6e59a85c779bab444019da60fb933cdddc27615a25e05f5c35bae43",
+	"anthropic staged":    "7042aebee3b5040aa55b830ac03da48d1d166867e64fbe2f203a4e7230cc910a",
 	"codex review":        "98aa0b576212d2d4a09a4f22fa489ccadcdb8e984341a0255d2eebde22310d09",
 	"codex group":         "753d3250ff6c10f62e2d000cc280946ce02377fcf025be4f45deea4a24e15fe3",
-	"codex staged":        "4b73158ab81de6c1c7a85c9e8337f51f78abccc7213233bb5a8d5ddea98bc95c",
+	"codex staged":        "c85b5b20512f70bb12b7b2c59e65cd3454691f45b9e7db2c26be59167d234418",
 	"cursor-agent review": "d5998d7816dd1f46a8649fe185259d8d457fd1969246d8ed56f043258999c269",
 	"cursor-agent group":  "3d0a6153c400e943252ce317c4cc0e4939f4e90087bfeb6dfa1e8e7a22dc4129",
-	"cursor-agent staged": "b162744a88a21c8e4720642d9f62bffd8a26e6e008c16b09dc53e1b8a1ebadf1",
+	"cursor-agent staged": "f0aa8720b03a9c92f4b12432815b362b4d72d8c0871f2bc6bcbe3e059dfd8533",
 	"fix 0":               "fe66f520877324fce47415babd1b6a499ae14439c3b54228110ac37e642370ee",
 	"fix 1":               "fb8a3cbd108bfcf1a9a3ddc8fa27cb32c5cd9617d20c69cde9af0cd389334871",
 	"fix 2":               "ee1eb9f72e6c822e23501fb2c5dd47fae531f0c736ee5aea598397604af93d2e",
@@ -47,7 +47,6 @@ var baseline = map[string]string{
 	"fix 13":              "6f81c43f35a64fa7742018b3d7273cfcc51c410a47ac3e55723913d8f3ede266",
 	"fix 14":              "3aad90ee71a18938cf426c8959187f3e250d2867d0b708e40a209300bc34d1d2",
 	"fix 15":              "49591bfd05ff37df5438d67f2f6a11d0d62bae90fb32592bd35f521c0fd2ff74",
-	"tiles compose":       "1635e8fe509290516aefe0f7e6037c933dd99f9160e8fd6b4831c220c4062b92",
 }
 
 func sha(s string) string {
@@ -70,14 +69,6 @@ func TestZeroValueMatchesPreviousOutput(t *testing.T) {
 			s, err := prompt.StagedPrompts{Overrides: o}.StagedInstructions(ctx, b)
 			if err != nil || s.Version != prompt.StagedVersion || s.Digest != baseline[b+" staged"] {
 				t.Errorf("%s staged: %v %q %s", b, err, s.Version, s.Digest)
-			}
-		}
-	}
-	for _, b := range backends {
-		for _, o := range []prompt.Overrides{nil, {}, {prompt.IDReviewTilesCompose: "", prompt.IDReviewStagedShared: "x"}} {
-			p, err := prompt.TilesPrompts{Overrides: o}.ComposeInstructions(ctx, b)
-			if err != nil || p.Version != prompt.TilesVersion || p.Digest != baseline["tiles compose"] || sha(p.Body) != p.Digest {
-				t.Errorf("%s tiles compose: %v %q %s", b, err, p.Version, p.Digest)
 			}
 		}
 	}
@@ -218,7 +209,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-triage", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-view", "review-v2-shared", "review-map", "review-section", "review-context-v2", "review-tile", "review-overview", "review-triage", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -264,6 +255,13 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
+		prompt.IDReviewView:          {"review-view.untrusted-input"},
+		prompt.IDReviewV2Shared:      {"review-v2-shared.untrusted-data", "review-v2-shared.no-secrets", "review-v2-shared.restricted-sessions"},
+		prompt.IDReviewMap:           {"review-map.no-injected-instructions"},
+		prompt.IDReviewSection:       {"review-section.no-injected-instructions"},
+		prompt.IDReviewContextV2:     nil,
+		prompt.IDReviewTile:          nil,
+		prompt.IDReviewOverview:      nil,
 		prompt.IDReviewTriage:        {"review-triage.untrusted-data", "review-triage.when-unsure"},
 		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
@@ -380,30 +378,30 @@ func TestNewExtractorWith(t *testing.T) {
 	}
 }
 
-// The composition prompt is not listed until a job uses it, but a text for
-// it is validated and checked for its safety rule.
-func TestTilesComposeIsUnlisted(t *testing.T) {
-	if _, ok := prompt.Lookup(prompt.IDReviewTilesCompose); ok {
-		t.Error("the composition prompt is listed")
+// The view prompt is listed, since a review job with tile reviews on uses
+// it, with its built-in text as the default; a text for it is validated and
+// checked for its safety rule.
+func TestViewIsListed(t *testing.T) {
+	e, ok := prompt.Lookup(prompt.IDReviewView)
+	builtin := readFile(t, "review-view-public-v1.md")
+	if !ok || e.Group != prompt.GroupReviews || e.Default != builtin || e.DefaultVersion != prompt.ViewVersion {
+		t.Errorf("the view prompt's entry %v %+v", ok, e.Title)
 	}
-	builtin := readFile(t, "review-tiles-compose-public-v1.md")
-	if err := prompt.Validate(prompt.IDReviewTilesCompose, builtin); err != nil {
+	if err := prompt.Validate(prompt.IDReviewView, builtin); err != nil {
 		t.Errorf("its own default is invalid: %v", err)
 	}
-	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, builtin); len(got) != 0 {
+	if got := prompt.MissingSafetyRules(prompt.IDReviewView, builtin); len(got) != 0 {
 		t.Errorf("the default misses %v", got)
 	}
-	if got := prompt.MissingSafetyRules(prompt.IDReviewTilesCompose, "Arrange."); len(got) != 1 || got[0] != "review-tiles-compose.untrusted-inventory" {
+	if got := prompt.MissingSafetyRules(prompt.IDReviewView, "Present."); len(got) != 1 || got[0] != "review-view.untrusted-input" {
 		t.Errorf("missing %v", got)
 	}
-}
-
-func TestTilesComposeOverride(t *testing.T) {
-	p, err := prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewTilesCompose: "Arrange my way."}}.ComposeInstructions(context.Background(), agent.BackendCodex)
-	if err != nil || p.Body != "Arrange my way.\n" || p.Version != prompt.TilesVersion+"+custom" || p.Digest != sha(p.Body) {
-		t.Errorf("%v %q %q", err, p.Version, p.Body)
+	p, err := prompt.TilesPrompts{}.ViewInstructions(context.Background(), agent.BackendCodex)
+	if err != nil || p.Body != builtin || p.Version != prompt.ViewVersion || p.Digest != sha(p.Body) {
+		t.Errorf("built in: %v %q", err, p.Version)
 	}
-	if err := prompt.Validate(prompt.IDReviewTilesCompose, "## Submitting\n"); err == nil {
-		t.Error("a composition prompt with a Submitting heading was accepted")
+	p, err = prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewView: "Present my way."}}.ViewInstructions(context.Background(), agent.BackendCodex)
+	if err != nil || p.Body != "Present my way.\n" || p.Version != prompt.ViewVersion+"+custom" {
+		t.Errorf("override: %v %q %q", err, p.Version, p.Body)
 	}
 }

@@ -1381,11 +1381,12 @@ needs the launch secret and cannot read the response. The header is absent from
 agent CLIs calling the MCP endpoint, the hook command, the desktop shell's own
 client, health checks and test clients, and those pass; the browser app's own
 requests are `same-origin` and a typed launch URL is `none`, and those pass too.
-The page's Content-Security-Policy names `frame-src 'self'` explicitly; the
-only frames the app embeds are custom tiles' frames. The one document route
-outside the namespace and without the cookie is a custom tile's frame,
-`GET /tile-frames/<digest>`, served only to a same-origin frame navigation (see
-[Custom tiles](#custom-tiles)). The capability is the daemon's app
+The page's Content-Security-Policy names `frame-src 'self'` explicitly. The
+one document route outside the namespace and without the cookie is a custom
+tile's frame, `GET /tile-frames/<digest>`, served only to a same-origin frame
+navigation (see [Custom tiles](#custom-tiles)); the app's own frames are
+same-origin navigations, so the check above lets them through. The capability
+is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
@@ -1617,6 +1618,135 @@ document the daemon serves with its own Content-Security-Policy:
 img-src data: blob:; font-src data:; form-action 'none'; base-uri 'none';
 frame-ancestors 'self'; sandbox allow-scripts`.
 
+**Built-in library types.** baum's own library types (`tiles/library`:
+schema changes, interface changes) are custom tiles too: their HTML is
+baum's, but it draws data a model wrote from the pull request (a fill), so it
+runs in the same frame under the same policy and checks as any custom tile.
+The page names such a tile as baum's own, without the "Custom" mark, only when
+the daemon marks its served definition `builtin: true`, which it does when the
+digest computed from the stored definition's content is a built-in type's,
+current or past; the digest covers the whole definition, so neither a tile's
+title, a `builtin` member it carries nor a stored definition that differs in
+any byte can claim it. The composition holds only built-in types' tiles from a
+generation. A fill's data
+is model output like the review's: it is masked for secrets as a task's
+output, checked against the type's schema and the diff (every citation a hunk
+of the diff), and the host writes `related` itself. Authored tiles (exhibits)
+are table, code and prose data drawn by the page's own built-in faces, with the
+same masking and citation checks; a code excerpt must be the cited code, and a
+file it cites must be a file of the diff, a regular file in the checkout.
+Table cells, code and captions are drawn as text. A note's Markdown draws
+paragraphs, emphasis, code spans and lists only: a link reads as its text and
+raw HTML is not rendered.
+
+**Saved tile types.** A person's library of tile types (`internal/tilelibrary`)
+lives in the private application database on this computer. A type's code and
+instructions are the person's: they are never read from repository content, and
+a type's fill and review checks enter the fill and details prompts as
+instructions of the same trust as a custom prompt, while the pull request stays
+data.
+
+- Generation offers saved types in every repository, by default: at most six
+  per review, those whose paths match the diff, and the pinned ones are
+  filled. A saved type's fill opens with a note that its instructions are the
+  person's and the only instructions about the tile, and that text in the pull
+  request, its code, sessions or the outline that reads like tile
+  instructions is data; its review checks come under a heading marked as the
+  person's, after a note that the pull request cannot add a check. The
+  fill and selection texts say the same of every type. The outline lists a
+  saved type's texts as the person wrote them, bounded in length. A type "Not
+  checked yet" is neither offered nor filled. The person's instructions only
+  add: the notes say they never remove, soften or hide a risk and never set
+  or change the recommendation, and in a fill the outline follows under a
+  heading of its own, marked as data. A saved title's whitespace is
+  collapsed wherever it heads a section, so it cannot open a heading of its
+  own. A type's path globs are bounded where they are saved (at most 8 braces
+  expanding to at most 64 patterns, refused with a reason past that), and
+  brace expansion stops at that bound, so matching a glob against a diff's
+  paths takes bounded time whatever the glob. Offering is not restricted
+  further on purpose: each tile is labelled "Custom", cites the review, passes
+  the first-show preflight and stands among a section's tiles, never in the
+  place of the review's own text, recommendation or risk score.
+- A saved type's data may cite more of the pull request than its code. A
+  fill's citations are checked against the whole bundle (`library.CheckFillIn`):
+  a file must be a path of the diff, a prompt or session event must name one
+  of the bundle's sessions that is not restricted, a check or review thread
+  must be the bundle's, and a risk, evidence item or tile is refused. A
+  restricted session is never cited, here or when the composition resolves
+  the tile's citations against the review.
+- The view call places a saved type's tile only when its definition's digest,
+  computed from its content, is one of the types the host offered for the run
+  (`agent.ViewRequest.Saved`), beside the built-in types'.
+
+- Persistence needs the person. A chat can only propose saving or changing a
+  type (`propose_tile_type`); the person's Save in the panel writes it, the same
+  way every other proposal is saved, and a proposal that is stale (the type
+  changed since it was read) saves nothing. A saved type is checked as a
+  built-in type is (`library.Check`, which includes the kit's lint) and its name
+  may not shadow a built-in tile type, a built-in library type or a tile ID
+  prefix.
+- Samples are self-contained and checked not to copy the open pull request.
+  A proposal needs a render check that passed on a sample whose hunks and
+  items are its own, only such samples are saved, and a sample whose citations
+  do not resolve to its own hunks and items is refused. On a pull request's
+  page the proposal is also refused when a sample's hunks share three or more
+  distinct non-trivial lines (not blank, brackets, imports or common
+  boilerplate) with that pull request's diff, and when its diff cannot be
+  read to check. This is a heuristic on lines, not proof that a sample holds
+  none of a pull request's data: the person sees every sample, in the
+  proposal's Before and After, before they press Save, and nothing is saved
+  until they do.
+- "Built in" is decided by digest only. A saved type is never marked built in
+  unless its content is byte for byte a built-in type's, which then is baum's
+  own code; nothing a proposal, a name or a stored row carries can claim it.
+- An agent reads a type's source only through `tile_type`, a chat tool on the
+  pull request page and Settings' Tile library section; an action never sees
+  it, and the tile routes still serve definitions without their HTML.
+- The preview route `GET /api/tile-types/{name}/preview` registers the type's
+  digest in the frame registry like the tile routes, and has the session
+  namespace's cookie or the launch token like every other `/api` route; a
+  request that carries a definition registers nothing, with one exception:
+  the import check below.
+- Importing a tile type file (`POST /api/tile-type-files/check`, then `POST
+  /api/tile-type-files`, from Settings › Tile library) treats the file as
+  untrusted. It is refused past 3 MiB, nested deeper than 64 levels or holding
+  more than 200,000 JSON values (checked before it is decoded), holding a NUL or not valid UTF-8,
+  with a member a tile type file does not have (at any level, a sample's
+  included) or a schema other than
+  `baum.tile-type/1`; its definition must pass the definition checks (shape,
+  UTF-8, dialect, a supported kit) and the kit's lint without an error, its
+  samples must validate and cite only their own hunks and items, and its name
+  must pass the name rules (a name already in the library is renamed with a
+  numeric suffix). Its digest is computed and whether it is built in follows
+  from that digest; a digest or `builtin` in the file is never read. Its
+  origin is "Imported". The person sees the title, use-when line, the fill
+  instructions it would give the review agent, its paths and a preview of a
+  sample before anything is saved; to draw that preview, the check registers
+  the file's definition in the frame registry once it has passed every check.
+  This is the one registration of something a request carries: it is the
+  person's own file pick, sent by the authenticated app, which already holds
+  that HTML, and the frame is the same sandbox as every custom tile's.
+  Bidirectional controls, zero-width characters and Unicode tag characters
+  are removed from the title, use-when line, fill instructions, glance and
+  review checks on import and on every save (the stored text and its digest
+  never hold them), and a path with a control or invisible character is
+  refused; the review checks are at most 1,500 characters. The dialog shows
+  the fill instructions, glance and review checks, labelled as instructions
+  given to the review agent. An import then runs the render check
+  (`tilechecks.Checker.ImportCheck`) on the file's first three samples in the
+  app's sandboxed frames: a type that fails or hangs is refused. When no
+  runner takes the check (the app is closed or cannot draw tiles) the type is
+  saved marked "Not checked yet", which is all that mark means: it is saved
+  and previewable, but no render check ran on it. Its first preview with a
+  runner available runs the check in the background once per daemon run and
+  marks it checked on a pass; a failed deferred check leaves the mark. The
+  check draws the type's HTML in the same sandbox as any custom tile; it does
+  not read the type's content for instructions.
+  An exported file holds the type's synthetic samples and no review content.
+- A review keeps the definition it was made with: its library tiles embed
+  the full definition, so editing or deleting a saved type changes no saved
+  review.
+
 **What a tile's frame cannot reach.** The sandbox gives the frame an opaque
 origin, so it cannot read the app's page, its cookies or storage, or the
 desktop app's bridge, and it cannot open windows, submit forms or navigate
@@ -1656,14 +1786,111 @@ which never says whether a digest exists:
 - the path is exactly `/tile-frames/` and the digits, with no encoding, extra
   segment or trailing slash; the query is ignored;
 - the daemon itself handed that type to the authenticated app: the tile
-  routes register the types of the custom tiles they serve, and nothing a
-  request carries is ever registered, so the route serves only HTML the app
-  already received. At most 32 MiB of documents are kept, the least recently
+  routes register the types of the custom tiles they serve, the tile type
+  preview route the type it draws (see "Saved tile types"), and a
+  render-check candidate is registered when the daemon hands it to the app's
+  check runner; nothing else a request carries is ever registered (the one
+  exception, an imported file the person picked, is registered after the
+  import checks, see "Saved tile types"), so the route serves only HTML the
+  app already received or sent. At most 32 MiB of documents are kept, the
+  least recently
   used going first; reading the tile route again registers its types again.
 
 The answer is `no-store`, sets no cookie, ignores `Range` and carries
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
 `Cross-Origin-Resource-Policy: same-origin`.
+
+**What the page checks.** The app's host (see "The app's host" under
+"Custom tile kit" in `ARCHITECTURE.md`) treats every message from a frame as
+untrusted:
+
+- The frame is `<iframe sandbox="allow-scripts">` with no other flag, no
+  `srcdoc`, `referrerpolicy="no-referrer"` and an empty `allow`; so it cannot
+  open windows or dialogs, submit forms, navigate the app's page or reach
+  storage, and its own policy lets it load nothing.
+- **Where frames mount.** In a browser, always. In the desktop app only when
+  the shell declares, by a script it runs in the page before the page's own,
+  `window.__BAUM_DESKTOP__ = { tileFrames: true }`: a shell says so once it
+  refuses every navigation that is not to the daemon's own pages (only a
+  request for a new window opens your browser) and once its commands are
+  checked to be out of a sandboxed frame's reach. A shell without the
+  declaration (an older one, or the Windows shell until its own check is
+  done) mounts no frame, and its custom tiles say they aren't available in
+  this version of the desktop app yet. A frame cannot set the declaration:
+  it cannot write the page's globals.
+- A message counts only from a frame's own window (`event.source`) and with
+  the opaque origin `"null"`, so no frame can speak for another tile or for
+  the page; a frame's kit likewise hears only the page, so a frame posting
+  to its neighbours as if it were the page is ignored. Messages are counted
+  before their data is read: past 30 in a second the rest of that second's
+  are dropped unread, and a frame over that rate in more than three of the
+  last ten seconds, or past 300 in one second, is unmounted.
+- Every field is read with strict type checks; a string longer than 1024
+  UTF-16 code units is dropped, an error's message is cut to 500, and what a
+  tile writes is shown only as text.
+- A detail's height, whether from `ready` or `resize`, is held to 120 to
+  20,000px, applied at most once an animation frame, and stops following a
+  height that keeps growing by one amount or keeps changing direction;
+  `ready` is taken once for each `init` or `update` the page sent, any other
+  is a resize under the same rules. A glance's box is fixed.
+- A frame can ask the page only to jump to an item its own data cites,
+  which the page resolved from the review it already shows (the frame names
+  it by key, never by address), to open the session panel's question about
+  the tile, or to act on a whitelisted key; and only from a detail whose
+  keyboard the reader gave it (below). A jump or a question also needs the
+  browser to report a user activation at that moment (a browser that cannot
+  say is taken as no), and the page honours at most one a second.
+- **The keyboard.** A frame takes no keys unless the reader gives them: a
+  glance never (it lies under its card's link with `tabindex=-1`); a detail
+  when a Tab lands on its frame, or when the pointer is over it, the browser
+  reports a user activation and the page saw no key press of its own in
+  the half second before (the reader typing elsewhere with the pointer
+  resting on a tile is not a click). The page cannot see clicks inside a
+  frame, so this is how it tells one apart. Focus a frame takes otherwise is
+  given back to the page's element that had it, and a frame that takes it a
+  fourth time is unmounted (its document unloaded at once, before the page
+  draws the failure). A key pressed in the instant a frame holds the
+  keyboard, before the page takes it back on its next task, reaches the
+  frame.
+- **Forwarded keys.** The whitelist is the page's reading keys only: Escape
+  and `u` (back to the summary), `j` and `k` (next and previous),
+  ArrowLeft and ArrowRight (previous and next tile), `[` and `]` (the
+  sidebars) and `?` (the shortcuts sheet). The page dispatches a `keydown` on
+  the frame's element carrying the key's name and whether Shift was held,
+  nothing else (no other modifier, code or text), and only while the reader
+  has given the frame the keyboard. No key that acts outward or changes
+  anything is on it: not Enter or Space, `m` (merge), `v` (send a review),
+  `c` (comment), `a` (ask), `f` (fix), `t`, `g`, or any key with Ctrl, Alt
+  or Meta; the frame's kit forwards none of those, and the page drops any
+  other key a frame names.
+- A frame that does not start, does not draw in time, says hello twice,
+  floods or keeps taking the keyboard is unmounted and its tile says it
+  couldn't load, in the host's own words; what the tile reported is shown
+  apart, quoted, behind Details. A frame that navigates itself after it
+  drew is unmounted where the engine reports the navigation as a load (both
+  Chromium and WebKit do for the navigations the suite tries); one that
+  navigates before it drew never draws and is unmounted when its time runs
+  out. That failure is about that frame only: nothing a frame sends marks
+  its tile type, or any other tile, as broken. Only the daemon's own render
+  check or the authenticated app may block a type.
+- What the tile draws is set apart from the page: its kicker reads
+  "Custom ·" and the type's title, whatever the title (one that names a
+  built-in tile too), in the card, the detail and the rail, and its detail
+  sits inside a faint edge under a "Custom tile" caption that the page
+  draws.
+
+The browser suite (`app/custom-tile-tests/tile-frames.spec.ts`) runs hostile
+tiles on the real frame route in Chromium, and in WebKit with
+`just local_app::e2e-webkit`: every way out it tries (reading the page,
+cookies, storage, caches and the shell's message handlers, top and parent
+navigation, `window.open`, dialogs, form submission, nested frames, fetch,
+XHR, WebSocket, EventSource, beacons, images, fonts, stylesheets and CSS
+`url()` to the daemon and to another origin, workers, spoofed and oversized
+messages, a second hello, floods, taking the keyboard while the reader
+types elsewhere, navigating itself before and after it drew) is refused,
+the page stays as it was and a listening server on another port receives
+nothing. The desktop shells' own webviews are checked by hand
+(`desktop/tests/tile-frames-manual.md`).
 
 **What a tile is given.** The frame protocol gives a tile its own data, the
 face and size it draws, the app's theme and language, and the items of the
@@ -1683,12 +1910,28 @@ by the chat's agent.
   govern. baum ships no script that tries to block these inside the frame: a
   fresh realm gets around such a script. It minimises what a tile receives
   instead.
-- A tile that runs a busy loop freezes the app's window until it is closed.
-- In the desktop app, a frame's navigation to an external address may be
-  handed to the desktop shell's navigation handler, which opens external
-  addresses in your browser, before the page's `frame-src` is applied. Until
-  the shell refuses frame navigations, a tile may be able to open a page of
-  its choosing in your browser, with what the tile was given in its address.
+- **A tile in an endless loop freezes the app's window until the app is
+  closed**, where the engine runs the frame on the page's thread, and
+  nothing in the page can stop it; the next time the review is opened it
+  freezes again. In the browser suite a 1.5-second loop held the page for
+  its length in WebKit every time, and in Chromium in some runs and not
+  others. The host unmounts a frame that does not draw in time, but cannot
+  interrupt one that holds the thread. Where the desktop shell provides the
+  render check a window with its own web process (currently Linux), that
+  window takes the freeze instead (see "The render check" below). Elsewhere
+  (a browser, a shell without one) the render check draws in the app's own
+  page, so a
+  candidate that loops freezes it, and the daemon then answers `hang` and
+  refuses that type until it restarts.
+- A frame can navigate itself to a page of the daemon's own origin: the
+  request reaches the daemon without the cookie, the namespace or any data,
+  and the daemon's pages refuse to be framed (`frame-ancestors 'none'`); the
+  host then unmounts the frame.
+- In a desktop shell that hands navigations to external addresses to your
+  browser, a frame navigating itself could open a page of its choosing there,
+  with what the tile was given in its address, and the page would not see it
+  happen. That is why the page mounts frames in a desktop shell only when
+  the shell declares it refuses such navigations (above).
 - A local process that knows a tile type's digest can fetch that type's
   source by sending the three `Sec-Fetch-*` headers itself; the checks are
   not authentication. It never gets a tile's data, which is not in the
@@ -1699,6 +1942,44 @@ by the chat's agent.
 
 Tile code is never read from repository content: a pull request cannot
 supply a tile.
+
+
+**The render check.** Before a tile made in the app is shown, the daemon
+checks its type (`internal/tilechecks`) and the app's check runner draws it
+in the same sandboxed frames, under the same policy, with the type's own
+samples and the data it will show. It is a quality gate for honest
+mistakes, not a security control: a tile can fake its `ready`, swallow its
+errors or behave differently later. What it does protect against is a
+freeze where it would hurt:
+
+- Where the desktop shell provides a check window (currently Linux), the
+  runner draws in that hidden window with its own web process. While it
+  draws, the runner tells the daemon it is alive every 2 seconds and as
+  frames finish; a candidate that never finishes drawing freezes it, so
+  after 10 s without a sign of life (or past a limit scaled by the frames
+  the check draws) the daemon answers `hang`, marks the type's digest hung
+  (the frame route then refuses it until the daemon restarts) and tells the
+  main page, which has the shell close the window, ending its process and
+  the loop. The main window is not affected.
+- Where that window exists, the first time the app shows a custom tile that is not of a
+  built-in type, with data it has not drawn before, it first draws that
+  pair in the check window (the first-show preflight). A pair that hangs
+  stays down, with "This tile stopped responding when it was checked."; a
+  pair that drew, or failed in a way the frame's own failure faces show,
+  is shown. Verdicts are kept per pair (the type's digest and the data's
+  SHA-256) in `app.sqlite`, the newest 10,000.
+- The runner's routes (`/api/tile-checks/next`, `/{id}/result`,
+  `/preflight`) sit behind the app server's Host, session, Origin and JSON
+  checks, and refuse a browser request that is not same-origin: claiming a
+  job registers its frame document, so only the app may claim. A job
+  carries the candidate's served definition (no HTML: the frame route
+  serves that by digest), its samples and their citations' payloads, and
+  never more than the page itself would give the frame. The `tile_check`
+  event names a check's ID and state only.
+- Only the daemon marks a digest hung, from its own timer: no message from a
+  frame or a runner can. A runner whose page goes away mid-check reports the
+  job abandoned, which ends it unavailable without blocking the type, and a
+  long poll whose client left puts its job back.
 
 ### MCP server for agents
 
@@ -1977,6 +2258,89 @@ setting and is never stored in the proposal, returned to the agent, printed
 or logged. Nothing outside that list can be changed through a saved
 proposal: not your GitHub connection, a repository's registration or clones,
 nor any GitHub write.
+
+One change takes no save: adding a tile to the review on the pull request
+page you have open. A chat may add a library tile type or a tile it made for
+that page (`add_tile`, `start_tile`, `check_tile`, `add_custom_tile`), on one
+of the review's sections, and it applies at once. The agent reads untrusted
+pull request text (the diff, the description, threads and transcripts), which
+can tell it to add tiles, and baum accepts that without asking, because the
+worst such text can do is add a tile to your own page, visibly, removably and
+within fixed rules:
+
+- No content changes. An added tile stands among a section's tiles; the
+  review's text, risks, recommendation and risk score, the saved version, the
+  repository and GitHub are never touched.
+- Every added tile shows, and is taken off in one step: Remove on its menu
+  takes it off every version of the pull request, and the toast's Undo puts
+  it back on the section it stood on. Only you remove; the chat has no tool
+  for it.
+- Scope is one page. The tools are global, so an action never sees them; they
+  refuse any page but the pull request's, and a section they name must be one
+  of the review that page shows. A conversation's page follows the person
+  around the app, so an add is also refused unless the page open now is the
+  pull request the current message was sent from: a long turn begun about one
+  pull request cannot change another's page. Added tiles stay on this
+  computer, in `app.sqlite`, for that pull request; the event that tells the
+  page carries only the pull request's key.
+- Bounded: at most 8 added tiles a pull request, the 200 most recently
+  changed pull requests; a removed tile is kept a day for its Undo.
+
+An added library tile brings data. Data the agent writes
+for it is checked against the type's schema, every hunk it cites must be in
+the diff of the version shown (a refusal names the place in the data, never
+its values), and it is masked for secrets, as every model output is, before
+it is stored on this computer. The type is one of baum's built-in library
+types, named by the host; the page labels the tile as baum's own by its
+definition's digest, which data cannot change. A review never takes the
+agent's data as its own: only fills baum ran itself are reused in a later
+version. An add without data starts one fill run with your review agent (a
+model call at your expense, as a review's fill is): each version's tile type
+is filled at most once while baum runs, however often it is added, removed
+and added again, and a failed run is not retried for ten minutes. The run is checked
+and masked like any fill.
+
+A tile made in chat brings code as well as data: the agent, which reads
+untrusted pull request content, writes a tile type (HTML and JavaScript) for
+the pull request page you have open (`start_tile`, `check_tile`,
+`add_custom_tile`), and it is added at once, as any added tile is. That is
+safe to do without asking for the same reasons, and these:
+
+- The frame is the boundary, unchanged. The tile runs in the custom tile
+  frame described above ("Custom tiles"): sandboxed, an opaque origin, the
+  frame route's policy with no network, only its own data and the items it
+  cites, and the strict message router. The render check and the lint are
+  quality gates for honest mistakes, not security controls; the check draws
+  the candidate in the check window where the desktop app has one, else in
+  the page, as the first-show preflight does.
+- It is labelled and grounded. It stands under a "Custom tile" caption on
+  the review page, whatever its title says, and is marked baum's own only by a
+  built-in type's digest; its name may not be a built-in library type's. Its
+  data must cite at least one hunk, file, prompt or session event of the
+  review, and every citation must resolve to the version shown, so each
+  claim leads to code or a transcript you can open. It stands among a
+  section's tiles and cannot take the place of the review's own text,
+  recommendation or risk score.
+- Its data is masked for secrets before it is checked or stored, as every
+  model output is, and kept, with its definition, in `app.sqlite` for that
+  pull request only.
+- It is yours and the page's only. Saving it as a type for later reviews is
+  a proposal (`propose_tile_type`) you save, with synthetic samples only; on
+  later versions it is never filled again, because its fill instructions were
+  written by the session agent, which reads untrusted pull request content, and
+  you have not seen them: it shows its newest data marked as from the version
+  it was made for. Save to library shows the fill instructions before you save
+  them, and only then does a review agent fill the type on later versions.
+- The pending card that shows while the tile is made lives in the daemon's
+  memory; its event carries only the pull request's key.
+- Where the desktop app does not mount tile frames (Windows, for now), the
+  tools refuse before anything is made.
+
+There is no confirmation and no rate cap on purpose: each would make "add
+the API changes tile" slower for everyone to guard against an attack whose
+worst result is a tile you see and remove. Anything that lasts beyond the page you have open
+(standing preferences for a repository's future reviews, for instance) stays
+a proposal.
 
 A chat may also propose an operation: one of the buttons of the page you
 have open, for something that page shows. The agent never runs anything.

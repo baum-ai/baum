@@ -120,7 +120,7 @@ content. A failed later read keeps the content shown and says so in a banner. Na
 open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them.
 Dialog and panel dismissals use the viewer's `CloseButton`; confirmation actions
 keep their Cancel buttons until finished. The keyboard shortcuts dialog keeps
-its title and close control visible while the list scrolls.
+its title, search field and close control visible while the list scrolls.
 Every screen uses baum's bundled type from the
 viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope for
 headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
@@ -152,7 +152,7 @@ name. A reference or before-state image is not evidence that the finished
 change passed a test. Images are copied into the saved review version, so
 history keeps them after a native transcript is removed. Entire checkpoint
 images and image paths or URLs merely mentioned in a transcript are excluded.
-The full review's Images part opens each copy at full size and retains its
+The review's Images part opens each copy at full size and retains its
 provenance.
 
 Setup and the app's Add repositories use the same repository picker and daemon
@@ -323,7 +323,7 @@ request, so it stays). A rate limit or a failed read says so above the page,
 with **Retry**; a daemon that serves no facts shows the page as before. Once a
 review is saved the page shows it instead, as before.
 
-A pull request opens on the full review.
+A pull request opens on the review page described under [Review page](#review-page).
 
 Up next's list shows a review group or stack (`api/groups`) with a shown member
 as one row (`withGroups` in `src/up-next.tsx`). A stack takes the section and
@@ -704,7 +704,7 @@ the agent sessions, and, with a daemon that has inboxes, each saved inbox by its
 name (opening its queue) with **New inbox** and **Manage inboxes**. There is no
 Inbox page to go to, as no page shows the whole queue: every word typed must match, a label that starts with the
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes; it also
-offers **Open the session panel**. The sidebar
+offers **Open the session panel** and **Keyboard shortcuts**. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
 `aria-keyshortcuts`. Ctrl with the backtick (`` Ctrl+` ``) shows the session
 panel, or hides it from its composer, anywhere (see "Session panel").
@@ -752,7 +752,9 @@ them: Summary, Changes and, while it is open, each change, Files changed,
 Decisions, and Sessions and Commits with theirs while open (the viewer's
 `ReviewSteps` `rail`); a folded group is one place. `Space` on a selected group
 (Changes, Files changed, Sessions, Commits) opens or closes it in the rail
-(`toggleGroup`). `j`/`↓` and `k`/`↑` move through
+(`toggleGroup`). On Files changed `j`/`↓` and `k`/`↑` open the next and
+previous file of the list in its order and stop at the ends. Elsewhere they
+move through
 the blocks of the one read (its attention, each behavior, risk or finding, a
 commit's or session's card, each file of a commit opened alone, a decision,
 or, in a session's transcript, each prompt and agent reply as the transcript
@@ -791,7 +793,10 @@ page, `?` (or the `?` button in Pull
 requests' page bar) shows the sheet of every key, grouped by where it works
 (anywhere, the Inbox, Pull requests, a pull request or group, Sessions, Jobs,
 Repositories, a session or job transcript), with the current page's group
-first; `?` or `Esc` closes it. Key hints drawn
+first; `?` or `Esc` closes it. It opens on the list, which the arrow and page
+keys scroll; typing searches it by what a key does or by the key (`/` only
+moves to the search field), and `↓` from the field returns to the list. A key
+typed there never reaches the page behind the sheet. Key hints drawn
 on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 `useKeyHints` marks the document root then and clears it on release or when
 the window loses focus. Every page also shows its own keys then, in one line
@@ -830,7 +835,8 @@ fix (as `fixLabel` names it), **Re-run checks** and **Update branch**; with
 none to offer it is the state alone, and while a fix starts or runs a live dot
 says so beside it. **Regenerate review** is at the end of the version menu
 (the viewer's `header.versionActions`), read "Generating review…" or "Review
-queued" while one runs. Earlier versions are read once per pull request or group
+queued" while one runs. It works on a merged or closed pull request too: the
+daemon reviews it from its last head, though it never does so on its own. Earlier versions are read once per pull request or group
 (`useVersionLoader` in `src/version-cache.ts`): the viewer's version menu,
 section panes and hunk evidence share one cache, a failed read is retried on
 the next call, and the latest version is never kept because the daemon
@@ -1678,8 +1684,7 @@ straight to Connections. **General**, the default, offers System, Light and Dark
 as the **Preferred theme**, under it a **Light theme** and a **Dark theme** select
 (the built-in and custom themes, whatever their base, in either slot) and the
 custom themes with a menu to rename or delete each (a delete asks first and
-resets a slot that used it), the review page a pull request opens on (**Full review**, the
-default, or **Tiles (preview)**; see [Tiles page](#tiles-page)), the modifier
+resets a slot that used it), the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
 elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
@@ -1754,6 +1759,13 @@ can install dependencies and fetch what builds and tests need; off, its
 sandbox allows no connection, so it can't install dependencies. **Data
 extraction** has the same Agent and Model rows, its agent "Same as reviews
 (agent)" by default.
+
+Reviews ends with **Generate reviews as tiles (experimental)** (`TileReviewsRow`),
+off by default: read with `GET api/settings/labs` and saved with `PUT
+api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
+and says why. It applies to reviews that start after the change. While it is
+on, a running review's `arranging` phase reads "Arranging the page…". A pull
+request's page is the same whether it is on or off.
 
 While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
 or Codex, a closed **Advanced** disclosure at the end of the section
@@ -1998,6 +2010,62 @@ leaving the page or the Settings section discards it, which the repository page 
 with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
 when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.
+
+**Settings › Tile library** (`TileLibrarySection`, `src/settings-tiles.tsx`;
+`?page=settings&section=tiles`, with `&type=<name>` while a type is open) lists
+the person's saved tile types (`GET api/tile-types`) as list rows: the title
+(which opens the type), a **Custom** pill, the use-when line, where it came
+from (Made in chat or Imported), where it is pinned, and when a review last
+used it and in how many repositories (`used_at`, `used_in`, recorded when a
+generated version is stored with a ready tile of the type; "Not used in a
+review yet" until then). A row's menu has Open, Edit in chat, Export… and Delete. An empty library
+says how to make a type: ask the session panel on a review for a tile, then to
+save it. The section list's line counts the saved types. A type's pane (`GET
+api/tile-types/{name}`, which never carries the HTML) shows its title with
+**Rename** in place (`PUT api/tile-types/{name}/title`; Enter saves, Escape
+puts it back; a rename is a new version), **Edit in chat**, **Delete**, the
+use-when, glance and paths, the fill instructions and review checks behind a
+disclosure, a preview of each sample (a segmented switch between samples): a
+glance in a card at each declared size (third 344px, half 522px and full
+width) and the detail, each in its sandboxed frame
+(`PreviewFrame`, `src/tiles/custom/tile-frame.tsx`, fed by `GET
+api/tile-types/{name}/preview?sample=`, which registers the frame document;
+nothing in a preview jumps or asks), switches to pin the type to each picked
+repository (`PUT api/tile-types/{name}/pins {repositories}`, written into each
+repository's `settings.tiles.types`, at most 8 a repository; a repository
+settings `PUT` without a `tiles` member keeps them), and its versions, newest
+first, each earlier one with **Restore** (`POST
+api/tile-types/{name}/restore {digest}`). Delete (`DELETE api/tile-types/{name}`)
+goes back to the list with a toast whose **Undo** brings the type back pinned
+where it was (`POST api/tile-types/{name}/undelete`). Edit in chat opens the
+type's pane and the session panel: the page context is `{page: "settings",
+section: "tiles", focus: {type}}`, its bar reads "Settings · Tile library ·
+<name>", and the agent reads the type with `tile_type` and proposes a change
+with `propose_tile_type`. A desktop shell that mounts no tile frames (Windows)
+shows "Custom tiles aren't available in this version of the desktop app yet"
+in place of the previews; everything else works.
+
+**Export…** (the row's menu and the pane) reads `GET
+api/tile-types/{name}/export`, the type's current version as a
+`<name>.baumtile.json` file (`schema/tile-type-1.json`: the definition without
+its digest, glance, review checks, `applies_with`, paths, the synthetic samples
+and `exported {at, baum}`), and saves it through the desktop app's save dialog
+(the `save_tile_type` command, `desktop/src/tile_files.rs`, which writes only
+where the person chose, a file of at most 3 MiB under a tile type's name), or
+as a download in a browser. **Import…** (the section's heading, and the empty
+library) opens a file picker; the file's text goes to `POST
+api/tile-type-files/check {file}`, which runs every import check without
+saving, and a dialog shows the name it would get (saying so when its own is
+taken and it gets a numeric suffix), the title, use-when line, glance, paths,
+the fill instructions ("Given to the review agent when this type is filled"),
+the review checks ("Instructions given to the review agent") and its
+first sample as a glance and a detail in their frames. **Import** sends `POST
+api/tile-type-files {file}`, opens the new type and says so in a toast. A
+refused file names the reason under the heading. An imported version shows a
+**Not checked yet** pill when no render check ran on it (`checked: false` in
+the list and the pane): an import runs the render check on its samples when
+the app can draw them and refuses a type that fails, and with no runner
+available saves it unchecked until its first preview with one.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
@@ -2316,6 +2384,42 @@ Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
 `../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
 `pnpm test:unit` runs them again against the compacted script the daemon inlines
 (`KIT_SCRIPT=inlined`, `../tiles/kit/testdata/v1.inlined.js`).
+The overview page: `e2e/review-view.spec.ts` serves acme/demo#7's tile route
+with the `baum.review/2` document of `src/review-view/fixture-1303.ts` and
+checks the rail, the address, the file grouping and that no place scrolls
+sideways at 390, 900 and
+1440px; `REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each place, light and
+dark. It also removes an added tile and undoes it, shows pending cards on
+their sections (both against routes it answers itself), checks the review
+page setting and an arranged version with tile reviews on, and, until the
+daemon answers `baum.review/2`, that a `baum.review/1` answer with its view
+draws the same page.
+Custom tiles on the review page: `pnpm test:custom-tiles`
+(`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
+the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
+each opening a tile's place (`pane=tile&tile=<id>`, the rail's row of the
+How it works section the tile stands on). With that variable the fixture
+stores acme/demo#7's versions and #13 as `baum.review/2` documents with
+their tiles (`browserV2`): #7's with the synthetic custom tiles on the
+section of its first hunk, #13's with its composition's library and
+authored tiles. The well-behaved tile at 1440, 900 and
+390px in light and dark (pictures into `test-results/custom-tiles` with
+`CUSTOM_TILE_SHOTS=1`), a review generated with library and authored tiles
+(`library-tiles.spec.ts`, acme/demo#13, with the same widths, themes and
+pictures), and the escape probes on the real frame route
+(`tile-frames.spec.ts`), with a server on port 4170 that must hear nothing.
+The synthetic tiles share a section, so each test serves the document with
+only the ones it drives (`showOnly`, which drops the others' tiles and tile
+blocks). `just local_app::e2e-webkit`
+runs those probes in WebKit (`BAUM_E2E_WEBKIT=1`), which approximates the
+macOS desktop app's engine; it is opt-in, not part of `e2e` or per-PR CI.
+The main suite starts the fixture without custom tiles.
+`e2e/tile-check.spec.ts` (main suite) submits candidates through a route
+only the fixture has (`POST api/tile-checks/submit`) and lets the page's own
+runner draw them: one tile per problem in `e2e/tile-check/`, the built-in
+library types and the starter, which pass, and a busy tile that a runner
+claims and never answers, which hangs. `just local_app::e2e-webkit` runs it
+in WebKit too.
 `just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
 (synthetic data) with the Go kit and takes pictures of them in sandboxed
 frames under the frame route's headers, glance at each card size and detail at
@@ -2323,6 +2427,14 @@ frames under the frame route's headers, glance at each card size and detail at
 (`e2e/tile-kit-screens.spec.ts`, only with `TILE_KIT_SCREENSHOTS=1`); it also
 checks that a throwing, network-using, failing and height-looping tile is
 reported from a real frame. `pnpm tile-kit` regenerates the kit's tokens.
+`just local_app::tile-type-screens [dirs]` checks tile type directories (the
+tile library's by default; see `../tiles/kit/GUIDE.md`) with the Go library
+check, then draws every sample and the schema's minimal and maximal samples:
+glances at each declared size and on a phone, details at 720 and 360px, light
+and dark, into `test-results/tile-types` with a glance contact sheet per type
+(`e2e/tile-type-screens.spec.ts`, only with `TILE_TYPE_SCREENSHOTS=1`). It
+fails on a script error, sideways overflow, an unresolved citation or a glance
+that overflows its box (the maximal sample only warns).
 
 Real reviews: a review page is designed against real data with pictures of
 saved reviews from a dataset the person supplies, which is a directory of
@@ -2381,12 +2493,21 @@ that was skipped for want of a document, and a review left unfinished after
 `REAL_REVIEW_MINUTES` (8 by default). Expected 404, 502 and 503 console errors
 from the refusing backends stay in `console-errors.txt` and out of the sheet's
 error count. States are the `STATES` list at the top of the
-spec: the landing page, a detail (the first section, or with `view=tiles` the
-first element matching `REAL_REVIEW_TILE`) and its first hunk excerpt opened.
+spec: the page as it opens (`landing`, the Overview), a
+detail (the first section) and its first hunk excerpt opened, and
+"Where this fits" (`context`), the section's Code and Tests views,
+Files changed grouped by type, folder and feature (`code`, `code-folder`,
+`code-feature`), and the rail's Sessions and Commits pages and the first
+session (`sessions`, `session`, `commits`).
+`BAUM_APP_REAL_COMPOSITIONS` names a directory of presentations to serve in
+place of the saved ones, each `<number>@<version>.json` (a replay run's
+`composition.json`), with `<number>@<version>.document.json` replacing that
+version's review too, so a replay run can be seen on the page.
 A new page adds a state by adding an entry with the steps that open it.
 `REAL_REVIEW_ONLY` limits the run to reviews whose `repo#number` contains the
 text, and `REAL_REVIEW_FULL=0` skips the full-page pictures. The pictures hold
-private content: keep them out of commits and shared services.
+private content: keep them out of commits and shared services. The waiting and
+capturing steps are in `e2e/review-screens.ts`.
 
 Generation usage is retained as provider-reported input, output, cache-read and
 cache-creation buckets, with available TTL, speed, prompt range and model-call
@@ -2621,94 +2742,309 @@ page offers **Open in panel** instead of Focus and has no reply bar, and a
 pull request's sessions tag it **Panel** with **Open in panel** beside Open
 transcript.
 
-## Tiles page
+## Review page
 
-A pull request's or a group's review can open as tiles instead of the full
-review (`src/tiles/`). Settings > General chooses which (`review_page`), and
-`?view=tiles` or `?view=full` in the address overrides it for that address.
-The page reads each version from `GET api/tiles` (a group's from
-`api/groups/{id}/tiles`, a draft's from `api/jobs/{id}/draft?tiles=1`): the
-review the page's chrome reads, carrying the converted tile document. A review
-the daemon cannot convert (`tiles: null`) shows as the full review, with a
-notice and a link that keeps the full review for that address. Facts-only
-pages, before a review exists, are the same on both.
+Every single pull request's review opens on the viewer's rail
+(`src/review-view/`, drawn through the viewer's places seam by `useViewPlaces`,
+with the viewer's `flatRail` and `ownFiles`) in every state; there is no other
+layout, and no setting for it (the stored `review_page` and `arranged_tiles`
+appearance values are ignored). The page always passes its places, with or
+without a document:
 
-The page is drawn through the viewer's places seam (`useTilePlaces`), so the
-head, the version menu, history, Compare, the side pane's tabs, the Files,
-Decisions, Sessions and Commits panes, comments and the review dialog are the
-full review's own.
+- **No review yet** (none asked for, queued, being written with no draft
+  yet, failed, needing a clone, or still loading): the rail has Overview, How
+  it works greyed with "No sections yet." under it, and Files changed with the
+  pull request's file count when its facts are read (left out when the facts
+  are unavailable), then Decisions, Sessions and Commits from the facts. The
+  Overview is current and its pane is the page's placeholder: "Review
+  queued", "Generating the review" (with Cancel), the failed job's outcome
+  with Try again, "No review yet" with Generate review, "Needs a local
+  clone", or "Loading review…". Files changed opens the viewer's own files
+  pane on the facts (`pane=files`, `pane=file`); once a review lands, that
+  address becomes the review's Files changed (`pane=tile&tile=code`, with the
+  open file), replacing the history entry. The side pane starts folded.
+- **A draft** and **every saved version** are drawn in the same rail, side
+  pane and keys. Only the content of the Overview and of a section depends
+  on the version shown: a `baum.review/2` version (and a draft) draws the
+  Overview and section bodies below, and a `baum.review/1` version draws the
+  viewer's own Summary and section pages (every block they show: behaviour
+  steps, evidence, images, intent, entities, risks, agent findings,
+  attention, and so on) in the pane, through the viewer's
+  `ReviewPlaceContext.builtInPane`. The rail's How it works rows come from
+  the version's own sections ("Where this fits" only for a version that has
+  one: a `baum.review/1` context is part of its Summary), and Files changed,
+  Decisions, Sessions and Commits are the same for both. `shellRequest`
+  reads a version from `GET api/document` and, when it is `baum.review/2`,
+  again from `api/tiles`; a `baum.review/1` version is kept as stored.
+- **An earlier version** read alone or compared is drawn the same way, each
+  by its own version's pages.
 
-- **Landing page** (the Summary, `pane` absent). The rail starts folded
-  there (`railFolded`) and opens in a tile's detail for stepping; the side
-  pane starts folded on every place of the tiles page (`sidePaneFolded`), so
-  the reader's own unfold holds as they move between them. At 1440×900 the
-  first screen shows the band, the Overview and Risks cards side by side, and
-  the first row of changes. A band in the same place on every review leads:
-  the recommendation (its decision, its sentence and the tiles it cites) when
-  the review gives one, the risk score on one line with its strongest reason
-  (every reason in its title; on a phone the meaning takes two lines and the
-  reason waits in the title), "N missing · N failed evidence" whenever any
-  evidence of a current change is missing or failed, leading to the Evidence
-  tile at the first, and where the version stands only when that is news:
-  outdated, a draft, "Writing details for N of M changes", "N changes
-  couldn't be written" with Retry, or an earlier version. Below it, the tiles' glance faces in the layout's order,
-  on a grid of six units (a full tile six, a half three, a third two) that
-  becomes two columns and then one as the pane narrows. The Changes group
-  shows every change up to eight and otherwise its first six, the rest behind
-  a slim row naming the first three ("Show 4 more changes · …, … and 1
-  more"); the tiles past the
-  landing area wait behind "Show N more tiles · …". Both are kept in the
-  address (`expand=<group,…>`, `more=1`), so Back restores them.
-- **Glance faces** say whether a tile needs opening. A card is as tall as its
-  row asks: it shows what it must (a change's warning, every critical or high
-  risk), then fills the rest of its row with more of its own content (more of
-  the overview, further risks, more evidence or decisions), fading at the
-  foot; a card with little to say is short in one column. The Overview card
-  leaves the title to the page and shows the kind, the reading time, a
-  breaking change, what needs attention and the summary. A Change shows its
-  review score, its state, its high or critical risk (named by tier and
-  category when the Risks card beside it says it in full) or what needs
-  attention, what it does, its size and its open risks and evidence; Risks
-  counts the open risks by tier and shows every critical and high one in
-  full, never cut;
-  Evidence counts what is verified, claimed, missing and failed, the gaps
-  first; Media shows the first images; Intent the issues it implements and
-  the stated reasons; Decisions who made them; Context the area; Everything
-  else the hunks no change describes and their files. A card's ⋯ (or a right
-  click) offers Open, Comment, Ask about this tile and Open in Full review.
-- **Detail faces** (`pane=tile&tile=<id>&tile_item=<id>`) hold everything about
-  one tile, with the rail unfolded for stepping between tiles. A Change's
-  detail is its section as the full review draws it, then the tiles that
-  gather its risks, evidence, intent, decisions and media. The detail is held
-  to a reading measure on a wide window. A link to an item scrolls to it,
-  marks it and gives it the keys. "Summary", Escape and `u` lead back to the
-  landing page: back through history when the entry before is that landing
-  page, so Back does not open the tile again, else in the tile's place. The
-  landing page comes back where the reader left it, with the card of the tile
-  read last under the keys (the first card when that tile is not on it).
-- **Always shown.** The recommendation and any missing or failed evidence are
-  in the band; every active critical or high risk is on the landing page, in
-  the Risks tile or, while that tile is not ready or not on the landing page,
-  in a "Read before approving" band over the grid.
-- **Tiles that cannot be drawn** (unavailable, of a type this version does not
-  know, a custom tile, or one that fails while drawing) show a quiet
-  "unavailable" face; the rest of the page is unaffected. A tile still being
-  written shows that it is.
-- **Links.** A full review's address still works: a section opens its tile
-  (the mechanical change's is Everything else), a risk opens Risks at it, and
-  the Changes overview scrolls the landing page to the Changes group. A chip
-  in prose opens the tile that holds what it names.
-- **Compare.** Each side draws its own snapshot; the current side marks tiles
-  new since the compared version and changes whose code moved.
-- **Keys.** As on the full review: `j`/`k` move between the cards (or the
-  items of a tile), Enter opens the card, Space shows a group's hidden
-  members, `←`/`→` and Shift+J/K step through the Summary and the tiles in
-  order, Escape and `u` go back from a tile, `c` comments on the tile open or
-  the card the keys are on, and `a`, `]`, `m`, `f` and `v` work as everywhere
-  on the page.
+A group's or a stack's page (`src/group.tsx`) keeps the viewer's own places. The
+head, the version menu, history, Compare, the side pane, the Decisions,
+Sessions and Commits panes and the review dialog are the viewer's own. The rail
+lists, in order:
 
-The session panel's page context names the page in its `focus`: `view`
-`tiles`, and the `tile` open with its `item`.
+- **Overview**, then **How it works** with "Where this fits" and each section
+  nested under it (the group's own row opens the first real section; an
+  obsolete section is muted), then **Files changed** with the number of changed
+  files. These are the page's places; the rail's other rows are the viewer's.
+- **Decisions**, **Sessions** and **Commits** are plain rows, with no
+  disclosure and nothing nested under them (`flatRail`; the group page keeps
+  the viewer's disclosures). Each has its count and a live or waiting dot, and opens a
+  page listing the pull request's items; a session, a commit or a decision
+  opened from there shows in the review pane and leaves its group's row marked.
+  Files changed is the app's own place (`ownFiles`), so the viewer's Files row
+  and its file tree are not drawn.
+- The side pane has its usual tabs (Details, Activity, Comments, and the
+  conversation) and starts folded on the page's own places, then stays as the
+  reader leaves it. Where the panes stack, the rail is a sheet opened from the
+  navigator bar, which also steps through the places.
+
+The page reads each `baum.review/2` version from `GET api/tiles` (a draft's
+from `api/jobs/{id}/draft?tiles=1`), which answers `{document}` with a
+`baum.review/2` document (`oss/reviewv2/document.go`; `review-view/document.ts`
+has its types): the summary with its `verdict` and `risk_why`, the
+`overview` (`screenshots`, `diagram`, `intent`), the `context`, the sections
+with their `gist`, `body` (blocks: `prose`, `points`, `note`, or a `tile` naming a tile the section owns), `risks` and `details`, and every tile
+placed by its `owner` (`overview`, `context` or a section). `parseReviewV2`
+reads it, dropping a malformed item (a section, step, risk, tile or intent row)
+rather than the page. A section without a `body` (a document written before
+bodies, with a `summary` and `steps`) reads as one, as the daemon's `BodyOf`
+does: a prose block, a points block, then its tiles; tiles the body does not
+place (a person's own among them) follow it, and a tile block naming a missing
+or another section's tile is ignored. The page reads only this document. The review viewer
+around them (the head, history, side pane, comments, selection and keys) and
+the viewer's parts they draw (citation chips, images, diffs) read a
+`baum.review/1` review, which `chromeOf` makes from the document: what
+`baum.review/2` has no field for (the author, agent reviews, evidence) is
+empty there. Until the daemon converts every version, it may answer with a
+`baum.review/1` document and its `view` (`baum.view/1`) instead; the page
+converts that answer (`review-view/from-v1.ts`, to be removed once the daemon
+answers `baum.review/2`) and keeps the served review for the chrome. A
+`baum.review/1` version has no tiles: it shows the viewer's Summary and
+sections.
+
+- **Where the reader is** stays in the address, so a reload, Back and a link
+  land there: the Overview is the Summary (no `pane`), How it works is
+  `pane=section&section=<id>` (`context` is "Where this fits"; a risk's
+  `pane=risk` opens its section at the risk, and the Changes its first
+  section), and Files changed is `pane=tile&tile=code&tile_item=<path>` (the
+  address keeps `code`). A link to a tile opens the section it is placed on.
+  The Files changed row opens the first file that is not generated.
+- **Overview**, always in this order: the summary (`summary.text`), the risk
+  (score, level and why: `risk_why`, or else the score's first reason) with
+  the verdict inside its card when it has points (each linking to its
+  section), what it looks like (`overview.screenshots`), the main diagram
+  (`overview.diagram`) under its title, and what was asked (`overview.intent`,
+  else each linked session's first prompt), each linking to the prompt in its
+  session.
+- **How it works** lists "Where this fits" first in the rail (the review's
+  context, its files as chips, and the tiles `context` owns) and opens on the
+  first real section. The sections are the rail's rows, not a list in the page. A section shows its
+  title, then a row of views, each with its count and disabled (never hidden)
+  when the section has nothing for it: **Overview** (its gist, then its body block by
+  block, then its risks: prose at reading width, points as hairline lines that
+  open to a detail and the files they cite, a note with a left rule, and tile
+  blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
+  label; a table cell `{text, was}` strikes the old value, and a flow whose
+  steps have `more` makes them buttons that show the step's detail below; "Writing
+  details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
+  migration hunks, file by file, drawn as Files changed draws them with the
+  section's own steps and risks pinned to the hunks they cite, and its
+  generated or vendored files folded at the end), **Tests** (its test hunks,
+  under the names of the tests they add or change where those can be read
+  from the lines, once the hunks the review left out are loaded: Go's
+  `func TestX(`, JavaScript's `it("…"` and `test("…"`, else no list), **Session** (the prompts and session events its
+  summary, steps, risks and tiles cite, quoted with when and who, each linking
+  to its turn of the transcript) and **Docs** (its docs hunks). Code, Tests and
+  Docs count files, Session quotes. The view is `section_view=<view>` beside
+  `section=`, and opening another section opens its Overview. The full
+  review's check callouts and line counts are not shown.
+- **Files changed** (`code-tab.tsx`) lists every changed file in a list beside
+  the open file, under a switch, **Group files by**, with three modes. **Type**
+  groups them as code, tests, docs, config and generated (folded, and a
+  generated file's diff waits for Show the diff). **Folder** groups them by
+  directory, a directory with no file of its own and one directory joined to it
+  (`oss/internal/jobs`), files by name under their folder. **Feature** groups
+  them by the sections that explain them (`ViewFile.sections`), in the
+  sections' order; a file explained by several sections is listed under each
+  (and marked in each), and the files no section explains come last under "Not
+  in a section". A row shows the file's name (and its folder, where the heading
+  does not), its added and removed lines and its notes. The mode is kept in the
+  browser (`localStorage` `baum.review.fileGrouping`; when storage is refused it
+  holds for the page). The open file shows its hunks with the steps and open
+  risks that cite each pinned under it, each linking to its section. A code
+  chip anywhere on the page opens its file here.
+- **Tiles** always show their title. Flows, columns, sequences and tables are
+  drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
+  caption and citations, and lay themselves out by the room they have: lanes
+  wrap and then stack, columns stack, and a sequence becomes a list. A wide
+  sequence draws each actor as a lifeline under its name and each message,
+  numbered, as an arrow between two lifelines: dashed for a reply, ending in
+  a cross when it is `bad`; a message an actor sends itself is a loop on its
+  lifeline. A message the pull request adds or changes (`change`, or the
+  `new` tone) has a New or Changed pill and a bar at its row's edge, with a
+  changed message's earlier text (`was`) struck through. A legend under the
+  sequence explains only the marks it uses, and when some messages changed
+  and some did not, a "Show only changes" switch fades the rest. A code
+  tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
+  in that range. Exhibits draw as the generic tiles do, and library and
+  chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that
+  failed and one that cannot be read say so in its place.
+- **Comments and keys.** `c` comments on the section read (in any of its
+  views), the file open in Code, or the pull request on the Overview; on a tile the keys are on
+  (`j`/`k`), on that tile, placed on the code it cites. `a` asks the session
+  panel about the tile the keys are on, else the pull request. `←`/`→`
+  (and `Shift+J`/`Shift+K`) step through the rail's rows: the
+  Overview, each section, then Files changed, where `→` goes on from file to
+  file, then the viewer's Decisions, Sessions and Commits. On Files changed `j`/`k` (`↓`/`↑`)
+  open the next and previous file in the list as it is grouped (Type, Folder or
+  Feature, following a switch made on the page; a file under several sections
+  is taken at its first place) and do nothing at the first and last file
+  (`ReviewPlaceSteps.item`, `listedFiles` in `places.tsx`); the grouping is one
+  shared choice (`useFileGrouping`, `readFileGrouping` in `file-grouping.ts`).
+  Elsewhere they mark blocks as above. `]`
+  opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request. The session
+  panel's focus names `view: tiles` and the tab: on the
+  Overview `tab: overview`; on How it works `tab: sections` and the `section`
+  read (`context` for Where this fits; a risk adds its `item`; a link to a
+  tile names the `tile`), so a tile made or added from chat stands there; on
+  Code `tab: code` and the `file`.
+
+## Tiles on the review page
+
+Tiles are what the model and the person customise on the overview tabs
+(`src/tiles/`, drawn by `ViewTileCard` in `src/review-view/view-tile.tsx`):
+the document's native diagrams and tables, exhibits (code, prose, table and
+diagram source, `src/tiles/builtins/generic.tsx`), library tiles and tiles
+made in chat. Each stands on a section of How it works (or on Where this
+fits), or is the Overview's main diagram, and is as wide as its section.
+
+- **Custom tiles** (`src/tiles/custom/`) draw in sandboxed frames from the
+  daemon's frame route: the title is the page's, the body is the tile's. A
+  tile is as tall as it draws, inside a faint edge under a "Custom tile"
+  caption, and Tab reaches it. A tile of a built-in library type, whose
+  served definition the daemon marks `builtin: true`, is baum's own: it has
+  no caption or edge, though it draws in the same frame. Its frame is told
+  the size `full`, or the largest its type declares. A citation the tile's
+  reader clicks opens the cited code in Files changed, a risk or section in
+  How it works, or the tile cited where it stands. Citations resolve against
+  the shown version's review (its index, its sections, their risks and
+  evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),
+  never by fetching. Frames follow the app's theme. A frame that doesn't
+  start, draw or behave says "This tile couldn't load" with Retry; a tile
+  made with a newer kit says so; a desktop shell that has not declared
+  `window.__BAUM_DESKTOP__ = { tileFrames: true }` shows custom tiles as not
+  available yet. The protocol, its checks and the states are in
+  `ARCHITECTURE.md` ("The app's host"); what a frame cannot reach is in
+  `SECURITY.md` ("Custom tiles").
+- **Render check** (`src/tiles/custom/check-runner.tsx`). The daemon's render
+  check has the app draw a candidate tile type: the runner claims a job from
+  `api/tile-checks/next`, draws it in invisible sandboxed frames (each
+  sample as a glance at each declared size and a detail at 720 and 360px,
+  the pull request's data in dark too, 8 at a time) and reports what it saw
+  to `api/tile-checks/{id}/result`. The pull request's data has its
+  citations resolved against that version's review and view (`GET
+  api/tiles`). It reads sizes from the layout and from the frame's messages
+  only, never animation frames, ResizeObserver or tight timers, so it works
+  in a hidden window, and tells the daemon it is alive every 2 seconds while
+  it draws (reporting the job abandoned if its page goes away). Where the
+  desktop shell declares `window.__BAUM_DESKTOP__.checkWindow`, the main
+  page opens the shell's check window (`open_check_window`, which loads
+  `?page=tile-check`, the runner alone) on a `tile_check` event and closes it
+  (`close_check_window`) when a check hangs or after 2 minutes without one.
+  In a browser and on macOS the runner draws inside the page; a desktop shell
+  without frames draws nothing.
+- **First-show preflight** (`src/tiles/custom/preflight.ts`). Where the check
+  window exists, a custom tile that is not of a built-in type waits (its
+  box's `data-frame-state` reads `checking`) while the daemon draws its data
+  once in that window, unless it already has. A tile that hung there says
+  "This tile stopped responding when it was checked." instead of mounting;
+  every other answer mounts it.
+- **A tile's menu** (⋯, or a right click) offers Comment, Ask about this tile,
+  **Save to library…** on a custom tile that is not baum's own (it opens the
+  panel on the pull request about that tile with "Save this tile to my
+  library" typed; the agent proposes the type with `propose_tile_type`), and
+  **Remove** on a tile the person added. An earlier version's tiles and a
+  draft's offer only Ask.
+- **Added tiles.** The panel can add a library tile the review does not show
+  ("add the API changes tile") or make one no library type gives. A view tile
+  the person added carries `added: true`; one whose data is from an earlier
+  version says "From version N" under its title (`from`), with "; filling for
+  this version" while it is filled (`filling`), and one without data yet says
+  "Filling this tile…". Remove sends `POST api/tiles/added {clone, pr, tile,
+  action: "remove"}`, which takes it off every version of the pull request,
+  and shows a toast "Removed <title>" whose **Undo** sends `action:
+  "restore"`, putting it back on the section it stood on. A refusal is a
+  toast saying why.
+- **Tiles made in chat.** The panel's agent starts a pending card
+  (`start_tile`), checks the type it wrote with this pull request's data in
+  the render check (`check_tile`, drawn by this page's runner or the check
+  window) and adds the check that passed (`add_custom_tile`), on the section
+  the person is reading. The tile route's `drafts` (`[{tile, title, section,
+  phase, round?, reason?}]`, the latest version only, read with the document
+  by `parseReviewV2`) are the pending cards, which `src/tiles/pending-card.tsx`
+  draws after the tiles of their section (`context` is Where this fits, which
+  is then listed; a card naming a section the page does not list stands on
+  the first listed): the title, the live dot and a line saying how far it got
+  ("Being made in the session panel · Writing the component", "… · Checking
+  (round 2)", the host's reason after a check that could not run, "Not
+  finished" once the turn ended without the tile), with Remove (`DELETE
+  api/tiles/drafts/{tile}?clone=&pr=`). A desktop shell that mounts no
+  frames adds `frames: "off"` to the pull request page's focus, and the tile
+  making tools refuse there.
+- **Events.** The daemon publishes `added_tiles` (`{pr}`, the pull request's
+  key, `owner/repo#123` lowercased) when the tiles the person added or the
+  pending cards change; the app passes it to the open review page
+  (`src/tiles/added-events.ts`), which reads the versions on screen (and a
+  draft) again, as it does after the event stream reconnects.
+
+### Native diagram gallery
+
+A dev page (`gallery/`, served by `vite.gallery.config.ts`, never part of the
+app's build) draws the review page's native diagrams (flow, columns, sequence,
+table) with its own `ViewTileCard`, without opening the app: in a card on the
+overview and in "Where this fits", bare in a section, and a failed, pending or
+unreadable tile as the page shows it. Editing `native-tiles.tsx`, `flow.css`,
+the palette or a sample redraws it in place. From the repository root:
+
+```sh
+just local_app::diagram-gallery [stores-dir]
+```
+
+It serves `http://127.0.0.1:5181` from the `ui-test` service.
+`DIAGRAM_GALLERY_PORT` changes the port and `DIAGRAM_GALLERY_POLLING=1` watches files by polling,
+for a mount that misses file events. The recipe publishes the port on
+127.0.0.1 only; `pnpm gallery` run elsewhere listens on `DIAGRAM_GALLERY_HOST`
+(127.0.0.1 by default). Each diagram shows its title, type,
+origin, placement and the page's verdict (`NATIVE[type].valid`), with a
+one-line reason when the page cannot draw it. Controls, kept in the address:
+type, source, the section's width at a 1440 window, a 900 window and a 390
+phone (the overview's column is as wide), and light, dark or both side by side.
+The diagrams come from:
+
+- the fixture `src/review-view/fixture-1303.ts` (acme/demo#7) and
+  `gallery/samples.ts`: per type the smallest and the largest the schemas
+  allow, realistic ones and one the page cannot read
+  (`gallery/gallery.test.tsx` checks each against the page's check,
+  composition-2.json and review-2.json);
+- replay runs under `$BAUM_REPLAY_OUT` or `~/.cache/baum/replay-runs`: each
+  case's `document.json` and `composition.json`;
+- the desktop app's review stores (`<clone>/.git/baum/reviews/versions.sqlite`,
+  or any `versions.sqlite` such as the app's fallback under
+  `~/.local/share/baum/reviews/`) found under the optional `stores-dir`: each
+  pull request's latest version only, its baum.review/2 document or, for an
+  older review, its composition;
+- loose JSON in `oss/app/gallery-data/` (a review, a composition, one diagram
+  or an array of them), which git ignores.
+
+A baum.review/2 document is read with the page's own `parseReviewV2` and cited
+against itself; a composition's or a sample's diagram is drawn without its
+citations, which name another review's hunks. The page asks the server
+(`GET /api/diagrams`) again every two seconds, so a new run or review version
+appears without a reload; a document it cannot parse is listed as a problem,
+and when the server does not answer, it says so and still draws the built-in
+diagrams.
 
 ## Your review
 
@@ -2729,13 +3065,10 @@ draft and the page reloads.
 On the PR page, `c` comments on the item being read (`commentTarget`): the
 selected section or risk, placed on the first line its anchors cite (else the
 section's first hunk), a changed file, on its first hunk, or else the pull
-request as a whole. On the tiles page a comment is on a tile: a Change tile's
-is its section's, and one on a risk in it or in Risks is the risk's, each
-targeted and placed exactly as the full review does; any other tile is a
-`tile` target, placed on the first line it cites (an evidence item's or a
-decision's anchors, Everything else's first hunk) or, for the Overview,
-Intent, Context and Media, put in the review's body under its title. Each card
-counts the comments on its tile. It opens the side pane's **Comments** tab (the viewer's
+request as a whole. On the overview tabs a comment on a tile (the keys on it,
+or its menu's Comment) is a `tile` target, placed on the first line it cites
+(a custom tile's hunk citations, else its data's `source`) or, citing no
+code, put in the review's body under its title. It opens the side pane's **Comments** tab (the viewer's
 `comments` slot) with a box for the comment, saved with ⌘↵ and put away with
 Esc. The tab lists the comments in the order written, each with its item and
 place; its ⋯ (or a right click) edits or deletes one, and the tab ends with

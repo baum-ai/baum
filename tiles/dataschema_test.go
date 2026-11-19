@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
+
 	"github.com/baum-ai/baum/tiles"
 )
 
@@ -232,4 +234,45 @@ func options(n int) string {
 		values = append(values, fmt.Sprintf(`{"const":%d}`, i))
 	}
 	return strings.Join(values, ",")
+}
+
+// A standalone data schema carries the reserved definitions it uses, and
+// those they use, so a JSON Schema implementation resolves it on its own.
+func TestStandaloneDataSchema(t *testing.T) {
+	raw := `{"type":"object","additionalProperties":false,"required":["cites"],"properties":{
+		"cites":{"type":"array","maxItems":3,"items":{"$ref":"#/$defs/citation"}},
+		"note":{"$ref":"#/$defs/own"}},
+		"$defs":{"own":{"type":"string","maxLength":10}}}`
+	out, err := tiles.StandaloneDataSchema(json.RawMessage(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Defs map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(out, &schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"own", "citation", "anchor", "itemRef", "hunkId"} {
+		if schema.Defs[name] == nil {
+			t.Errorf("the standalone schema lacks $defs/%s", name)
+		}
+	}
+	if schema.Defs["markdown"] != nil {
+		t.Error("the standalone schema carries a definition it does not use")
+	}
+	var resolved jsonschema.Schema
+	if err := json.Unmarshal(out, &resolved); err != nil {
+		t.Fatal(err)
+	}
+	r, err := resolved.Resolve(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Validate(map[string]any{"cites": []any{map[string]any{"type": "hunk", "id": "h_000000000001"}}}); err != nil {
+		t.Error(err)
+	}
+	if _, err := tiles.StandaloneDataSchema(json.RawMessage(`{"type":"array"}`)); err == nil {
+		t.Error("a schema outside the dialect has a standalone form")
+	}
 }

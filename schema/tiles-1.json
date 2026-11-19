@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://static.usebaum.com/schemas/tiles/1.json",
   "title": "baum tile review document",
-  "description": "One review of a pull request as tiles: the substrate a review is scored and refreshed on (the same shapes as baum.review/1), the tiles that present it and their layout. A reference to #/$defs/<name> that this file does not define names a definition of review-1.json, or one of the parts of review-1.json the schema package copies into $defs under a fixed name (reviewHeader, reviewSummary, reviewRisk, reviewRiskRules and the others it lists).",
+  "description": "One review of a pull request as tiles: the substrate a review is scored and refreshed on (the same shapes as baum.review/1), and the tiles that present it. A reference to #/$defs/<name> that this file does not define names a definition of review-1.json, or one of the parts of review-1.json the schema package copies into $defs under a fixed name (reviewHeader, reviewSummary, reviewRisk, reviewRiskRules and the others it lists).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "origin", "review", "facts", "stats", "index", "agent_reviews", "unassigned_hunks", "changes", "risks", "evidence", "tiles", "layout"],
+  "required": ["schema", "origin", "review", "facts", "stats", "index", "agent_reviews", "unassigned_hunks", "changes", "risks", "evidence", "tiles"],
   "properties": {
     "schema": { "const": "baum.tiles/1" },
     "origin": { "$ref": "#/$defs/origin" },
@@ -39,8 +39,7 @@
       "type": "array",
       "items": { "$ref": "#/$defs/evidence" }
     },
-    "tiles": { "type": "array", "items": { "$ref": "#/$defs/documentTile" } },
-    "layout": { "$ref": "#/$defs/layout" }
+    "tiles": { "type": "array", "items": { "$ref": "#/$defs/documentTile" } }
   },
   "$defs": {
     "origin": {
@@ -185,7 +184,7 @@
     },
     "tileTypeDefinition": {
       "type": "object",
-      "description": "The definition a custom tile was made with, embedded in the tile so a stored review renders without a library lookup. A validator checks it per tile, and a definition that fails marks its tile unavailable. name must not be custom or a built-in type's. data_schema is in the restricted dialect the tiles package checks (CheckDataSchema), at most 32 KiB encoded. kit is the major version of the tile kit the component was written for. sizes are the layout sizes the glance was made for, in order of preference; a layout entry of another size gets the first. digest is written by the host: sha256 over the RFC 8785 canonical JSON of the definition without its digest.",
+      "description": "The definition a custom tile was made with, embedded in the tile so a stored review renders without a library lookup. A validator checks it per tile, and a definition that fails marks its tile unavailable. name must not be custom or a built-in type's. data_schema is in the restricted dialect the tiles package checks (CheckDataSchema), at most 32 KiB encoded. kit is the major version of the tile kit the component was written for. sizes are the widths the glance was made for, in order of preference. digest is written by the host: sha256 over the RFC 8785 canonical JSON of the definition without its digest.",
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
         "title": { "type": "string", "minLength": 1, "maxLength": 160 },
@@ -252,43 +251,6 @@
       "maxLength": 4000,
       "description": "Text in the Markdown subset the tile kit renders."
     },
-    "layout": {
-      "type": "object",
-      "description": "Every tile once, in reading order. Members of a group are contiguous. landing is host-derived: the number of leading entries on the landing page.",
-      "properties": {
-        "entries": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "tile": { "$ref": "#/$defs/tileId" },
-              "size": { "enum": ["full", "half", "third"] },
-              "group": { "$ref": "#/$defs/groupId" },
-              "pin": { "const": true }
-            },
-            "additionalProperties": false,
-            "required": ["tile", "size"]
-          }
-        },
-        "groups": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": { "$ref": "#/$defs/groupId" },
-              "title": { "type": "string", "minLength": 1, "maxLength": 80 },
-              "collapse_after": { "type": "integer", "minimum": 0 }
-            },
-            "additionalProperties": false,
-            "required": ["id", "title"]
-          }
-        },
-        "landing": { "type": "integer", "minimum": 0 }
-      },
-      "additionalProperties": false,
-      "required": ["entries", "groups", "landing"]
-    },
-    "groupId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
     "tileData_overview": {
       "type": "object",
       "properties": {

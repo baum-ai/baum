@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
 )
 
 // KindChat is the Item.Kind of one question an earlier version asked the
@@ -37,6 +38,27 @@ func (q *Queue) SetChat(service ChatService) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.chat = service
+}
+
+// SetAdded installs what reads the tiles a person added to a pull request
+// (internal/addedtiles), which the draft route's view shows, so a review
+// being generated keeps them.
+func (q *Queue) SetAdded(added func(repository string, number int) []tileview.AddedTile) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.added = added
+}
+
+// addedOf is the tiles the person added to a job's pull request; none for a
+// group's.
+func (q *Queue) addedOf(job Job) []tileview.AddedTile {
+	q.mu.Lock()
+	added := q.added
+	q.mu.Unlock()
+	if added == nil || job.PR < 1 || job.Group != "" {
+		return nil
+	}
+	return added(job.Repository, job.PR)
 }
 
 func (q *Queue) chatService() ChatService {

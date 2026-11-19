@@ -146,7 +146,7 @@ beforeEach(() => {
         posts.push(JSON.parse(String(init.body)));
         return Response.json(postBody, { status: postStatus });
       }
-      if (path.endsWith("/draft"))
+      if (path.includes("/draft"))
         return draftValue
           ? Response.json({ draft: 1, document: draftValue })
           : new Response("none", { status: 404 });

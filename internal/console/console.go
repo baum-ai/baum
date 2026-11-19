@@ -475,6 +475,13 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 		s.setPageLocked(*page)
 		c.Pages = addPage(c.Pages, *page)
 	}
+	// The turn is about the page it is sent from, else the one open now: a
+	// tool that edits at once only acts on that page.
+	if turn := cmp.Or(page, s.page); turn != nil {
+		if err := s.opts.Registry.SetTurnPage(l.consumer, *turn); err != nil {
+			s.opts.Log.Warn("turn page not set on a conversation's token", "conversation", id, "error", err)
+		}
+	}
 	if c.Title == "" {
 		c.Title = title(message)
 	}

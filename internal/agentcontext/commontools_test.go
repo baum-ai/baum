@@ -423,7 +423,7 @@ func TestActionsLackSearchAndDaemonStatus(t *testing.T) {
 		t.Errorf("an action's refused calls read %v", d.requests())
 	}
 	text, _ := data(t, s, action, "current_page", nil)
-	if strings.Contains(text, "search") || strings.Contains(text, "daemon_status") || !strings.Contains(text, "app_help") {
+	if strings.Contains(text, `"search"`) || strings.Contains(text, "daemon_status") || !strings.Contains(text, "app_help") {
 		t.Errorf("an action's page lists %s", text)
 	}
 }

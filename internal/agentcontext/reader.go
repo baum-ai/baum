@@ -25,7 +25,7 @@ const maxDocumentRead = 32 << 20
 // readLimit is the body bound of a read of path.
 func readLimit(path string) int {
 	if path == "/api/document" || path == "/api/tiles" || path == "/api/facts" ||
-		(strings.HasPrefix(path, "/api/groups/") && (strings.HasSuffix(path, "/document") || strings.HasSuffix(path, "/tiles"))) ||
+		(strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/document")) ||
 		(strings.HasPrefix(path, "/api/jobs/") && strings.HasSuffix(path, "/draft")) {
 		return maxDocumentRead
 	}
@@ -53,7 +53,7 @@ var unreadable = []string{"/api/settings", "/api/debug", "/api/github", "/api/di
 var projectedReads = map[string][]string{
 	"diagnostics_summary":  {"/api/diagnostics"},
 	"settings_general":     {"/api/settings/appearance"},
-	"settings_reviews":     {"/api/settings"},
+	"settings_reviews":     {"/api/settings", "/api/settings/labs"},
 	"settings_fixes":       {"/api/settings"},
 	"settings_connections": {"/api/github-auth"},
 	"settings_computer":    {"/api/settings", "/api/diagnostics"},
@@ -177,6 +177,16 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/commit", bind: byClone, params: []string{"pr", "version", "oid"}},
 	{pattern: "/api/commit-patch", bind: byClone, params: []string{"pr", "version", "oid", "path"}},
 	{pattern: "/api/decisions", bind: byRepository, params: []string{"pr"}},
+	// GitHub's view of the pull request beyond the page's: every review
+	// thread, its timeline, and the repository's issues.
+	{pattern: "/api/prs/threads", bind: byRepository, params: []string{"pr", "state"}},
+	{pattern: "/api/prs/timeline", bind: byRepository, params: []string{"pr"}},
+	{pattern: "/api/issue", bind: byRepository, params: []string{"number"}},
+	// The clone's history and files at any commit it holds.
+	{pattern: "/api/clone/log", bind: byClone, params: []string{"rev", "path", "limit", "since"}},
+	{pattern: "/api/clone/blame", bind: byClone, params: []string{"rev", "path", "start", "end"}},
+	{pattern: "/api/clone/file", bind: byClone, params: []string{"rev", "path"}},
+	{pattern: "/api/clone/changed", bind: byClone, params: []string{"base", "head"}},
 
 	// The person's own draft review is kept by key, which says whose it is:
 	// only the action's own pull request's key.
@@ -196,7 +206,6 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/groups", bind: byFilter, filter: filterGroups},
 	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
 	{pattern: "/api/groups/{id}/document", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
-	{pattern: "/api/groups/{id}/tiles", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/patch", bind: byLookup, params: []string{"version", "path", "hunk"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/file", bind: byLookup, params: []string{"version", "path"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
@@ -457,6 +466,9 @@ type Reader struct {
 	repository string
 	// pull is the action's pull request, which a byKey route is bound to.
 	pull int
+	// deny are route prefixes this reader never reads, whatever the tool
+	// declared (a review's, reviewUnreadable).
+	deny []string
 }
 
 // NewReader reads through api, the LocalAPI handler; clone resolves clone
@@ -524,6 +536,11 @@ func (r *Reader) Get(ctx context.Context, target string) (Response, error) {
 	}
 	if !readable(u.Path, r.allow) && (r.repository != "" || !slices.Contains(r.projected, u.Path)) {
 		return Response{}, fmt.Errorf("read %s: %w", u.Path, errNotReadable)
+	}
+	for _, prefix := range r.deny {
+		if u.Path == prefix || strings.HasPrefix(u.Path, prefix+"/") {
+			return Response{}, fmt.Errorf("read %s: %w", u.Path, errNotReadable)
+		}
 	}
 	// A pasted image is served as it was pasted, unmasked: no tool reads one.
 	if strings.Contains(u.Path, "/transcript/images/") {
