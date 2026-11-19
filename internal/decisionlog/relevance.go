@@ -27,6 +27,12 @@ const (
 	relevanceInputLimit   = 384 << 10
 	relevancePatchLimit   = 192 << 10
 	relevanceRetry        = 15 * time.Minute
+	// A reply's output cap: a base for the model's thinking, which Claude Code
+	// counts against the cap, plus about 250 tokens per decision (id, state
+	// and a one-sentence reason) with room to spare, so a full batch is not
+	// cut off before the model submits it.
+	relevanceOutputBase        = 4096
+	relevanceOutputPerDecision = 300
 )
 
 var errRelevanceContextLarge = errors.New("PR context exceeds relevance size limit")
@@ -426,6 +432,11 @@ func relevanceReplySchema() map[string]any {
 	}}
 }
 
+// relevanceOutputTokens caps a reply classifying n decisions.
+func relevanceOutputTokens(n int) int64 {
+	return int64(relevanceOutputBase + n*relevanceOutputPerDecision)
+}
+
 func (r *Relevance) process(ctx context.Context, w relevanceWork) (bool, error) {
 	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
@@ -512,7 +523,7 @@ func (r *Relevance) process(ctx context.Context, w relevanceWork) (bool, error) 
 							return validationErr
 						}}
 					result, callErr := call.complete(ctx, "", "", Attempt{Repository: w.repository, Stage: "decision_relevance", Item: fmt.Sprint(w.number), Mode: "classify"},
-						decisions.ModelRequest{System: relevancePrompt, User: string(input), SchemaName: "pr_decision_relevance", Schema: relevanceReplySchema(), MaxOutputTokens: 4096})
+						decisions.ModelRequest{System: relevancePrompt, User: string(input), SchemaName: "pr_decision_relevance", Schema: relevanceReplySchema(), MaxOutputTokens: relevanceOutputTokens(len(candidates))})
 					err = callErr
 					if result.Skip != "" {
 						err = fmt.Errorf("relevance unavailable: %s", result.Skip)
