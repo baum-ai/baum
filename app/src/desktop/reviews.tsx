@@ -1,6 +1,15 @@
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { type ReactNode, useId, useState } from "react";
-import { modelName, modelPresets, type PullRequests, type ReviewSettings } from "./setup-model";
+import {
+  modeSettings,
+  modelName,
+  modelPresets,
+  type PullRequests,
+  type ReviewMode,
+  type ReviewSettings,
+  reviewMode,
+  reviewModes,
+} from "./setup-model";
 import { effortLabels, modelEfforts, supportedEffort } from "../model-effort";
 import { TerminalCommand } from "./terminal-setup";
 import "./review-form.css";
@@ -292,6 +301,7 @@ export function ReviewSettingsForm({
    *  baum cannot see it (see terminalSetup). */
   terminal?: { text: string; command: string } | null;
 }) {
+  const mode = reviewMode(settings.automatic, settings.updates);
   const update = (patch: Partial<ReviewSettings>) => {
     const next = { ...settings, ...patch };
     onChange({
@@ -394,20 +404,25 @@ export function ReviewSettingsForm({
             />
           ) : null}
           <div className="review-section">
-            <label className="switch-row">
-              <span>
-                Review pull requests automatically
-                <small>baum reviews new pushes and review requests in your repositories.</small>
-              </span>
-              <input
-                id="review-automatic"
-                type="checkbox"
-                role="switch"
-                checked={settings.automatic}
-                disabled={disabled}
-                onChange={(event) => update({ automatic: event.target.checked })}
-              />
-            </label>
+            <fieldset className="scope" id="review-automatic">
+              <legend className="review-label">Review pull requests automatically</legend>
+              <div className="segmented">
+                {reviewModes.map((choice) => (
+                  <label key={choice.id}>
+                    <input
+                      type="radio"
+                      name="review-mode"
+                      value={choice.id}
+                      checked={mode === choice.id}
+                      disabled={disabled}
+                      onChange={() => update(modeSettings(choice.id as ReviewMode))}
+                    />
+                    <span>{choice.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="review-note">{reviewModes.find((c) => c.id === mode)!.detail}</p>
+            </fieldset>
             {settings.automatic && (
               <fieldset
                 className="scope"

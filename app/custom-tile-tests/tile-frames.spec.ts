@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { detail, frameBox, frameReady, open, SHOTS, showOnly, tileOn } from "./helpers";
+import { detail, frameBox, frameReady, open, railRow, SHOTS, showOnly, tileOn } from "./helpers";
 
 // The adversarial suite: the escape probe tiles (oss/internal/tileview/
 // tileviewtest/testdata/custom/escape_probe.html) on the review page's How it
@@ -330,10 +330,7 @@ test("a frame in a busy loop holds the page only while it runs", async ({ page }
   console.log(`busy loop: the page's timers were held for at most ${stall}ms`);
   // The page is intact and answers again.
   await expect(page.getByRole("heading", { name: "Escape probe: busy" })).toBeVisible();
-  await page
-    .getByRole("tablist", { name: "Review" })
-    .getByRole("tab", { name: "Overview" })
-    .click();
+  await railRow(page, "Overview").click();
   await expect(page).not.toHaveURL(/tile=escape_busy/);
   expect(hits).toEqual([]);
 });
@@ -359,12 +356,16 @@ test("a frame that navigates before it draws, or says hello again, is unmounted"
   expect(hits).toEqual([]);
 });
 
-test("a detail that takes the keyboard while the reader types elsewhere gets no keys", async ({
+test("a detail that takes the keyboard while the reader types elsewhere is taken down", async ({
   page,
 }) => {
   // The reader writes in the session panel's composer, the pointer resting
-  // over a detail that grabs the keyboard every 200ms: what they type stays
-  // in the composer.
+  // over a detail that grabs the keyboard every 200ms. The page gives the
+  // keyboard back to the composer each time, and takes the frame down the
+  // fourth time: what they type stays in the composer. A key pressed in the
+  // instant the frame holds the keyboard, before the page takes it back, is
+  // the frame's (SECURITY.md, "The keyboard"); on a busy page that can be a
+  // few keys each of the four times.
   await showOnly(page, ["escape_focus"]);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, detail("escape_focus"));
@@ -379,6 +380,14 @@ test("a detail that takes the keyboard while the reader types elsewhere gets no 
   await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 60));
   const text = "the retry delay is capped at thirty seconds";
   await page.keyboard.type(text, { delay: 60 });
-  await expect(composer).toHaveValue(text);
+  await expect(page.getByRole("alert")).toContainText("It kept taking the keyboard from the page.");
   await expect(composer).toBeFocused();
+  const typed = await composer.inputValue();
+  // The keys the composer has arrived in order.
+  let at = 0;
+  const inOrder = [...typed].every((key) => (at = text.indexOf(key, at) + 1) > 0);
+  expect(inOrder).toBe(true);
+  // Once it is down, every key is the composer's.
+  await page.keyboard.type(" and then retried", { delay: 60 });
+  await expect(composer).toHaveValue(`${typed} and then retried`);
 });

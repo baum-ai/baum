@@ -14,6 +14,7 @@ import (
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/tileview"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
@@ -461,9 +462,26 @@ func CustomEntry(a Added, definition func(digest string) (json.RawMessage, bool)
 // fillValidator checks held fills; it compiles its schemas once.
 var fillValidator = sync.OnceValue(tiles.NewValidator)
 
-// Generated are the library types a stored composition holds filled.
-func Generated(composition []byte) map[string]bool {
+// Generated are the library types a stored version holds filled: its
+// composition's (baum.review/1) or, for a baum.review/2 document, its ready
+// dedicated tiles, which a pinned or added type always has (orchestrate.
+// Run.Always).
+func Generated(composition, document []byte) map[string]bool {
 	out := map[string]bool{}
+	var head struct {
+		Schema string          `json:"schema"`
+		Tiles  []reviewv2.Tile `json:"tiles"`
+	}
+	if json.Unmarshal(document, &head) == nil && head.Schema == reviewv2.Name {
+		for _, t := range head.Tiles {
+			var def struct {
+				Name string `json:"name"`
+			}
+			if t.State == reviewv2.TileReady && len(t.Definition) > 0 && json.Unmarshal(t.Definition, &def) == nil && def.Name != "" {
+				out[def.Name] = true
+			}
+		}
+	}
 	if len(composition) == 0 {
 		return out
 	}

@@ -290,6 +290,11 @@ export type ReviewPlaceContext = {
   document: ReviewDocument | null;
   /** The earlier version on screen, alone or compared, once loaded. */
   historicalDocument: ReviewDocument | null;
+  /** The viewer's `files` slot, null without one, with how many changed
+   *  files it lists (null while it loads or after it failed): a host drawing
+   *  its rail before there is a document (a review still being written)
+   *  offers the viewer's Files changed from it. */
+  files: { count: number | null } | null;
   /** An earlier version is on screen, alone or compared. */
   historical: boolean;
   /** Two versions are on screen side by side. */
@@ -1198,6 +1203,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       ...placeActions,
       document: navigationDocument,
       historicalDocument,
+      files: filesSlot ? { count: fileList ? fileList.length : null } : null,
       historical: historyActive,
       comparing,
       version: fileVersion,
@@ -1215,6 +1221,8 @@ function ReviewWorkspace<F extends ReviewFile>({
       placeActions,
       navigationDocument,
       historicalDocument,
+      filesSlot,
+      fileList,
       historyActive,
       comparing,
       fileVersion,

@@ -14,6 +14,7 @@ import {
   type ReviewSteps,
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import { formatDate } from "@baum/viewer/components/format";
 import type {
   HostSessionView,
   SessionListState,
@@ -107,9 +108,15 @@ import {
 } from "./pending-review";
 import { commentTarget, reviewable, type ReviewEvent } from "./pending-review-model";
 import { useMedia } from "./media";
-import { readSelection } from "@baum/viewer/review-selection";
+import { readSelection, withSelection } from "@baum/viewer/review-selection";
 import { useViewPlaces } from "./review-view/places";
-import { commentSelection, reviewOf, servedReview, withReview } from "./review-view/model";
+import {
+  CODE_PLACE,
+  commentSelection,
+  reviewOf,
+  servedReview,
+  withReview,
+} from "./review-view/model";
 import { activeTile } from "./review-view/view-tile";
 import { TileHostContext, type TileHost } from "./tiles/host";
 import { addedTilesKey, useAddedTilesEvents } from "./tiles/added-events";
@@ -406,6 +413,12 @@ export function LocalReview({
         : entry.status === "current" || entry.status === "outdated" || entry.status === "failed"
           ? entry.status
           : undefined;
+  // The review was kept for the head the pull request is at: it is current,
+  // and says so with the agent's reason rather than as outdated.
+  const kept =
+    !generating && entry.status === "current" && entry.kept && entry.kept.head === pr.head_sha
+      ? entry.kept
+      : null;
   const [doc, setDoc] = useState<ReviewDocument | null>(null);
   // The decisions of its sessions, in their own pane beside Sessions and
   // Commits rather than above the review.
@@ -573,6 +586,27 @@ export function LocalReview({
     [showingDraft, draft, retrying, doc, failedSections],
   );
   const contextPending = showingDraft && isActiveJob(job) && !draft?.summary.context;
+  // Before there is a review, Files changed lists the pull request's files
+  // in the viewer's own files pane; once one lands, the same place is the
+  // review's Files changed, in place of that address.
+  const factsFile =
+    shownDocument && (selection.kind === "files" || selection.kind === "file")
+      ? selection.kind === "file"
+        ? selection.id
+        : ""
+      : null;
+  useEffect(() => {
+    if (factsFile === null) return;
+    url.update(
+      (current) =>
+        withSelection(current, {
+          kind: "tile",
+          id: CODE_PLACE,
+          ...(factsFile ? { item: factsFile } : {}),
+        }),
+      { replace: true, preventScrollReset: true },
+    );
+  }, [factsFile, url]);
   // What c comments on: the section, risk, file or tile being read; on the
   // review page's Code tab, the file open there.
   const commentOn = commentTarget(viewedDocument ?? null, commentSelection(selection));
@@ -1015,7 +1049,7 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
-                places={shownDocument ? places : undefined}
+                places={places}
                 detailsChecks={(shown) =>
                   liveDetailsChecks(
                     shown,
@@ -1054,8 +1088,16 @@ export function LocalReview({
                   // The stacks and groups it belongs to, under the title with its
                   // other facts rather than as a notice over the review.
                   subtitle:
-                    groups.length > 0 ? (
+                    groups.length > 0 || kept ? (
                       <>
+                        {kept ? (
+                          <span
+                            className="local-kept-note"
+                            title={`Checked ${formatDate(kept.kept_at)}: ${kept.reason}`}
+                          >
+                            Still applies to the newer commits
+                          </span>
+                        ) : null}
                         {groups.map((group) => (
                           <ViewerLink
                             key={group.id}

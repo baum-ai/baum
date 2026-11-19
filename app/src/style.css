@@ -2365,6 +2365,16 @@ dialog.local-dialog-wide {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A review kept for newer commits: a quiet fact beside the groups, its reason
+   in the title. */
+.local-kept-note {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
 /* The pull request's state on its page, which opens to its remedies: drawn
    as the state is, boxed only under the pointer or while open. */
 .local-status-menu {
