@@ -109,7 +109,11 @@ export function ReviewImages({
           {
             key: `${position}-${item.attachment}`,
             attachment,
-            text: item.caption || attachment.alt,
+            // GitHub gives an uploaded clip no alt text; its heading names it.
+            text:
+              item.caption ||
+              attachment.alt ||
+              (attachment.content_type.startsWith("video/") ? attachment.heading : undefined),
           },
         ];
       })

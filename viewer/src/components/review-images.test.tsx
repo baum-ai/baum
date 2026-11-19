@@ -277,7 +277,7 @@ it("retains local document selectors and fragments when retrying an image", () =
 it("plays a description video in place and says in its place when it fails", () => {
   const review = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
   review.index.attachments = [
-    { ...attachment("att_vv", "Demo", [1280, 720]), content_type: "video/mp4" },
+    { ...attachment("att_vv", "", [1280, 720]), content_type: "video/mp4", heading: "Demo" },
   ];
   const block = {
     kind: "images",
