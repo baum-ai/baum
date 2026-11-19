@@ -60,7 +60,7 @@ func (l *Local) recordTileUse(ctx context.Context, repository string, result gen
 	if l.TileLibrary == nil {
 		return
 	}
-	names := tilelibrary.UsedTypes(result.Composition)
+	names := tilelibrary.UsedTypes(result.Composition, result.Document)
 	if len(names) == 0 {
 		return
 	}

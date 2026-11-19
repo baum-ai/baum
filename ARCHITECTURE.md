@@ -1801,9 +1801,9 @@ computer by `internal/tilelibrary`, in the private application database
   (digest, the definition with its HTML, time of the first save). A version is
   a definition digest, and a saved type's name is its tiles' ID. The table
   is shared with the added tiles (see "Added tiles" under "Tile documents"):
-  the sweep that removes unreferenced definitions keeps one that a
-  `tile_fills` row (or a leftover `tile_overlays` value) names, when those
-  tables exist; a missing table names nothing, and any other error reading
+  the sweep that removes unreferenced definitions keeps one that an
+  `added_tiles` or `tile_fills` row names (`tilelibrary.ReferencingTables`,
+  which the added tiles' sweep uses too), when those tables exist; a missing table names nothing, and any other error reading
   one keeps the definition. Reads run in
   one transaction, so a type's row and the definition it names are read at the
   same moment, and `List` leaves out (and logs) a type that cannot be loaded

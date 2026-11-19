@@ -39,6 +39,17 @@ var reviewVersions = map[string]string{
 	   {"id":"s3","vendor":"codex","restricted":true}]}}`,
 }
 
+func init() {
+	reviewVersions["4"] = `{"schema":"baum.review/2","review":{"head":"h14a","base":"b13","merge_base":"m13","version":4},
+	 "summary":{"verdict":{"decision":"look_first","text":"x","points":[]},"risk_score":{"status":"scored","score":50}},
+	 "sections":[{"id":"s-api","title":"API","kind":"logical","hunks":["h1"],"risks":[{"id":"r1","tier":"high","text":"Breaks clients","state":"open"}]}],
+	 "index":{"hunks":[{"id":"h1","path":"a.go"}]}}`
+	reviewVersions["5"] = `{"schema":"baum.review/2","review":{"head":"h14","base":"b13","merge_base":"m13","version":5},
+	 "summary":{"verdict":{"decision":"approve","text":"y","points":[]},"risk_score":{"status":"scored","score":10}},
+	 "sections":[{"id":"s-api","title":"API","kind":"logical","hunks":["h1"],"risks":[{"id":"r1","tier":"high","text":"Breaks clients","state":"mitigated","mitigated_version":5}]}],
+	 "index":{"hunks":[{"id":"h1","path":"a.go"}]}}`
+}
+
 const reviewTranscript = `{"session":{"working_dir":"/home/dev/secret","user_email":"dev@example.com","prompts":[
  {"turn_id":"t1","ordinal":1,"text":"Add search"},
  {"turn_id":"t2","ordinal":2,"text":"Fix the flaky test","replies":[{"text":"on it"}]},
@@ -151,6 +162,10 @@ func TestReviewReadToolsAnswer(t *testing.T) {
 			`"risks_mitigated":[{"section":"s-api","id":"r1"`, `"risks_removed":[{"section":"s-old","id":"r9"`,
 			`"recommendation":{"from":"look_first","to":"approve"}`, `"risk_score":{"from":40,"to":20}`}},
 		{tool: "review_version_diff", args: map[string]any{"from": 3}, failed: "before 3"},
+		// A baum.review/2 pair compares the verdict, and a v1 to v2 pair reads both.
+		{tool: "review_version_diff", args: map[string]any{"from": 4, "to": 5}, want: []string{`"versions":[4,5]`, `"recommendation":{"from":"look_first","to":"approve"}`,
+			`"risk_score":{"from":50,"to":10}`, `"risks_mitigated":[{"section":"s-api","id":"r1"`}},
+		{tool: "review_version_diff", args: map[string]any{"from": 3, "to": 4}, want: []string{`"schemas":["baum.review/1","baum.review/2"]`}},
 		// The checks its sessions ran.
 		{tool: "validation_runs", want: []string{`"method":"go test ./search/..."`, `"outcome":"passed"`, `"commit_label":{"state":"head"`, `"not_verified":[{"what":"the UI"}]`,
 			`"cited_events":[{"id":"e1"`, `"version":3`, `"from":"review"`}, not: []string{`"s3"`, `read a.go`}},
@@ -262,5 +277,18 @@ func TestActionsReadTheNewRoutesOfTheirRepositoryOnly(t *testing.T) {
 				t.Errorf("%s read %s", tt.tool, request)
 			}
 		}
+	}
+}
+
+func TestSnippetOfSlicesTheTextItSearched(t *testing.T) {
+	// U+023A lowers to a character two bytes longer, so offsets found in a
+	// lowered copy would run past the original's.
+	text := strings.Repeat("\u023a", 300) + " needle " + strings.Repeat("x", 300)
+	got, ok := snippetOf(text, []string{"needle"})
+	if !ok || !strings.Contains(got, "needle") {
+		t.Fatalf("snippet %q, %v", got, ok)
+	}
+	if _, ok := snippetOf(strings.Repeat("\u023a", 10), []string{"needle"}); ok {
+		t.Error("a match in text without one")
 	}
 }

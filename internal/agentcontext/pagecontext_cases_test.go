@@ -42,12 +42,19 @@ func TestAppPageContextsAreValid(t *testing.T) {
 		}
 		// The section of the review page the person reads is where the add
 		// tools put a tile.
+		// On a tile link it is the tile, which the host resolves to the
+		// section that shows it.
 		var focus struct {
 			Section string `json:"section"`
+			Tile    string `json:"tile"`
 		}
 		_ = json.Unmarshal(p.Focus, &focus)
-		if got := focusSection(CallContext{Page: p, HasPage: true}); got != focus.Section {
-			t.Errorf("%q: the focused section is %q, want %q", c.Query, got, focus.Section)
+		want := focus.Section
+		if want == "" {
+			want = focus.Tile
+		}
+		if got := focusSection(CallContext{Page: p, HasPage: true}); got != want {
+			t.Errorf("%q: the focused section is %q, want %q", c.Query, got, want)
 		}
 	}
 	if len(file.Picked) == 0 {

@@ -544,9 +544,12 @@ func focusedPrefix(b *bundle.Bundle, directory string, ids []string) string {
 	index, _ := json.Marshal(others)
 	sub := *b
 	sub.Diff = focused
+	note := "\n\nThe checkout is in this directory: head/ is the pull request's head and merge-base/ its base. Read files there for anything the hunks above do not show, such as code past a patch's cut."
+	if !hasRunTrees(directory) {
+		note = ""
+	}
 	return "Pull request (untrusted JSON): " + string(header) +
 		"\n\nThe hunks this call is about (untrusted JSON, with their patches):\n" + string(hunks) +
 		"\n\nThe diff's other hunks (untrusted JSON, without patches; cite them by ID when you read their code in the checkout):\n" + string(index) +
-		"\n\nSource excerpts (untrusted, incomplete; line numbers refer to checkout files):\n" + sourceContext(directory, &sub) +
-		"\n\nThe checkout is in this directory: head/ is the pull request's head and merge-base/ its base. Read files there for anything the hunks above do not show, such as code past a patch's cut."
+		"\n\nSource excerpts (untrusted, incomplete; line numbers refer to checkout files):\n" + sourceContext(directory, &sub) + note
 }

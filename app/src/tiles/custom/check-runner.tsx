@@ -302,7 +302,7 @@ export function drawFrame(
               registered
                 ? {
                     code: "timeout",
-                    message: "The tile was not drawn 3 seconds after it was given its data.",
+                    message: `The tile was not drawn ${READY_TIMEOUT / 1000} seconds after it was given its data.`,
                   }
                 : {
                     code: "render_failed",

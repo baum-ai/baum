@@ -62,6 +62,7 @@ import (
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
 	"github.com/baum-ai/baum/reviewv2"
+	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -978,12 +979,17 @@ func seedTileLibrary(t *testing.T, path string, registry *repos.Registry) *tilel
 
 // browserV2 converts a baum.review/1 fixture document to the baum.review/2
 // document a review written with tiles stores: with its composition's tiles
-// (reviewv2.FromV1) and extra, and every section's body.
+// (tileview.Serve) and extra, and every section's body.
 func browserV2(t *testing.T, document, composition []byte, extra []reviewv2.Tile) []byte {
 	t.Helper()
-	d, err := reviewv2.FromV1(document, composition)
+	d, err := reviewv2.FromV1(document)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(composition) > 0 {
+		if err := json.Unmarshal(tileview.Serve(document, composition, nil, tiles.Options{}).Document, &d); err != nil {
+			t.Fatal(err)
+		}
 	}
 	d.Tiles = append(d.Tiles, extra...)
 	reviewv2.EnsureBodies(&d)

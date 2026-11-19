@@ -255,3 +255,13 @@ func TestRemoveAndRestoreAnAddedTile(t *testing.T) {
 		t.Errorf("a tile not added: %d", w.Code)
 	}
 }
+
+func TestShownSectionOfTile(t *testing.T) {
+	s := shownVersion{owners: map[string]string{"tl_a": "context", "tl_o": reviewv2.OwnerOverview}}
+	if got := s.section("tl_a", nil); got != "context" {
+		t.Errorf("a tile asked for goes on its section; got %q", got)
+	}
+	if got := s.section("tl_o", nil); got != "" {
+		t.Errorf("an overview tile names no section; got %q", got)
+	}
+}

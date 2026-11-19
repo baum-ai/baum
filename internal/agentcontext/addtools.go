@@ -79,9 +79,15 @@ func focusSection(c CallContext) string {
 	}
 	var focus struct {
 		Section string `json:"section"`
+		Tile    string `json:"tile"`
 	}
 	if json.Unmarshal(c.Page.Focus, &focus) != nil {
 		return ""
+	}
+	// A tile link shows the section that owns the tile; the host resolves
+	// a tile ID to that section.
+	if focus.Section == "" {
+		return focus.Tile
 	}
 	return focus.Section
 }
