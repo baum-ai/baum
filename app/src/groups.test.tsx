@@ -1,21 +1,21 @@
-import type { ReviewViewerProps } from "@baum/viewer/components/review-viewer";
+import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import type { ReviewViewerProps } from "@baum/viewer/components/review-viewer";
 import example from "../../schema/review-example.json" with { type: "json" };
+import { App } from "./app";
 import {
   automaticLabel,
+  groupJob,
+  reviewJob,
   type Clone,
   type Entry,
-  groupJob,
   type Job,
   type ReviewGroup,
-  reviewJob,
 } from "./api";
-import { App } from "./app";
 import { inboxGroups } from "./inbox";
 import { forgetLastRows } from "./shortcuts";
-import { mockStateFetch } from "./ui-state-test-helper";
 
 // The group page loads on demand; have its module ready so a render inside
 // act() finds it resolved.

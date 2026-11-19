@@ -862,8 +862,9 @@ an agent** (Fix, Update, then the person's pull requests a fix agent is working
 on, each with the loader and the fix's phase). Within Review a saved review
 ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
-clones hold it. Every row, a group's too, starts with the dot for how baum's
-review stands, as Pull requests draws it (`src/review-dot.tsx`). After the groups, their own pull requests with nothing to do
+clones hold it. Every row, a review group's too (a stack's has none), starts
+with the dot for how baum's review stands, as Pull requests draws it
+(`src/review-dot.tsx`). After the groups, their own pull requests with nothing to do
 (drafts, and those waiting on reviewers, checks or another GitHub blocker) are
 listed under **Waiting**, and every other open pull request (`others`: someone
 else's that neither asks for their review nor is assigned to them), oldest
@@ -1323,9 +1324,10 @@ thread counts also appear for pull requests without saved reviews. Normal or
 unknown states (no score, no estimate, no GitHub review, no unresolved
 threads, nothing reported) leave the cell empty and are read only by screen
 readers. A dot before the title says how baum's review stands
-(`src/review-dot.tsx`, as in Inbox): the nine dots while its job waits in the
-queue, the live dot while it is generated, green when it is ready (it covers
-the head), amber when it is outdated and red when it failed. A pull request
+(`src/review-dot.tsx`, as in Inbox): the live dot while its review job is
+queued or running, a green dot when it is ready (it covers the
+head), an amber ring when it is outdated and a red warning sign when it
+failed, so no state is told by colour alone. A pull request
 without a saved review, or one whose state is unknown, keeps an empty slot so
 titles line up. The dot is not a button, since a list row carries none: its
 label is read with the row, and its meaning (and why a review failed) opens
@@ -1352,7 +1354,7 @@ clone, being written, failed, none yet) and offers **Generate the review**
 where it can run. A row whose state (review, checks, merge state, threads,
 score, estimate or version) changed in the latest read flashes once. The keys that work on the list are
 in the shortcuts sheet (`?`). How baum's review stands is a
-dot before the title (see below), with agent sessions in progress under it. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
+dot before the title (see above), with agent sessions in progress under it. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
 colour. Collapsible groups say who acts next, with each row in one group:
 Review requested; the person's own pull requests as Needs changes (changes

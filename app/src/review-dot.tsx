@@ -1,18 +1,13 @@
+import { WarningIcon } from "@baum/viewer/components/icons";
 import { LiveDot } from "@baum/viewer/components/ui";
 import { useEffect, useRef, useState } from "react";
-import { NineDots } from "./nine-dots";
 
-export type ReviewDotState = "queued" | "generating" | "ready" | "outdated" | "failed";
+export type ReviewDotState = "generating" | "ready" | "outdated" | "failed";
 
 const DOTS: Record<ReviewDotState, { label: string; note: string; color: string }> = {
-  queued: {
-    label: "Review queued",
-    note: "baum will generate this review shortly.",
-    color: "text-secondary",
-  },
   generating: {
     label: "Generating review",
-    note: "baum is generating this review now.",
+    note: "baum is generating this review now, or will shortly.",
     color: "text-secondary",
   },
   ready: {
@@ -32,32 +27,44 @@ const DOTS: Record<ReviewDotState, { label: string; note: string; color: string 
   },
 };
 
-/** How a pull request's review stands, for its dot: null when it has none
- *  (or the daemon can't tell), so the row keeps an empty slot. A review job
- *  waiting in the queue is queued until the daemon marks it generating. */
-export function reviewDotState(status: string, queued = false): ReviewDotState | null {
+/** A review job queued or running reads generating, as the app's rows treat
+ *  it (`indexedEntries` in app.tsx); a finished one says nothing over the
+ *  saved review. */
+function jobDot(jobState: string | undefined): ReviewDotState | null {
+  return jobState === "queued" || jobState === "running" ? "generating" : null;
+}
+
+/** How a pull request's review stands, for its dot: its review job's state
+ *  (`reviewJob`) while one is queued or running, else the daemon's status.
+ *  Null when it has no review (or the daemon can't tell), so the row keeps an
+ *  empty slot. */
+export function reviewDotState(status: string, jobState?: string): ReviewDotState | null {
   if (status === "generating") return "generating";
-  if (queued) return "queued";
+  const job = jobDot(jobState);
+  if (job) return job;
   if (status === "current") return "ready";
   if (status === "outdated" || status === "failed") return status;
   return null;
 }
 
-/** A group review's dot: none for a stack, which has no combined review, or
- *  for a group not yet reviewed. Its job running or queued reads generating. */
+/** A group review's dot, from its job's state (`groupJob`) and the group:
+ *  none for a stack, which has no combined review, or for a group not yet
+ *  reviewed. */
 export function groupDotState(
   group: { stack?: boolean; version_count: number; outdated?: boolean },
-  generating: boolean,
+  jobState?: string,
 ): ReviewDotState | null {
   if (group.stack) return null;
-  if (generating) return "generating";
+  const job = jobDot(jobState);
+  if (job) return job;
   if (group.version_count === 0) return null;
   return group.outdated ? "outdated" : "ready";
 }
 
 const CLOSE_MS = 150;
 
-/** The dot before a row's title for how its review stands. A list row
+/** The dot before a row's title for how its review stands: filled when
+ *  ready, a ring when outdated, a warning sign when failed. A list row
  *  carries no buttons (.agents/guides/ui.md), so the dot is not one: its
  *  label is read with the row, and its note opens on hover with a mouse and
  *  stays while the pointer moves onto it. The row's own page says the same in
@@ -79,11 +86,17 @@ export function ReviewDot({
 
   useEffect(() => {
     if (!open) return;
-    const hide = () => popup.current?.hidePopover();
+    const hide = () => {
+      if (popup.current?.matches(":popover-open")) popup.current.hidePopover();
+    };
     window.addEventListener("scroll", hide, { capture: true, passive: true });
     return () => window.removeEventListener("scroll", hide, { capture: true });
   }, [open]);
   useEffect(() => () => clearTimeout(closing.current), []);
+  // A row whose dot goes away while its note is open drops the note's listener.
+  useEffect(() => {
+    if (!state) setOpen(false);
+  }, [state]);
 
   if (!state) return <span aria-hidden className="review-dot" />;
   const dot = DOTS[state];
@@ -102,7 +115,9 @@ export function ReviewDot({
   const hide = (event: React.PointerEvent) => {
     if (event.pointerType !== "mouse") return;
     clearTimeout(closing.current);
-    closing.current = setTimeout(() => popup.current?.hidePopover(), CLOSE_MS);
+    closing.current = setTimeout(() => {
+      if (popup.current?.matches(":popover-open")) popup.current.hidePopover();
+    }, CLOSE_MS);
   };
 
   return (
@@ -113,12 +128,16 @@ export function ReviewDot({
         onPointerEnter={show}
         onPointerLeave={hide}
       >
-        {state === "queued" ? (
-          <NineDots size={14} />
-        ) : state === "generating" ? (
+        {state === "generating" ? (
           <LiveDot />
+        ) : state === "failed" ? (
+          <WarningIcon size={12} className="flex-none" />
         ) : (
-          <span aria-hidden className="block h-2 w-2 rounded-full bg-current" />
+          // Ready is filled and outdated a ring, so neither is told by colour alone.
+          <span
+            aria-hidden
+            className={`block h-2 w-2 rounded-full ${state === "outdated" ? "border-[1.5px] border-current" : "bg-current"}`}
+          />
         )}
         <span className="sr-only">{dot.label}</span>
       </span>

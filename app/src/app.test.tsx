@@ -1,14 +1,13 @@
+import { DEFAULT_INBOX, mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { appBase, type Clone, cost, type Entry, filtered } from "./api";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
+import { inboxGroups } from "./inbox";
 import { App } from "./app";
 import { ReviewSettingsForm } from "./desktop/reviews";
-import { inboxGroups } from "./inbox";
 import { useLocation } from "./location";
+import { appBase, cost, filtered, type Entry, type Clone, type Job } from "./api";
 import { forgetLastRows } from "./shortcuts";
-import { DEFAULT_INBOX, mockStateFetch } from "./ui-state-test-helper";
-
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -47,6 +46,7 @@ let root: Root;
 let node: HTMLDivElement;
 let fail = false;
 let entries: Entry[] = [];
+let jobs: Partial<Job>[] = [];
 let streams: string[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -55,6 +55,7 @@ beforeEach(() => {
   localStorage.clear();
   fail = false;
   entries = [];
+  jobs = [];
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
@@ -85,7 +86,7 @@ beforeEach(() => {
               : path === "/s/test-ns/api/prs?view=health"
                 ? []
                 : path === "/s/test-ns/api/jobs"
-                  ? { jobs: [] }
+                  ? { jobs }
                   : {},
       );
     }),
@@ -314,6 +315,13 @@ it("puts a dot before each title for how its saved review stands, explained in a
     entry(3, "current"),
     entry(4, "generating"),
     entry(5, "no_review"),
+    entry(6, "no_review"),
+    entry(7, "failed"),
+  ];
+  // A queued review, and a running one the daemon's index hasn't marked yet.
+  jobs = [
+    { id: "j6", repository: "acme/demo", pr: 6, state: "queued" },
+    { id: "j7", repository: "acme/demo", pr: 7, state: "running" },
   ];
   await act(async () => root.render(<App />));
   const inbox = node.querySelector(".local-inbox")!;
@@ -328,6 +336,8 @@ it("puts a dot before each title for how its saved review stands, explained in a
   expect(label(2)).toBe("Review failed");
   expect(label(3)).toBe("Review ready");
   expect(label(4)).toBe("Generating review");
+  expect(label(6)).toBe("Generating review");
+  expect(label(7)).toBe("Generating review");
   // A list row carries no buttons: the dot is not one.
   expect(dot(3).querySelector("button")).toBeNull();
   // No saved review: an empty slot, so the titles still line up.

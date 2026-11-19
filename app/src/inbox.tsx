@@ -1,3 +1,14 @@
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+  type Dispatch,
+  type MouseEvent,
+  type SetStateAction,
+} from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { formatCount, formatRelative } from "@baum/viewer/components/format";
 import {
@@ -7,57 +18,45 @@ import {
   CircleCrossIcon,
   CircleDashedIcon,
   CommentsIcon,
-  type IconProps,
   MergeIcon,
   SparkleIcon,
   StackIcon,
   WarningIcon,
+  type IconProps,
 } from "@baum/viewer/components/icons";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Badge } from "@baum/viewer/components/ui";
-import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
-  type RiskScoreLevel,
   riskScoreTone,
   sectionsInReviewOrder,
+  type RiskScoreLevel,
 } from "@baum/viewer/review-document";
-import {
-  type ComponentType,
-  type Dispatch,
-  type MouseEvent,
-  type ReactNode,
-  type SetStateAction,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
-import { SMALL } from "./action-classes";
+import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
-  type Entry,
   fixJob,
   fixLabel,
   groupJob,
   isActiveJob,
-  type Job,
+  reviewJob,
   jobHref,
-  type LiveSession,
   liveFor,
   navigate,
   openExternal,
-  type ReviewGroup,
-  reviewJob,
   rowKey,
   sameRepository,
   watchableFix,
+  type Entry,
+  type Job,
+  type LiveSession,
+  type ReviewGroup,
 } from "./api";
-import { MenuButton, type MenuItem, useContextMenu } from "./context-menu";
+import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
 import { ListPagination, useListPage } from "./list-pagination";
 import { LiveBadge, useNow } from "./live";
-import { canMerge, MergeDialog } from "./merge";
 import { LoadingStatus, NineDots } from "./nine-dots";
+import { canMerge, MergeDialog } from "./merge";
 import { groupDotState, ReviewDot, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
@@ -70,7 +69,8 @@ import {
   useLastRow,
   useShortcuts,
 } from "./shortcuts";
-import { MergeReadyDialog, type SavedReviews, useSavedReview } from "./up-next";
+import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
+import { SMALL } from "./action-classes";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
@@ -444,7 +444,7 @@ export function Inbox({
       live={liveFor(live, entry.pull_request)}
       nested={nested}
       fixing={fixing(entry)}
-      reviewing={isActiveJob(reviewJob(entry, jobs))}
+      review={reviewJob(entry, jobs)}
       peeked={peeked.has(rowKey(entry))}
       actions={<MenuButton label={rowName(entry)} items={() => actionsFor(entry)} menu={menu} />}
       savedReviews={savedReviews}
@@ -958,8 +958,7 @@ function GroupRow({
         <RiskCell risk={group.risk_score} />
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-2">
-            {/* A stack has no combined review, only its members' own. */}
-            <ReviewDot state={groupDotState(group, isActiveJob(job))} />
+            <ReviewDot state={groupDotState(group, job?.state)} />
             {group.stack ? (
               // The hosted pull request list's mark for a stack.
               <span
@@ -1010,7 +1009,7 @@ function InboxRow({
   savedReviews,
   changed,
   generate,
-  reviewing,
+  review,
 }: {
   rowId: string;
   /** The row the keyboard is on. */
@@ -1032,8 +1031,8 @@ function InboxRow({
   /** Its state changed in the latest read. */
   changed: boolean;
   generate?: () => void;
-  /** Its review is queued or running in the job queue. */
-  reviewing: boolean;
+  /** Its latest review job, whose queued or running state its dot shows. */
+  review: Job | undefined;
 }) {
   const pr = entry.pull_request;
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
@@ -1063,8 +1062,8 @@ function InboxRow({
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
           <ReviewDot
-            state={reviewDotState(entry.status, reviewing)}
-            detail={entry.status === "failed" ? entry.failure_reason : undefined}
+            state={reviewDotState(entry.status, review?.state)}
+            detail={entry.failure_reason}
           />
           <Link
             href={href}
