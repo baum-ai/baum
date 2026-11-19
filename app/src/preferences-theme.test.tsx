@@ -208,3 +208,58 @@ it("rejects a failed rename without stopping the saves queued after it", async (
   await vi.waitFor(() => expect(api.saving).toBe(false));
   expect(api.preferences.theme).toBe("light");
 });
+
+it("takes the built-ins and their tokens from the daemon, in its order, and applies one in a slot", async () => {
+  const builtin = (
+    id: string,
+    name: string,
+    base: "light" | "dark",
+    tokens: Record<string, string>,
+  ): Theme => ({
+    id,
+    name,
+    base,
+    builtin: true,
+    tokens,
+  });
+  saved = {
+    theme: "dark",
+    light_theme: "default-light",
+    dark_theme: "pine",
+    themes: [
+      builtin("default-light", "Default light", "light", {}),
+      builtin("default-dark", "Default dark", "dark", {}),
+      builtin("birch", "Birch", "light", { "--color-ink": "#1d2a38" }),
+      builtin("pine", "Pine", "dark", { "--color-paper": "#dce9df" }),
+      dusk,
+    ],
+  };
+  const invoke = vi.fn(async () => undefined);
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  await mount();
+  expect(api.preferences.themes.map((theme) => theme.id)).toEqual([
+    "default-light",
+    "default-dark",
+    "birch",
+    "pine",
+    "c-1",
+  ]);
+  expect(api.preferences.dark_theme).toBe("pine");
+  expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("#dce9df");
+  expect(invoke).toHaveBeenCalledWith("save_theme", {
+    mode: "dark",
+    light: { base: "light", tokens: {} },
+    dark: { base: "dark", tokens: { "--color-paper": "#dce9df" } },
+  });
+});
+
+it("keeps the two defaults first when the daemon lists no built-ins", async () => {
+  saved = { theme: "dark", light_theme: "pine", dark_theme: "pine", themes: [dusk] };
+  await mount();
+  expect(api.preferences.themes.map((theme) => theme.id)).toEqual([
+    "default-light",
+    "default-dark",
+    "c-1",
+  ]);
+  expect(api.preferences.light_theme).toBe("default-light");
+});

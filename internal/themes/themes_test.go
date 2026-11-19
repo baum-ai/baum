@@ -228,3 +228,32 @@ func TestContrast(t *testing.T) {
 		t.Errorf("pale action: %v", pale)
 	}
 }
+
+func TestBuiltinThemes(t *testing.T) {
+	var ids []string
+	for _, theme := range Builtins {
+		ids = append(ids, theme.ID)
+		if err := Validate(theme); err != nil {
+			t.Errorf("%s: %v", theme.ID, err)
+		}
+		if warnings := Contrast(theme); len(warnings) != 0 {
+			t.Errorf("%s has contrast warnings: %+v", theme.ID, warnings)
+		}
+		if !IsBuiltin(theme.ID) {
+			t.Errorf("%s is not reported as built in", theme.ID)
+		}
+	}
+	want := []string{"default-light", "default-dark", "birch", "parchment", "pine", "ember"}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Errorf("built-ins = %v, want %v", ids, want)
+	}
+	if IsBuiltin("c-1") || IsBuiltin("") {
+		t.Error("a custom or empty id is not built in")
+	}
+	bases := map[string]string{"birch": "light", "parchment": "light", "pine": "dark", "ember": "dark"}
+	for _, theme := range Builtins {
+		if base, ok := bases[theme.ID]; ok && theme.Base != base {
+			t.Errorf("%s base = %s, want %s", theme.ID, theme.Base, base)
+		}
+	}
+}

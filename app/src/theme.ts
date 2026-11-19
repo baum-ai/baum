@@ -65,6 +65,10 @@ export type ThemePrefs = {
   themes: Theme[];
 };
 
+/** The two built-ins every installation has, with no tokens: what the app
+ *  shows before the daemon answers and when it answers without them. The other
+ *  built-ins and every built-in's tokens come from the daemon
+ *  (`themes.Builtins` in oss/internal/themes), so they are defined once. */
 export const builtinThemes: Theme[] = [
   { id: DEFAULT_LIGHT, name: "Default light", base: "light", tokens: {}, builtin: true },
   { id: DEFAULT_DARK, name: "Default dark", base: "dark", tokens: {}, builtin: true },

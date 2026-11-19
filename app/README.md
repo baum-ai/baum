@@ -1689,7 +1689,7 @@ otherwise the mode names which slot is used), then a row for each slot, **Light
 theme** and **Dark theme**. The row of the slot in use, by the mode and the
 operating system's mode and ignoring any proposal preview, says "· in use" after
 its heading. A row is a wrapping strip of thumbnails, one per theme (the
-built-ins, then the person's own), each a small sketch of baum's own layout
+six built-ins, then the person's own), each a small sketch of baum's own layout
 (the sidebar on the canvas, the page's panel with its header line and primary
 action, text bars and a diff with an added and a removed line) with the theme's
 name under it. The thumbnail is the choice: the row is a radio group labelled
@@ -1713,7 +1713,7 @@ and loopback port changes. The same document carries the custom colour themes:
 `light_theme` and `dark_theme` are the ids of the themes the Light and Dark
 slots use (`theme` still picks which slot is active; any theme may sit in
 either, and an empty or vanished id is `default-light` or `default-dark`), and
-`themes` lists the built-ins first (`builtin: true`, no tokens) and then the
+`themes` lists the built-ins first (`builtin: true`, with their tokens) and then the
 person's own (`{id, name, base, tokens}`, at most 32; a token is one of the
 palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
 `light_theme` and `dark_theme` (set by the thumbnails) and refuses an unknown id.
@@ -1722,6 +1722,17 @@ palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
 a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`) renames it, and
 `DELETE` removes it and resets a slot that used it; all answer with the
 appearance document, and the built-ins can be neither renamed nor deleted.
+The built-ins are, in order, **Default light** and **Default dark** (`default-light`
+and `default-dark`: the palette as it ships, no tokens), **Birch** (`birch`,
+light: cool blue-grey with teal), **Parchment** (`parchment`, light: warm cream
+with terracotta), **Pine** (`pine`, dark: green-black with a mint accent) and
+**Ember** (`ember`, dark: neutral charcoal with an orange accent). They are
+defined once, in `themes.Builtins` (`internal/themes`), with tokens that pass
+`themes.Validate` and raise no contrast warning (a test checks each); the daemon
+sends them with the list and the app keeps no copy of their tokens, only the two
+token-less defaults it shows before the daemon answers. Either slot takes any of
+them, and the desktop app's cached screens get a built-in's tokens from the app
+like any other theme's.
 The app sends a rename or delete in turn with its settings saves (after any
 `PUT` in flight), so an older answer never brings a deleted theme back.
 The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")

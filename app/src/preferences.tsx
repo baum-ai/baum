@@ -93,11 +93,13 @@ function normalizeThemes(saved: unknown): Theme[] {
           if (typeof value === "string") tokens[token] = value;
       list.push({ id: item.id, name: item.name, base, tokens, builtin: item.builtin === true });
     }
-  // The built-ins are always there, first, whatever an older daemon answers.
-  return [
-    ...builtinThemes,
-    ...list.filter((theme) => !builtinThemes.some((builtin) => builtin.id === theme.id)),
-  ];
+  // The daemon lists the built-ins first, with their tokens. The two defaults
+  // are always there, first, whatever an older daemon answers; a custom theme
+  // never takes a built-in's id.
+  const builtins = list.filter((theme) => theme.builtin);
+  const missing = builtinThemes.filter((theme) => !builtins.some((b) => b.id === theme.id));
+  const ids = new Set([...missing, ...builtins].map((theme) => theme.id));
+  return [...missing, ...builtins, ...list.filter((theme) => !theme.builtin && !ids.has(theme.id))];
 }
 
 function normalize(saved: Partial<Preferences>): Preferences {

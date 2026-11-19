@@ -71,7 +71,7 @@ test("puts a dark theme in the light slot and the page follows its base", async 
   const dark = group("Dark theme");
   const mode = (name: string) =>
     page.getByRole("group", { name: "Theme mode" }).getByRole("button", { name, exact: true });
-  await expect(light.getByRole("radio")).toHaveCount(3);
+  await expect(light.getByRole("radio")).toHaveCount(7);
   await expect(light.getByRole("radio", { name: "Dusk" })).toBeAttached();
   await expect(page.getByRole("heading", { name: "Light theme · in use" })).toBeVisible();
 
@@ -109,7 +109,7 @@ test("puts a dark theme in the light slot and the page follows its base", async 
   // Arrow keys move within a row of thumbnails, as native radios do.
   await light.getByRole("radio", { name: "Dusk" }).focus();
   await page.keyboard.press("ArrowLeft");
-  await expect(light.getByRole("radio", { name: "Default dark" })).toBeChecked();
+  await expect(light.getByRole("radio", { name: "Ember" })).toBeChecked();
   await thumb("Light theme", "Dusk").click();
 
   // The dark slot is used when the theme mode is dark.
@@ -129,13 +129,81 @@ test("puts a dark theme in the light slot and the page follows its base", async 
   await page.getByRole("menuitem", { name: "Rename" }).click();
   await page.getByLabel("Name of Dusk").fill("Midnight");
   await page.getByRole("button", { name: "Rename", exact: true }).click();
-  await expect(light.getByRole("radio")).toHaveCount(3);
+  await expect(light.getByRole("radio")).toHaveCount(7);
   await expect(light.getByRole("radio", { name: "Midnight" })).toBeAttached();
   await page.getByRole("button", { name: "Actions for Midnight in light theme" }).click();
   await page.getByRole("menuitem", { name: "Delete" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
-  await expect(light.getByRole("radio")).toHaveCount(2);
+  await expect(light.getByRole("radio")).toHaveCount(6);
   await expect(dark.getByRole("radio", { name: "Default dark" })).toBeChecked();
+});
+
+test("lists the six built-in themes in order and applies Pine in the dark slot", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto(await launchURL());
+  await expect(page.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Appearance/ }).click();
+
+  const names = ["Default light", "Default dark", "Birch", "Parchment", "Pine", "Ember"];
+  for (const slot of ["Light theme", "Dark theme"]) {
+    const radios = page.getByRole("radiogroup", { name: slot, exact: true }).getByRole("radio");
+    await expect(radios).toHaveCount(6);
+    expect(await radios.evaluateAll((all) => all.map((r) => r.getAttribute("aria-label")))).toEqual(
+      names,
+    );
+    // Built-ins have no menu: they cannot be renamed or deleted.
+    await expect(page.getByRole("button", { name: /^Actions for/ })).toHaveCount(0);
+  }
+  // Every thumbnail draws its own base and colours.
+  await expect(page.locator(".theme-mini")).toHaveCount(12);
+
+  const api = await page.evaluate(async () => {
+    const answer = (await (await fetch("api/settings/appearance")).json()) as Appearance & {
+      themes: { id: string; tokens: Record<string, string> }[];
+    };
+    return answer.themes.map((t) => [t.id, t.tokens["--color-paper"] ?? ""]);
+  });
+  expect(api.map(([id]) => id)).toEqual([
+    "default-light",
+    "default-dark",
+    "birch",
+    "parchment",
+    "pine",
+    "ember",
+  ]);
+
+  // Pine in the dark slot, with the mode set to dark, puts its tokens on the page.
+  await page
+    .getByRole("group", { name: "Theme mode" })
+    .getByRole("button", { name: "Dark", exact: true })
+    .click();
+  await expect(html(page)).toHaveAttribute("data-theme", "dark");
+  expect(await paper(page)).toBe("");
+  await page
+    .getByRole("radiogroup", { name: "Dark theme", exact: true })
+    .locator('label[title="Pine"]')
+    .click();
+  await expect.poll(() => paper(page)).toBe("#dce9df");
+  await expect(html(page)).toHaveAttribute("data-theme", "dark");
+  const surface = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--surface-page").trim(),
+  );
+  expect(surface.toLowerCase()).toBe("#0b130f");
+
+  // A built-in cannot be renamed or deleted through the API either.
+  const refused = await page.evaluate(async () => {
+    const send = (method: string, body: string) =>
+      fetch("api/settings/appearance/themes/pine", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body,
+      }).then((r) => r.status);
+    return [await send("PATCH", '{"name":"x"}'), await send("DELETE", "{}")];
+  });
+  expect(refused).toEqual([400, 400]);
 });
 
 test("previews a proposed theme, restores it on dismiss and saves it with a name and slot", async ({

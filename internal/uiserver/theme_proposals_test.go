@@ -65,7 +65,7 @@ func TestThemeProposalSavesLikeThePostRoute(t *testing.T) {
 	if string(p.Before) != `{"light_theme":"Default light","dark_theme":"Default dark"}` {
 		t.Errorf("before %s", p.Before)
 	}
-	if got := f.appearance(); len(got.Themes) != 2 {
+	if got := f.appearance(); len(got.Themes) != 6 {
 		t.Fatalf("a proposal stored a theme: %+v", got)
 	}
 	// Saved from another page, with no input: the proposal's name and its
@@ -75,16 +75,16 @@ func TestThemeProposalSavesLikeThePostRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := f.appearance()
-	if len(got.Themes) != 3 || got.Themes[2].Name != "Midnight" || got.Themes[2].Base != "dark" || got.Themes[2].Tokens["--color-paper"] != "#e8eef4" ||
-		got.DarkTheme != got.Themes[2].ID || got.LightTheme != "default-light" {
+	if len(got.Themes) != 7 || got.Themes[6].Name != "Midnight" || got.Themes[6].Base != "dark" || got.Themes[6].Tokens["--color-paper"] != "#e8eef4" ||
+		got.DarkTheme != got.Themes[6].ID || got.LightTheme != "default-light" {
 		t.Fatalf("saved %+v", got)
 	}
 	// The same body through the route gives the same theme.
 	other := newProposalFixture(t)
 	other.must("POST", "/api/settings/appearance/themes", `{"name":"Midnight","base":"dark","tokens":{"--color-paper":"#e8eef4"},"slot":"dark"}`)
 	want := other.appearance()
-	if want.Themes[2].Name != got.Themes[2].Name || want.Themes[2].Base != got.Themes[2].Base || want.DarkTheme != want.Themes[2].ID ||
-		!maps.Equal(want.Themes[2].Tokens, got.Themes[2].Tokens) {
+	if want.Themes[6].Name != got.Themes[6].Name || want.Themes[6].Base != got.Themes[6].Base || want.DarkTheme != want.Themes[6].ID ||
+		!maps.Equal(want.Themes[6].Tokens, got.Themes[6].Tokens) {
 		t.Errorf("the route saved %+v", want)
 	}
 }
@@ -97,7 +97,7 @@ func TestThemeProposalTakesTheNameAndSlotTheSaverChose(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := f.appearance()
-	if got.Themes[2].Name != "Dusk" || got.Themes[2].Base != "dark" || got.LightTheme != got.Themes[2].ID || got.DarkTheme != "default-dark" {
+	if got.Themes[6].Name != "Dusk" || got.Themes[6].Base != "dark" || got.LightTheme != got.Themes[6].ID || got.DarkTheme != "default-dark" {
 		t.Fatalf("saved %+v", got)
 	}
 	// Only the name, then only the slot.
@@ -105,14 +105,14 @@ func TestThemeProposalTakesTheNameAndSlotTheSaverChose(t *testing.T) {
 	if err := f.save(q, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Name: "Renamed"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.appearance(); got.Themes[3].Name != "Renamed" || got.LightTheme != got.Themes[3].ID {
+	if got := f.appearance(); got.Themes[7].Name != "Renamed" || got.LightTheme != got.Themes[7].ID {
 		t.Fatalf("saved %+v", got)
 	}
 	r := f.proposeTheme("Fourth", "light")
 	if err := f.save(r, agentcontext.SaveInput{Theme: &agentcontext.ThemeSave{Slot: "dark"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.appearance(); got.Themes[4].Name != "Fourth" || got.DarkTheme != got.Themes[4].ID {
+	if got := f.appearance(); got.Themes[8].Name != "Fourth" || got.DarkTheme != got.Themes[8].ID {
 		t.Fatalf("saved %+v", got)
 	}
 }
@@ -128,7 +128,7 @@ func TestThemeProposalIsNotStaleAfterOtherChanges(t *testing.T) {
 	if err := f.save(p, agentcontext.SaveInput{}); err != nil {
 		t.Fatalf("saved after other changes: %v", err)
 	}
-	if got := f.appearance(); len(got.Themes) != 4 {
+	if got := f.appearance(); len(got.Themes) != 8 {
 		t.Fatalf("saved %+v", got)
 	}
 }
@@ -183,7 +183,7 @@ func TestAppearanceProposalSetsThemeSlots(t *testing.T) {
 	f := newProposalFixture(t)
 	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "appearance"})
 	f.must("POST", "/api/settings/appearance/themes", `{"name":"Mine","base":"dark","tokens":{}}`)
-	id := f.appearance().Themes[2].ID
+	id := f.appearance().Themes[6].ID
 	p, err := f.propose("propose_theme_choice", map[string]any{"dark_theme": id})
 	if err != nil {
 		t.Fatal(err)

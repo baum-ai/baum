@@ -132,7 +132,7 @@ type AppearancePreferences struct {
 	ReviewPage string `json:"review_page,omitempty"`
 	// LightTheme and DarkTheme are the ids of the themes used when Theme
 	// (system, light or dark) selects the light or the dark slot; empty is
-	// the built-in default-light or default-dark. Any theme may sit in
+	// a built-in: default-light or default-dark. Any theme may sit in
 	// either slot. An id no longer in Themes counts as empty.
 	LightTheme string `json:"light_theme,omitempty"`
 	DarkTheme  string `json:"dark_theme,omitempty"`
@@ -162,7 +162,10 @@ func validateThemes(prev, list []CustomTheme) error {
 	for _, t := range prev {
 		stored[t.ID] = t
 	}
-	seen := map[string]bool{themes.DefaultLight: true, themes.DefaultDark: true}
+	seen := map[string]bool{}
+	for _, b := range themes.Builtins {
+		seen[b.ID] = true
+	}
 	for _, t := range list {
 		repeated := seen[t.ID]
 		seen[t.ID] = true

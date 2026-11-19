@@ -49,24 +49,51 @@ func themesTestServer(t *testing.T) func(method, path, body string, code int) ap
 func TestAppearanceThemes(t *testing.T) {
 	call := themesTestServer(t)
 	got := call("GET", "", "", 200)
-	if got.LightTheme != "default-light" || got.DarkTheme != "default-dark" || len(got.Themes) != 2 ||
-		!got.Themes[0].Builtin || !got.Themes[1].Builtin || got.Themes[0].ID != "default-light" || got.Themes[1].Base != "dark" {
+	if got.LightTheme != "default-light" || got.DarkTheme != "default-dark" || len(got.Themes) != 6 {
 		t.Fatalf("defaults: %#v", got)
+	}
+	for i, want := range []struct{ id, name, base string }{
+		{"default-light", "Default light", "light"}, {"default-dark", "Default dark", "dark"},
+		{"birch", "Birch", "light"}, {"parchment", "Parchment", "light"},
+		{"pine", "Pine", "dark"}, {"ember", "Ember", "dark"},
+	} {
+		if g := got.Themes[i]; g.ID != want.id || g.Name != want.name || g.Base != want.base || !g.Builtin {
+			t.Fatalf("built-in %d: %#v, want %v", i, g, want)
+		}
+	}
+	// The tokens the app applies come from here: the built-ins carry them.
+	if got.Themes[0].Tokens == nil || len(got.Themes[0].Tokens) != 0 || got.Themes[4].Tokens["--color-paper"] != "#dce9df" ||
+		got.Themes[5].Tokens["--surface-page"] != "#1c1a19" {
+		t.Fatalf("built-in tokens: %#v", got.Themes)
+	}
+	// Either slot takes any built-in.
+	got = call("PUT", "", `{"light_theme":"pine","dark_theme":"birch"}`, 200)
+	if got.LightTheme != "pine" || got.DarkTheme != "birch" {
+		t.Fatalf("built-in slots: %q %q", got.LightTheme, got.DarkTheme)
+	}
+	got = call("PUT", "", `{"light_theme":"","dark_theme":""}`, 200)
+	if got.LightTheme != "default-light" || got.DarkTheme != "default-dark" {
+		t.Fatalf("reset slots: %q %q", got.LightTheme, got.DarkTheme)
+	}
+	// None can be renamed, deleted or taken as the id of a new theme.
+	for _, id := range []string{"default-light", "default-dark", "birch", "parchment", "pine", "ember"} {
+		call("PATCH", "/themes/"+id, `{"name":"x"}`, 400)
+		call("DELETE", "/themes/"+id, "", 400)
 	}
 
 	// Create into the dark slot.
 	got = call("POST", "/themes", `{"name":"  Dusk ","base":"dark","tokens":{"--surface-page":"#101820"},"slot":"dark"}`, 200)
-	if len(got.Themes) != 3 || got.Themes[2].Builtin || got.Themes[2].Name != "Dusk" || got.Themes[2].Base != "dark" ||
-		got.Themes[2].Tokens["--surface-page"] != "#101820" || !strings.HasPrefix(got.Themes[2].ID, "c-") {
+	if len(got.Themes) != 7 || got.Themes[6].Builtin || got.Themes[6].Name != "Dusk" || got.Themes[6].Base != "dark" ||
+		got.Themes[6].Tokens["--surface-page"] != "#101820" || !strings.HasPrefix(got.Themes[6].ID, "c-") {
 		t.Fatalf("created: %#v", got.Themes)
 	}
-	dusk := got.Themes[2].ID
+	dusk := got.Themes[6].ID
 	if got.DarkTheme != dusk || got.LightTheme != "default-light" {
 		t.Fatalf("slots: %q %q", got.LightTheme, got.DarkTheme)
 	}
 	// Created with no slot: the slots stay.
 	got = call("POST", "/themes", `{"name":"Paper","base":"light","tokens":{}}`, 200)
-	paper := got.Themes[3].ID
+	paper := got.Themes[7].ID
 	if paper == dusk || got.DarkTheme != dusk || got.LightTheme != "default-light" {
 		t.Fatalf("second theme: %#v", got)
 	}
@@ -84,11 +111,10 @@ func TestAppearanceThemes(t *testing.T) {
 
 	// Rename.
 	got = call("PATCH", "/themes/"+paper, `{"name":"Newsprint"}`, 200)
-	if got.Themes[3].Name != "Newsprint" {
+	if got.Themes[7].Name != "Newsprint" {
 		t.Fatalf("renamed: %#v", got.Themes)
 	}
 	call("PATCH", "/themes/"+paper, `{"name":""}`, 400)
-	call("PATCH", "/themes/default-light", `{"name":"x"}`, 400)
 	call("PATCH", "/themes/c-nope", `{"name":"x"}`, 404)
 	call("PATCH", "/themes/"+paper, `{"name":"x","extra":1}`, 400)
 
@@ -105,24 +131,22 @@ func TestAppearanceThemes(t *testing.T) {
 	} {
 		call("POST", "/themes", body, 400)
 	}
-	if got := call("GET", "", "", 200); len(got.Themes) != 4 {
+	if got := call("GET", "", "", 200); len(got.Themes) != 8 {
 		t.Fatalf("refusals saved: %#v", got.Themes)
 	}
 
 	// Delete resets the slot that used the theme and leaves the other.
 	got = call("DELETE", "/themes/"+dusk, "", 200)
-	if len(got.Themes) != 3 || got.LightTheme != "default-light" || got.DarkTheme != "default-dark" {
+	if len(got.Themes) != 7 || got.LightTheme != "default-light" || got.DarkTheme != "default-dark" {
 		t.Fatalf("deleted: %#v", got)
 	}
 	call("DELETE", "/themes/"+dusk, "", 404)
-	call("DELETE", "/themes/default-dark", "", 400)
-	call("DELETE", "/themes/default-light", "", 400)
 }
 
 func TestAppearanceThemeStoresTrimmedColours(t *testing.T) {
 	call := themesTestServer(t)
 	got := call("POST", "/themes", `{"name":"Trim","base":"light","tokens":{"--surface-page":" \t#101820\n"}}`, 200)
-	if v := got.Themes[2].Tokens["--surface-page"]; v != "#101820" {
+	if v := got.Themes[6].Tokens["--surface-page"]; v != "#101820" {
 		t.Fatalf("stored %q", v)
 	}
 	call("POST", "/themes", `{"name":"Nbsp","base":"light","tokens":{"--surface-page":" #101820"}}`, 400)
@@ -147,7 +171,9 @@ func TestAddThemeCap(t *testing.T) {
 	if _, err := addTheme(p, repos.CustomTheme{ID: "c-more", Name: "t", Base: "light"}, ""); err == nil {
 		t.Fatal("33rd theme accepted")
 	}
-	if _, err := addTheme(p, repos.CustomTheme{ID: "default-dark", Name: "t", Base: "light"}, ""); err == nil {
-		t.Fatal("built-in id accepted")
+	for _, id := range []string{"default-dark", "pine", "ember"} {
+		if _, err := addTheme(p, repos.CustomTheme{ID: id, Name: "t", Base: "light"}, ""); err == nil {
+			t.Fatalf("built-in id %s accepted", id)
+		}
 	}
 }

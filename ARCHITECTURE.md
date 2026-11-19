@@ -1287,8 +1287,9 @@ The `review_page` appearance preference (`full`, the default, or `tiles`; see
 and the settings chat reads and proposes it with General's other
 settings (`settings_general`, `propose_appearance`). The same route carries the custom colour themes: `light_theme`
 and `dark_theme` name the theme of each slot (the built-in `default-light` and
-`default-dark` when empty) and `themes` lists the built-ins and the person's
-own, kept in `AppearancePreferences` and validated by `internal/themes` (an
+`default-dark` when empty) and `themes` lists the built-ins (`themes.Builtins`:
+Default light, Default dark, Birch, Parchment, Pine and Ember, with their
+tokens) and the person's own, kept in `AppearancePreferences` and validated by `internal/themes` (an
 allowlist of palette tokens, each a plain colour, and the contrast check that
 evaluates the palette's recipes from the tile kit's generated `tokens.css`).
 `POST`, `PATCH` and `DELETE /api/settings/appearance/themes[/{id}]` create,

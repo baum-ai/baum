@@ -18,11 +18,59 @@ import (
 	"unicode/utf8"
 )
 
-// The built-in themes: the palette as it ships, which have no tokens.
+// The ids of the built-in themes. The first two are the palette as it ships,
+// which have no tokens; the rest are in Builtins.
 const (
 	DefaultLight = "default-light"
 	DefaultDark  = "default-dark"
+	Birch        = "birch"
+	Parchment    = "parchment"
+	Pine         = "pine"
+	Ember        = "ember"
 )
+
+// Builtins are the built-in themes in the order the app lists them, before
+// the person's own. They are defined here and nowhere else: the appearance
+// API sends them to the app, which does not keep a copy of the tokens. A
+// built-in can be neither renamed nor deleted, and either slot can take one.
+var Builtins = []Theme{
+	{ID: DefaultLight, Name: "Default light", Base: "light"},
+	{ID: DefaultDark, Name: "Default dark", Base: "dark"},
+	{ID: Birch, Name: "Birch", Base: "light", Tokens: map[string]string{
+		"--color-ink": "#1d2a38", "--color-paper": "#f8fafb", "--color-shadow": "#0b1620",
+		"--brand-forest": "#14393f", "--brand-sand-100": "#d2e2e8", "--brand-green-600": "#2f7d4f",
+		"--color-critical": "#b93a3a", "--color-blue": "#2c5d94",
+		"--series-3":       "#a07f0a",
+		"--action-primary": "#1b6f73", "--action-primary-hover": "#14585c",
+		"--nav-selected": "#cfe1e8", "--nav-hover": "#e0ecf0",
+	}},
+	{ID: Parchment, Name: "Parchment", Base: "light", Tokens: map[string]string{
+		"--color-ink": "#3b2a1f", "--color-paper": "#fbf5e9", "--color-shadow": "#2a1a10",
+		"--brand-forest": "#8a3b1e", "--brand-sand-100": "#ecd7b0", "--brand-green-600": "#5c7a2e",
+		"--color-critical": "#b3362b", "--color-blue": "#3c5f8a",
+		"--series-3": "#9a6a08", "--series-4": "#7a3f8f",
+		"--action-primary": "#b04f27", "--action-primary-hover": "#8f3d1b",
+	}},
+	{ID: Pine, Name: "Pine", Base: "dark", Tokens: map[string]string{
+		"--color-paper": "#dce9df", "--color-shadow": "#010805",
+		"--brand-forest": "#08110c", "--brand-sand-100": "#94e6b6", "--brand-green-600": "#5b8f5a",
+		"--color-critical": "#d9483b", "--series-3": "#c98a12", "--series-4": "#8a5cc0", "--color-blue": "#3f7bbf",
+		"--surface-page": "#0b130f", "--surface-card": "#101b15", "--surface-canvas": "#070d0a", "--surface-popup": "#16231c",
+		"--border-default": "#2e4036", "--nav-selected": "#1b2d23", "--nav-hover": "#14221a",
+	}},
+	{ID: Ember, Name: "Ember", Base: "dark", Tokens: map[string]string{
+		"--color-shadow": "#0c0806", "--color-paper": "#efe4d6", "--color-ink": "#1f1712",
+		"--brand-forest": "#17120e", "--brand-sand-100": "#f0904a", "--brand-green-600": "#6a9150",
+		"--color-critical": "#c8453a", "--color-blue": "#3d6a9c", "--series-3": "#c99a10",
+		"--surface-page": "#1c1a19", "--surface-card": "#232120", "--surface-canvas": "#131211", "--surface-popup": "#2a2725",
+		"--border-default": "#3a3633", "--nav-selected": "#322f2c", "--nav-hover": "#292624",
+	}},
+}
+
+// IsBuiltin reports whether id is a built-in theme's.
+func IsBuiltin(id string) bool {
+	return slices.ContainsFunc(Builtins, func(t Theme) bool { return t.ID == id })
+}
 
 // Limits on a theme and on how many a person keeps.
 const (

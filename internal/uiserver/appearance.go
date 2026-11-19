@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -31,8 +32,8 @@ type appearanceSettings struct {
 	Themes        []appearanceTheme `json:"themes"`
 }
 
-// appearanceTheme is a colour theme as the app lists it: the two built-ins
-// first, with no tokens, then the person's own.
+// appearanceTheme is a colour theme as the app lists it: the built-ins first
+// (themes.Builtins, with their tokens), then the person's own.
 type appearanceTheme struct {
 	ID      string            `json:"id"`
 	Name    string            `json:"name"`
@@ -54,9 +55,11 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 	if reviewPage != "tiles" {
 		reviewPage = "full"
 	}
-	list := []appearanceTheme{
-		{ID: themes.DefaultLight, Name: "Default light", Base: "light", Builtin: true, Tokens: map[string]string{}},
-		{ID: themes.DefaultDark, Name: "Default dark", Base: "dark", Builtin: true, Tokens: map[string]string{}},
+	list := make([]appearanceTheme, 0, len(themes.Builtins)+len(p.Appearance.Themes))
+	for _, t := range themes.Builtins {
+		tokens := map[string]string{}
+		maps.Copy(tokens, t.Tokens)
+		list = append(list, appearanceTheme{ID: t.ID, Name: t.Name, Base: t.Base, Builtin: true, Tokens: tokens})
 	}
 	for _, t := range p.Appearance.Themes {
 		tokens := t.Tokens
@@ -136,7 +139,7 @@ func (in appearanceInput) checkThemes(p repos.Preferences) error {
 
 // themeKnown reports whether id is empty, a built-in or a custom theme in p.
 func themeKnown(p repos.Preferences, id string) bool {
-	return id == "" || id == themes.DefaultLight || id == themes.DefaultDark ||
+	return id == "" || themes.IsBuiltin(id) ||
 		slices.ContainsFunc(p.Appearance.Themes, func(t repos.CustomTheme) bool { return t.ID == id })
 }
 
@@ -254,7 +257,7 @@ func addTheme(p repos.Preferences, t repos.CustomTheme, slot string) (repos.Pref
 
 // renameTheme renames a custom theme.
 func renameTheme(p repos.Preferences, id, name string) (repos.Preferences, error) {
-	if id == themes.DefaultLight || id == themes.DefaultDark {
+	if themes.IsBuiltin(id) {
 		return p, themeInvalid("built-in themes cannot be renamed")
 	}
 	if err := themes.ValidateName(name); err != nil {
@@ -272,7 +275,7 @@ func renameTheme(p repos.Preferences, id, name string) (repos.Preferences, error
 
 // deleteTheme removes a custom theme and resets a slot that used it.
 func deleteTheme(p repos.Preferences, id string) (repos.Preferences, error) {
-	if id == themes.DefaultLight || id == themes.DefaultDark {
+	if themes.IsBuiltin(id) {
 		return p, themeInvalid("built-in themes cannot be deleted")
 	}
 	i := slices.IndexFunc(p.Appearance.Themes, func(t repos.CustomTheme) bool { return t.ID == id })
