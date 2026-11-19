@@ -257,7 +257,10 @@ func mp4Size(b []byte) (int, int, bool) {
 			})
 		})
 	})
-	return width, height, width > 0 && height > 0
+	if width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
 }
 
 // mp4Boxes calls visit with the payload of each of b's boxes of one type
@@ -296,13 +299,15 @@ func webmSize(b []byte) (int, int, bool) {
 			return ebmlChildren(tracks, 0xae, func(entry []byte) bool {
 				return ebmlChildren(entry, 0xe0, func(video []byte) bool {
 					width, height = ebmlUint(ebmlFirst(video, 0xb0)), ebmlUint(ebmlFirst(video, 0xba))
-					return width > 0 && height > 0
+					return width > 0 && height > 0 && width <= math.MaxInt32 && height <= math.MaxInt32
 				})
 			})
 		})
 	})
-	ok := width > 0 && height > 0 && width <= math.MaxInt32 && height <= math.MaxInt32
-	return int(width), int(height), ok
+	if width == 0 || height == 0 || width > math.MaxInt32 || height > math.MaxInt32 {
+		return 0, 0, false
+	}
+	return int(width), int(height), true
 }
 
 // ebmlChildren calls visit with the payload of each of b's elements with one

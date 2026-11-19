@@ -169,6 +169,12 @@ func TestVideoIsStoredAsAFile(t *testing.T) {
 	if files, _ := os.ReadDir(filepath.Join(s.Root(), "attachments")); len(files) != 1 {
 		t.Fatalf("files = %v, want the one clip", files)
 	}
+	if err := os.Remove(filepath.Join(s.Root(), "attachments", contentHash(clip))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Attachment(ctx, key, 1, imageID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing clip file: err = %v, want ErrNotFound", err)
+	}
 }
 
 // legacyRow writes an image the way earlier binaries did.
