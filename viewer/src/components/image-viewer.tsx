@@ -44,9 +44,13 @@ export function ImageViewer({
   // a full screen it entered.
   const holdsFullScreen = useRef(false);
 
+  // The header's height when the image was fitted: one row beside the
+  // controls when the image is wide enough.
+  const fittedHeader = useRef(0);
   const fit = (size: ImageSize) => {
     fitted.current = size;
     fitFrame(frame.current, header.current, size);
+    fittedHeader.current = header.current?.offsetHeight ?? 0;
   };
 
   // Hosts pass a fresh object each render; only a different image refits,
@@ -66,8 +70,7 @@ export function ImageViewer({
     dragged.current = false;
     fitted.current = null;
     if (src && width && height) {
-      fitted.current = { width, height };
-      fitFrame(frame.current, header.current, fitted.current);
+      fit({ width, height });
     }
   }, [src, width, height]);
 
@@ -80,7 +83,7 @@ export function ImageViewer({
       dialog.current?.removeAttribute("style");
       frame.current?.style.removeProperty("max-width");
       if (!dragged.current && fitted.current) {
-        fitFrame(frame.current, header.current, fitted.current);
+        fit(fitted.current);
       }
     };
     window.addEventListener("resize", refit);
@@ -171,18 +174,34 @@ export function ImageViewer({
     bound(element);
     // Past the height the window allows, a wider frame would only add bars
     // beside the image, so the drag stops there.
+    // The cap is in pixels so the dialog sizes to it too, and allows for
+    // the header falling back to one row as the image widens.
     const size = fitted.current;
+    const target = event.currentTarget;
     if (size) {
-      const chrome = element.offsetHeight - event.currentTarget.offsetHeight;
-      const room = window.innerHeight - at.top - 16 - chrome;
-      const widest = Math.max(64, Math.floor((room * size.width) / size.height));
-      event.currentTarget.style.maxWidth = `min(100%, ${widest}px)`;
+      const headerHeight = header.current?.offsetHeight ?? 0;
+      const around =
+        element.offsetHeight -
+        target.offsetHeight -
+        headerHeight +
+        Math.min(headerHeight, fittedHeader.current || headerHeight);
+      const room = window.innerHeight - at.top - 16 - around;
+      const across =
+        Number.parseFloat(element.style.maxWidth) - (element.offsetWidth - target.offsetWidth);
+      const widest = Math.max(64, Math.floor(Math.min((room * size.width) / size.height, across)));
+      target.style.maxWidth = `${widest}px`;
     }
     window.addEventListener(
       "pointerup",
       () => {
-        if (frame.current && frame.current.offsetWidth !== start) dragged.current = true;
-        else if (!dragged.current) element.removeAttribute("style");
+        // Keep the width as drawn, so a later window resize, which lifts
+        // the cap, does not bring back the width dragged past it.
+        const drawn = target.offsetWidth;
+        target.style.removeProperty("max-width");
+        if (drawn !== start) {
+          dragged.current = true;
+          target.style.width = `${drawn}px`;
+        } else if (!dragged.current) element.removeAttribute("style");
       },
       { once: true },
     );
@@ -198,9 +217,11 @@ export function ImageViewer({
         if (!full) return;
         event.preventDefault();
         leaveFullScreen();
-        // The dialog's own cancel handling can take focus; it stays on the
-        // control that entered full screen.
-        fullButton.current?.focus();
+        // Leaving the cover can drop focus out of the dialog; it returns to
+        // the control that entered full screen.
+        if (!dialog.current?.contains(globalThis.document.activeElement)) {
+          fullButton.current?.focus();
+        }
       }}
       onClose={() => {
         leaveFullScreen();
