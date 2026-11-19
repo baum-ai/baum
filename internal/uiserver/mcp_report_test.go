@@ -104,6 +104,7 @@ func newReportFixture(t *testing.T) *reportFixture {
 	registry, clone := readRegistry(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	dir := appdbtest.TempDir(t)
 	ui := &uistate.Store{Path: filepath.Join(dir, "ui.sqlite")}
 	store, err := decisionlog.Open(filepath.Join(dir, "decisions.sqlite"), decisionlog.OpenOptions{})
