@@ -40,16 +40,17 @@ func capturedAttachments(path string, listed []bundle.Attachment) ([]store.Attac
 			return nil, err
 		}
 		a, ok := byPath[header.Name]
-		if !ok || header.Typeflag != tar.TypeReg || header.Size > store.MaxAttachmentBytes || header.Size < 0 {
+		limit := store.MaxAttachmentSize(a.ContentType)
+		if !ok || header.Typeflag != tar.TypeReg || header.Size > limit || header.Size < 0 {
 			return nil, errors.New("invalid captured attachment archive")
 		}
 		delete(byPath, header.Name)
-		bytes, err := io.ReadAll(io.LimitReader(reader, store.MaxAttachmentBytes+1))
+		bytes, err := io.ReadAll(io.LimitReader(reader, limit+1))
 		if err != nil {
 			return nil, err
 		}
 		hash := sha256.Sum256(bytes)
-		mime, _, _, valid := bundle.SniffImage(bytes)
+		mime, _, _, valid := bundle.SniffMedia(bytes, bundle.IsVideo(a.ContentType))
 		if !valid || mime != a.ContentType || hex.EncodeToString(hash[:]) != a.SHA256 {
 			return nil, errors.New("captured attachment differs from assembled evidence")
 		}

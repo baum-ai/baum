@@ -1,6 +1,7 @@
 // Description images: the rendered-image and markdown-upload walk of a pull
 // request description, image identity and sniffing, the attachment listing
-// of a bundle, and the archive that carries the images to a run.
+// of a bundle, and the archive that carries the images to a run. Local
+// reviews carry description video clips the same way.
 package bundle
 
 import (
@@ -16,6 +17,8 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
+	"math/bits"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -55,6 +58,16 @@ type DescriptionImage struct {
 	// ObjectKey is where the host stored the copy.
 	ObjectKey string
 }
+
+// Local reviews also capture MP4 and WebM clips from the description, under
+// limits of their own.
+const (
+	MaxVideos     = 3
+	MaxVideoBytes = 100 << 20
+)
+
+// IsVideo reports whether contentType is a captured clip's.
+func IsVideo(contentType string) bool { return strings.HasPrefix(contentType, "video/") }
 
 var attachmentIDPattern = regexp.MustCompile(`^att_[0-9a-f]{32}$`)
 
@@ -98,12 +111,24 @@ type RenderedImage struct {
 	FetchURL string
 	// State is preset for an image that is not downloaded.
 	State string
+	// Video marks an uploaded clip, which RenderedMedia lists.
+	Video bool
 }
 
 // RenderedImages walks the img elements of body_html. GitHub renders none
 // from HTML comments or code fences, so those are left out. A repeated image
 // is listed once.
 func RenderedImages(bodyHTML string, uploads map[string]string) []RenderedImage {
+	return renderedMedia(bodyHTML, uploads, false)
+}
+
+// RenderedMedia is RenderedImages that also lists the video elements GitHub
+// renders for uploaded clips, by their src or their first source child's.
+func RenderedMedia(bodyHTML string, uploads map[string]string) []RenderedImage {
+	return renderedMedia(bodyHTML, uploads, true)
+}
+
+func renderedMedia(bodyHTML string, uploads map[string]string, videos bool) []RenderedImage {
 	root, err := html.Parse(strings.NewReader(bodyHTML))
 	if err != nil {
 		return nil
@@ -111,14 +136,20 @@ func RenderedImages(bodyHTML string, uploads map[string]string) []RenderedImage 
 	var images []RenderedImage
 	seen := map[string]bool{}
 	for node := range root.Descendants() {
-		if node.Type != html.ElementNode || node.Data != "img" {
+		video := videos && node.Type == html.ElementNode && node.Data == "video"
+		if node.Type != html.ElementNode || (node.Data != "img" && !video) {
 			continue
 		}
 		src, alt, canonical, class := attr(node, "src"), attr(node, "alt"), attr(node, "data-canonical-src"), attr(node, "class")
+		for child := range node.ChildNodes() {
+			if video && src == "" && child.Type == html.ElementNode && child.Data == "source" {
+				src = attr(child, "src")
+			}
+		}
 		if src == "" || strings.Contains(class, "emoji") {
 			continue
 		}
-		image := RenderedImage{Alt: alt}
+		image := RenderedImage{Alt: alt, Video: video}
 		parsed, err := url.Parse(src)
 		switch {
 		case err != nil || !githubUploadURL(parsed):
@@ -197,6 +228,147 @@ func SniffImage(content []byte) (contentType string, width, height int, ok bool)
 	return "image/" + format, config.Width, config.Height, true
 }
 
+// SniffMedia is SniffImage, or for a video only an MP4 or WebM clip whose
+// frame size it can read.
+func SniffMedia(content []byte, video bool) (contentType string, width, height int, ok bool) {
+	switch {
+	case !video:
+		return SniffImage(content)
+	case len(content) >= 8 && string(content[4:8]) == "ftyp":
+		width, height, ok = mp4Size(content)
+		return "video/mp4", width, height, ok
+	case bytes.HasPrefix(content, []byte{0x1a, 0x45, 0xdf, 0xa3}):
+		width, height, ok = webmSize(content)
+		return "video/webm", width, height, ok
+	}
+	return "", 0, 0, false
+}
+
+// mp4Size reads the first track header with a frame size, wherever the
+// movie box sits.
+func mp4Size(b []byte) (int, int, bool) {
+	for _, moov := range mp4Boxes(b, "moov") {
+		for _, trak := range mp4Boxes(moov, "trak") {
+			for _, tkhd := range mp4Boxes(trak, "tkhd") {
+				at := 76 // version, flags, times, track, duration, layer, volume, matrix
+				if len(tkhd) > 0 && tkhd[0] == 1 {
+					at = 88
+				}
+				if len(tkhd) >= at+8 {
+					width, height := int(binary.BigEndian.Uint32(tkhd[at:])>>16), int(binary.BigEndian.Uint32(tkhd[at+4:])>>16)
+					if width > 0 && height > 0 {
+						return width, height, true
+					}
+				}
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+// mp4Boxes lists the payloads of b's boxes of one type.
+func mp4Boxes(b []byte, kind string) [][]byte {
+	var found [][]byte
+	for len(b) >= 8 {
+		size, header := uint64(binary.BigEndian.Uint32(b)), uint64(8)
+		switch size {
+		case 0:
+			size = uint64(len(b))
+		case 1:
+			if len(b) < 16 {
+				return found
+			}
+			size, header = binary.BigEndian.Uint64(b[8:]), 16
+		}
+		if size < header || size > uint64(len(b)) {
+			return found
+		}
+		if string(b[4:8]) == kind {
+			found = append(found, b[header:size])
+		}
+		b = b[size:]
+	}
+	return found
+}
+
+// webmSize reads the first video track's pixel size of a WebM file.
+func webmSize(b []byte) (int, int, bool) {
+	header := ebmlChildren(b, 0x1a45dfa3)
+	if len(header) == 0 || string(bytes.Join(ebmlChildren(header[0], 0x4282), nil)) != "webm" {
+		return 0, 0, false
+	}
+	for _, segment := range ebmlChildren(b, 0x18538067) {
+		for _, tracks := range ebmlChildren(segment, 0x1654ae6b) {
+			for _, entry := range ebmlChildren(tracks, 0xae) {
+				for _, video := range ebmlChildren(entry, 0xe0) {
+					width, height := ebmlUint(ebmlChildren(video, 0xb0)), ebmlUint(ebmlChildren(video, 0xba))
+					if width > 0 && height > 0 && width <= math.MaxInt32 && height <= math.MaxInt32 {
+						return int(width), int(height), true
+					}
+				}
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+// ebmlChildren lists the payloads of b's elements with one ID. An element of
+// unknown or overlong size runs to the end of b.
+func ebmlChildren(b []byte, id uint64) [][]byte {
+	var found [][]byte
+	for len(b) > 0 {
+		elementID, n := ebmlVint(b, false)
+		if n == 0 {
+			return found
+		}
+		size, m := ebmlVint(b[n:], true)
+		if m == 0 {
+			return found
+		}
+		b = b[n+m:]
+		size = min(size, uint64(len(b)))
+		if elementID == id {
+			found = append(found, b[:size])
+		}
+		b = b[size:]
+	}
+	return found
+}
+
+// ebmlVint reads a variable-length ID (marker kept) or size (marker dropped,
+// all ones meaning unknown) and its length, zero when malformed.
+func ebmlVint(b []byte, size bool) (uint64, int) {
+	if len(b) == 0 || b[0] == 0 {
+		return 0, 0
+	}
+	n := bits.LeadingZeros8(b[0]) + 1
+	if len(b) < n {
+		return 0, 0
+	}
+	v := uint64(b[0])
+	if size {
+		v &= 0xff >> n
+	}
+	for _, c := range b[1:n] {
+		v = v<<8 | uint64(c)
+	}
+	if size && v == 1<<(7*n)-1 {
+		return math.MaxUint64, n
+	}
+	return v, n
+}
+
+// ebmlUint reads the first of the given elements as an unsigned integer.
+func ebmlUint(elements [][]byte) uint64 {
+	var v uint64
+	if len(elements) > 0 && len(elements[0]) <= 8 {
+		for _, c := range elements[0] {
+			v = v<<8 | uint64(c)
+		}
+	}
+	return v
+}
+
 // webpSize reads the canvas size from the first chunk's header.
 func webpSize(b []byte) (int, int, bool) {
 	if len(b) < 30 {
@@ -224,7 +396,7 @@ func webpSize(b []byte) (int, int, bool) {
 	return width, height, width > 0 && height > 0
 }
 
-var attachmentExtensions = map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+var attachmentExtensions = map[string]string{"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "video/mp4": "mp4", "video/webm": "webm"}
 
 // attachmentPath is where a stored image's file sits in the run directory;
 // only a stored image of an accepted type has one.
@@ -237,7 +409,7 @@ func attachmentPath(image DescriptionImage) (string, bool) {
 }
 
 // attachmentFileName is the only name an unpacked image may have.
-var attachmentFileName = regexp.MustCompile(`^attachments/att_[0-9a-f]{32}\.(?:png|jpg|gif|webp)$`)
+var attachmentFileName = regexp.MustCompile(`^attachments/att_[0-9a-f]{32}\.(?:png|jpg|gif|webp|mp4|webm)$`)
 
 // DescriptionAttachments lists the stored images for the bundle, each under
 // the nearest heading above it in the untrimmed body.
@@ -342,7 +514,7 @@ func MaxAttachmentsArchiveBytes(maxImages int, maxImageBytes int64) int64 {
 //
 // The caller must bound the archive's size before calling (see
 // MaxAttachmentsArchiveBytes). A maxImageBytes of zero puts no per-entry
-// limit before the hash check.
+// limit before the hash check; a listed video may reach MaxVideoBytes.
 func UnpackAttachments(ctx context.Context, archive, dir string, attachments []Attachment, maxImageBytes int64) error {
 	if archive == "" {
 		if len(attachments) > 0 {
@@ -350,12 +522,12 @@ func UnpackAttachments(ctx context.Context, archive, dir string, attachments []A
 		}
 		return nil
 	}
-	listed := map[string]string{}
+	listed := map[string]Attachment{}
 	for _, attachment := range attachments {
 		if !attachmentFileName.MatchString(attachment.Path) {
 			return ErrInvalidArchive
 		}
-		listed[attachment.Path] = attachment.SHA256
+		listed[attachment.Path] = attachment
 	}
 	file, err := os.Open(archive)
 	if err != nil {
@@ -378,8 +550,12 @@ func UnpackAttachments(ctx context.Context, archive, dir string, attachments []A
 		if err != nil {
 			return ErrInvalidArchive
 		}
-		digest, ok := listed[entry.Name]
-		if !ok || entry.Typeflag != tar.TypeReg || entry.Size < 0 || (maxImageBytes > 0 && entry.Size > maxImageBytes) {
+		attachment, ok := listed[entry.Name]
+		limit := maxImageBytes
+		if IsVideo(attachment.ContentType) && limit > 0 {
+			limit = max(limit, MaxVideoBytes)
+		}
+		if !ok || entry.Typeflag != tar.TypeReg || entry.Size < 0 || (limit > 0 && entry.Size > limit) {
 			return ErrInvalidArchive
 		}
 		delete(listed, entry.Name)
@@ -389,7 +565,7 @@ func UnpackAttachments(ctx context.Context, archive, dir string, attachments []A
 		}
 		hash := sha256.New()
 		_, copyErr := io.CopyN(io.MultiWriter(output, hash), reader, entry.Size)
-		if err := errors.Join(copyErr, output.Close()); err != nil || hex.EncodeToString(hash.Sum(nil)) != digest {
+		if err := errors.Join(copyErr, output.Close()); err != nil || hex.EncodeToString(hash.Sum(nil)) != attachment.SHA256 {
 			return ErrInvalidArchive
 		}
 	}

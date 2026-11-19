@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -25,7 +27,7 @@ func imageVersion(t *testing.T, k Key, n int) Version {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v.Attachments = []Attachment{{imageID, "image/png", png}}
+	v.Attachments = []Attachment{{ID: imageID, ContentType: "image/png", Bytes: png}}
 	return v
 }
 func TestVersionAttachmentAtomicityAndIsolation(t *testing.T) {
@@ -132,6 +134,40 @@ func TestVersionsShareIdenticalImageBytes(t *testing.T) {
 		if got, err := s.Attachment(ctx, key, n, imageID); err != nil || !bytes.Equal(got.Bytes, first.Attachments[0].Bytes) {
 			t.Fatal(n, got, err)
 		}
+	}
+}
+
+// A clip's bytes are a file under the store root, shared by the versions
+// that list it, and a read returns its path.
+func TestVideoIsStoredAsAFile(t *testing.T) {
+	clip, err := os.ReadFile("../../bundle/testdata/video/clip.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := opened(t)
+	ctx := context.Background()
+	key := Key{"owner/repo", 7}
+	first := imageVersion(t, key, 1)
+	first.Attachments[0] = Attachment{ID: imageID, ContentType: "video/mp4", Bytes: clip}
+	second := imageVersion(t, key, 2)
+	second.Attachments = first.Attachments
+	if err := s.Put(ctx, key, Version{}, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, key, first, second); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{1, 2} {
+		got, err := s.Attachment(ctx, key, n, imageID)
+		if err != nil || got.ContentType != "video/mp4" || got.Bytes != nil || got.Path != filepath.Join(s.Root(), "attachments", contentHash(clip)) {
+			t.Fatal(n, got, err)
+		}
+		if stored, err := os.ReadFile(got.Path); err != nil || !bytes.Equal(stored, clip) {
+			t.Fatal("stored clip differs", err)
+		}
+	}
+	if files, _ := os.ReadDir(filepath.Join(s.Root(), "attachments")); len(files) != 1 {
+		t.Fatalf("files = %v, want the one clip", files)
 	}
 }
 

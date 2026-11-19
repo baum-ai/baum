@@ -16,10 +16,12 @@ import (
 
 // Description images are downloaded under the hosted limits: each download
 // has its own timeout, and all of them share one budget so capture cannot
-// stall an assembly.
+// stall an assembly. Video clips, which hosted capture skips, get longer
+// downloads and a share of the budget of their own.
 const (
 	imageDownloadTimeout = 30 * time.Second
-	imageCaptureTimeout  = 2 * time.Minute
+	videoDownloadTimeout = 2 * time.Minute
+	imageCaptureTimeout  = 2*time.Minute + bundle.MaxVideos*videoDownloadTimeout
 )
 
 // ErrImageTooLarge is what an ImageFetcher returns for an image over the
@@ -32,9 +34,10 @@ type ImageFetcher func(ctx context.Context, fetchURL string, maxBytes int64) ([]
 
 // captureImages records a state for every image the description renders and
 // downloads the ones GitHub hosts, as the hosted capture does: it never
-// fails the assembly, every problem becomes the image's state. The contents
-// of the stored images are returned by ID. Neither a warning nor an error
-// carries a URL, which is signed.
+// fails the assembly, every problem becomes the image's state. Video clips
+// count against bundle.MaxVideos and bundle.MaxVideoBytes instead of the
+// image limits. The contents of the stored images are returned by ID.
+// Neither a warning nor an error carries a URL, which is signed.
 func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedImage, redactor *bundle.Redactor, limits Limits) ([]bundle.DescriptionImage, map[string][]byte, int) {
 	if len(found) == 0 {
 		return nil, nil, 0
@@ -43,7 +46,7 @@ func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedIm
 	defer cancel()
 	contents := map[string][]byte{}
 	images := make([]bundle.DescriptionImage, 0, len(found))
-	hosted, masked := 0, 0
+	hosted, videos, masked := 0, 0, 0
 	for _, candidate := range found {
 		image := bundle.DescriptionImage{ID: candidate.ID, SourceURL: candidate.SourceURL, Position: len(images) + 1, State: candidate.State}
 		if alt, count, err := redactor.RedactString(ctx, candidate.Alt); err == nil {
@@ -51,14 +54,18 @@ func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedIm
 			masked += count
 		}
 		if image.State == "" {
-			hosted++
+			count, limit, maxBytes := &hosted, limits.MaxImages, limits.MaxImageBytes
+			if candidate.Video {
+				count, limit, maxBytes = &videos, bundle.MaxVideos, bundle.MaxVideoBytes
+			}
+			*count++
 			switch {
-			case hosted > limits.MaxImages:
+			case *count > limit:
 				image.State = bundle.AttachmentOverLimit
 			case a.Images == nil:
 				image.State = bundle.AttachmentFailed
 			default:
-				if content := a.download(ctx, candidate.FetchURL, limits.MaxImageBytes, &image); content != nil {
+				if content := a.download(ctx, candidate.FetchURL, maxBytes, candidate.Video, &image); content != nil {
 					contents[image.ID] = content
 				}
 			}
@@ -69,10 +76,14 @@ func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedIm
 }
 
 // download fills image from the signed source and returns the content of a
-// stored image.
-func (a *Assembler) download(ctx context.Context, source string, maxBytes int64, image *bundle.DescriptionImage) []byte {
+// stored image or clip.
+func (a *Assembler) download(ctx context.Context, source string, maxBytes int64, video bool, image *bundle.DescriptionImage) []byte {
 	image.State = bundle.AttachmentFailed
-	ctx, cancel := context.WithTimeout(ctx, imageDownloadTimeout)
+	timeout := imageDownloadTimeout
+	if video {
+		timeout = videoDownloadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	content, err := a.Images(ctx, source, maxBytes)
 	switch {
@@ -86,7 +97,7 @@ func (a *Assembler) download(ctx context.Context, source string, maxBytes int64,
 		image.State = bundle.AttachmentTooLarge
 		return nil
 	}
-	contentType, width, height, ok := bundle.SniffImage(content)
+	contentType, width, height, ok := bundle.SniffMedia(content, video)
 	if !ok {
 		image.State = bundle.AttachmentUnsupported
 		return nil

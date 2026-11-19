@@ -168,6 +168,14 @@ func TestUnpackAttachmentsRejectsAnythingButTheListedImages(t *testing.T) {
 	if err := UnpackAttachments(context.Background(), "", t.TempDir(), nil, 1024); err != nil {
 		t.Fatalf("a run without images failed: %v", err)
 	}
+	// A listed clip may exceed the image byte limit.
+	clip, clipListed := attachmentArchive(t, map[string][]byte{strings.TrimSuffix(testAttachmentA, ".png") + ".mp4": []byte("a clip over the image limit")})
+	clipListed[0].ContentType = "video/mp4"
+	clipDir := t.TempDir()
+	t.Cleanup(func() { removeTree(clipDir) })
+	if err := UnpackAttachments(context.Background(), write(t, clip), clipDir, clipListed, 4); err != nil {
+		t.Fatalf("listed clip refused: %v", err)
+	}
 	// entry archives one header per content, in order.
 	entry := func(header tar.Header, contents ...string) []byte {
 		var out bytes.Buffer
@@ -207,5 +215,51 @@ func TestUnpackAttachmentsRejectsAnythingButTheListedImages(t *testing.T) {
 				t.Fatal("accepted an archive that does not hold exactly the listed images")
 			}
 		})
+	}
+}
+
+// The fixtures are tiny ffmpeg clips; the MP4's movie box follows its data.
+func TestSniffMediaReadsClipSizes(t *testing.T) {
+	read := func(name string) []byte {
+		content, err := os.ReadFile(filepath.Join("testdata", "video", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return content
+	}
+	png := pngOfSize(t, 5, 3)
+	for name, tc := range map[string]struct {
+		content       []byte
+		video         bool
+		contentType   string
+		width, height int
+	}{
+		"mp4":              {read("clip.mp4"), true, "video/mp4", 32, 18},
+		"webm":             {read("clip.webm"), true, "video/webm", 40, 24},
+		"png as image":     {png, false, "image/png", 5, 3},
+		"png as video":     {png, true, "", 0, 0},
+		"mp4 as image":     {read("clip.mp4"), false, "", 0, 0},
+		"mp4 with no moov": {read("clip.mp4")[:32], true, "video/mp4", 0, 0},
+	} {
+		contentType, width, height, ok := SniffMedia(tc.content, tc.video)
+		if contentType != tc.contentType || width != tc.width || height != tc.height || ok != (tc.width > 0) {
+			t.Errorf("%s: sniffed %q %dx%d %v, want %q %dx%d", name, contentType, width, height, ok, tc.contentType, tc.width, tc.height)
+		}
+	}
+}
+
+// GitHub renders an uploaded clip as a video element; only RenderedMedia
+// lists it, by its src or a source child's.
+func TestRenderedMediaListsUploadedClips(t *testing.T) {
+	uploads := MarkdownUploads(markdownAsset(uploadBefore) + "\n" + markdownAsset(uploadAfter))
+	body := `<video src="` + signedSource(uploadBefore) + `" data-canonical-src="` + signedSource(uploadBefore) + `" controls></video>` +
+		`<video controls><source src="` + signedSource(uploadAfter) + `" type="video/mp4"></video>`
+	if images := RenderedImages(body, uploads); len(images) != 0 {
+		t.Fatalf("RenderedImages listed clips: %+v", images)
+	}
+	clips := RenderedMedia(body, uploads)
+	if len(clips) != 2 || !clips[0].Video || !clips[1].Video || clips[0].SourceURL != markdownAsset(uploadBefore) ||
+		clips[1].SourceURL != markdownAsset(uploadAfter) || clips[1].FetchURL != signedSource(uploadAfter) || clips[0].State != "" {
+		t.Fatalf("clips = %+v", clips)
 	}
 }

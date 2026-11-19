@@ -2469,7 +2469,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v5`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v6`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and
@@ -4192,7 +4192,11 @@ A desktop generation job uses `internal/generate` to:
 4. reads the pull request's rendered body with the user's token, which carries
    image URLs GitHub has already signed, and downloads the description images
    from them without credentials; `bundle` caches nothing, and writes the
-   images only to the attachments archive `generate` reads. After session
+   images only to the attachments archive `generate` reads. MP4 and WebM
+   clips the description uploads are captured the same way, under their own
+   limits (`bundle.MaxVideos`, 3, of at most `bundle.MaxVideoBytes`, 100 MiB,
+   each; over them a clip is `over_limit` or `too_large`); the agent does not
+   open them and places one by its alt text and heading. After session
    linkage and count caps, native Claude Code and Codex transcripts also supply
    retained inline pasted and tool-result images through `sessions/sessionimages`.
    Only readable linked roots and reachable subagents contribute; Entire
@@ -4365,6 +4369,7 @@ Native images retain human-input or tool-result origins, their root prompt,
 optional child input and tool ID. The host deduplicates content across both
 image sources, retaining all origins and additional description URLs. The
 20-image/10-MiB-per-image defaults are shared; description images come first.
+Description clips do not count against them.
 Session images are content-sniffed and limited to 40 million pixels. A
 session image longer than 1568 px on either side is resized to fit
 (`assemble.MaxSessionImageEdge`; a JPEG stays a JPEG, PNG and WebP become PNG)
@@ -4832,9 +4837,13 @@ each distinct image, keyed by the SHA-256 of its bytes, and
 `version_attachments` maps each repository, PR, immutable version and
 attachment ID to a copy; `Store.Put` commits both with the version, and
 regenerating a review with the same images stores no new bytes. Reads check
-the copy against its hash. `generate` returns copies from the original,
+the copy against its hash. A video clip is the exception: its bytes are a
+file, `attachments/<sha256>` under the store root, written once when a version
+is saved, and its `attachment_blobs` row holds no bytes; a read returns the
+file's path, which `GET /api/attachments/{id}` serves with range requests.
+Versions are never deleted, so neither are the files. `generate` returns copies from the original,
 hash-checked assembly archive, not agent-visible files. Reads expose only
-raster images listed in that version's document. Existing stores without the
+raster images and clips listed in that version's document. Existing stores without the
 tables remain readable. A writable open moves an earlier store's per-version
 `attachments` rows into the shared copies in `BEGIN IMMEDIATE` batches of at
 most 32 MiB, deleting each batch's rows as it commits and dropping the table

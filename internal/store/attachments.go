@@ -8,13 +8,23 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/baum-ai/baum/bundle"
 )
 
 const MaxAttachmentBytes = 10 << 20
-const MaxAttachments = 20
+const MaxAttachments = 20 + bundle.MaxVideos
+
+// MaxAttachmentSize is the largest stored copy of contentType.
+func MaxAttachmentSize(contentType string) int64 {
+	if bundle.IsVideo(contentType) {
+		return bundle.MaxVideoBytes
+	}
+	return MaxAttachmentBytes
+}
 
 var attachmentID = regexp.MustCompile(`^att_[0-9a-f]{32}$`)
 
@@ -23,6 +33,8 @@ var attachmentID = regexp.MustCompile(`^att_[0-9a-f]{32}$`)
 // maps a version's attachment IDs to those copies. Versions stay immutable
 // (rows are only ever added), so regenerating a review with the same images
 // stores no new bytes. The blob table keeps a rowid because its rows are large.
+// A video clip's bytes are a file, attachments/<sha256> under the store root,
+// and its blob row holds no bytes; neither is ever deleted.
 const attachmentSchema = `CREATE TABLE IF NOT EXISTS attachment_blobs(sha256 TEXT PRIMARY KEY, content_type TEXT NOT NULL, bytes BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS version_attachments(repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, id TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(repository,pr,version,id)) WITHOUT ROWID;`
 
@@ -32,12 +44,15 @@ CREATE TABLE IF NOT EXISTS version_attachments(repository TEXT NOT NULL, pr INTE
 // finished, stays readable.
 const legacyAttachments = "attachments"
 
-// Attachment is a captured raster image. Bytes are persisted transactionally
-// with the version, never inferred from a path or fetched from a document URL.
+// Attachment is a captured raster image or video clip. Image bytes are
+// persisted transactionally with the version, never inferred from a path or
+// fetched from a document URL. A clip read back has its file's Path instead
+// of Bytes.
 type Attachment struct {
 	ID          string
 	ContentType string
 	Bytes       []byte
+	Path        string
 }
 
 func attachmentIDs(document []byte) map[string]bool {
@@ -62,8 +77,8 @@ func validateAttachments(v Version) error {
 	ids := attachmentIDs(v.Document)
 	seen := map[string]bool{}
 	for _, a := range v.Attachments {
-		mime, _, _, ok := bundle.SniffImage(a.Bytes)
-		if !attachmentID.MatchString(a.ID) || !ids[a.ID] || seen[a.ID] || len(a.Bytes) > MaxAttachmentBytes || !ok || mime != a.ContentType {
+		mime, _, _, ok := bundle.SniffMedia(a.Bytes, bundle.IsVideo(a.ContentType))
+		if !attachmentID.MatchString(a.ID) || !ids[a.ID] || seen[a.ID] || int64(len(a.Bytes)) > MaxAttachmentSize(a.ContentType) || !ok || mime != a.ContentType {
 			return errors.New("invalid stored attachment")
 		}
 		seen[a.ID] = true
@@ -94,15 +109,40 @@ type execer interface {
 // identical image is stored yet. Put has already rejected a version's duplicate
 // IDs; a migrated row a version already maps is left as it is.
 func putAttachment(ctx context.Context, tx execer, repository string, pr, version int, a Attachment) error {
-	hash := contentHash(a.Bytes)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO attachment_blobs(sha256,content_type,bytes) VALUES(?,?,?) ON CONFLICT(sha256) DO NOTHING`, hash, a.ContentType, a.Bytes); err != nil {
+	hash, content := contentHash(a.Bytes), a.Bytes
+	if bundle.IsVideo(a.ContentType) {
+		content = []byte{}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO attachment_blobs(sha256,content_type,bytes) VALUES(?,?,?) ON CONFLICT(sha256) DO NOTHING`, hash, a.ContentType, content); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO version_attachments(repository,pr,version,id,sha256) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING`, repository, pr, version, a.ID, hash)
 	return err
 }
 
-func saveAttachments(ctx context.Context, tx *sql.Tx, k Key, v Version) error {
+// writeVideo stores a clip's file once, renamed into place whole.
+func writeVideo(root string, a Attachment) error {
+	dir := filepath.Join(root, "attachments")
+	path := filepath.Join(dir, contentHash(a.Bytes))
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	_, err = f.Write(a.Bytes)
+	if err = errors.Join(err, f.Close()); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+func saveAttachments(ctx context.Context, tx *sql.Tx, root string, k Key, v Version) error {
 	if len(v.Attachments) == 0 {
 		return nil
 	}
@@ -110,6 +150,11 @@ func saveAttachments(ctx context.Context, tx *sql.Tx, k Key, v Version) error {
 		return err
 	}
 	for _, a := range v.Attachments {
+		if bundle.IsVideo(a.ContentType) {
+			if err := writeVideo(root, a); err != nil {
+				return err
+			}
+		}
 		if err := putAttachment(ctx, tx, k.repository(), k.Number, v.Metadata.Version, a); err != nil {
 			return err
 		}
@@ -178,9 +223,10 @@ func migrateAttachments(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// Attachment reads a single document-listed captured image. Version zero
-// selects latest in one read transaction. Earlier stores without bytes return
-// ErrNotFound without creating a table or changing their contents.
+// Attachment reads a single document-listed captured image, or finds a
+// captured clip's file. Version zero selects latest in one read transaction.
+// Earlier stores without bytes return ErrNotFound without creating a table or
+// changing their contents.
 func (s *Store) Attachment(ctx context.Context, k Key, version int, id string) (Attachment, error) {
 	if !k.valid() || version < 0 || !attachmentID.MatchString(id) {
 		return Attachment{}, ErrNotFound
@@ -221,6 +267,11 @@ func (s *Store) Attachment(ctx context.Context, k Key, version int, id string) (
 		err = tx.QueryRowContext(ctx, `SELECT b.sha256,b.content_type,b.bytes FROM version_attachments v JOIN attachment_blobs b ON b.sha256=v.sha256 WHERE v.repository=? AND v.pr=? AND v.version=? AND v.id=?`, k.repository(), k.Number, n, id).Scan(&hash, &a.ContentType, &a.Bytes)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return Attachment{}, err
+		}
+		if err == nil && bundle.IsVideo(a.ContentType) {
+			// The clip's file was hash checked when it was saved.
+			a.Bytes, a.Path = nil, filepath.Join(s.root, "attachments", hash)
+			return a, nil
 		}
 		if err == nil {
 			if contentHash(a.Bytes) != hash {

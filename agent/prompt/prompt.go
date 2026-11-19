@@ -150,7 +150,7 @@ func (g GroupPrompts) Instructions(_ context.Context, backend string) (agent.Pro
 
 // StagedVersion is the prompt version of a staged review. Change it with the
 // text of any review-*-public-v1.md file of the staged review.
-const StagedVersion = "review-staged-public-v5"
+const StagedVersion = "review-staged-public-v6"
 
 //go:embed review-shared-public-v1.md
 var stagedShared string
