@@ -292,7 +292,7 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 		ThemeTokens:   themeTokens{Seeds: themes.Seeds, Roles: themes.Roles()},
 		ThemeDefaults: map[string]map[string]string{"light": themeColours("light", nil), "dark": themeColours("dark", nil)},
 		SlotValues:    map[string]map[string]string{},
-		ThemeNote:     "The colours in use are the active slot's theme: the theme setting picks it (light uses the light slot, dark the dark slot, system follows the operating system). theme_defaults are the built-in light and dark colours, slot_values what each slot's theme resolves to. A theme sets some tokens over its base; the rest follow from them."}
+		ThemeNote:     "The colours in use are the active slot's theme: the theme setting picks it (light uses the light slot, dark the dark slot, system follows the operating system). theme_defaults are the built-in light and dark colours, slot_values what each slot's theme resolves to. A theme sets some tokens over its base; the rest follow from them. On a light base --color-ink is the text and --color-paper the page; on a dark base --color-paper is the text colour (the surfaces come from --color-shadow) and --color-ink does not colour text."}
 	for _, t := range appearance.Themes {
 		tokens := t.Tokens
 		if tokens == nil {

@@ -90,7 +90,7 @@ func TestProposeThemeTool(t *testing.T) {
 	s := New(Options{API: http.NotFoundHandler(), Proposers: map[string]Proposer{ProposalAnywhere: rec}})
 	token, id := chat(t, s)
 	// No page open: refused. Then any page will do.
-	args := map[string]any{"name": "Dusk", "base": "dark", "tokens": map[string]string{"--color-paper": "#101820"}}
+	args := map[string]any{"name": "Dusk", "base": "dark", "tokens": map[string]string{"--color-paper": "#e8eef4"}}
 	if text, failed := data(t, s, token, "propose_theme", args); !failed {
 		t.Fatalf("proposed with no page open: %s", text)
 	}
@@ -113,11 +113,11 @@ func TestProposeThemeTool(t *testing.T) {
 		}
 	}
 	open := s.Proposals.List(id)
-	if len(open) != 3 || open[0].Page != ProposalAnywhere || open[0].Target != TargetTheme || !sameJSON(open[0].After, json.RawMessage(`{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#101820"}}`)) {
+	if len(open) != 3 || open[0].Page != ProposalAnywhere || open[0].Target != TargetTheme || !sameJSON(open[0].After, json.RawMessage(`{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#e8eef4"}}`)) {
 		t.Fatalf("proposals %+v", open)
 	}
-	// Dark paper with the dark text left alone is readable; a light page with
-	// the default text is not.
+	// A light theme whose page surface and primary text are both dark (#222222
+	// and #333333) is hard to read, so the answer carries contrast warnings.
 	text, _ := data(t, s, token, "propose_theme", map[string]any{"name": "Glare", "base": "light", "tokens": map[string]string{"--surface-page": "#222222", "--text-primary": "#333333"}})
 	var warned struct {
 		ContrastWarnings []themes.Warning `json:"contrast_warnings"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 
@@ -34,7 +35,7 @@ func (f *proposalFixture) appearance() themeAppearance {
 func (f *proposalFixture) proposeTheme(name, base string) agentcontext.Proposal {
 	f.t.Helper()
 	text, failed := (&readFixture{mcp: f.mcp}).callTool(f.t, f.token, "propose_theme", map[string]any{
-		"name": name, "base": base, "tokens": map[string]string{"--color-paper": "#101820"}})
+		"name": name, "base": base, "tokens": map[string]string{"--color-paper": "#e8eef4"}})
 	if failed {
 		f.t.Fatalf("propose_theme: %s", text)
 	}
@@ -73,15 +74,16 @@ func TestThemeProposalSavesLikeThePostRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := f.appearance()
-	if len(got.Themes) != 3 || got.Themes[2].Name != "Midnight" || got.Themes[2].Base != "dark" || got.Themes[2].Tokens["--color-paper"] != "#101820" ||
+	if len(got.Themes) != 3 || got.Themes[2].Name != "Midnight" || got.Themes[2].Base != "dark" || got.Themes[2].Tokens["--color-paper"] != "#e8eef4" ||
 		got.DarkTheme != got.Themes[2].ID || got.LightTheme != "default-light" {
 		t.Fatalf("saved %+v", got)
 	}
 	// The same body through the route gives the same theme.
 	other := newProposalFixture(t)
-	other.must("POST", "/api/settings/appearance/themes", `{"name":"Midnight","base":"dark","tokens":{"--color-paper":"#101820"},"slot":"dark"}`)
+	other.must("POST", "/api/settings/appearance/themes", `{"name":"Midnight","base":"dark","tokens":{"--color-paper":"#e8eef4"},"slot":"dark"}`)
 	want := other.appearance()
-	if want.Themes[2].Name != got.Themes[2].Name || want.Themes[2].Base != got.Themes[2].Base || want.DarkTheme != want.Themes[2].ID {
+	if want.Themes[2].Name != got.Themes[2].Name || want.Themes[2].Base != got.Themes[2].Base || want.DarkTheme != want.Themes[2].ID ||
+		!maps.Equal(want.Themes[2].Tokens, got.Themes[2].Tokens) {
 		t.Errorf("the route saved %+v", want)
 	}
 }

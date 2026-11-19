@@ -15,9 +15,11 @@ import (
 	"strings"
 )
 
-// commonToolNames are the tools of every page: they read the app as a whole,
-// not what one page shows. New adds them to the tools of every page, and
-// RegisterPage to those of each page registered later.
+// commonToolNames are the tools offered on every page: they act on the app as
+// a whole, not on what one page shows (search, link, app_help, daemon_status)
+// or propose an app-wide change (propose_theme, a proposal under the
+// ProposalAnywhere "app" sentinel rather than a page). New adds them to the
+// tools of every page, and RegisterPage to those of each page registered later.
 var commonToolNames = []string{"search", "link", "app_help", "daemon_status", "propose_theme"}
 
 // withCommonTools is names followed by the common tools, each once.
