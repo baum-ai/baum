@@ -1,7 +1,16 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
-import { frameReady, open, servePatch, SHOTS, tileOn, watchErrors } from "./helpers";
+import { expect, test } from "@playwright/test";
+import {
+  frameReady,
+  open,
+  sectionRow,
+  servePatch,
+  serveTiles,
+  SHOTS,
+  tileOn,
+  watchErrors,
+} from "./helpers";
 
 // A review generated with tile reviews on (the fixture's acme/demo#13): its
 // composition holds two library tiles, a schema change that drops a column
@@ -10,22 +19,19 @@ import { frameReady, open, servePatch, SHOTS, tileOn, watchErrors } from "./help
 // most. Library tiles are custom tiles of baum's own types: they mount in
 // sandboxed frames but read as the page's own, never as "Custom tile".
 
-const PR13 = "repository=acme%2Fdemo&pr=13&view=tiles";
+const PR13 = "repository=acme%2Fdemo&pr=13";
 const WIDTHS = [1440, 900, 390] as const;
 const SCHEMES = ["light", "dark"] as const;
 
 /** The section a tile stands on, scrolled to the tile. */
 const at = (tile: string) => `${PR13}&pane=tile&tile=${tile}`;
 
-const howItWorks = (page: Page) =>
-  page.getByRole("tablist", { name: "Review" }).getByRole("tab", { name: "How it works" });
-
 test("library and authored tiles on their sections", async ({ page }) => {
   const errors = watchErrors(page);
   await servePatch(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, at("schema_change"));
-  await expect(howItWorks(page)).toHaveAttribute("aria-selected", "true");
+  await expect(sectionRow(page)).toHaveCount(1);
   const schema = tileOn(page, "schema_change");
   await expect(schema).toBeVisible();
   await frameReady(page, "schema_change");
@@ -93,17 +99,11 @@ for (const width of WIDTHS)
 // filled it draws there.
 test("a library tile being filled holds its place", async ({ page }) => {
   let pending = true;
-  await page.route(
-    (url) => url.pathname.endsWith("/api/tiles"),
-    async (route) => {
-      const response = await route.fetch();
-      const body = await response.json();
-      if (pending)
-        for (const tile of body.view?.tiles ?? [])
-          if (tile.id === "schema_change") Object.assign(tile, { state: "pending", data: {} });
-      await route.fulfill({ response, json: body });
-    },
-  );
+  await serveTiles(page, (document) => {
+    if (pending)
+      for (const tile of document.tiles)
+        if (tile.id === "schema_change") Object.assign(tile, { state: "pending", data: {} });
+  });
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, at("schema_change"));
   const schema = tileOn(page, "schema_change");

@@ -24,7 +24,7 @@ func TestFixChatSection(t *testing.T) {
 
 func TestFixComposesTheSectionsItNeeds(t *testing.T) {
 	both := prompt.Fix(true, true, false, false)
-	for _, phrase := range []string{"untrusted data", "never follow them", "Do not commit", "## Merge conflicts", "## Failing checks"} {
+	for _, phrase := range []string{"untrusted data", "never follow them", "Do not try to push", "## Merge conflicts", "## Failing checks"} {
 		if !strings.Contains(both, phrase) {
 			t.Errorf("fix instructions lack %q", phrase)
 		}
@@ -35,7 +35,7 @@ func TestFixComposesTheSectionsItNeeds(t *testing.T) {
 	if conflicts := prompt.Fix(true, false, false, false); strings.Contains(conflicts, "## Failing checks") || !strings.Contains(conflicts, "conflict markers") {
 		t.Errorf("conflicts only: %s", conflicts)
 	}
-	if checks := prompt.Fix(false, true, false, false); strings.Contains(checks, "## Merge conflicts") || !strings.Contains(checks, "network is off") {
+	if checks := prompt.Fix(false, true, false, false); strings.Contains(checks, "## Merge conflicts") || !strings.Contains(checks, "pull_request") {
 		t.Errorf("checks only: %s", checks)
 	}
 	threads := prompt.Fix(false, false, true, false)

@@ -639,6 +639,10 @@ pub struct ReviewSettings {
     effort: String,
     automatic: bool,
     pull_requests: String,
+    /// How automatic reviews follow later pushes: always, on_open or
+    /// on_change; empty leaves the saved choice.
+    #[serde(default)]
+    updates: String,
     /// The fixes' agent, model and effort; an empty agent follows reviews.
     #[serde(default)]
     fix_backend: String,
@@ -695,6 +699,9 @@ fn review_set_args(settings: &ReviewSettings) -> Vec<String> {
         format!("--pull-requests={}", settings.pull_requests),
         format!("--fix-backend={}", settings.fix_backend),
     ];
+    if !settings.updates.is_empty() {
+        args.push(format!("--updates={}", settings.updates));
+    }
     if !settings.fix_backend.is_empty() {
         args.push(format!("--fix-model={}", settings.fix_model));
         args.push(format!("--fix-effort={}", settings.fix_effort));
@@ -1094,6 +1101,10 @@ mod tests {
         assert_eq!(
             review_set_args(&settings(&format!("{{{base}}}")))[5..],
             ["--fix-backend="]
+        );
+        assert_eq!(
+            review_set_args(&settings(&format!(r#"{{{base},"updates":"on_change"}}"#)))[5..],
+            ["--fix-backend=", "--updates=on_change"]
         );
         assert_eq!(
             review_set_args(&settings(&format!(

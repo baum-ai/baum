@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 type fakeMCP struct {
@@ -122,6 +124,44 @@ func TestV2RunWritesLevelsInAWorktree(t *testing.T) {
 	}
 	if len(drafts) == 0 || !strings.Contains(string(drafts[len(drafts)-1]), reviewv2.Name) {
 		t.Error("no baum.review/2 draft")
+	}
+}
+
+// The types the person added to the pull request and the saved types
+// pinned to the repository (Tiles.Always, with Saved's always ones) are
+// filled in a v2 review although the map plans no tile of them.
+func TestV2RunFillsTheAlwaysTypes(t *testing.T) {
+	f := newFixture(t)
+	replies := v2Replies(t)
+	var mu sync.Mutex
+	var fills []string
+	f.backend.RunFunc = func(ctx context.Context, r agent.Request, pass int) (agent.Result, error) {
+		if strings.HasPrefix(r.Stage, "tile-") {
+			mu.Lock()
+			fills = append(fills, r.Stage)
+			mu.Unlock()
+			return agent.Result{Document: []byte(`{}`), Calls: 1}, nil
+		}
+		return replies(ctx, r, pass)
+	}
+	o := f.options(t)
+	o.Budgets.MaxCalls = 0
+	o.Tiles = &generate.Tiles{
+		Always: []agent.AlwaysTile{{Name: "api_change"}},
+		Saved: func(context.Context, []string, []string) ([]library.Entry, []library.Entry) {
+			e, _ := library.Get("schema_change")
+			e.Definition.Name = "team_schema"
+			return []library.Entry{e}, nil
+		},
+	}
+	o.V2 = &generate.V2{}
+	if _, err := generate.Run(context.Background(), o); err != nil {
+		t.Fatalf("%v\n%s", err, f.progress.String())
+	}
+	slices.Sort(fills)
+	fills = slices.Compact(fills)
+	if want := []string{"tile-tl-api-change", "tile-tl-team-schema"}; !slices.Equal(fills, want) {
+		t.Errorf("fills %v, want %v", fills, want)
 	}
 }
 

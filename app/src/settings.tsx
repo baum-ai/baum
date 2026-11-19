@@ -114,6 +114,11 @@ import {
   modelPresets,
   withModel,
   type PullRequests,
+  modeSettings,
+  reviewMode,
+  reviewModes,
+  type ReviewMode,
+  type Updates,
   type ReviewSettings,
 } from "./desktop/setup-model";
 import { CommandText, useCopy } from "./desktop/terminal-setup";
@@ -138,6 +143,8 @@ export type ReviewDefaults = {
   fix_backend?: string;
   fix_model?: string;
   fix_effort?: string;
+  /** Whether the fix agent's commands get network access; absent is on. */
+  fix_network?: boolean;
   /** The Claude Code configuration directories reviews and fixes run with;
    *  empty leaves it to the environment, which gives
    *  `default_claude_config_dir`. `claude_config_dirs` are the ones baum
@@ -462,7 +469,10 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
     }
   };
   const save = (body: Record<string, unknown>) => {
-    waiting.current = body;
+    // A save that waits keeps the fields of the one it replaces, so a control
+    // that sends one field (such as fix_network) and one that sends a whole
+    // section never drop each other's change.
+    waiting.current = { ...waiting.current, ...body };
     if (!busy.current) void drain();
   };
   const status = (
@@ -929,6 +939,7 @@ function ReviewsSection({
         backend: shownBackend(defaults.backend),
         model: defaults.backend === "auto" ? "" : defaults.model,
         automatic: automatic.enabled,
+        updates: automatic.updates ?? "always",
         pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
       }),
       effort: defaults.effort ?? "",
@@ -947,6 +958,8 @@ function ReviewsSection({
     setDraft(next);
     save({
       enabled: next.automatic,
+      // Never leaves what a push does as it was.
+      ...(next.automatic ? { updates: next.updates } : {}),
       backend: next.backend,
       model: next.model,
       effort: next.effort,
@@ -959,6 +972,7 @@ function ReviewsSection({
     });
   };
   const harness = harnesses.find((h) => h.id === draft.backend);
+  const mode = reviewMode(draft.automatic, draft.updates as Updates);
   return (
     <section aria-labelledby="settings-reviews-heading" className="settings-section">
       <SectionHead
@@ -976,18 +990,23 @@ function ReviewsSection({
       ) : null}
       <div className="local-panel settings-list">
         <SettingRow
+          pick
           label="Review pull requests automatically"
           htmlFor="review-automatic"
-          detail="New pushes and review requests in your repositories. Drafts, forks and authors without write access are skipped."
+          detail={`${reviewModes.find((m) => m.id === mode)!.detail} Drafts, forks and authors without write access are skipped.`}
         >
-          <input
+          <select
             id="review-automatic"
-            type="checkbox"
-            role="switch"
-            className="local-switch"
-            checked={draft.automatic}
-            onChange={(event) => change({ automatic: event.target.checked })}
-          />
+            className={cn(SELECT_FIELD, "settings-select settings-model-pick")}
+            value={mode}
+            onChange={(event) => change(modeSettings(event.target.value as ReviewMode))}
+          >
+            {reviewModes.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
         </SettingRow>
         {draft.automatic ? (
           <SettingRow
@@ -1097,6 +1116,14 @@ function FixesSection({
   const { save, error, status, failures } = useAutoSave(changed);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `saved`
   useEffect(() => setDraft(saved), [key, failures]);
+  const savedNetwork = defaults.fix_network ?? true;
+  const [network, setNetwork] = useState(savedNetwork);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `savedNetwork` stands for the saved choice
+  useEffect(() => setNetwork(savedNetwork), [savedNetwork, failures]);
+  const changeNetwork = (fix_network: boolean) => {
+    setNetwork(fix_network);
+    save({ fix_network });
+  };
   const change = (next: typeof saved) => {
     setDraft(next);
     save({
@@ -1177,6 +1204,20 @@ function FixesSection({
             </div>
           </SettingRow>
         ) : null}
+        <SettingRow
+          label="Network access"
+          htmlFor="fix-network"
+          detail="Lets the agent install dependencies and fetch what builds and tests need. With it off, the agent can't install dependencies."
+        >
+          <input
+            id="fix-network"
+            type="checkbox"
+            role="switch"
+            className="local-switch"
+            checked={network}
+            onChange={(event) => changeNetwork(event.target.checked)}
+          />
+        </SettingRow>
         <AccountAdvanced
           id={draft.backend === "codex" ? "fix-codex-home" : "fix-claude-config-dir"}
           backend={draft.backend}

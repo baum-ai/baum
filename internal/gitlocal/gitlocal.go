@@ -787,6 +787,25 @@ func (r *Repo) PatchFetcher(ctx context.Context, comparison bundle.Comparison) b
 	}
 }
 
+// Diff is the whole text diff between two commits exactly as given, without
+// computing a merge base: a file summary (--stat) and then every file's
+// patch. Output over maxBytes is bundle.ErrOutputTooLarge.
+func (r *Repo) Diff(ctx context.Context, baseOID, headOID string, maxBytes int64) ([]byte, error) {
+	if !validOID(baseOID) || !validOID(headOID) || maxBytes <= 0 {
+		return nil, ErrInvalidInput
+	}
+	done, err := r.begin()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	out, err := r.read(ctx, maxBytes, "diff", "--no-ext-diff", "--no-textconv", "-M", "-l1000", "--stat", "--patch", baseOID, headOID, "--")
+	if err != nil {
+		return nil, fmt.Errorf("reading diff: %w", err)
+	}
+	return out, nil
+}
+
 // TextPatch diffs one file (or a rename's old and new path) between two
 // commits exactly as given, without computing a merge base.
 func (r *Repo) TextPatch(ctx context.Context, baseOID, headOID string, paths ...string) ([]byte, error) {

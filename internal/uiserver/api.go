@@ -309,6 +309,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			source = "file"
 		}
 		fixBackend, fixModel, fixEffort, fixClaudeDir, fixCodexHome := "", "", "", "", ""
+		fixNetwork := true
 		concurrency := repos.MaxJobConcurrency
 		prefs, prefsErr := a.Registry.Preferences(r.Context())
 		if prefsErr == nil {
@@ -323,6 +324,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			if prefs.FixEffort != nil {
 				fixEffort = *prefs.FixEffort
 			}
+			fixNetwork = prefs.FixNetworkAllowed()
 			if prefs.FixBackend != nil && prefs.FixClaudeConfigDir != nil {
 				fixClaudeDir = *prefs.FixClaudeConfigDir
 			}
@@ -344,6 +346,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			FixModel       string            `json:"fix_model"`
 			Effort         string            `json:"effort"`
 			FixEffort      string            `json:"fix_effort"`
+			FixNetwork     bool              `json:"fix_network"`
 			JobConcurrency int               `json:"job_concurrency"`
 			// The time limits in force, in whole minutes.
 			ReviewTimeLimit int `json:"review_time_limit_minutes"`
@@ -367,7 +370,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			// the config file's alone: not what a run started now would use
 			// once they can be read again.
 			PreferencesUnavailable bool `json:"preferences_unavailable,omitempty"`
-		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
+		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, fixNetwork, concurrency,
 			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout),
 			cfg.ClaudeConfigDir, fixClaudeDir, defaultAgentDir(cfg, agentdirs.Claude), agentdirs.Claude.All(""),
 			cfg.CodexHome, fixCodexHome, defaultAgentDir(cfg, agentdirs.Codex), agentdirs.Codex.All(""), userHome(), prefsErr != nil})

@@ -50,16 +50,21 @@ func TestRefreshLocalSourcesAndCurrencyPreserveAuthorship(t *testing.T) {
 	before := object(t, schema.Example)
 	header := before["review"].(map[string]any)
 	saved := store.Version{Document: schema.Example, Metadata: store.Metadata{Version: 3, Head: header["head"].(string), Base: header["base"].(string), MergeBase: header["merge_base"].(string)}}
-	for _, tc := range []struct{ name, head, base, conclusion, state, status string }{
-		{"complete", saved.Metadata.Head, saved.Metadata.Base, "success", "current", "verified"},
-		{"failed", saved.Metadata.Head, saved.Metadata.Base, "failure", "current", "failed"},
-		{"head moved", "aaaaaaa", saved.Metadata.Base, "success", "outdated", "asserted"},
-		{"base moved", saved.Metadata.Head, "bbbbbbb", "success", "outdated", "verified"},
+	for _, tc := range []struct{ name, head, base, conclusion, state, status, keptHead, keptBase string }{
+		{"complete", saved.Metadata.Head, saved.Metadata.Base, "success", "current", "verified", "", ""},
+		{"failed", saved.Metadata.Head, saved.Metadata.Base, "failure", "current", "failed", "", ""},
+		{"head moved", "aaaaaaa", saved.Metadata.Base, "success", "outdated", "asserted", "", ""},
+		{"base moved", saved.Metadata.Head, "bbbbbbb", "success", "outdated", "verified", "", ""},
+		// A head the review was kept for is current while the base it was
+		// checked against has not moved.
+		{"kept head", "aaaaaaa", saved.Metadata.Base, "success", "current", "asserted", "aaaaaaa", saved.Metadata.Base},
+		{"kept head, base moved", "aaaaaaa", "bbbbbbb", "success", "outdated", "asserted", "aaaaaaa", saved.Metadata.Base},
+		{"kept for another head", "ccccccc", saved.Metadata.Base, "success", "outdated", "asserted", "aaaaaaa", saved.Metadata.Base},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := &sources{evidence: github.Evidence{Repository: "example-org/taskline", PullRequest: bundle.PullRequest{Number: 212, State: "open", HeadSHA: tc.head, BaseSHA: tc.base}, Checks: []bundle.Check{{ID: "chk_9001", Kind: "check_run", Name: "Tests", Status: "completed", Conclusion: tc.conclusion}}, Sources: bundle.Sources{"checks": true, "review_threads": true}}}
 			now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
-			result, err := (Refresher{GitHub: source, Git: source, Sessions: source}).Refresh(context.Background(), github.Repository{Host: "github.com", Owner: "Example-Org", Name: "Taskline"}, 212, saved, assemble.DefaultLimits().Caps, now)
+			result, err := (Refresher{GitHub: source, Git: source, Sessions: source, KeptHead: tc.keptHead, KeptBase: tc.keptBase}).Refresh(context.Background(), github.Repository{Host: "github.com", Owner: "Example-Org", Name: "Taskline"}, 212, saved, assemble.DefaultLimits().Caps, now)
 			if err != nil {
 				t.Fatal(err)
 			}

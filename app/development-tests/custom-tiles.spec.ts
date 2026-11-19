@@ -22,7 +22,7 @@ test("a custom tile's frame loads and draws through the development proxy", asyn
   const frame = page.waitForResponse((response) =>
     new URL(response.url()).pathname.startsWith("/tile-frames/"),
   );
-  await page.goto(`${base}?repository=acme%2Fdemo&pr=7&view=tiles&pane=tile&tile=widget_health`);
+  await page.goto(`${base}?repository=acme%2Fdemo&pr=7&pane=tile&tile=widget_health`);
   expect((await frame).status()).toBe(200);
   const box = page.locator('[data-custom-tile="widget_health"]');
   await expect(box).toHaveAttribute("data-frame-state", "ready", { timeout: 20000 });
