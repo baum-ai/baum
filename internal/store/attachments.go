@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -136,10 +137,17 @@ func writeVideo(root string, a Attachment) error {
 	}
 	defer func() { _ = os.Remove(f.Name()) }()
 	_, err = f.Write(a.Bytes)
-	if err = errors.Join(err, f.Close()); err != nil {
+	if err = errors.Join(err, f.Sync(), f.Close()); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err = os.Rename(f.Name(), path); err != nil {
+		// Another save may have put it there first (Windows refuses to
+		// replace a file a reader holds open).
+		if _, statErr := os.Stat(path); statErr == nil {
+			return nil
+		}
+	}
+	return err
 }
 
 func saveAttachments(ctx context.Context, tx *sql.Tx, root string, k Key, v Version) error {
@@ -271,6 +279,9 @@ func (s *Store) Attachment(ctx context.Context, k Key, version int, id string) (
 		if err == nil && bundle.IsVideo(a.ContentType) {
 			// The clip's file was hash checked when it was saved.
 			a.Bytes, a.Path = nil, filepath.Join(s.root, "attachments", hash)
+			if _, err := os.Stat(a.Path); errors.Is(err, fs.ErrNotExist) {
+				return Attachment{}, ErrNotFound
+			}
 			return a, nil
 		}
 		if err == nil {

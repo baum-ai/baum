@@ -45,8 +45,8 @@ func capturedAttachments(path string, listed []bundle.Attachment) ([]store.Attac
 			return nil, errors.New("invalid captured attachment archive")
 		}
 		delete(byPath, header.Name)
-		bytes, err := io.ReadAll(io.LimitReader(reader, limit+1))
-		if err != nil {
+		bytes := make([]byte, header.Size)
+		if _, err := io.ReadFull(reader, bytes); err != nil {
 			return nil, err
 		}
 		hash := sha256.Sum256(bytes)

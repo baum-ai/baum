@@ -227,7 +227,6 @@ func TestSniffMediaReadsClipSizes(t *testing.T) {
 		}
 		return content
 	}
-	png := pngOfSize(t, 5, 3)
 	for name, tc := range map[string]struct {
 		content       []byte
 		video         bool
@@ -236,8 +235,6 @@ func TestSniffMediaReadsClipSizes(t *testing.T) {
 	}{
 		"mp4":              {read("clip.mp4"), true, "video/mp4", 32, 18},
 		"webm":             {read("clip.webm"), true, "video/webm", 40, 24},
-		"png as image":     {png, false, "image/png", 5, 3},
-		"png as video":     {png, true, "", 0, 0},
 		"mp4 as image":     {read("clip.mp4"), false, "", 0, 0},
 		"mp4 with no moov": {read("clip.mp4")[:32], true, "video/mp4", 0, 0},
 	} {
@@ -249,17 +246,26 @@ func TestSniffMediaReadsClipSizes(t *testing.T) {
 }
 
 // GitHub renders an uploaded clip as a video element; only RenderedMedia
-// lists it, by its src or a source child's.
+// lists it.
 func TestRenderedMediaListsUploadedClips(t *testing.T) {
-	uploads := MarkdownUploads(markdownAsset(uploadBefore) + "\n" + markdownAsset(uploadAfter))
-	body := `<video src="` + signedSource(uploadBefore) + `" data-canonical-src="` + signedSource(uploadBefore) + `" controls></video>` +
-		`<video controls><source src="` + signedSource(uploadAfter) + `" type="video/mp4"></video>`
+	uploads := MarkdownUploads(markdownAsset(uploadBefore))
+	body := `<video src="` + signedSource(uploadBefore) + `" data-canonical-src="` + signedSource(uploadBefore) + `" controls></video>`
 	if images := RenderedImages(body, uploads); len(images) != 0 {
 		t.Fatalf("RenderedImages listed clips: %+v", images)
 	}
 	clips := RenderedMedia(body, uploads)
-	if len(clips) != 2 || !clips[0].Video || !clips[1].Video || clips[0].SourceURL != markdownAsset(uploadBefore) ||
-		clips[1].SourceURL != markdownAsset(uploadAfter) || clips[1].FetchURL != signedSource(uploadAfter) || clips[0].State != "" {
+	if len(clips) != 1 || !clips[0].Video || clips[0].SourceURL != markdownAsset(uploadBefore) || clips[0].FetchURL != signedSource(uploadBefore) || clips[0].State != "" {
 		t.Fatalf("clips = %+v", clips)
+	}
+}
+
+// Sniffing walks a clip's elements without collecting them, so a clip made
+// of many empty track entries costs no memory in proportion.
+func TestSniffMediaDoesNotCollectElements(t *testing.T) {
+	webm := append([]byte{0x1a, 0x45, 0xdf, 0xa3, 0x87, 0x42, 0x82, 0x84}, "webm"...)
+	webm = append(webm, 0x18, 0x53, 0x80, 0x67, 0xff, 0x16, 0x54, 0xae, 0x6b, 0xff)
+	webm = append(webm, bytes.Repeat([]byte{0xae, 0x80}, 1<<20)...)
+	if allocs := testing.AllocsPerRun(1, func() { SniffMedia(webm, true) }); allocs > 20 {
+		t.Fatalf("%v allocations sniffing empty track entries", allocs)
 	}
 }

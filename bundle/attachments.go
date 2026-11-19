@@ -123,7 +123,7 @@ func RenderedImages(bodyHTML string, uploads map[string]string) []RenderedImage 
 }
 
 // RenderedMedia is RenderedImages that also lists the video elements GitHub
-// renders for uploaded clips, by their src or their first source child's.
+// renders for uploaded clips.
 func RenderedMedia(bodyHTML string, uploads map[string]string) []RenderedImage {
 	return renderedMedia(bodyHTML, uploads, true)
 }
@@ -141,11 +141,6 @@ func renderedMedia(bodyHTML string, uploads map[string]string, videos bool) []Re
 			continue
 		}
 		src, alt, canonical, class := attr(node, "src"), attr(node, "alt"), attr(node, "data-canonical-src"), attr(node, "class")
-		for child := range node.ChildNodes() {
-			if video && src == "" && child.Type == html.ElementNode && child.Data == "source" {
-				src = attr(child, "src")
-			}
-		}
 		if src == "" || strings.Contains(class, "emoji") {
 			continue
 		}
@@ -247,28 +242,27 @@ func SniffMedia(content []byte, video bool) (contentType string, width, height i
 // mp4Size reads the first track header with a frame size, wherever the
 // movie box sits.
 func mp4Size(b []byte) (int, int, bool) {
-	for _, moov := range mp4Boxes(b, "moov") {
-		for _, trak := range mp4Boxes(moov, "trak") {
-			for _, tkhd := range mp4Boxes(trak, "tkhd") {
+	var width, height int
+	mp4Boxes(b, "moov", func(moov []byte) bool {
+		return mp4Boxes(moov, "trak", func(trak []byte) bool {
+			return mp4Boxes(trak, "tkhd", func(tkhd []byte) bool {
 				at := 76 // version, flags, times, track, duration, layer, volume, matrix
 				if len(tkhd) > 0 && tkhd[0] == 1 {
 					at = 88
 				}
 				if len(tkhd) >= at+8 {
-					width, height := int(binary.BigEndian.Uint32(tkhd[at:])>>16), int(binary.BigEndian.Uint32(tkhd[at+4:])>>16)
-					if width > 0 && height > 0 {
-						return width, height, true
-					}
+					width, height = int(binary.BigEndian.Uint32(tkhd[at:])>>16), int(binary.BigEndian.Uint32(tkhd[at+4:])>>16)
 				}
-			}
-		}
-	}
-	return 0, 0, false
+				return width > 0 && height > 0
+			})
+		})
+	})
+	return width, height, width > 0 && height > 0
 }
 
-// mp4Boxes lists the payloads of b's boxes of one type.
-func mp4Boxes(b []byte, kind string) [][]byte {
-	var found [][]byte
+// mp4Boxes calls visit with the payload of each of b's boxes of one type
+// until it returns true, and reports whether it did.
+func mp4Boxes(b []byte, kind string, visit func([]byte) bool) bool {
 	for len(b) >= 8 {
 		size, header := uint64(binary.BigEndian.Uint32(b)), uint64(8)
 		switch size {
@@ -276,63 +270,68 @@ func mp4Boxes(b []byte, kind string) [][]byte {
 			size = uint64(len(b))
 		case 1:
 			if len(b) < 16 {
-				return found
+				return false
 			}
 			size, header = binary.BigEndian.Uint64(b[8:]), 16
 		}
 		if size < header || size > uint64(len(b)) {
-			return found
+			return false
 		}
-		if string(b[4:8]) == kind {
-			found = append(found, b[header:size])
+		if string(b[4:8]) == kind && visit(b[header:size]) {
+			return true
 		}
 		b = b[size:]
 	}
-	return found
+	return false
 }
 
 // webmSize reads the first video track's pixel size of a WebM file.
 func webmSize(b []byte) (int, int, bool) {
-	header := ebmlChildren(b, 0x1a45dfa3)
-	if len(header) == 0 || string(bytes.Join(ebmlChildren(header[0], 0x4282), nil)) != "webm" {
+	if string(ebmlFirst(ebmlFirst(b, 0x1a45dfa3), 0x4282)) != "webm" {
 		return 0, 0, false
 	}
-	for _, segment := range ebmlChildren(b, 0x18538067) {
-		for _, tracks := range ebmlChildren(segment, 0x1654ae6b) {
-			for _, entry := range ebmlChildren(tracks, 0xae) {
-				for _, video := range ebmlChildren(entry, 0xe0) {
-					width, height := ebmlUint(ebmlChildren(video, 0xb0)), ebmlUint(ebmlChildren(video, 0xba))
-					if width > 0 && height > 0 && width <= math.MaxInt32 && height <= math.MaxInt32 {
-						return int(width), int(height), true
-					}
-				}
-			}
-		}
-	}
-	return 0, 0, false
+	var width, height uint64
+	ebmlChildren(b, 0x18538067, func(segment []byte) bool {
+		return ebmlChildren(segment, 0x1654ae6b, func(tracks []byte) bool {
+			return ebmlChildren(tracks, 0xae, func(entry []byte) bool {
+				return ebmlChildren(entry, 0xe0, func(video []byte) bool {
+					width, height = ebmlUint(ebmlFirst(video, 0xb0)), ebmlUint(ebmlFirst(video, 0xba))
+					return width > 0 && height > 0
+				})
+			})
+		})
+	})
+	ok := width > 0 && height > 0 && width <= math.MaxInt32 && height <= math.MaxInt32
+	return int(width), int(height), ok
 }
 
-// ebmlChildren lists the payloads of b's elements with one ID. An element of
-// unknown or overlong size runs to the end of b.
-func ebmlChildren(b []byte, id uint64) [][]byte {
-	var found [][]byte
+// ebmlChildren calls visit with the payload of each of b's elements with one
+// ID until it returns true, and reports whether it did. An element of unknown
+// or overlong size runs to the end of b.
+func ebmlChildren(b []byte, id uint64, visit func([]byte) bool) bool {
 	for len(b) > 0 {
 		elementID, n := ebmlVint(b, false)
 		if n == 0 {
-			return found
+			return false
 		}
 		size, m := ebmlVint(b[n:], true)
 		if m == 0 {
-			return found
+			return false
 		}
 		b = b[n+m:]
 		size = min(size, uint64(len(b)))
-		if elementID == id {
-			found = append(found, b[:size])
+		if elementID == id && visit(b[:size]) {
+			return true
 		}
 		b = b[size:]
 	}
-	return found
+	return false
+}
+
+// ebmlFirst is the payload of b's first element with one ID, nil when none.
+func ebmlFirst(b []byte, id uint64) (payload []byte) {
+	ebmlChildren(b, id, func(p []byte) bool { payload = p; return true })
+	return payload
 }
 
 // ebmlVint reads a variable-length ID (marker kept) or size (marker dropped,
@@ -358,11 +357,11 @@ func ebmlVint(b []byte, size bool) (uint64, int) {
 	return v, n
 }
 
-// ebmlUint reads the first of the given elements as an unsigned integer.
-func ebmlUint(elements [][]byte) uint64 {
+// ebmlUint reads an element's payload as an unsigned integer.
+func ebmlUint(payload []byte) uint64 {
 	var v uint64
-	if len(elements) > 0 && len(elements[0]) <= 8 {
-		for _, c := range elements[0] {
+	if len(payload) <= 8 {
+		for _, c := range payload {
 			v = v<<8 | uint64(c)
 		}
 	}

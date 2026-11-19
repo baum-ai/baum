@@ -17,11 +17,11 @@ import (
 // Description images are downloaded under the hosted limits: each download
 // has its own timeout, and all of them share one budget so capture cannot
 // stall an assembly. Video clips, which hosted capture skips, get longer
-// downloads and a share of the budget of their own.
+// downloads, and each one downloaded adds its timeout to the budget.
 const (
 	imageDownloadTimeout = 30 * time.Second
 	videoDownloadTimeout = 2 * time.Minute
-	imageCaptureTimeout  = 2*time.Minute + bundle.MaxVideos*videoDownloadTimeout
+	imageCaptureTimeout  = 2 * time.Minute
 )
 
 // ErrImageTooLarge is what an ImageFetcher returns for an image over the
@@ -42,7 +42,13 @@ func (a *Assembler) captureImages(ctx context.Context, found []bundle.RenderedIm
 	if len(found) == 0 {
 		return nil, nil, 0
 	}
-	ctx, cancel := context.WithTimeout(ctx, imageCaptureTimeout)
+	budget, clips := imageCaptureTimeout, 0
+	for _, candidate := range found {
+		if candidate.Video && candidate.State == "" && clips < bundle.MaxVideos {
+			budget, clips = budget+videoDownloadTimeout, clips+1
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	contents := map[string][]byte{}
 	images := make([]bundle.DescriptionImage, 0, len(found))
