@@ -38,7 +38,6 @@ import {
   fixLabel,
   groupJob,
   isActiveJob,
-  reviewJob,
   jobHref,
   liveFor,
   navigate,
@@ -444,7 +443,6 @@ export function Inbox({
       live={liveFor(live, entry.pull_request)}
       nested={nested}
       fixing={fixing(entry)}
-      review={reviewJob(entry, jobs)}
       peeked={peeked.has(rowKey(entry))}
       actions={<MenuButton label={rowName(entry)} items={() => actionsFor(entry)} menu={menu} />}
       savedReviews={savedReviews}
@@ -1009,7 +1007,6 @@ function InboxRow({
   savedReviews,
   changed,
   generate,
-  review,
 }: {
   rowId: string;
   /** The row the keyboard is on. */
@@ -1031,8 +1028,6 @@ function InboxRow({
   /** Its state changed in the latest read. */
   changed: boolean;
   generate?: () => void;
-  /** Its latest review job, whose queued or running state its dot shows. */
-  review: Job | undefined;
 }) {
   const pr = entry.pull_request;
   const metadata = [pr.repository, `#${pr.number}`, pr.author].filter(Boolean);
@@ -1061,10 +1056,7 @@ function InboxRow({
       <RiskCell risk={entry.risk_score} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
-          <ReviewDot
-            state={reviewDotState(entry.status, review?.state)}
-            detail={entry.failure_reason}
-          />
+          <ReviewDot state={reviewDotState(entry.status)} detail={entry.failure_reason} />
           <Link
             href={href}
             title={pr.title}

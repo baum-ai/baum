@@ -1,21 +1,13 @@
 import { expect, it } from "vitest";
 import { groupDotState, reviewDotState } from "./review-dot";
 
-it("maps a pull request's review status and queued job to its dot", () => {
+it("maps a pull request's review status to its dot", () => {
   expect(reviewDotState("current")).toBe("ready");
   expect(reviewDotState("outdated")).toBe("outdated");
   expect(reviewDotState("failed")).toBe("failed");
   expect(reviewDotState("generating")).toBe("generating");
   expect(reviewDotState("no_review")).toBeNull();
   expect(reviewDotState("unknown")).toBeNull();
-  // A queued or running review job wins over the saved review, before the
-  // daemon's index marks it generating; a finished job says nothing.
-  expect(reviewDotState("no_review", "queued")).toBe("generating");
-  expect(reviewDotState("failed", "queued")).toBe("generating");
-  expect(reviewDotState("current", "running")).toBe("generating");
-  expect(reviewDotState("generating", "queued")).toBe("generating");
-  expect(reviewDotState("current", "completed")).toBe("ready");
-  expect(reviewDotState("failed", "failed")).toBe("failed");
 });
 
 it("maps a group's review to its dot, and gives a stack none", () => {

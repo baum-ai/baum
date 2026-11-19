@@ -398,20 +398,6 @@ it.each<Overrides>([
   expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
 });
 
-it("puts the review's dot before each row's title", async () => {
-  entries = [
-    requested(1, { status: "current", version_count: 1 }),
-    requested(2, { status: "outdated", version_count: 1 }),
-    requested(3),
-  ];
-  await render();
-  const dot = (title: string) => row(title).querySelector(".review-dot")!;
-  expect(dot("Change 1").querySelector(".sr-only")?.textContent).toBe("Review ready");
-  expect(dot("Change 2").querySelector(".sr-only")?.textContent).toBe("Review outdated");
-  expect(dot("Change 3").childElementCount).toBe(0);
-  expect(dot("Change 1").nextElementSibling?.className).toBe("upnext-row-text");
-});
-
 it("puts the review's dot before each row's title, a group's too", async () => {
   entries = [
     requested(1, { status: "current", version_count: 1 }),
@@ -419,6 +405,9 @@ it("puts the review's dot before each row's title, a group's too", async () => {
     requested(3),
     requested(4),
     requested(5),
+    // Current, but over a list too old to trust: the panel says it covers an
+    // earlier commit, and so does the dot.
+    requested(6, { status: "current", version_count: 1, stale: true }),
   ];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
@@ -448,6 +437,7 @@ it("puts the review's dot before each row's title, a group's too", async () => {
   expect(dot("Change 2").querySelector(".sr-only")?.textContent).toBe("Review outdated");
   expect(dot("Change 3").childElementCount).toBe(0);
   expect(dot("Auth rework").querySelector(".sr-only")?.textContent).toBe("Review outdated");
+  expect(dot("Change 6").querySelector(".sr-only")?.textContent).toBe("Review outdated");
   expect(dot("Change 1").nextElementSibling?.className).toBe("upnext-row-text");
 });
 

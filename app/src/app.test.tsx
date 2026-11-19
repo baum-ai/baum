@@ -311,7 +311,7 @@ it("shows actionable launch authorization failure", async () => {
 it("puts a dot before each title for how its saved review stands, explained in a note", async () => {
   entries = [
     entry(1, "outdated"),
-    { ...entry(2, "failed"), failure_reason: "The backend timed out." },
+    { ...entry(2, "failed"), failure_reason: "interrupted" },
     entry(3, "current"),
     entry(4, "generating"),
     entry(5, "no_review"),
@@ -343,7 +343,7 @@ it("puts a dot before each title for how its saved review stands, explained in a
   // No saved review: an empty slot, so the titles still line up.
   expect(dot(5).childElementCount).toBe(0);
   // The note says what the dot means, and why a review failed.
-  expect(note(2)).toBe("Review failed. The review could not be generated. The backend timed out.");
+  expect(note(2)).toBe("Review failed. The review could not be generated. Reason: interrupted.");
   expect(note(1)).toBe("Review outdated. There are changes since the review was written.");
   // The dot comes before the title.
   const row = dot(3).closest("li")!;

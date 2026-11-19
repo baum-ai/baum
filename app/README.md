@@ -864,7 +864,8 @@ ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
 clones hold it. Every row, a review group's too (a stack's has none), starts
 with the dot for how baum's review stands, as Pull requests draws it
-(`src/review-dot.tsx`). After the groups, their own pull requests with nothing to do
+(`src/review-dot.tsx`); there a current review over pull request data too old
+to trust (`metadataStale`) reads outdated, as its panel says. After the groups, their own pull requests with nothing to do
 (drafts, and those waiting on reviewers, checks or another GitHub blocker) are
 listed under **Waiting**, and every other open pull request (`others`: someone
 else's that neither asks for their review nor is assigned to them), oldest
@@ -1327,7 +1328,7 @@ readers. A dot before the title says how baum's review stands
 (`src/review-dot.tsx`, as in Inbox): the live dot while its review job is
 queued or running, a green dot when it is ready (it covers the
 head), an amber ring when it is outdated and a red warning sign when it
-failed, so no state is told by colour alone. A pull request
+failed, so ready, outdated and failed differ by shape as well as colour. A pull request
 without a saved review, or one whose state is unknown, keeps an empty slot so
 titles line up. The dot is not a button, since a list row carries none: its
 label is read with the row, and its meaning (and why a review failed) opens

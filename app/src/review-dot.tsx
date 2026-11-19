@@ -27,36 +27,26 @@ const DOTS: Record<ReviewDotState, { label: string; note: string; color: string 
   },
 };
 
-/** A review job queued or running reads generating, as the app's rows treat
- *  it (`indexedEntries` in app.tsx); a finished one says nothing over the
- *  saved review. */
-function jobDot(jobState: string | undefined): ReviewDotState | null {
-  return jobState === "queued" || jobState === "running" ? "generating" : null;
-}
-
-/** How a pull request's review stands, for its dot: its review job's state
- *  (`reviewJob`) while one is queued or running, else the daemon's status.
- *  Null when it has no review (or the daemon can't tell), so the row keeps an
- *  empty slot. */
-export function reviewDotState(status: string, jobState?: string): ReviewDotState | null {
+/** How a pull request's review stands, for its dot, from its status as the
+ *  rows get it: `indexedEntries` (app.tsx) already reads a queued or running
+ *  review job as generating. Null when it has no review (or the daemon can't
+ *  tell), so the row keeps an empty slot. */
+export function reviewDotState(status: string): ReviewDotState | null {
   if (status === "generating") return "generating";
-  const job = jobDot(jobState);
-  if (job) return job;
   if (status === "current") return "ready";
   if (status === "outdated" || status === "failed") return status;
   return null;
 }
 
-/** A group review's dot, from its job's state (`groupJob`) and the group:
- *  none for a stack, which has no combined review, or for a group not yet
- *  reviewed. */
+/** A group review's dot, from its job's state (`groupJob`; a queued or
+ *  running one is generating) and the group: none for a stack, which has no
+ *  combined review, or for a group not yet reviewed. */
 export function groupDotState(
   group: { stack?: boolean; version_count: number; outdated?: boolean },
   jobState?: string,
 ): ReviewDotState | null {
   if (group.stack) return null;
-  const job = jobDot(jobState);
-  if (job) return job;
+  if (jobState === "queued" || jobState === "running") return "generating";
   if (group.version_count === 0) return null;
   return group.outdated ? "outdated" : "ready";
 }
@@ -76,7 +66,7 @@ export function ReviewDot({
   detail,
 }: {
   state: ReviewDotState | null;
-  /** Said after a failed review's note: why it failed. */
+  /** Why a failed review failed (`failure_reason`), said after its note. */
   detail?: string;
 }) {
   const anchor = useRef<HTMLSpanElement>(null);
@@ -90,7 +80,11 @@ export function ReviewDot({
       if (popup.current?.matches(":popover-open")) popup.current.hidePopover();
     };
     window.addEventListener("scroll", hide, { capture: true, passive: true });
-    return () => window.removeEventListener("scroll", hide, { capture: true });
+    window.addEventListener("resize", hide);
+    return () => {
+      window.removeEventListener("scroll", hide, { capture: true });
+      window.removeEventListener("resize", hide);
+    };
   }, [open]);
   useEffect(() => () => clearTimeout(closing.current), []);
   // A row whose dot goes away while its note is open drops the note's listener.
@@ -148,10 +142,13 @@ export function ReviewDot({
         onPointerEnter={show}
         onPointerLeave={hide}
         onToggle={(event) => setOpen(event.newState === "open")}
+        // The note is the row's descendant: a click on it is not one on the row.
+        onClick={(event) => event.stopPropagation()}
         className="fixed m-0 w-max max-w-[min(20rem,calc(100vw-1rem))] rounded-md border border-default bg-surface-card px-2.5 py-1.5 text-left text-xs font-normal whitespace-normal text-secondary shadow-overlay"
       >
         <span className="font-medium text-primary">{dot.label}.</span> {dot.note}
-        {state === "failed" && detail ? ` ${detail}` : null}
+        {/* The daemon's reason is a short code, such as "interrupted". */}
+        {state === "failed" && detail ? ` Reason: ${detail}.` : null}
       </span>
     </span>
   );

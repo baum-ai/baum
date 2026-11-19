@@ -1785,7 +1785,7 @@ export function UpNextPage({
                     tabbable={row.key === tabbable}
                     pick={select}
                     inGroup={!!group}
-                    review={reviewJob(row.entry, jobs)}
+                    now={now}
                   />
                 </li>
               );
@@ -2044,7 +2044,7 @@ function ListRow({
   tabbable,
   pick,
   inGroup = false,
-  review,
+  now,
 }: {
   row: Row;
   on: boolean;
@@ -2052,8 +2052,8 @@ function ListRow({
   pick: (key: string) => void;
   /** The row is a member nested under its review group's row. */
   inGroup?: boolean;
-  /** Its latest review job, whose queued or running state its dot shows. */
-  review: Job | undefined;
+  /** For whether its pull request's data is too old to call a review current. */
+  now: number;
 }) {
   const pr = row.entry.pull_request;
   // The section heading already names the kind, so the line starts with the
@@ -2088,7 +2088,15 @@ function ListRow({
       aria-current={on || undefined}
       onClick={() => pick(row.key)}
     >
-      <ReviewDot state={reviewDotState(row.entry.status, review?.state)} />
+      {/* As the panel says (why): a current review over data too old to trust
+          covers an earlier commit. */}
+      <ReviewDot
+        state={reviewDotState(
+          row.entry.status === "current" && metadataStale(row.entry, now)
+            ? "outdated"
+            : row.entry.status,
+        )}
+      />
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
         <span className="upnext-row-line">
