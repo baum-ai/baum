@@ -2840,7 +2840,9 @@ sections.
   caption and citations, and lay themselves out by the room they have: lanes
   wrap and then stack, columns stack, and a sequence becomes a list. While a
   flow's lanes are rows, lines join its steps, a branch drops from the step
-  it leaves after into its first step, and a dashed rule sets off a later
+  it leaves after into its first step (or, when that line would cross
+  another lane or the branch sits left of its step, its label names the
+  step), and a dashed rule sets off a later
   lane that is a path of its own. A step in the `new` tone has the
   sequence's New pill and bar, and a legend under the flow explains only the
   other marks it uses. A wide

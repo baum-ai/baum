@@ -185,9 +185,8 @@ const branchOf = (data: FlowData, at: number) => {
   return at > 0 && typeof from === "number" && from >= 1 && from <= first ? from : 0;
 };
 
-/** A connector's path and the arrowheads at its ends. */
-/** `kind`: a line between steps, a branch's elbow, or the rule over a lane
- *  of its own. */
+/** A connector's path and the arrowheads at its ends. `kind`: a line
+ *  between steps, a branch's elbow, or the rule over a lane of its own. */
 type Wire = { d: string; heads: string[]; kind: "step" | "branch" | "apart" };
 
 /** An arrowhead whose tip is at (x, y), pointing right or down. */
@@ -200,16 +199,18 @@ const head = (x: number, y: number, down: boolean) =>
  *  a line between each step and the next, and for a branch an elbow down
  *  from the step it leaves after into its first step. Measured from the
  *  laid-out boxes, so it follows any width; none while each lane is a list,
- *  where the arrows are text. */
+ *  where the arrows are text. `unlinked`: the branches whose elbow can't be
+ *  drawn plainly (moved left of their step, or another lane in the way),
+ *  which name their step in words instead. */
 function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
-  const [wires, setWires] = useState<Wire[]>([]);
+  const [drawn, setDrawn] = useState<{ wires: Wire[]; unlinked: number[] }>(NOTHING_DRAWN);
   useLayoutEffect(() => {
     const element = root.current;
     if (!element) return;
     const measure = () => {
       const steps = element.querySelector(".flow-steps");
       if (!steps || getComputedStyle(steps).display !== "contents") {
-        setWires((now) => (now.length ? [] : now));
+        setDrawn(NOTHING_DRAWN);
         return;
       }
       const origin = element.getBoundingClientRect();
@@ -225,6 +226,7 @@ function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
         };
       };
       const next: Wire[] = [];
+      const unlinked: number[] = [];
       const gap = 3;
       data.lanes.forEach((lane, at) => {
         lane.steps.forEach((step, position) => {
@@ -254,7 +256,7 @@ function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
             first?.top ?? Infinity,
             label ? label.getBoundingClientRect().top - origin.top : Infinity,
           );
-          if (Number.isFinite(top) && top > above) {
+          if (Number.isFinite(above) && Number.isFinite(top) && top > above) {
             const y = Math.round((above + top) / 2) + 0.5;
             next.push({ d: `M0 ${y} H${origin.width}`, heads: [], kind: "apart" });
           }
@@ -266,23 +268,28 @@ function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
         const x = (a.left + a.right) / 2;
         const y0 = a.bottom + gap;
         const y1 = (b.top + b.bottom) / 2;
-        if (b.left - gap > x + 8) {
-          const r = Math.min(6, (y1 - y0) / 2);
-          next.push({
-            d: `M${x} ${y0} V${y1 - r} Q${x} ${y1} ${x + r} ${y1} H${b.left - gap}`,
-            heads: [head(b.left - gap, y1, false)],
-            kind: "branch",
-          });
-        } else {
-          const tip = Math.min(Math.max(x, b.left + 12), b.right - 12);
-          next.push({
-            d: `M${tip} ${y0} V${b.top - gap}`,
-            heads: [head(tip, b.top - gap, true)],
-            kind: "branch",
-          });
+        // The line drops from the step's middle: something in a lane between
+        // under it, or a lane of its own between, would read as the source.
+        const blocked = data.lanes.slice(1, at).some(
+          (each, lane) =>
+            !branchOf(data, lane + 1) ||
+            each.steps.some((_, step) => {
+              const other = box(lane + 1, step);
+              return other !== undefined && other.left <= x && other.right >= x;
+            }),
+        );
+        if (blocked || b.left <= a.right || y1 <= y0) {
+          unlinked.push(at);
+          return;
         }
+        const r = Math.min(6, (y1 - y0) / 2);
+        next.push({
+          d: `M${x} ${y0} V${y1 - r} Q${x} ${y1} ${x + r} ${y1} H${b.left - gap}`,
+          heads: [head(b.left - gap, y1, false)],
+          kind: "branch",
+        });
       });
-      setWires(next);
+      setDrawn({ wires: next, unlinked });
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -290,12 +297,14 @@ function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
     observer.observe(element);
     return () => observer.disconnect();
   }, [data, root]);
-  return wires;
+  return drawn;
 }
+
+const NOTHING_DRAWN = { wires: [] as Wire[], unlinked: [] as number[] };
 
 export function FlowDiagram({ data }: { data: FlowData }) {
   // The step whose detail shows under the flow, as [lane, step]: the one
-  // pointed at or focused, else the one clicked.
+  // the mouse is over, else the one clicked.
   const [picked, setPicked] = useState<[number, number] | null>(null);
   const [peeked, setPeeked] = useState<[number, number] | null>(null);
   const shown = peeked ?? picked;
@@ -317,7 +326,7 @@ export function FlowDiagram({ data }: { data: FlowData }) {
     const steps = data.lanes[at]?.steps.length ?? 1;
     return from ? Math.max(1, Math.min(from + 1, columns - steps + 1)) : 1;
   };
-  const wires = useWires(data, root);
+  const { wires, unlinked } = useWires(data, root);
   const grid = (
     <div
       ref={root}
@@ -338,10 +347,17 @@ export function FlowDiagram({ data }: { data: FlowData }) {
             className="flow-lane"
             style={{ "--flow-row": at + 1, "--flow-start": startOf(at) } as CSSProperties}
           >
-            {labelled ? (
-              <InlineMarkdown className={cn("flow-label", LANE_LABEL)}>
-                {lane.label ?? ""}
-              </InlineMarkdown>
+            {labelled || (after && unlinked.includes(at)) ? (
+              <span className={cn("flow-label", LANE_LABEL)}>
+                <InlineMarkdown>{lane.label ?? ""}</InlineMarkdown>
+                {after && unlinked.includes(at) ? (
+                  // The grid draws no elbow for this branch: say where it
+                  // starts, as the list does.
+                  <span className="tracking-normal normal-case">
+                    {lane.label ? " · " : ""}after <InlineMarkdown>{after}</InlineMarkdown>
+                  </span>
+                ) : null}
+              </span>
             ) : null}
             {after ? (
               <p className="flow-after text-xs text-tertiary">
@@ -424,7 +440,7 @@ export function FlowDiagram({ data }: { data: FlowData }) {
       {grid}
       {legend}
       <div
-        aria-live="polite"
+        aria-live={peeked ? "off" : "polite"}
         data-flow-more=""
         className="max-w-[72ch] space-y-1.5 text-base text-secondary"
       >
