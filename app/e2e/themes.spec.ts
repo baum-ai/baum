@@ -307,6 +307,10 @@ test("previews a proposed theme, restores it on dismiss and saves it with a name
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(await launchURL());
   await expect(html(page)).toHaveAttribute("data-theme", "light");
+  // The page is light before the app mounts; wait for the app before its key.
+  await expect(
+    page.getByRole("link", { name: "Pull requests", exact: true }).first(),
+  ).toBeVisible();
   await page.keyboard.press("Control+`");
   const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
   await expect(composer).toBeFocused();
@@ -390,6 +394,12 @@ test("tweaking a custom theme twice updates it in place and adds no theme", asyn
   });
   const before = await read();
   await page.reload();
+  // Wait for the app to mount and load its preferences before pressing its key:
+  // Mine (dark base) in the light slot turns the page dark only once they have.
+  await expect(html(page)).toHaveAttribute("data-theme", "dark");
+  await expect(
+    page.getByRole("link", { name: "Pull requests", exact: true }).first(),
+  ).toBeVisible();
   await page.keyboard.press("Control+`");
   const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
   await expect(composer).toBeFocused();
