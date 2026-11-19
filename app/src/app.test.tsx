@@ -1,13 +1,14 @@
-import { DEFAULT_INBOX, mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { inboxGroups } from "./inbox";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { appBase, type Clone, cost, type Entry, filtered } from "./api";
 import { App } from "./app";
 import { ReviewSettingsForm } from "./desktop/reviews";
+import { inboxGroups } from "./inbox";
 import { useLocation } from "./location";
-import { appBase, cost, filtered, type Entry, type Clone } from "./api";
 import { forgetLastRows } from "./shortcuts";
+import { DEFAULT_INBOX, mockStateFetch } from "./ui-state-test-helper";
+
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -320,23 +321,20 @@ it("puts a dot before each title for how its saved review stands, explained in a
     inbox
       .querySelector(`input[aria-label="Select acme/demo #${n}"]`)!
       .closest("li")!
-      .querySelector(".inbox-review-dot")!;
-  expect(dot(1).querySelector("button")!.textContent).toBe("Review outdated");
-  expect(dot(2).querySelector("button")!.textContent).toBe("Review failed");
-  expect(dot(3).querySelector("button")!.textContent).toBe("Review ready");
-  expect(dot(4).querySelector("button")!.textContent).toBe("Generating review");
-  expect(dot(4).querySelector(".nine-dots")).not.toBeNull();
+      .querySelector(".review-dot")!;
+  const label = (n: number) => dot(n).querySelector(".sr-only")?.textContent;
+  const note = (n: number) => dot(n).querySelector("[popover]")!.textContent;
+  expect(label(1)).toBe("Review outdated");
+  expect(label(2)).toBe("Review failed");
+  expect(label(3)).toBe("Review ready");
+  expect(label(4)).toBe("Generating review");
+  // A list row carries no buttons: the dot is not one.
+  expect(dot(3).querySelector("button")).toBeNull();
   // No saved review: an empty slot, so the titles still line up.
   expect(dot(5).childElementCount).toBe(0);
   // The note says what the dot means, and why a review failed.
-  const note = dot(2).querySelector('[role="tooltip"]')!;
-  expect(dot(2).querySelector("button")!.getAttribute("aria-describedby")).toBe(note.id);
-  expect(note.textContent).toBe(
-    "Review failed. The review could not be generated. The backend timed out.",
-  );
-  expect(dot(1).querySelector('[role="tooltip"]')!.textContent).toContain(
-    "There are changes since the review was written.",
-  );
+  expect(note(2)).toBe("Review failed. The review could not be generated. The backend timed out.");
+  expect(note(1)).toBe("Review outdated. There are changes since the review was written.");
   // The dot comes before the title.
   const row = dot(3).closest("li")!;
   expect(

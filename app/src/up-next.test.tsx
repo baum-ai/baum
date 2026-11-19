@@ -398,6 +398,20 @@ it.each<Overrides>([
   expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
 });
 
+it("puts the review's dot before each row's title", async () => {
+  entries = [
+    requested(1, { status: "current", version_count: 1 }),
+    requested(2, { status: "outdated", version_count: 1 }),
+    requested(3),
+  ];
+  await render();
+  const dot = (title: string) => row(title).querySelector(".review-dot")!;
+  expect(dot("Change 1").querySelector(".sr-only")?.textContent).toBe("Review ready");
+  expect(dot("Change 2").querySelector(".sr-only")?.textContent).toBe("Review outdated");
+  expect(dot("Change 3").childElementCount).toBe(0);
+  expect(dot("Change 1").nextElementSibling?.className).toBe("upnext-row-text");
+});
+
 const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
 // A heading's name and count, as "Ready to merge · 2".

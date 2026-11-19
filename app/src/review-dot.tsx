@@ -1,10 +1,15 @@
-import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
-import { useId, useRef } from "react";
+import { LiveDot } from "@baum/viewer/components/ui";
+import { useEffect, useRef, useState } from "react";
 import { NineDots } from "./nine-dots";
 
-export type ReviewDotState = "generating" | "ready" | "outdated" | "failed";
+export type ReviewDotState = "queued" | "generating" | "ready" | "outdated" | "failed";
 
 const DOTS: Record<ReviewDotState, { label: string; note: string; color: string }> = {
+  queued: {
+    label: "Review queued",
+    note: "baum will generate this review shortly.",
+    color: "text-secondary",
+  },
   generating: {
     label: "Generating review",
     note: "baum is generating this review now.",
@@ -27,100 +32,107 @@ const DOTS: Record<ReviewDotState, { label: string; note: string; color: string 
   },
 };
 
-/** How a pull request's saved review stands, for its inbox dot: null when it
- *  has none (or the daemon can't tell), so the row keeps an empty slot. A
- *  queued review counts as generating before the daemon marks it so. */
+/** How a pull request's review stands, for its dot: null when it has none
+ *  (or the daemon can't tell), so the row keeps an empty slot. A review job
+ *  waiting in the queue is queued until the daemon marks it generating. */
 export function reviewDotState(status: string, queued = false): ReviewDotState | null {
-  if (queued || status === "generating") return "generating";
+  if (status === "generating") return "generating";
+  if (queued) return "queued";
   if (status === "current") return "ready";
   if (status === "outdated" || status === "failed") return status;
   return null;
 }
 
-/** The dot before an inbox row's title. Its meaning opens in a note on hover
- *  with a mouse and on tap or Enter otherwise, since a `title` never shows on
- *  a touch screen; a native popover keeps the note out of the list's
- *  clipping, and the note stays the dot's accessible description. */
+/** A group review's dot: none for a stack, which has no combined review, or
+ *  for a group not yet reviewed. Its job running or queued reads generating. */
+export function groupDotState(
+  group: { stack?: boolean; version_count: number; outdated?: boolean },
+  generating: boolean,
+): ReviewDotState | null {
+  if (group.stack) return null;
+  if (generating) return "generating";
+  if (group.version_count === 0) return null;
+  return group.outdated ? "outdated" : "ready";
+}
+
+const CLOSE_MS = 150;
+
+/** The dot before a row's title for how its review stands. A list row
+ *  carries no buttons (.agents/guides/ui.md), so the dot is not one: its
+ *  label is read with the row, and its note opens on hover with a mouse and
+ *  stays while the pointer moves onto it. The row's own page says the same in
+ *  words for the keyboard. A native popover keeps the note out of the list's
+ *  clipping; it opens above the dot when there is no room below, and closes
+ *  on scroll, which would leave it behind. */
 export function ReviewDot({
   state,
   detail,
 }: {
   state: ReviewDotState | null;
-  /** Said after the state's own note, such as why a review failed. */
+  /** Said after a failed review's note: why it failed. */
   detail?: string;
 }) {
-  const id = useId();
-  const trigger = useRef<HTMLButtonElement>(null);
-  const popup = useRef<HTMLDivElement>(null);
-  const pointer = useRef("");
-  if (!state) return <span aria-hidden className="inbox-review-dot" />;
+  const anchor = useRef<HTMLSpanElement>(null);
+  const popup = useRef<HTMLSpanElement>(null);
+  const closing = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const hide = () => popup.current?.hidePopover();
+    window.addEventListener("scroll", hide, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", hide, { capture: true });
+  }, [open]);
+  useEffect(() => () => clearTimeout(closing.current), []);
+
+  if (!state) return <span aria-hidden className="review-dot" />;
   const dot = DOTS[state];
 
-  const place = () => {
-    const button = trigger.current;
+  const show = (event: React.PointerEvent) => {
+    if (event.pointerType !== "mouse") return;
+    clearTimeout(closing.current);
     const element = popup.current;
-    if (!button || !element) return;
-    const rect = button.getBoundingClientRect();
-    element.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - element.offsetWidth - 8))}px`;
-    element.style.top = `${rect.bottom + 4}px`;
-  };
-  const show = () => {
-    const element = popup.current;
-    if (!element || element.matches(":popover-open")) return;
+    const rect = anchor.current?.getBoundingClientRect();
+    if (!element || !rect || element.matches(":popover-open")) return;
     element.showPopover();
-    place();
+    element.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - element.offsetWidth - 8))}px`;
+    const below = rect.bottom + 4 + element.offsetHeight + 8 <= window.innerHeight;
+    element.style.top = `${below ? rect.bottom + 4 : Math.max(8, rect.top - 4 - element.offsetHeight)}px`;
   };
-  const hide = () => {
-    const element = popup.current;
-    if (element?.matches(":popover-open")) element.hidePopover();
+  const hide = (event: React.PointerEvent) => {
+    if (event.pointerType !== "mouse") return;
+    clearTimeout(closing.current);
+    closing.current = setTimeout(() => popup.current?.hidePopover(), CLOSE_MS);
   };
 
   return (
-    <span className="inbox-review-dot">
-      <button
-        ref={trigger}
-        type="button"
-        popoverTarget={id}
-        aria-describedby={id}
-        className={cn(
-          "-m-1.5 flex cursor-help items-center justify-center rounded-sm p-1.5",
-          FOCUS_RING,
-          dot.color,
-        )}
-        onPointerDown={(event) => {
-          pointer.current = event.pointerType;
-        }}
-        onPointerEnter={(event) => {
-          if (event.pointerType === "mouse") show();
-        }}
-        onPointerLeave={(event) => {
-          if (event.pointerType === "mouse") hide();
-        }}
-        onClick={(event) => {
-          // Hover already opened it; a click must not toggle it shut again.
-          if (pointer.current === "mouse") event.preventDefault();
-          pointer.current = "";
-        }}
+    <span className="review-dot">
+      <span
+        ref={anchor}
+        className={`-m-1.5 flex items-center justify-center p-1.5 ${dot.color}`}
+        onPointerEnter={show}
+        onPointerLeave={hide}
       >
-        {state === "generating" ? (
+        {state === "queued" ? (
           <NineDots size={14} />
+        ) : state === "generating" ? (
+          <LiveDot />
         ) : (
           <span aria-hidden className="block h-2 w-2 rounded-full bg-current" />
         )}
         <span className="sr-only">{dot.label}</span>
-      </button>
+      </span>
       <span
         ref={popup}
-        id={id}
-        popover="auto"
-        role="tooltip"
-        onToggle={(event) => {
-          if (event.newState === "open") place();
-        }}
-        className="fixed m-0 w-max max-w-[min(20rem,calc(100vw-1rem))] rounded-md border border-default bg-surface-card px-2.5 py-1.5 text-xs font-normal whitespace-normal text-secondary shadow-overlay"
+        popover="manual"
+        aria-hidden
+        onPointerEnter={show}
+        onPointerLeave={hide}
+        onToggle={(event) => setOpen(event.newState === "open")}
+        className="fixed m-0 w-max max-w-[min(20rem,calc(100vw-1rem))] rounded-md border border-default bg-surface-card px-2.5 py-1.5 text-left text-xs font-normal whitespace-normal text-secondary shadow-overlay"
       >
         <span className="font-medium text-primary">{dot.label}.</span> {dot.note}
-        {detail ? ` ${detail}` : null}
+        {state === "failed" && detail ? ` ${detail}` : null}
       </span>
     </span>
   );

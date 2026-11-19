@@ -1,24 +1,5 @@
-import { Stumpy } from "@baum/viewer/components/stumpy";
-import { uiState, useUIState } from "./ui-state";
-import {
-  FilterBar,
-  FilterButton,
-  FilterSaveError,
-  SaveButton,
-  type SaveOption,
-} from "./filter-menu";
-import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
-import {
-  Fragment,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ComponentType,
-  type Dispatch,
-  type SetStateAction,
-} from "react";
+import { cn } from "@baum/viewer/components/classnames";
+import { ReviewHunksProvider } from "@baum/viewer/components/code-file-link";
 import { formatCount } from "@baum/viewer/components/format";
 import {
   BranchIcon,
@@ -28,69 +9,96 @@ import {
   MergeIcon,
   StackIcon,
 } from "@baum/viewer/components/icons";
-import { ReviewHunksProvider } from "@baum/viewer/components/code-file-link";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
+import { Stumpy } from "@baum/viewer/components/stumpy";
 import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
+import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { sectionsInReviewOrder, type ReviewDocument } from "@baum/viewer/review-document";
+import { type ReviewDocument, sectionsInReviewOrder } from "@baum/viewer/review-document";
 import {
+  type ComponentType,
+  type Dispatch,
+  Fragment,
+  type SetStateAction,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
+import {
+  agentName,
   appURL,
+  changedNothing,
   documentRequest,
-  readableDocument,
-  groupDocumentRequest,
+  type Entry,
+  type FixOnly,
   fixJob,
   fixLabel,
+  groupDocumentRequest,
+  groupJob,
   isActiveJob,
+  type Job,
   jobHref,
-  agentName,
   jobReasonText,
-  changedNothing,
-  summaryLead,
   joinAnd,
+  type LiveSession,
   liveFor,
   navigate,
   openExternal,
+  type ReviewGroup,
+  readableDocument,
   request,
   reviewJob,
   sameRepository,
+  summaryLead,
   watchableFix,
-  type Entry,
-  type FixOnly,
-  type Job,
-  type LiveSession,
-  type ReviewGroup,
 } from "./api";
-import { fixStep, type FixState } from "./fix";
+import { checksCount, checksSummary, PullRequestChecks, useChecks } from "./checks";
+import { ConflictingFiles } from "./conflicts";
+import { MenuButton, type MenuItem, useContextMenu, useMenuFocus } from "./context-menu";
+import {
+  FilterBar,
+  FilterButton,
+  FilterSaveError,
+  SaveButton,
+  type SaveOption,
+} from "./filter-menu";
+import { type FixState, fixStep } from "./fix";
 import {
   COLOR_NAMES,
   foldedQuery,
+  type Held,
   holds,
   INBOX_COLORS,
-  withQuery,
+  type Inbox,
+  type InboxColor,
   inboxesOf,
   nameProblem,
   useHeld,
-  type Held,
-  type Inbox,
-  type InboxColor,
+  withQuery,
 } from "./inboxes";
-import { useDisclosure } from "@baum/viewer/components/use-disclosure";
-import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./context-menu";
-import { ListPagination, useListPage } from "./list-pagination";
 import { ListSection, type ListTone } from "./list";
+import { ListPagination, useListPage } from "./list-pagination";
 import { useDeadlineNow } from "./live";
-import { peekHref } from "./sessions";
 import {
   canMerge,
   defaultMergeMethod,
-  mergeMethodLabel,
-  mergeRefusal,
   MergeDialog,
   type MergeOptions,
+  mergeMethodLabel,
+  mergeRefusal,
 } from "./merge";
 import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
+import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
+import { type ReviewEvent, reviewable } from "./pending-review-model";
+import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
+import { groupDotState, ReviewDot, reviewDotState } from "./review-dot";
+import { peekHref } from "./sessions";
+import { RefreshButton, type RefreshRun } from "./shell";
 import {
   GITHUB_KEY_LABEL,
   KeyBar,
@@ -100,17 +108,11 @@ import {
   useLastRow,
   useShortcuts,
 } from "./shortcuts";
-import { PullRequestChecks, checksCount, checksSummary, useChecks } from "./checks";
-import { ConflictingFiles } from "./conflicts";
-import { RefreshButton, type RefreshRun } from "./shell";
-import { ReviewThreads } from "./threads";
-import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
-import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
-import { useToast } from "./toast";
-import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
-import { reviewable, type ReviewEvent } from "./pending-review-model";
-import { cn } from "@baum/viewer/components/classnames";
 import { minutesText, RiskCard, StackOverview } from "./stack-overview";
+import { ReviewThreads } from "./threads";
+import { useToast } from "./toast";
+import { uiState, useUIState } from "./ui-state";
+import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 
 /** What the person does next about a pull request: read a review they were
  *  asked for, unblock their own, merge it, bring it up to date with its base,
@@ -1783,6 +1785,7 @@ export function UpNextPage({
                     tabbable={row.key === tabbable}
                     pick={select}
                     inGroup={!!group}
+                    reviewing={isActiveJob(reviewJob(row.entry, jobs))}
                   />
                 </li>
               );
@@ -1817,6 +1820,7 @@ export function UpNextPage({
                         >
                           <GroupListRow
                             line={entry}
+                            reviewing={isActiveJob(groupJob(entry.group, jobs))}
                             open={groupOpen(entry)}
                             toggle={() => toggleGroup(entry)}
                             on={entry.key === line?.key}
@@ -2040,6 +2044,7 @@ function ListRow({
   tabbable,
   pick,
   inGroup = false,
+  reviewing,
 }: {
   row: Row;
   on: boolean;
@@ -2047,6 +2052,8 @@ function ListRow({
   pick: (key: string) => void;
   /** The row is a member nested under its review group's row. */
   inGroup?: boolean;
+  /** Its review is queued or running in the job queue. */
+  reviewing: boolean;
 }) {
   const pr = row.entry.pull_request;
   // The section heading already names the kind, so the line starts with the
@@ -2081,6 +2088,7 @@ function ListRow({
       aria-current={on || undefined}
       onClick={() => pick(row.key)}
     >
+      <ReviewDot state={reviewDotState(row.entry.status, reviewing)} />
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
         <span className="upnext-row-line">
@@ -2129,6 +2137,7 @@ function memberKinds(members: Row[]) {
 /** A review group's row: it opens to its members, nested under it. */
 function GroupListRow({
   line,
+  reviewing,
   open,
   toggle,
   on,
@@ -2136,6 +2145,8 @@ function GroupListRow({
   pick,
 }: {
   line: GroupRow;
+  /** The group's review is queued or running. */
+  reviewing: boolean;
   open: boolean;
   toggle: () => void;
   on: boolean;
@@ -2164,6 +2175,7 @@ function GroupListRow({
         aria-expanded={open}
         onClick={() => pick(line.key)}
       >
+        <ReviewDot state={groupDotState(group, reviewing)} />
         <span className="upnext-row-text">
           <span className="upnext-row-title">
             {group.stack ? <StackIcon size={13} className="upnext-stack-icon" /> : null}

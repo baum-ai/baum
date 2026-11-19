@@ -1,14 +1,3 @@
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ComponentType,
-  type ReactNode,
-  type Dispatch,
-  type MouseEvent,
-  type SetStateAction,
-} from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { formatCount, formatRelative } from "@baum/viewer/components/format";
 import {
@@ -18,45 +7,58 @@ import {
   CircleCrossIcon,
   CircleDashedIcon,
   CommentsIcon,
+  type IconProps,
   MergeIcon,
   SparkleIcon,
   StackIcon,
   WarningIcon,
-  type IconProps,
 } from "@baum/viewer/components/icons";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Badge } from "@baum/viewer/components/ui";
-import {
-  riskScoreTone,
-  sectionsInReviewOrder,
-  type RiskScoreLevel,
-} from "@baum/viewer/review-document";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
+  type RiskScoreLevel,
+  riskScoreTone,
+  sectionsInReviewOrder,
+} from "@baum/viewer/review-document";
+import {
+  type ComponentType,
+  type Dispatch,
+  type MouseEvent,
+  type ReactNode,
+  type SetStateAction,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
+import { SMALL } from "./action-classes";
+import {
   appURL,
+  type Entry,
   fixJob,
   fixLabel,
   groupJob,
   isActiveJob,
-  reviewJob,
+  type Job,
   jobHref,
+  type LiveSession,
   liveFor,
   navigate,
   openExternal,
+  type ReviewGroup,
+  reviewJob,
   rowKey,
   sameRepository,
   watchableFix,
-  type Entry,
-  type Job,
-  type LiveSession,
-  type ReviewGroup,
 } from "./api";
-import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { MenuButton, type MenuItem, useContextMenu } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
 import { ListPagination, useListPage } from "./list-pagination";
 import { LiveBadge, useNow } from "./live";
-import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
+import { LoadingStatus, NineDots } from "./nine-dots";
+import { groupDotState, ReviewDot, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
   inboxAction,
@@ -68,9 +70,7 @@ import {
   useLastRow,
   useShortcuts,
 } from "./shortcuts";
-import { ReviewDot, reviewDotState } from "./review-dot";
-import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
-import { SMALL } from "./action-classes";
+import { MergeReadyDialog, type SavedReviews, useSavedReview } from "./up-next";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
@@ -959,19 +959,7 @@ function GroupRow({
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-2">
             {/* A stack has no combined review, only its members' own. */}
-            <ReviewDot
-              state={
-                group.stack
-                  ? null
-                  : isActiveJob(job)
-                    ? "generating"
-                    : group.version_count === 0
-                      ? null
-                      : group.outdated
-                        ? "outdated"
-                        : "ready"
-              }
-            />
+            <ReviewDot state={groupDotState(group, isActiveJob(job))} />
             {group.stack ? (
               // The hosted pull request list's mark for a stack.
               <span

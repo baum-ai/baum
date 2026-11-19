@@ -1212,7 +1212,7 @@ select.local-field {
 }
 /* The review dot's slot (review-dot.tsx) before every title, empty without a
    saved review so titles line up; one title line high, the dot centred in it. */
-.inbox-review-dot {
+.review-dot {
   flex: none;
   align-self: flex-start;
   display: flex;
@@ -5688,6 +5688,11 @@ kbd.key-hint {
 .upnext-row-sub {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+/* The review dot's slot (review-dot.tsx) sits on the title's line. */
+.upnext-row > .review-dot {
+  font-size: var(--text-base);
+  height: 1lh;
 }
 /* The line under the title, its inbox tag after it: a long line gives way first. */
 .upnext-row-line {
