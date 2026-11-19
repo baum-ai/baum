@@ -65,7 +65,8 @@ export function CodeTab({
   // the files.
   const fileList = useRef<HTMLElement>(null);
   const openPath = file?.path;
-  const shownPath = useRef<string | undefined>(undefined);
+  // Arriving on the tab is not opening a file: the place lands as any other.
+  const shownPath = useRef(openPath);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the open file's change moves the marked row
   useEffect(() => {
     const row = fileList.current?.querySelector<HTMLElement>(':scope li [aria-pressed="true"]');

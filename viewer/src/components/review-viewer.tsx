@@ -1628,7 +1628,8 @@ function ReviewWorkspace<F extends ReviewFile>({
         ? selection.kind
         : null;
   // The rail's step back to its first row starts that place from the page's
-  // top, with the review's header, rather than just under the bar.
+  // top, with the review's header, rather than just under the bar; on the
+  // first row already, the step back goes to the top too.
   const fromTop = (step: ReviewStep): ReviewStep => ({
     ...step,
     go: () => {
@@ -1642,7 +1643,12 @@ function ReviewWorkspace<F extends ReviewFile>({
       next: nextStep,
       item: hostSteps?.item ?? { previous: blockStep(-1), next: blockStep(1) },
       rail: {
-        previous: railAt === 1 ? fromTop(railRows[0]!) : railAt > 0 ? railRows[railAt - 1]! : null,
+        previous:
+          railAt === 0 || railAt === 1
+            ? fromTop(railRows[0]!)
+            : railAt > 0
+              ? railRows[railAt - 1]!
+              : null,
         next: railAt >= 0 ? (railRows[railAt + 1] ?? null) : null,
       },
       toggleGroup: hostSteps

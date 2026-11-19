@@ -437,4 +437,9 @@ test("k back to the first block, and to the first place, shows the review's head
   await expect.poll(top).toBeGreaterThan(0);
   for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+K");
   await expect.poll(top).toBe(0);
+  // On the first place already, Shift+K still takes a scrolled page back up.
+  await page.evaluate(() => document.querySelector(".local-main")!.scrollTo({ top: 200 }));
+  await expect.poll(top).toBeGreaterThan(0);
+  await page.keyboard.press("Shift+K");
+  await expect.poll(top).toBe(0);
 });
