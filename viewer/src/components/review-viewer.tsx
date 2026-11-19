@@ -99,7 +99,7 @@ import {
 } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { tabIds, tabPanelProps } from "./tabs";
-import { scrollerOf } from "./scroller";
+import { scrollerOf, scrollToTop } from "./scroller";
 import {
   Alert,
   Badge,
@@ -1534,6 +1534,8 @@ function ReviewWorkspace<F extends ReviewFile>({
       target.setAttribute("data-review-block-active", "");
       if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
       target.focus({ preventScroll: true });
+      // The first block goes back to the top, so the review's header shows.
+      if (target === blocks[0]) return scrollToTop(target);
       const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
       target.scrollIntoView?.({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
     },
@@ -1625,13 +1627,22 @@ function ReviewWorkspace<F extends ReviewFile>({
           selection.kind === "commits"
         ? selection.kind
         : null;
+  // The rail's step back to its first row starts that place from the page's
+  // top, with the review's header, rather than just under the bar.
+  const fromTop = (step: ReviewStep): ReviewStep => ({
+    ...step,
+    go: () => {
+      scrollToTop(reviewPane.current);
+      step.go();
+    },
+  });
   if (stepsRef)
     stepsRef.current = {
       previous: previousStep,
       next: nextStep,
       item: hostSteps?.item ?? { previous: blockStep(-1), next: blockStep(1) },
       rail: {
-        previous: railAt > 0 ? railRows[railAt - 1]! : null,
+        previous: railAt === 1 ? fromTop(railRows[0]!) : railAt > 0 ? railRows[railAt - 1]! : null,
         next: railAt >= 0 ? (railRows[railAt + 1] ?? null) : null,
       },
       toggleGroup: hostSteps

@@ -13,6 +13,7 @@ import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import { hunkUrl, type IndexedHunk, type ReviewDocument } from "@baum/viewer/review-document";
 import { LoadingStatus } from "../nine-dots";
 import { useFileGrouping } from "./file-grouping";
+import { scrollerOf } from "@baum/viewer/components/scroller";
 import type { ReviewV2 } from "./document";
 import {
   FILE_GROUPINGS,
@@ -66,9 +67,11 @@ export function CodeTab({
   const openPath = file?.path;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the open file's change moves the marked row
   useEffect(() => {
-    fileList.current
-      ?.querySelector<HTMLElement>('[aria-pressed="true"]')
-      ?.scrollIntoView?.({ block: "nearest" });
+    const row = fileList.current?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    // The first file takes the list back to its top, with its group's label.
+    if (row && row === fileList.current?.querySelector("[aria-pressed]"))
+      scrollerOf(row).scrollTo?.({ top: 0 });
+    else row?.scrollIntoView?.({ block: "nearest" });
   }, [openPath, grouping, generatedOpen]);
   if (files.length === 0)
     return <p className="text-base text-secondary">This pull request changes no files.</p>;
