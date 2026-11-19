@@ -5369,8 +5369,11 @@ dialog.shortcuts-sheet[open] {
   padding-top: 0.5rem;
   font-size: var(--text-base);
 }
+/* Sized by its rows (an auto basis), shrinking to the dialog's max-height.
+   With a 0% basis (`flex: 1`), WebKitGTK sizes the dialog from the basis and
+   the list collapses to nothing under the search field. */
 .shortcuts-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   padding: 0 0.35rem 0.75rem;
   overflow-y: auto;
