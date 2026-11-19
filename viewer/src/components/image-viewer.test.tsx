@@ -48,6 +48,15 @@ function mount(image: ViewedImage | null, onClose = () => {}) {
 
 const viewport = () => ({ width: innerWidth, height: innerHeight });
 
+/** Presses at a point of a frame laid out at 0,0–100,100; its resize grip
+ *  is the bottom-right corner. */
+function press(frame: HTMLElement, x: number, y: number) {
+  frame.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+  act(() => {
+    frame.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: x, clientY: y }));
+  });
+}
+
 describe("ImageViewer", () => {
   it("opens filling the screen and keeps a dragged size across re-renders", () => {
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
@@ -58,7 +67,7 @@ describe("ImageViewer", () => {
 
     // The person drags the corner; a host re-render with a fresh object
     // leaves their size alone.
-    act(() => view.frame().dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    press(view.frame(), 95, 95);
     view.frame().style.width = "300px";
     view.render({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
     expect(view.frame().style.width).toBe("300px");
@@ -70,6 +79,9 @@ describe("ImageViewer", () => {
 
   it("refits to a resized window until the person drags the corner", () => {
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    // A click on the image itself is not a resize.
+    press(view.frame(), 50, 50);
+    expect(view.dialog.style.top).toBe("");
     const before = view.frame().style.width;
     const inner = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });

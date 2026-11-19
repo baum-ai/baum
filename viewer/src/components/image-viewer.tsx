@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type PointerEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { type ImageSize, viewerImageWidth } from "../review-image-layout";
 import { cn } from "./classnames";
@@ -34,6 +34,7 @@ export function ImageViewer({
   const frame = useRef<HTMLDivElement>(null);
   const closer = useRef<HTMLButtonElement>(null);
   const [full, setFull] = useState(false);
+  const captionId = useId();
   // The size the frame fits to, until the person drags its corner; from then
   // on the size is theirs.
   const fitted = useRef<ImageSize | null>(null);
@@ -77,6 +78,7 @@ export function ImageViewer({
       if (!dragged.current && fitted.current) {
         fitFrame(frame.current, header.current, fitted.current);
       }
+      if (dialog.current?.style.top) bound(dialog.current);
     };
     window.addEventListener("resize", refit);
     return () => window.removeEventListener("resize", refit);
@@ -92,6 +94,16 @@ export function ImageViewer({
     globalThis.document.addEventListener("fullscreenchange", follow);
     return () => globalThis.document.removeEventListener("fullscreenchange", follow);
   }, []);
+
+  // Leaving the browser's full screen is asynchronous and moves focus, so a
+  // close from full screen waits for it; the host can then restore focus.
+  const close = async () => {
+    if (holdsFullScreen.current && globalThis.document.fullscreenElement) {
+      holdsFullScreen.current = false;
+      await globalThis.document.exitFullscreen?.().catch(() => {});
+    }
+    dialog.current?.close();
+  };
 
   const leaveFullScreen = () => {
     setFull(false);
@@ -116,21 +128,26 @@ export function ImageViewer({
 
   // Dragging the corner of a centred dialog would move the corner at half
   // the pointer's speed, as the dialog re-centres; pinning the dialog where
-  // it stands keeps the corner under the pointer.
-  const pin = () => {
-    dragged.current = true;
+  // it stands keeps the corner under the pointer. Only a press on the
+  // corner's grip counts, so a click on the image leaves the fit alone.
+  const pin = (event: PointerEvent<HTMLDivElement>) => {
     const element = dialog.current;
-    if (!element || full) return;
-    const box = element.getBoundingClientRect();
+    const box = event.currentTarget.getBoundingClientRect();
+    const onGrip = event.clientX >= box.right - GRIP && event.clientY >= box.bottom - GRIP;
+    if (!element || full || !onGrip) return;
+    dragged.current = true;
+    const at = element.getBoundingClientRect();
     element.style.margin = "0";
-    element.style.top = `${box.top}px`;
-    element.style.left = `${box.left}px`;
+    element.style.top = `${at.top}px`;
+    element.style.left = `${at.left}px`;
+    bound(element);
   };
 
   return (
     <dialog
       ref={dialog}
       aria-label={label}
+      aria-describedby={caption ? captionId : undefined}
       data-full={full || undefined}
       onCancel={(event) => {
         if (!full) return;
@@ -147,7 +164,7 @@ export function ImageViewer({
         "m-auto max-h-[calc(100dvh-2rem)] w-fit max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-default open:flex",
         "bg-surface-card p-3 text-primary shadow-card",
         "backdrop:bg-surface-scrim",
-        full && "inset-0! m-0! h-dvh max-h-none w-screen max-w-none rounded-none border-0",
+        full && "inset-0! m-0! h-dvh max-h-none! w-screen max-w-none! rounded-none border-0",
       )}
     >
       {image && (
@@ -160,7 +177,9 @@ export function ImageViewer({
             ref={header}
             className="flex flex-none flex-col-reverse gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
           >
-            <div className="min-w-0 pt-1 text-base text-secondary">{caption}</div>
+            <div id={captionId} className="min-w-0 pt-1 text-base text-secondary">
+              {caption}
+            </div>
             <div className="flex flex-none items-center gap-2 self-end sm:self-auto">
               <a
                 href={image.src}
@@ -178,11 +197,7 @@ export function ImageViewer({
               >
                 {full ? <LeaveFullScreenIcon /> : <FullScreenIcon />}
               </IconButton>
-              <CloseButton
-                ref={closer}
-                label="Close image"
-                onClick={() => dialog.current?.close()}
-              />
+              <CloseButton ref={closer} label="Close image" onClick={close} />
             </div>
           </div>
           <div
@@ -215,6 +230,19 @@ export function ImageViewer({
       )}
     </dialog>
   );
+}
+
+/** How far in from the frame's corner a press starts a resize: the
+ *  browser's grip, with some slack. */
+const GRIP = 20;
+
+/** Keeps a pinned dialog inside the window, so a corner dragged outwards
+ *  stops at its edge and the controls stay in view. */
+function bound(dialog: HTMLElement) {
+  const left = Number.parseFloat(dialog.style.left) || 0;
+  const top = Number.parseFloat(dialog.style.top) || 0;
+  dialog.style.maxWidth = `${Math.max(160, window.innerWidth - left - 16)}px`;
+  dialog.style.maxHeight = `${Math.max(160, window.innerHeight - top - 16)}px`;
 }
 
 /** Sizes the image's frame to fill the screen below the header. */
