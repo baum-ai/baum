@@ -98,9 +98,6 @@ func NewRegistry(dedicated []library.Entry) *Registry {
 	return r
 }
 
-// Types lists the registry's types in order.
-func (r *Registry) Types() []TileType { return append([]TileType(nil), r.types...) }
-
 // Get returns the type named.
 func (r *Registry) Get(name string) (TileType, bool) {
 	for _, t := range r.types {

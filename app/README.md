@@ -2364,10 +2364,10 @@ checks the rail, the address, the file grouping and that no place scrolls
 sideways at 390, 900 and
 1440px; `REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each place, light and
 dark. It also removes an added tile and undoes it, shows pending cards on
-their sections (both against routes it answers itself), checks the review
-page setting and an arranged version with tile reviews on, and, until the
-daemon answers `baum.review/2`, that a `baum.review/1` answer with its view
-draws the same page.
+their sections (both against routes it answers itself), checks that every
+pull request, arranged or not, opens on the rail with no setting to choose a
+page, and that a `baum.review/1` version draws the viewer's own Summary and
+sections.
 Custom tiles on the review page: `pnpm test:custom-tiles`
 (`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
@@ -2791,12 +2791,9 @@ around them (the head, history, side pane, comments, selection and keys) and
 the viewer's parts they draw (citation chips, images, diffs) read a
 `baum.review/1` review, which `chromeOf` makes from the document: what
 `baum.review/2` has no field for (the author, agent reviews, evidence) is
-empty there. Until the daemon converts every version, it may answer with a
-`baum.review/1` document and its `view` (`baum.view/1`) instead; the page
-converts that answer (`review-view/from-v1.ts`, to be removed once the daemon
-answers `baum.review/2`) and keeps the served review for the chrome. A
-`baum.review/1` version has no tiles: it shows the viewer's Summary and
-sections.
+empty there. A `baum.review/1` version is read as stored. It has no tiles:
+it shows the viewer's Summary and sections, and `review-view/from-v1.ts` only
+builds the rail's model (the sections and the file list) from it.
 
 - **Where the reader is** stays in the address, so a reload, Back and a link
   land there: the Overview is the Summary (no `pane`), How it works is
@@ -2888,7 +2885,7 @@ sections.
   shared choice (`useFileGrouping`, `readFileGrouping` in `file-grouping.ts`).
   Elsewhere they mark blocks as above. `]`
   opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request. The session
-  panel's focus names `view: tiles` and the tab: on the
+  panel's focus names the tab: on the
   Overview `tab: overview`; on How it works `tab: sections` and the `section`
   read (`context` for Where this fits; a risk adds its `item`; a link to a
   tile names the `tile`), so a tile made or added from chat stands there; on

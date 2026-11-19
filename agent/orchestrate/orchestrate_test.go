@@ -603,10 +603,10 @@ func TestLabels(t *testing.T) {
 
 func TestCopyRules(t *testing.T) {
 	c := &checker{}
-	c.text("/b", "As #123 did before.", 100, 0, true)
-	c.text("/c", "It changes 40 lines.", 100, 0, true)
-	c.text("/e", "", 100, 2, true)
-	if got := c.text("/f", strings.Repeat("x ", 100), 100, 0, true); len(got) < 199 {
+	c.text("/b", "As #123 did before.", 100, true)
+	c.text("/c", "It changes 40 lines.", 100, true)
+	c.text("/e", "", 100, true)
+	if got := c.text("/f", strings.Repeat("x ", 100), 100, true); len(got) < 199 {
 		t.Errorf("a text far over its limit was cut: %d", len(got))
 	}
 	if len(c.findings) != 3 {
@@ -622,7 +622,7 @@ func TestCopyRules(t *testing.T) {
 	c = &checker{}
 	// A text a quarter over its limit at most is cut to it, at a
 	// sentence's end where one is near.
-	if got := c.text("/ok", "A **plain** [link](http://x) text that is a bit long", 32, 1, true); len(c.findings) != 0 || got != "A plain link text that is a…" {
+	if got := c.text("/ok", "A **plain** [link](http://x) text that is a bit long", 32, true); len(c.findings) != 0 || got != "A plain link text that is a…" {
 		t.Fatalf("clean and cut: %q %v", got, c.findings)
 	}
 	if got := fit("The first sentence is here. The second one is longer.", 45); got != "The first sentence is here." {
@@ -630,7 +630,7 @@ func TestCopyRules(t *testing.T) {
 	}
 	// The last pass lets style through and cuts what is far too long.
 	c = &checker{lenient: true}
-	got := c.text("/last", "The evidence. Two. Three. "+strings.Repeat("y", 200), 100, 1, true)
+	got := c.text("/last", "The evidence. Two. Three. "+strings.Repeat("y", 200), 100, true)
 	if len(c.findings) != 0 || !strings.HasSuffix(got, "…") {
 		t.Fatalf("lenient: %q %v", got, c.findings)
 	}

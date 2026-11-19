@@ -11,7 +11,7 @@ import type {
   SectionDetailsState,
 } from "@baum/viewer/review-document";
 import { parseDrafts, type DraftCard } from "../tiles/drafts";
-import type { Tile } from "../tiles/types";
+import { isRecord, isString, type Tile } from "../tiles/types";
 
 /** The review page's document, `baum.review/2` (`oss/reviewv2/document.go`;
  *  the JSON field names are the Go types' tags): the overview, the sections
@@ -48,13 +48,13 @@ export type ReviewV2 = {
   drafts?: DraftCard[];
 };
 
-export type V2Verdict = {
+type V2Verdict = {
   decision: RecommendationDecision;
   text: string;
   points: { text: string; section?: string }[];
 };
 
-export type V2Intent = { session: string; prompt: number; asked: string; got: string };
+type V2Intent = { session: string; prompt: number; asked: string; got: string };
 
 export type V2ContextPart = { text: string; files: string[] };
 export type V2Context = {
@@ -116,7 +116,7 @@ export type V2Section = {
   derived: Section["derived"];
 };
 
-export type ViewTileType = "flow" | "columns" | "sequence" | "table" | "code" | "prose" | "custom";
+type ViewTileType = "flow" | "columns" | "sequence" | "table" | "code" | "prose" | "custom";
 export type ViewTileState = "ready" | "pending" | "failed" | "unavailable";
 
 /** A tile of the document, placed by its owner: `overview` (the main
@@ -140,9 +140,13 @@ export type ViewTile = Tile & {
 
 // ---------- the parser ----------
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isString = (value: unknown): value is string => typeof value === "string";
+/** The first sentence of a text, for a list's quiet line. */
+export function firstSentence(text: string): string {
+  const plain = text.replace(/\s+/g, " ").trim();
+  const end = plain.search(/[.!?](\s|$)/);
+  return end >= 0 ? plain.slice(0, end + 1) : plain;
+}
+
 const text = (value: unknown): string => (isString(value) ? value : "");
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter(isString) : []);
 const records = (value: unknown): Record<string, unknown>[] =>

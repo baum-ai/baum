@@ -6,11 +6,9 @@
 // features. Additive schema edits bump the revision recorded at
 // $defs/schemaRevision/const, which a generated document echoes in
 // generator.schema_revision. tiles-1.json is the baum.tiles/1 tile document
-// schema, which reuses review-1.json's definitions (CompileTiles), and
-// composition-1.json the baum.composition/1 schema of how a generated review
-// is presented as tiles, which reuses the tile schema's (CompileComposition).
-// composition-2.json is baum.composition/2, which replaces it for new
-// versions: how a generated review is presented on its review page
+// schema, which reuses review-1.json's definitions (CompileTiles).
+// composition-2.json is baum.composition/2, how older baum.review/1 versions
+// are presented on their review page, which reuses the tile schema's
 // (CompileViewComposition). review-2.json is baum.review/2, the desktop
 // app's review document (oss/reviewv2), which reuses review-1.json's header,
 // index, stats, risk score, derived facts and anchors (CompileReview2). Its

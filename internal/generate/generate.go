@@ -40,8 +40,6 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/sessions"
-	"github.com/baum-ai/baum/tiles"
-	"github.com/baum-ai/baum/tiles/library"
 )
 
 // Category classifies why a run failed.
@@ -135,9 +133,8 @@ type Options struct {
 	// It is never a version. Calls come one at a time, from a goroutine of
 	// the run, and the last one returns before Run does.
 	OnDraft func(Draft)
-	// Tiles, for a staged run of one pull request that does not continue a
-	// version, arranges the review's tiles after its analysis (see Tiles).
-	// Nil arranges nothing and makes no call beyond the review's.
+	// Tiles, for a V2 run, supplies its dedicated tile types (see Tiles).
+	// Other runs ignore it.
 	Tiles *Tiles
 	// Continue, for a staged run, is the saved version to complete instead
 	// of writing a new one: the latest version, some of whose sections
@@ -178,10 +175,10 @@ type Options struct {
 	Group *Group
 	// V2, for a new review of a single pull request (no Group, no
 	// Continue), writes it as a baum.review/2 document in the levels of
-	// agent/orchestrate instead of the staged review and its page view (see
-	// V2). Tiles, when set too, supplies the dedicated tile types (its
-	// library and saved types) and their fill texts. Groups, stacks and
-	// continued versions keep baum.review/1.
+	// agent/orchestrate instead of the staged review (see V2). Tiles, when
+	// set too, supplies the dedicated tile types (its library and saved
+	// types) and their fill texts. Groups, stacks and continued versions
+	// keep baum.review/1.
 	V2 *V2
 }
 
@@ -204,14 +201,6 @@ type Result struct {
 	// outline stage's validation repairs and the replies its harness
 	// rejected against the schema, which tile reviews widen.
 	OutlineRepairs, OutlineRejections int
-	// Composition, for a run with Tiles, is the composition to store with
-	// the version (store.Version.Composition) and CompositionGenerator where
-	// it came from (a review view composition); nil when none could be made.
-	// Compose is what the compose stage, the view call, did, nil when it did
-	// not run.
-	Composition          json.RawMessage
-	CompositionGenerator *tiles.Generator
-	Compose              *ComposeReport
 	// V2, for a baum.review/2 run (Options.V2), is what its levels did; its
 	// Outcome is Outcome before masking.
 	V2 *orchestrate.Outcome
@@ -222,12 +211,8 @@ type Draft struct {
 	// Document is the review so far, masked and completed as the published
 	// document is, with the sections still being written pending.
 	Document []byte
-	// Composition presents the draft's tiles. For a run with Tiles it is a
-	// provisional review view composition (provisional: the library tiles,
-	// pending or filled, placed by their hunks) while the review is written,
-	// then, in one last draft of the finished review, the composition the run
-	// stores. A draft of a continued version carries that version's
-	// composition. Nil otherwise.
+	// Composition is the stored composition of the version a run continues
+	// (Options.Continue), which presents its tiles; nil otherwise.
 	Composition []byte
 }
 
@@ -387,9 +372,6 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	if o.V2 != nil && o.Group == nil && o.Continue == nil {
 		return v2Run(ctx, runCtx, o, assembled, captured, runDir, redactor, fail, progress, started, now)
 	}
-	// With Tiles, the analysis runs exactly as without it, with the whole
-	// wall clock and budgets; the composition follows it (composeTiles).
-	composing := staged && o.Tiles != nil && o.Continue == nil
 	backend := o.Backend
 	if o.PassTimeout > 0 {
 		backend = passBounded{Backend: backend, timeout: o.PassTimeout}
@@ -410,17 +392,6 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	var outcome agent.Outcome
 	var document []byte
 	var genErr, redactErr error
-	// analysis is the tile analysis of a run with Tiles; tileEntries the
-	// library types it offers.
-	var analysis *agent.TilesOutcome
-	var tileEntries []library.Entry
-	if composing {
-		// The person's saved types are chosen for this diff.
-		o.Tiles = o.Tiles.withSaved(ctx, &b)
-		if tileEntries = o.Tiles.Library; tileEntries == nil {
-			tileEntries = library.All()
-		}
-	}
 	closed := 0
 	if staged {
 		continued.Run, continued.Prompts, continued.NoReuse = run, stagedPrompts, o.NoReuse
@@ -444,21 +415,14 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 					return Draft{}, false
 				}
 				d := Draft{Document: completed}
-				switch {
-				case composing:
-					d.Composition = provisional(completed, draftLibrary(p.Tiles, tileEntries), draftHunks(p.Tiles))
-				case o.Continue != nil && len(o.Continue.Composition) > 0:
+				if o.Continue != nil && len(o.Continue.Composition) > 0 {
 					d.Composition = o.Continue.Composition
 				}
 				return d, true
 			})
 		}
-		if composing {
-			continued.Tiles = o.Tiles.staged()
-		}
 		var stages agent.StagedOutcome
 		stages, document, genErr = generator.StagedReview(runCtx, continued)
-		analysis = stages.Tiles
 		result.OutlineRepairs, result.OutlineRejections = stages.Outline.ValidationRepairs, stages.Outline.StructuredOutputRejections
 		if stopDrafts != nil {
 			stopDrafts()
@@ -524,35 +488,6 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		outcome.Reason, outcome.Findings = agent.ReasonValidationRejected, strings.Join(stored, "\n")
 		result.Outcome = outcome
 		return result, rejection(fail, outcome.Findings)
-	}
-	if composing {
-		// The review is final: only its page view is left to write. What the
-		// stage spends counts as the run's.
-		composition, generator, report, composeErr := composeTiles(ctx, o, completed, outcome, redactor, analysis)
-		// The analysis's model prices the run and names the version.
-		model := outcome.Model
-		outcome.Add(report.Outcome)
-		if model != "" {
-			outcome.Model = model
-		}
-		result.Outcome, result.Compose = outcome, report
-		// Only a cancellation stops the run here: the composition is bounded
-		// by its own limit, not the run's deadline, which may have passed.
-		if composeErr != nil || errors.Is(ctx.Err(), context.Canceled) {
-			return result, &Error{Category: CategoryInterrupted, Err: errors.New("interrupted")}
-		}
-		result.Composition, result.CompositionGenerator = composition, generator
-		switch {
-		case report.Problem != "":
-			progress("%s; the review is published without a composition", report.Problem)
-		case report.Fallback:
-			progress("the review's page view fell back: %s", report.FallbackReason)
-		default:
-			progress("the review's page view written in %s", report.Elapsed.Round(time.Second))
-		}
-		if o.OnDraft != nil {
-			o.OnDraft(Draft{Document: completed, Composition: composition})
-		}
 	}
 	var stored struct {
 		Schema string `json:"schema"`

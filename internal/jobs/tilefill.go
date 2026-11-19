@@ -21,10 +21,8 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
 // KindTileFill names a fill of a tile a person added to a pull request's
@@ -258,12 +256,9 @@ func (l *Local) FillTile(ctx context.Context, r addedtiles.FillRequest) (json.Ra
 	return entry.Encoded, result.Data, cost, nil
 }
 
-// alwaysTiles are the library types the person added to the pull request's
-// review (generate.Tiles.Always), each with the last data held for it: the
-// newest of baum's own fills (never data the agent wrote, which stays the
-// person's) and of the latest version's composition, with the hunks of the
-// version it was written for.
-func (l *Local) alwaysTiles(ctx context.Context, versions *store.Store, key store.Key) []agent.AlwaysTile {
+// alwaysTiles names the library types the person added to the pull
+// request's review (generate.Tiles.Always).
+func (l *Local) alwaysTiles(ctx context.Context, key store.Key) []string {
 	if l.Added == nil {
 		return nil
 	}
@@ -277,67 +272,5 @@ func (l *Local) alwaysTiles(ctx context.Context, versions *store.Store, key stor
 			names = append(names, a.Name)
 		}
 	}
-	return l.lastTiles(ctx, versions, key, names)
-}
-
-// lastTiles are always-filled tiles of the named types, each with the last
-// data held for it (agent.AlwaysTile): the newest of baum's own fills of an
-// added tile and of the latest version's composition, with the hunks of the
-// version it was written for.
-func (l *Local) lastTiles(ctx context.Context, versions *store.Store, key store.Key, names []string) []agent.AlwaysTile {
-	if len(names) == 0 {
-		return nil
-	}
-	var fills []addedtiles.Fill
-	if l.Added != nil {
-		fills, _ = l.Added.Fills(ctx, addedtiles.Key(key.Repository, key.Number))
-	}
-	latest, latestErr := versions.Latest(ctx, key)
-	hunksOf := map[int][]string{}
-	hunks := func(version int) []string {
-		if ids, ok := hunksOf[version]; ok {
-			return ids
-		}
-		var ids []string
-		if v, err := versions.Get(ctx, key, version); err == nil {
-			if normalized, err := review.NormalizeStored(v.Document); err == nil {
-				if doc, err := tiles.FromReview(normalized, tiles.Options{}); err == nil {
-					for _, h := range library.DiffOf(doc) {
-						ids = append(ids, h.ID)
-					}
-				}
-			}
-		}
-		hunksOf[version] = ids
-		return ids
-	}
-	var out []agent.AlwaysTile
-	for _, name := range names {
-		always := agent.AlwaysTile{Name: name}
-		version := 0
-		for _, f := range fills {
-			// Data the agent wrote stays the person's: only baum's own fill
-			// runs may stand for a generated tile.
-			if f.Origin == addedtiles.OriginFill && f.Tile == tiles.LibraryTileID(name) && f.Version > version {
-				version, always.Last = f.Version, f.Data
-			}
-		}
-		if latestErr == nil && latest.Metadata.Version > version {
-			if c, err := view.Parse(latest.Composition); err == nil {
-				for _, lib := range c.Library {
-					var def struct {
-						Name string `json:"name"`
-					}
-					if !lib.Pending && json.Unmarshal(lib.Definition, &def) == nil && def.Name == name {
-						version, always.Last = latest.Metadata.Version, lib.Data
-					}
-				}
-			}
-		}
-		if version > 0 {
-			always.LastHunks = hunks(version)
-		}
-		out = append(out, always)
-	}
-	return out
+	return names
 }

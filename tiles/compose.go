@@ -14,8 +14,8 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// A review's extra tiles are the tiles the tile analysis adds to what the
-// review says: library tiles (a library type with its data) and authored
+// A review's extra tiles are the tiles an older tile review's analysis
+// added to what the review says: library tiles (a library type with its data) and authored
 // tiles (exhibits: a table, code excerpt or prose the analysis wrote). The
 // review view composition (tiles/view) stores them; this file checks them
 // against the tile document converted from their review, which is the
