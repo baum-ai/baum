@@ -168,11 +168,11 @@ const KEYBOARD_FOCUS = ":focus-visible:not(.context-menu *)";
  *  The attribute is set on the element itself, not through React state, so it
  *  changes within the event, at the same moments the selector did: on focus
  *  and key events in the element, after every render of its owner (which may
- *  have removed the focused element without a blur), and when the window
- *  gains or loses focus, since `:focus-visible` does not match in a window in
- *  the background and WebKit tells the element only with `focus` and `blur`,
- *  which do not bubble. A child that removes the focused element in a render
- *  of its own is not seen until the next of these. */
+ *  have removed the focused element without a blur), on any change to the
+ *  element's children (WebKit sends no blur for a focused element removed),
+ *  and when the window gains or loses focus, since `:focus-visible` does not
+ *  match in a window in the background and WebKit tells the element only with
+ *  `focus` and `blur`, which do not bubble. */
 function useKeyboardFocusWithin<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   const sync = useCallback(() => {
@@ -184,7 +184,7 @@ function useKeyboardFocusWithin<T extends HTMLElement>() {
     const element = ref.current;
     if (!element) return;
     let frame = 0;
-    // The window's activation may land after its `focus` event.
+    // The window's activation may land after its `focus` or `blur` event.
     const later = () => {
       sync();
       cancelAnimationFrame(frame);
@@ -193,14 +193,17 @@ function useKeyboardFocusWithin<T extends HTMLElement>() {
     for (const type of ["focusin", "focusout", "keydown", "keyup"])
       element.addEventListener(type, sync);
     window.addEventListener("focus", later);
-    window.addEventListener("blur", sync);
+    window.addEventListener("blur", later);
     document.addEventListener("visibilitychange", later);
+    const changed = new MutationObserver(sync);
+    changed.observe(element, { childList: true, subtree: true });
     return () => {
+      changed.disconnect();
       cancelAnimationFrame(frame);
       for (const type of ["focusin", "focusout", "keydown", "keyup"])
         element.removeEventListener(type, sync);
       window.removeEventListener("focus", later);
-      window.removeEventListener("blur", sync);
+      window.removeEventListener("blur", later);
       document.removeEventListener("visibilitychange", later);
     };
   }, [sync]);

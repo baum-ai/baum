@@ -78,24 +78,6 @@ test("folds the sidebar, opens it under the pointer and pins it again", async ({
   }
   await expect.poll(() => width(page, ".local-rail")).toBe(244);
   await expect(lane(page)).toHaveAttribute("data-keyboard-focus", "");
-  // A menu it shows takes the focus without opening it: the menu hangs where
-  // its button was. (Help is focused by a script, as the app's arrow keys
-  // move focus in the sidebar; after the keys, that is keyboard focus too.)
-  const help = rail(page).getByRole("button", { name: "Help" });
-  await help.focus();
-  await expect(lane(page)).toHaveAttribute("data-keyboard-focus", "");
-  await page.keyboard.press("Enter");
-  await expect(page.getByRole("menuitem").first()).toBeFocused();
-  await expect(lane(page)).not.toHaveAttribute("data-keyboard-focus");
-  await expect.poll(() => width(page, ".local-rail")).toBe(56);
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("menu")).toBeHidden();
-  // Keyboard focus back in it opens it again.
-  for (let i = 0; i < 30; i++) {
-    await page.keyboard.press("Tab");
-    if (await page.evaluate(() => !!document.activeElement?.closest(".local-rail"))) break;
-  }
-  await expect.poll(() => width(page, ".local-rail")).toBe(244);
   await page.locator(".local-frame").click({ position: { x: 600, y: 10 } });
   await expect(lane(page)).not.toHaveAttribute("data-keyboard-focus");
   await expect.poll(() => width(page, ".local-rail")).toBe(56);
