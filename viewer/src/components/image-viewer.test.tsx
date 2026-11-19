@@ -58,9 +58,29 @@ describe("ImageViewer", () => {
 
     // The person drags the corner; a host re-render with a fresh object
     // leaves their size alone.
+    act(() => view.frame().dispatchEvent(new Event("pointerdown", { bubbles: true })));
     view.frame().style.width = "300px";
     view.render({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
     expect(view.frame().style.width).toBe("300px");
+    // A window resize leaves it alone too.
+    act(() => window.dispatchEvent(new Event("resize")));
+    view.render({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    expect(view.frame().style.width).toBe("300px");
+  });
+
+  it("refits to a resized window until the person drags the corner", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const before = view.frame().style.width;
+    const inner = Object.getOwnPropertyDescriptor(window, "innerWidth")!;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
+    try {
+      act(() => window.dispatchEvent(new Event("resize")));
+      const width = viewerImageWidth({ width: 40, height: 20 }, viewport(), 0);
+      expect(view.frame().style.width).toBe(`${width}px`);
+      expect(view.frame().style.width).not.toBe(before);
+    } finally {
+      Object.defineProperty(window, "innerWidth", inner);
+    }
   });
 
   it("fits an image of unknown size once it loads", () => {
@@ -85,8 +105,10 @@ describe("ImageViewer", () => {
 
     act(() => view.button("Full screen").click());
     expect(requestFullscreen).toHaveBeenCalledOnce();
+    // A dialog cannot go full screen itself; its content does.
+    expect(requestFullscreen.mock.contexts[0]).toBe(view.dialog.firstElementChild);
     expect(view.dialog.dataset.full).toBe("true");
-    expect(view.button("Exit full screen").getAttribute("aria-pressed")).toBe("true");
+    expect(view.button("Full screen").getAttribute("aria-pressed")).toBe("true");
 
     const escape = () => {
       const cancel = new Event("cancel", { cancelable: true });
