@@ -207,7 +207,7 @@ type Discovery struct {
 // Discover finds what Load would read for the repository containing dir.
 func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error) {
 	d := &Discovery{dir: dir, opts: opts}
-	// A clone whose worktrees git cannot list (git older than 2.36) is read
+	// A clone whose worktrees git cannot list is read
 	// as the one checkout containing dir.
 	if listed, err := gitlocal.Worktrees(ctx, dir); err == nil {
 		for _, worktree := range listed {
