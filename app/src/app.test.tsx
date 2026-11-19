@@ -2918,6 +2918,26 @@ it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
 });
+it("opens the shortcuts sheet from Go to", async () => {
+  entries = [entry(1)];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  await act(async () => root.render(<App />));
+  await press("k", { ctrlKey: true });
+  const option = Array.from(
+    node.querySelectorAll<HTMLElement>('[data-go-to] [role="option"]'),
+  ).find((one) => one.textContent?.startsWith("Keyboard shortcuts"))!;
+  expect(option.textContent).toBe("Keyboard shortcuts?Action");
+  await act(async () => option.click());
+  expect(node.querySelector("[data-go-to]")).toBeNull();
+  expect(node.querySelector("[data-shortcuts-sheet]")?.textContent).toContain(
+    "Refresh from GitHub",
+  );
+});
 it("folds the sidebar opened under the mouse when the pointer or focus leaves the window", async () => {
   entries = [entry(1)];
   // A narrow window always folds the sidebar.
@@ -2984,6 +3004,25 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
   expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
   await choose("Report a problem");
   expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
+});
+it("keeps the page's keys off the page behind the shortcuts sheet", async () => {
+  entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  history.replaceState(null, "", "/s/test-ns/?repository=acme%2Fdemo&pr=42");
+  await act(async () => root.render(<App />));
+  await press("?");
+  await act(async () => (document.activeElement as HTMLElement).click());
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
+  // With the focus outside the sheet, as after a click on its padding.
+  (document.activeElement as HTMLElement | null)?.blur();
+  await press("u");
+  expect(location.search).toContain("pr=42");
+  expect(node.querySelector("[data-shortcuts-sheet]")).not.toBeNull();
 });
 it("goes back to the inbox from a pull request page with u or Escape, keeping the filter", async () => {
   entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];

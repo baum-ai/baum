@@ -105,7 +105,7 @@ content. A failed later read keeps the content shown and says so in a banner. Na
 open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them.
 Dialog and panel dismissals use the viewer's `CloseButton`; confirmation actions
 keep their Cancel buttons until finished. The keyboard shortcuts dialog keeps
-its title and close control visible while the list scrolls.
+its title, search field and close control visible while the list scrolls.
 Every screen uses baum's bundled type from the
 viewer (`../viewer/src/fonts/fonts.css`), Instrument Sans for text and Manrope for
 headings, through its `--font-text` and `--font-heading` tokens. Both fonts are
@@ -689,7 +689,7 @@ the agent sessions, and, with a daemon that has inboxes, each saved inbox by its
 name (opening its queue) with **New inbox** and **Manage inboxes**. There is no
 Inbox page to go to, as no page shows the whole queue: every word typed must match, a label that starts with the
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes; it also
-offers **Open the session panel**. The sidebar
+offers **Open the session panel** and **Keyboard shortcuts**. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
 `aria-keyshortcuts`. Ctrl with the backtick (`` Ctrl+` ``) shows the session
 panel, or hides it from its composer, anywhere (see "Session panel").
@@ -778,7 +778,10 @@ page, `?` (or the `?` button in Pull
 requests' page bar) shows the sheet of every key, grouped by where it works
 (anywhere, the Inbox, Pull requests, a pull request or group, Sessions, Jobs,
 Repositories, a session or job transcript), with the current page's group
-first; `?` or `Esc` closes it. Key hints drawn
+first; `?` or `Esc` closes it. It opens on the list, which the arrow and page
+keys scroll; typing searches it by what a key does or by the key (`/` only
+moves to the search field), and `↓` from the field returns to the list. A key
+typed there never reaches the page behind the sheet. Key hints drawn
 on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 `useKeyHints` marks the document root then and clears it on release or when
 the window loses focus. Every page also shows its own keys then, in one line
