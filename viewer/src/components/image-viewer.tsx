@@ -33,6 +33,7 @@ export function ImageViewer({
   const header = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const closer = useRef<HTMLButtonElement>(null);
+  const fullButton = useRef<HTMLButtonElement>(null);
   const [full, setFull] = useState(false);
   const captionId = useId();
   // The size the frame fits to, until the person drags its corner; from then
@@ -77,6 +78,7 @@ export function ImageViewer({
     if (!src) return;
     const refit = () => {
       dialog.current?.removeAttribute("style");
+      frame.current?.style.removeProperty("max-width");
       if (!dragged.current && fitted.current) {
         fitFrame(frame.current, header.current, fitted.current);
       }
@@ -167,6 +169,15 @@ export function ImageViewer({
     element.style.top = `${at.top}px`;
     element.style.left = `${at.left}px`;
     bound(element);
+    // Past the height the window allows, a wider frame would only add bars
+    // beside the image, so the drag stops there.
+    const size = fitted.current;
+    if (size) {
+      const chrome = element.offsetHeight - event.currentTarget.offsetHeight;
+      const room = window.innerHeight - at.top - 16 - chrome;
+      const widest = Math.max(64, Math.floor((room * size.width) / size.height));
+      event.currentTarget.style.maxWidth = `min(100%, ${widest}px)`;
+    }
     window.addEventListener(
       "pointerup",
       () => {
@@ -187,6 +198,9 @@ export function ImageViewer({
         if (!full) return;
         event.preventDefault();
         leaveFullScreen();
+        // The dialog's own cancel handling can take focus; it stays on the
+        // control that entered full screen.
+        fullButton.current?.focus();
       }}
       onClose={() => {
         leaveFullScreen();
@@ -204,36 +218,37 @@ export function ImageViewer({
       {image && (
         <div
           ref={content}
-          className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 bg-surface-card [&:fullscreen]:p-3"
+          className="flex min-h-0 min-w-0 flex-auto flex-col gap-2 bg-surface-card [&:fullscreen]:p-3"
         >
-          {/* On a phone the caption takes its own row under the controls. A
-              long caption wraps to the image's width rather than widening
-              the dialog past it. */}
-          <div
-            ref={header}
-            className="flex flex-none [contain:inline-size] flex-col-reverse gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3"
-          >
-            <div id={captionId} className="min-w-0 pt-1 text-base text-secondary">
-              {caption}
-            </div>
-            <div className="flex flex-none items-center gap-2 self-end sm:self-auto">
-              <a
-                href={image.src}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-base"
-              >
-                Open original
-                <ExternalLinkIcon size={10} />
-              </a>
-              <IconButton
-                label="Full screen"
-                aria-pressed={full}
-                onClick={full ? leaveFullScreen : enterFullScreen}
-              >
-                {full ? <LeaveFullScreenIcon /> : <FullScreenIcon />}
-              </IconButton>
-              <CloseButton ref={closer} label="Close image" onClick={close} />
+          {/* The header takes the image's width rather than widening the
+              dialog past it. Where that leaves too little room beside the
+              controls, as on a phone or above a tall, narrow image, the
+              caption takes its own row under them. */}
+          <div ref={header} className="@container flex-none">
+            <div className="flex flex-col-reverse gap-2 @md:flex-row @md:items-start @md:justify-between @md:gap-3">
+              <div id={captionId} className="min-w-0 pt-1 text-base text-secondary">
+                {caption}
+              </div>
+              <div className="flex flex-none items-center gap-2 self-end @md:self-auto">
+                <a
+                  href={image.src}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-base"
+                >
+                  Open original
+                  <ExternalLinkIcon size={10} />
+                </a>
+                <IconButton
+                  ref={fullButton}
+                  label="Full screen"
+                  aria-pressed={full}
+                  onClick={full ? leaveFullScreen : enterFullScreen}
+                >
+                  {full ? <LeaveFullScreenIcon /> : <FullScreenIcon />}
+                </IconButton>
+                <CloseButton ref={closer} label="Close image" onClick={close} />
+              </div>
             </div>
           </div>
           <div
@@ -245,7 +260,7 @@ export function ImageViewer({
               // corner scales the image. It shrinks with the dialog when the
               // window does, letterboxing the image on the sunken surface.
               "min-h-0 min-w-0 max-w-full shrink self-center overflow-hidden rounded-md bg-surface-sunken",
-              full ? "aspect-auto! h-auto! w-full! flex-1" : "resize-x",
+              full ? "aspect-auto! h-auto! w-full! max-w-none! flex-1" : "resize-x",
             )}
           >
             <img
