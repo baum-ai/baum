@@ -685,3 +685,36 @@ func TestAHangAnnouncesTheWaitingChecksAgain(t *testing.T) {
 		t.Fatalf("second = %+v", r)
 	}
 }
+
+// A runner already polling claims a job as soon as it is queued; the job's
+// queued event still comes before its running.
+func TestQueuedIsPublishedBeforeRunning(t *testing.T) {
+	f := newFixture(t, func(o *Options) {
+		publish := o.Publish
+		o.Publish = func(e Event) {
+			if e.State == StateQueued {
+				// A slow publish widens the window a claim could slip into.
+				time.Sleep(50 * time.Millisecond)
+			}
+			publish(e)
+		}
+	})
+	claimed := make(chan Job, 1)
+	go func() {
+		job, _ := f.checker.Next(context.Background(), 3*time.Second)
+		claimed <- job
+	}()
+	time.Sleep(20 * time.Millisecond) // the runner is polling
+	done := f.submit(starter(t))
+	job := <-claimed
+	if job.ID == "" {
+		t.Fatal("no job came")
+	}
+	if err := f.checker.Report(job.ID, Report{}); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if got := f.events.states(job.ID); len(got) < 2 || !slices.Equal(got[:2], []string{StateQueued, StateRunning}) {
+		t.Fatalf("events = %v", got)
+	}
+}
