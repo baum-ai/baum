@@ -121,3 +121,18 @@ it("reads again when the window gets the focus or is shown, and ignores a hidden
   expect(root.style.getPropertyValue("--surface-page")).toBe("");
   vi.restoreAllMocks();
 });
+
+it("removes its listeners when stopped", async () => {
+  bridge(() => saved);
+  const win = vi.spyOn(window, "removeEventListener");
+  const doc = vi.spyOn(document, "removeEventListener");
+  stop = followTheme();
+  await settle();
+  expect(listeners).toHaveLength(1);
+  stop();
+  stop = undefined;
+  expect(listeners).toHaveLength(0);
+  expect(win).toHaveBeenCalledWith("focus", expect.any(Function));
+  expect(doc).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+  vi.restoreAllMocks();
+});

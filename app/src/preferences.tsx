@@ -166,6 +166,9 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
   useEffect(() => {
+    // Until the saved preferences arrive the defaults would strip what the
+    // desktop app's init script already painted, so wait, unless previewing.
+    if (!ready && !preview) return;
     const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
     const apply = () =>
       applyTheme(
@@ -175,7 +178,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     apply();
     dark?.addEventListener("change", apply);
     return () => dark?.removeEventListener("change", apply);
-  }, [preferences, preview]);
+  }, [preferences, preview, ready]);
   // The desktop app keeps what the saved theme resolves to for its own
   // screens, which cannot ask the daemon. A preview is never sent.
   const sentTheme = useRef("");

@@ -97,9 +97,11 @@ the daemon pages report it with `save_theme` and the screens read it with
 most 40 tokens per theme, values of at most 64 bytes, at most 32 KiB, mode
 `system`, `light` or `dark`, base `light` or `dark`) and refuses anything else
 without changing what is stored. An initialization script on the main window and
-the tray panel applies the saved theme before the first paint; it is built when
-the window is created, so after a change a later page load paints the theme saved
-at startup until the page applies the current one. Without a saved theme the
+the tray panel applies the saved theme before the first paint; it is built
+when the window is created, so each page load on the main window also pushes the
+current theme with a best-effort `eval` as the load starts (logged if it fails),
+and the page applies the live one right after. The tray panel keeps the theme
+saved at startup until its page applies the current one. Without a saved theme the
 screens follow the system's light or dark.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
@@ -812,9 +814,9 @@ doing anything (`src/zoom.rs`).
   button opens, which changes nothing and returns only the chosen folder. The
   page registers it through the daemon's own API. It also allows the zoom
   commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
-  offered levels, `save_theme` (shape-checked, see First run), and the updater's (`update_state`, `check_for_updates`,
-  `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
-  read the state, start a check, install only an update the app has already
+  offered levels, `save_theme` (shape-checked, see First run), and the updater's
+  (`update_state`, `check_for_updates`, `install_update`, `cancel_update` and
+  `dismiss_update_notice`): a page can read the state, start a check, install only an update the app has already
   downloaded and verified, and record that a notice was closed. It also
   allows `open_check_window` and `close_check_window` (see Tile check
   window). They can call no other Tauri command or

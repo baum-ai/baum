@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PreferencesProvider, usePreferences } from "./preferences";
+import * as native from "./desktop/native";
 import type { Theme } from "./theme";
 
 let node: HTMLDivElement;
@@ -12,14 +13,18 @@ const dusk: Theme = {
   base: "dark",
   tokens: { "--color-paper": "#e8eef4", "--not-allowed": "red" },
 };
-let saved = {
+const initial = {
   theme: "dark",
   light_theme: "default-light",
   dark_theme: "c-1",
   themes: [dusk],
 };
+let saved = initial;
 
 beforeEach(() => {
+  saved = initial;
+  document.documentElement.removeAttribute("data-theme");
+  document.documentElement.removeAttribute("style");
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   node = document.createElement("div");
   document.body.append(node);
@@ -70,8 +75,36 @@ it("tells the desktop app the saved theme, but never a preview, and not twice", 
 });
 
 it("sends nothing outside the desktop app", async () => {
+  const invoke = vi.fn(async () => undefined);
+  vi.spyOn(native, "invoke").mockImplementation(invoke);
   await mount();
   expect(api.ready).toBe(true);
+  expect(invoke).not.toHaveBeenCalled();
+  vi.restoreAllMocks();
+});
+
+it("leaves a pre-painted root alone until the preferences are ready", async () => {
+  const html = document.documentElement;
+  html.dataset.theme = "dark";
+  html.style.setProperty("--color-paper", "#123456");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      await gate;
+      return Response.json(saved);
+    }),
+  );
+  await mount();
+  expect(api.ready).toBe(false);
+  expect(html.dataset.theme).toBe("dark");
+  expect(html.style.getPropertyValue("--color-paper")).toBe("#123456");
+  await act(async () => release());
+  await vi.waitFor(() => expect(api.ready).toBe(true));
+  expect(html.dataset.theme).toBe("dark");
+  expect(html.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
+  expect(html.style.getPropertyValue("--not-allowed")).toBe("");
 });
 
 it("shows the slot's built-in when a slot names a theme that is gone", async () => {

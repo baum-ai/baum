@@ -438,6 +438,12 @@ fn main() {
                 .on_page_load(|webview, payload| {
                     if payload.event() == tauri::webview::PageLoadEvent::Started {
                         zoom::apply(webview.as_ref());
+                        // Best effort: the init script holds the theme saved
+                        // at startup, so push the current one.
+                        let script = theme::script(&webview.state::<theme::Store>().get());
+                        if let Err(e) = webview.eval(&script) {
+                            eprintln!("baum desktop: cannot refresh the theme: {e}");
+                        }
                         // The page that opened the check window is gone.
                         check_window::close_soon(webview.app_handle());
                     }

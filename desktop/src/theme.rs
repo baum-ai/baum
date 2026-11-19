@@ -136,20 +136,25 @@ impl Store {
         self.saved.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
-    /// Replaces and saves the theme, or refuses it and changes nothing.
+    /// Replaces and saves the theme, or refuses it and changes nothing: a theme
+    /// that fails the shape check or cannot be written (including into a damaged
+    /// section) leaves the current one in place.
     fn set(&self, next: Saved) -> Result<(), String> {
         check(&next)?;
         let mut current = self.saved.lock().unwrap_or_else(|p| p.into_inner());
         if *current == next {
             return Ok(());
         }
-        *current = next.clone();
+        // Memory follows the disk, so a failed write is neither shown nor
+        // mistaken for saved when the same theme comes again.
         if let Some(path) = &self.path
             && let Err(e) =
-                crate::settings::update(path, SECTION, |saved: &mut Saved| *saved = next)
+                crate::settings::update(path, SECTION, |saved: &mut Saved| *saved = next.clone())
         {
             eprintln!("baum desktop: cannot save the theme: {e}");
+            return Err(format!("cannot save the theme: {e}"));
         }
+        *current = next;
         Ok(())
     }
 }
@@ -165,8 +170,12 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// The initialization script of a window: applies `saved` before the first
-/// paint, as `applyTheme` in the app does (`data-theme`, `color-scheme` and
-/// inline tokens), choosing the slot with `matchMedia` in system mode. The
+/// paint like `applyTheme` in the app (`data-theme`, `color-scheme` and inline
+/// tokens), choosing the slot with `matchMedia` in system mode. Unlike
+/// `applyTheme`, which manages only the allowlisted tokens, it sets every
+/// stored token, so a token outside the allowlist would stick. Only a daemon
+/// page calling `save_theme` directly can store one (the app sends only
+/// allowlisted tokens), and the effect is cosmetic. The
 /// data is JSON with `<`, U+2028 and U+2029 escaped, so no value can end a
 /// script element or a string. The page's own code applies the live theme
 /// right after.
@@ -250,6 +259,25 @@ mod tests {
         };
         Store::in_dir(dir.clone()).set(next.clone()).unwrap();
         assert_eq!(Store::in_dir(dir.clone()).get(), next);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_failed_write_is_not_kept_in_memory() {
+        let dir = scratch("unwritable");
+        fs::create_dir_all(&dir).unwrap();
+        // A file where the directory should be makes every write fail.
+        let blocker = dir.join("blocker");
+        fs::write(&blocker, "x").unwrap();
+        let store = Store {
+            saved: Mutex::new(Saved::default()),
+            path: Some(blocker.join(crate::settings::FILE)),
+        };
+        let next = saved(palette(Base::Light, &[("--surface-page", "white")]));
+        assert!(store.set(next.clone()).is_err());
+        assert_eq!(store.get(), Saved::default());
+        // The retry is not mistaken for already saved.
+        assert!(store.set(next).is_err());
         let _ = fs::remove_dir_all(dir);
     }
 
