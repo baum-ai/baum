@@ -172,8 +172,10 @@ if [ -n "$baseline" ]; then
   exec 9>&-
 
   # Both sides start from homes in the same state: the same seed at the
-  # same path in each container gives the same dataset (the runners check
-  # its digest), and nothing a previous comparison left. The Claude Code
+  # same path in each container, written by this checkout's generator for
+  # both (isolated.sh), since the dataset a seed gives changes between
+  # commits, gives the same dataset (the runners check its digest), and
+  # nothing a previous comparison left. The Claude Code
   # each home installs stays.
   seed=--seed-data
   case $pass in *--seed-data=*) seed=$(printf '%s\n' "$pass" | grep -- '--seed-data=' | tail -n 1) ;; esac

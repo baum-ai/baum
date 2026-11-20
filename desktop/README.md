@@ -1323,16 +1323,17 @@ builds nothing; the three most recent stay. The shell is built per side
 because its connecting screen and commands are part of what cold start
 measures. A REF from before the profiling runner has no
 `__baumPerf.progress()` to drive, so the comparison stops before building,
-saying so; `main` is such a REF until the runner merges.
+saying so.
 
 Each side runs in its own headless instance, `NAME-head` and `NAME-base`
 (`profile-head` and `profile-base` by default), at the same time: two
 containers, each with its own daemon, which keeps running between launches
 as it does for a user. Their homes are emptied (but for the Claude Code
 they installed) and seeded afresh with the same seed (`--seed-data=SEED`,
-1 by default) at the same path, so both start from the same data and from
-no cache; the runners check that the datasets' digests match before the
-first run. A home of its own per side means one version's daemon never
+1 by default) at the same path, both by this checkout's generator, since
+the dataset a seed gives changes between commits. So both start from the
+same data and from no cache; the runners check that the datasets' digests
+match before the first run. A home of its own per side means one version's daemon never
 migrates or caches what the other then reads. `--copy-data` and
 `--workspace` do not apply.
 
