@@ -84,6 +84,7 @@ import { useDeadlineNow } from "./live";
 import { peekHref } from "./sessions";
 import {
   canMerge,
+  readyToMerge,
   defaultMergeMethod,
   mergeMethodLabel,
   mergeRefusal,
@@ -205,7 +206,7 @@ function kindOf(entry: Entry, jobs: Job[]): UpNextKind | null {
   if (blocked(entry)) return "fix";
   // GitHub can call a head just pushed clean before its checks are queued;
   // checks running say the merge is not ready yet, whatever the merge state.
-  if (canMerge(entry) && entry.checks !== "running") return "merge";
+  if (readyToMerge(entry) && entry.checks !== "running") return "merge";
   if (canUpdateBranch(entry)) return "update";
   return null;
 }
@@ -1538,7 +1539,7 @@ export function UpNextPage({
       setMenu(false);
       button.click();
     } else if (key === "m") {
-      if (selected?.item?.kind !== "merge") return;
+      if (!selected || selected.job || !canMerge(selected.entry)) return;
       event.preventDefault();
       setMenu(false);
       setMerging(selected.entry);
@@ -1599,11 +1600,11 @@ export function UpNextPage({
         hint: watchable ? "t" : undefined,
         onSelect: () => navigate(jobHref(run)),
       });
+    if (!job && canMerge(entry))
+      items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
     if (!job && !waiting) {
       const label = fixLabel(entry);
-      if (item?.kind === "merge")
-        items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
-      else if (item?.kind === "update")
+      if (item?.kind === "update")
         items.push({ label: "Update the branch…", onSelect: () => setUpdating(entry) });
       else if (item?.kind === "fix" && label && cloneFor(entry) && !fixState(entry).starting)
         items.push({ label, hint: "f", onSelect: () => fix(entry) });
@@ -2459,8 +2460,8 @@ function Panel({
         ? `${pr.author ?? "Someone"}'s, assigned to you`
         : `By ${pr.author ?? "someone else"}`;
   // Opening the pull request is always the default; what the kind asks for
-  // follows it. A merge or branch update opens its confirmation; a fix starts
-  // at once.
+  // follows it, then Merge whenever GitHub can merge it. A merge or branch
+  // update opens its confirmation; a fix starts at once.
   const actions = (
     <>
       <Link href={href} className={cn("upnext-primary", PRIMARY)}>
@@ -2478,25 +2479,7 @@ function Panel({
             </kbd>
           ) : null}
         </Link>
-      ) : waiting ? (
-        pr.url ? (
-          <a
-            href={pr.url}
-            target="_blank"
-            rel="noreferrer"
-            className={cn("upnext-secondary", SECONDARY)}
-          >
-            Open on GitHub
-          </a>
-        ) : null
-      ) : kind === "merge" ? (
-        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
-          Merge
-          <kbd aria-hidden="true" className="key-hint">
-            m
-          </kbd>
-        </button>
-      ) : kind === "update" ? (
+      ) : waiting ? null : kind === "update" ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={update}>
           Update the branch
         </button>
@@ -2517,6 +2500,14 @@ function Panel({
               </kbd>
             </>
           )}
+        </button>
+      ) : null}
+      {!job && canMerge(entry) ? (
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
+          Merge
+          <kbd aria-hidden="true" className="key-hint">
+            m
+          </kbd>
         </button>
       ) : null}
     </>

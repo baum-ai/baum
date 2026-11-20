@@ -376,10 +376,11 @@ it("distinguishes a GitHub blocker from a required review without requiring appr
   )!;
   expect(github.textContent).toContain("Merge blocked by GitHub");
   expect(github.textContent).toContain("GitHub has not supplied the reason.");
-  expect(
-    panel().querySelector('.upnext-actions a[href="https://github.com/acme/demo/pull/1130"]')
-      ?.textContent,
-  ).toBe("Open on GitHub");
+  // GitHub can still merge it, so Merge stays the person's call; the panel has
+  // no Open on GitHub button.
+  const actions = Array.from(panel().querySelectorAll(".upnext-actions a, .upnext-actions button"));
+  expect(actions.some((action) => action.textContent === "Open on GitHub")).toBe(false);
+  expect(actions.some((action) => action.textContent?.startsWith("Merge"))).toBe(true);
 });
 
 it.each<Overrides>([

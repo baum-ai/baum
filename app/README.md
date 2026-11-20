@@ -631,7 +631,8 @@ beside its Transcript): the notice goes and the run joins the fix runs below,
 remembered in this browser (`useDismissedFixes`, the 50 latest). A running
 fix's notice cannot be dismissed.
 
-Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
+Merging: an open pull request, not a draft, that GitHub can merge (Merge state
+Ready or Blocked, that is without a conflict) shows a
 Merge button in the PR page header, **Merge…** in its Pull requests row's
 menu, and the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
@@ -743,8 +744,7 @@ opened on the page itself goes to its list.
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `g`/`Home` and `G`/`End` move it to the first and last row, `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
-where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
+its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them, `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
 and `Esc` clears the focus. On a pull request's or group's page, `Shift+K`
 (`Shift+↑`, `←`) and `Shift+J` (`Shift+↓`, `→`) move to the previous and next
@@ -907,7 +907,9 @@ GitHub** without guessing the cause. Older snapshots without the review
 requirement keep that neutral explanation. An otherwise unexplained GitHub
 merge blocker adds **Merge blocked by GitHub** under **On GitHub**, saying when
 GitHub has not supplied the reason. Known blockers keep their existing rows and
-chips. **Open on GitHub** is offered beside Open for waiting pull requests.
+chips. **Merge** is offered beside Open, and `m` opens it, for any pull request
+GitHub can merge, failing checks or missing reviews
+included; only a Ready one joins Ready to merge.
 
 The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was

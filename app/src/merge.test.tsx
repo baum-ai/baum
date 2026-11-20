@@ -139,7 +139,7 @@ it("will not merge when the head moved since the inbox was read", async () => {
   expect(posts).toEqual([]);
 });
 
-it("offers Merge on ready rows only and opens the dialog from the row", async () => {
+it("offers Merge on rows GitHub can merge, not on a conflict, and opens the dialog from the row", async () => {
   const rows = [entry(1), entry(2, "blocked"), entry(3, "conflict")];
   await act(async () =>
     root.render(
@@ -160,10 +160,11 @@ it("offers Merge on ready rows only and opens the dialog from the row", async ()
     act(async () =>
       node.querySelector<HTMLButtonElement>(`button[aria-label="Actions for ${name}"]`)!.click(),
     );
-  for (const name of ["acme/demo #2", "acme/demo #3"]) {
-    await openActions(name);
-    expect(choices()).toHaveLength(0);
-  }
+  await openActions("acme/demo #3");
+  expect(choices()).toHaveLength(0);
+  // Blocked (failing checks, missing reviews) is the person's call.
+  await openActions("acme/demo #2");
+  expect(choices()).toHaveLength(1);
   await openActions("acme/demo #1");
   expect(choices()).toHaveLength(1);
   await act(async () => choices()[0]!.click());
