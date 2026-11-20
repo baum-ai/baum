@@ -83,6 +83,10 @@ only what the new commits changed.
   longer exists; a kept point names the section that covers it now.
 - Remove what no longer holds, and check every kept intent line against
   the current change.
+- When the verdict or summary says something is fixed or now behaves
+  differently, name the new behaviour in the code's and the sections' own
+  terms: do not paraphrase it into another category (a retry that is now
+  repeated is not "conditional", an idle timeout is not a deadline).
 
 ## Final checklist
 

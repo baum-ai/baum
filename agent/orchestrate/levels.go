@@ -361,8 +361,14 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, h 
 	var result sectionResult
 	c := call{level: LevelSections, id: s.ID, label: label("section", s.ID), input: input, schema: SectionSchema(o.registry.names()),
 		instructions: o.prompt.Section + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("section", s.ID)) + "`.\n"}
+	// A revision is sent back at most once to re-check previous claims it
+	// repeats over changed code; the same text after is taken as checked.
+	recheck := true
 	c.check = func(reply []byte, lenient bool) string {
-		r, findings := checkSection(reply, s, rev, h.fixed, planned, o.tileIDs(), o.facts, o.registry, lenient)
+		r, findings := checkSection(reply, s, rev, h.fixed, planned, o.tileIDs(), o.facts, o.registry, lenient, recheck)
+		if r.Rechecked {
+			recheck = false
+		}
 		if findings == "" {
 			result = r
 		}

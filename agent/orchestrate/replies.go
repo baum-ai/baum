@@ -289,6 +289,9 @@ type sectionResult struct {
 	Dropped map[string]string
 	// Kept is a reply that kept the previous version's body and risks.
 	Kept bool
+	// Rechecked is a reply sent back for previous claims it repeats over
+	// changed code (unrevisedClaims).
+	Rechecked bool
 }
 
 // checkSection checks a section agent's reply. taken are the IDs of the
@@ -308,7 +311,13 @@ type sectionResult struct {
 // added code (reviewv2.Revised.Additive: what the text describes may have
 // changed even where it cites nothing), or when the text cites a hunk the
 // section no longer has; the agent then writes the section.
-func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised, fixed []string, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
+//
+// A revision that repeats word for word a previous point or risk resting on
+// a gone hunk, now citing a new one, is sent back once to re-check it
+// (unrevisedClaims) when recheck is set and the pass is not lenient; the
+// caller clears recheck once a reply was (sectionResult.Rechecked), so the
+// same text on a later pass is taken as checked.
+func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised, fixed []string, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient, recheck bool) (sectionResult, string) {
 	var s sectionReply
 	if problem := decode(reply, &s); problem != "" {
 		return sectionResult{}, problem
@@ -477,6 +486,12 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 		}
 		out.Body = append(out.Body, b)
 	}
+	if rev != nil && recheck && !lenient {
+		if paths, claims := unrevisedClaims(s, *rev); len(claims) > 0 {
+			out.Rechecked = true
+			c.add(strings.Join(paths, ", "), "%s; read the new hunk and confirm each claim still holds: rewrite what changed in meaning even if no number or name changed (a deadline that became an idle timeout, a bound that no longer bounds), and send the text again as it is only if all of it still holds", strings.Join(claims, "; "))
+		}
+	}
 	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: section.ID, Kind: section.Kind, Body: out.Body, Risks: out.Risks}, f.refs))
 	if len(c.findings) > 0 {
 		return out, c.String()
@@ -485,6 +500,68 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 	// MaxPoints.
 	out.Body, _ = reviewv2.CheckBody(out.Body, f.refs)
 	return out, ""
+}
+
+// unrevisedClaims are the points and risks of a revision's reply (their
+// paths, and each described) whose text is a previous point's or risk's
+// word for word (whitespace aside) that cited a gone hunk, and that now
+// cite a hunk new to the pull request (reviewv2.Revised.New): the cites
+// moved to the new code, but the claims may no longer hold.
+func unrevisedClaims(s sectionReply, rev reviewv2.Revised) (paths, claims []string) {
+	stale := map[string][]string{}
+	note := func(text string, cites []reviewv2.Anchor) {
+		if code, gone, _ := claimCode(reviewv2.CitedHunks(cites), rev); code == codeChanged && len(gone) > 0 {
+			key := sameText(text)
+			for _, h := range gone {
+				if !slices.Contains(stale[key], h) {
+					stale[key] = append(stale[key], h)
+				}
+			}
+		}
+	}
+	for _, b := range rev.Previous.Body {
+		for _, p := range b.Items {
+			note(p.Text, p.Cites)
+		}
+	}
+	for _, risk := range rev.Previous.Risks {
+		note(risk.Text, risk.Cites)
+	}
+	if len(stale) == 0 {
+		return nil, nil
+	}
+	check := func(path, text string, cites []json.RawMessage) {
+		gone, ok := stale[sameText(text)]
+		if !ok {
+			return
+		}
+		var fresh []string
+		for _, h := range hunkCites(cites) {
+			if slices.Contains(rev.New, h) && !slices.Contains(fresh, h) {
+				fresh = append(fresh, h)
+			}
+		}
+		if len(fresh) == 0 {
+			return
+		}
+		paths = append(paths, path)
+		claims = append(claims, fmt.Sprintf("%q is the previous text unchanged, but the code it described changed (%s gone, now %s)", clean(text), strings.Join(gone, ", "), strings.Join(fresh, ", ")))
+	}
+	for i, b := range s.Body {
+		for j, p := range b.Items {
+			check(fmt.Sprintf("/body/%d/items/%d/text", i, j), p.Text, p.Cites)
+		}
+	}
+	for i, risk := range s.Risks {
+		check(fmt.Sprintf("/risks/%d/text", i), risk.Text, risk.Cites)
+	}
+	return paths, claims
+}
+
+// sameText is a text as unrevisedClaims compares it: clean, whitespace
+// folded.
+func sameText(s string) string {
+	return strings.Join(strings.Fields(clean(s)), " ")
 }
 
 // keptText is a kept section's previous body and risks as this version

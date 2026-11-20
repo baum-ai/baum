@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/baum-ai/baum/bundle"
@@ -151,6 +152,7 @@ func sectionBrief(s reviewv2.Section, tiles []reviewv2.Tile, hunks map[string][]
 
 // revisionBlock is a revised section's previous text, for its agent to
 // start from: the body's blocks and the active risks in the reply's shape,
+// each claim marked with whether the code it rests on changed (claimCode),
 // each hunk's status (reviewv2.Revised), the risks handed over with its
 // joined hunks and the risk IDs fixed earlier (fixed). A section of a new
 // ID (id) is told which previous section it continues.
@@ -160,16 +162,18 @@ func revisionBlock(id string, r reviewv2.Revised, fixed []string) string {
 	if r.Previous.ID != id {
 		out.WriteString("Your section continues the previous version's section " + jsonText(r.Previous.Title) + " (" + r.Previous.ID + "), whose code it now has under a new ID.\n")
 	}
+	out.WriteString("Each claim's code says what it rests on now: a point's or risk's cited hunks, and a prose or note block (which cites nothing) the section's code as a whole. changed: a hunk it rests on is gone (listed in gone), so check every sentence of it against the new hunks' meaning; unchanged: none is gone (moved lists those now in another section).\n")
 	out.WriteString("body:\n")
 	for _, b := range r.Previous.Body {
-		out.WriteString(jsonText(b) + "\n")
+		out.WriteString(jsonText(markedBlock(b, r)) + "\n")
 	}
 	out.WriteString("risks:\n")
 	if len(r.Previous.Risks) == 0 {
 		out.WriteString("(none)\n")
 	}
 	for _, risk := range r.Previous.Risks {
-		out.WriteString(jsonText(risk) + "\n")
+		code, gone, moved := claimCode(reviewv2.CitedHunks(risk.Cites), r)
+		out.WriteString(jsonText(markedRisk{Risk: risk, Code: code, Gone: gone, Moved: moved}) + "\n")
 	}
 	out.WriteString("Your hunks against the previous version's (joined: unchanged code the previous version reviewed in another section; moved: now in another section; gone: no longer in the pull request, where the previous version's diff placed it):\n")
 	for _, id := range r.Unchanged {
@@ -189,6 +193,80 @@ func revisionBlock(id string, r reviewv2.Revised, fixed []string) string {
 	}
 	out.WriteString(joinedRisks(r.JoinedRisks) + fixedIDs(fixed))
 	return out.String()
+}
+
+// Claim codes: whether the code a previous claim rests on changed.
+const (
+	codeChanged   = "changed"
+	codeUnchanged = "unchanged"
+)
+
+// claimCode is what a previous claim citing the hunks cited rests on now
+// (reviewv2.Revised): changed when one of them is gone, with the gone and
+// the moved ones. A claim citing no hunk rests on the section's code as a
+// whole: changed when any of its previous hunks is gone.
+func claimCode(cited []string, r reviewv2.Revised) (code string, gone, moved []string) {
+	if len(cited) == 0 {
+		if len(r.Gone) > 0 {
+			return codeChanged, nil, nil
+		}
+		return codeUnchanged, nil, nil
+	}
+	for _, h := range cited {
+		if slices.ContainsFunc(r.Gone, func(g reviewv2.GoneHunk) bool { return g.ID == h }) && !slices.Contains(gone, h) {
+			gone = append(gone, h)
+		}
+		if slices.ContainsFunc(r.Moved, func(m reviewv2.MovedHunk) bool { return m.ID == h }) && !slices.Contains(moved, h) {
+			moved = append(moved, h)
+		}
+	}
+	if len(gone) > 0 {
+		return codeChanged, gone, moved
+	}
+	return codeUnchanged, nil, moved
+}
+
+// markedPoint, markedBlock and markedRisk are a previous section's text as
+// its revision reads it: in the reply's shape, each claim with its code
+// (claimCode).
+type markedPoint struct {
+	reviewv2.Point
+	Code  string   `json:"code"`
+	Gone  []string `json:"gone,omitempty"`
+	Moved []string `json:"moved,omitempty"`
+}
+
+type markedRisk struct {
+	reviewv2.Risk
+	Code  string   `json:"code"`
+	Gone  []string `json:"gone,omitempty"`
+	Moved []string `json:"moved,omitempty"`
+}
+
+type markedBlockText struct {
+	Type  string        `json:"type"`
+	Title string        `json:"title,omitempty"`
+	Text  string        `json:"text,omitempty"`
+	Items []markedPoint `json:"items,omitempty"`
+	Tile  string        `json:"tile,omitempty"`
+	Code  string        `json:"code,omitempty"`
+}
+
+// markedBlock is a previous block with its claims' codes: each point's, and
+// a prose or note block's own; a tile block claims nothing.
+func markedBlock(b reviewv2.Block, r reviewv2.Revised) markedBlockText {
+	out := markedBlockText{Type: b.Type, Title: b.Title, Text: b.Text, Tile: b.Tile}
+	switch b.Type {
+	case reviewv2.BlockPoints:
+		for _, p := range b.Items {
+			code, gone, moved := claimCode(reviewv2.CitedHunks(p.Cites), r)
+			out.Items = append(out.Items, markedPoint{Point: p, Code: code, Gone: gone, Moved: moved})
+		}
+	case reviewv2.BlockTile:
+	default:
+		out.Code, _, _ = claimCode(nil, r)
+	}
+	return out
 }
 
 // joinedBlock is, for a section the previous version did not write under

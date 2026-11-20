@@ -273,7 +273,7 @@ func TestKeepChecks(t *testing.T) {
 	section := reviewv2.Section{ID: "sec_retry", Kind: reviewv2.KindLogical, Hunks: []string{hunkA, hunkB}}
 	planned := []reviewv2.Tile{{ID: "tl_backoff", Type: "table", Owner: "sec_retry"}}
 	check := func(reply string, rev *reviewv2.Revised) (sectionResult, string) {
-		return checkSection([]byte(reply), section, rev, nil, planned, map[string]bool{}, facts, NewRegistry(nil), true)
+		return checkSection([]byte(reply), section, rev, nil, planned, map[string]bool{}, facts, NewRegistry(nil), true, true)
 	}
 	previous := retrySection([]string{hunkA}, hunkA)
 	previous.Risks = []reviewv2.Risk{}
@@ -300,10 +300,10 @@ func TestKeepChecks(t *testing.T) {
 	}
 	// A risk that takes a fixed ID is sent back, and renamed on the last pass.
 	fixed := []string{"rsk_unbounded", "rsk_unbounded_2"}
-	if _, findings := checkSection([]byte(sectionReplyJSON(`[]`)), section, nil, fixed, planned, map[string]bool{}, facts, NewRegistry(nil), false); !strings.Contains(findings, "/risks/0/id: rsk_unbounded is a risk fixed in an earlier version; give this risk a new ID") {
+	if _, findings := checkSection([]byte(sectionReplyJSON(`[]`)), section, nil, fixed, planned, map[string]bool{}, facts, NewRegistry(nil), false, true); !strings.Contains(findings, "/risks/0/id: rsk_unbounded is a risk fixed in an earlier version; give this risk a new ID") {
 		t.Errorf("a fixed risk ID: %q", findings)
 	}
-	if r, findings := checkSection([]byte(sectionReplyJSON(`[]`)), section, nil, fixed, planned, map[string]bool{}, facts, NewRegistry(nil), true); findings != "" || len(r.Risks) != 1 || r.Risks[0].ID != "rsk_unbounded_3" {
+	if r, findings := checkSection([]byte(sectionReplyJSON(`[]`)), section, nil, fixed, planned, map[string]bool{}, facts, NewRegistry(nil), true, true); findings != "" || len(r.Risks) != 1 || r.Risks[0].ID != "rsk_unbounded_3" {
 		t.Errorf("a fixed risk ID on the last pass: %q %+v", findings, r.Risks)
 	}
 	withBody := strings.Replace(sectionReplyJSON(`[]`), `"keep":false`, `"keep":true`, 1)
@@ -702,5 +702,167 @@ func TestRenamedSectionKept(t *testing.T) {
 	}
 	if fixed := risks["rsk_fixed"]; fixed.State != "mitigated" || len(s.Risks) != 2 {
 		t.Errorf("risks: %+v", s.Risks)
+	}
+}
+
+// The poll section of a pull request whose fixed deadline became an idle
+// timeout: a point and a risk resting on the gone hunk (hunkGone), one point
+// on unchanged code (hunkA), and hunkB new.
+func pollRevision() *reviewv2.Revised {
+	previous := reviewv2.Section{ID: "sec_retry", Kind: reviewv2.KindLogical, Hunks: []string{hunkA, hunkGone},
+		Body: []reviewv2.Block{
+			{Type: reviewv2.BlockProse, Text: "Repositories poll in parallel."},
+			{Type: reviewv2.BlockPoints, Items: []reviewv2.Point{
+				{Text: "At most three repositories poll at once, each bounded by the same 45 s timeout as before.", Cites: hunkAnchors([]string{hunkGone})},
+				{Text: "Results are merged in order.", Cites: hunkAnchors([]string{hunkA})},
+			}},
+			{Type: reviewv2.BlockTile, Tile: "tl_backoff"},
+		},
+		Risks: []reviewv2.Risk{
+			{ID: "rsk_stale", Tier: "low", Category: "correctness", Text: "A slow poll shows results which can be tens of seconds old.", Cites: hunkAnchors([]string{hunkGone, hunkA})},
+			{ID: "rsk_order", Tier: "low", Category: "correctness", Text: "A failed poll reorders results.", Cites: hunkAnchors([]string{hunkA})},
+		}}
+	return &reviewv2.Revised{Previous: previous, Unchanged: []string{hunkA}, New: []string{hunkB},
+		Gone: []reviewv2.GoneHunk{{ID: hunkGone, Path: "queue/old.go", Start: 3, Count: 7}}}
+}
+
+// The revision input marks each previous claim with whether the code it
+// rests on changed: a point or risk citing a gone hunk is changed (with
+// it), one citing only unchanged hunks unchanged, and a prose block rests
+// on the section's code as a whole.
+func TestRevisionMarksClaims(t *testing.T) {
+	rev := pollRevision()
+	input := revisionBlock("sec_retry", *rev, nil)
+	for _, want := range []string{
+		`{"type":"prose","text":"Repositories poll in parallel.","code":"changed"}`,
+		`"text":"At most three repositories poll at once, each bounded by the same 45 s timeout as before.","cites":[{"id":"` + hunkGone + `","type":"hunk"}],"code":"changed","gone":["` + hunkGone + `"]}`,
+		`"text":"Results are merged in order.","cites":[{"id":"` + hunkA + `","type":"hunk"}],"code":"unchanged"}`,
+		`{"type":"tile","tile":"tl_backoff"}`,
+		`"id":"rsk_stale","tier":"low","category":"correctness","text":"A slow poll shows results which can be tens of seconds old.","cites":[{"id":"` + hunkGone + `","type":"hunk"},{"id":"` + hunkA + `","type":"hunk"}],"code":"changed","gone":["` + hunkGone + `"]}`,
+		`"id":"rsk_order","tier":"low","category":"correctness","text":"A failed poll reorders results.","cites":[{"id":"` + hunkA + `","type":"hunk"}],"code":"unchanged"}`,
+	} {
+		if !strings.Contains(input, want) {
+			t.Errorf("the revision input lacks %s:\n%s", want, input)
+		}
+	}
+	// Without a gone hunk the prose rests on unchanged code; a point on a
+	// moved hunk is unchanged and says where it moved.
+	moved := *rev
+	moved.Gone = nil
+	moved.Moved = []reviewv2.MovedHunk{{ID: hunkGone, To: "sec_api"}}
+	input = revisionBlock("sec_retry", moved, nil)
+	for _, want := range []string{
+		`{"type":"prose","text":"Repositories poll in parallel.","code":"unchanged"}`,
+		`"code":"unchanged","moved":["` + hunkGone + `"]}`,
+	} {
+		if !strings.Contains(input, want) {
+			t.Errorf("the revision input lacks %s:\n%s", want, input)
+		}
+	}
+}
+
+// pollReply is a revision of pollRevision whose first point and first risk
+// are point and risk, each citing cites.
+func pollReply(point, risk string, cites ...string) string {
+	anchors, _ := json.Marshal(hunkAnchors(cites))
+	return `{"keep":false,"body":[
+  {"type":"prose","title":null,"text":"Repositories poll in parallel and stop when idle.","items":null,"tile":null},
+  {"type":"points","title":null,"text":null,"items":[
+   {"text":` + jsonText(point) + `,"more":null,"cites":` + string(anchors) + `},
+   {"text":"Results are merged in order.","more":null,"cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]}],"tile":null}],
+ "risks":[
+  {"id":"rsk_stale","tier":"low","category":"correctness","text":` + jsonText(risk) + `,"cites":` + string(anchors) + `},
+  {"id":"rsk_order","tier":"low","category":"correctness","text":"A failed poll reorders results.","cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]}],
+ "tiles":[],"propose":null}`
+}
+
+// A revision that repeats word for word a point or risk resting on a gone
+// hunk while its cites moved to a new hunk is sent back once on a strict
+// pass, listing them; the lenient pass, or a pass after the section was
+// asked, takes it. Claims kept over unchanged code, rewritten claims and
+// keeps are not sent back.
+func TestRevisionRechecksClaimsOverChangedCode(t *testing.T) {
+	facts := newFacts(testBundle(), nil)
+	section := reviewv2.Section{ID: "sec_retry", Kind: reviewv2.KindLogical, Hunks: []string{hunkA, hunkB}}
+	check := func(reply string, rev *reviewv2.Revised, lenient, recheck bool) (sectionResult, string) {
+		return checkSection([]byte(reply), section, rev, nil, nil, map[string]bool{}, facts, NewRegistry(nil), lenient, recheck)
+	}
+	rev := pollRevision()
+	oldPoint := rev.Previous.Body[1].Items[0].Text
+	oldRisk := rev.Previous.Risks[0].Text
+	// Whitespace aside, the same text.
+	stale := pollReply(" "+strings.Replace(oldPoint, " ", "  ", 2), oldRisk, hunkB)
+	r, findings := check(stale, rev, false, true)
+	want := "/body/1/items/0/text, /risks/0/text: " + jsonText(oldPoint) + " is the previous text unchanged, but the code it described changed (" + hunkGone + " gone, now " + hunkB + "); " +
+		jsonText(oldRisk) + " is the previous text unchanged, but the code it described changed (" + hunkGone + " gone, now " + hunkB + "); read the new hunk and confirm each claim still holds"
+	if !strings.Contains(findings, want) || !r.Rechecked {
+		t.Errorf("a stale revision on a strict pass: %v %q", r.Rechecked, findings)
+	}
+	if strings.Contains(findings, "\n") {
+		t.Errorf("more than one finding: %q", findings)
+	}
+	for _, c := range []struct {
+		name             string
+		reply            string
+		lenient, recheck bool
+	}{
+		{name: "lenient pass", reply: stale, lenient: true, recheck: true},
+		{name: "asked before", reply: stale, recheck: false},
+		{name: "cites still the unchanged hunk", reply: pollReply(oldPoint, oldRisk, hunkA), recheck: true},
+		{name: "rewritten", reply: pollReply("At most three repositories poll at once, each stopped after 45 s without progress.", "A poll that keeps making progress never times out.", hunkB), recheck: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if r, findings := check(c.reply, rev, c.lenient, c.recheck); findings != "" || r.Rechecked {
+				t.Errorf("sent back: %v %q", r.Rechecked, findings)
+			}
+		})
+	}
+	// A claim kept word for word over unchanged code is not sent back, even
+	// when the section's other code is gone and it now cites a new hunk too.
+	unchanged := strings.Replace(pollReply("Repositories poll on a timer.", "Polls overlap.", hunkB),
+		`"text":"Results are merged in order.","more":null,"cites":[`, `"text":"Results are merged in order.","more":null,"cites":[{"type":"hunk","id":"`+hunkB+`","lines":null},`, 1)
+	if r, findings := check(unchanged, rev, false, true); findings != "" || r.Rechecked {
+		t.Errorf("a claim over unchanged code: %v %q", r.Rechecked, findings)
+	}
+	// A keep never reaches the check: on additive code it is taken.
+	additive := pollRevision()
+	additive.Gone = nil
+	additive.Previous.Body[1].Items[0].Cites = hunkAnchors([]string{hunkA})
+	additive.Previous.Risks[0].Cites = hunkAnchors([]string{hunkA})
+	keep := `{"keep":true,"body":[],"risks":[],"tiles":[],"propose":null}`
+	if r, findings := check(keep, additive, false, true); findings != "" || !r.Kept || r.Rechecked {
+		t.Errorf("an additive keep: %v %v %q", r.Kept, r.Rechecked, findings)
+	}
+}
+
+// Across a call's passes the section is sent back for repeated claims once:
+// the same text on the next pass, strict or not, is taken.
+func TestRevisionRechecksOnce(t *testing.T) {
+	f := fullFake()
+	previous := retrySection([]string{hunkA, hunkGone}, hunkGone)
+	stale := strings.Replace(f.replies["section-sec-retry"](1),
+		`{"text":"A failed handler schedules a **retry**.","more":null,"cites":[{"type":"hunk","id":"`+hunkA+`"`,
+		`{"text":"Defaults are **5 attempts**.","more":null,"cites":[{"type":"hunk","id":"`+hunkB+`"`, 1)
+	f.reply("section-sec-retry", stale)
+	run, calls := revisedRun(t, f, previousDoc(t, previous))
+	run.Budgets.MaxRepairAttempts = 2
+	_, doc, err := Generate(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var passes []Call
+	for _, c := range *calls {
+		if c.ID == "sec_retry" {
+			passes = append(passes, c)
+		}
+	}
+	if len(passes) != 2 || !strings.Contains(passes[0].Findings, `"Defaults are 5 attempts." is the previous text unchanged, but the code it described changed (`+hunkGone+` gone, now `+hunkB+`)`) || passes[1].Findings != "" {
+		for _, p := range passes {
+			t.Logf("pass %d: %q", p.Pass, p.Findings)
+		}
+		t.Fatalf("%d passes", len(passes))
+	}
+	if items := doc.Sections[0].Body[1].Items; items[0].Text != "Defaults are **5 attempts**." {
+		t.Errorf("the second pass was not taken: %+v", items)
 	}
 }

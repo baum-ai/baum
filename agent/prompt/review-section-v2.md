@@ -149,6 +149,14 @@ version should find only what the new commits changed.
 - Change only what the new, moved and gone hunks change. Read their
   patches, and check every claim you keep against the current diff. A gone
   hunk's code was edited or removed: a new hunk often holds its new form.
+- Each previous point, risk and prose or note block says whether the code
+  it rests on changed (`code`: `changed` when a hunk it cites, or for a
+  block without cites any of the section's hunks, is gone). A sentence can
+  become false without any number or name in it changing: a deadline that
+  became an idle timeout, a limit that now applies elsewhere, a bound that
+  no longer bounds. Re-check every claim marked `changed` against what the
+  new hunk's code means, not the words it shares, and rewrite what changed
+  in meaning before you keep it.
 - Joined code is not new: the previous version reviewed it in another
   section. Do not rewrite claims because of it. Carry the risks the
   previous version raised on it, with their IDs, where they still apply.

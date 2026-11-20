@@ -2812,7 +2812,10 @@ the levels of `agent/orchestrate` instead of the staged review:
    or under another ID over the same code (`reviewv2.RenamedSections`; the
    input then names the section it continues), is
    revised: its input adds, as model-written data, the previous body and
-   active risks, the IDs of risks fixed earlier, each hunk's status
+   active risks, each point, risk and prose or note block marked with
+   whether the code it rests on changed (`code`: `changed` when a hunk it
+   cites is gone, with the gone hunks; a block without cites rests on the
+   section's code as a whole), the IDs of risks fixed earlier, each hunk's status
    (unchanged, new, joined from another previous section, moved to another
    section, or gone, with where it was) and the risks handed over with
    joined hunks. Any other section that takes over code from a previous
@@ -2826,7 +2829,14 @@ the levels of `agent/orchestrate` instead of the staged review:
    else (some hunk unchanged, none moved or gone, no risk handed over with
    joined code) and the previous text
    cites only the section's hunks now; otherwise it is sent back and the
-   agent writes the section. Its tile blocks place only the section's tiles
+   agent writes the section. A written revision that repeats a previous
+   point or risk word for word (whitespace aside) whose cited hunks
+   included a gone one, now citing a hunk new to the pull request, is sent
+   back once with one finding listing them: its words may still match while
+   its meaning changed (a deadline that became an idle timeout). The check
+   runs on strict passes until it has sent the section back once; the same
+   text on a later pass, or on the lenient last pass, is taken as checked.
+   Its tile blocks place only the section's tiles
    now. The section's call record says `ran`, with the reason that it
    revised or kept the previous text, and the level counts kept and revised
    sections (replay's `v2_sections_kept`, `v2_sections_revised`).
@@ -2852,7 +2862,8 @@ the levels of `agent/orchestrate` instead of the staged review:
    data: the title and change kind then, the summary, the verdict (its
    decision, text and points), why the risk is what it is and the intent
    lines. The agent keeps what still holds word for word and changes what
-   the sections now say differently; the verdict follows the current
+   the sections now say differently, naming changed behaviour in the
+   code's own terms; the verdict follows the current
    sections and risks, and never keeps a point about a mitigated risk or a
    section that no longer exists. A point that names a section the
    document does not have is sent back; the last pass drops the name. The
