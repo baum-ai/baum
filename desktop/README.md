@@ -1253,6 +1253,83 @@ requests and the inboxes and Pull requests stay empty: `jk` skips, and
 sessions are recorded as ended, so in `session-panel` nothing streams: it
 measures the panel open on an ended conversation, and the summary says so.
 
+#### CPU profiles in Chromium
+
+The WebKit runs say what is slow (interactions, frames, renders) but not
+why. `--engine chromium` runs the same scenarios in Chromium and records a
+CPU profile of every measured run, which says which functions the time went
+to:
+
+```sh
+just desktop::profile review --engine chromium --runs 3
+just desktop::profile jk --engine chromium --runs 3
+```
+
+The instance starts as usual, with its daemon, its data and the profiling
+frontend in the sidecar, but no app: the runner starts the daemon with the
+bundled `baum daemon ensure`, as the app does, and Playwright's Chromium
+(Chrome for Testing, headless, in the `desktop-isolated` image) opens the
+launch URL from its `credential.json` (see
+[Attaching to the daemon](#attaching-to-the-daemon)). chromedriver of the
+same version drives it with the same WebDriver commands as WebKitWebDriver,
+so the scenarios are the same code. The image takes both at the Playwright
+version `../app`'s lockfile pins (`chromium.test.ts` checks), from Chrome for
+Testing, which has chromedriver for x86-64 Linux only. Each measured run
+(not the warm-up) samples the page's main thread every 250 µs through
+chromedriver's DevTools Protocol endpoint (`Profiler.start` and `stop`):
+enough samples to tell a 16 ms frame's stacks apart at a few percent of
+overhead, where 100 µs costs more on long journeys and makes long profiles
+large.
+
+The summary then ends with a CPU section:
+
+- the time a run spent in JavaScript, outside it (`(program)`: style,
+  layout, paint and the browser's own work), in garbage collection and idle,
+  from the collector's reset to its snapshot, the window the rest of the
+  summary measures (cold start relaunches the browser each run and counts
+  from the page's start, sampling from before it loads, which adds the
+  profiler's start to its launch times);
+- the 20 functions with the most self time per run, with their total time
+  (callees included, a recursive function counted once). Each is named by
+  the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
+  at the line its function starts, `oss/app/src/up-next.tsx:1396`; a
+  package's functions by the package (`react-dom`); `browser` for the DOM's
+  and V8's own functions, whose time includes the style and layout they
+  force (`getBoundingClientRect`, `scrollIntoView`);
+- for the five slowest interactions and the three longest frames, that
+  breakdown within the interaction (from the input to the frame after it)
+  or frame, its functions with the most self time, and its three heaviest
+  JavaScript stacks, innermost first, at most eight frames, a package's
+  consecutive frames as one (`[react-dom ×56]`). Idle time within an
+  interaction or frame was spent off the main thread: raster, compositing
+  or the driver, which the profile does not see.
+
+To place interactions and frames on the profile, the runner lines up the
+page's `performance.now()` with the profile's clock: after the snapshot it
+runs a function, `__baumProfileClock`, that spins 30 ms and returns the
+page times it started and ended. Its first sample is no earlier than the
+start and its last no later than the end, so the clocks' offset is the mean
+of the two differences, to within half a sampling interval. It is kept in
+each profile as `baumClockOffset` (microseconds, profile time less page
+time).
+
+`run-N.cpuprofile` beside the summary holds each run's whole profile: open
+it in Chrome DevTools (Performance, Load profile) or
+[speedscope](https://www.speedscope.app) for the flame chart. The bundles
+are minified, so their names there are the minified ones unless DevTools
+can load the source maps.
+
+Chromium's numbers are not WebKit's. V8 and JavaScriptCore compile and
+collect garbage differently, Blink's style and layout differ from WebKit's,
+and headless Chromium paints with its own software renderer, so a frame or
+an interaction may be much faster or slower in one than the other, and a
+problem only one engine has (a slow path in its layout or its regular
+expressions) shows only there. Use Chromium's profile to find which code is
+hot, and WebKit's runs to judge how slow the app is for its users. The rest
+of the summary (metrics, interactions, components) is measured the same way
+in both. The driver's own polling shows in the profile as anonymous
+functions with no source, a little in every interaction.
+
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
 release runs them, without a Developer ID, so the app is signed ad hoc and not

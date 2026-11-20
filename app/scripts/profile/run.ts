@@ -2,8 +2,11 @@
 // WebKitWebDriver: a warm-up, then N runs, reading window.__baumPerf after
 // each, and writes metrics.json and summary.md. `just desktop::profile`
 // (oss/desktop/scripts/profile.sh) runs it inside the headless isolated
-// container; see the desktop README's Profiling section.
+// container; see the desktop README's Profiling section. With --engine
+// chromium, Chromium opens the daemon's pages instead and each run records a
+// CPU profile (chromium.ts).
 // usage: node run.ts <scenario> --app BINARY --out DIR [--runs N] [--dist DIR]
+//        node run.ts <scenario> --engine chromium --baum BINARY --out DIR ...
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -11,6 +14,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
 import { readChunks } from "./bundle.ts";
+import { CHROMEDRIVER, CpuRecorder, launchChromium } from "./chromium.ts";
 import { scenarios, Skip, type Context } from "./scenarios.ts";
 import { standardMetrics, summarise, type Profile, type Run } from "./summary.ts";
 import { newSession, waitForDriver, WebDriverError, type Session } from "./webdriver.ts";
@@ -25,13 +29,21 @@ const { values, positionals } = parseArgs({
     port: { type: "string", default: "4444" },
     "run-timeout": { type: "string", default: "600" },
     env: { type: "string", multiple: true, default: [] },
+    engine: { type: "string", default: "webkit" },
+    baum: { type: "string" },
   },
 });
+const chromium = values.engine === "chromium";
 const name = positionals[0] ?? "";
 const scenario = scenarios.find((s) => s.name === name);
-if (!scenario || !values.app || !values.out) {
+if (
+  !scenario ||
+  !values.out ||
+  !(chromium ? values.baum : values.app) ||
+  !["webkit", "chromium"].includes(values.engine!)
+) {
   console.error(
-    `usage: run.ts <scenario> --app BINARY --out DIR [--runs N]\nscenarios: ${scenarios.map((s) => s.name).join(", ")}`,
+    `usage: run.ts <scenario> (--app BINARY | --engine chromium --baum BINARY) --out DIR [--runs N]\nscenarios: ${scenarios.map((s) => s.name).join(", ")}`,
   );
   process.exit(2);
 }
@@ -67,7 +79,8 @@ const desktopConfig = join(homedir(), ".config/com.usebaum.desktop/desktop.json"
 // WebKitGTK lets the app's first web context be automated only with this set.
 process.env.TAURI_WEBVIEW_AUTOMATION = "true";
 const driverLog = createWriteStream(join(out, "driver.log"));
-const driver = spawn("WebKitWebDriver", [`--port=${values.port}`], {
+const cpu = chromium ? new CpuRecorder(out, values.dist) : undefined;
+const driver = spawn(chromium ? CHROMEDRIVER : "WebKitWebDriver", [`--port=${values.port}`], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 driver.stdout.pipe(driverLog);
@@ -148,7 +161,9 @@ async function launch() {
   const started = performance.now();
   // The wall clock the page's performance.timeOrigin shares.
   const startedAt = Date.now();
-  session = await newSession(driverBase, values.app!);
+  session = chromium
+    ? await launchChromium(driverBase, values.baum!, cpu!)
+    : await newSession(driverBase, values.app!);
   await session.setTimeouts({ script: 600_000 });
   const end = Date.now() + 120_000;
   for (;;) {
@@ -303,13 +318,18 @@ function environment(snapshot: Snapshot) {
     read("/sys/fs/cgroup/cpuset.cpus.effective") ||
     read("/sys/fs/cgroup/cpuset/cpuset.effective_cpus") ||
     "unknown";
-  // The user agent's WebKit version is frozen; the package's is not.
-  let webkit = "";
-  try {
-    webkit = execFileSync("pkg-config", ["--modversion", "webkit2gtk-4.1"], { encoding: "utf8" });
-  } catch {}
-  entries.WebKitGTK =
-    webkit.trim() || (snapshot.userAgent.match(/AppleWebKit\/[\d.]+/)?.[0] ?? snapshot.userAgent);
+  if (cpu) {
+    entries.engine = "Chromium";
+    entries.Chromium = cpu.version || snapshot.userAgent;
+  } else {
+    // The user agent's WebKit version is frozen; the package's is not.
+    let webkit = "";
+    try {
+      webkit = execFileSync("pkg-config", ["--modversion", "webkit2gtk-4.1"], { encoding: "utf8" });
+    } catch {}
+    entries.WebKitGTK =
+      webkit.trim() || (snapshot.userAgent.match(/AppleWebKit\/[\d.]+/)?.[0] ?? snapshot.userAgent);
+  }
   const marker = read(join(homedir(), ".local/state/baum/seeddata.json"));
   if (marker) {
     const seeded = JSON.parse(marker) as { seed?: number; digest?: string };
@@ -358,7 +378,7 @@ function write(partial?: string) {
     chunks: values.dist && existsSync(values.dist) ? readChunks(values.dist) : [],
   };
   writeFileSync(join(out, "metrics.json"), `${JSON.stringify(profile, null, 2)}\n`);
-  writeFileSync(join(out, "summary.md"), summarise(profile));
+  writeFileSync(join(out, "summary.md"), summarise(profile) + (cpu?.section() ?? ""));
 }
 
 const done = () => `${Math.max(0, collected.length - 1)} of ${runs} runs`;
@@ -382,10 +402,12 @@ async function main() {
     await limited(
       (async () => {
         await restoreState();
+        if (index > 0) await cpu?.start(page());
         const started = performance.now();
         const metrics = await scenario!.run(context, state as never);
         const wall = performance.now() - started;
         const snapshot = await execute<Snapshot>("return window.__baumPerf.snapshot();");
+        await cpu?.stop(index, snapshot, execute);
         // After the snapshot, so it is not measured.
         await scenario!.teardown?.(context, state as never);
         environmentFrom ??= snapshot;
