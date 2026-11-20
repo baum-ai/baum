@@ -1029,6 +1029,10 @@ function stubAutomatic(
   vi.mocked(fetch).mockImplementation((...args) => {
     const path = String(args[0]);
     const init = args[1] as RequestInit | undefined;
+    // The session panel reports the open page 250ms after each navigation on
+    // real timers, so recording it would race the settings saves tests check.
+    if (init?.method === "PUT" && path.endsWith("api/console/page"))
+      return Promise.resolve(Response.json({}));
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
       if (
@@ -1358,6 +1362,7 @@ it("saves one change at a time and only the newest of those made meanwhile", asy
   vi.mocked(fetch).mockImplementation((...args) => {
     const response = stubbed(...args);
     if ((args[1] as RequestInit | undefined)?.method !== "PUT") return response;
+    if (String(args[0]).endsWith("api/console/page")) return response;
     return new Promise((resolve) => held.push(() => resolve(response)));
   });
   await act(async () => root.render(<App />));
