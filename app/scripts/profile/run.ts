@@ -513,6 +513,11 @@ async function main() {
   }
 }
 
+/** The baseline as it was named, and its commit unless that is the name. */
+function baseLabel(ref = "", commit = "unknown") {
+  return !ref || commit.startsWith(ref) || ref.startsWith(commit) ? commit : `${ref} at ${commit}`;
+}
+
 /** Head's last step: once base has run all its runs, or stopped, the
  *  comparison of the two. */
 async function compare(partial?: string) {
@@ -544,7 +549,7 @@ async function compare(partial?: string) {
     scenario: scenario!.name,
     description: scenario!.description,
     headline: values.headline ?? scenario!.headline,
-    baseLabel: [base.environment.ref, base.environment.commit].filter(Boolean).join(" at "),
+    baseLabel: baseLabel(base.environment.ref, base.environment.commit),
     headLabel: head.environment.commit ?? "unknown",
     base,
     head,
