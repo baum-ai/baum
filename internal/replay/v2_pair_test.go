@@ -171,3 +171,67 @@ func TestV2ReuseIsOptIn(t *testing.T) {
 		t.Errorf("--reuse does not reach the v2 generator: %v", err)
 	}
 }
+
+func TestV2FactsMatchSpansAtTokenBoundaries(t *testing.T) {
+	for _, c := range []struct {
+		earlier, later string
+		kept           int
+	}{
+		{"Used **id** and `ok`.", "Please provide a book.", 0},
+		{"Used **id** and `ok`.", "The id and ok values.", 2},
+		{"Runs **4** jobs.", "Runs 14 jobs.", 0},
+		{"Uses `a.b`.", "Uses (a.b).", 1},
+	} {
+		if _, kept := retained(c.earlier, c.later); kept != c.kept {
+			t.Errorf("%q in %q: kept %d, want %d", c.earlier, c.later, kept, c.kept)
+		}
+	}
+	// A bold span and the numbers inside it are separate facts.
+	if total, _ := retained("**24 repos**", ""); total != 2 {
+		t.Errorf("total %d, want 2", total)
+	}
+}
+
+// A later section pairs once: B shares h1 with A', which A already claimed by id.
+func TestV2PairClaimsALaterSectionOnce(t *testing.T) {
+	g := &V2Generator{}
+	previous := v2Doc(t, 1,
+		reviewv2.Section{ID: "sec_a", Hunks: []string{"h1"}, Body: prose("Alpha.")},
+		reviewv2.Section{ID: "sec_b", Hunks: []string{"h1", "h2"}, Body: prose("Beta.")},
+	)
+	next := v2Doc(t, 2, reviewv2.Section{ID: "sec_a", Hunks: []string{"h1"}, Body: prose("Alpha.")})
+	m, err := g.PairMetrics(previous, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[MetricV2SectionsReused] != 1 || m[MetricV2SectionsMatched] != 0 || m[MetricV2SectionsDropped] != 1 || m[MetricV2BodyPairs] != 1 || m[MetricV2SectionsNew] != 0 {
+		t.Errorf("%v", m)
+	}
+}
+
+func TestV2ChangedPairsLeaveOutReusedSections(t *testing.T) {
+	g := &V2Generator{}
+	previous := v2Doc(t, 1,
+		reviewv2.Section{ID: "sec_a", Hunks: []string{"h1"}, Body: prose("Keeps **ten** items.")},
+		reviewv2.Section{ID: "sec_b", Hunks: []string{"h3"}, Body: prose("Holds **five** and 5 things.")},
+	)
+	next := v2Doc(t, 2,
+		reviewv2.Section{ID: "sec_a", Hunks: []string{"h1"}, Body: prose("Keeps **ten** items.")},
+		reviewv2.Section{ID: "sec_b", Hunks: []string{"h3"}, Body: prose("Something else.")},
+	)
+	m, err := g.PairMetrics(previous, next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m[MetricV2ChangedPairs] != 1 || m[MetricV2ChangedSimilaritySum] != 0 || m[MetricV2ChangedFactsPrevious] != 2 || m[MetricV2ChangedFactsKept] != 0 {
+		t.Errorf("%v", m)
+	}
+	// Over all pairs the reused section dilutes the figures.
+	if m[MetricV2BodyPairs] != 2 || m[MetricV2BodySimilaritySum] != 1 || m[MetricV2FactsPrevious] != 3 || m[MetricV2FactsKept] != 1 {
+		t.Errorf("%v", m)
+	}
+	d := g.Derived(m)
+	if d["v2_changed_body_similarity_pooled"] != 0 || d["v2_changed_fact_retention_pooled"] != 0 || d["v2_fact_retention_pooled"] != 1.0/3 {
+		t.Errorf("%v", d)
+	}
+}

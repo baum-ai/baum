@@ -171,8 +171,7 @@ the review stayed:
   `v2_sections_rewritten` (same id, anything else), `v2_sections_matched` (no same
   id, but a later section matches by code: most shared hunks, then shared file
   paths, as for the review generator) or `v2_sections_dropped`.
-  `v2_sections_new` counts later sections that carry no earlier id and match
-  nothing earlier.
+  `v2_sections_new` counts later sections that no earlier section paired with.
 - **Body text.** For every same-id and matched pair, `v2_body_similarity_sum` adds
   the word-level Jaccard index of the two bodies' text (block titles, text, each
   point's text and `more`; two empty bodies count 1), and `v2_body_pairs` counts
@@ -180,14 +179,26 @@ the review stayed:
 - **Facts.** `v2_facts_previous` counts the facts of the earlier bodies of those
   pairs (bold spans, code spans and numbers such as `24`, `5,000` and `3.5`, each
   once per body) and `v2_facts_kept` those that the later body still has verbatim.
-  A number must match whole, not as part of another number.
+  A number must match whole, not as part of another number, and a span must not
+  sit inside a longer word (`4` is not kept by `14`, `id` not by `provide`). A
+  bold span and the numbers inside it are separate facts, so both count.
+- **Changed pairs.** Reused sections are the same by construction and pull the
+  figures above toward 1. `v2_changed_body_similarity_sum`, `v2_changed_body_pairs`,
+  `v2_changed_facts_previous` and `v2_changed_facts_kept` are the same four
+  figures over the rewritten and matched pairs only; they are the headline
+  numbers for how stable a rewrite kept the review.
+- **Pairing.** A later section pairs with at most one earlier section: same ids
+  first, then the earlier sections without one match among the later sections
+  still unpaired. An earlier section that finds none is dropped; a later section
+  nothing paired with is new.
 - **Summary and overview.** `v2_summary_similarity` is the word-level Jaccard index
   of the two summaries' title, text, `risk_why` and verdict text and points, and
   `v2_overview_similarity` the same over the intents' `asked` and `got`. Each is
   left out when both texts are empty.
 
-`v2_body_similarity_pooled`, `v2_fact_retention_pooled`, `v2_section_reuse_pooled`
-and `v2_section_dropped_pooled` are ratios over the sums of a group (kept over
+`v2_body_similarity_pooled`, `v2_fact_retention_pooled`, `v2_section_reuse_pooled`,
+`v2_section_dropped_pooled` and, over changed pairs, `v2_changed_body_similarity_pooled`
+and `v2_changed_fact_retention_pooled` are ratios over the sums of a group (kept over
 earlier facts, reused or dropped over earlier sections), not the mean of each
 pair's.
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/baum-ai/baum/reviewv2"
 )
@@ -24,6 +26,12 @@ const (
 	MetricV2FactsKept         = "v2_facts_kept"
 	MetricV2SummarySimilarity = "v2_summary_similarity"
 	MetricV2OverviewSimilar   = "v2_overview_similarity"
+
+	// The same four figures over changed pairs only (rewritten and matched).
+	MetricV2ChangedSimilaritySum = "v2_changed_body_similarity_sum"
+	MetricV2ChangedPairs         = "v2_changed_body_pairs"
+	MetricV2ChangedFactsPrevious = "v2_changed_facts_previous"
+	MetricV2ChangedFactsKept     = "v2_changed_facts_kept"
 )
 
 var v2PairDefinitions = map[string]string{
@@ -32,7 +40,7 @@ var v2PairDefinitions = map[string]string{
 	MetricV2SectionsRewritten: "earlier sections the later document has under the same id, with other hunks or another body",
 	MetricV2SectionsMatched:   "earlier sections whose id the later document lacks but one of its sections matches by code (most shared hunks, then shared file paths)",
 	MetricV2SectionsDropped:   "earlier sections with no same id and no match by code",
-	MetricV2SectionsNew:       "later sections with no earlier id and no match by code",
+	MetricV2SectionsNew:       "later sections no earlier section was paired with, by id or by code",
 	MetricV2BodySimilaritySum: "over the same-id and matched section pairs: the sum of the word-level Jaccard index of the two bodies' text (block titles, text, points' text and more); two empty bodies count 1",
 	MetricV2BodyPairs:         "same-id and matched section pairs: the divisor of v2_body_similarity_sum",
 	MetricV2FactsPrevious:     "over those pairs: facts in the earlier body, each counted once (bold spans, numbers such as 24, 5,000 and 3.5, and code spans)",
@@ -40,10 +48,17 @@ var v2PairDefinitions = map[string]string{
 	MetricV2SummarySimilarity: "word-level Jaccard index of the two summaries' text (title, text, risk_why, verdict text and points); left out when both are empty",
 	MetricV2OverviewSimilar:   "word-level Jaccard index of the two overviews' intent text (asked and got); left out when both are empty",
 
-	"v2_body_similarity_pooled": "over all pairs: v2_body_similarity_sum / v2_body_pairs",
-	"v2_fact_retention_pooled":  "over all pairs: v2_facts_kept / v2_facts_previous",
-	"v2_section_reuse_pooled":   "over all pairs: v2_sections_reused / v2_sections_previous",
-	"v2_section_dropped_pooled": "over all pairs: v2_sections_dropped / v2_sections_previous",
+	MetricV2ChangedSimilaritySum: "like v2_body_similarity_sum over changed pairs only (rewritten and matched sections), without the reused ones that are the same by construction",
+	MetricV2ChangedPairs:         "changed pairs: the divisor of v2_changed_body_similarity_sum",
+	MetricV2ChangedFactsPrevious: "like v2_facts_previous over changed pairs only",
+	MetricV2ChangedFactsKept:     "like v2_facts_kept over changed pairs only",
+
+	"v2_changed_body_similarity_pooled": "over all pairs: v2_changed_body_similarity_sum / v2_changed_body_pairs (the headline figure for how much a rewrite changed)",
+	"v2_changed_fact_retention_pooled":  "over all pairs: v2_changed_facts_kept / v2_changed_facts_previous (the headline figure for facts a rewrite lost)",
+	"v2_body_similarity_pooled":         "over all pairs: v2_body_similarity_sum / v2_body_pairs",
+	"v2_fact_retention_pooled":          "over all pairs: v2_facts_kept / v2_facts_previous",
+	"v2_section_reuse_pooled":           "over all pairs: v2_sections_reused / v2_sections_previous",
+	"v2_section_dropped_pooled":         "over all pairs: v2_sections_dropped / v2_sections_previous",
 }
 
 // v2Section is a section with what the matching and the body comparison read.
@@ -75,14 +90,6 @@ func v2SectionsOf(d reviewv2.Document) []v2Section {
 			}
 		}
 		out = append(out, sec)
-	}
-	return out
-}
-
-func plainSections(sections []v2Section) []section {
-	out := make([]section, len(sections))
-	for i, s := range sections {
-		out[i] = s.section
 	}
 	return out
 }
@@ -143,7 +150,7 @@ func retained(earlier, later string) (total, kept int) {
 	plain := strings.NewReplacer("**", "", "`", "").Replace(later)
 	for s := range before.spans {
 		total++
-		if strings.Contains(plain, s) {
+		if containsToken(plain, s) {
 			kept++
 		}
 	}
@@ -154,6 +161,30 @@ func retained(earlier, later string) (total, kept int) {
 		}
 	}
 	return total, kept
+}
+
+// containsToken says text has s, not inside a longer word or number: where s
+// starts or ends with a letter or digit, the text beside it is not one.
+func containsToken(text, s string) bool {
+	if s == "" {
+		return false
+	}
+	word := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	first, _ := utf8.DecodeRuneInString(s)
+	last, _ := utf8.DecodeLastRuneInString(s)
+	for from := 0; ; {
+		i := strings.Index(text[from:], s)
+		if i < 0 {
+			return false
+		}
+		start, end := from+i, from+i+len(s)
+		before, _ := utf8.DecodeLastRuneInString(text[:start])
+		after, _ := utf8.DecodeRuneInString(text[end:])
+		if !(start > 0 && word(first) && word(before)) && !(end < len(text) && word(last) && word(after)) {
+			return true
+		}
+		from = start + 1
+	}
 }
 
 func sameSet(a, b []string) bool {
@@ -203,50 +234,67 @@ func (g *V2Generator) PairMetrics(previous, next []byte) (map[string]float64, er
 	}
 	before, after := v2SectionsOf(a), v2SectionsOf(b)
 	m := map[string]float64{MetricV2SectionsPrevious: float64(len(before)), MetricV2SectionsReused: 0, MetricV2SectionsRewritten: 0, MetricV2SectionsMatched: 0,
-		MetricV2SectionsDropped: 0, MetricV2SectionsNew: 0, MetricV2BodySimilaritySum: 0, MetricV2BodyPairs: 0, MetricV2FactsPrevious: 0, MetricV2FactsKept: 0}
+		MetricV2SectionsDropped: 0, MetricV2SectionsNew: 0, MetricV2BodySimilaritySum: 0, MetricV2BodyPairs: 0, MetricV2FactsPrevious: 0, MetricV2FactsKept: 0,
+		MetricV2ChangedSimilaritySum: 0, MetricV2ChangedPairs: 0, MetricV2ChangedFactsPrevious: 0, MetricV2ChangedFactsKept: 0}
 
-	byID := map[string]v2Section{}
-	for _, s := range after {
-		byID[s.id] = s
-	}
-	laterPlain := plainSections(after)
-	compare := func(earlier, later v2Section) {
+	compare := func(earlier, later v2Section, changed bool) {
 		x, y := bodyText(earlier.body), bodyText(later.body)
-		m[MetricV2BodyPairs]++
-		m[MetricV2BodySimilaritySum] += textSimilarity(x, y)
+		similar := textSimilarity(x, y)
 		total, kept := retained(x, y)
+		m[MetricV2BodyPairs]++
+		m[MetricV2BodySimilaritySum] += similar
 		m[MetricV2FactsPrevious] += float64(total)
 		m[MetricV2FactsKept] += float64(kept)
+		if changed {
+			m[MetricV2ChangedPairs]++
+			m[MetricV2ChangedSimilaritySum] += similar
+			m[MetricV2ChangedFactsPrevious] += float64(total)
+			m[MetricV2ChangedFactsKept] += float64(kept)
+		}
 	}
+	// A later section pairs with one earlier section: first the ones with the
+	// same id, then the rest by code among the later sections still unpaired.
+	claimed := map[int]bool{}
+	laterAt := map[string]int{}
+	for i, s := range after {
+		laterAt[s.id] = i
+	}
+	var unpaired []v2Section
 	for _, s := range before {
-		if later, ok := byID[s.id]; ok {
-			earlierBody, _ := json.Marshal(s.body)
-			laterBody, _ := json.Marshal(later.body)
-			if sameSet(s.hunkIDs, later.hunkIDs) && bytes.Equal(earlierBody, laterBody) {
-				m[MetricV2SectionsReused]++
-			} else {
-				m[MetricV2SectionsRewritten]++
-			}
-			compare(s, later)
+		i, ok := laterAt[s.id]
+		if !ok {
+			unpaired = append(unpaired, s)
 			continue
 		}
-		if i := bestMatch(s.section, laterPlain); i >= 0 {
+		later := after[i]
+		claimed[i] = true
+		earlierBody, _ := json.Marshal(s.body)
+		laterBody, _ := json.Marshal(later.body)
+		same := sameSet(s.hunkIDs, later.hunkIDs) && bytes.Equal(earlierBody, laterBody)
+		if same {
+			m[MetricV2SectionsReused]++
+		} else {
+			m[MetricV2SectionsRewritten]++
+		}
+		compare(s, later, !same)
+	}
+	for _, s := range unpaired {
+		var candidates []section
+		var at []int
+		for i, later := range after {
+			if !claimed[i] {
+				candidates, at = append(candidates, later.section), append(at, i)
+			}
+		}
+		if i := bestMatch(s.section, candidates); i >= 0 {
+			claimed[at[i]] = true
 			m[MetricV2SectionsMatched]++
-			compare(s, after[i])
+			compare(s, after[at[i]], true)
 		} else {
 			m[MetricV2SectionsDropped]++
 		}
 	}
-	earlierPlain := plainSections(before)
-	earlierIDs := map[string]bool{}
-	for _, s := range before {
-		earlierIDs[s.id] = true
-	}
-	for _, s := range after {
-		if !earlierIDs[s.id] && bestMatch(s.section, earlierPlain) < 0 {
-			m[MetricV2SectionsNew]++
-		}
-	}
+	m[MetricV2SectionsNew] = float64(len(after) - len(claimed))
 
 	if x, y := summaryText(a), summaryText(b); len(words(x)) > 0 || len(words(y)) > 0 {
 		m[MetricV2SummarySimilarity] = textSimilarity(x, y)
@@ -262,6 +310,12 @@ func (g *V2Generator) Derived(sums map[string]float64) map[string]float64 {
 	derived := map[string]float64{}
 	if v := sums[MetricV2BodyPairs]; v > 0 {
 		derived["v2_body_similarity_pooled"] = sums[MetricV2BodySimilaritySum] / v
+	}
+	if v := sums[MetricV2ChangedPairs]; v > 0 {
+		derived["v2_changed_body_similarity_pooled"] = sums[MetricV2ChangedSimilaritySum] / v
+	}
+	if v := sums[MetricV2ChangedFactsPrevious]; v > 0 {
+		derived["v2_changed_fact_retention_pooled"] = sums[MetricV2ChangedFactsKept] / v
 	}
 	if v := sums[MetricV2FactsPrevious]; v > 0 {
 		derived["v2_fact_retention_pooled"] = sums[MetricV2FactsKept] / v
