@@ -8,12 +8,16 @@ set -eu
 
 usage() {
   cat <<'EOF'
-usage: profile.sh <scenario> [--runs N] [--name NAME]
+usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout SECONDS]
                   [--seed-data[=SEED] | --copy-data] [--workspace DIR]...
 
   scenario         cold-start, jk, review, filter, switch-inboxes or
                    session-panel
+  --check          only check the arguments (just desktop::profile does,
+                   before it builds anything)
   --runs N         measured runs after the warm-up (default 5)
+  --run-timeout S  fail a run (or the launch, or preparing) that takes
+                   longer than S seconds, as a hung driver does (default 600)
   --name NAME      the isolated instance to run in (default profile); its
                    home keeps its data between profiles
   --seed-data[=SEED], --copy-data, --workspace DIR
@@ -30,6 +34,8 @@ desktop=$(CDPATH='' cd -- "$here/.." && pwd)
 scenario=
 runs=5
 name=profile
+check=0
+timeout=600
 pass=
 nl='
 '
@@ -39,6 +45,9 @@ while [ "$#" -gt 0 ]; do
     --runs=*) runs=${1#--runs=} ;;
     --name) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; name=$2; shift ;;
     --name=*) name=${1#--name=} ;;
+    --run-timeout) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; timeout=$2; shift ;;
+    --run-timeout=*) timeout=${1#--run-timeout=} ;;
+    --check) check=1 ;;
     --copy-data|--seed-data|--seed-data=*) pass="$pass$nl$1" ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pass="$pass$nl--workspace$nl$2"; shift ;;
     --workspace=*) pass="$pass$nl$1" ;;
@@ -49,8 +58,16 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$scenario" ] || { usage >&2; exit 2; }
-case $scenario in *[!a-z-]*) usage >&2; exit 2 ;; esac
-case $runs in ''|*[!0-9]*) echo "profile: --runs takes a number: $runs" >&2; exit 2 ;; esac
+# The scenarios the runner knows, from their definitions.
+known=$(sed -n 's/^  name: "\([a-z-]*\)",$/\1/p' "$desktop/../app/scripts/profile/scenarios.ts")
+if ! printf '%s\n' "$known" | grep -qx -- "$scenario"; then
+  echo "profile: no scenario $scenario; the scenarios are: $(printf '%s' "$known" | tr '\n' ' ')" >&2
+  exit 2
+fi
+case $runs in ''|0|*[!0-9]*) echo "profile: --runs takes a number from 1: $runs" >&2; exit 2 ;; esac
+case $timeout in ''|0|*[!0-9]*) echo "profile: --run-timeout takes a number of seconds: $timeout" >&2; exit 2 ;; esac
+case $name in ''|*[!a-z0-9-]*) echo "profile: the name may only hold lowercase letters, digits and dashes: $name" >&2; exit 2 ;; esac
+[ "$check" = 1 ] && exit 0
 
 # A new instance with neither flag gets the seeded dataset, whose numbers
 # compare across runs and machines; one that has data keeps it.
@@ -76,7 +93,7 @@ commit=$(git -C "$desktop" rev-parse --short HEAD 2>/dev/null || echo unknown)
 # shellcheck disable=SC2089,SC2090
 BAUM_ISOLATED_RUN="cargo build --locked --quiet && node /oss/app/scripts/profile/run.ts $scenario \
 --app /oss/desktop/target/debug/baum-desktop --out /oss/desktop/$out --runs $runs \
---dist /oss/internal/localapp/dist --env 'commit=$commit' --env 'instance=$name'"
+--dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
 # shellcheck disable=SC2090
 export BAUM_ISOLATED_RUN
 
