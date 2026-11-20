@@ -423,13 +423,17 @@ try {
     }
     if (session) {
       const shot = join(out, "failure.png");
-      await session
-        .screenshot()
-        .then((png) => {
-          writeFileSync(shot, png);
-          console.error("profile: failure.png beside the summary shows the window then");
-        })
-        .catch(() => {});
+      // Best effort, and bounded: after a run timeout the driver may be hung.
+      await Promise.race([
+        session
+          .screenshot()
+          .then((png) => {
+            writeFileSync(shot, png);
+            console.error("profile: failure.png beside the summary shows the window then");
+          })
+          .catch(() => {}),
+        sleep(5_000),
+      ]);
     }
     code = 1;
   }

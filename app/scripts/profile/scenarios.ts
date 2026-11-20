@@ -6,7 +6,7 @@
 // fails rather than report numbers for something else. The runner supplies
 // the Context.
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
-import { percentile } from "./summary.ts";
+import { percentile, ROOT_REGION } from "./summary.ts";
 import { KEY } from "./webdriver.ts";
 
 /** A scenario that cannot run on this data says why. */
@@ -594,7 +594,11 @@ const sessionPanel: Scenario<PanelState> = {
   after(snapshot) {
     const from = snapshot.marks.find((m) => m.name === "idle")?.at ?? 0;
     const to = snapshot.marks.find((m) => m.name === "end")?.at ?? Infinity;
-    const commits = snapshot.commits.filter((c) => c.at >= from && c.at <= to);
+    // The root region holds the others: counting them too would add nested
+    // renders twice.
+    const commits = snapshot.commits.filter(
+      (c) => c.id === ROOT_REGION && c.at >= from && c.at <= to,
+    );
     const long = snapshot.frames.long.filter((f) => f.start >= from && f.start <= to);
     return {
       open_duration:
