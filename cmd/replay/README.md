@@ -126,7 +126,9 @@ content and are never committed.
 does with tile reviews on once the levels land (`generate.Options.V2`,
 `agent/orchestrate`): the map, then the section agents and the context agent
 at once, each tile once its section is written, and the overview. Every
-section is written; nothing is reused. `--generator-option concurrency=N`
+section is written; nothing is reused unless you pass `--reuse`, which lets the
+orchestration reuse a previous version's unchanged sections as the app does (it
+needs a previous version, so it matters for chains). `--generator-option concurrency=N`
 bounds a case's calls at once (default 4). Prompt overrides take the ids
 `review-v2-shared`, `review-map`, `review-section`, `review-context-v2`,
 `review-tile` and `review-overview`.
@@ -155,7 +157,39 @@ Validation checks the schema and that every hunk is in a section.
 `v2_tiles_failed`, `v2_tiles_type_<type>`, `v2_blocks`, `v2_points`, `v2_risks`,
 `v2_context_missing` and `v2_overview_failed`; from `levels.json`
 `v2_repairs` and per level `v2_<level>_calls`, `_tokens`, `_seconds`,
-`_failed` and `_cost_usd`. Chains are not replayed.
+`_failed` and `_cost_usd`.
+
+With `--chain`, each revision after the first reads the baum.review/2 document
+the one before it generated as its previous version (`generate.V2.Previous`,
+with that document's own `review.version`), as `generate.Publish` hands it to a
+run in the app. The bundle carries no previous version of its own for v2. The
+first revision has none. Each pair of consecutive documents reports how stable
+the review stayed:
+
+- **Section fate.** `v2_sections_previous`, then each earlier section is counted
+  once: `v2_sections_reused` (same id, same hunks, identical body),
+  `v2_sections_rewritten` (same id, anything else), `v2_sections_matched` (no same
+  id, but a later section matches by code: most shared hunks, then shared file
+  paths, as for the review generator) or `v2_sections_dropped`.
+  `v2_sections_new` counts later sections that carry no earlier id and match
+  nothing earlier.
+- **Body text.** For every same-id and matched pair, `v2_body_similarity_sum` adds
+  the word-level Jaccard index of the two bodies' text (block titles, text, each
+  point's text and `more`; two empty bodies count 1), and `v2_body_pairs` counts
+  the pairs, so the mean is the sum over the pairs.
+- **Facts.** `v2_facts_previous` counts the facts of the earlier bodies of those
+  pairs (bold spans, code spans and numbers such as `24`, `5,000` and `3.5`, each
+  once per body) and `v2_facts_kept` those that the later body still has verbatim.
+  A number must match whole, not as part of another number.
+- **Summary and overview.** `v2_summary_similarity` is the word-level Jaccard index
+  of the two summaries' title, text, `risk_why` and verdict text and points, and
+  `v2_overview_similarity` the same over the intents' `asked` and `got`. Each is
+  left out when both texts are empty.
+
+`v2_body_similarity_pooled`, `v2_fact_retention_pooled`, `v2_section_reuse_pooled`
+and `v2_section_dropped_pooled` are ratios over the sums of a group (kept over
+earlier facts, reused or dropped over earlier sections), not the mean of each
+pair's.
 
 ## Detectors
 
@@ -250,7 +284,7 @@ replay --dataset <dir> --split calibration --chain --with-previous --limit 4 --m
   the stored document of the last kept; a rerun clears the chain's links and the
   pair records of the revisions it runs again.
 - **Generators.** A generator that can chain implements `Chainer` (the review
-  generator does). The runner and driver do not know the document's format.
+  and v2 generators do). The runner and driver do not know the document's format.
 
 ## Metrics
 
