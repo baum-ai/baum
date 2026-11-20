@@ -20,8 +20,8 @@ test *args: frontend sidecar
 frontend_mode := env("BAUM_FRONTEND_MODE", "production")
 
 # Bundle the React application and native setup screen in the UI container.
-frontend:
-    {{ heavy }} --workdir /oss/app ui-test pnpm exec vite build --mode {{ frontend_mode }}
+frontend mode=frontend_mode:
+    {{ heavy }} --workdir /oss/app ui-test pnpm exec vite build --mode {{ mode }}
 
 # Build the viewer the bundled baum embeds, which frontend leaves out
 [private]
@@ -120,6 +120,12 @@ run: frontend sidecar
 # --seed-data writes the seeded profiling dataset)
 isolated *args: frontend viewer sidecar
     sh {{ source_directory() }}/scripts/isolated.sh {{ args }}
+
+# Run a scripted journey against the headless app N times after a warm-up,
+# with the profiling build, and write summary.md and metrics.json under
+# target/profile (scripts/profile.sh; --copy-data and --workspace as isolated)
+profile *args: (frontend "profile") viewer sidecar
+    sh {{ source_directory() }}/scripts/profile.sh {{ args }}
 
 # Save a PNG of a running --headless isolated app's screen
 isolated-screenshot name="default" out="isolated-screenshot.png":

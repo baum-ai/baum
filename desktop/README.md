@@ -1041,6 +1041,7 @@ just desktop::dmg-layout    # regenerate the DMG window layout and background in
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
+just desktop::profile       # time a scripted journey in the headless app (see Profiling)
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
@@ -1125,6 +1126,78 @@ daemon's pages expose `window.__baumPerf`:
 ```sh
 BAUM_FRONTEND_MODE=profile just desktop::isolated perf --copy-data --headless
 ```
+
+### Profiling
+
+`just desktop::profile <scenario>` measures how fast the app's JavaScript
+renders and reacts, for people and agents tuning it. It builds the profiling
+frontend, the viewer and the sidecar (which stay the profiling build until
+another recipe builds them), starts a `--headless` isolated instance
+(`profile` unless `--name` says otherwise) and, inside its container, runs
+`../app/scripts/profile/run.ts` with Node. The runner starts
+`WebKitWebDriver` (Ubuntu's `webkit2gtk-driver`, the same WebKitGTK as the
+app's), which launches the app's debug build with
+`TAURI_WEBVIEW_AUTOMATION=true`, so WebDriver drives the real main webview
+from the connecting screen on to the daemon's page. Key presses are WebKit's
+own synthesized events, which reach the page without an input seat, and the
+collector records them as interactions. The runner marks the instance set up
+(`desktop.json`), so it opens on the Inbox rather than first-run setup, and
+closes the first-run tour if it shows.
+
+```sh
+just desktop::profile cold-start --runs 5 --copy-data --workspace ~/workspace
+just desktop::profile jk --runs 10
+```
+
+`--copy-data` and `--workspace DIR` work as for `isolated`; the copy is
+made once per instance. `--runs N` (5 by default) sets the measured runs,
+after one warm-up whose numbers are kept apart. The container runs on
+`BAUM_DEV_CPUSET`, like every development container, and the summary names
+the CPUs it had. The scenarios:
+
+| Scenario | Journey | Needs |
+| --- | --- | --- |
+| `cold-start` | Quit and launch the app, until the Inbox shows content and settles | |
+| `jk` | 50 presses of j and k down the list with the most rows (an inbox or Pull requests) and back | a list of two rows |
+| `review` | From the Inbox, open the largest reviewed pull request (lines changed, else review size), then scroll the review to its end, 400 px a frame | a review |
+| `filter` | `/` on the Inbox, type `author=@me` a key at a time, Enter | the Inbox's filter |
+| `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled | two inboxes |
+| `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
+
+A scenario the data cannot run exits with status 3 and a summary saying
+why. Every run but cold-start's loads its start page afresh in the same app,
+so its JavaScript heap and React state start clean, then resets the
+collector: relaunching would add some ten seconds a run and change nothing a
+page reload does not. Cold start must launch, so each run quits the app and
+starts it again; the daemon keeps running between launches, as it does for a
+user, and WebKit's cache in the instance's home stays warm. The runner waits
+for each key press's frame, then 50 ms, before the next.
+
+Each profile goes to `target/profile/<scenario>-<time>/`, whose path the
+command prints at the end:
+
+- `summary.md`, short enough to read whole: the metrics' median, p95 (which
+  interpolates between the slowest runs, so with few runs it is near the
+  maximum), minimum and maximum over the runs; interactions by key and the
+  slowest of them; render time and commits per `<Profiled>` region; the
+  requests that took the most time; and the JavaScript and CSS chunks
+  `index.html` loads, with their sizes and gzip sizes, and the largest of
+  the rest, since parsing them dominates cold start.
+- `metrics.json`: the same, with every run's metrics and the collector's raw
+  snapshot (`__baumPerf.snapshot()`, [local app](../app/README.md)).
+- `driver.log`, WebKitWebDriver's output, and `failure.png`, the window
+  when a run failed.
+
+The numbers come with the headless instance's limits. Weston renders with
+Pixman, in software, so script, style, layout and React times are
+realistic and paint and compositing times are not; frame gaps include
+software painting. The app's Rust shell is a debug build, as `isolated`
+runs it; the measured pages come from the daemon and run in the system's
+WebKitGTK, so that only slows the shell's own commands. Data copied with
+`--copy-data` holds no GitHub sign-in, so the daemon finds no open pull
+requests and the inboxes and Pull requests stay empty: `jk` skips, and
+`filter` types into an empty list. Signing the instance in once
+(`just desktop::isolated profile` with a window) fills them.
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the

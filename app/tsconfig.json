@@ -1,6 +1,6 @@
 {
   "extends": "../viewer/tsconfig.json",
-  "include": ["src/**/*", "gallery/**/*", "*.ts"],
+  "include": ["src/**/*", "gallery/**/*", "scripts/**/*.ts", "*.ts"],
   "compilerOptions": {
     "types": ["vite/client", "node"],
     "paths": {
