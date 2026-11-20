@@ -345,8 +345,7 @@ export function Inbox({
         setMerging(entry);
         return;
       case "fix":
-        // Merge takes the row's action when both could apply.
-        if (!entry || canMerge(entry) || !fixLabel(entry) || !fix || !cloneFor(entry)) return;
+        if (!entry || !fixLabel(entry) || !fix || !cloneFor(entry)) return;
         if (isActiveJob(fixJob(entry, jobs)) || fixStarting?.(entry)) return;
         event.preventDefault();
         fix(entry);
@@ -396,7 +395,7 @@ export function Inbox({
     const label = fixLabel(entry);
     if (canMerge(entry))
       items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
-    else if (label && fix && clone && !fixing(entry))
+    if (label && fix && clone && !fixing(entry))
       items.push({ label, hint: "f", onSelect: () => fix(entry) });
     const run = watchableFix(entry, jobs);
     if (run)
