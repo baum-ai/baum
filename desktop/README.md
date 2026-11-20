@@ -1199,27 +1199,46 @@ row's numbers going down. It covers the sidebar's pages (Inbox, Sessions,
 Timeline, Pull requests, Analytics, Repositories, Jobs, Settings) and the
 sub-views of a pull request's review (the largest reviewed pull request
 the Pull requests page links to), a session's transcript (the largest),
-New inbox and Edit inbox (opened, never saved). The sidebar's pages are read
-from the sidebar at run time, and the run fails if it lists one the scenario
-does not know (add it to `KNOWN` in `app/scripts/profile/pages.ts`), so a
-new page is not left out unseen. Each page is measured two ways: `nav`, as a
-person moves (it tries Ctrl+1 to Ctrl+8 and, because the app reads the key's
-place (`code`), which WebDriver's synthesized key events leave empty, clicks
-the sidebar's link instead; sub-views click their link, else use the history
-entry the app's own links make; the summary says which), and
-`direct`, a reload of the page's address. Each page must show real content
-(its list's rows, the review, the transcript...) and not a loader or an
-error, or the run fails; a page the data leaves empty reports `empty` in the
-table and is not timed. Its `## Pages` table has a row per page and way,
-slowest `content` first, then the empty ones: `content` and `settled` are the
-collector's navigation times (first frame with no loader, then with no
-request in flight as well), `commits` and `render ms` the root `app`
-region's counted in the page's own window, `long frames` and `requests` the
-ones that began in it, `request ms` the requests' summed time to their
-headers, and `DOM` the element count once it settled. Numbers are medians
-over the runs. The tour of `nav` visits comes last in each run, so the
-summary's other sections (metrics, interactions, components, requests)
-describe that tour alone.
+New inbox and Edit inbox (opened, never saved); the summary lists the app's
+routes it does not measure. The pages are read from the sidebar and checked
+against the app's own page list (`src/pages.ts`): the run fails if the two
+differ, or if the app has a page the scenario does not know (add it to
+`KNOWN` in `app/scripts/profile/pages.ts`), so a new page is not left out
+unseen.
+
+Each page is measured two ways. `nav` moves to it as a person does, from the
+page before: Ctrl+1 to Ctrl+8 where they work, else a click on the sidebar's
+link (WebDriver's synthesized keys leave the key's place, `code`, which the
+app reads, empty; the summary says so, and each run probes it once before
+its first mark); a sub-view clicks its link on the page, else uses the
+history entry the app's own links make. Its times run from the start of that
+navigation, with the app's code and in-memory caches loaded, so a `nav` row
+depends on the pages before it. `direct` reloads the page's address and its
+times run from the document's own start, so the bundle's fetch and parse are
+in them. Which of the two goes first alternates from run to run.
+
+A page must show its own content (a row, a field, a message: never a wrapper
+around a loader) or its own empty state, and a failure panel, a "not
+available" or "not found" panel, or a loader that stays fails the run. A
+page the data should fill (the Inbox, Pull requests, Repositories, a review,
+a transcript, and Sessions when a session runs) fails the run if empty. Pages
+that seeded data leaves empty (Timeline, Jobs, and Sessions: its sessions
+all ended and "Ended recently" starts folded) report `empty` in the table and
+are not timed; a page empty in some runs only, or empty one way and not the
+other, is flagged. Analytics' Delivery card reads GitHub, which an offline
+instance never answers promptly, so its content and settled times can be
+missing: the table says in how many runs (`n/N`).
+
+The `## Pages` table has a row per page and way, slowest `content` first,
+then the empty ones: `content` and `settled` are the collector's navigation
+times (first frame with no loader on screen, then with no request in flight
+as well), `commits` and `render ms` the root `app` region's in the page's own
+window (between marks around it), `long frames`, `requests` and `request ms`
+those that began in it (a request begun in the window counts whole), and
+`DOM` the element count once it settled. Numbers are medians over the runs.
+The summary's other sections (metrics, interactions, components, requests)
+describe a last load of the Inbox, the same every run, and are not the
+scenario's result.
 
 A scenario the data cannot run exits with status 3 and a summary saying
 why. A journey that does not go as planned fails rather than report

@@ -3,9 +3,9 @@ import { describe, it } from "node:test";
 import type { Snapshot } from "../../src/perf-collector.ts";
 import {
   attribute,
+  emptyWarnings,
   navigationPages,
   navMark,
-  pageMetric,
   pageMetrics,
   pageRows,
   pagesSection,
@@ -89,6 +89,7 @@ describe("attribute", () => {
     assert.deepEqual(attribute(tour, 100, 400), {
       content: 40,
       settled: 90,
+      navigations_count: 1,
       commits_count: 2,
       render_total: 12,
       long_frames_count: 1,
@@ -116,18 +117,59 @@ describe("attribute", () => {
     assert.equal("settled" in none, false);
   });
 
-  it("takes the last navigation of the window, as a redirect leaves it", () => {
+  it("measures from the first navigation's start to the last one's frames", () => {
+    // The app pushed a second address itself, 10 ms in: the wait is both.
     const s = snapshot({
       navigations: [
         { search: "?a", start: 10, superseded: true },
-        { search: "?b", start: 20, content: 7 },
+        { search: "?b", start: 20, content: 7, settled: 12 },
       ],
     });
-    assert.equal(attribute(s, 0, 100).content, 7);
+    const page = attribute(s, 0, 100);
+    assert.equal(page.navigations_count, 2);
+    assert.equal(page.content, 17);
+    assert.equal(page.settled, 22);
+  });
+
+  it("has no times for a window without a navigation", () => {
+    const page = attribute(
+      snapshot({ navigations: [{ search: "", start: 500, content: 1 }] }),
+      0,
+      100,
+    );
+    assert.equal(page.navigations_count, 0);
+    assert.equal("content" in page, false);
+  });
+
+  it("counts a request or commit by where it began, straddling an end mark", () => {
+    const s = snapshot({
+      requests: [request(395, 300), request(400, 1), request(401, 1)],
+      commits: [commit("app", 400, 3), commit("app", 401, 9)],
+    });
+    // Began before the end of the window, ended long after it: the window's.
+    const a = attribute(s, 100, 400);
+    assert.equal(a.requests_count, 2);
+    assert.equal(a.request_total, 301);
+    assert.equal(a.commits_count, 1);
+    assert.equal(a.render_total, 3);
+    // The next window takes what began after the mark, once.
+    const b = attribute(s, 401, 900);
+    assert.equal(b.requests_count, 1);
+    assert.equal(b.commits_count, 1);
   });
 
   it("covers a direct load with an unbounded window", () => {
     assert.equal(attribute(tour, 0, Infinity).commits_count, 4);
+  });
+
+  it("times a direct load from the document's start, bundle included", () => {
+    // The collector installed at 300 ms, after the bundle was fetched and
+    // parsed; its content frame came 50 ms later.
+    const s = snapshot({ navigations: [{ search: "", start: 300, content: 50, settled: 80 }] });
+    const page = attribute(s, 0, Infinity, true);
+    assert.equal(page.content, 350);
+    assert.equal(page.settled, 380);
+    assert.equal(attribute(s, 0, Infinity).content, 50);
   });
 });
 
@@ -142,9 +184,18 @@ describe("navigationPages", () => {
     assert.equal(pages[1]!.page.requests_count, 1);
   });
 
-  it("leaves out a page whose end mark is missing", () => {
-    const s = snapshot({ marks: [{ name: navMark("A", "start"), at: 1 }] });
-    assert.deepEqual(navigationPages(s), []);
+  it("leaves out a page whose end mark is missing, and keeps the rest", () => {
+    const s = snapshot({
+      marks: [
+        { name: navMark("A", "start"), at: 1 },
+        { name: navMark("B", "start"), at: 5 },
+        { name: navMark("B", "end"), at: 9 },
+      ],
+    });
+    assert.deepEqual(
+      navigationPages(s).map((p) => p.label),
+      ["B"],
+    );
   });
 });
 
@@ -182,11 +233,78 @@ describe("pageRows", () => {
     assert.equal(rows[0]!.dom, 500);
   });
 
+  it("flags a page empty in some runs only, and times it over the others", () => {
+    const runs = [
+      run(1, metricsOf("Flaky", 10)),
+      run(2, metricsOf("Flaky", 500, 1)),
+      run(3, metricsOf("Flaky", 30)),
+    ];
+    const [row] = pageRows(runs);
+    assert.equal(row!.mixed, true);
+    assert.equal(row!.empty, false);
+    assert.equal(row!.emptyRuns, 1);
+    assert.equal(row!.content, 20);
+    assert.match(
+      emptyWarnings(pageRows(runs)).join("\n"),
+      /Flaky \(nav\) was empty in 1 of 3 runs/,
+    );
+    const text = summarise(profileOf(runs));
+    assert.match(text, /\| Flaky \| nav \| empty in 1\/3 \|/);
+  });
+
+  it("shows in how many runs a page settled", () => {
+    const runs = [
+      run(1, pageMetrics("A", "nav", { content: 10, settled: 20 }, { empty_count: 0 })),
+      run(2, pageMetrics("A", "nav", { content: 12 }, { empty_count: 0 })),
+    ];
+    const [row] = pageRows(runs);
+    assert.equal(row!.settledRuns, 1);
+    assert.equal(row!.contentRuns, 2);
+    assert.equal(row!.countedRuns, 2);
+    assert.match(summarise(profileOf(runs)), /\| A \| nav \| 11\.0 \| 20\.0 \(1\/2\) \|/);
+  });
+
+  it("says never for a page with no content time in any run", () => {
+    const runs = [run(1, pageMetrics("G", "direct", {}, { empty_count: 0 }))];
+    assert.match(
+      summarise(profileOf(runs)),
+      /\| G \| direct \| never \(0\/1\) \| never \(0\/1\) \|/,
+    );
+  });
+
+  it("flags a page empty one way and not the other", () => {
+    const runs = [
+      run(1, {
+        ...pageMetrics("P", "nav", { content: 5 }, { empty_count: 1 }),
+        ...pageMetrics("P", "direct", { content: 9 }, { empty_count: 0 }),
+      }),
+    ];
+    assert.match(
+      emptyWarnings(pageRows(runs)).join("\n"),
+      /P is empty by navigation and not empty by direct load/,
+    );
+  });
+
+  it("sorts a page with no content time with the slowest, and mixed pages after the full ones", () => {
+    const runs = [
+      run(1, {
+        ...metricsOf("Fast", 10),
+        ...metricsOf("Mixed", 999, 1),
+        ...pageMetrics("NoContent", "nav", { settled: 5 }, { empty_count: 0 }),
+      }),
+      run(2, { ...metricsOf("Fast", 10), ...metricsOf("Mixed", 999, 0) }),
+    ];
+    assert.deepEqual(
+      pageRows(runs).map((r) => r.label),
+      ["NoContent", "Fast", "Mixed"],
+    );
+  });
+
   it("keeps the two ways of a page apart", () => {
     const runs = [
       run(1, {
-        [pageMetric("P", "nav", "content")]: 5,
-        [pageMetric("P", "direct", "content")]: 50,
+        ...pageMetrics("P", "nav", { content: 5 }, { empty_count: 0 }),
+        ...pageMetrics("P", "direct", { content: 50 }, { empty_count: 0 }),
       }),
     ];
     assert.deepEqual(
@@ -197,6 +315,17 @@ describe("pageRows", () => {
       ],
     );
   });
+});
+
+const profileOf = (runs: Run[]): Profile => ({
+  scenario: "pages",
+  description: "d",
+  started: "now",
+  environment: {},
+  notes: [],
+  warmup: runs[0]!,
+  runs,
+  chunks: [],
 });
 
 describe("the summary", () => {
