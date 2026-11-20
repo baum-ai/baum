@@ -101,7 +101,8 @@ one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
 lives only in `src/nine-dots.css`. A page that reads something says which of four things it is
 (`src/page-state.tsx`): waiting for its first read, that read failed (`Couldn't load jobs`,
 with the daemon's message and one Retry, never an empty page or an endless wait), empty, or its
-content. A failed later read keeps the content shown and says so in a banner. Native dialogs
+content. Retry starts a new read rather than waiting on one still under way, which
+may never answer. A failed later read keeps the content shown and says so in a banner. Native dialogs
 open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them.
 Dialog and panel dismissals use the viewer's `CloseButton`; confirmation actions
 keep their Cancel buttons until finished. The keyboard shortcuts dialog keeps
