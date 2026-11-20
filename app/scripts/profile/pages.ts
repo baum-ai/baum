@@ -46,7 +46,10 @@ const KNOWN: Record<string, Check> = {
     content: ".upnext-list [data-row]",
     empty: ".upnext-list:not(:has([data-row]))",
   },
-  Sessions: { content: "#sessions-running li, #sessions-ended li", empty: ".local-sessions-empty" },
+  Sessions: {
+    content: "#sessions-needs li, #sessions-waiting li, #sessions-running li, #sessions-ended li",
+    empty: ".local-sessions-empty",
+  },
   Timeline: {
     content: ".timeline-log [data-row-id]",
     empty: ".timeline-log:not(:has([data-row-id]))",
@@ -212,6 +215,16 @@ async function keysWork(ctx: Context, probe: Step) {
     .catch(() => false);
 }
 
+/** Whether this instance holds the seeded profiling dataset. */
+function seeded(): boolean {
+  try {
+    readFileSync(`${process.env.HOME}/.local/state/baum/seeddata.json`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type Entry = {
   clone_id?: string;
   latest?: unknown;
@@ -279,9 +292,14 @@ const pagesScenario: Scenario<State> = {
     // What the data must show, from the daemon's own reads.
     if (entries.length) {
       const why = `the daemon lists ${entries.length} pull requests`;
-      page("Inbox").expect = why;
-      page("Pull requests").expect = why;
       page("Repositories").expect = `${why}, so repositories exist`;
+      // The Inbox applies its saved query and Pull requests shows open ones
+      // only, so other data may rightly leave them empty; the seeded
+      // dataset fills both.
+      if (seeded()) {
+        page("Inbox").expect = `${why} and the seeded dataset fills the default Inbox`;
+        page("Pull requests").expect = `${why} and the seeded dataset has open ones`;
+      }
     }
 
     ctx.note(
