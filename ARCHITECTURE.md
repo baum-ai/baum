@@ -2499,7 +2499,7 @@ A tile review takes its instructions through `ReviewV2Prompts`; the module's
 `prompt.V2Prompts` (`review-v2-public-v2`) embeds the shared text and one
 text per level (`review-map-v1.md`, `review-section-v2.md`,
 `review-context-v2.md`, `review-tile-v1.md` with a part per native type, and
-`review-overview-v1.md`). A library tile's fill opens with
+`review-overview-v2.md`). A library tile's fill opens with
 `review-tiles-fill-public-v1.md` (`prompt.TilesPrompts`, version
 `review-tiles-public-v1`), which is built in and not replaceable.
 
@@ -2831,7 +2831,15 @@ the levels of `agent/orchestrate` instead of the staged review:
    goes through the library's fill (`agent.Generator.FillTile`); a code tile
    is filled by the host. The types the person added or pinned
    (`generate.Tiles.Always`) get a tile whatever the map plans.
-4. **The overview**, by resuming the map's session.
+4. **The overview**, by resuming the map's session (or in a fresh call
+   with the map in its input). After a `baum.review/2` version, and unless
+   `Run.NoReuse`, its input adds that version's overview as model-written
+   data: the title and change kind then, the summary, the verdict (its
+   decision, text and points), why the risk is what it is and the intent
+   lines. The agent keeps what still holds word for word and changes what
+   the sections now say differently; the verdict follows the current
+   sections and risks, and never keeps a point about a mitigated risk or a
+   section that no longer exists.
 
 A section, the context, a tile or the overview that fails never fails the
 run. The run's call and token budgets and its time limit are split between

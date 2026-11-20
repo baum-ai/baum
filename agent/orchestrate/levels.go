@@ -662,7 +662,9 @@ func (o *orchestration) dedicatedTile(ctx context.Context, t reviewv2.Tile, kind
 }
 
 // overviewLevel writes the overview by resuming the map's session, or in a
-// fresh call with the map in its input. A failed overview falls back.
+// fresh call with the map in its input. Either revises a previous
+// baum.review/2 version's overview, unless NoReuse. A failed overview falls
+// back.
 func (o *orchestration) overviewLevel(ctx context.Context) {
 	o.step("Writing the overview")
 	o.mu.Lock()
@@ -672,6 +674,11 @@ func (o *orchestration) overviewLevel(ctx context.Context) {
 	session := o.mapSession
 	o.mu.Unlock()
 	results := overviewInput(sections, tiles, o.run.Bundle)
+	if !o.run.NoReuse {
+		if prev := previousOverview(o.run.Previous); prev != "" {
+			results += "\n" + prev
+		}
+	}
 	o.budget.expect(3, 1)
 	var accepted overviewResult
 	check := func(reply []byte, lenient bool) string {

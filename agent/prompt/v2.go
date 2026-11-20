@@ -17,7 +17,7 @@ import (
 // levels of agent/orchestrate). Change it with the text of any of its files:
 // review-v2-shared.md, review-map-v1.md, review-section-v2.md,
 // review-context-v2.md, review-tile-v1.md and its review-tile-<type>-v1.md
-// parts, and review-overview-v1.md.
+// parts, and review-overview-v2.md.
 const V2Version = "review-v2-public-v2"
 
 //go:embed review-v2-shared.md
@@ -47,7 +47,7 @@ var v2TileSequence string
 //go:embed review-tile-table-v1.md
 var v2TileTable string
 
-//go:embed review-overview-v1.md
+//go:embed review-overview-v2.md
 var v2Overview string
 
 // The baum.review/2 prompts a host can replace.
