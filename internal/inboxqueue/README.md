@@ -61,10 +61,11 @@ kind, so `waiting=` never holds them.
 
 `Service.AutoReview` gives the automatic scheduler, while automatic reviews
 follow the inboxes, a test of whether a saved inbox with `auto_review` on
-holds a pull request discovery read. It matches as above, with the index
-entry (review, checks, risk) and kind of an indexed pull request under
-discovery's newer fields; one not indexed yet, or at a head the index has not
-seen, gets its kind from discovery alone. A risk filter therefore holds a
+holds a pull request discovery read. It matches as above, with discovery's
+pull request and its review, checks, merge and thread state (copied onto the
+entry as the index copies them), and for an indexed pull request the index
+entry's saved review and risk; at the head the index has seen it takes the
+item's kind, otherwise it works the kind out from discovery alone. A risk filter therefore holds a
 pull request only once a review has scored it. An index that does not read
 leaves discovery's fields; saved inboxes that do not read are an error.
 

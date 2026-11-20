@@ -402,10 +402,11 @@ func (s *Service) Queue(ctx context.Context) (Queue, error) {
 // on (inboxes.Inbox.AutoReview) holds a pull request, as the Inbox page
 // matches it: for automatic reviews that follow the inboxes. The test takes
 // discovery's pull request, which may be newer than the index: an indexed
-// one is matched with its index entry (its review, checks and risk) and
-// queue kind, read now, under discovery's fields; one not indexed yet, or one
-// at a head the index has not seen, has its kind worked out from discovery
-// alone. When the index cannot be read every pull request is matched so.
+// one is matched with its index entry (its saved review and risk) and queue
+// kind, read now, under discovery's fields; one not indexed yet, or one at a
+// head the index has not seen, has its kind worked out from discovery alone.
+// The review, checks, merge and thread state always come from discovery, as
+// the index takes them. When the index cannot be read every pull request is matched so.
 // It fails only when the saved inboxes cannot be read.
 func (s *Service) AutoReview(ctx context.Context) (func(discovery.PullRequest) bool, error) {
 	none := func(discovery.PullRequest) bool { return false }
@@ -443,6 +444,10 @@ func (s *Service) AutoReview(ctx context.Context) (func(discovery.PullRequest) b
 			e = item.entry
 			e.PullRequest = pr
 		}
+		// The metadata the filters read, from discovery as the index takes
+		// it (reviewindex), so it is never an older head's.
+		e.Review, e.Checks, e.Merge = pr.Review, pr.Checks, pr.Merge
+		e.Unresolved, e.UnresolvedCapped = pr.Unresolved, pr.UnresolvedCapped
 		if indexed && item.entry.PullRequest.HeadSHA == pr.HeadSHA {
 			kind = item.Kind
 		} else {

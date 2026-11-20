@@ -528,6 +528,29 @@ func TestAutoReviewReadsTheIndexEntryForWhatDiscoveryLacks(t *testing.T) {
 	}
 }
 
+func TestAutoReviewReadsDiscoveryMetadataOfAPullRequestNotIndexed(t *testing.T) {
+	saved := []inboxes.Inbox{
+		{ID: "failing", Query: "checks=failing", AutoReview: true},
+		{ID: "merge", Query: "waiting=merge", AutoReview: true},
+	}
+	test, err := autoReviewService(nil, nil, saved).AutoReview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !test(discovered(1, func(pr *discovery.PullRequest) { pr.Checks = "failing" })) {
+		t.Fatal("checks=failing missed discovery's failing checks")
+	}
+	ready := discovered(2, func(pr *discovery.PullRequest) {
+		pr.AuthoredByMe, pr.Merge, pr.Checks = true, "ready", "passing"
+	})
+	if !test(ready) {
+		t.Fatal("waiting=merge missed discovery's ready pull request")
+	}
+	if test(discovered(3, func(pr *discovery.PullRequest) { pr.Checks = "passing" })) {
+		t.Fatal("matched passing checks of someone else's pull request")
+	}
+}
+
 func TestAutoReviewMatchesFromDiscoveryWhenTheIndexFails(t *testing.T) {
 	saved := []inboxes.Inbox{{ID: "mine", Query: "author=@me", AutoReview: true}}
 	test, err := autoReviewService(nil, errors.New("index unreadable"), saved).AutoReview(context.Background())
