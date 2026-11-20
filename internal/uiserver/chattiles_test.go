@@ -108,7 +108,7 @@ func newChatTilesFixture(t *testing.T) *chatTilesFixture {
 	}
 	t.Cleanup(revoke)
 	f.token, f.id = token, id
-	f.page(`{"view":"tiles"}`)
+	f.page(`{}`)
 	return f
 }
 
@@ -244,7 +244,7 @@ func TestATileMadeInChat(t *testing.T) {
 		t.Fatalf("tile_guide manifest: %.300s", text)
 	}
 
-	f.page(`{"view":"tiles","tab":"sections","section":"context"}`)
+	f.page(`{"tab":"sections","section":"context"}`)
 	text, failed = f.call("start_tile", map[string]any{"title": "New environment variables"})
 	if failed || !strings.Contains(text, `"tile":"draft_1"`) {
 		t.Fatalf("start_tile: %s", text)
@@ -421,7 +421,7 @@ func TestAddingATileMadeInChatIsRefused(t *testing.T) {
 // review; a check the app could not run fails the card with its reason.
 func TestChatTilesRefusals(t *testing.T) {
 	f := newChatTilesFixture(t)
-	f.page(`{"view":"tiles","frames":"off"}`)
+	f.page(`{"frames":"off"}`)
 	for _, tool := range []string{"start_tile", "check_tile", "add_custom_tile"} {
 		args := map[string]any{"title": "x"}
 		switch tool {
@@ -434,7 +434,7 @@ func TestChatTilesRefusals(t *testing.T) {
 			t.Errorf("%s without frames: %s", tool, text)
 		}
 	}
-	f.page(`{"view":"tiles"}`)
+	f.page(`{}`)
 	if err := f.mcp.Registry.SetTurnPage(f.id, agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "acme/widgets", PullRequest: 7}); err != nil {
 		t.Fatal(err)
 	}

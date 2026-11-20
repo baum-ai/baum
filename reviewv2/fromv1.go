@@ -108,7 +108,6 @@ func (r v1Risk) v2() Risk {
 type v1Behavior struct {
 	Kind  string `json:"kind"`
 	Steps []struct {
-		ID      string   `json:"id"`
 		Title   string   `json:"title"`
 		Text    string   `json:"text"`
 		Anchors []Anchor `json:"anchors"`
@@ -166,7 +165,6 @@ func FromV1(document []byte) (Document, error) {
 		}
 		d.Sections = append(d.Sections, sectionFromV1(s))
 	}
-	d.Overview = Overview{Screenshots: []string{}, Intent: []Intent{}}
 	r, err := view.ParseReview(document)
 	if err != nil {
 		return Document{}, fmt.Errorf("reviewv2: reading the review for its tiles: %w", err)
@@ -184,10 +182,15 @@ func sectionFromV1(s v1Section) Section {
 	if out.Hunks == nil {
 		out.Hunks = []string{}
 	}
+	summary := ""
 	if s.Summary != nil {
-		out.Summary = s.Summary.Text
+		summary = s.Summary.Text
 	}
-	out.Gist = Gist(out.Summary)
+	out.Gist = Gist(summary)
+	if text := strings.TrimSpace(summary); text != "" {
+		out.Body = append(out.Body, Block{Type: BlockProse, Text: text})
+	}
+	points := Block{Type: BlockPoints}
 	if a := s.Assessment; a != nil {
 		level := a.Level
 		out.Level = &level
@@ -209,12 +212,15 @@ func sectionFromV1(s v1Section) Section {
 			if cites == nil {
 				cites = []Anchor{}
 			}
-			id := step.ID
-			if rest, ok := strings.CutPrefix(id, "beh_"); ok {
-				id = "st_" + rest
+			text := strings.TrimSpace(step.Text)
+			if title := strings.TrimRight(strings.TrimSpace(step.Title), "."); title != "" {
+				text = strings.TrimSpace("**" + title + ".** " + text)
 			}
-			out.Steps = append(out.Steps, Step{ID: id, Title: step.Title, Text: step.Text, Cites: cites})
+			points.Items = append(points.Items, Point{Text: text, Cites: cites})
 		}
+	}
+	if len(points.Items) > 0 {
+		out.Body = append(out.Body, points)
 	}
 	for _, risk := range s.Risks {
 		out.Risks = append(out.Risks, risk.v2())

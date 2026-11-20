@@ -184,11 +184,6 @@ func normalizeEmpty(d *Document) {
 				}
 			}
 		}
-		for j := range s.Steps {
-			if s.Steps[j].Cites == nil {
-				s.Steps[j].Cites = []Anchor{}
-			}
-		}
 		for j := range s.Risks {
 			if s.Risks[j].Cites == nil {
 				s.Risks[j].Cites = []Anchor{}
@@ -417,7 +412,7 @@ func fillCode(t *Tile, hunks map[string]bundle.Hunk) {
 
 // ReviewMinutes is the document's reading time: the words of its prose (the
 // summary's text, the verdict, why the risk is what it is, the intent, the
-// context, each section's title, gist, body (or the summary and steps of an older one) and risks, and each
+// context, each section's title, gist, body and risks, and each
 // tile's title and caption), at baum.review/1's reading speed
 // (review.MinutesForWords).
 func ReviewMinutes(d Document) int {
@@ -441,10 +436,7 @@ func ReviewMinutes(d Document) int {
 		count(c.Area.Text, c.ReachedBy.Text, c.Contracts.Text, c.Related.Text)
 	}
 	for _, s := range d.Sections {
-		count(s.Title, s.Gist, s.Summary)
-		for _, step := range s.Steps {
-			count(step.Title, step.Text)
-		}
+		count(s.Title, s.Gist)
 		count(bodyWords(s.Body)...)
 		for _, r := range s.Risks {
 			if r.State != "mitigated" {

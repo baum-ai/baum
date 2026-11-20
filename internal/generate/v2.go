@@ -29,8 +29,8 @@ import (
 type ReviewMCP func(repository string, number int) (*agent.MCPServer, func(), error)
 
 // V2 writes a single pull request's review as a baum.review/2 document, in
-// the levels of agent/orchestrate, instead of the staged review and its
-// page view (Options.V2). The completed document is the version's document;
+// the levels of agent/orchestrate, instead of the staged review
+// (Options.V2). The completed document is the version's document;
 // it has no composition.
 type V2 struct {
 	// Prompts defaults to prompt.V2Prompts{} and FillPrompts, the library
@@ -78,11 +78,6 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 	if fills == nil {
 		fills = prompt.TilesPrompts{}
 	}
-	if o.Tiles != nil && o.Tiles.Prompts != nil {
-		if p, ok := o.Tiles.Prompts.(agent.TileAnalysisPrompts); ok {
-			fills = p
-		}
-	}
 	instructions, err := prompts.ReviewV2Instructions(ctx, o.Backend.Name())
 	if err != nil {
 		return result, fail(CategoryBackend, err)
@@ -100,9 +95,7 @@ func v2Run(ctx, runCtx context.Context, o Options, assembled assemble.Result, ca
 		if t.NoLibrary {
 			entries = nil
 		}
-		for _, a := range t.Always {
-			always = append(always, a.Name)
-		}
+		always = t.Always
 	}
 	version := v.PreviousVersion + 1
 	if b.Previous != nil {

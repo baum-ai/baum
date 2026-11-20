@@ -131,7 +131,7 @@ func (o *orchestration) mandatoryTiles(sections []reviewv2.Section) map[string][
 		}
 		planned[name] = true
 		t := reviewv2.Tile{ID: mandatoryTileID(name, taken), Type: name, Owner: owner, Cites: hunkAnchors(hunks), State: reviewv2.TilePending,
-			Shows: cut(kind.Title+" of this pull request, a tile filled on every review of it", MaxShows)}
+			Shows: cut(kind.Title+" of this pull request, a tile filled on every review of it", reviewv2.MaxShows)}
 		taken[t.ID] = true
 		o.setTile(t)
 		out[owner] = append(out[owner], t)
@@ -365,7 +365,7 @@ func (o *orchestration) tileIDs() map[string]bool {
 // claimProposal gives a section's proposed tile an ID no tile has now (a
 // section written at the same time may have taken the one it checked), and
 // the body's tile blocks that place it the new ID. The ID check, the
-// MaxTiles check and the insert happen under one hold of o.mu, so sections
+// reviewv2.MaxTiles check and the insert happen under one hold of o.mu, so sections
 // running together cannot take the same ID or exceed the cap. A proposal
 // over the cap is dropped from result.
 func (o *orchestration) claimProposal(result *sectionResult) {
@@ -385,7 +385,7 @@ func (o *orchestration) claimProposal(result *sectionResult) {
 	for n := 2; taken[extra.ID]; n++ {
 		extra.ID = fmt.Sprintf("%s_%d", id, n)
 	}
-	if len(o.tiles) >= MaxTiles {
+	if len(o.tiles) >= reviewv2.MaxTiles {
 		o.mu.Unlock()
 		result.Propose = nil
 		return
@@ -473,7 +473,7 @@ func (o *orchestration) codeTile(t reviewv2.Tile) {
 		data.Lines = lines
 	}
 	t.Data, _ = json.Marshal(data)
-	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), MaxTileTitle)
+	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), reviewv2.MaxTileTitle)
 	t.State = reviewv2.TileReady
 	o.setTile(t)
 	o.record(LevelTiles, t.ID, StatusSkipped, "the host fills a code tile")

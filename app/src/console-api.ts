@@ -161,9 +161,30 @@ export async function listProposals(id: string): Promise<Proposal[]> {
 const proposalPath = (id: string, proposal: string, action: string) =>
   `${conversationPath(id)}/proposals/${encodeURIComponent(proposal)}/${action}`;
 
-/** Saves a change; `value` is what the person typed, when it takes one. */
-export function saveProposal(id: string, proposal: string, value?: string): Promise<unknown> {
-  return request(proposalPath(id, proposal, "save"), value === undefined ? {} : { value });
+/** What the person chose when saving a colour theme: its name and, for a new
+ *  theme, the slot it goes in (light or dark; the app always sends one, the
+ *  daemon reads an empty one differently). `mode` says whether the proposal
+ *  updates the theme it names (`update`, which keeps its slots and takes no
+ *  slot) or adds a new one; omitted, the daemon updates when the proposal
+ *  names a theme and adds otherwise. */
+export type ThemeSave = {
+  name?: string;
+  slot?: "light" | "dark";
+  mode?: "update" | "new";
+};
+
+/** Saves a change; `value` is what the person typed, when it takes one, and
+ *  `theme` what they chose for a colour theme. */
+export function saveProposal(
+  id: string,
+  proposal: string,
+  value?: string,
+  theme?: ThemeSave,
+): Promise<unknown> {
+  return request(proposalPath(id, proposal, "save"), {
+    ...(value === undefined ? {} : { value }),
+    ...(theme === undefined ? {} : { theme }),
+  });
 }
 
 export function dismissProposal(id: string, proposal: string): Promise<unknown> {

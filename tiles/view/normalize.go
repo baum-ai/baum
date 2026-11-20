@@ -71,21 +71,6 @@ func (r *Report) add(counts map[tiles.FixKind]int) {
 	}
 }
 
-// Merge adds another report's fixes and problems to r.
-func (r *Report) Merge(other Report) {
-	r.add(other.counts)
-	for _, p := range other.Problems {
-		if len(r.Problems) < maxProblems {
-			r.Problems = append(r.Problems, p)
-		}
-	}
-}
-
-// PlacedReport counts n tiles the host placed by their hunks (Place).
-func PlacedReport(n int) Report {
-	return Report{counts: map[tiles.FixKind]int{FixPlaced: n}}
-}
-
 // Counts returns the fixes by kind, nil for none.
 func (r Report) Counts() map[tiles.FixKind]int {
 	if len(r.counts) == 0 {
@@ -125,7 +110,7 @@ const (
 	maxInputPlaced     = 40
 )
 
-// Normalize checks a composition, as the view call or a store gave it,
+// Normalize checks a composition, as a caller of store.Put gave it,
 // against its review r and the tile document converted from it (doc), and
 // returns what may be stored and shown, with what it fixed. It never drops
 // the whole composition, only the offending item. The result is a fixed

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,9 +14,6 @@ import (
 	"github.com/baum-ai/baum/internal/addedtiles"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/store"
-	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
-	"github.com/baum-ai/baum/review"
-	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
@@ -94,53 +90,21 @@ func TestTileFillsRunOnceAndStoreTheData(t *testing.T) {
 	}
 }
 
-// A review of a pull request fills the library types the person added,
-// each with the last data held for it and the hunks of the version that
-// data was written for.
+// A review of a pull request fills the library types the person added.
 func TestAlwaysTilesComeFromTheAddedTiles(t *testing.T) {
 	ctx := context.Background()
 	service := &addedtiles.Service{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
-	versions, err := store.Open("", t.TempDir(), true)
-	if err != nil {
-		t.Fatal(err)
-	}
 	key := store.Key{Repository: "acme/widgets", Number: 42}
-	base := tileviewtest.Base(t)
-	base["review"].(map[string]any)["version"] = 1
-	delete(base["review"].(map[string]any), "previous_version")
-	document := tileviewtest.Encode(t, base)
-	if err := versions.Put(ctx, key, store.Version{}, store.Version{Metadata: store.Metadata{Version: 1}, Document: document}); err != nil {
-		t.Fatal(err)
-	}
 	l := &Local{Added: service}
-	if got := l.alwaysTiles(ctx, versions, key); got != nil {
+	if got := l.alwaysTiles(ctx, key); got != nil {
 		t.Fatalf("nothing added: %+v", got)
-	}
-	normalized, err := review.NormalizeStored(document)
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := tiles.FromReview(normalized, tiles.Options{})
-	if err != nil {
-		t.Fatal(err)
 	}
 	entry, _ := library.Get("api_change")
 	pr := addedtiles.Key(key.Repository, key.Number)
 	if err := service.Add(ctx, pr, addedtiles.Added{Tile: "api_change", Kind: addedtiles.KindLibrary, Name: "api_change", Digest: entry.Definition.Digest, By: "chat"}); err != nil {
 		t.Fatal(err)
 	}
-	diff := library.DiffOf(doc)
-	data := json.RawMessage(fmt.Sprintf(`{"endpoints":[],"docs":null,"consumers":[{"label":"x","updated":true,"cites":[{"type":"hunk","id":%q}]}]}`, diff[0].ID))
-	if err := service.PutFill(ctx, pr, "api_change", 1, addedtiles.OriginFill, entry.Encoded, data); err != nil {
-		t.Fatal(err)
-	}
-	// Data the agent wrote is the person's: a review never reuses it.
-	chatData := json.RawMessage(strings.Replace(string(data), `"label":"x"`, `"label":"the agent's"`, 1))
-	if err := service.PutFill(ctx, pr, "api_change", 2, addedtiles.OriginChat, entry.Encoded, chatData); err != nil {
-		t.Fatal(err)
-	}
-	got := l.alwaysTiles(ctx, versions, key)
-	if len(got) != 1 || got[0].Name != "api_change" || string(got[0].Last) != string(data) || len(got[0].LastHunks) != len(diff) || !slices.Contains(got[0].LastHunks, diff[0].ID) {
+	if got := l.alwaysTiles(ctx, key); !slices.Equal(got, []string{"api_change"}) {
 		t.Fatalf("always: %+v", got)
 	}
 }

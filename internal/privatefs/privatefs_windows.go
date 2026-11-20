@@ -52,10 +52,12 @@ func ProtectDirectory(path string) error {
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 }
 
-// ProtectFile gives the file at path a protected DACL with one full-control
-// ACE for the current user, so PrivateFile accepts it wherever it was created:
-// a new file otherwise inherits its directory's ACL.
-func ProtectFile(path string) error {
+// CreateFile creates the file at path, which must not exist, with a protected
+// DACL holding one full-control ACE for the current user, so PrivateFile
+// accepts it wherever it was created. The DACL is set by the creation itself:
+// a concurrent caller never sees the file with its directory's inherited ACL.
+// An existing file is an os.ErrExist error.
+func CreateFile(path string) error {
 	sid, err := userSID()
 	if err != nil {
 		return err
@@ -64,11 +66,17 @@ func ProtectFile(path string) error {
 	if err != nil {
 		return err
 	}
-	acl, _, err := descriptor.DACL()
+	name, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
+	attributes := windows.SecurityAttributes{SecurityDescriptor: descriptor}
+	attributes.Length = uint32(unsafe.Sizeof(attributes))
+	handle, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, &attributes, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return &os.PathError{Op: "create", Path: path, Err: err}
+	}
+	return windows.CloseHandle(handle)
 }
 
 func PrivateFile(path string, info os.FileInfo) bool {

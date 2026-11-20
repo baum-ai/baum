@@ -1,4 +1,4 @@
-import { type ReactNode, type Ref, useContext } from "react";
+import type { ReactNode, Ref } from "react";
 
 import { cn, FOCUS_RING } from "./classnames";
 import {
@@ -9,8 +9,17 @@ import {
   type IconProps,
   TeamChatIcon,
 } from "./icons";
-import { type ReviewAside, ReviewAsideContext } from "./review-aside-context";
 import { IconButton } from "./ui";
+
+/** The side pane as the button that opens its sheet sees it: its name
+ *  ("Conversation", or "Details" without one), what its tabs flag in words,
+ *  if anything, and whether it is open. */
+export type ReviewAside = {
+  label: string;
+  alert: string | null;
+  expanded: boolean;
+  onOpen: () => void;
+};
 
 /** A place the reader can step to from the one they are on. */
 export type ReviewStep = { label: string; go: () => void };
@@ -33,17 +42,6 @@ function AsideButton({ aside, className }: { aside: ReviewAside; className?: str
       ) : null}
     </IconButton>
   );
-}
-
-/** The way to the side pane's sheet where the panes stack (below `wide`), for
- *  a host whose places draw no rail and so no navigator bar
- *  (`ReviewPlaces.noRail`), drawn in the host's own head. Hidden once wide,
- *  where the side pane is a column with its own fold, and outside a review
- *  page. */
-export function ReviewSidePaneButton({ className }: { className?: string }) {
-  const aside = useContext(ReviewAsideContext);
-  if (!aside) return null;
-  return <AsideButton aside={aside} className={cn("flex-none wide:hidden", className)} />;
 }
 
 /** The bar that stands in for the rail where the panes stack (below `wide`):

@@ -10,51 +10,23 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// CompositionURL is the composition schema's $id.
-const CompositionURL = "https://static.usebaum.com/schemas/composition/1.json"
-
-// CompositionName is the value of a composition's top-level "schema" field.
-const CompositionName = "baum.composition/1"
-
-// Composition is the schema of a stored baum.composition/1, the retired tile
-// grid's layout of a generated review, kept as published. A $ref it does not define names a definition of the
-// merged tile schema (MergedTiles); use MergedComposition or
-// CompileComposition rather than resolving it alone.
-//
-//go:embed composition-1.json
-var Composition []byte
-
 // ViewCompositionURL is the review view composition schema's $id.
 const ViewCompositionURL = "https://static.usebaum.com/schemas/composition/2.json"
 
 // ViewCompositionName is the value of a review view composition's top-level
-// "schema" field. It replaced CompositionName: a stored baum.composition/1
-// (the tile grid's layout) is no longer read.
+// "schema" field. It replaced baum.composition/1 (the tile grid's layout),
+// which is no longer read.
 const ViewCompositionName = "baum.composition/2"
 
 // ViewComposition is the schema of a stored review view composition: the
 // overview's model-written parts, the tiles placed on each section and the
-// tiles themselves. Like Composition, it names definitions of the merged
-// tile schema; use CompileViewComposition.
+// tiles themselves. A $ref it does not define names a definition of the
+// merged tile schema (MergedTiles); use CompileViewComposition. Only
+// versions stored before baum.review/2 carry one; in Go, only tests compile
+// the schema.
 //
 //go:embed composition-2.json
 var ViewComposition []byte
-
-// MergedComposition returns the composition schema with the merged tile
-// schema's definitions merged into its $defs. A name defined by both is an
-// error.
-func MergedComposition() ([]byte, error) {
-	merged, err := mergedComposition()
-	return bytes.Clone(merged), err
-}
-
-var mergedComposition = sync.OnceValues(func() ([]byte, error) {
-	tiles, err := mergedTiles()
-	if err != nil {
-		return nil, err
-	}
-	return mergeComposition(Composition, tiles)
-})
 
 var mergedViewComposition = sync.OnceValues(func() ([]byte, error) {
 	tiles, err := mergedTiles()
@@ -63,10 +35,6 @@ var mergedViewComposition = sync.OnceValues(func() ([]byte, error) {
 	}
 	return mergeSchema("composition-2.json", ViewComposition, tiles)
 })
-
-func mergeComposition(composition, tiles []byte) ([]byte, error) {
-	return mergeSchema("composition-1.json", composition, tiles)
-}
 
 func mergeSchema(file string, composition, tiles []byte) ([]byte, error) {
 	var root map[string]any
@@ -90,17 +58,6 @@ func mergeSchema(file string, composition, tiles []byte) ([]byte, error) {
 		defs[name] = definition
 	}
 	return json.Marshal(root)
-}
-
-// CompileComposition returns the merged composition schema
-// (MergedComposition) resolved as JSON Schema draft 2020-12. The result is
-// safe for concurrent use.
-func CompileComposition() (*jsonschema.Resolved, error) {
-	merged, err := MergedComposition()
-	if err != nil {
-		return nil, err
-	}
-	return compileMerged(merged)
 }
 
 // CompileViewComposition returns the review view composition schema, with

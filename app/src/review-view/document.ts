@@ -1,6 +1,5 @@
 import type {
   Anchor,
-  HunkRole,
   IndexedHunk,
   RecommendationDecision,
   ReviewDocument,
@@ -11,7 +10,7 @@ import type {
   SectionDetailsState,
 } from "@baum/viewer/review-document";
 import { parseDrafts, type DraftCard } from "../tiles/drafts";
-import type { Tile } from "../tiles/types";
+import { isRecord, isString, type Tile } from "../tiles/types";
 
 /** The review page's document, `baum.review/2` (`oss/reviewv2/document.go`;
  *  the JSON field names are the Go types' tags): the overview, the sections
@@ -48,13 +47,13 @@ export type ReviewV2 = {
   drafts?: DraftCard[];
 };
 
-export type V2Verdict = {
+type V2Verdict = {
   decision: RecommendationDecision;
   text: string;
   points: { text: string; section?: string }[];
 };
 
-export type V2Intent = { session: string; prompt: number; asked: string; got: string };
+type V2Intent = { session: string; prompt: number; asked: string; got: string };
 
 export type V2ContextPart = { text: string; files: string[] };
 export type V2Context = {
@@ -116,7 +115,7 @@ export type V2Section = {
   derived: Section["derived"];
 };
 
-export type ViewTileType = "flow" | "columns" | "sequence" | "table" | "code" | "prose" | "custom";
+type ViewTileType = "flow" | "columns" | "sequence" | "table" | "code" | "prose" | "custom";
 export type ViewTileState = "ready" | "pending" | "failed" | "unavailable";
 
 /** A tile of the document, placed by its owner: `overview` (the main
@@ -140,9 +139,13 @@ export type ViewTile = Tile & {
 
 // ---------- the parser ----------
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isString = (value: unknown): value is string => typeof value === "string";
+/** The first sentence of a text, for a list's quiet line. */
+export function firstSentence(text: string): string {
+  const plain = text.replace(/\s+/g, " ").trim();
+  const end = plain.search(/[.!?](\s|$)/);
+  return end >= 0 ? plain.slice(0, end + 1) : plain;
+}
+
 const text = (value: unknown): string => (isString(value) ? value : "");
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter(isString) : []);
 const records = (value: unknown): Record<string, unknown>[] =>
@@ -155,7 +158,6 @@ const count = (value: unknown): number | undefined =>
 const TILE_STATES = new Set<string>(["ready", "pending", "failed", "unavailable"]);
 const TIERS = new Set<string>(["critical", "high", "medium", "low", "mechanical"]);
 const DECISIONS = new Set<string>(["approve", "look_first", "request_changes"]);
-const TIER_ORDER: RiskTier[] = ["critical", "high", "medium", "low", "mechanical"];
 
 /** The native tile types: their caption and citations are drawn from their
  *  data (`caption`, `source`), which the tile's own fill when absent. */
@@ -176,7 +178,7 @@ export function parseReviewV2(value: unknown, drafts?: unknown): ReviewV2 | null
     return parsed ? [parsed] : [];
   });
   const sections = records(value.sections).flatMap((section) => {
-    const parsed = parseSection(section, index.hunks, tiles);
+    const parsed = parseSection(section, tiles);
     return parsed ? [parsed] : [];
   });
   const pending = parseDrafts(drafts);
@@ -209,7 +211,7 @@ export function parseReviewV2(value: unknown, drafts?: unknown): ReviewV2 | null
     context: parseContext(value.context),
     sections,
     tiles,
-    stats: parseStats(value.stats, sections.length, index.hunks),
+    stats: value.stats as ReviewDocument["stats"],
     index,
     ...(value.generation !== undefined && value.generation !== null
       ? { generation: value.generation }
@@ -274,28 +276,6 @@ function parseIndex(value: unknown): ReviewDocument["index"] {
   };
 }
 
-function parseStats(
-  value: unknown,
-  sections: number,
-  hunks: IndexedHunk[],
-): ReviewDocument["stats"] {
-  if (isRecord(value) && typeof value.files === "number") return value as ReviewDocument["stats"];
-  const roleLoc: Partial<Record<HunkRole, number>> = {};
-  for (const hunk of hunks)
-    roleLoc[hunk.role] = (roleLoc[hunk.role] ?? 0) + hunk.additions + hunk.deletions;
-  return {
-    sections,
-    files: new Set(hunks.map((hunk) => hunk.path)).size,
-    hunks: hunks.length,
-    additions: hunks.reduce((total, hunk) => total + hunk.additions, 0),
-    deletions: hunks.reduce((total, hunk) => total + hunk.deletions, 0),
-    risk_loc: { critical: 0, high: 0, medium: 0, low: 0, mechanical: 0, unrated: 0 },
-    role_loc: roleLoc,
-    checks: { required_failed: 0, optional_failed: 0, pending: 0, skipped: 0 },
-    agent_findings: { open: 0, resolved: 0, dismissed: 0 },
-  };
-}
-
 function parseRisk(value: Record<string, unknown>): V2Risk | null {
   if (!isString(value.id) || !isString(value.text) || !value.text.trim()) return null;
   return {
@@ -314,11 +294,7 @@ function parseRisk(value: Record<string, unknown>): V2Risk | null {
   };
 }
 
-function parseSection(
-  value: Record<string, unknown>,
-  hunks: IndexedHunk[],
-  tiles: ViewTile[],
-): V2Section | null {
+function parseSection(value: Record<string, unknown>, tiles: ViewTile[]): V2Section | null {
   if (!isString(value.id) || !value.id || !isString(value.title)) return null;
   const own = strings(value.hunks);
   const risks = records(value.risks).flatMap((risk) => {
@@ -348,7 +324,7 @@ function parseSection(
     ),
     risks,
     ...(details ? { details } : {}),
-    derived: derivedOf(value.derived, own, risks, hunks),
+    derived: value.derived as Section["derived"],
   };
 }
 
@@ -364,10 +340,8 @@ function parsePoint(value: Record<string, unknown>): V2Point | null {
 /** A section's body: its blocks as served, a malformed one dropped, a tile
  *  block kept only for a tile the section owns (and placed once), then any
  *  owned tile the body does not place (a tile the person added, or one made
- *  after the body) at the end. A section with no usable body reads as one
- *  made from its `summary` (a prose block), its `steps` (a points block) and
- *  its tiles, as the daemon's `BodyOf` does for documents written before. */
-export function sectionBody(value: Record<string, unknown>, owned: ViewTile[]): V2Block[] {
+ *  after the body) at the end. */
+function sectionBody(value: Record<string, unknown>, owned: ViewTile[]): V2Block[] {
   const placed = new Set<string>();
   const body = records(value.body).flatMap((block): V2Block[] => {
     const title = isString(block.title) && block.title.trim() ? { title: block.title.trim() } : {};
@@ -388,49 +362,8 @@ export function sectionBody(value: Record<string, unknown>, owned: ViewTile[]): 
     }
     return [];
   });
-  if (body.length === 0) {
-    const summary = text(value.summary).trim();
-    const items = records(value.steps).flatMap((step, at): V2Point[] => {
-      if (!isString(step.text) || !step.text.trim()) return [];
-      const title = text(step.title).trim();
-      return [
-        {
-          id: isString(step.id) && step.id ? step.id : `step_${at + 1}`,
-          text: title
-            ? `**${/[.!?]$/.test(title) ? title : `${title}.`}** ${step.text}`
-            : step.text,
-          cites: anchors(step.cites),
-        },
-      ];
-    });
-    if (summary) body.push({ type: "prose", text: summary });
-    if (items.length > 0) body.push({ type: "points", items });
-  }
   for (const tile of owned) if (!placed.has(tile.id)) body.push({ type: "tile", tile: tile.id });
   return body;
-}
-
-/** The host's facts of a section, as served, over what the page can work out
- *  itself where a draft has none yet. */
-function derivedOf(
-  value: unknown,
-  own: string[],
-  risks: V2Risk[],
-  hunks: IndexedHunk[],
-): Section["derived"] {
-  const ours = hunks.filter((hunk) => own.includes(hunk.id));
-  const top = TIER_ORDER.find((tier) => risks.some((risk) => risk.tier === tier));
-  return {
-    risk_tier: top ?? "unrated",
-    additions: ours.reduce((total, hunk) => total + hunk.additions, 0),
-    deletions: ours.reduce((total, hunk) => total + hunk.deletions, 0),
-    role_loc: {},
-    reviewers: [],
-    state: "new",
-    evidence_summary: {},
-    open_findings: 0,
-    ...(isRecord(value) ? (value as Partial<Section["derived"]>) : {}),
-  };
 }
 
 function parseTile(value: Record<string, unknown>, hunks: IndexedHunk[]): ViewTile | null {
@@ -502,9 +435,8 @@ const LANGUAGES: Record<string, string> = {
   html: "html",
 };
 
-/** A code tile's excerpt: the text the host filled (`text`, or `content` or
- *  `code`), else the hunk's lines in the range read from the index, as the
- *  new side of the change has them. Null when neither has the code. */
+/** A code tile's excerpt: the text the host filled (`text`), with the
+ *  language its hunk's path picks. Null when the host filled none. */
 function codeExcerpt(
   data: Record<string, unknown>,
   caption: string | undefined,
@@ -512,6 +444,7 @@ function codeExcerpt(
   hunks: IndexedHunk[],
 ): { language: string; content: string; caption?: string; source: Anchor[] } | null {
   const id = data.hunk as string;
+  if (!isString(data.text) || !data.text) return null;
   const hunk = hunks.find((each) => each.id === id);
   const lines =
     Array.isArray(data.lines) &&
@@ -519,20 +452,6 @@ function codeExcerpt(
     data.lines.every((line) => typeof line === "number")
       ? (data.lines as [number, number])
       : undefined;
-  const filled = [data.text, data.content, data.code].find(isString);
-  const content =
-    filled ??
-    (hunk?.diff
-      ? hunk.diff.lines
-          .filter(
-            (line) =>
-              line.kind !== "remove" &&
-              (!lines || (line.new_line >= lines[0] && line.new_line <= lines[1])),
-          )
-          .map((line) => line.text)
-          .join("\n")
-      : "");
-  if (!content) return null;
   const extension = hunk?.path.slice(hunk.path.lastIndexOf(".") + 1) ?? "";
   const source: Anchor[] = [
     lines ? { type: "hunk", id, lines } : { type: "hunk", id },
@@ -540,7 +459,7 @@ function codeExcerpt(
   ];
   return {
     language: isString(data.language) ? data.language : (LANGUAGES[extension] ?? "text"),
-    content,
+    content: data.text,
     ...(caption ? { caption } : {}),
     source,
   };

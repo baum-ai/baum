@@ -61,7 +61,7 @@ func TestSetTileTypePins(t *testing.T) {
 	if e := r.SetTileTypePins(ctx, "migrations", []string{"acme/docs", "acme/elsewhere"}); !errors.Is(e, ErrNotFound) {
 		t.Errorf("an unpicked repository: %v", e)
 	}
-	full := make([]string, MaxPinnedTileTypes)
+	full := make([]string, MaxTileTypes)
 	for i := range full {
 		full[i] = fmt.Sprintf("type_%d", i)
 	}
@@ -145,9 +145,6 @@ func TestUnpinningTheLastType(t *testing.T) {
 	if s, _, _ := r.RepositorySettings(ctx, "acme/web"); s.Tiles != nil {
 		t.Errorf("tiles after unpinning: %+v", s.Tiles)
 	}
-	if (TileSettings{Types: []string{"a"}}).empty() || !(TileSettings{}).empty() {
-		t.Error("empty")
-	}
 }
 
 // A settings PUT merges tiles per member: what it leaves out keeps its
@@ -195,7 +192,7 @@ func TestSettingsPutMergesTilesPerMember(t *testing.T) {
 		}
 		// Types sent empty clear them.
 		put(path, `{"automatic":null,"tiles":{"types":[]}}`)
-		if got := tilesOf(); !got.empty() {
+		if got := tilesOf(); len(got.Types) != 0 {
 			t.Fatalf("%s: cleared: %+v", path, got)
 		}
 	}

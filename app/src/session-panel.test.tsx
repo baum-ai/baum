@@ -18,6 +18,7 @@ import {
   shown,
   useSessionPanel,
 } from "./session-panel";
+import { PreferencesProvider } from "./preferences";
 import { SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
 
@@ -45,7 +46,7 @@ let root: Root;
 let node: HTMLDivElement;
 let calls: Call[];
 /** The fake daemon's answer to one request, or undefined for its default. */
-let answer: (call: Call) => Response | Promise<Response> | undefined;
+let answer: (call: Call) => Response | Promise<Response | undefined> | undefined;
 let conversation: Conversation | null;
 let available: boolean;
 /** The conversation's transcript: its prompts and each one's replies. */
@@ -1012,4 +1013,503 @@ it("opens from the foot while the window is too narrow for a side panel beside t
   } finally {
     await resize(wide);
   }
+});
+
+// A colour theme is proposed under the "app" page, which is no page's: the
+// panel previews the newest open one on the whole app.
+const themeProposal = (id: string, over: Partial<Proposal> = {}): Proposal => ({
+  id,
+  kind: "diff",
+  page: "app",
+  target: "theme",
+  before: { light_theme: "Default light", dark_theme: "Default dark" },
+  after: {
+    name: `Theme ${id}`,
+    base: "dark",
+    tokens: { "--color-paper": "#e8eef4", "--brand-green-600": "#5aa9e6" },
+    contrast_warnings: [{ foreground: "--text-primary", background: "--surface-page", ratio: 3.2 }],
+  },
+  revision: "theme",
+  context: { page: "inbox" },
+  ...over,
+});
+const rootStyle = () => document.documentElement.style;
+
+async function themedHost(page: PageContext = { page: "inbox" }) {
+  await act(async () =>
+    root.render(
+      <PreferencesProvider>
+        <ToastProvider>
+          <div className="local-frame">
+            <SessionPanelHost page={page} liveTick={0} go={() => {}} />
+          </div>
+        </ToastProvider>
+      </PreferencesProvider>,
+    ),
+  );
+}
+
+/** Opens the panel on conversation c1, whose open proposals are `list()`. */
+async function openThemes(list: () => Proposal[], saved: () => void = () => {}) {
+  conversation = made();
+  sessionPanel.select("c1");
+  answer = (call) => {
+    if (call.path.endsWith("/proposals")) return Response.json({ proposals: list() });
+    if (call.path.endsWith("/save") || call.path.endsWith("/dismiss")) {
+      saved();
+      return Response.json({});
+    }
+    return undefined;
+  };
+  await themedHost();
+  await act(async () => sessionPanel.show());
+}
+const proposalsChanged = () =>
+  act(async () =>
+    publishConsoleEvent(JSON.stringify({ conversation: "c1", kind: "proposals", state: "idle" })),
+  );
+
+it("previews the newest open theme proposal and a newer one replaces it", async () => {
+  let open = [themeProposal("t1")];
+  await openThemes(() => open);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  open = [
+    themeProposal("t1"),
+    themeProposal("t2", {
+      after: { name: "Sand", base: "light", tokens: { "--color-paper": "#fdf6e3" } },
+    }),
+  ];
+  await proposalsChanged();
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#fdf6e3"));
+  expect(document.documentElement.dataset.theme).toBe("light");
+  // The first theme's other colours did not stay behind.
+  expect(rootStyle().getPropertyValue("--brand-green-600")).toBe("");
+});
+
+it("previews only a proposal for the app, and never calls one elsewhere", async () => {
+  const other: Proposal = { ...themeProposal("t9"), page: "settings", target: "appearance" };
+  await openThemes(() => [other, themeProposal("t1")]);
+  await until(() => expect(node.querySelectorAll("article").length).toBe(2));
+  const cards = [...node.querySelectorAll("article")];
+  const themeCard = cards.find((c) => c.querySelector(".session-panel-swatches"))!;
+  expect(themeCard.textContent).not.toContain("open it to save");
+  expect(themeCard.querySelector(".session-panel-swatch")).not.toBeNull();
+  expect(themeCard.textContent).toContain("--text-primary");
+  expect(themeCard.textContent).toContain("3.2:1");
+  const name = themeCard.querySelector<HTMLInputElement>('input[type="text"]')!;
+  expect(name.value).toBe("Theme t1");
+  expect(themeCard.querySelector<HTMLSelectElement>("select")!.value).toBe("dark");
+});
+
+it("restores the saved theme when the proposal is dismissed", async () => {
+  let open = [themeProposal("t1")];
+  await openThemes(
+    () => open,
+    () => {
+      open = [];
+    },
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  await act(async () => button("Dismiss")!.click());
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(calls.some((c) => c.path.endsWith("/proposals/t1/dismiss"))).toBe(true);
+});
+
+it("saves a theme with the name and an explicit slot, then ends the preview", async () => {
+  let open = [themeProposal("t1")];
+  await openThemes(
+    () => open,
+    () => {
+      open = [];
+    },
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  const name = node.querySelector<HTMLInputElement>('article input[type="text"]')!;
+  await type(name, "Midnight");
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/t1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/t1/save"))!.body).toEqual({
+    theme: { name: "Midnight", slot: "dark" },
+  });
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+});
+
+it("sends the slot the person chose, and the default slot when they did not", async () => {
+  await openThemes(() => [themeProposal("t1")]);
+  await until(() => expect(node.querySelector("article select")).not.toBeNull());
+  const slot = node.querySelector<HTMLSelectElement>("article select")!;
+  await act(async () => {
+    slot.value = "light";
+    slot.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/save"))!.body).toEqual({
+    theme: { name: "Theme t1", slot: "light" },
+  });
+});
+
+it("restores the saved theme when the conversation closes and when the panel goes away", async () => {
+  const open = [themeProposal("t1")];
+  await openThemes(() => open);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  conversation = made({ state: "closed" });
+  await proposalsChanged();
+  await act(async () =>
+    publishConsoleEvent(JSON.stringify({ conversation: "c1", kind: "state", state: "closed" })),
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+  conversation = made();
+  await act(async () =>
+    publishConsoleEvent(JSON.stringify({ conversation: "c1", kind: "state", state: "idle" })),
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  // The panel goes away while its proposal is still open.
+  await act(async () =>
+    root.render(
+      <PreferencesProvider>
+        <ToastProvider>{null}</ToastProvider>
+      </PreferencesProvider>,
+    ),
+  );
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+  expect(document.documentElement.dataset.theme).toBe("light");
+});
+
+const sandAfter = {
+  name: "Sand",
+  base: "light" as const,
+  tokens: { "--color-paper": "#fdf6e3" },
+};
+
+it.each(["Save", "Dismiss"])(
+  "does not preview an older open theme proposal after %s of the newest",
+  async (label) => {
+    // The daemon closes the older proposal when the newer is recorded, so a
+    // list that still holds both is only what an older daemon answers; the
+    // preview shows the newest, and neither resurfaces once it is gone.
+    let open = [themeProposal("t1"), themeProposal("t2", { after: sandAfter })];
+    await openThemes(
+      () => open,
+      () => {
+        open = [];
+      },
+    );
+    await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#fdf6e3"));
+    const cards = [...node.querySelectorAll("article")];
+    expect(cards.length).toBe(2);
+    const second = cards[1]!;
+    const press = [...second.querySelectorAll("button")].find((b) => b.textContent === label)!;
+    await act(async () => press.click());
+    await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+    await proposalsChanged();
+    expect(rootStyle().getPropertyValue("--color-paper")).toBe("");
+  },
+);
+
+it("keeps the preview after Save until the saved preferences arrive", async () => {
+  let open = [themeProposal("t1")];
+  let releaseSave!: () => void;
+  let releasePrefs!: () => void;
+  const saveGate = new Promise<void>((resolve) => (releaseSave = resolve));
+  const prefsGate = new Promise<void>((resolve) => (releasePrefs = resolve));
+  let prefsHeld = false;
+  conversation = made();
+  sessionPanel.select("c1");
+  answer = async (call) => {
+    if (call.path.endsWith("/proposals")) return Response.json({ proposals: open });
+    if (call.path.endsWith("/save")) {
+      // The daemon publishes the change before it answers the save.
+      open = [];
+      await proposalsChanged();
+      await saveGate;
+      return Response.json({});
+    }
+    if (call.path === "api/settings/appearance" && prefsHeld) {
+      await prefsGate;
+      return Response.json({ theme: "light", themes: [] });
+    }
+    return undefined;
+  };
+  await themedHost();
+  await act(async () => sessionPanel.show());
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4"));
+  prefsHeld = true;
+  await act(async () => button("Save")!.click());
+  await until(() => expect(node.querySelectorAll("article").length).toBe(0));
+  // The list is empty and the save is unanswered: the preview stays.
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4");
+  await act(async () => releaseSave());
+  await until(() =>
+    expect(calls.filter((c) => c.path === "api/settings/appearance").length).toBeGreaterThan(0),
+  );
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#e8eef4");
+  await act(async () => releasePrefs());
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe(""));
+});
+
+// A theme proposal that names one of the person's custom themes updates it.
+const mineTheme = {
+  id: "c-mine",
+  name: "Mine",
+  base: "dark",
+  tokens: { "--color-paper": "#111111" },
+};
+const editPrefs = {
+  theme: "dark",
+  light_theme: "default-light",
+  dark_theme: "c-mine",
+  themes: [
+    { id: "default-light", name: "Default light", base: "light", tokens: {}, builtin: true },
+    { id: "default-dark", name: "Default dark", base: "dark", tokens: {}, builtin: true },
+    mineTheme,
+  ],
+};
+const editProposal = (id = "e1") =>
+  themeProposal(id, {
+    after: {
+      theme_id: "c-mine",
+      name: "Mine",
+      base: "dark",
+      tokens: { "--color-paper": "#223344" },
+      contrast_warnings: [],
+    },
+  });
+
+/** Opens a theme edit whose saves are answered by `saved`. */
+async function openEdit(saved: (call: Call) => Response | undefined = () => undefined) {
+  let open = [editProposal()];
+  await openThemes(
+    () => open,
+    () => {
+      open = [];
+    },
+  );
+  const base = answer;
+  answer = (call) => {
+    if (call.path === "api/settings/appearance") return Response.json(editPrefs);
+    if (call.path.endsWith("/save")) {
+      const given = saved(call);
+      if (given) return given;
+    }
+    return base(call);
+  };
+  // The preferences are read again (the window gaining focus does it).
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await proposalsChanged();
+  await until(() => expect(node.textContent).toContain("Saving updates Mine"));
+}
+
+it("offers Update and Save as new theme for a proposal that edits a custom theme", async () => {
+  await openEdit();
+  const card = node.querySelector("article")!;
+  expect(button("Update Mine")).toBeDefined();
+  expect(button("Save as new theme")).toBeDefined();
+  // The name is prefilled; the slot choice is not offered, the slots it is in are named.
+  expect(card.querySelector<HTMLInputElement>('input[type="text"]')!.value).toBe("Mine");
+  expect(card.querySelector("select")).not.toBeNull();
+  expect(card.textContent).toContain("your dark theme");
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#223344");
+});
+
+it("updates in place with no slot, and saves as new with the base's slot", async () => {
+  await openEdit();
+  await act(async () => button("Update Mine")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Mine", mode: "update" },
+  });
+  calls.length = 0;
+  await openEdit();
+  const name = node.querySelector<HTMLInputElement>('article input[type="text"]')!;
+  await type(name, "Copy");
+  await act(async () => button("Save as new theme")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Copy", slot: "dark", mode: "new" },
+  });
+});
+
+it("defaults Save as new to the slot in use and sends a changed slot", async () => {
+  // Mode dark (desktop light): the edited theme is in the dark slot in use.
+  await openEdit();
+  const select = node.querySelector<HTMLSelectElement>("article select")!;
+  expect(select.value).toBe("dark");
+  await act(async () => {
+    select.value = "light";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await act(async () => button("Save as new theme")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Mine", slot: "light", mode: "new" },
+  });
+});
+
+it("labels the update as a rename when the name field differs from the stored name", async () => {
+  await openEdit();
+  expect(button("Update Mine")).toBeDefined();
+  const name = node.querySelector<HTMLInputElement>('article input[type="text"]')!;
+  await type(name, "Dusk");
+  expect(button("Update and rename to Dusk")).toBeDefined();
+  expect(button("Update Mine")).toBeUndefined();
+  await act(async () => button("Update and rename to Dusk")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/e1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/e1/save"))!.body).toEqual({
+    theme: { name: "Dusk", mode: "update" },
+  });
+});
+
+it("shows why an update failed and keeps Save as new theme", async () => {
+  await openEdit(() =>
+    Response.json(
+      {
+        code: "refused",
+        message: "the theme this edits was deleted: save it as a new theme instead",
+      },
+      { status: 422 },
+    ),
+  );
+  await act(async () => button("Update Mine")!.click());
+  await until(() => expect(node.querySelector('[role="alert"]')).not.toBeNull());
+  expect(node.querySelector('[role="alert"]')!.textContent).toContain("deleted");
+  const again = button("Save as new theme")!;
+  expect(again.disabled).toBe(false);
+  // The proposal is still open, and so is the preview.
+  expect(node.querySelectorAll("article").length).toBe(1);
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#223344");
+});
+
+// A theme choice is for no page: it switches to an existing theme, for the
+// slot in use unless the agent named one.
+const pineTheme = {
+  id: "pine",
+  name: "Pine",
+  base: "dark",
+  tokens: { "--color-paper": "#cfe8d8" },
+  builtin: true,
+};
+const choiceProposal = (after: Record<string, unknown>, id = "k1"): Proposal => ({
+  id,
+  kind: "diff",
+  page: "app",
+  target: "theme_choice",
+  before: { theme: "light", light_theme: "Default light", dark_theme: "Mine" },
+  after,
+  revision: "theme",
+  context: { page: "inbox" },
+});
+
+/** Opens the proposals `open` with these saved preferences and the desktop in
+ *  dark mode or not. */
+async function openChoice(
+  prefs: { theme: string },
+  open: Proposal[],
+  osDark = false,
+  saved: () => void = () => {},
+) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: osDark && query.includes("dark"),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+  let list = open;
+  await openThemes(
+    () => list,
+    () => {
+      saved();
+      list = [];
+    },
+  );
+  const base = answer;
+  answer = (call) => {
+    if (call.path === "api/settings/appearance")
+      return Response.json({ ...editPrefs, ...prefs, themes: [...editPrefs.themes, pineTheme] });
+    return base(call);
+  };
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  await proposalsChanged();
+}
+const cardText = () => node.querySelector("article")?.textContent ?? "";
+
+it.each([
+  ["light", false, "light"],
+  ["light", true, "light"],
+  ["dark", false, "dark"],
+  ["dark", true, "dark"],
+  ["system", false, "light"],
+  ["system", true, "dark"],
+] as const)(
+  "names the slot in use for mode %s with the desktop dark %s: %s",
+  async (theme, osDark, slot) => {
+    await openChoice({ theme }, [choiceProposal({ theme_id: "pine", slot: "in_use" })], osDark);
+    await until(() => expect(cardText()).toContain(`Use Pine for the ${slot} theme (in use)`));
+    // The thumbnail of the theme is shown.
+    expect(node.querySelector("article [data-testid='theme-mini']")).not.toBeNull();
+    expect(button("Save")).toBeDefined();
+    expect(button("Dismiss")).toBeDefined();
+  },
+);
+
+it("previews a choice for the slot in use and a mode change, and not the other slot", async () => {
+  // Dark mode, slot in use: Pine shows now.
+  await openChoice({ theme: "dark" }, [choiceProposal({ theme_id: "pine", slot: "in_use" })]);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#cfe8d8"));
+  expect(document.documentElement.dataset.theme).toBe("dark");
+});
+
+it("does not preview a choice for the other slot, and says which slot it is for", async () => {
+  await openChoice({ theme: "dark" }, [choiceProposal({ theme_id: "pine", slot: "light" })]);
+  await until(() => expect(cardText()).toContain("Use Pine for the light theme"));
+  expect(cardText()).not.toContain("(in use)");
+  expect(cardText()).toContain("not the one in use");
+  expect(node.querySelector("article [data-testid='theme-mini']")).not.toBeNull();
+  // The saved dark theme (Mine) still shows: Pine is not previewed.
+  expect(rootStyle().getPropertyValue("--color-paper")).toBe("#111111");
+  expect(document.documentElement.dataset.theme).toBe("dark");
+});
+
+it("previews a mode change that comes with a choice for the other slot", async () => {
+  // Light mode now; the choice switches to dark mode and sets the dark slot.
+  await openChoice({ theme: "light" }, [
+    choiceProposal({ theme_id: "pine", slot: "dark", theme: "dark" }),
+  ]);
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#cfe8d8"));
+  await until(() => expect(cardText()).toContain("Switch the theme mode to dark"));
+});
+
+it("saves a choice with an explicit slot, resolving the slot in use", async () => {
+  // System mode on a dark desktop: the slot in use is dark.
+  await openChoice(
+    { theme: "system" },
+    [choiceProposal({ theme_id: "pine", slot: "in_use" })],
+    true,
+  );
+  await until(() => expect(cardText()).toContain("(in use)"));
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#cfe8d8"));
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/k1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/k1/save"))!.body).toEqual({
+    theme: { slot: "dark" },
+  });
+  // The preview ends once the choice is saved: the saved dark theme shows again.
+  await until(() => expect(rootStyle().getPropertyValue("--color-paper")).toBe("#111111"));
+});
+
+it("saves a choice that names the other slot with that slot, and a mode alone with none", async () => {
+  await openChoice({ theme: "light" }, [choiceProposal({ theme_id: "pine", slot: "dark" })]);
+  await until(() => expect(button("Save")).toBeDefined());
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/k1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/k1/save"))!.body).toEqual({
+    theme: { slot: "dark" },
+  });
+  calls.length = 0;
+  await openChoice({ theme: "light" }, [choiceProposal({ theme: "dark" })]);
+  await until(() => expect(cardText()).toContain("Switch the theme mode to dark"));
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/k1/save"))).toBe(true));
+  expect(calls.find((c) => c.path.endsWith("/proposals/k1/save"))!.body).toEqual({});
 });

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -34,18 +35,22 @@ func TestFixEnvironmentDropsTokensAndMovesCaches(t *testing.T) {
 }
 
 func TestFixCredentialPaths(t *testing.T) {
-	paths := FixCredentialPaths("/home/user", []string{"CLAUDE_CONFIG_DIR=/cfg/claude", "CODEX_HOME=/cfg/codex", "CODEX_HOME=relative", "XDG_RUNTIME_DIR=/run/user/1000"})
+	// abs makes a slash path absolute on this OS: "/cfg" is relative on
+	// Windows, which needs a volume.
+	abs := func(p string) string { return filepath.VolumeName(os.TempDir()) + filepath.FromSlash(p) }
+	paths := FixCredentialPaths(abs("/home/user"), []string{"CLAUDE_CONFIG_DIR=" + abs("/cfg/claude"), "CODEX_HOME=" + abs("/cfg/codex"), "CODEX_HOME=relative",
+		"XDG_RUNTIME_DIR=" + abs("/run/user/1000")})
 	for _, want := range []string{"/home/user/.ssh", "/home/user/.aws", "/home/user/.config/gcloud", "/home/user/.config/gh", "/home/user/.netrc", "/home/user/.git-credentials",
 		"/home/user/.docker/config.json", "/home/user/.npmrc", "/home/user/.pypirc", "/home/user/.kube", "/home/user/.gnupg", "/home/user/.codex/auth.json",
 		"/home/user/.claude/.credentials.json", "/cfg/claude/.credentials.json", "/cfg/codex/auth.json", "/run/user/1000"} {
-		if !slices.Contains(paths, filepath.FromSlash(want)) {
-			t.Errorf("missing %s", want)
+		if !slices.Contains(paths, abs(want)) {
+			t.Errorf("missing %s in %q", want, paths)
 		}
 	}
 	if slices.ContainsFunc(paths, func(p string) bool { return strings.Contains(p, "relative") }) {
 		t.Error("a relative CODEX_HOME was used")
 	}
-	if Home([]string{"HOME=/a", "HOME=/b"}) != "/b" {
+	if Home([]string{"HOME=" + abs("/a"), "HOME=" + abs("/b")}) != abs("/b") {
 		t.Error("the last HOME does not win")
 	}
 }

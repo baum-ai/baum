@@ -398,7 +398,7 @@ it.each<Overrides>([
   expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
 });
 
-it("puts the review's dot before each row's title, a group's too", async () => {
+it("puts the review's dot under each row's title, a group's too", async () => {
   entries = [
     requested(1, { status: "current", version_count: 1 }),
     requested(2, { status: "outdated", version_count: 1 }),
@@ -444,7 +444,8 @@ it("puts the review's dot before each row's title, a group's too", async () => {
   expect(label("Change 1")).toBe(", Review ready");
   expect(label("Change 2")).toBe(", Review outdated");
   expect(label("Change 3")).toBeUndefined();
-  expect(dot("Change 3").childElementCount).toBe(0);
+  // Without a review there is no dot, and no empty slot either.
+  expect(row("Change 3").querySelector(".review-dot")).toBeNull();
   expect(label("Change 6")).toBe(", Review outdated");
   expect(label("Change 7")).toBe(", Review failed");
   expect(dot("Change 7").querySelector("[popover]")?.textContent).toBe(
@@ -452,7 +453,9 @@ it("puts the review's dot before each row's title, a group's too", async () => {
   );
   expect(label("Auth rework")).toBe(", Generating review");
   expect(dot("Change 1").querySelector(".sr-only")).toBeNull();
-  expect(dot("Change 1").nextElementSibling?.className).toBe("upnext-row-text");
+  // The dot leads the line under the title.
+  expect(dot("Change 1").parentElement?.className).toBe("upnext-row-line");
+  expect(dot("Auth rework").parentElement?.className).toBe("upnext-row-line");
 });
 
 const list = () =>

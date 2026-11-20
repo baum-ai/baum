@@ -153,9 +153,7 @@ func TestDetectorReportWritesIDsToTheRunDirectoryOnly(t *testing.T) {
 	if !strings.Contains(printed, "wrote the detector report") || !strings.Contains(printed, "cases whose every hunk lacks patch text: 1") || !strings.Contains(printed, "heuristics") {
 		t.Errorf("output:\n%s", printed)
 	}
-	if snapshot(t, d.dir) != before {
-		t.Error("the dataset changed")
-	}
+	unchanged(t, d.dir, before)
 	if _, _, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, DryRun: true, DetectorReport: true, Selection: replay.Selection{IDs: []string{"c1"}}}); err == nil {
 		t.Error("a report of named cases is accepted")
 	}

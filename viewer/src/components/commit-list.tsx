@@ -7,7 +7,6 @@ import { EM_DASH, formatDate, formatSHA, formatTime } from "./format";
 import { Item, JumpLink } from "./review-parts";
 import { CodeDiff, type CodeDiffFile } from "./code-diff";
 import type { ReviewViewerActions } from "./review-viewer";
-import { SideNavEntry } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { Badge, type BadgeTone, Button, CardHeader } from "./ui";
 
@@ -426,55 +425,6 @@ function CommitCard({
         </ul>
       )}
     </Item>
-  );
-}
-
-/** The commits as a compact list, for the side pane: a row each, by subject,
- *  with its short id, author and time, that opens the commit in the review
- *  pane. */
-export function CommitEntries({
-  state,
-  selected,
-  actions,
-}: {
-  state: CommitListState;
-  selected: string | null;
-  actions: ReviewViewerActions;
-}) {
-  if (state.status === "loading")
-    return (
-      <p role="status" className="px-2.5 py-1.5 text-base text-tertiary">
-        Reading the commits…
-      </p>
-    );
-  if (state.status === "failed") return <Failed>The commits could not be loaded.</Failed>;
-  if (state.commits.length === 0)
-    return (
-      <p className="px-2.5 py-1.5 text-base text-secondary">
-        No commit was found for this pull request.
-      </p>
-    );
-  return (
-    <div className="flex flex-col gap-0.5">
-      {state.commits.map((commit) => (
-        <SideNavEntry
-          key={commit.id}
-          title={commit.subject || formatSHA(commit.id)}
-          meta={[
-            formatSHA(commit.id),
-            commit.author,
-            commit.committedAt
-              ? `${formatDate(commit.committedAt)} ${formatTime(commit.committedAt)}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(" · ")}
-          active={selected === commit.id}
-          controls="review-section"
-          onSelect={() => actions.select({ kind: "commit", id: commit.id })}
-        />
-      ))}
-    </div>
   );
 }
 

@@ -128,7 +128,8 @@ func TestEditingAndDeletingATypeKeepsAStoredReviewsTiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	now = now.Add(40 * 24 * time.Hour)
-	if err := lib.Purge(ctx); err != nil {
+	// Every write sweeps the types deleted past the undo window first.
+	if _, err := lib.Create(ctx, savedTypeChange(t, "other_type", ""), nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := lib.Get(ctx, "migrations"); !errors.Is(err, tilelibrary.ErrUnknown) {

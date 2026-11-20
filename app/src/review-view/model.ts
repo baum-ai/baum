@@ -6,7 +6,15 @@ import type {
   RiskTier,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
-import { leadProse, pointId, type ReviewV2, type V2Section, type ViewTile } from "./document";
+import {
+  firstSentence,
+  leadProse,
+  pointId,
+  type ReviewV2,
+  type V2Section,
+  type ViewTile,
+} from "./document";
+import { isRecord, isString } from "../tiles/types";
 import { fromV1 } from "./from-v1";
 
 export type { ReviewV2, V2Block, V2Point, V2Section, V2Risk, ViewTile } from "./document";
@@ -59,10 +67,6 @@ export const CONTEXT_ID = "context";
  *  library type's), with the file open as its item. */
 export const CODE_PLACE = "code";
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isString = (value: unknown): value is string => typeof value === "string";
-
 /** The quiet note under an added tile's title: where its data is from while
  *  it is filled, or nothing. */
 export function addedNote(tile: Pick<ViewTile, "from" | "filling">): string | null {
@@ -78,7 +82,7 @@ export function addedNote(tile: Pick<ViewTile, "from" | "filling">): string | nu
  *  makes and never seen by JSON. */
 export const REVIEW: unique symbol = Symbol.for("baum.review/2");
 
-export type ReviewedDocument = ReviewDocument & { [REVIEW]?: ReviewV2 };
+type ReviewedDocument = ReviewDocument & { [REVIEW]?: ReviewV2 };
 
 export function withReview<D extends ReviewDocument>(document: D, review: ReviewV2): D {
   (document as ReviewedDocument)[REVIEW] = review;
@@ -149,15 +153,8 @@ export type ListedSection = {
 };
 
 /** Inline markdown as plain text: the marks of bold and code dropped. */
-export function plainText(text: string): string {
+function plainText(text: string): string {
   return text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
-}
-
-/** The first sentence of a text, for a list's quiet line. */
-export function firstSentence(text: string): string {
-  const plain = text.replace(/\s+/g, " ").trim();
-  const end = plain.search(/[.!?](\s|$)/);
-  return end >= 0 ? plain.slice(0, end + 1) : plain;
 }
 
 /** How it works lists "Where this fits" first (when the review has a context,
@@ -204,8 +201,6 @@ export function defaultSection(list: ListedSection[]): string | null {
 }
 
 // ---------- places ----------
-
-export type ViewTab = "overview" | "sections" | "code";
 
 /** Where the reader is on the page, read off the viewer's selection. */
 export type ViewPlace =
@@ -277,8 +272,8 @@ export function commentSelection(selection: Selection): Selection {
 
 // ---------- the Code tab ----------
 
-export type FileGroup = "Code" | "Tests" | "Docs" | "Config" | "Generated";
-export const FILE_GROUPS: FileGroup[] = ["Code", "Tests", "Docs", "Config", "Generated"];
+type FileGroup = "Code" | "Tests" | "Docs" | "Config" | "Generated";
+const FILE_GROUPS: FileGroup[] = ["Code", "Tests", "Docs", "Config", "Generated"];
 
 const GROUP_OF_ROLE: Record<HunkRole, FileGroup> = {
   code: "Code",
@@ -345,7 +340,7 @@ export const FILE_GROUPINGS: { value: FileGrouping; label: string }[] = [
   { value: "feature", label: "Feature" },
 ];
 
-export const NO_SECTION = "Not in a section";
+const NO_SECTION = "Not in a section";
 
 /** One heading of the file list and the files under it. A file explained by
  *  several sections is under each of them. */
@@ -581,7 +576,7 @@ export const SECTION_VIEWS: { value: SectionView; label: string }[] = [
   { value: "docs", label: "Docs" },
 ];
 
-export function isSectionView(value: unknown): value is SectionView {
+function isSectionView(value: unknown): value is SectionView {
   return SECTION_VIEWS.some((view) => view.value === value);
 }
 

@@ -77,7 +77,9 @@ test("folds the sidebar, opens it under the pointer and pins it again", async ({
     if (await page.evaluate(() => !!document.activeElement?.closest(".local-rail"))) break;
   }
   await expect.poll(() => width(page, ".local-rail")).toBe(244);
+  await expect(lane(page)).toHaveAttribute("data-keyboard-focus", "");
   await page.locator(".local-frame").click({ position: { x: 600, y: 10 } });
+  await expect(lane(page)).not.toHaveAttribute("data-keyboard-focus");
   await expect.poll(() => width(page, ".local-rail")).toBe(56);
 
   // Pinned again, it stands beside the page.

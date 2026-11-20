@@ -79,7 +79,8 @@ body {
   z-index: calc(var(--z-sheet, 40) + 1);
 }
 .local-rail-lane[data-rail="folded"]:not(
-  :has(:focus-visible:not(.context-menu *), .local-rail-menu, .context-menu)
+  [data-keyboard-focus],
+  :has(.local-rail-menu, .context-menu)
 ) {
   z-index: 5;
 }
@@ -499,10 +500,12 @@ body {
   display: none;
 }
 /* Folded to its glyphs: unpinned, or in a narrow window, and neither under
-   the pointer (`data-rail="open"`) nor holding keyboard focus. A menu it
+   the pointer (`data-rail="open"`) nor holding keyboard focus
+   (`data-keyboard-focus`, set by the sidebar: see `useKeyboardFocusWithin`
+   in shell.tsx for why it is not a `:has()` here). A menu it
    shows does not open it: the menu hangs where its button was. The links
    keep their names. */
-.local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+.local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
   .local-rail {
     width: var(--rail-folded-width);
     box-shadow: none;
@@ -557,7 +560,7 @@ body {
 /* Without a pointer that hovers, the folded sidebar never opens to show
    Help, so it keeps Help under the mark. */
 @media (hover: none) {
-  .local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+  .local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
     .local-rail-head {
       flex-direction: column;
     }
@@ -587,8 +590,13 @@ body {
   padding: 0.75rem 1.5rem 0;
 }
 /* What scrolls, a size container so a pane held beside the page (the
-   review's rail) can fill the panel's height rather than the window's. */
+   review's rail) can fill the panel's height rather than the window's.
+   Positioned, so what is placed absolutely in a page (a transcript's
+   screen-reader labels) scrolls with it: placed against the window instead,
+   it would lengthen the window, and scrolling past the page's end would then
+   scroll the whole app away. */
 .local-main {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -2641,6 +2649,221 @@ dialog.local-dialog-wide {
 }
 .settings-select {
   width: 15rem;
+}
+/* Settings › Appearance. Each theme's thumbnail is a
+   [data-theme-scope] element: the palette's recipes apply to it, so it
+   shows its own theme whatever the page's mode. The scope redeclares the
+   palette's radii, so the app's are put back on it. */
+[data-theme-scope] {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+.theme-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.875rem 1.25rem 1.125rem;
+  border-top: 1px solid var(--border-subtle);
+}
+.theme-row-title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 500;
+}
+.theme-row-use {
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+.theme-row-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.theme-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 0.875rem;
+  padding-top: 0.25rem;
+}
+.theme-option {
+  position: relative;
+  width: 7rem;
+}
+/* Six built-ins fit one row at the usual desktop width. */
+.settings-content > .settings-section:has(.theme-strip) {
+  max-width: 900px;
+}
+/* The selection and focus rings sit on this frame, outside the thumbnail's
+   [data-theme-scope], so they take the page's colours, not the theme's. */
+.theme-mini-frame {
+  display: block;
+  border-radius: var(--radius-md);
+}
+.theme-option-label {
+  display: grid;
+  gap: 0.375rem;
+  cursor: pointer;
+}
+.theme-option-label:has(input:disabled) {
+  cursor: default;
+  opacity: 0.6;
+}
+.theme-option-name {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+.theme-option-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.theme-option-check {
+  flex: none;
+  display: none;
+  color: var(--text-primary);
+}
+.theme-option-label:has(input:checked) .theme-option-check {
+  display: block;
+}
+.theme-option-label:has(input:checked) .theme-mini-frame {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+.theme-option-label:has(input:focus-visible) .theme-mini-frame {
+  box-shadow: var(--focus-ring);
+}
+.theme-option-label:has(input:checked) .theme-option-text {
+  font-weight: 500;
+}
+.theme-option-menu {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+}
+/* The ⋯ sits over the thumbnail, so it is a chip in the page's colours that
+   reads on a dark or a light thumbnail alike. */
+.theme-option .theme-option-menu .row-menu-button {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--border-default);
+  background: var(--surface-popup);
+  color: var(--text-primary);
+}
+.theme-option .theme-option-menu .row-menu-button:hover,
+.theme-option .theme-option-menu .row-menu-button[aria-expanded="true"] {
+  background: var(--surface-popup);
+  border-color: var(--text-secondary);
+}
+.theme-rename {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin-top: 0.75rem;
+}
+/* A sketch of baum's layout: sidebar on the canvas, the page's panel with its
+   header and action, text bars and a diff, drawn with palette roles only. */
+.theme-mini {
+  display: grid;
+  grid-template-columns: 18% 1fr;
+  gap: 0.25rem;
+  aspect-ratio: 16 / 10;
+  box-sizing: border-box;
+  padding: 0.25rem;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+}
+.theme-mini-rail {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  padding-top: 0.125rem;
+}
+.theme-mini-panel {
+  display: grid;
+  align-content: start;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0.3125rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-page);
+}
+.theme-mini-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding-bottom: 0.1875rem;
+  border-bottom: 1px solid var(--border-default);
+}
+.theme-mini-bar {
+  display: block;
+  height: 0.25rem;
+  border-radius: var(--radius-full);
+  background: var(--text-secondary);
+  opacity: 0.4;
+}
+.theme-mini-bar.theme-mini-selected {
+  height: 0.4375rem;
+  border-radius: var(--radius-xs);
+  background: var(--nav-selected);
+  opacity: 1;
+}
+.theme-mini-bar.theme-mini-title {
+  width: 40%;
+  background: var(--text-primary);
+  opacity: 0.7;
+}
+.theme-mini-bar.theme-mini-short {
+  width: 65%;
+}
+.theme-mini-action {
+  flex: none;
+  width: 1.125rem;
+  height: 0.4375rem;
+  border-radius: var(--radius-full);
+  background: var(--action-primary);
+}
+.theme-mini-diff {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+}
+.theme-mini-line {
+  display: flex;
+  align-items: center;
+  gap: 0.1875rem;
+  padding: 0.125rem 0.1875rem;
+}
+.theme-mini-line > .theme-mini-bar {
+  flex: 1;
+}
+.theme-mini-line[data-tone="positive"] {
+  background: var(--status-positive-bg);
+}
+.theme-mini-line[data-tone="critical"] {
+  background: var(--status-critical-bg);
+}
+.theme-mini-mark {
+  flex: none;
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: var(--radius-xs);
+}
+.theme-mini-mark[data-tone="positive"] {
+  background: var(--status-positive);
+}
+.theme-mini-mark[data-tone="critical"] {
+  background: var(--status-critical);
 }
 .settings-model {
   display: grid;
@@ -5698,10 +5921,16 @@ kbd.key-hint {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
-/* The review dot's slot (review-dot.tsx) sits on the title's line. */
-.upnext-row > .review-dot {
-  font-size: var(--text-base);
+/* The review dot (review-dot.tsx) leads the line under the title, smaller
+   than in the other lists so it stays out of the title's way. */
+.upnext-row-line > .review-dot {
+  width: auto;
   height: 1lh;
+  margin-right: -2px;
+  font-size: var(--text-xs);
+}
+.review-dot-compact > span:first-child {
+  transform: scale(0.75);
 }
 /* The line under the title, its inbox tag after it: a long line gives way first. */
 .upnext-row-line {
