@@ -5,6 +5,7 @@ import {
   detail,
   frameBox,
   frameReady,
+  frameStill,
   open,
   railRow,
   sectionRow,
@@ -110,6 +111,7 @@ test("a citation in the frame opens the cited code in Files changed", async ({ p
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, detail("widget_health"));
   await frameReady(page, "widget_health");
+  await frameStill(page, "widget_health");
   // The hunk citation's chip, a button in the frame.
   const chip = widget(page).locator('baum-cite[data-kind="hunk"] button').first();
   await expect(chip).toBeVisible();
@@ -124,6 +126,7 @@ test("a citation of another tile shows that tile", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, detail("widget_health"));
   await frameReady(page, "widget_health");
+  await frameStill(page, "widget_health");
   await widget(page).locator('baum-cite[data-kind="tile"] button').click();
   await expect(page).toHaveURL(/tile=newer_kit/);
   await expect(tileOn(page, "newer_kit")).toBeInViewport();
