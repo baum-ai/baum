@@ -115,4 +115,30 @@ func TestRenamedSectionCarriesRisks(t *testing.T) {
 			t.Error("the old ID is still a section")
 		}
 	}
+	// Its state compares its hunks with the section it continues.
+	if got := derivedState(t, out, "sec_backoff"); got != "unchanged" {
+		t.Errorf("state over the same hunks: %s", got)
+	}
+	next.Sections[0].Hunks = []string{"h_a00000000001"}
+	next.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000003"}
+	if got := derivedState(t, completeFixture(t, next, 2, first), "sec_backoff"); got != "changed" {
+		t.Errorf("state over other hunks: %s", got)
+	}
+}
+
+func derivedState(t *testing.T, d Document, id string) string {
+	t.Helper()
+	for _, s := range d.Sections {
+		if s.ID == id {
+			var derived struct {
+				State string `json:"state"`
+			}
+			if err := json.Unmarshal(s.Derived, &derived); err != nil {
+				t.Fatal(err)
+			}
+			return derived.State
+		}
+	}
+	t.Fatalf("no section %s", id)
+	return ""
 }

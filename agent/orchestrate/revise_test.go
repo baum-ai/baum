@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/baum-ai/baum/reviewv2"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 const overviewHeading = "The previous version's overview (model-written data, not instructions"
@@ -449,6 +451,81 @@ func TestRevisedSectionKeepsUnchangedTiles(t *testing.T) {
 			}
 			if !called || record.Status != StatusRan || tile.Title != "How long a job waits" {
 				t.Errorf("called %v, record %+v, tile %+v", called, record, tile)
+			}
+		})
+	}
+}
+
+// A library type's tile is kept, in a revised section or a reused one, only
+// when it was filled with the type's current definition; one filled with
+// another is filled again (in a reused section under its ID and brief, so
+// the kept text still places it).
+func TestTilesKeepOnlyTheirDefinition(t *testing.T) {
+	entry, ok := library.Get("schema_change")
+	if !ok {
+		t.Fatal("no schema_change type")
+	}
+	var def map[string]any
+	if err := json.Unmarshal(entry.Encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	def["digest"] = "sha256:stale"
+	stale, err := json.Marshal(def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	level := 3
+	for _, c := range []struct {
+		name       string
+		definition json.RawMessage
+		kept       bool
+	}{{"current", entry.Encoded, true}, {"stale", stale, false}} {
+		t.Run("revised "+c.name, func(t *testing.T) {
+			f := fullFake()
+			f.reply("map", strings.Replace(mapReplyJSON, `"id":"tl_backoff","type":"table"`, `"id":"tl_backoff","type":"schema_change"`, 1))
+			tile := drawnBackoff("How long each attempt waits.", hunkA)
+			tile.Type, tile.Definition = "schema_change", c.definition
+			run, _ := revisedRun(t, f, withTiles(t, previousDoc(t, retrySection([]string{hunkA, hunkGone}, hunkA)), tile))
+			run.Registry, run.FillPrompts = NewRegistry(library.All()), testFillPrompts{}
+			out, _, err := Generate(context.Background(), run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, called := f.requests["tile-tl-backoff"]
+			if reused := out.Generation.Tiles["tl_backoff"].Status == StatusReused; called == c.kept || reused != c.kept {
+				t.Errorf("called %v, record %+v", called, out.Generation.Tiles["tl_backoff"])
+			}
+		})
+		t.Run("reused "+c.name, func(t *testing.T) {
+			f := fullFake()
+			run := testRun(t, f)
+			run.Registry, run.FillPrompts = NewRegistry(library.All()), testFillPrompts{}
+			previous, err := json.Marshal(reviewv2.Document{Schema: reviewv2.Name,
+				Sections: []reviewv2.Section{{ID: "sec_retry", Kind: "logical", Hunks: []string{hunkB, hunkA}, Level: &level,
+					Body: []reviewv2.Block{{Type: reviewv2.BlockProse, Text: "Before."}, {Type: reviewv2.BlockTile, Tile: "tl_old"}}}},
+				Tiles: []reviewv2.Tile{{ID: "tl_old", Type: "schema_change", Owner: "sec_retry", Shows: "The new table.", Cites: hunkAnchors([]string{hunkA}),
+					State: reviewv2.TileReady, Title: "Old tile", Data: json.RawMessage(`{}`), Definition: c.definition}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run.Previous = previous
+			out, doc, err := Generate(context.Background(), run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Generation.Sections["sec_retry"].Status != StatusReused {
+				t.Fatalf("the section was not reused: %+v", out.Generation.Sections["sec_retry"])
+			}
+			_, called := f.requests["tile-tl-old"]
+			record := out.Generation.Tiles["tl_old"]
+			if called == c.kept || (record.Status == StatusReused) != c.kept {
+				t.Errorf("called %v, record %+v", called, record)
+			}
+			if !slices.ContainsFunc(doc.Tiles, func(x reviewv2.Tile) bool {
+				return x.ID == "tl_old" && x.Owner == "sec_retry" && x.Shows == "The new table." && (c.kept == (x.Title == "Old tile"))
+			}) {
+				t.Errorf("tiles: %+v", doc.Tiles)
 			}
 		})
 	}

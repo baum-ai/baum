@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,7 +23,7 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	sections := slices.Clone(o.plan.Sections)
 	planned := slices.Clone(o.plan.Tiles)
 	o.mu.Unlock()
-	reused := o.reuse(sections)
+	reused, refill := o.reuse(sections)
 	histories := o.histories(sections)
 	var toWrite []reviewv2.Section
 	for _, s := range sections {
@@ -45,6 +46,9 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 		}
 	}
 	for _, list := range mandatory {
+		tileCalls += len(list)
+	}
+	for _, list := range refill {
 		tileCalls += len(list)
 	}
 	o.budget.expect(1, len(toWrite)+1)
@@ -72,9 +76,10 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 		if s.Kind == "mechanical" && !reused[s.ID] {
 			startTiles(s.ID, ownedBy(s.ID))
 		}
-		// A reused section's text is in: its mandatory tiles start now.
+		// A reused section's text is in: its mandatory tiles, and the tiles
+		// it keeps that are filled again, start now.
 		if reused[s.ID] {
-			startTiles(s.ID, mandatory[s.ID])
+			startTiles(s.ID, append(refill[s.ID], mandatory[s.ID]...))
 		}
 	}
 	// A written section's mandatory tiles start once its text is in, as its
@@ -213,11 +218,14 @@ func (o *orchestration) dropTile(id string) {
 // reuse keeps the previous version's text and tiles of each section whose
 // hunks are unchanged and whose text was complete (reviewv2.
 // ReusableSections). The map's tiles of a reused section give way to the
-// previous ones.
-func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
-	reused := map[string]bool{}
+// previous ones. A previous tile whose type is no longer offered with the
+// definition it was filled with (sameDefinition) stands pending, with its
+// ID, type and brief, so the text's tile block still places it: it is
+// returned by owner (refill) to be filled again.
+func (o *orchestration) reuse(sections []reviewv2.Section) (reused map[string]bool, refill map[string][]reviewv2.Tile) {
+	reused, refill = map[string]bool{}, map[string][]reviewv2.Tile{}
 	if len(o.run.Previous) == 0 || o.run.NoReuse {
-		return reused
+		return reused, refill
 	}
 	var withHunks []reviewv2.Section
 	for _, s := range sections {
@@ -238,6 +246,12 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 		o.tiles = slices.DeleteFunc(o.tiles, func(t reviewv2.Tile) bool { return t.Owner == id })
 		o.mu.Unlock()
 		for _, t := range r.Tiles {
+			if !o.sameDefinition(t) {
+				t.Title, t.Caption, t.Data, t.Definition, t.Problems, t.State = "", "", nil, nil, nil, reviewv2.TilePending
+				o.setTile(t)
+				refill[id] = append(refill[id], t)
+				continue
+			}
 			o.setTile(t)
 			o.record(LevelTiles, t.ID, StatusReused, "")
 		}
@@ -245,7 +259,7 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 	if len(reused) > 0 {
 		o.publish()
 	}
-	return reused
+	return reused, refill
 }
 
 // history is what a section's agent is given of the previous version: its
@@ -431,7 +445,33 @@ func (o *orchestration) keepTiles(tiles, previous []reviewv2.Tile) []reviewv2.Ti
 func (o *orchestration) unchangedTile(previous, t reviewv2.Tile) bool {
 	cited := hunkCites(previous.Cites)
 	return previous.Type == t.Type && previous.Shows == t.Shows && previous.State == reviewv2.TileReady && !previous.Added &&
-		len(cited) > 0 && !slices.ContainsFunc(cited, func(h string) bool { return !o.facts.refs.HasHunk(h) })
+		len(cited) > 0 && !slices.ContainsFunc(cited, func(h string) bool { return !o.facts.refs.HasHunk(h) }) && o.sameDefinition(previous)
+}
+
+// sameDefinition reports whether a drawn tile's type is still offered with
+// the definition it was filled with. A native type is drawn by the page's
+// own code, which has no version to compare, so it always is; a dedicated
+// type compares its definition's digest (its encoded definition when either
+// has no digest).
+func (o *orchestration) sameDefinition(t reviewv2.Tile) bool {
+	kind, ok := o.registry.Get(t.Type)
+	if !ok {
+		return false
+	}
+	if !kind.Dedicated || kind.Entry == nil {
+		return true
+	}
+	var drawn struct {
+		Digest string `json:"digest"`
+	}
+	if json.Unmarshal(t.Definition, &drawn) != nil {
+		return false
+	}
+	if current := kind.Entry.Definition.Digest; drawn.Digest != "" && current != "" {
+		return drawn.Digest == current
+	}
+	var a, b bytes.Buffer
+	return json.Compact(&a, t.Definition) == nil && json.Compact(&b, kind.Entry.Encoded) == nil && bytes.Equal(a.Bytes(), b.Bytes())
 }
 
 // tileIDs are the IDs of every tile the map planned or a section proposed.

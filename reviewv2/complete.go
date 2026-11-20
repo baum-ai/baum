@@ -50,7 +50,8 @@ type CompleteInput struct {
 // continues that section's risks as a section of its ID would; any other
 // previous section the map no longer has is not carried. Each section's derived
 // state compares its hunks with the previous version's section of the same
-// ID (new, unchanged or changed), and its review score is baum.review/1's.
+// ID, or the one it continues (new, unchanged or changed), and its review
+// score is baum.review/1's.
 // A tile without a state is ready when it has data and pending otherwise; a
 // code tile whose hunk the diff does not have is unavailable.
 func Complete(authored Document, in CompleteInput) (Document, error) {
@@ -114,6 +115,13 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 	}
 	for id, s := range prior.sections {
 		host.PreviousHunks[id] = s.Hunks
+	}
+	// A renamed section's state compares its hunks with the section it
+	// continues.
+	for next, old := range renamed {
+		if s, ok := prior.sections[old]; ok {
+			host.PreviousHunks[next] = s.Hunks
+		}
 	}
 	var sections []review.HostSection
 	for _, s := range d.Sections {

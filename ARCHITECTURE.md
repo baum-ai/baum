@@ -2070,8 +2070,8 @@ stored document without a model: the header, index and stats from the
 bundle and the risk score (rubric `risk-v1`: the highest section level,
 mechanical sections 1, floors of 4 and 5 for active high and critical risks,
 a lower bound when a section's details failed) and each section's derived
-facts (state against the previous version's section of the same ID by hunk
-hashes, line counts, reviewers, review score) through
+facts (state against the previous version's section of the same ID, or
+the one a renamed section continues, by hunk hashes, line counts, reviewers, review score) through
 `review.HostParts`, which runs `baum.review/1`'s completion code; the
 reading time (`ReviewMinutes`: the prose's words at 400 a minute,
 `review.MinutesForWords`); the risks' history as `baum.review/1`'s (a risk
@@ -2104,8 +2104,9 @@ map gives an ID the previous version did not have is revised the same way
 from the previous logical section whose code it clearly has and whose ID
 the new map no longer has (`RenamedSections`): they share a hunk, or a
 hunk of the new section overlaps one of the previous section's lines on
-the same path (each in its version's new file, so a heuristic), or the
-one file of both is the same; a shared path alone is not enough. The
+the same path, or the one file of both is the same; a shared path alone
+is not enough. The overlap is a heuristic: each version numbers lines in
+its own new file, so code added above a hunk shifts it. The
 pairs with the most shared hunks, then overlapping hunks, then shared
 paths are taken first, in map order on ties, and a section on either side
 is in at most one pair. Their agents revise
@@ -2798,7 +2799,9 @@ the levels of `agent/orchestrate` instead of the staged review:
    `generate.Tiles`). Only a map that fails after its repair fails the run.
 2. **Sections and context.** One section agent per logical section and the
    context agent run at once. A section whose hunks are unchanged since the
-   previous version keeps its text and tiles without a call. A logical
+   previous version keeps its text and tiles without a call; a kept tile
+   whose type is no longer offered with the definition it was filled with
+   stays under its ID and brief, pending, and is filled again. A logical
    section the previous version wrote under the same ID over other hunks,
    or under another ID over the same code (`reviewv2.RenamedSections`; the
    input then names the section it continues), is
@@ -2826,8 +2829,11 @@ the levels of `agent/orchestrate` instead of the staged review:
    its owner is written. In a revised or kept section, a tile the map plans
    again is kept from the previous version without a call (`reused`) when
    the previous section drew it ready under the same ID and type, every
-   hunk it cited is still in the pull request and its brief, after the
-   section agent's answer, is the same; a changed brief draws it again. Native types share the tile prompt; a dedicated type
+   hunk it cited is still in the pull request, its brief, after the
+   section agent's answer, is the same, and its type's definition is the
+   one it was filled with (a library or saved type's digest; a native type
+   is drawn by the page's own code and counts as unchanged); otherwise it is
+   drawn again. Native types share the tile prompt; a dedicated type
    goes through the library's fill (`agent.Generator.FillTile`); a code tile
    is filled by the host. The types the person added or pinned
    (`generate.Tiles.Always`) get a tile whatever the map plans.
