@@ -4,7 +4,7 @@
 // (oss/desktop/scripts/profile.sh) runs it inside the headless isolated
 // container; see the desktop README's Profiling section.
 // usage: node run.ts <scenario> --app BINARY --out DIR [--runs N] [--dist DIR]
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -45,7 +45,9 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const log = (text: string) => console.log(`profile: ${text}`);
 
 // The instance is set up already (isolated.sh), so the app opens on the
-// connecting screen and the daemon's page rather than first-run setup.
+// connecting screen and the daemon's page rather than first-run setup. A
+// seeded home's desktop.json says so already and is left as it is; in
+// another, only the flag is added.
 const desktopConfig = join(homedir(), ".config/com.usebaum.desktop/desktop.json");
 {
   const saved = existsSync(desktopConfig)
@@ -229,7 +231,20 @@ function environment(snapshot: Snapshot) {
     if (at > 0) entries[item.slice(0, at)] = item.slice(at + 1);
   }
   entries.CPUs = read("/sys/fs/cgroup/cpuset.cpus.effective") || "unrestricted";
-  entries.WebKit = snapshot.userAgent.match(/AppleWebKit\/[\d.]+/)?.[0] ?? snapshot.userAgent;
+  // The user agent's WebKit version is frozen; the package's is not.
+  let webkit = "";
+  try {
+    webkit = execFileSync("pkg-config", ["--modversion", "webkit2gtk-4.1"], { encoding: "utf8" });
+  } catch {}
+  entries.WebKitGTK =
+    webkit.trim() || (snapshot.userAgent.match(/AppleWebKit\/[\d.]+/)?.[0] ?? snapshot.userAgent);
+  const marker = read(join(homedir(), ".local/state/baum/seeddata.json"));
+  if (marker) {
+    const seeded = JSON.parse(marker) as { seed?: number; digest?: string };
+    entries.data = `seed ${seeded.seed} (digest ${String(seeded.digest).slice(0, 12)})`;
+  } else {
+    entries.data = "this instance's own (not seeded, so not comparable across machines)";
+  }
   return entries;
 }
 

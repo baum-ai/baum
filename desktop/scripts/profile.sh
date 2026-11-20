@@ -8,16 +8,20 @@ set -eu
 
 usage() {
   cat <<'EOF'
-usage: profile.sh <scenario> [--runs N] [--name NAME] [--copy-data] [--workspace DIR]...
+usage: profile.sh <scenario> [--runs N] [--name NAME]
+                  [--seed-data[=SEED] | --copy-data] [--workspace DIR]...
 
   scenario         cold-start, jk, review, filter, switch-inboxes or
                    session-panel
   --runs N         measured runs after the warm-up (default 5)
   --name NAME      the isolated instance to run in (default profile); its
                    home keeps its data between profiles
-  --copy-data, --workspace DIR
-                   as isolated.sh: copy this machine's baum data into the
-                   instance (once), and mount the repositories it names
+  --seed-data[=SEED], --copy-data, --workspace DIR
+                   as isolated.sh: fill a new instance with the seeded
+                   dataset (comparable across runs and machines), or copy
+                   this machine's baum data into it, and mount the
+                   repositories it names. An instance with no data and
+                   neither flag is seeded with seed 1
 EOF
 }
 
@@ -35,7 +39,7 @@ while [ "$#" -gt 0 ]; do
     --runs=*) runs=${1#--runs=} ;;
     --name) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; name=$2; shift ;;
     --name=*) name=${1#--name=} ;;
-    --copy-data) pass="$pass$nl$1" ;;
+    --copy-data|--seed-data|--seed-data=*) pass="$pass$nl$1" ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pass="$pass$nl--workspace$nl$2"; shift ;;
     --workspace=*) pass="$pass$nl$1" ;;
     -h|--help) usage; exit 0 ;;
@@ -47,6 +51,19 @@ done
 [ -n "$scenario" ] || { usage >&2; exit 2; }
 case $scenario in *[!a-z-]*) usage >&2; exit 2 ;; esac
 case $runs in ''|*[!0-9]*) echo "profile: --runs takes a number: $runs" >&2; exit 2 ;; esac
+
+# A new instance with neither flag gets the seeded dataset, whose numbers
+# compare across runs and machines; one that has data keeps it.
+case $pass in
+  *--seed-data*|*--copy-data*) ;;
+  *)
+    home=${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/desktop-homes/$name
+    if [ ! -e "$home/.local/state/baum" ] && [ ! -e "$home/.config/baum" ]; then
+      echo "profile: $name has no data yet, so it gets the seeded dataset (--seed-data)"
+      pass="$pass$nl--seed-data"
+    fi
+    ;;
+esac
 
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 out=target/profile/$scenario-$stamp

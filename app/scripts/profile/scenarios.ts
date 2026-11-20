@@ -66,6 +66,16 @@ function inboxes(ctx: Context) {
       }));`);
 }
 
+/** How many rows the Inbox lists in all, on every page: the pagination's
+ *  "1–30 of 75", or the rows shown when it fits on one page. */
+const inboxTotal = (ctx: Context) =>
+  ctx.execute<number>(
+    `const pages = document.querySelector("nav[aria-label='Inbox pagination'] [aria-live]")?.textContent ?? "";
+     const total = pages.match(/of\\s*([\\d,]+)/);
+     return total ? Number(total[1].replace(/,/g, "")) : document.querySelectorAll(arguments[0]).length;`,
+    [ROWS],
+  );
+
 const rowCount = (ctx: Context) =>
   ctx.execute<number>(`return document.querySelectorAll(${JSON.stringify(ROWS)}).length;`);
 /** Waits until the inbox shows rows, or says it has none. */
@@ -372,7 +382,9 @@ const review: Scenario<ReviewState> = {
   },
 };
 
-const QUERY = "author=@me";
+// A word from titles: Enter then applies "Titles containing retry", the
+// filter's first suggestion for text that is not a field.
+const QUERY = "retry";
 
 /** Clears every page's typed filter through the daemon, as the browser tests do. */
 const clearFilters = (ctx: Context) =>
@@ -391,7 +403,9 @@ const clearFilters = (ctx: Context) =>
 
 const filter: Scenario = {
   name: "filter",
-  description: `Opens the Inbox's filter with / and types \`${QUERY}\` a key at a time, then Enter applies it.`,
+  description:
+    `Opens the Inbox's filter with / and types \`${QUERY}\` a key at a time, then Enter applies ` +
+    "it as a title search. Rows are the Inbox's, on every page.",
   async prepare(ctx) {
     await ctx.open("");
     await inboxShown(ctx);
@@ -404,7 +418,7 @@ const filter: Scenario = {
     await clearFilters(ctx);
     await ctx.open("");
     await inboxShown(ctx);
-    const before = await rowCount(ctx);
+    const before = await inboxTotal(ctx);
     await ctx.reset();
     await ctx.mark("open");
     await ctx.press("/");
@@ -418,7 +432,7 @@ const filter: Scenario = {
     await ctx.press(KEY.enter);
     await ctx.sleep(1_000);
     await ctx.mark("end");
-    const after = await rowCount(ctx);
+    const after = await inboxTotal(ctx);
     await ctx.press(KEY.escape);
     return { typed_count: QUERY.length, rows_before_count: before, rows_after_count: after };
   },

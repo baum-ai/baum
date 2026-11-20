@@ -1145,12 +1145,24 @@ collector records them as interactions. The runner marks the instance set up
 closes the first-run tour if it shows.
 
 ```sh
-just desktop::profile cold-start --runs 5 --copy-data --workspace ~/workspace
-just desktop::profile jk --runs 10
+just desktop::profile jk --runs 10                  # seeded dataset, seed 1
+just desktop::profile review --seed-data=7 --name profile-7
+just desktop::profile cold-start --name mine --copy-data --workspace ~/workspace
 ```
 
-`--copy-data` and `--workspace DIR` work as for `isolated`; the copy is
-made once per instance. `--runs N` (5 by default) sets the measured runs,
+Profile on the seeded dataset (`--seed-data[=SEED]`, above): a seed gives
+the same pull requests, reviews, inboxes and sessions on every machine and
+every run, and the instance runs offline, so numbers before and after a
+change, or from two machines, compare. An instance that has no data yet
+and is given neither flag is seeded with seed 1, so the plain command does
+this. An instance that already has data keeps it, so `--copy-data` users
+get what they had; a seeded home is never mixed with copied data
+(`isolated.sh` refuses). `--copy-data` and `--workspace DIR` work as for
+`isolated`, the copy made once per instance: this machine's data shows how
+the app behaves on it, but differs between machines and changes over time.
+The summary's environment line says which data a profile ran on (the seed
+and the dataset's digest), the WebKitGTK package version and the CPUs.
+`--runs N` (5 by default) sets the measured runs,
 after one warm-up whose numbers are kept apart. The container runs on
 `BAUM_DEV_CPUSET`, like every development container, and the summary names
 the CPUs it had. The scenarios:
@@ -1160,7 +1172,7 @@ the CPUs it had. The scenarios:
 | `cold-start` | Quit and launch the app, until the Inbox shows content and settles | |
 | `jk` | 50 presses of j and k down the list with the most rows (an inbox or Pull requests) and back | a list of two rows |
 | `review` | From the Inbox, open the largest reviewed pull request (lines changed, else review size), then scroll the review to its end, 400 px a frame | a review |
-| `filter` | `/` on the Inbox, type `author=@me` a key at a time, Enter | the Inbox's filter |
+| `filter` | `/` on the Inbox, type `retry` a key at a time, Enter to search titles; reports the Inbox's rows before and after | the Inbox's filter |
 | `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled | two inboxes |
 | `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
 
@@ -1196,8 +1208,9 @@ runs it; the measured pages come from the daemon and run in the system's
 WebKitGTK, so that only slows the shell's own commands. Data copied with
 `--copy-data` holds no GitHub sign-in, so the daemon finds no open pull
 requests and the inboxes and Pull requests stay empty: `jk` skips, and
-`filter` types into an empty list. Signing the instance in once
-(`just desktop::isolated profile` with a window) fills them.
+`filter` types into an empty list. The seeded dataset has them. Its
+sessions are recorded as ended, so in `session-panel` nothing streams: it
+measures the panel open on an ended conversation, and the summary says so.
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
