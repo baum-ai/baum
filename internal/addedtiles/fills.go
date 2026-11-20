@@ -13,6 +13,7 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
@@ -220,35 +221,24 @@ func (s *Service) Sweep(ctx context.Context) error {
 			return err
 		}
 		named := map[string]bool{}
-		rows, err := conn.QueryContext(ctx, `SELECT DISTINCT digest FROM added_tiles`)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var digest string
-			if err := rows.Scan(&digest); err != nil {
-				_ = rows.Close()
+		var rows *sql.Rows
+		var err error
+		for _, table := range tilelibrary.ReferencingTables {
+			rows, err = conn.QueryContext(ctx, `SELECT DISTINCT digest FROM `+table)
+			if err != nil {
 				return err
 			}
-			named[digest] = true
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-		rows, err = conn.QueryContext(ctx, `SELECT DISTINCT digest FROM tile_fills`)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var digest string
-			if err := rows.Scan(&digest); err != nil {
-				_ = rows.Close()
+			for rows.Next() {
+				var digest string
+				if err := rows.Scan(&digest); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				named[digest] = true
+			}
+			if err := rows.Close(); err != nil {
 				return err
 			}
-			named[digest] = true
-		}
-		if err := rows.Close(); err != nil {
-			return err
 		}
 		// The tile library (saved tile types) keeps its definitions in the
 		// same table; what it names is kept. When it cannot be read, no
@@ -468,19 +458,8 @@ var fillValidator = sync.OnceValue(tiles.NewValidator)
 // Run.Always).
 func Generated(composition, document []byte) map[string]bool {
 	out := map[string]bool{}
-	var head struct {
-		Schema string          `json:"schema"`
-		Tiles  []reviewv2.Tile `json:"tiles"`
-	}
-	if json.Unmarshal(document, &head) == nil && head.Schema == reviewv2.Name {
-		for _, t := range head.Tiles {
-			var def struct {
-				Name string `json:"name"`
-			}
-			if t.State == reviewv2.TileReady && len(t.Definition) > 0 && json.Unmarshal(t.Definition, &def) == nil && def.Name != "" {
-				out[def.Name] = true
-			}
-		}
+	for _, name := range reviewv2.ReadyTypes(document) {
+		out[name] = true
 	}
 	if len(composition) == 0 {
 		return out
@@ -540,4 +519,19 @@ func (s *Service) RestoreFill(ctx context.Context, pr, tile string, version int,
 	}
 	defer release()
 	_, _ = db.ExecContext(ctx, `DELETE FROM tile_fills WHERE pr = ? AND tile = ? AND version = ?`, pr, tile, version)
+}
+
+// DiffOfStored is the hunks a stored review document's index lists.
+func DiffOfStored(document []byte) []bundle.Hunk {
+	var stored struct {
+		Index json.RawMessage `json:"index"`
+	}
+	if json.Unmarshal(document, &stored) != nil {
+		return []bundle.Hunk{}
+	}
+	diff := library.DiffOf(&tiles.Document{Index: stored.Index})
+	if diff == nil {
+		diff = []bundle.Hunk{}
+	}
+	return diff
 }

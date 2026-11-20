@@ -86,7 +86,7 @@ func (a LocalAPI) addedFor(ctx context.Context, c repos.Clone, number int, versi
 	if len(added) == 0 {
 		return nil
 	}
-	v := addedtiles.Version{Number: version.Metadata.Version, Latest: latest, Generated: addedtiles.Generated(version.Composition, version.Document), Diff: diffOfStored(version.Document)}
+	v := addedtiles.Version{Number: version.Metadata.Version, Latest: latest, Generated: addedtiles.Generated(version.Composition, version.Document), Diff: addedtiles.DiffOfStored(version.Document)}
 	held, missing := addedtiles.AddedFor(added, fills, v, func(digest string) (json.RawMessage, bool) { return a.Added.Definition(ctx, digest) })
 	if a.Fills != nil {
 		for _, add := range missing {
@@ -100,21 +100,6 @@ func (a LocalAPI) addedFor(ctx context.Context, c repos.Clone, number int, versi
 	return held
 }
 
-// diffOfStored is the hunks a stored review document's index lists.
-func diffOfStored(document []byte) []bundle.Hunk {
-	var stored struct {
-		Index json.RawMessage `json:"index"`
-	}
-	if json.Unmarshal(document, &stored) != nil {
-		return []bundle.Hunk{}
-	}
-	diff := library.DiffOf(&tiles.Document{Index: stored.Index})
-	if diff == nil {
-		diff = []bundle.Hunk{}
-	}
-	return diff
-}
-
 // shownVersion is a pull request's latest saved version as its page shows
 // it: its number, the review (for its sections) and the tile document
 // converted from it, which an added tile's data is checked against.
@@ -122,6 +107,9 @@ type shownVersion struct {
 	Version  int
 	Review   *view.Review
 	Document *tiles.Document
+	// owners maps each tile of a baum.review/2 version to its section, so
+	// an add asked for on a tile goes on the section that shows it.
+	owners map[string]string
 }
 
 // errNoTiles is a saved version that cannot be shown with tiles.
@@ -151,7 +139,11 @@ func (a LocalAPI) latestShown(ctx context.Context, c repos.Clone, number int) (s
 		if err != nil {
 			return shownVersion{}, errNoTiles
 		}
-		return shownVersion{Version: version.Metadata.Version, Review: r, Document: reviewv2.Substrate(d)}, nil
+		owners := map[string]string{}
+		for _, t := range d.Tiles {
+			owners[t.ID] = t.Owner
+		}
+		return shownVersion{Version: version.Metadata.Version, Review: r, Document: reviewv2.Substrate(d), owners: owners}, nil
 	}
 	normalized, err := review.NormalizeStored(version.Document)
 	if err != nil {
@@ -172,8 +164,14 @@ func (a LocalAPI) latestShown(ctx context.Context, c repos.Clone, number int) (s
 // asked for when the review has it (or context), else the one whose hunks
 // the data cites most, else context. Data that cites nothing yet (a tile
 // being filled) with no section asked keeps none: the page places it by
-// what its fill cites.
+// what its fill cites. A tile asked for stands for the section it is on.
 func (s shownVersion) section(asked string, data json.RawMessage) string {
+	if owner, ok := s.owners[asked]; ok {
+		asked = owner
+		if owner == reviewv2.OwnerOverview {
+			asked = ""
+		}
+	}
 	var hunks []string
 	for _, c := range library.Citations(data) {
 		if c.Type == "hunk" {

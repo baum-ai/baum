@@ -398,6 +398,63 @@ it.each<Overrides>([
   expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
 });
 
+it("puts the review's dot before each row's title, a group's too", async () => {
+  entries = [
+    requested(1, { status: "current", version_count: 1 }),
+    requested(2, { status: "outdated", version_count: 1 }),
+    requested(3),
+    requested(4),
+    requested(5),
+    // Current, but over a list too old to trust: the panel says it covers an
+    // earlier commit, and so does the dot.
+    requested(6, { status: "current", version_count: 1, stale: true }),
+    requested(7, { status: "failed", version_count: 1, failure_reason: "interrupted" }),
+  ];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).endsWith("api/jobs")
+      ? // The group's review is running.
+        Response.json({
+          jobs: [{ id: "gj", repository: "acme/demo", pr: 0, group: "g1", state: "running" }],
+        })
+      : String(args[0]).endsWith("api/groups")
+        ? Response.json({
+            groups: [
+              {
+                id: "g1",
+                repository: "acme/demo",
+                name: "Auth rework",
+                members: [4, 5],
+                created_at: "",
+                updated_at: "",
+                version_count: 1,
+                latest: null,
+                risk_score: null,
+                reviewed: [],
+                outdated: true,
+              },
+            ],
+          })
+        : original(...args),
+  );
+  await render();
+  const dot = (title: string) => row(title).querySelector(".review-dot")!;
+  // The row is one button: its name reads the title first, then the dot.
+  const label = (title: string) => row(title).querySelector(":scope > .sr-only")?.textContent;
+  expect(label("Change 1")).toBe(", Review ready");
+  expect(label("Change 2")).toBe(", Review outdated");
+  expect(label("Change 3")).toBeUndefined();
+  expect(dot("Change 3").childElementCount).toBe(0);
+  expect(label("Change 6")).toBe(", Review outdated");
+  expect(label("Change 7")).toBe(", Review failed");
+  expect(dot("Change 7").querySelector("[popover]")?.textContent).toBe(
+    "Review failed. The review could not be generated. Reason: interrupted.",
+  );
+  expect(label("Auth rework")).toBe(", Generating review");
+  expect(dot("Change 1").querySelector(".sr-only")).toBeNull();
+  expect(dot("Change 1").nextElementSibling?.className).toBe("upnext-row-text");
+});
+
 const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
 // A heading's name and count, as "Ready to merge · 2".

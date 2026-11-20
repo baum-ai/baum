@@ -52,6 +52,7 @@ import {
   navigate,
   openExternal,
   request,
+  groupJob,
   reviewJob,
   sameRepository,
   watchableFix,
@@ -91,6 +92,7 @@ import {
 } from "./merge";
 import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
+import { groupDotState, ReviewDot, reviewDotLabel, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
   KeyBar,
@@ -110,6 +112,7 @@ import { useToast } from "./toast";
 import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
 import { reviewable, type ReviewEvent } from "./pending-review-model";
 import { cn } from "@baum/viewer/components/classnames";
+import { scrollToTop } from "@baum/viewer/components/scroller";
 import { minutesText, RiskCard, StackOverview } from "./stack-overview";
 
 /** What the person does next about a pull request: read a review they were
@@ -1394,7 +1397,9 @@ export function UpNextPage({
     const element = Array.from(
       list.current?.querySelectorAll<HTMLElement>("[data-row]") ?? [],
     ).find((element) => element.dataset.row === line.key);
-    element?.scrollIntoView?.({ block: "nearest" });
+    // The first row takes the list back to the top, with the page's bar.
+    if (line.key === rows[0]?.key) scrollToTop(element);
+    else element?.scrollIntoView?.({ block: "nearest" });
     if (list.current?.contains(document.activeElement))
       element?.querySelector<HTMLElement>(".upnext-row")?.focus({ preventScroll: true });
   }, [line?.key]);
@@ -1783,6 +1788,7 @@ export function UpNextPage({
                     tabbable={row.key === tabbable}
                     pick={select}
                     inGroup={!!group}
+                    now={now}
                   />
                 </li>
               );
@@ -1817,6 +1823,7 @@ export function UpNextPage({
                         >
                           <GroupListRow
                             line={entry}
+                            review={groupJob(entry.group, jobs)}
                             open={groupOpen(entry)}
                             toggle={() => toggleGroup(entry)}
                             on={entry.key === line?.key}
@@ -2040,6 +2047,7 @@ function ListRow({
   tabbable,
   pick,
   inGroup = false,
+  now,
 }: {
   row: Row;
   on: boolean;
@@ -2047,6 +2055,8 @@ function ListRow({
   pick: (key: string) => void;
   /** The row is a member nested under its review group's row. */
   inGroup?: boolean;
+  /** For whether its pull request's data is too old to call a review current. */
+  now: number;
 }) {
   const pr = row.entry.pull_request;
   // The section heading already names the kind, so the line starts with the
@@ -2073,6 +2083,11 @@ function ListRow({
     .filter(Boolean)
     .join(" · ");
   const hot = (row.entry.risk_score?.score ?? 0) >= 5;
+  // As a review row's panel says (why): a current review over data too old to
+  // trust covers an earlier commit.
+  const dot = reviewDotState(
+    row.entry.status === "current" && metadataStale(row.entry, now) ? "outdated" : row.entry.status,
+  );
   return (
     <button
       type="button"
@@ -2081,6 +2096,7 @@ function ListRow({
       aria-current={on || undefined}
       onClick={() => pick(row.key)}
     >
+      <ReviewDot state={dot} detail={row.entry.failure_reason} labelled={false} />
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
         <span className="upnext-row-line">
@@ -2098,6 +2114,7 @@ function ListRow({
           </span>
         </span>
       </span>
+      {dot ? <span className="sr-only">, {reviewDotLabel(dot)}</span> : null}
       {hot ? (
         <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
       ) : null}
@@ -2129,6 +2146,7 @@ function memberKinds(members: Row[]) {
 /** A review group's row: it opens to its members, nested under it. */
 function GroupListRow({
   line,
+  review,
   open,
   toggle,
   on,
@@ -2136,6 +2154,8 @@ function GroupListRow({
   pick,
 }: {
   line: GroupRow;
+  /** The group's latest review job. */
+  review: Job | undefined;
   open: boolean;
   toggle: () => void;
   on: boolean;
@@ -2144,6 +2164,7 @@ function GroupListRow({
 }) {
   const { group, members } = line;
   const hot = members.some((member) => (member.entry.risk_score?.score ?? 0) >= 5);
+  const groupDot = groupDotState(group, review?.state);
   return (
     <div className="upnext-group-line">
       <button
@@ -2164,6 +2185,7 @@ function GroupListRow({
         aria-expanded={open}
         onClick={() => pick(line.key)}
       >
+        <ReviewDot state={groupDot} labelled={false} />
         <span className="upnext-row-text">
           <span className="upnext-row-title">
             {group.stack ? <StackIcon size={13} className="upnext-stack-icon" /> : null}
@@ -2173,6 +2195,7 @@ function GroupListRow({
             {[groupName(group), group.repository, memberKinds(members)].join(" · ")}
           </span>
         </span>
+        {groupDot ? <span className="sr-only">, {reviewDotLabel(groupDot)}</span> : null}
         {hot ? (
           <span
             className="upnext-hot"

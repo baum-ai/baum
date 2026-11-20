@@ -143,9 +143,7 @@ func TestRunGeneratesFromTheSavedCase(t *testing.T) {
 			if err := json.Unmarshal(raw, &document); err != nil || document.Review.Repository != "acme/demo" || !bytes.Equal(raw, outcome.Document) {
 				t.Errorf("document: %v %q", err, document.Review.Repository)
 			}
-			if after := snapshot(t, d.dir); after != before {
-				t.Error("the dataset changed")
-			}
+			unchanged(t, d.dir, before)
 		})
 	}
 }

@@ -747,6 +747,8 @@ page moves through them: the viewer's `data-review-block`; a
 block holding blocks, such as a session's card of decisions, is passed over for
 what it holds), bringing it into
 view, marking it and giving it the focus; a new section starts from its first.
+The first block, like a step back to the first place, scrolls the page to its
+top, so the review's header shows again (`scrollToTop` in the viewer).
 `Space` opens or closes the marked block's first fold (a behavior's excerpts, a
 risk's details, a decision; `toggleActiveBlock`), and still presses a focused
 button or link. `Enter` opens the marked block where it opens somewhere (its
@@ -865,7 +867,11 @@ an agent** (Fix, Update, then the person's pull requests a fix agent is working
 on, each with the loader and the fix's phase). Within Review a saved review
 ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
-clones hold it. After the groups, their own pull requests with nothing to do
+clones hold it. Every row, a review group's too (a stack's has none), starts
+with the dot for how baum's review stands, as Pull requests draws it
+(`src/review-dot.tsx`), its label read after the title. Here, unlike Pull
+requests, a current review over pull request data too old to trust
+(`metadataStale`) reads outdated, as a review row's panel says. After the groups, their own pull requests with nothing to do
 (drafts, and those waiting on reviewers, checks or another GitHub blocker) are
 listed under **Waiting**, and every other open pull request (`others`: someone
 else's that neither asks for their review nor is assigned to them), oldest
@@ -1324,7 +1330,15 @@ then passing checks; its tooltip names both. GitHub state and unresolved
 thread counts also appear for pull requests without saved reviews. Normal or
 unknown states (no score, no estimate, no GitHub review, no unresolved
 threads, nothing reported) leave the cell empty and are read only by screen
-readers. A review being generated shows the nine-dots loader under the title.
+readers. A dot before the title says how baum's review stands
+(`src/review-dot.tsx`, as in Inbox): the live dot while its review job is
+queued or running, a green dot when it is ready (it covers the
+head), an amber ring when it is outdated and a red warning sign when it
+failed, so ready, outdated and failed differ by shape as well as colour. A pull request
+without a saved review, or one whose state is unknown, keeps an empty slot so
+titles line up. The dot is not a button, since a list row carries none: its
+label is read with the row, and its meaning (and why a review failed) opens
+in a note while the mouse is over it.
 Discovery fetches
 open pull requests with paginated GraphQL queries per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
@@ -1346,8 +1360,8 @@ and removed, and **Open the review**. Without a saved review it says why (no
 clone, being written, failed, none yet) and offers **Generate the review**
 where it can run. A row whose state (review, checks, merge state, threads,
 score, estimate or version) changed in the latest read flashes once. The keys that work on the list are
-in the shortcuts sheet (`?`). Generating and failed reviews remain visible under the
-title, with agent sessions in progress beside them. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
+in the shortcuts sheet (`?`). How baum's review stands is a
+dot before the title (see above), with agent sessions in progress under it. Incomplete risk assessments show a lower bound (`≥N/5`) with an explicit
 “at least” description and caution styling rather than a reassuring low-risk
 colour. Collapsible groups say who acts next, with each row in one group:
 Review requested; the person's own pull requests as Needs changes (changes
@@ -1466,11 +1480,12 @@ historical). Its shown members leave the loose rows and nest under the group
 row, which is collapsed by default; members the current filter hides are not
 shown, bucket counts count the group once, and Select all covers loose rows and
 the members of expanded groups. The group row shows the group's risk, its name
-with a "Group of N" badge, "repository · #n, …" and, when it applies,
-"Generating group review", "Group review outdated" or "No group review yet". A
-stack group, which baum made for stacked pull requests, shows the hosted
-list's stack icon and member count before its name instead of the badge, its
-riskiest pull request's risk, and none of the group review lines.
+with a "Group of N" badge, "repository · #n, …", the group review's dot before
+its name (as a pull request row's: generating, ready or outdated) and "No
+group review yet" when there is none. A stack group, which baum made for
+stacked pull requests, shows the hosted list's stack icon and member count
+before its name instead of the badge, its riskiest pull request's risk, and
+neither the dot nor that line.
 A stack's page (`?group=<id>` of a stack group) is its overview, under a bar
 with its name, the way back and Refresh: the Stack chip, repository and count,
 "Stacked on", the size and review time summed, Risk, What changed and the
@@ -2806,7 +2821,8 @@ sections.
   open to a detail and the files they cite, a note with a left rule, and tile
   blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
   label; a table cell `{text, was}` strikes the old value, and a flow whose
-  steps have `more` makes them buttons that show the step's detail below; "Writing
+  steps have `more` shows a step's detail below while the mouse is over it
+  and makes them buttons that keep it open; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
   migration hunks, file by file, drawn as Files changed draws them with the
   section's own steps and risks pinned to the hunks they cite, and its
@@ -2837,14 +2853,22 @@ sections.
 - **Tiles** always show their title. Flows, columns, sequences and tables are
   drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
   caption and citations, and lay themselves out by the room they have: lanes
-  wrap and then stack, columns stack, and a sequence becomes a list. A wide
+  wrap and then stack, columns stack, and a sequence becomes a list. While a
+  flow's lanes are rows, lines join its steps, a branch drops from the step
+  it leaves after into its first step (or, when that line would cross
+  another lane or the branch sits left of its step, its label names the
+  step), and a dashed rule sets off a later
+  lane that is a path of its own. A step in the `new` tone has the
+  sequence's New pill and bar, and a legend under the flow explains only the
+  other marks it uses. A wide
   sequence draws each actor as a lifeline under its name and each message,
   numbered, as an arrow between two lifelines: dashed for a reply, ending in
   a cross when it is `bad`; a message an actor sends itself is a loop on its
   lifeline. A message the pull request adds or changes (`change`, or the
   `new` tone) has a New or Changed pill and a bar at its row's edge, with a
   changed message's earlier text (`was`) struck through. A legend under the
-  sequence explains only the marks it uses, and when some messages changed
+  sequence explains only the marks it uses, apart from the pills, which say
+  what they mean, and when some messages changed
   and some did not, a "Show only changes" switch fades the rest. A code
   tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
   in that range. Exhibits draw as the generic tiles do, and library and

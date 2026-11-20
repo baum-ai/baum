@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -145,7 +146,8 @@ func TestRememberKeepsExistingOtherDirectoriesOnce(t *testing.T) {
 	if err != nil || file != filepath.Join(home, ".config", "baum", "claude-dirs.json") {
 		t.Fatalf("RecordFile = %q, %v", file, err)
 	}
-	if info, err := os.Stat(file); err != nil || info.Mode().Perm() != 0o600 {
+	// Windows has no mode bits: every writable file reads as 0666.
+	if info, err := os.Stat(file); err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
 		t.Fatalf("record: %v, %v", info, err)
 	}
 	if changed, err := Claude.Forget(personal); err != nil || !changed {

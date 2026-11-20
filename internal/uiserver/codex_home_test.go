@@ -143,7 +143,7 @@ func TestDecisionSettingsChooseACodexHome(t *testing.T) {
 			t.Errorf("%s = %d %s", body, code, out)
 		}
 	}
-	if code, out := put(`{"enabled":true,"backend":"codex","codex_home":"~/.codex-work"}`); code != 200 || !strings.Contains(out, `"codex_home":"`+filepath.ToSlash(work)+`"`) || !strings.Contains(out, `"claude_config_dir":""`) {
+	if code, out := put(`{"enabled":true,"backend":"codex","codex_home":"~/.codex-work"}`); code != 200 || !strings.Contains(out, `"codex_home":"`+jsonText(work)+`"`) || !strings.Contains(out, `"claude_config_dir":""`) {
 		t.Fatalf("choose = %d %s", code, out)
 	}
 	if saved() != work || !slices.Contains(agentdirs.Codex.Recorded(), work) || len(agentdirs.Claude.Recorded()) != 0 {

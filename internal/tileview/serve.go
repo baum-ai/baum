@@ -57,7 +57,7 @@ func Serve(document, composition []byte, added []AddedTile, opts tiles.Options) 
 		return serveV2(document, added)
 	}
 	built := BuildWith(document, composition, added, opts)
-	d, err := reviewv2.FromV1(built.Document, composition)
+	d, err := reviewv2.FromV1(built.Document)
 	if err != nil {
 		problem := built.Problem
 		if problem == "" {
@@ -143,6 +143,13 @@ func addedTiles(d reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {
 	current := map[string][]string{}
 	var order []string
 	for _, s := range d.Sections {
+		var derived struct {
+			State string `json:"state"`
+		}
+		// A stale section, whose code is gone, places nothing (view.SectionFor).
+		if json.Unmarshal(s.Derived, &derived) == nil && derived.State == "stale" {
+			continue
+		}
 		current[s.ID] = s.Hunks
 		order = append(order, s.ID)
 	}

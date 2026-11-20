@@ -330,9 +330,7 @@ func TestChainFeedsEachRevisionThePreviousOutput(t *testing.T) {
 	if out, _ := replay.ReadOutcome(filepath.Join(cases, "r-b")); out.BundleDigest != hex.EncodeToString(sum[:]) || out.BundleDigest == "" {
 		t.Errorf("the outcome's bundle digest %s is not the digest of the bundle the agent read", out.BundleDigest)
 	}
-	if snapshot(t, d.dir) != before {
-		t.Error("the dataset changed")
-	}
+	unchanged(t, d.dir, before)
 
 	// The run records the chain: its links in order, and a pair record per step.
 	var record replay.ChainRecord

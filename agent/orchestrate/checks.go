@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -275,6 +276,7 @@ type facts struct {
 	sessions  map[string]bool
 	hasBody   bool
 	pathCache map[string]bool
+	pathMu    sync.Mutex
 	// refs are what the document layer's checks resolve cites against.
 	refs *reviewv2.Refs
 }
@@ -323,10 +325,13 @@ func (f *facts) hasPath(path string) bool {
 	if path == "" || !filepath.IsLocal(path) {
 		return false
 	}
-	if ok, seen := f.pathCache[path]; seen {
+	f.pathMu.Lock()
+	ok, seen := f.pathCache[path]
+	f.pathMu.Unlock()
+	if seen {
 		return ok
 	}
-	ok := false
+	ok = false
 	if _, isHunk := f.pathOfHunk(path); isHunk {
 		ok = true
 	}
@@ -335,7 +340,9 @@ func (f *facts) hasPath(path string) bool {
 			ok = true
 		}
 	}
+	f.pathMu.Lock()
 	f.pathCache[path] = ok
+	f.pathMu.Unlock()
 	return ok
 }
 
@@ -385,7 +392,7 @@ func (f *facts) cites(in []json.RawMessage) ([]json.RawMessage, int) {
 			}
 			keep = hunk
 		case "file":
-			if f.hasPath(a.Path) {
+			if p := strings.TrimPrefix(strings.TrimPrefix(a.Path, "head/"), "merge-base/"); f.refs.Files[p] {
 				keep = map[string]any{"type": "file", "path": strings.TrimPrefix(strings.TrimPrefix(a.Path, "head/"), "merge-base/")}
 			}
 		case "prompt":
