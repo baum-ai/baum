@@ -70,6 +70,7 @@ export function ReviewDot({
   state,
   detail,
   labelled = true,
+  compact = false,
 }: {
   state: ReviewDotState | null;
   /** Why a failed review failed (`failure_reason`), said after its note. */
@@ -77,6 +78,9 @@ export function ReviewDot({
   /** Reads its label where it stands; a row that is one button says it after
    *  the title instead (`reviewDotLabel`), so the title is read first. */
   labelled?: boolean;
+  /** A smaller dot for the line under a title, and no empty slot without a
+   *  review, since nothing lines up on it there. */
+  compact?: boolean;
 }) {
   const anchor = useRef<HTMLSpanElement>(null);
   const popup = useRef<HTMLSpanElement>(null);
@@ -114,7 +118,7 @@ export function ReviewDot({
     if (!state) setOpen(false);
   }, [state]);
 
-  if (!state) return <span aria-hidden className="review-dot" />;
+  if (!state) return compact ? null : <span aria-hidden className="review-dot" />;
   const dot = DOTS[state];
 
   const show = (event: React.PointerEvent) => {
@@ -137,7 +141,7 @@ export function ReviewDot({
   };
 
   return (
-    <span className="review-dot">
+    <span className={compact ? "review-dot review-dot-compact" : "review-dot"}>
       <span
         ref={anchor}
         className={`-m-1.5 flex items-center justify-center p-1.5 ${dot.color}`}

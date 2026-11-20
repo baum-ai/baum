@@ -5698,10 +5698,16 @@ kbd.key-hint {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
-/* The review dot's slot (review-dot.tsx) sits on the title's line. */
-.upnext-row > .review-dot {
-  font-size: var(--text-base);
+/* The review dot (review-dot.tsx) leads the line under the title, smaller
+   than in the other lists so it stays out of the title's way. */
+.upnext-row-line > .review-dot {
+  width: auto;
   height: 1lh;
+  margin-right: -2px;
+  font-size: var(--text-xs);
+}
+.review-dot-compact > span:first-child {
+  transform: scale(0.75);
 }
 /* The line under the title, its inbox tag after it: a long line gives way first. */
 .upnext-row-line {
