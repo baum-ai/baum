@@ -294,7 +294,8 @@ type sectionResult struct {
 // checkSection checks a section agent's reply. taken are the IDs of the
 // tiles the document already has, which a proposed tile's ID may not repeat
 // (it is made unique). rev is the section's previous text and its hunks'
-// statuses when the agent was given them to revise, else nil.
+// statuses when the agent was given them to revise, else nil; fixed are the
+// IDs of risks fixed in an earlier version, which a risk may not take.
 //
 // A tile block must name a tile of this section that is kept: planned and
 // not dropped by this reply, or the tile it proposes. One that names
@@ -307,7 +308,7 @@ type sectionResult struct {
 // added code (reviewv2.Revised.Additive: what the text describes may have
 // changed even where it cites nothing), or when the text cites a hunk the
 // section no longer has; the agent then writes the section.
-func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
+func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised, fixed []string, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
 	var s sectionReply
 	if problem := decode(reply, &s); problem != "" {
 		return sectionResult{}, problem
@@ -321,7 +322,7 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 		case len(s.Body) > 0 || len(s.Risks) > 0:
 			c.add("/keep", "keep takes the previous body and risks as they were; leave body and risks empty, or set keep to false and write them all")
 		case !rev.Additive():
-			c.add("/keep", "the code this text describes changed (hunks of the previous version are moved or gone, or none is unchanged); set keep to false and write the section, copying word for word what still holds")
+			c.add("/keep", "the code this text describes changed (hunks of the previous version are moved or gone, none is unchanged, or risks came with joined code); set keep to false and write the section, copying word for word what still holds")
 		default:
 			out.Kept = true
 		}
@@ -333,8 +334,11 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 	ids := map[string]bool{}
 	for i, risk := range s.Risks {
 		at := fmt.Sprintf("/risks/%d", i)
-		if !riskID.MatchString(risk.ID) || ids[risk.ID] {
+		switch {
+		case !riskID.MatchString(risk.ID) || ids[risk.ID]:
 			c.add(at+"/id", "must be rsk_ and a slug no other risk of the section has")
+		case slices.Contains(fixed, risk.ID):
+			c.add(at+"/id", "%s is a risk fixed in an earlier version; give this risk a new ID", risk.ID)
 		}
 		ids[risk.ID] = true
 		if !slices.Contains(reviewv2.RiskTiers, risk.Tier) {

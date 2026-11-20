@@ -23,7 +23,7 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	planned := slices.Clone(o.plan.Tiles)
 	o.mu.Unlock()
 	reused := o.reuse(sections)
-	revised := o.revisions(sections)
+	histories := o.histories(sections)
 	var toWrite []reviewv2.Section
 	for _, s := range sections {
 		switch {
@@ -81,7 +81,7 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	// own do, but never pass through it: a section cannot drop them.
 	for _, s := range toWrite {
 		middle.Go(func() {
-			list := o.sectionLevel(ctx, s, revised[s.ID], ownedBy(s.ID))
+			list := o.sectionLevel(ctx, s, histories[s.ID], ownedBy(s.ID))
 			startTiles(s.ID, append(list, mandatory[s.ID]...))
 		})
 	}
@@ -248,16 +248,36 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 	return reused
 }
 
-// revisions are, by ID, the logical sections the previous version wrote
-// over other hunks (reviewv2.RevisableSections), whose agents start from the
-// previous text. A run that reuses nothing revises nothing either.
-func (o *orchestration) revisions(sections []reviewv2.Section) map[string]*reviewv2.Revised {
-	out := map[string]*reviewv2.Revised{}
+// history is what a section's agent is given of the previous version: its
+// text to revise when it wrote the section over other hunks (rev), else the
+// code it takes over from other sections (joined), and the risk IDs fixed
+// earlier, which no risk of the reply may take.
+type history struct {
+	rev    *reviewv2.Revised
+	joined *reviewv2.Joined
+	fixed  []string
+}
+
+// histories are each section's history by ID (reviewv2.RevisableSections,
+// JoinedSections, FixedRiskIDs). A run that reuses nothing is given none.
+func (o *orchestration) histories(sections []reviewv2.Section) map[string]history {
+	out := map[string]history{}
 	if len(o.run.Previous) == 0 || o.run.NoReuse {
 		return out
 	}
+	fixed := reviewv2.FixedRiskIDs(o.run.Previous)
+	for _, s := range sections {
+		out[s.ID] = history{fixed: fixed}
+	}
 	for id, r := range reviewv2.RevisableSections(o.run.Previous, sections) {
-		out[id] = &r
+		h := out[id]
+		h.rev = &r
+		out[id] = h
+	}
+	for id, j := range reviewv2.JoinedSections(o.run.Previous, sections) {
+		h := out[id]
+		h.joined = &j
+		out[id] = h
 	}
 	return out
 }
@@ -309,19 +329,23 @@ func joinWords(parts []string) string {
 // sectionLevel writes one section and returns its tiles, sharpened, for the
 // tile level. A section that fails keeps the map's briefs for its tiles. A
 // revised section (rev) is written from its previous text, or keeps it.
-func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, rev *reviewv2.Revised, planned []reviewv2.Tile) []reviewv2.Tile {
+func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, h history, planned []reviewv2.Tile) []reviewv2.Tile {
+	rev := h.rev
 	o.mu.Lock()
 	p := o.plan
 	o.mu.Unlock()
 	input := basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p) + "\n" + sectionBrief(s, planned, p.Hunks)
-	if rev != nil {
-		input += "\n" + revisionBlock(*rev)
+	switch {
+	case rev != nil:
+		input += "\n" + revisionBlock(*rev, h.fixed)
+	case h.joined != nil:
+		input += "\n" + joinedBlock(*h.joined, h.fixed)
 	}
 	var result sectionResult
 	c := call{level: LevelSections, id: s.ID, label: label("section", s.ID), input: input, schema: SectionSchema(o.registry.names()),
 		instructions: o.prompt.Section + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("section", s.ID)) + "`.\n"}
 	c.check = func(reply []byte, lenient bool) string {
-		r, findings := checkSection(reply, s, rev, planned, o.tileIDs(), o.facts, o.registry, lenient)
+		r, findings := checkSection(reply, s, rev, h.fixed, planned, o.tileIDs(), o.facts, o.registry, lenient)
 		if findings == "" {
 			result = r
 		}

@@ -59,19 +59,17 @@ func ReusableSections(previous []byte, sections []Section) map[string]Reused {
 // Revised is a previous version's section that a new map gives again under
 // the same ID but over other hunks, so its agent writes it again starting
 // from the previous text. Previous is that section with the text Reused
-// takes (its body, and its active risks without their lifecycle fields);
-// Fixed are the IDs of its mitigated risks, which a new risk may not take.
+// takes (its body, and its active risks without their lifecycle fields).
 //
 // Its hunks against the previous version's: Unchanged are in both; New are
 // only in the new section and were in no previous section; Joined were in
 // another previous section (unchanged code that version reviewed there),
-// with JoinedRisks, that section's active risks citing them; Moved were in
-// the previous section and are in another section now; Gone were in the
-// previous section and are in no section now (the pull request no longer
-// has them), with where they were then.
+// with JoinedRisks, the risks handed over with them (see Joined); Moved
+// were in the previous section and are in another section now; Gone were
+// in the previous section and are in no section now (the pull request no
+// longer has them), with where they were then.
 type Revised struct {
 	Previous    Section
-	Fixed       []string
 	Unchanged   []string
 	New         []string
 	Joined      []JoinedHunk
@@ -81,10 +79,19 @@ type Revised struct {
 }
 
 // Additive reports whether the change only adds code to what the previous
-// text described: some of its hunks are unchanged and none moved out or is
-// gone. Only then may the previous text be kept as it was.
+// text described: some of its hunks are unchanged, none moved out or is
+// gone, and no risk was handed over with joined code (the section must
+// weigh it). Only then may the previous text be kept as it was.
 func (r Revised) Additive() bool {
-	return len(r.Unchanged) > 0 && len(r.Moved) == 0 && len(r.Gone) == 0
+	return len(r.Unchanged) > 0 && len(r.Moved) == 0 && len(r.Gone) == 0 && len(r.JoinedRisks) == 0
+}
+
+// Joined is what a new section takes over from other sections of the
+// previous version: the hunks they had (unchanged code), and the active
+// risks handed over with them.
+type Joined struct {
+	Hunks []JoinedHunk
+	Risks []JoinedRisk
 }
 
 // JoinedHunk is a hunk a section has now that another section of the
@@ -94,7 +101,7 @@ type JoinedHunk struct {
 }
 
 // JoinedRisk is an active risk of another previous section (From), without
-// its lifecycle fields, that cites a hunk joined to a section.
+// its lifecycle fields, handed over with joined code (HandedOver).
 type JoinedRisk struct {
 	From string
 	Risk Risk
@@ -115,79 +122,119 @@ type GoneHunk struct {
 	Start, Count int
 }
 
+// HandedOver reports whether a previous risk citing the hunks cited goes
+// with its code to another section: it cites a hunk the receiving section
+// has (has), and none of the hunks it cites is among stayed, its old
+// section's hunks now (none when the new map has no section of that ID).
+func HandedOver(cited, stayed []string, has func(string) bool) bool {
+	if !slices.ContainsFunc(cited, has) {
+		return false
+	}
+	return !slices.ContainsFunc(cited, func(h string) bool { return slices.Contains(stayed, h) })
+}
+
+// versions is a previous baum.review/2 document against a new map (every
+// section of it): which section had and has each hunk.
+type versions struct {
+	prior      Document
+	byID       map[string]Section
+	priorOwner map[string]string
+	owner      map[string]string
+	hunks      map[string][]string
+}
+
+// compare reads a previous baum.review/2 document against a new map. A
+// baum.review/1 previous version gives nothing: its converted text is not a
+// body or risks an agent of this version wrote.
+func compare(previous []byte, sections []Section) (*versions, bool) {
+	if len(previous) == 0 || !IsV2(previous) {
+		return nil, false
+	}
+	prior, err := Read(previous)
+	if err != nil {
+		return nil, false
+	}
+	v := &versions{prior: prior, byID: map[string]Section{}, priorOwner: map[string]string{}, owner: map[string]string{}, hunks: map[string][]string{}}
+	for _, s := range prior.Sections {
+		v.byID[s.ID] = s
+		for _, h := range s.Hunks {
+			v.priorOwner[h] = s.ID
+		}
+	}
+	for _, s := range sections {
+		v.hunks[s.ID] = s.Hunks
+		for _, h := range s.Hunks {
+			if _, taken := v.owner[h]; !taken {
+				v.owner[h] = s.ID
+			}
+		}
+	}
+	return v, true
+}
+
+// joined is what s takes over from other previous sections.
+func (v *versions) joined(s Section) Joined {
+	var out Joined
+	took := map[string]bool{}
+	for _, h := range s.Hunks {
+		from, had := v.priorOwner[h]
+		if had && from != s.ID && !slices.Contains(v.byID[s.ID].Hunks, h) {
+			out.Hunks = append(out.Hunks, JoinedHunk{ID: h, From: from})
+			took[h] = true
+		}
+	}
+	if len(took) == 0 {
+		return out
+	}
+	for _, other := range v.prior.Sections {
+		if other.ID == s.ID {
+			continue
+		}
+		_, active := writtenText(other)
+		for _, risk := range active {
+			if HandedOver(CitedHunks(risk.Cites), v.hunks[other.ID], func(h string) bool { return took[h] }) {
+				out.Risks = append(out.Risks, JoinedRisk{From: other.ID, Risk: risk})
+			}
+		}
+	}
+	return out
+}
+
 // RevisableSections returns, by section ID, the logical sections of the
 // previous version's stored baum.review/2 document whose text was complete
 // and not empty and that a new map (sections, every section of it) gives,
 // logical with hunks, under the same ID over other hunks. A section
-// ReusableSections returns never is one. A baum.review/1 previous version
-// gives none: its converted text is not a body its agent wrote.
+// ReusableSections returns never is one; a baum.review/1 previous version
+// gives none.
 func RevisableSections(previous []byte, sections []Section) map[string]Revised {
-	if len(previous) == 0 || !IsV2(previous) {
+	v, ok := compare(previous, sections)
+	if !ok {
 		return nil
 	}
-	prior, err := Read(previous)
-	if err != nil {
-		return nil
-	}
-	byID := map[string]Section{}
-	priorOwner := map[string]string{}
-	for _, s := range prior.Sections {
-		byID[s.ID] = s
-		for _, h := range s.Hunks {
-			priorOwner[h] = s.ID
-		}
-	}
-	owner := map[string]string{}
-	for _, s := range sections {
-		for _, h := range s.Hunks {
-			if _, taken := owner[h]; !taken {
-				owner[h] = s.ID
-			}
-		}
-	}
-	refs := RefsOfIndex(prior.Index)
+	refs := RefsOfIndex(v.prior.Index)
 	out := map[string]Revised{}
 	for _, s := range sections {
-		old, ok := byID[s.ID]
+		old, ok := v.byID[s.ID]
 		if !ok || s.Kind != KindLogical || len(s.Hunks) == 0 || old.Kind != KindLogical || old.Details != "" || len(old.Body) == 0 || sameHunks(old.Hunks, s.Hunks) {
 			continue
 		}
 		r := Revised{Previous: Section{ID: old.ID, Kind: old.Kind, Hunks: slices.Clone(old.Hunks)}}
 		r.Previous.Body, r.Previous.Risks = writtenText(old)
-		for _, risk := range old.Risks {
-			if risk.State == "mitigated" {
-				r.Fixed = append(r.Fixed, risk.ID)
-			}
-		}
-		joined := map[string]bool{}
+		j := v.joined(s)
+		r.Joined, r.JoinedRisks = j.Hunks, j.Risks
 		for _, h := range s.Hunks {
-			from, had := priorOwner[h]
 			switch {
 			case slices.Contains(old.Hunks, h):
 				r.Unchanged = append(r.Unchanged, h)
-			case had:
-				r.Joined = append(r.Joined, JoinedHunk{ID: h, From: from})
-				joined[h] = true
-			default:
+			case !slices.ContainsFunc(j.Hunks, func(x JoinedHunk) bool { return x.ID == h }):
 				r.New = append(r.New, h)
-			}
-		}
-		for _, other := range prior.Sections {
-			if other.ID == s.ID {
-				continue
-			}
-			_, active := writtenText(other)
-			for _, risk := range active {
-				if slices.ContainsFunc(CitedHunks(risk.Cites), func(h string) bool { return joined[h] }) {
-					r.JoinedRisks = append(r.JoinedRisks, JoinedRisk{From: other.ID, Risk: risk})
-				}
 			}
 		}
 		for _, h := range old.Hunks {
 			if slices.Contains(s.Hunks, h) {
 				continue
 			}
-			if to, ok := owner[h]; ok {
+			if to, ok := v.owner[h]; ok {
 				r.Moved = append(r.Moved, MovedHunk{ID: h, To: to})
 				continue
 			}
@@ -196,6 +243,58 @@ func RevisableSections(previous []byte, sections []Section) map[string]Revised {
 		}
 		out[s.ID] = r
 	}
+	return out
+}
+
+// JoinedSections returns, by section ID, what each logical section with
+// hunks of a new map (sections, every section of it) takes over from other
+// sections of the previous baum.review/2 version, for each that takes over
+// a hunk: a section with a new ID as well as a revised one.
+func JoinedSections(previous []byte, sections []Section) map[string]Joined {
+	v, ok := compare(previous, sections)
+	if !ok {
+		return nil
+	}
+	out := map[string]Joined{}
+	for _, s := range sections {
+		if s.Kind != KindLogical || len(s.Hunks) == 0 {
+			continue
+		}
+		if j := v.joined(s); len(j.Hunks) > 0 {
+			out[s.ID] = j
+		}
+	}
+	return out
+}
+
+// FixedRiskIDs are the IDs of the risks a previous version's stored
+// document (either schema) holds mitigated and nowhere active, sorted: a new
+// risk may not take one, or the fixed risk's history would revive.
+func FixedRiskIDs(previous []byte) []string {
+	if len(previous) == 0 {
+		return nil
+	}
+	prior, err := Read(previous)
+	if err != nil {
+		return nil
+	}
+	fixed, active := map[string]bool{}, map[string]bool{}
+	for _, s := range prior.Sections {
+		for _, r := range s.Risks {
+			if r.State == "mitigated" {
+				fixed[r.ID] = true
+			} else {
+				active[r.ID] = true
+			}
+		}
+	}
+	var out []string
+	for id := range fixed {
+		if !active[id] {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 

@@ -2097,14 +2097,20 @@ active risks and their ready tiles, so the orchestration writes them
 without a call. `reviewv2.RevisableSections` gives the logical sections a
 new map keeps under the same ID over other hunks, with a complete body, of
 a previous `baum.review/2` version (a converted `baum.review/1` one gives
-none): their previous body and active risks, their fixed risks' IDs, and
-each hunk unchanged, new, joined (in another previous section, with that
-section's active risks on it), moved (to another section now) or gone
-(with its path and range in the previous index). Their agents revise that
-text (see "Tiles in the pipeline"). `Complete` carries a risk across
-sections: a previous risk a different section of the new version names is
-not mitigated in its old section, and keeps its introduced version in the
-new one. `reviewv2.Substrate` is the tile document a
+none): their previous body and active risks, and each hunk unchanged, new,
+joined (in another previous section), moved (to another section now) or
+gone (with its path and range in the previous index). Their agents revise
+that text (see "Tiles in the pipeline"). `reviewv2.JoinedSections` gives,
+for every logical section of the new map, a new ID's too, the hunks it
+takes over from other previous sections and the active risks handed over
+with them; `FixedRiskIDs` the IDs of risks mitigated and nowhere active.
+A risk is handed over with its code (`HandedOver`): it cites a hunk the
+receiving section has and every hunk it cites has left its old section.
+`Complete` follows the same rule: a previous risk that a section of the new
+version names under its ID, citing a hunk it cited, after all its hunks
+left its section, is not mitigated in its old section and keeps its
+introduced version. Any other risk of the same ID elsewhere is a new risk,
+and the old one is mitigated where it was. `reviewv2.Substrate` is the tile document a
 `baum.review/2` document's library and added tiles are checked against.
 
 **Storage and serving.** A version's document is either schema; the store's
@@ -2785,12 +2791,16 @@ the levels of `agent/orchestrate` instead of the staged review:
    revised: its input adds, as model-written data, the previous body and
    active risks, the IDs of risks fixed earlier, each hunk's status
    (unchanged, new, joined from another previous section, moved to another
-   section, or gone, with where it was) and the risks the previous version
-   raised on joined hunks. The agent keeps what still holds word for word
+   section, or gone, with where it was) and the risks handed over with
+   joined hunks. Any other section that takes over code from a previous
+   section, a new ID's included, gets a shorter block: the joined hunks,
+   the risks handed over with them and the fixed IDs. A reply risk that
+   takes a fixed ID is sent back. The agent keeps what still holds word for word
    and changes only what the new code changes, or answers `keep`, and the
    host takes the previous body and risks (their IDs, so the risks' history
    carries). A keep is accepted only when the change adds code and nothing
-   else (some hunk unchanged, none moved or gone) and the previous text
+   else (some hunk unchanged, none moved or gone, no risk handed over with
+   joined code) and the previous text
    cites only the section's hunks now; otherwise it is sent back and the
    agent writes the section. Its tile blocks place only the section's tiles
    now. The section's call record says `ran`, with the reason that it

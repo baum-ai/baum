@@ -335,7 +335,8 @@ func TestRevisableSections(t *testing.T) {
 	}
 
 	// A hunk that moves between sections is moved in the one and joined, with
-	// its old section's risks on it, in the other.
+	// its old section's risks on it, in the other; a change that hands a risk
+	// over is not additive.
 	moved := authored(t)
 	moved.Sections[0].Hunks = []string{"h_a00000000003"}
 	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
@@ -344,7 +345,7 @@ func TestRevisableSections(t *testing.T) {
 	if !slices.Equal(policy.Moved, []MovedHunk{{ID: "h_a00000000001", To: "sec_delivery_errors"}}) || len(policy.Gone) != 0 || policy.Additive() {
 		t.Errorf("policy: %+v", policy)
 	}
-	if !slices.Equal(delivery.Joined, []JoinedHunk{{ID: "h_a00000000001", From: "sec_retry_policy"}}) || len(delivery.New) != 0 || !delivery.Additive() ||
+	if !slices.Equal(delivery.Joined, []JoinedHunk{{ID: "h_a00000000001", From: "sec_retry_policy"}}) || len(delivery.New) != 0 || delivery.Additive() ||
 		len(delivery.JoinedRisks) != 1 || delivery.JoinedRisks[0].From != "sec_retry_policy" || delivery.JoinedRisks[0].Risk.ID != "rsk_unbounded_retries" {
 		t.Errorf("delivery: %+v", delivery)
 	}
@@ -369,6 +370,8 @@ func TestRevisableSections(t *testing.T) {
 func TestRiskMovesBetweenSections(t *testing.T) {
 	first := encode(t, completeFixture(t, authored(t), 1, nil))
 	next := authored(t)
+	next.Sections[0].Hunks = []string{"h_a00000000003"}
+	next.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
 	next.Sections[1].Risks = next.Sections[0].Risks
 	next.Sections[0].Risks = []Risk{}
 	out := completeFixture(t, next, 2, first)
@@ -579,5 +582,65 @@ func TestFromV1CarriesNoLibraryTiles(t *testing.T) {
 		if len(tile.Definition) != 0 || tile.Type == tiles.TypeCustom {
 			t.Errorf("tile %s carries a definition", tile.ID)
 		}
+	}
+}
+
+// riskIn is every copy of a risk in a document, by section.
+func riskIn(d Document, id string) map[string]Risk {
+	out := map[string]Risk{}
+	for _, s := range d.Sections {
+		for _, r := range s.Risks {
+			if r.ID == id {
+				out[s.ID] = r
+			}
+		}
+	}
+	return out
+}
+
+// A risk is handed over only with its code: one of the same ID that another
+// section raises on other code is a new risk, and the old one is mitigated
+// where it was; a risk on code that partly stays is not handed over.
+func TestRisksFollowTheirCode(t *testing.T) {
+	first := encode(t, completeFixture(t, authored(t), 1, nil))
+
+	// Collision: the policy section fixes its risk on h1; the delivery
+	// section raises one of the same ID on h2.
+	collide := authored(t)
+	collide.Sections[1].Risks = []Risk{{ID: "rsk_unbounded_retries", Tier: "low", Category: "correctness", Text: "A slow remote holds a worker.", Cites: []Anchor{HunkAnchor("h_a00000000002", nil)}}}
+	collide.Sections[0].Risks = []Risk{}
+	copies := riskIn(completeFixture(t, collide, 2, first), "rsk_unbounded_retries")
+	if old, fresh := copies["sec_retry_policy"], copies["sec_delivery_errors"]; old.State != "mitigated" || fresh.State != "active" || fresh.IntroducedVersion == nil || *fresh.IntroducedVersion != 2 {
+		t.Errorf("collision: %+v", copies)
+	}
+
+	// Split: the risk cites h1, which stays, and h3, which moves.
+	split := authored(t)
+	split.Sections[0].Risks[0].Cites = []Anchor{HunkAnchor("h_a00000000001", nil), HunkAnchor("h_a00000000003", nil)}
+	splitFirst := encode(t, completeFixture(t, split, 1, nil))
+	moved := authored(t)
+	moved.Sections[0].Risks[0].Cites = split.Sections[0].Risks[0].Cites
+	moved.Sections[0].Hunks = []string{"h_a00000000001"}
+	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000003"}
+	if j := JoinedSections(splitFirst, moved.Sections)["sec_delivery_errors"]; len(j.Hunks) != 1 || len(j.Risks) != 0 {
+		t.Errorf("split joined: %+v", j)
+	}
+	if r := RevisableSections(splitFirst, moved.Sections)["sec_delivery_errors"]; len(r.JoinedRisks) != 0 {
+		t.Errorf("split revised: %+v", r.JoinedRisks)
+	}
+	copies = riskIn(completeFixture(t, moved, 2, splitFirst), "rsk_unbounded_retries")
+	if len(copies) != 1 || copies["sec_retry_policy"].State != "active" {
+		t.Errorf("split: %+v", copies)
+	}
+}
+
+// The fixed risk IDs are those mitigated and nowhere active.
+func TestFixedRiskIDs(t *testing.T) {
+	one := 1
+	d := authored(t)
+	d.Sections[0].Risks = append(d.Sections[0].Risks, Risk{ID: "rsk_fixed", State: "mitigated", MitigatedVersion: &one}, Risk{ID: "rsk_both", State: "mitigated"})
+	d.Sections[1].Risks = append(d.Sections[1].Risks, Risk{ID: "rsk_both", State: "active"})
+	if got := FixedRiskIDs(encode(t, d)); !slices.Equal(got, []string{"rsk_fixed"}) {
+		t.Errorf("fixed = %v", got)
 	}
 }

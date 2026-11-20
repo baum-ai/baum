@@ -19,6 +19,12 @@ named in the input; it is in the run directory.
   in another section, with the risks it raised on it there), `moved` (now in
   another section) or `gone` (no longer in the pull request, with where it
   was). See "Revising the previous version".
+- On a new version, when your section takes over code the previous version
+  reviewed in another section and the previous version did not write your
+  section: those `joined` hunks, with the section they came from, the risks
+  the previous version raised on them, and the IDs of risks fixed earlier.
+  Joined code is not new: carry those risks with their IDs where they still
+  apply, and never give a risk an ID listed as fixed.
 - Your tools, for your hunks' patches, the code around them, the linked
   sessions, the threads and checks.
 
@@ -144,19 +150,23 @@ version should find only what the new commits changed.
 - Joined code is not new: the previous version reviewed it in another
   section. Do not rewrite claims because of it. Carry the risks the
   previous version raised on it, with their IDs, where they still apply.
-- Claims and risks about a moved hunk now belong to the section that has
-  it, which sees it as joined: leave them out of yours.
+- Claims about a moved hunk now belong to the section that has it, which
+  is given it as joined: leave them out of yours. A risk that rests only on
+  moved code goes with it, so leave it out too; one that also rests on code
+  your section keeps stays yours.
 - Remove what no longer holds: a block, a point or a risk the new code
   makes untrue. Leave out a risk the new commits fixed, and never give a
   new risk an ID listed as fixed.
 - Cite the current hunks of your section. A kept point or risk that cited
   a gone hunk cites the hunk that now holds its code.
 - Answer `keep: true`, with `body` and `risks` empty, only when the change
-  only adds code: some hunks are unchanged, none is moved or gone, and no
-  claim is affected by what was added. The host then keeps the previous
-  body and risks; answer `tiles` and `propose` as usual. If anything the
-  text described was changed or removed, write the section instead,
-  copying word for word what still holds.
+  only adds code: some hunks are unchanged, none is moved or gone, no risk
+  came with joined code, and no claim is affected by what was added. Added
+  code can change what unchanged code does (a new setting, override or
+  caller): keep only when no added hunk affects a kept claim. The host
+  then keeps the previous body and risks; answer `tiles` and `propose` as
+  usual. If anything the text described was changed or removed, write the
+  section instead, copying word for word what still holds.
 
 ## Final checklist
 
