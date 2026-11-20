@@ -247,6 +247,41 @@ it("does not call a review group missing when the groups could not be read", asy
   expect(node.textContent).toContain("does not exist any more");
 });
 
+it("reads again on Retry when a read under way never answers", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  const heal = refuse("api/groups");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Couldn't load the review group");
+  heal();
+  // The next read of the inbox hangs, and the read it is part of with it.
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let hang = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string, init?: RequestInit) => {
+      if (hang && path.endsWith("api/inbox")) {
+        hang = false;
+        return new Promise<Response>(() => {});
+      }
+      return original(path, init);
+    }),
+  );
+  await act(async () => listeners.get("index")!());
+  expect(node.textContent).toContain("Couldn't load the review group");
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).toContain("does not exist any more");
+});
+
 it("says the sessions could not be read instead of listing none", async () => {
   const heal = refuse("api/live-sessions");
   history.replaceState(null, "", "/s/test-ns/?page=sessions");

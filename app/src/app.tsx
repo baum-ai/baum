@@ -1302,6 +1302,9 @@ function Workspace({ url }: { url: UrlState }) {
   const pageRefresh = usePageRefresh(shownPage, () =>
     Promise.all([reload({ restart: true }), reloadLive()]),
   );
+  // Retry after a failed read starts a new one: a read still under way may
+  // never answer, and joining it would leave the page waiting on it.
+  const retryRead = () => reload({ restart: true });
   // The pages that show what the first read brought: when it failed they say
   // so, once, rather than wait for it or call themselves empty.
   const readFailed =
@@ -1705,7 +1708,7 @@ function Workspace({ url }: { url: UrlState }) {
             <section>
               <PageBar title={readPageTitle(page, groupId)} />
               <div className="local-page-body local-list-page">
-                <ReadFailed what={readPageWhat(page, groupId)} message={error} retry={reload} />
+                <ReadFailed what={readPageWhat(page, groupId)} message={error} retry={retryRead} />
               </div>
             </section>
           ) : page === "repositories" && openRepository ? (
@@ -1951,7 +1954,7 @@ function Workspace({ url }: { url: UrlState }) {
                 <section>
                   <PageBar title="Review group" />
                   <div className="local-page-body">
-                    <ReadFailed what="the review group" message={groupsError} retry={reload} />
+                    <ReadFailed what="the review group" message={groupsError} retry={retryRead} />
                   </div>
                 </section>
               ) : (
