@@ -28,6 +28,9 @@ export type Profile = {
   environment: Record<string, string>;
   /** What the scenario found in the data, e.g. how many rows the inbox had. */
   notes: string[];
+  /** Set while runs are still to come, or when one failed: why the profile
+   *  holds fewer runs than asked for. */
+  partial?: string;
   warmup: Run;
   runs: Run[];
   chunks: Chunk[];
@@ -56,19 +59,38 @@ export function stats(values: number[]): Stats {
   };
 }
 
+const MODIFIERS = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock", "Fn"]);
+
+/** A key press that is only a modifier (`Shift`, `Ctrl+Control`), which a
+ *  person holds for the key after it rather than waits on. */
+export function modifierOnly(interaction: Pick<Interaction, "type" | "target">) {
+  return (
+    interaction.type === "keydown" && MODIFIERS.has(interaction.target.split("+").at(-1) ?? "")
+  );
+}
+
+/** The interactions a person waits on: modifier-only key presses left out. */
+export function interactions(snapshot: Snapshot) {
+  return snapshot.interactions.filter((i) => !modifierOnly(i));
+}
+
+/** The region around the whole app: the others are inside it, so totals
+ *  come from it alone rather than from a sum that counts them twice. */
+export const ROOT_REGION = "app";
+
 /** What every run reports, whatever its scenario, from the collector's
  *  snapshot: added to the scenario's own metrics. */
 export function standardMetrics(snapshot: Snapshot): Record<string, number> {
-  const durations = snapshot.interactions.map((i) => i.duration);
+  const durations = interactions(snapshot).map((i) => i.duration);
   const long = snapshot.frames.long;
-  const renders = Object.values(snapshot.renders);
+  const root = snapshot.renders[ROOT_REGION];
   const metrics: Record<string, number> = {
     interactions_count: durations.length,
     long_frames_count: long.length,
     long_frame_total: long.reduce((sum, frame) => sum + frame.duration, 0),
     worst_frame: long.reduce((worst, frame) => Math.max(worst, frame.duration), 0),
-    commits_count: renders.reduce((sum, r) => sum + r.commits, 0),
-    render_total: renders.reduce((sum, r) => sum + r.actual, 0),
+    commits_count: root?.commits ?? 0,
+    render_total: root?.actual ?? 0,
     requests_count: snapshot.requests.length,
     dom_count: snapshot.dom,
   };
@@ -82,14 +104,20 @@ export function standardMetrics(snapshot: Snapshot): Record<string, number> {
 }
 
 /** Each metric's statistics over the runs, in the order first reported. A
- *  run that lacks a metric leaves it out rather than counting zero. */
+ *  run that lacks a metric, or has no number for it (NaN), leaves it out
+ *  rather than counting zero or spoiling the rest. */
 export function metricStats(runs: Run[]): [string, Stats][] {
   const names: string[] = [];
   for (const run of runs)
     for (const name of Object.keys(run.metrics)) if (!names.includes(name)) names.push(name);
   return names.map((name) => [
     name,
-    stats(runs.flatMap((run) => (name in run.metrics ? [run.metrics[name]!] : []))),
+    stats(
+      runs.flatMap((run) => {
+        const value = run.metrics[name];
+        return value !== undefined && Number.isFinite(value) ? [value] : [];
+      }),
+    ),
   ]);
 }
 
@@ -98,7 +126,7 @@ export type Slow = Interaction & { run: number };
 /** The `limit` slowest interactions of all runs, slowest first. */
 export function slowest(runs: Run[], limit = 10): Slow[] {
   return runs
-    .flatMap((run) => run.snapshot.interactions.map((i) => ({ ...i, run: run.index })))
+    .flatMap((run) => interactions(run.snapshot).map((i) => ({ ...i, run: run.index })))
     .toSorted((a, b) => b.duration - a.duration)
     .slice(0, limit);
 }
@@ -107,7 +135,7 @@ export function slowest(runs: Run[], limit = 10): Slow[] {
 export function interactionGroups(runs: Run[]) {
   const groups = new Map<string, Interaction[]>();
   for (const run of runs)
-    for (const i of run.snapshot.interactions) {
+    for (const i of interactions(run.snapshot)) {
       const key = `${i.type} ${i.target}`;
       groups.set(key, [...(groups.get(key) ?? []), i]);
     }
@@ -216,6 +244,7 @@ export function summarise(profile: Profile): string {
     "Weston renders in software: script, style, layout and React times are realistic, " +
       "paint and composite times are not.",
   ];
+  if (profile.partial) lines.push("", `**Partial: ${profile.partial}**`);
   if (profile.notes.length) lines.push("", ...profile.notes.map((note) => `- ${note}`));
 
   lines.push(
@@ -242,7 +271,7 @@ export function summarise(profile: Profile): string {
       "",
       "## Interactions",
       "",
-      "All runs together; from the input to the frame after it.",
+      "All runs together; from the input to the frame after it, modifier keys left out.",
       "",
       ...table(
         ["input", "count", "median", "p95", "max", "delay", "processing"],
@@ -281,7 +310,8 @@ export function summarise(profile: Profile): string {
       "",
       "## Components",
       "",
-      "Per `<Profiled>` region, the median run: render time is React's actual duration.",
+      "Per `<Profiled>` region, the median run: render time is React's actual duration. " +
+        "`app` holds the others, so render_total and commits_count are its own.",
       "",
       ...table(
         ["region", "render ms", "commits", "mounts", "slowest commit", "full render (base)"],
@@ -326,7 +356,10 @@ export function summarise(profile: Profile): string {
       list.reduce((total, c) => total + c[field], 0);
     lines.push(
       "",
-      "## Bundle",
+      "## Bundle (profiling build)",
+      "",
+      "The profiling build's chunks, which carry React's profiling build and the collector: " +
+        "production's are somewhat smaller.",
       "",
       `Loaded by index.html: ${bytes(sum(initial, "bytes"))} (${bytes(sum(initial, "gzip"))} gzip) ` +
         `in ${initial.length} files. Loaded later: ${bytes(sum(lazy, "bytes"))} in ${lazy.length} files, ` +

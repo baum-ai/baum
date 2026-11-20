@@ -6,6 +6,7 @@ import {
   format,
   interactionGroups,
   metricStats,
+  modifierOnly,
   percentile,
   regions,
   requestGroups,
@@ -105,8 +106,8 @@ describe("standardMetrics", () => {
       long_frames_count: 2,
       long_frame_total: 180,
       worst_frame: 120,
-      commits_count: 5,
-      render_total: 12,
+      commits_count: 2,
+      render_total: 5,
       requests_count: 1,
       dom_count: 100,
       interaction_median: 20,
@@ -114,6 +115,32 @@ describe("standardMetrics", () => {
       interaction_max: 30,
       heap_bytes: 2048,
     });
+  });
+
+  it("counts the app region alone, which holds the others", () => {
+    const metrics = standardMetrics(
+      snapshot({
+        renders: {
+          app: { commits: 4, mounts: 1, actual: 20, max: 9, base: 3 },
+          sidebar: { commits: 4, mounts: 1, actual: 5, max: 2, base: 1 },
+          main: { commits: 4, mounts: 1, actual: 14, max: 8, base: 2 },
+        },
+      }),
+    );
+    assert.equal(metrics.commits_count, 4);
+    assert.equal(metrics.render_total, 20);
+    assert.equal(standardMetrics(snapshot()).render_total, 0);
+  });
+
+  it("leaves modifier-only key presses out of the interactions", () => {
+    const metrics = standardMetrics(
+      snapshot({
+        interactions: [key("Shift", 90), key("J", 10), key("Ctrl+Control", 80), key("Ctrl+`", 30)],
+      }),
+    );
+    assert.equal(metrics.interactions_count, 2);
+    assert.equal(metrics.interaction_median, 20);
+    assert.equal(metrics.interaction_max, 30);
   });
 
   it("leaves out interaction times and the heap when there are none", () => {
@@ -124,7 +151,24 @@ describe("standardMetrics", () => {
   });
 });
 
+describe("modifierOnly", () => {
+  it("tells modifier keys from keys pressed with one", () => {
+    for (const target of ["Shift", "Control", "Ctrl+Control", "Alt+Alt", "Meta", "AltGraph"])
+      assert.equal(modifierOnly({ type: "keydown", target }), true, target);
+    for (const target of ["J", "Ctrl+`", "Alt+Shift+k", "Enter", "/"])
+      assert.equal(modifierOnly({ type: "keydown", target }), false, target);
+    assert.equal(modifierOnly({ type: "click", target: 'button "Shift"' }), false);
+  });
+});
+
 describe("across runs", () => {
+  it("leaves out values that are not finite numbers", () => {
+    const runs = [run(1, { a: Number.NaN, b: 1 }), run(2, { a: 4, b: Infinity }), run(3, { a: 2 })];
+    const [a, b] = metricStats(runs);
+    assert.deepEqual([a![0], a![1].n, a![1].median, a![1].min, a![1].max], ["a", 2, 3, 2, 4]);
+    assert.deepEqual(b, ["b", { n: 1, median: 1, p95: 1, min: 1, max: 1 }]);
+  });
+
   it("takes each metric's statistics, skipping runs without it", () => {
     const runs = [run(1, { a: 1, b: 5 }), run(2, { a: 3 }), run(3, { a: 2, b: 7 })];
     assert.deepEqual(metricStats(runs), [
@@ -138,6 +182,7 @@ describe("across runs", () => {
       run(1, {}, { interactions: [key("j", 10), key("k", 50)] }),
       run(2, {}, { interactions: [key("j", 40)] }),
     ];
+    runs[0]!.snapshot.interactions.push(key("Shift", 500));
     assert.deepEqual(
       slowest(runs, 2).map((i) => [i.run, i.target, i.duration]),
       [
@@ -147,9 +192,9 @@ describe("across runs", () => {
     );
   });
 
-  it("groups interactions by input, the worst p95 first", () => {
+  it("groups interactions by input, the worst p95 first, without modifiers", () => {
     const runs = [
-      run(1, {}, { interactions: [key("j", 10), key("k", 50)] }),
+      run(1, {}, { interactions: [key("j", 10), key("k", 50), key("Shift", 99)] }),
       run(2, {}, { interactions: [key("j", 20), key("k", 60)] }),
     ];
     const groups = interactionGroups(runs);
@@ -285,6 +330,13 @@ describe("summarise", () => {
     assert.match(text, /\| main \| 2\.0 \| 2 \| 0 \|/);
     assert.match(text, /Loaded by index.html: 2.0 KiB \(1.0 KiB gzip\) in 1 files/);
     assert.match(text, /\| assets\/review.js \| lazy \| 4.0 KiB \| 2.0 KiB \|/);
+  });
+
+  it("says when it holds fewer runs than asked for, and labels the bundle", () => {
+    const text = summarise({ ...profile, partial: "2 of 5 runs; run 3 failed: timed out" });
+    assert.match(text, /\*\*Partial: 2 of 5 runs; run 3 failed: timed out\*\*/);
+    assert.match(text, /## Bundle \(profiling build\)/);
+    assert.doesNotMatch(summarise(profile), /Partial/);
   });
 
   it("leaves out sections with nothing in them", () => {
