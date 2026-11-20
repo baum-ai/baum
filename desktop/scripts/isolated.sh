@@ -8,13 +8,18 @@ set -eu
 
 usage() {
   cat <<'EOF'
-usage: isolated.sh [name] [--copy-data] [--workspace DIR]... [--headless]
+usage: isolated.sh [name] [--copy-data | --seed-data[=SEED]] [--workspace DIR]... [--headless]
 
   name             the instance, letters, digits and dashes (default: default)
   --copy-data      first copy this machine's baum data into the instance's
                    home: repositories, reviews and settings, without the
                    credentials, the daemon's runtime files or the Claude
                    account folders; only when the instance has none yet
+  --seed-data[=SEED]
+                   instead fill the instance's home with the seeded
+                   profiling dataset (oss/internal/seeddata, seed 1 by
+                   default): the same data on every machine, served with
+                   no GitHub and no model; only when it has no data yet
   --workspace DIR  mount DIR read-only at the same path, so repositories
                    the app knows from the copied data are there; repeatable.
                    Their review stores get writable copies of the instance's,
@@ -31,11 +36,14 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo=$(CDPATH='' cd -- "$here/../../.." && pwd)
 name=default
 copy=0
+seed=
 headless=0
 workspaces=
 while [ "$#" -gt 0 ]; do
   case $1 in
     --copy-data) copy=1 ;;
+    --seed-data) seed=1 ;;
+    --seed-data=*) seed=${1#--seed-data=} ;;
     --headless) headless=1 ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; workspaces="$workspaces
 $2"; shift ;;
@@ -47,6 +55,13 @@ ${1#--workspace=}" ;;
   esac
   shift
 done
+case $seed in
+  *[!0-9]*) echo "isolated: the seed must be a number: $seed" >&2; exit 2 ;;
+esac
+if [ -n "$seed" ] && [ "$copy" = 1 ]; then
+  echo "isolated: --copy-data and --seed-data both fill the home; choose one" >&2
+  exit 2
+fi
 case $name in
   ''|*[!a-z0-9-]*) echo "isolated: the name may only hold lowercase letters, digits and dashes: $name" >&2; exit 2 ;;
 esac
@@ -103,6 +118,17 @@ if [ "$copy" = 1 ]; then
   [ "$#" -gt 0 ] && compose "$@" desktop-isolated sh scripts/isolated-home.sh seed
 fi
 
+if [ -n "$seed" ]; then
+  if [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
+    echo "isolated: $name already has baum data, kept; delete $home to start again"
+  else
+    # Its sessions are recorded as ended just now: the Sessions page lists
+    # an ended session for a day.
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 "$repo/dev-compose.sh" run --rm --no-deps -e HOME="$HOME" -v "$home:$HOME" \
+      oss-test go run ./cmd/seeddata -seed "$seed" -home "$HOME" -sessions-at now
+  fi
+fi
+
 if [ "$headless" = 1 ]; then
   set -- -e BAUM_ISOLATED_HEADLESS=1 -e BAUM_ISOLATED_WIDTH -e BAUM_ISOLATED_HEIGHT
 else
@@ -110,6 +136,8 @@ else
 fi
 [ -f "$HOME/.gitconfig" ] && set -- "$@" -v "$HOME/.gitconfig:/seed/gitconfig:ro"
 [ -n "${BAUM_RELAY_URL:-}" ] && set -- "$@" -e BAUM_RELAY_URL
+# A seeded home reaches no GitHub and no model (isolated-home.sh).
+[ -f "$home/.local/state/baum/seeddata.json" ] && set -- "$@" -e BAUM_ISOLATED_OFFLINE=1
 IFS=$nl
 for dir in $dirs; do
   set -- "$@" -v "$dir:$dir:ro"

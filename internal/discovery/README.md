@@ -53,6 +53,11 @@ validated in this process remains stale, but waiting for the next poll does
 not change every row. `Cached` retains deadline-based staleness for readers
 that use it to decide whether to fetch fresh data.
 
+`Seed` writes a repository's cache from a given snapshot, saved as a cache of
+the format before 3, under the client's credential. Only development data
+uses it ([`seeddata`](../seeddata/README.md), for profiling offline); the
+daemon never calls it.
+
 ## A poll
 
 Most polls are **incremental**. A poll reads the window of pull requests

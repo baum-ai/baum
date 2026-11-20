@@ -116,7 +116,8 @@ run: frontend sidecar
         desktop-test cargo run --locked
 
 # Run the app with its own home, keyring and daemon beside the installed one,
-# one per name (scripts/isolated.sh; --copy-data copies this machine's data)
+# one per name (scripts/isolated.sh; --copy-data copies this machine's data,
+# --seed-data writes the seeded profiling dataset)
 isolated *args: frontend viewer sidecar
     sh {{ source_directory() }}/scripts/isolated.sh {{ args }}
 
