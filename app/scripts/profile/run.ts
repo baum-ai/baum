@@ -159,9 +159,14 @@ async function launch() {
     }
     if (Date.now() > end) {
       const at = await session.url().catch(() => "?");
+      if (/^https?:\/\/[^/]+\/s\/[^/]+\//.test(at))
+        throw new Error(
+          "the daemon's page has no profiling collector: the sidecar holds a build of the " +
+            "frontend that is not the profiling build. just desktop::profile builds it; a recipe " +
+            "since (check, isolated, build) may have rebuilt it for production",
+        );
       throw new Error(
-        `the app did not open the daemon's page with the profiling collector within two minutes; it shows ${at.replace(/\/s\/[^/]+/, "/s/…")}. ` +
-          "Was the frontend built with BAUM_FRONTEND_MODE=profile (just desktop::profile does)?",
+        `the app did not open the daemon's page within two minutes; it shows ${at.replace(/\/s\/[^/]+/, "/s/…")}`,
       );
     }
     await sleep(50);
