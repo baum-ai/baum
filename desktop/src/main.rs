@@ -24,6 +24,7 @@ mod navigation;
 mod notifications;
 mod onboarding;
 mod panel;
+mod pointer;
 mod settings;
 mod status;
 mod theme;
@@ -490,6 +491,7 @@ fn main() {
                 eprintln!("baum desktop: no tray panel: {e}");
             }
             zoom::apply(window.as_ref());
+            pointer::watch(&window);
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
