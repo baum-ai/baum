@@ -19,7 +19,7 @@
     "lint": "pnpm lint:palette && oxlint --deny-warnings .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "test:unit": "node --test scripts/check-palette.test.mjs && vitest run && KIT_SCRIPT=inlined vitest run src/tile-kit",
+    "test:unit": "node --test scripts/check-palette.test.mjs scripts/profile/*.test.ts && vitest run && KIT_SCRIPT=inlined vitest run src/tile-kit",
     "test:e2e": "playwright test",
     "test:desktop": "node ../desktop/tests/onboarding.cjs",
     "test:development": "playwright test --config playwright.development.config.ts",

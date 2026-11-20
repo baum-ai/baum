@@ -199,6 +199,16 @@ export function createCollector(env: CollectorEnv) {
         if (inFlight === 0) navigation.settled = at - navigation.start;
       }
     },
+    /** What a scenario waits on, without copying every record as
+     *  `snapshot` does: the latest navigation, and how many key presses and
+     *  clicks have been recorded since the page opened or the last reset. */
+    progress(): { navigation: Navigation | undefined; interactions: number } {
+      const navigation = navigations.at(-1);
+      return {
+        navigation: navigation && { ...navigation },
+        interactions: interactions.length + (dropped.interactions ?? 0),
+      };
+    },
     snapshot(): Snapshot {
       return structuredClone({
         version: 1 as const,

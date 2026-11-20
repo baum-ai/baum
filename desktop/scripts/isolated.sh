@@ -30,6 +30,8 @@ usage: isolated.sh [name] [--copy-data | --seed-data[=SEED]] [--workspace DIR]..
                    and profiling. Rendering is in software
 
 BAUM_RELAY_URL, when set, is passed to the instance's daemon.
+BAUM_ISOLATED_RUN, when set, is the shell command the container runs in the
+prepared home instead of the app (scripts/profile.sh runs its scenarios so).
 EOF
 }
 
@@ -157,4 +159,4 @@ IFS=$old_ifs
 echo "isolated: $name, home $home"
 compose --name "$container" "$@" \
   -e GDK_BACKEND=wayland -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-  desktop-isolated sh scripts/isolated-home.sh app cargo run --locked
+  desktop-isolated sh scripts/isolated-home.sh app sh -c "${BAUM_ISOLATED_RUN:-cargo run --locked}"

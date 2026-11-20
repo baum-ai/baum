@@ -46,6 +46,10 @@ JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
 - the scenario's own `__baumPerf.mark(name)` markers, the DOM's element count
   and, where the engine has it, the JS heap size.
 
+`__baumPerf.progress()` returns just the latest navigation and how many
+interactions were recorded, without copying the rest, for a scenario to
+wait on (`just desktop::profile`, [desktop](../desktop/README.md#profiling)).
+
 It measures by hand rather than with the Event Timing or Long Tasks APIs,
 which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
 things. Every other build leaves it out, and fails if `__baumPerf` reaches a
