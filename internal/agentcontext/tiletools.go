@@ -118,7 +118,7 @@ func (s *Server) tileMakingTools() []Tool {
 	return []Tool{{
 		Name: "tile_guide",
 		Description: "How to write a tile type: the guide (part guide, the default: the files, the rules, the two faces, the data schema dialect, citations, the kit API, samples and the render check), the starter type to copy (part starter: its files), or the names the kit offers (part manifest: its API, view, elements, classes and tokens). " +
-			"Read the guide and the starter before writing a tile with check_tile. Look first for a type that already does the job: add_tile lists baum's library types and tile_type reads one in full.",
+			"Read the guide and the starter before writing a tile with check_tile. " + preferBuiltIn + " add_tile lists the built-in and library types, and tile_type reads one in full.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"part":{"type":"string","enum":["guide","starter","manifest"]}},"additionalProperties":false}`),
 		Call: func(_ context.Context, c CallContext, args json.RawMessage) (string, error) {
 			if c.Consumer.Kind == Action {
@@ -134,7 +134,7 @@ func (s *Server) tileMakingTools() []Tool {
 		},
 	}, {
 		Name: "start_tile",
-		Description: "Starts making a tile for the review on the pull request page the person has open: the page shows a pending card on the section where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. Call it first, when the person asks for a tile no library type gives; then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
+		Description: "Starts making a tile for the review on the pull request page the person has open: the page shows a pending card on the section where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. " + preferBuiltIn + " Call it first, when the person asks for a tile no built-in or library type gives (add_tile lists them); then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
 			"If you stop before adding it, the card says \"Not finished\" for a few minutes, with Remove. The result is the card's id (draft_<n>)." + tileRule,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":80,"description":"The tile's title, as the card shows it."},` + sectionArg + `},"required":["title"],"additionalProperties":false}`),
 		Edits:       true,

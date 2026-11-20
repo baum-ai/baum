@@ -7,11 +7,14 @@ guide is everything you need to write one that passes every check. Start from
 the starter in [`starter/`](starter/) and change it; do not start from an
 empty file.
 
-**Before you write a tile**, look for one that already does the job. Check
-the saved tile library and the built-in types (their source can be read:
-[`tiles/library`](../library) holds the built-ins), and the kit's elements
-and classes in section 6. Reuse a type, or start from the closest one and
-change it, rather than write the same thing again.
+**Before you write a tile**, look for one that already does the job, and
+write one only when nothing else makes sense. The review page draws flows,
+columns, sequences, tables, code excerpts and images (screenshots) itself:
+in a chat, add_tile adds them with data you write, an image by its file's
+path. Check those, the saved tile library and baum's library types (their
+source can be read: [`tiles/library`](../library) holds them), and the
+kit's elements and classes in section 6. Reuse a type, or start from the
+closest one and change it, rather than write the same thing again.
 
 ## 1. The files
 

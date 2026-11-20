@@ -26,8 +26,9 @@ export function ReviewImages({
 }: {
   document: ReviewDocument;
   block: ImagesBlock;
-  /** The heading over the images. */
-  heading?: string;
+  /** The heading over the images; null for none, when the images stand
+   *  under a heading of their own (a tile's). */
+  heading?: string | null;
 }) {
   const attachmentUrl = useAttachmentUrl();
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
@@ -114,8 +115,8 @@ export function ReviewImages({
     sectionImageHeight(space.viewport.height),
   );
 
-  return (
-    <Part label={heading}>
+  const content = (
+    <>
       <div ref={setPane} className="space-y-4">
         {rows.map((row) => (
           <div
@@ -218,7 +219,12 @@ export function ReviewImages({
           if (key) triggers.current.get(key)?.focus();
         }}
       />
-    </Part>
+    </>
+  );
+  return heading === null ? (
+    <div className="min-w-0">{content}</div>
+  ) : (
+    <Part label={heading}>{content}</Part>
   );
 }
 
