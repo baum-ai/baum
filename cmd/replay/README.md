@@ -124,14 +124,18 @@ content and are never committed.
 
 `--generator v2` writes each case as a baum.review/2 document, as the desktop
 does with tile reviews on once the levels land (`generate.Options.V2`,
-`agent/orchestrate`): the map, then the section agents and the context agent
-at once, each tile once its section is written, and the overview. Every
-section is written; nothing is reused unless you pass `--reuse`, which lets the
+`agent/orchestrate`): the map, then the section agents and the context agent at
+once, each tile once its section is written, and the overview. Every section is
+written; nothing is reused unless you pass `--reuse`, which lets the
 orchestration reuse a previous version's unchanged sections as the app does (it
-needs a previous version, so it matters for chains). `--generator-option concurrency=N`
-bounds a case's calls at once (default 4). Prompt overrides take the ids
-`review-v2-shared`, `review-map`, `review-section`, `review-context-v2`,
-`review-tile` and `review-overview`.
+needs a previous version, so it matters for chains). For v2 it also turns on
+revising changed sections from their previous text, keeping unchanged tiles and
+revising the previous overview. Without `--reuse`, a v2 chain's previous
+document only feeds risk history and section state, and every section and the
+overview are written fresh. `--generator-option concurrency=N` bounds a case's
+calls at once (default 4). Prompt overrides take the ids `review-v2-shared`,
+`review-map`, `review-section`, `review-context-v2`, `review-tile` and
+`review-overview`.
 
 ```sh
 oss/bin/replay --dataset <dir> --generator v2 --case <id> --name v2-first --max-cost-usd 20
@@ -164,9 +168,11 @@ and per level `v2_<level>_calls`, `_tokens`, `_seconds`, `_failed` and
 With `--chain`, each revision after the first reads the baum.review/2 document
 the one before it generated as its previous version (`generate.V2.Previous`,
 with that document's own `review.version`), as `generate.Publish` hands it to a
-run in the app. The bundle carries no previous version of its own for v2. The
-first revision has none. Each pair of consecutive documents reports how stable
-the review stayed:
+run in the app. The bundle of a later revision carries no previous version of
+its own for v2. The first revision has no previous document, though its
+bundle's frozen previous version, if any, still feeds risk history and section
+state when the document is completed. Each pair of consecutive documents
+reports how stable the review stayed:
 
 - **Section fate.** `v2_sections_previous`, then each earlier section is counted
   once: `v2_sections_reused` (same id, same hunks, identical body),
@@ -273,23 +279,28 @@ replay --dataset <dir> --split calibration --chain --with-previous --limit 4 --m
   tie or differ by machine. A revision with no number that follows one that has a
   number, or that was captured before the one ordered ahead of it, is listed in
   `chain.json` and the dry run as a guess.
-- **Handoff.** The first revision keeps its bundle, frozen previous version
-  included. For each later one the generator turns the previous revision's
-  document into the previous version as the app does (`review.PreviousVersionOf`,
-  with the document's own `review.version`, which the pipeline set above the
-  version it was given), and moves its hunk anchors to where the hunks sit in this
-  revision's diff (`review.FitPreviousHunkAnchors`). The runner then does what
-  assembly does to a bundle it has built: masks it (`bundle.Redact`, which covers
-  the carried content), fits it to the evidence byte budget (`bundle.Fit`, whose
-  budget counts the previous version, so a larger one trims other evidence and
-  adds notes to `truncated`, or fails the revision with the app's
-  `evidence byte budget exceeded` as an `input` failure), and stamps the digest.
-  The outcome records `bundle_bytes` (the encoded size the model read),
-  `bundle_fitted` (fitting cut something) and `bundle_notes`; `chain.json` records
-  them per revision with the version number carried. Everything else in the
-  bundle is the capture's. With `--reuse`, details are reused as in the app,
-  including when the images are unchanged, because the carried version knows
-  which images it was offered.
+- **Handoff.** For the review (v1) generator, the first revision keeps its
+  bundle, frozen previous version included. For each later one the generator
+  turns the previous revision's document into the previous version as the app
+  does (`review.PreviousVersionOf`, with the document's own `review.version`,
+  which the pipeline set above the version it was given), and moves its hunk
+  anchors to where the hunks sit in this revision's diff
+  (`review.FitPreviousHunkAnchors`). The runner then does what assembly does to
+  a bundle it has built: masks it (`bundle.Redact`, which covers the carried
+  content), fits it to the evidence byte budget (`bundle.Fit`, whose budget
+  counts the previous version, so a larger one trims other evidence and adds
+  notes to `truncated`, or fails the revision with the app's `evidence byte
+  budget exceeded` as an `input` failure), and stamps the digest. The outcome
+  records `bundle_bytes` (the encoded size the model read), `bundle_fitted`
+  (fitting cut something) and `bundle_notes`; `chain.json` records them per
+  revision with the version number carried. Everything else in the bundle is the
+  capture's. With `--reuse`, details are reused as in the app, including when
+  the images are unchanged, because the carried version knows which images it
+  was offered. For v2, `V2Generator.Next` clears the bundle's previous version
+  and hands the previous revision's document over as the generation's previous
+  version, as the app does. The first revision has no previous document, though
+  its bundle's frozen previous version still feeds risk history and section
+  state through completion (`reviewv2.Complete`).
 - **Failure.** A revision that fails ends its pull request's chain: the later
   ones are skipped (reason `chain`) and `chain.json` says why. Other pull requests
   go on. The cost guard is checked before each revision. `--resume` keeps the
@@ -446,7 +457,9 @@ prompt change is measured on all of them. `--reuse` keeps the pipeline's
 behaviour, with one difference: a saved bundle does not record which images the
 previous version was offered, so the pipeline treats any image the bundle offers
 as new. With `--reuse` details are therefore reused only for a case whose bundle
-offers no image; the app also reuses them when the images are unchanged.
+offers no image; the app also reuses them when the images are unchanged. For
+v2, `--reuse` instead turns on revising and keeping from the previous document
+(see "baum.review/2 in levels").
 
 ## Adding another kind of output
 
