@@ -259,6 +259,42 @@ type CodeData struct {
 	Text  string `json:"text,omitempty"`
 }
 
+// TypeImages is a tile of images a person added to their review page
+// (internal/addedtiles): screenshots the host stored, drawn by the page's
+// own image layout. A review generation never writes one.
+const TypeImages = "images"
+
+// HunkIDs are the ids of the hunks anchors cite, in order.
+func HunkIDs(anchors []Anchor) []string {
+	var out []string
+	for _, raw := range anchors {
+		var a struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if json.Unmarshal(raw, &a) == nil && a.Type == "hunk" && a.ID != "" {
+			out = append(out, a.ID)
+		}
+	}
+	return out
+}
+
+// ImagesData is an images tile's data: each image by the id the host
+// stored it under (an attachment id the attachment route serves for the
+// pull request), with its caption, type and size.
+type ImagesData struct {
+	Items []ImageItem `json:"items"`
+}
+
+// ImageItem is one image of an images tile.
+type ImageItem struct {
+	Attachment  string `json:"attachment"`
+	Caption     string `json:"caption,omitempty"`
+	ContentType string `json:"content_type"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+}
+
 // Tile states.
 const (
 	TilePending     = "pending"

@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import { cn } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
+import { ReviewImages } from "@baum/viewer/components/review-images";
 import { Cites } from "./cites";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
@@ -27,6 +28,19 @@ export function activeTile(): string | null {
 const anchorsOf = (data: unknown): Anchor[] => {
   const source = (data as { source?: unknown } | null)?.source;
   return Array.isArray(source) ? (source as Anchor[]) : [];
+};
+/** An images tile's images (a tile the person added): each by the id the
+ *  daemon stored it under, which the document's index lists. */
+export const imageItems = (data: unknown): { attachment: string; caption?: string }[] | null => {
+  const items = (data as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const out: { attachment: string; caption?: string }[] = [];
+  for (const item of items) {
+    const { attachment, caption } = (item ?? {}) as { attachment?: unknown; caption?: unknown };
+    if (typeof attachment !== "string") return null;
+    out.push(typeof caption === "string" && caption ? { attachment, caption } : { attachment });
+  }
+  return out;
 };
 const captionOf = (data: unknown): string => {
   const caption = (data as { caption?: unknown } | null)?.caption;
@@ -123,6 +137,17 @@ export function ViewTileCard({
             ? face.why
             : (tile.problems?.[0] ?? "This tile isn't available.")}
         </Note>
+      );
+    }
+    if (tile.type === "images") {
+      const items = imageItems(tile.data);
+      if (!items) return <Note>This tile's content couldn't be read.</Note>;
+      return (
+        <ReviewImages
+          document={review}
+          heading={null}
+          block={{ kind: "images", items, source: [] }}
+        />
       );
     }
     if (native) {

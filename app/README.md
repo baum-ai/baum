@@ -2460,6 +2460,18 @@ fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 `e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
 only with `INBOX_SCREENSHOTS=1`.
 
+Screenshots for a pull request: `just local_app::shot '<route>' ['<selector>']
+['<name>']` builds the app, rebuilds the fixture (it embeds the build) and runs
+`e2e/shot.spec.ts` against the browser fixture, which writes
+`oss/app/screenshots/<name>-light.png` and `-dark.png` (default name `shot`).
+The route is the part after the launch URL, such as
+`'?page=settings&section=reviews'`; a selector narrows the picture to that
+element. `SHOT_WAIT` (a selector to wait for), `SHOT_WIDTH` and `SHOT_HEIGHT`
+pass through. `screenshots/` is ignored by git and, unlike `test-results/`,
+not emptied by the next Playwright run. The spec skips without `SHOT_ROUTE`, so
+the e2e suites never take these pictures. The fixture holds demo data, not the
+person's own.
+
 Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
 `../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
 `pnpm test:unit` runs them again against the compacted script the daemon inlines

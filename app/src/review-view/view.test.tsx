@@ -12,7 +12,8 @@ import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
-import { drawnAs, ViewTileCard } from "./view-tile";
+import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
+import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
 declare global {
@@ -858,6 +859,50 @@ describe("the native tiles", () => {
     });
     expect(container.querySelector("h3")?.textContent).toBe("Why a relay");
     expect(container.textContent).toContain("Phones can't reach a laptop behind NAT.");
+  });
+
+  it("draws an added images tile from the images the index lists", async () => {
+    const id = "att_0123456789abcdef0123456789abcdef";
+    const review = {
+      ...CHROME,
+      index: {
+        ...CHROME.index,
+        attachments: [
+          ...(CHROME.index.attachments ?? []),
+          {
+            id,
+            position: 99,
+            content_type: "image/png",
+            width: 40,
+            height: 20,
+            alt: "The switch, on",
+          },
+        ],
+      },
+    } as ReviewDocument;
+    const tile: ViewTile = {
+      ...tileOf("dg_shape"),
+      id: "added_images_0a1b2c3d4e",
+      type: "images",
+      title: "Review automatically",
+      state: "ready",
+      added: true,
+      data: { items: [{ attachment: id, caption: "The switch, on" }] },
+    };
+    const container = await render(
+      <Host>
+        <AttachmentUrlProvider resolve={(each) => `api/attachments/${each}`}>
+          <ViewTileCard tile={tile} review={review} ctx={ctx} />
+        </AttachmentUrlProvider>
+      </Host>,
+    );
+    expect(container.querySelector("h3")?.textContent).toBe("Review automatically");
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("src")).toBe(`api/attachments/${id}`);
+    expect(container.querySelector("figcaption")?.textContent).toBe("The switch, on");
+    // The tile's own title heads it: the images add no heading of their own.
+    expect(container.querySelectorAll("h3")).toHaveLength(1);
+    expect(imageItems({ items: [{ attachment: 3 }] })).toBeNull();
   });
 });
 

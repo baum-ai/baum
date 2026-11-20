@@ -19,6 +19,7 @@ import (
 	"github.com/baum-ai/baum/internal/tileframes"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
@@ -139,6 +140,23 @@ type AddedTile struct {
 	Section string
 	From    int
 	Filling bool
+	// Native is a native added tile (a type the page draws itself, or an
+	// images tile), served beside the document's own tiles; Tile is then
+	// empty.
+	Native *NativeAdded `json:",omitempty"`
+}
+
+// NativeAdded is a native added tile as the agent wrote it and the host
+// checked and stored it: a tile of a baum.review/2 document in the shape a
+// generated one has (its caption and citations lifted out of its data, a
+// code tile's text filled), keyed by the added tile's ID.
+type NativeAdded struct {
+	ID      string            `json:"id,omitempty"`
+	Type    string            `json:"type"`
+	Title   string            `json:"title"`
+	Caption string            `json:"caption,omitempty"`
+	Cites   []reviewv2.Anchor `json:"cites"`
+	Data    json.RawMessage   `json:"data"`
 }
 
 // AddedKey names a version's added tiles for a cache key, empty for none,

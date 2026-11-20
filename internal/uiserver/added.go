@@ -180,12 +180,14 @@ func (s shownVersion) section(asked string, data json.RawMessage) string {
 	return reviewv2.OwnerFor(s.Review, asked, hunks)
 }
 
-// AddTile is an add_tile request: the library type, the section it goes on
-// and the data the agent wrote for it, if any.
+// AddTile is an add_tile request: the library or native type, the section
+// it goes on, the data the agent wrote for it, if any, and a native tile's
+// title.
 type AddTile struct {
 	Type    string
 	Section string
 	Data    json.RawMessage
+	Title   string
 }
 
 // AddedTile is what an add did: the tile's ID, whether it shows its data
@@ -223,6 +225,9 @@ func (a LocalAPI) roomFor(ctx context.Context, pr, id string) error {
 func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by string, add AddTile) (AddedTile, error) {
 	if a.Added == nil {
 		return AddedTile{}, errors.New("adding tiles is not available in this baum")
+	}
+	if IsNativeAddType(add.Type) {
+		return a.addNative(ctx, c, number, by, add)
 	}
 	entry, ok := library.Find(add.Type)
 	if !ok {
