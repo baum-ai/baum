@@ -1359,14 +1359,35 @@ and a change that added background work would look faster. What a side
 does in the background still slows its own runs, which is the cost a
 person would see. Ctrl-C stops both instances and thaws them.
 
+Before the first warm-up, and before every run, the runner waits until its
+container has been quiet for a second (under a tenth of a CPU in each
+quarter second; at most 5 minutes before the first, 15 s before a run). A
+new home's daemon works through its clones after it starts, and frozen it
+only gets on with that in its own turns, so that work can ride along in a
+side's first runs; a side just thawed also catches up on what came due.
+In one comparison on a loaded machine (load average 5.7), the first seven
+runs used about 16 s of container CPU each against 9 s for the rest, for
+the same journey, and the spread of `jk`'s `interaction_median` grew from
+about 2 ms (interquartile range) to 23 ms. Each run records the load
+average as it began, the time it waited and its container's CPU
+(`conditions` in `metrics.json`), and the summary warns when the machine
+was busy or a side's runs did uneven work. `BAUM_PROFILE_PAUSE=0` and
+`BAUM_PROFILE_SETTLE=0` turn pausing and settling off, to measure what
+each does; they are diagnostic, not settings.
+
 `--runs N` is the runs a side, 8 by default. Single cold starts on a
 loaded machine vary from 680 to 970 ms, while medians of five agree within
 about 3%. How many runs the test below needs depends on how many metrics
 a scenario reports: with five a side the smallest possible p is 0.008,
 which passes Holm's adjustment only when six or fewer other metrics are
-tested, and the scenarios test 7 (jk) to 16 (cold-start), so then only the headline can
-reach a verdict (the summary says so). Eight lets every metric reach one on
-a clear change; more find smaller ones.
+tested, and the scenarios test 7 (jk) to 16 (cold-start), so then only
+the headline can reach a verdict (the summary says so). Eight lets every
+metric reach one on a clear change; more find smaller ones. On a quiet
+machine, A/A comparisons of `jk` varied `interaction_median` by about
+1.8 ms (standard deviation), so 8 runs a side detect a 3.5 ms change of it
+four times in five and 12 runs a 3 ms change; with the uneven work above
+the same took 25 and 15 ms. When the summary warns of a busy machine or
+uneven work, run again rather than add runs.
 
 The verdict per metric: the two-sided Mann-Whitney U test, exact (every
 way to split the pooled runs into the two groups, ties at their mean rank),
