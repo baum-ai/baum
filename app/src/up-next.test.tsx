@@ -210,6 +210,7 @@ it("orders what waits on the person and sets apart what waits on others", () => 
     "baum's review is ready, risk 4 of 5. 1 agent session is still working on its branch, so reviewing now catches problems before more commits pile up.",
   );
   expect(review!.working).toEqual([working]);
+  expect(review!.waitingSessions).toEqual([]);
   expect(review!.minutes).toBe(12);
   // Its group already says a merge is ready.
   expect(merge!.why).toBe("");
@@ -1767,6 +1768,29 @@ it("links the agent sessions working on the pull request to their cards on Sessi
   expect(new URLSearchParams(location.search).get("session")).toBeNull();
   expect(node.querySelector('[data-row-id="claude-code:s1"]')).not.toBeNull();
   expect(node.querySelector(".local-feed-peek-row")).not.toBeNull();
+});
+
+it("links the agent sessions waiting for the person on the pull request apart from working ones", async () => {
+  const session = (session_id: string, state: "running" | "idle") => ({
+    agent: "claude-code",
+    session_id,
+    state,
+    started_at: "",
+    last_activity_at: "",
+    last_event: state === "running" ? ("tool" as const) : ("stop" as const),
+    repository: "acme/demo",
+    pr: 1,
+  });
+  liveList = [session("s1", "running"), session("s2", "idle"), session("s3", "idle")];
+  await render();
+  expect(shown()).toBe("Change 1");
+  const lines = [...panel().querySelectorAll(".upnext-agents")].map((p) => p.textContent);
+  expect(lines).toEqual([
+    "1 agent session working on its branch right now",
+    "2 agent sessions waiting for you on its branch: Claude Code · Claude Code",
+  ]);
+  const links = panel().querySelectorAll<HTMLAnchorElement>(".upnext-agents a");
+  expect(links[2]!.getAttribute("href")).toBe("/s/test-ns/?page=sessions&peek=claude-code%3As3");
 });
 
 // --- Everyone else's pull requests -------------------------------------------
