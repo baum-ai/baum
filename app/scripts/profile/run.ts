@@ -66,6 +66,13 @@ if (values.side !== undefined && values.side !== "base" && values.side !== "head
   process.exit(2);
 }
 const side = values.side as Side | undefined;
+const headline = values.headline ?? scenario.headline;
+if (side && !headline) {
+  console.error(
+    `profile: ${scenario.name} has no headline yet, so it cannot be compared; --headline names one`,
+  );
+  process.exit(2);
+}
 /** A comparison's directory, shared by both sides' containers. */
 const shared = values.out;
 /** This side's metrics.json and summary.md. */
@@ -566,7 +573,7 @@ async function compare(partial?: string) {
   const comparison = {
     scenario: scenario!.name,
     description: scenario!.description,
-    headline: values.headline ?? scenario!.headline,
+    headline: headline!,
     baseLabel: baseLabel(base.environment.ref, base.environment.commit),
     headLabel: head.environment.commit ?? "unknown",
     base,

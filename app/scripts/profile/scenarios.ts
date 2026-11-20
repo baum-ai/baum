@@ -47,8 +47,9 @@ export type Scenario<State = unknown> = {
   name: string;
   description: string;
   /** The metric a comparison (--baseline) judges first and on its own:
-   *  what a person waits on in this journey. */
-  headline: string;
+   *  what a person waits on in this journey. A scenario without one is
+   *  compared only with --metric. */
+  headline?: string;
   /** Once, on the launched app, before the warm-up: finds what the runs
    *  need in the data, or throws Skip. */
   prepare?(ctx: Context): Promise<State>;

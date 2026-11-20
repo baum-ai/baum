@@ -1392,6 +1392,7 @@ a comparison again before keeping a change it calls faster.
 | `filter` | `keystroke_median` |
 | `switch-inboxes` | `switch_content_median` |
 | `session-panel` | `open_duration` |
+| `pages` | none yet: a comparison needs `--metric` |
 
 A comparison goes to `target/profile/<scenario>-vs-<commit>-<time>/`:
 

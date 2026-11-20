@@ -79,7 +79,9 @@ done
 [ -n "$scenario" ] || { usage >&2; exit 2; }
 # The scenarios the runner knows, from their definitions (scenarios.ts, and
 # the modules it registers scenarios from).
-known=$(sed -n 's/^  name: "\([a-z-]*\)",$/\1/p' "$desktop/../app/scripts/profile/scenarios.ts" "$desktop/../app/scripts/profile/pages.ts")
+definitions="$desktop/../app/scripts/profile/scenarios.ts $desktop/../app/scripts/profile/pages.ts"
+# shellcheck disable=SC2086 # two paths without spaces' worth of words
+known=$(sed -n 's/^  name: "\([a-z-]*\)",$/\1/p' $definitions)
 if ! printf '%s\n' "$known" | grep -qx -- "$scenario"; then
   echo "profile: no scenario $scenario; the scenarios are: $(printf '%s' "$known" | tr '\n' ' ')" >&2
   exit 2
@@ -93,6 +95,14 @@ if [ -n "$metric" ] && [ -z "$baseline" ]; then
 fi
 case $metric in *[!a-z0-9_]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
 if [ -n "$baseline" ]; then
+  # A comparison judges the scenario's headline first (`headline:` after
+  # its name), unless --metric names another.
+  # shellcheck disable=SC2086
+  if [ -z "$metric" ] && ! awk -v want="  name: \"$scenario\"," \
+    'found { exit($0 ~ /^  headline: / ? 0 : 1) } $0 == want { found = 1 } END { if (!found) exit 1 }' $definitions; then
+    echo "profile: $scenario has no headline yet, so it cannot be compared; name the metric to judge with --metric" >&2
+    exit 2
+  fi
   case $pass in
     *--copy-data*|*--workspace*)
       echo "profile: a comparison runs both sides on the seeded dataset, the same on both; --copy-data and --workspace do not apply" >&2
