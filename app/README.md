@@ -3068,6 +3068,14 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   once in that window, unless it already has. A tile that hung there says
   "This tile stopped responding when it was checked." instead of mounting;
   every other answer mounts it.
+- **Stored images** (`src/tiles/custom/images.ts`). A tile made in chat
+  holds each image the host stored for it as `baum-image:att_<id>` in its
+  data. Before the frame's `init`, the page reads each from `api/attachments/{id}`
+  (the review page's attachment address) and gives the frame the data with
+  the image as a `data:` URL in its place, the only image a frame's policy
+  admits; the box reads `loading` meanwhile, and an image that cannot be read
+  becomes an empty string. The render check's runner gets its job's data
+  with the images already inlined by the daemon.
 - **A tile's menu** (⋯, or a right click) offers Comment, Ask about this tile,
   **Save to library…** on a custom tile that is not baum's own (it opens the
   panel on the pull request about that tile with "Save this tile to my
