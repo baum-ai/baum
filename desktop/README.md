@@ -753,6 +753,19 @@ doing anything (`src/zoom.rs`).
   app's config directory and applied when the window opens and whenever a
   page starts loading. A missing, damaged or unknown level is 100%.
 
+## Pointer leaving the window
+
+On Wayland a pointer leave event carries no position, so GTK3 reports the last
+one it saw, still inside the window after a quick move. WebKitGTK releases
+without the fix for [WebKit bug 326201](https://bugs.webkit.org/show_bug.cgi?id=326201)
+pass that to the page as a move inside it, so the page never learns the pointer
+left: the folded sidebar opened under it stayed open over the page when the
+pointer moved to the bar, an empty workspace or another screen. On Linux the
+main window therefore listens for its web view's own leave events, skipping
+grabs and moves into child widgets, and announces each one to the page as a
+`baum:pointer-left` event (`src/pointer.rs`). The sidebar folds on it as it
+does when the window loses focus.
+
 ## What pages may do
 
 - The window loads only the bundled screens and the attached daemon's origin.

@@ -3342,6 +3342,11 @@ it("folds the sidebar opened under the mouse when the pointer or focus leaves th
     expect(rail()).toBe("open");
     await act(async () => window.dispatchEvent(new FocusEvent("blur")));
     expect(rail()).toBe("folded");
+    // The desktop app's word that the pointer left, where WebKitGTK sends none.
+    await hover();
+    expect(rail()).toBe("open");
+    await act(async () => window.dispatchEvent(new Event("baum:pointer-left")));
+    expect(rail()).toBe("folded");
   } finally {
     vi.useRealTimers();
   }

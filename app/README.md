@@ -1083,7 +1083,9 @@ over the page, which does not move, and it folds again shortly after the
 pointer leaves or when a link in it is chosen. It folds at once when the
 pointer leaves the window or the window loses focus, since a pointer that
 leaves straight off the rail at the window's edge may never send the rail
-its own leave event; keyboard focus in the rail
+its own leave event. On Linux under Wayland, WebKitGTK may send the page no
+leave at all, so the desktop app announces it with a `baum:pointer-left`
+event; keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
