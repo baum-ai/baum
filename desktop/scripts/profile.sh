@@ -265,7 +265,7 @@ if [ -n "$baseline" ]; then
 --app /oss/desktop/target/debug/baum-desktop --dist /oss/internal/localapp/dist \
 --env 'commit=$commit' --env 'instance=$name-head'${metric:+ --headline $metric}"
   base_run="BAUM_DESKTOP_BAUM=/baseline/baum $run --side base --app /baseline/baum-desktop --dist /baseline/dist \
---env 'commit=$short' --env 'ref=$baseline' --env 'instance=$name-base'"
+--env 'commit=$short' --env 'ref=$baseline' --env 'instance=$name-base'${metric:+ --headline $metric}"
   side() {
     # $1 the side, $2 its command; a side that stops before its runner
     # could say so tells the other, which would otherwise wait for it.
