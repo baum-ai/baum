@@ -18,7 +18,9 @@ named in the input; it is in the run directory.
   `unchanged`, `new`, `joined` (unchanged code the previous version reviewed
   in another section, with the risks it raised on it there), `moved` (now in
   another section) or `gone` (no longer in the pull request, with where it
-  was). See "Revising the previous version".
+  was). When the map gave your section a new ID over code a previous
+  section had, the input says which section it continues, and you revise
+  that section's text the same way. See "Revising the previous version".
 - On a new version, when your section takes over code the previous version
   reviewed in another section and the previous version did not write your
   section: those `joined` hunks, with the section they came from, the risks

@@ -146,8 +146,8 @@ type Run struct {
 	// Previous is the previous version's stored document, of either schema:
 	// the map keeps its sections' ids and titles, its unchanged sections are
 	// reused (reviewv2.ReusableSections), and a section it wrote over other
-	// hunks is written from its text (reviewv2.RevisableSections). NoReuse
-	// does neither. Nil has none.
+	// hunks, or a new ID over its code, is written from its text
+	// (reviewv2.RevisableSections). NoReuse does neither. Nil has none.
 	Previous []byte
 	NoReuse  bool
 	// Concurrency bounds the calls at once; zero is DefaultConcurrency.

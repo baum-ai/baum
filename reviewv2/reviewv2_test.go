@@ -313,7 +313,7 @@ func TestRevisableSections(t *testing.T) {
 	next.Sections[0].Hunks = []string{"h_a00000000001", "h_b00000000009"}
 	next.Sections[2].Hunks = []string{"h_b00000000008"}
 	next.Sections = append(next.Sections, Section{ID: "sec_new", Kind: KindLogical, Hunks: []string{"h_b00000000007"}})
-	revised := RevisableSections(first, next.Sections)
+	revised := RevisableSections(first, next.Sections, current(t))
 	if len(revised) != 1 {
 		t.Fatalf("revised = %v", revised)
 	}
@@ -327,7 +327,7 @@ func TestRevisableSections(t *testing.T) {
 	if len(r.Previous.Body) != 4 || len(r.Previous.Risks) != 1 || r.Previous.Risks[0].ID != "rsk_unbounded_retries" || r.Previous.Risks[0].State != "" || r.Previous.Risks[0].IntroducedVersion != nil {
 		t.Errorf("previous text: %+v", r.Previous)
 	}
-	if got := RevisableSections(first, authored(t).Sections); len(got) != 0 {
+	if got := RevisableSections(first, authored(t).Sections, current(t)); len(got) != 0 {
 		t.Errorf("unchanged sections were revised: %v", got)
 	}
 	if r.Additive() {
@@ -340,7 +340,7 @@ func TestRevisableSections(t *testing.T) {
 	moved := authored(t)
 	moved.Sections[0].Hunks = []string{"h_a00000000003"}
 	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
-	revised = RevisableSections(first, moved.Sections)
+	revised = RevisableSections(first, moved.Sections, current(t))
 	policy, delivery := revised["sec_retry_policy"], revised["sec_delivery_errors"]
 	if !slices.Equal(policy.Moved, []MovedHunk{{ID: "h_a00000000001", To: "sec_delivery_errors"}}) || len(policy.Gone) != 0 || policy.Additive() {
 		t.Errorf("policy: %+v", policy)
@@ -359,7 +359,7 @@ func TestRevisableSections(t *testing.T) {
 	for i := range prior.Sections {
 		prior.Sections[i].Hunks = append(prior.Sections[i].Hunks, "h_b00000000009")
 	}
-	if got := RevisableSections(v1, prior.Sections); len(got) != 0 {
+	if got := RevisableSections(v1, prior.Sections, current(t)); len(got) != 0 {
 		t.Errorf("a baum.review/1 version was revised from: %v", got)
 	}
 }
@@ -622,10 +622,10 @@ func TestRisksFollowTheirCode(t *testing.T) {
 	moved.Sections[0].Risks[0].Cites = split.Sections[0].Risks[0].Cites
 	moved.Sections[0].Hunks = []string{"h_a00000000001"}
 	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000003"}
-	if j := JoinedSections(splitFirst, moved.Sections)["sec_delivery_errors"]; len(j.Hunks) != 1 || len(j.Risks) != 0 {
+	if j := JoinedSections(splitFirst, moved.Sections, current(t))["sec_delivery_errors"]; len(j.Hunks) != 1 || len(j.Risks) != 0 {
 		t.Errorf("split joined: %+v", j)
 	}
-	if r := RevisableSections(splitFirst, moved.Sections)["sec_delivery_errors"]; len(r.JoinedRisks) != 0 {
+	if r := RevisableSections(splitFirst, moved.Sections, current(t))["sec_delivery_errors"]; len(r.JoinedRisks) != 0 {
 		t.Errorf("split revised: %+v", r.JoinedRisks)
 	}
 	copies = riskIn(completeFixture(t, moved, 2, splitFirst), "rsk_unbounded_retries")
@@ -650,9 +650,15 @@ func TestRiskHeir(t *testing.T) {
 		{ID: "sec_c", Kind: KindLogical, Hunks: []string{"h_a00000000003"}, Body: []Block{{Type: BlockProse, Text: "C."}}, Risks: []Risk{onC}},
 		next.Sections[1], next.Sections[2],
 	}
-	joined := JoinedSections(first, next.Sections)
-	if len(joined["sec_b"].Risks) != 1 || len(joined["sec_c"].Hunks) != 1 || len(joined["sec_c"].Risks) != 0 {
+	// sec_b, first of the two over its code, continues the policy section
+	// (RenamedSections): the risk is its previous text's, not handed over.
+	joined := JoinedSections(first, next.Sections, current(t))
+	if _, ok := joined["sec_b"]; ok || len(joined["sec_c"].Hunks) != 1 || len(joined["sec_c"].Risks) != 0 {
 		t.Errorf("joined: %+v", joined)
+	}
+	if r := RevisableSections(first, next.Sections, current(t))["sec_b"]; r.Previous.ID != "sec_retry_policy" || len(r.Previous.Risks) != 1 || len(r.JoinedRisks) != 0 ||
+		!slices.Equal(r.Moved, []MovedHunk{{ID: "h_a00000000003", To: "sec_c"}}) {
+		t.Errorf("sec_b: %+v", r)
 	}
 	copies := riskIn(completeFixture(t, next, 2, first), risk.ID)
 	b, c := copies["sec_b"], copies["sec_c"]

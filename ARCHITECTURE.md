@@ -2099,7 +2099,16 @@ new map keeps under the same ID over other hunks, with a complete body, of
 a previous `baum.review/2` version (a converted `baum.review/1` one gives
 none): their previous body and active risks, and each hunk unchanged, new,
 joined (in another previous section), moved (to another section now) or
-gone (with its path and range in the previous index). Their agents revise
+gone (with its path and range in the previous index). A section the new
+map gives an ID the previous version did not have is revised the same way
+from the previous logical section whose code it clearly has and whose ID
+the new map no longer has (`RenamedSections`): they share a hunk, or a
+hunk of the new section overlaps one of the previous section's lines on
+the same path (each in its version's new file, so a heuristic), or the
+one file of both is the same; a shared path alone is not enough. The
+pairs with the most shared hunks, then overlapping hunks, then shared
+paths are taken first, in map order on ties, and a section on either side
+is in at most one pair. Their agents revise
 that text (see "Tiles in the pipeline"). `reviewv2.JoinedSections` gives,
 for every logical section of the new map, a new ID's too, the hunks it
 takes over from other previous sections and the active risks handed over
@@ -2109,7 +2118,10 @@ receiving section has and every hunk it cites has left its old section;
 when its hunks split, only the section that has the first of them gets it.
 `Complete` follows the same rule: a previous risk that that section names
 under its ID, citing a hunk it cited, is dropped from its old section (even
-where that section still names it) and keeps its introduced version. Any other risk of the same ID elsewhere is a new risk,
+where that section still names it) and keeps its introduced version. A
+renamed section is its previous section for both: that section's code is
+not joined, and its risks are reconciled under the new ID (named ones keep
+their history, the rest are mitigated there). Any other risk of the same ID elsewhere is a new risk,
 and the old one is mitigated where it was. `reviewv2.Substrate` is the tile document a
 `baum.review/2` document's library and added tiles are checked against.
 
@@ -2787,7 +2799,9 @@ the levels of `agent/orchestrate` instead of the staged review:
 2. **Sections and context.** One section agent per logical section and the
    context agent run at once. A section whose hunks are unchanged since the
    previous version keeps its text and tiles without a call. A logical
-   section the previous version wrote under the same ID over other hunks is
+   section the previous version wrote under the same ID over other hunks,
+   or under another ID over the same code (`reviewv2.RenamedSections`; the
+   input then names the section it continues), is
    revised: its input adds, as model-written data, the previous body and
    active risks, the IDs of risks fixed earlier, each hunk's status
    (unchanged, new, joined from another previous section, moved to another

@@ -259,7 +259,8 @@ type history struct {
 }
 
 // histories are each section's history by ID (reviewv2.RevisableSections,
-// JoinedSections, FixedRiskIDs). A run that reuses nothing is given none.
+// a renamed section's included, JoinedSections, FixedRiskIDs). A run that
+// reuses nothing is given none.
 func (o *orchestration) histories(sections []reviewv2.Section) map[string]history {
 	out := map[string]history{}
 	if len(o.run.Previous) == 0 || o.run.NoReuse {
@@ -269,12 +270,12 @@ func (o *orchestration) histories(sections []reviewv2.Section) map[string]histor
 	for _, s := range sections {
 		out[s.ID] = history{fixed: fixed}
 	}
-	for id, r := range reviewv2.RevisableSections(o.run.Previous, sections) {
+	for id, r := range reviewv2.RevisableSections(o.run.Previous, sections, o.facts.refs) {
 		h := out[id]
 		h.rev = &r
 		out[id] = h
 	}
-	for id, j := range reviewv2.JoinedSections(o.run.Previous, sections) {
+	for id, j := range reviewv2.JoinedSections(o.run.Previous, sections, o.facts.refs) {
 		h := out[id]
 		h.joined = &j
 		out[id] = h
@@ -337,7 +338,7 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, h 
 	input := basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p) + "\n" + sectionBrief(s, planned, p.Hunks)
 	switch {
 	case rev != nil:
-		input += "\n" + revisionBlock(*rev, h.fixed)
+		input += "\n" + revisionBlock(s.ID, *rev, h.fixed)
 	case h.joined != nil:
 		input += "\n" + joinedBlock(*h.joined, h.fixed)
 	}

@@ -306,3 +306,49 @@ func TestRiskFollowsItsMovedHunk(t *testing.T) {
 		t.Errorf("rsk_role is in %d sections", seen)
 	}
 }
+
+// A section the map gives a new ID over a previous section's code is
+// revised from that section's text, told which section it continues; a keep
+// takes that text, and its risks keep their IDs and history.
+func TestRenamedSectionKept(t *testing.T) {
+	f := fullFake()
+	f.reply("section-sec-retry", keepReplyJSON)
+	previous := retrySection([]string{hunkA}, hunkA)
+	previous.ID, previous.Title = "sec_jobs", "Jobs that fail"
+	run, _ := revisedRun(t, f, previousDoc(t, previous))
+	out, doc, err := Generate(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := f.requests["section-sec-retry"].Prompt
+	for _, want := range []string{
+		revisionHeading,
+		`Your section continues the previous version's section "Jobs that fail" (sec_jobs), whose code it now has under a new ID.`,
+		`{"id":"` + hunkA + `","status":"unchanged"}`,
+		`{"id":"` + hunkB + `","status":"new"}`,
+	} {
+		if !strings.Contains(input, want) {
+			t.Errorf("the renamed section's input lacks %s:\n%s", want, input)
+		}
+	}
+	if strings.Contains(input, `"status":"joined"`) {
+		t.Error("the code of the section it continues is joined")
+	}
+	if r := out.Generation.Sections["sec_retry"]; r.Status != StatusRan || r.Reason != ReasonKept {
+		t.Errorf("kept record: %+v", r)
+	}
+	s := doc.Sections[0]
+	if s.ID != "sec_retry" || len(s.Body) != 3 || s.Body[0].Text != "Failed jobs retry with a growing wait." {
+		t.Errorf("kept body: %+v", s.Body)
+	}
+	risks := map[string]reviewv2.Risk{}
+	for _, r := range s.Risks {
+		risks[r.ID] = r
+	}
+	if old := risks["rsk_old"]; old.State != "active" || old.IntroducedVersion == nil || *old.IntroducedVersion != 1 {
+		t.Errorf("carried risk: %+v", old)
+	}
+	if fixed := risks["rsk_fixed"]; fixed.State != "mitigated" || len(s.Risks) != 2 {
+		t.Errorf("risks: %+v", s.Risks)
+	}
+}
