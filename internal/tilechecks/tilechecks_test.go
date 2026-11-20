@@ -718,3 +718,57 @@ func TestQueuedIsPublishedBeforeRunning(t *testing.T) {
 		t.Fatalf("events = %v", got)
 	}
 }
+
+// The runner gets the pull request's data through Options.Inline (a custom
+// tile's stored images as data: URLs), for a check and a preflight alike;
+// the samples, and the data the verdict is kept under, are left as they are.
+func TestTheRunnerGetsTheDataInlined(t *testing.T) {
+	inline := func(_ context.Context, data json.RawMessage) json.RawMessage {
+		return json.RawMessage(strings.ReplaceAll(string(data), "Raises", "INLINED"))
+	}
+	f := newFixture(t, func(o *Options) { o.Inline = inline })
+	candidate := starter(t)
+	for _, s := range candidate.Samples {
+		if strings.Contains(string(s.Data), "Raises") {
+			candidate.Data = s.Data
+		}
+	}
+	if candidate.Data == nil {
+		t.Fatal("the starter has no sample that says Raises")
+	}
+	candidate.Context = &Context{Clone: "clone", PR: 7, Version: 2}
+	done := f.submit(candidate)
+	job := f.claim(t)
+	if job.Samples[0].Kind != KindData || !strings.Contains(string(job.Samples[0].Data), "INLINED") {
+		t.Errorf("the data: %s", job.Samples[0].Data)
+	}
+	for _, s := range job.Samples[1:] {
+		if strings.Contains(string(s.Data), "INLINED") {
+			t.Errorf("sample %s was inlined", s.Name)
+		}
+	}
+	if err := f.checker.Report(job.ID, Report{Engine: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	// The kept pair is the data as checked: a preflight of it is recorded.
+	r, err := f.checker.Preflight(context.Background(), PreflightRequest{Digest: job.Digest, Data: candidate.Data})
+	if err != nil || !r.Recorded || r.Verdict != VerdictPass {
+		t.Errorf("preflight of the checked data: %+v %v", r, err)
+	}
+	// A preflight's data is inlined too.
+	other := json.RawMessage(strings.Replace(string(candidate.Data), "Raises", "Raises again", 1))
+	pre := make(chan PreflightResult, 1)
+	go func() {
+		r, _ := f.checker.Preflight(context.Background(), PreflightRequest{Digest: job.Digest, Data: other})
+		pre <- r
+	}()
+	job = f.claim(t)
+	if job.Kind != JobPreflight || !strings.Contains(string(job.Samples[0].Data), "INLINED again") {
+		t.Errorf("the preflight's data: %s", job.Samples[0].Data)
+	}
+	if err := f.checker.Report(job.ID, Report{Engine: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	<-pre
+}

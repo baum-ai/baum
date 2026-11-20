@@ -817,14 +817,16 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}()
 		// The render check: the app's check runner draws candidate tile types
 		// and the tiles page's first-show preflights.
+		// A custom tile's data holds references to the images the host
+		// stored for it; the runner draws them as data: URLs.
 		tileChecks, err := tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Database: database, Log: log,
 			Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
-			Subscribed: server.Subscribed})
+			Subscribed: server.Subscribed, Inline: added.InlineImages})
 		if err != nil {
 			log.Warn("the render check could not keep its verdicts", "error", err.Error())
 			tileChecks, _ = tilechecks.New(tilechecks.Options{Frames: tileview.FrameRegistry(), Log: log,
 				Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
-				Subscribed: server.Subscribed})
+				Subscribed: server.Subscribed, Inline: added.InlineImages})
 		}
 		// The pending cards of tiles being made in the session panel; a
 		// change tells the open page to read its tiles again.
