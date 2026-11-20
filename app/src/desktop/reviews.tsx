@@ -23,6 +23,7 @@ const scopes: { id: PullRequests; label: string }[] = [
   { id: "both", label: "Mine and requested" },
   { id: "authored", label: "Only mine" },
   { id: "requested", label: "Only requested" },
+  { id: "inboxes", label: "In my inboxes" },
 ];
 const CUSTOM = "\u0000custom";
 const INHERIT = "\u0000inherit";
@@ -426,7 +427,13 @@ export function ReviewSettingsForm({
             {settings.automatic && (
               <fieldset
                 className="scope"
-                aria-describedby={settings.pull_requests === "all" ? "review-all-note" : undefined}
+                aria-describedby={
+                  settings.pull_requests === "all"
+                    ? "review-all-note"
+                    : settings.pull_requests === "inboxes"
+                      ? "review-inboxes-note"
+                      : undefined
+                }
               >
                 <legend className="review-label">Which pull requests</legend>
                 <div className="segmented">
@@ -448,6 +455,12 @@ export function ReviewSettingsForm({
                   <p id="review-all-note" className="review-note">
                     Every pull request in your repositories gets reviewed, including your team's, so
                     reviews, notifications and cost grow with their activity.
+                  </p>
+                )}
+                {settings.pull_requests === "inboxes" && (
+                  <p id="review-inboxes-note" className="review-note">
+                    Pull requests in any inbox with Review automatically on get reviewed. Each inbox
+                    has the switch on its edit page; it is on unless you turn it off.
                   </p>
                 )}
                 <p className="review-note">

@@ -639,6 +639,7 @@ const scopes: { value: PullRequests; label: string }[] = [
   { value: "both", label: "Mine and requested" },
   { value: "authored", label: "Only mine" },
   { value: "requested", label: "Only requested" },
+  { value: "inboxes", label: "In my inboxes" },
 ];
 
 const efforts: { value: string; label: string }[] = [
@@ -1029,6 +1030,11 @@ function ReviewsSection({
                 <span id="review-all-note">
                   Every pull request in your repositories gets reviewed, including your team's, so
                   reviews, notifications and cost grow with their activity.
+                </span>
+              ) : draft.pull_requests === "inboxes" ? (
+                <span id="review-inboxes-note">
+                  Pull requests in any inbox with Review automatically on get reviewed. Each inbox
+                  has the switch on its edit page; it is on unless you turn it off.
                 </span>
               ) : null
             }

@@ -1307,7 +1307,10 @@ They are pressed while every part of their query must already hold as written
 syntax** link beside the "What it catches" heading opens the docs' Inbox page
 at "Filter what you see" (`DOCS_URL` + `inbox/#filter-what-you-see`). A
 switch shows or hides the inbox's count in the sidebar; its pull requests still
-count in the Inbox total. **Delete inbox** asks, then
+count in the Inbox total. **Review automatically** (`auto_review`, on by
+default and for inboxes saved before it) has baum review the inbox's pull
+requests on its own while Settings › Reviews follows the inboxes; while it
+does not, the switch's sentence says so and links there. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the
 sidebar; with only one inbox it is disabled and the page says "Keep at least one
 inbox".
@@ -1805,8 +1808,9 @@ returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
-for which pull requests (a select of authored, requested, both, or all open
-pull requests in the repository), the **Agent** (Claude Code or Codex) and the
+for which pull requests (a select of authored, requested, both, all open
+pull requests in the repository, or "In my inboxes": those held by an inbox
+whose own **Review automatically** switch is on), the **Agent** (Claude Code or Codex) and the
 **Model**, a select of the agent's models with a custom name (saved when its
 field is left or Enter is pressed) beside the reasoning effort ("Default
 effort", which leaves it to the agent, then Low, Medium or High; a higher level

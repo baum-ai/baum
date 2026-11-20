@@ -221,8 +221,8 @@ type Preferences struct {
 	CodexHome    *string `json:"codex_home,omitempty"`
 	FixCodexHome *string `json:"fix_codex_home,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
-	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
-	// for both authored and requested.
+	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll,
+	// PullRequestsInboxes, or empty for both authored and requested.
 	PullRequests string `json:"pull_requests,omitempty"`
 	// Updates is how automatic reviews follow a pull request after its first
 	// review: UpdatesOnOpen, UpdatesOnChange, or empty (UpdatesAlways) for a
@@ -353,6 +353,10 @@ const (
 	PullRequestsRequested = "requested"
 	// PullRequestsAll covers every open pull request in the repository.
 	PullRequestsAll = "all"
+	// PullRequestsInboxes covers the pull requests held by a saved inbox
+	// with automatic reviews on (internal/inboxes). Covers cannot tell:
+	// the automatic scheduler matches the inboxes itself.
+	PullRequestsInboxes = "inboxes"
 )
 
 // The Updates choices.
@@ -380,7 +384,8 @@ func (p Preferences) ReviewUpdates() string {
 }
 
 // Covers reports whether automatic reviews cover a pull request the viewer
-// authored or was asked to review, as PullRequests chooses.
+// authored or was asked to review, as PullRequests chooses. It is false for
+// PullRequestsInboxes, where the saved inboxes decide.
 func (p Preferences) Covers(authored, requested bool) bool {
 	switch p.PullRequests {
 	case PullRequestsAuthored:
@@ -389,6 +394,8 @@ func (p Preferences) Covers(authored, requested bool) bool {
 		return requested
 	case PullRequestsAll:
 		return true
+	case PullRequestsInboxes:
+		return false
 	}
 	return authored || requested
 }
@@ -474,10 +481,10 @@ func (p Preferences) Validate() error {
 		return fmt.Errorf("unknown review updates choice %q; use %s, %s or leave it empty for %s", p.Updates, UpdatesOnOpen, UpdatesOnChange, UpdatesAlways)
 	}
 	switch p.PullRequests {
-	case "", PullRequestsAuthored, PullRequestsRequested, PullRequestsAll:
+	case "", PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, PullRequestsInboxes:
 		return nil
 	}
-	return fmt.Errorf("unknown pull requests choice %q; use %s, %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested, PullRequestsAll)
+	return fmt.Errorf("unknown pull requests choice %q; use %s, %s, %s, %s or leave it empty for both", p.PullRequests, PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, PullRequestsInboxes)
 }
 
 // ValidateTimeLimit accepts zero (the config file's) or 1 to MaxTimeLimit

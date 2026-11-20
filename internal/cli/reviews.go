@@ -232,7 +232,7 @@ func newReviewsCommand() *cobra.Command {
 	set.Flags().String("fix-effort", "", "reasoning effort for fixes: "+efforts+" (empty uses the fix agent's own)")
 	set.Flags().String("decisions-effort", "", "reasoning effort for data extraction: "+efforts+" (empty uses the agent's own)")
 	set.Flags().Bool("automatic", true, "generate reviews automatically (--automatic=false turns it off)")
-	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both or all")
+	set.Flags().String("pull-requests", "", "which pull requests get automatic reviews: authored, requested, both, all, or inboxes (those in a saved inbox with automatic reviews on)")
 	set.Flags().String("updates", "", "how automatic reviews follow later pushes: always, on_open (review once) or on_change (review again only when the agent finds the push changes the review)")
 	set.Flags().String("decisions-backend", "", "backend for data extraction, the decisions of agent sessions and the feature log: claude or codex (empty follows reviews again)")
 	set.Flags().String("decisions-model", "", "model for data extraction (empty uses the backend's default)")

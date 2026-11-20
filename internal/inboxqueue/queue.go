@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/prfilter"
@@ -395,6 +396,68 @@ func (s *Service) Queue(ctx context.Context) (Queue, error) {
 		out.Inboxes = nil
 	}
 	return out, nil
+}
+
+// AutoReview returns a test of whether a saved inbox with automatic reviews
+// on (inboxes.Inbox.AutoReview) holds a pull request, as the Inbox page
+// matches it: for automatic reviews that follow the inboxes. The test takes
+// discovery's pull request, which may be newer than the index: an indexed
+// one is matched with its index entry (its review, checks and risk) and
+// queue kind, read now, under discovery's fields; one not indexed yet, or one
+// at a head the index has not seen, has its kind worked out from discovery
+// alone. When the index cannot be read every pull request is matched so.
+// It fails only when the saved inboxes cannot be read.
+func (s *Service) AutoReview(ctx context.Context) (func(discovery.PullRequest) bool, error) {
+	none := func(discovery.PullRequest) bool { return false }
+	if s.Inboxes == nil {
+		return none, nil
+	}
+	saved, err := s.Inboxes()
+	if err != nil {
+		return nil, err
+	}
+	var tests []prfilter.Matcher
+	for _, inbox := range saved {
+		if inbox.AutoReview {
+			tests = append(tests, prfilter.Compile(Folded(inbox)))
+		}
+	}
+	if len(tests) == 0 {
+		return none, nil
+	}
+	// Without the index, discovery's fields still decide most queries.
+	items, _ := s.items(ctx)
+	known := make(map[string]Item, len(items))
+	for _, item := range items {
+		known[item.Key] = item
+	}
+	var queue []jobs.Job
+	if s.Jobs != nil {
+		queue = s.Jobs()
+	}
+	return func(pr discovery.PullRequest) bool {
+		e := reviewindex.Entry{PullRequest: pr}
+		item, indexed := known[Key(e)]
+		var kind string
+		if indexed {
+			e = item.entry
+			e.PullRequest = pr
+		}
+		if indexed && item.entry.PullRequest.HeadSHA == pr.HeadSHA {
+			kind = item.Kind
+		} else {
+			kind = kindOf(e, queue)
+			if kind == Waiting && !pr.AuthoredByMe {
+				kind = Other
+			}
+		}
+		for _, test := range tests {
+			if test(e, kind) {
+				return true
+			}
+		}
+		return false
+	}, nil
 }
 
 // Count is the Inbox total now.

@@ -81,6 +81,7 @@ const inbox = (id: string, overrides: Partial<Inbox>): Inbox => ({
   query: "",
   no_bots: false,
   badge: true,
+  auto_review: true,
   ...overrides,
 });
 const reviews = inbox("Reviews", { what: "review", color: "purple" });
@@ -91,6 +92,8 @@ let node: HTMLDivElement;
 let entries: Entry[] = [];
 let daemon: { revision: number; inboxes: Inbox[] } | null = null;
 let puts: { revision: number; inboxes: Inbox[] }[] = [];
+// What api/automatic answers; {} is a daemon without automatic generation.
+let automatic: object = {};
 // What the first read of the inboxes waits for, and a status that replaces its answer.
 let inboxesHold: Promise<void> | null = null;
 let inboxesFail: number | null = null;
@@ -106,6 +109,7 @@ beforeEach(() => {
   entries = fixture();
   daemon = { revision: 1, inboxes: [reviews, acme] };
   puts = [];
+  automatic = {};
   inboxesHold = null;
   inboxesFail = null;
   node = document.createElement("div");
@@ -144,15 +148,17 @@ beforeEach(() => {
                 ? []
                 : path.endsWith("api/jobs")
                   ? { jobs: [] }
-                  : path.endsWith("api/github-auth")
-                    ? {
-                        state: "connected",
-                        host: "github.com",
-                        login: "acme",
-                        override: false,
-                        saved: true,
-                      }
-                    : {},
+                  : path.endsWith("api/automatic")
+                    ? automatic
+                    : path.endsWith("api/github-auth")
+                      ? {
+                          state: "connected",
+                          host: "github.com",
+                          login: "acme",
+                          override: false,
+                          saved: true,
+                        }
+                      : {},
       );
     }),
   );
@@ -541,6 +547,33 @@ it("counts the inbox in the badge or not", async () => {
   expect(node.textContent).toContain(
     "No count beside it, so it never nags. Its pull requests still add to the Inbox total.",
   );
+});
+
+it("reviews the inbox's pull requests automatically or not", async () => {
+  automatic = { enabled: true, pull_requests: "inboxes", repositories: [] };
+  await render("?page=inbox-edit&inbox=Acme");
+  const auto = node.querySelector<HTMLInputElement>('input[role="switch"][id$="-auto-review"]')!;
+  expect(auto.labels![0]!.textContent).toBe("Review automatically");
+  expect(auto.checked).toBe(true);
+  expect(node.textContent).toContain("baum reviews its pull requests on its own.");
+  await click(auto);
+  expect(puts[0]!.inboxes[1]!.auto_review).toBe(false);
+  expect(puts[0]!.inboxes[0]!.auto_review).toBe(true);
+  expect(node.textContent).toContain(
+    "baum reviews its pull requests only when you ask, unless another inbox holding them reviews automatically.",
+  );
+});
+
+it("says the switch waits for the Reviews setting when reviews don't follow the inboxes", async () => {
+  automatic = { enabled: true, pull_requests: "both", repositories: [] };
+  await render("?page=inbox-edit&inbox=Acme");
+  expect(node.textContent).toContain(
+    "Counts once Settings › Reviews reviews the pull requests in your inboxes.",
+  );
+  const link = Array.from(node.querySelectorAll("a")).find(
+    (a) => a.textContent === "Settings › Reviews",
+  )!;
+  expect(link.getAttribute("href")).toContain("page=settings&section=reviews");
 });
 
 it("tags the preview's rows with the other inboxes and says what an empty one waits for", async () => {

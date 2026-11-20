@@ -792,6 +792,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			state, err := savedInboxes.Read()
 			return state.Inboxes, err
 		}}
+		// Automatic reviews that follow the inboxes review what they hold.
+		scheduler.InAutoReviewInbox = inboxQueue.AutoReview
 		inboxesAPI := &inboxes.API{Store: savedInboxes, Changed: changed}
 		var lastHookTrust uiserver.LastHookTrust
 		// The session panel's service needs the MCP server, which reads

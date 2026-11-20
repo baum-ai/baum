@@ -350,7 +350,7 @@ export type AutomaticStatus = {
 export type Automatic = {
   enabled: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
-  pull_requests?: "all" | "both" | "authored" | "requested";
+  pull_requests?: "all" | "both" | "authored" | "requested" | "inboxes";
   /** What a push to a reviewed pull request does; absent from older daemons,
    *  which review every push. */
   updates?: "always" | "on_open" | "on_change";

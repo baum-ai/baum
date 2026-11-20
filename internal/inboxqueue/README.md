@@ -57,6 +57,17 @@ app folds them. A query that does not read narrows nothing; an empty one holds
 every open pull request. Items whose kind is `""` match `waiting=` with no
 kind, so `waiting=` never holds them.
 
+## Automatic reviews
+
+`Service.AutoReview` gives the automatic scheduler, while automatic reviews
+follow the inboxes, a test of whether a saved inbox with `auto_review` on
+holds a pull request discovery read. It matches as above, with the index
+entry (review, checks, risk) and kind of an indexed pull request under
+discovery's newer fields; one not indexed yet, or at a head the index has not
+seen, gets its kind from discovery alone. A risk filter therefore holds a
+pull request only once a review has scored it. An index that does not read
+leaves discovery's fields; saved inboxes that do not read are an error.
+
 ## API
 
 `GET /api/inbox` answers:

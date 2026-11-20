@@ -303,6 +303,8 @@ func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
 		{PullRequestsAuthored, true, false, false},
 		{PullRequestsRequested, false, true, false},
 		{PullRequestsAll, true, true, true},
+		// The saved inboxes decide, not Covers.
+		{PullRequestsInboxes, false, false, false},
 	} {
 		p := Preferences{PullRequests: tc.choice}
 		if p.Validate() != nil {
