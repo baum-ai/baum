@@ -22,16 +22,13 @@ import type {
   TableData,
   Tone,
 } from "./model";
+import { isRecord, isString } from "../tiles/types";
 
 /** The diagrams and tables the view call writes, drawn by the page itself:
  *  a flow of steps in lanes, columns of items, a sequence of messages
  *  between actors, and a table. Each is held in a container, so it lays
  *  itself out by the room it has: lanes wrap and then stack, columns stack,
  *  and a sequence becomes a list of its messages, never widening the page. */
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isString = (value: unknown): value is string => typeof value === "string";
 
 /** A step's, item's or message's box by its tone. */
 const BOX: Record<Tone, string> = {
@@ -67,7 +64,9 @@ const TONES = new Set<string>(["plain", "new", "good", "bad", "muted", "missing"
 const toneOf = (tone: unknown): Tone =>
   isString(tone) && TONES.has(tone) ? (tone as Tone) : "plain";
 
-const LANE_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
+/** The small uppercase label above a block of a section's body (a tile's
+ *  title in the bare variant too), and above a flow's lane. */
+export const BLOCK_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
 
 /** One step, item or message: its title and an optional note under it. */
 function Box({
@@ -171,12 +170,18 @@ export function validFlow(data: unknown): data is FlowData {
   );
 }
 
-/** The container widths (rem) flow.css has rules for: from `wide`, the
- *  lanes are rows of one grid under their labels (about 8.5rem a column);
- *  from `wider`, the labels have a column of their own. Narrower, each lane
- *  is a list going down. */
-const WIDTHS = [28, 32, 36, 40, 44, 48, 52, 56, 64, 72];
-const widthFor = (rem: number) => WIDTHS.find((width) => width >= rem);
+/** Whether a flow of `columns` steps fits the lanes-as-rows layout (about
+ *  8.5rem a column) and, if it has lane labels, the labels in a column of
+ *  their own (6rem more, columns of 9rem) in `rem` of room. Never under 28rem,
+ *  and a flow of many columns stops asking at 72rem (its labels never fit
+ *  past it). Narrower, each lane is a list going down. */
+export function flowFit(columns: number, labelled: boolean, rem: number) {
+  const labels = columns * 9 + 6;
+  return {
+    across: rem >= Math.min(Math.max(columns * 8.5, 28), 72),
+    labels: labelled && labels <= 72 && rem >= Math.max(labels, 28),
+  };
+}
 
 /** The step of the first lane a later lane branches off (from 1), or 0 for
  *  a lane of its own. */
@@ -203,7 +208,11 @@ const head = (x: number, y: number, down: boolean) =>
  *  where the arrows are text. `unlinked`: the branches whose elbow can't be
  *  drawn plainly (moved left of their step, or another lane in the way),
  *  which name their step in words instead. */
-function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
+function useWires(
+  data: FlowData,
+  root: RefObject<HTMLDivElement | null>,
+  layout: { across: boolean; labels: boolean },
+) {
   const [drawn, setDrawn] = useState<Drawn>(NOTHING_DRAWN);
   useLayoutEffect(() => {
     const element = root.current;
@@ -297,7 +306,7 @@ function useWires(data: FlowData, root: RefObject<HTMLDivElement | null>) {
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [data, root]);
+  }, [data, root, layout]);
   return drawn;
 }
 
@@ -330,14 +339,33 @@ export function FlowDiagram({ data }: { data: FlowData }) {
     const steps = data.lanes[at]?.steps.length ?? 1;
     return from ? Math.max(1, Math.min(from + 1, columns - steps + 1)) : 1;
   };
-  const { grid: measured, wires, unlinked } = useWires(data, root);
+  // Measured, since the layout depends on the width the tile is given.
+  // Before the first measure the flow is the list going down.
+  const [fit, setFit] = useState({ across: false, labels: false });
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const measure = () => {
+      const rem =
+        el.clientWidth /
+        (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+      const next = flowFit(columns, labelled, rem);
+      setFit((now) => (now.across === next.across && now.labels === next.labels ? now : next));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [columns, labelled, root]);
+  const { grid: measured, wires, unlinked } = useWires(data, root, fit);
   const grid = (
     <div
       ref={root}
       className="flow"
       data-drawn={measured ? "" : undefined}
-      data-wide={widthFor(columns * 8.5) ?? WIDTHS[WIDTHS.length - 1]}
-      data-wider={labelled ? widthFor(columns * 9 + 6) : undefined}
+      data-across={fit.across || undefined}
+      data-labels={fit.labels || undefined}
       style={{ "--flow-columns": columns } as CSSProperties}
     >
       {data.lanes.map((lane, at) => {
@@ -352,7 +380,7 @@ export function FlowDiagram({ data }: { data: FlowData }) {
             style={{ "--flow-row": at + 1, "--flow-start": startOf(at) } as CSSProperties}
           >
             {labelled || (after && unlinked.includes(at)) ? (
-              <span className={cn("flow-label", LANE_LABEL)}>
+              <span className={cn("flow-label", BLOCK_LABEL)}>
                 <InlineMarkdown>{lane.label ?? ""}</InlineMarkdown>
                 {after && unlinked.includes(at) ? (
                   // The grid draws no elbow for this branch: say where it
@@ -494,7 +522,7 @@ export function ColumnsDiagram({ data }: { data: ColumnsData }) {
             aria-label={column.label}
             className="grid min-w-0 content-start gap-1.5"
           >
-            <h4 className={cn(LANE_LABEL, LABEL_INK[tone])}>
+            <h4 className={cn(BLOCK_LABEL, LABEL_INK[tone])}>
               <InlineMarkdown>{column.label}</InlineMarkdown>
             </h4>
             <ul className="grid gap-1.5">
@@ -985,7 +1013,7 @@ type Row = { key: string; cells: TableCell[] };
 
 /** The rows a long table shows until it is opened: enough to read what it
  *  compares without it outweighing the section around it. */
-export const TABLE_ROWS_SHOWN = 8;
+const TABLE_ROWS_SHOWN = 8;
 
 /** A table cell: its text, or what it is now (emphasised) after what it was
  *  before the change (struck through). */

@@ -12,7 +12,6 @@ const (
 	IDReviewStagedOutline ID = "review-staged-outline"
 	IDReviewStagedDetails ID = "review-staged-details"
 	IDReviewStagedContext ID = "review-staged-context"
-	IDReviewView          ID = "review-view"
 	// IDReviewTriage decides, with automatic reviews set to review on
 	// change, whether new commits need a new review.
 	IDReviewTriage ID = "review-triage"

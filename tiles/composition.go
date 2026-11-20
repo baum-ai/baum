@@ -10,7 +10,8 @@ import (
 
 // The parts of a review view composition (baum.composition/2, package
 // tiles/view) that are tiles of this package: the library and authored
-// tiles the tile analysis wrote, and the generator's provenance.
+// tiles an older tile review's analysis wrote, and the generator's
+// provenance.
 
 // Generator records where a composition came from. Only the host writes it
 // (SetGenerator).

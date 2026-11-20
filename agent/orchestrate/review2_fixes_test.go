@@ -48,7 +48,7 @@ func TestCitesDropUnchangedFiles(t *testing.T) {
 func TestClaimProposalAtomic(t *testing.T) {
 	o := &orchestration{}
 	var wg sync.WaitGroup
-	for i := 0; i < MaxTiles*3; i++ {
+	for i := 0; i < reviewv2.MaxTiles*3; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -57,8 +57,8 @@ func TestClaimProposalAtomic(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if len(o.tiles) != MaxTiles {
-		t.Fatalf("tiles %d, want %d", len(o.tiles), MaxTiles)
+	if len(o.tiles) != reviewv2.MaxTiles {
+		t.Fatalf("tiles %d, want %d", len(o.tiles), reviewv2.MaxTiles)
 	}
 	seen := map[string]bool{}
 	for _, tl := range o.tiles {

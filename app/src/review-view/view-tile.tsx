@@ -10,15 +10,11 @@ import { isBuiltinType } from "../tiles/custom/library";
 import { useTileHost } from "../tiles/host";
 import { tileFace } from "../tiles/registry";
 import type { TileContext } from "../tiles/types";
-import { NATIVE } from "./native-tiles";
+import { BLOCK_LABEL, NATIVE } from "./native-tiles";
 import { addedNote, type ViewTile } from "./model";
 
-/** The small uppercase label above a block of a section's body (a tile's
- *  title in the bare variant too). */
-export const BLOCK_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
-
 /** The tile's place on the page, which links and the keys reach. */
-export const tileElementId = (prefix: string, tile: string) => `${prefix}tile-${tile}`;
+const tileElementId = (prefix: string, tile: string) => `${prefix}tile-${tile}`;
 
 /** The tile the keys (j and k) are on, if any. */
 export function activeTile(): string | null {

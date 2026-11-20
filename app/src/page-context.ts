@@ -7,7 +7,7 @@ import { readSelection } from "@baum/viewer/review-selection";
 /** The pages a page context names, as the MCP server knows them
  *  (`agentcontext` page names): the sidebar's lists, and the pages of one
  *  pull request, group, session, job or feature. */
-export type ContextPage =
+type ContextPage =
   | "inbox"
   | "pulls"
   | "timeline"
@@ -167,13 +167,12 @@ export function pageContextOf(
   return withFilters({ page }, search);
 }
 
-/** The review page's focus says so and names where the
+/** The review page's focus names where the
  *  person is reading, so a tile made or added from chat stands there: the
  *  tab, and on How it works the section (`context` for Where this fits), or
  *  the tile a link opened; on Code the file open. */
 function tilesFocus(search: URLSearchParams) {
   const focus: Record<string, string> = {};
-  focus.view = "tiles";
   const fits = (value: string | null): value is string =>
     Boolean(value) && bytes(value!) <= MAX_PAGE_TEXT;
   const selection = readSelection(search);

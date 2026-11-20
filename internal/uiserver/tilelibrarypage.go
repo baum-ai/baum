@@ -208,26 +208,15 @@ func (a LocalAPI) checkTileTypeFile(w http.ResponseWriter, r *http.Request) {
 		writeTileTypeRefusal(w, http.StatusUnprocessableEntity, "the tile's frame document could not be made")
 		return
 	}
-	samples := make([]string, len(entry.Samples))
-	for i, s := range entry.Samples {
-		samples[i] = s.Name
-	}
-	sample := entry.Samples[0]
-	glance, _ := sample.Refs("glance")
-	detail, _ := sample.Refs("detail")
 	paths := candidate.Change.Paths
 	if paths == nil {
 		paths = []string{}
 	}
+	body := previewBody(entry, entry.Samples[0])
+	body["name"], body["renamed_from"], body["fill"] = candidate.Name, candidate.Renamed, entry.Definition.Fill
+	body["glance"], body["review_checks"], body["paths"] = entry.Glance, entry.ReviewChecks, paths
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, map[string]any{
-		"name": candidate.Name, "renamed_from": candidate.Renamed,
-		"title": entry.Definition.Title, "use_when": entry.Definition.UseWhen, "fill": entry.Definition.Fill,
-		"glance": entry.Glance, "review_checks": entry.ReviewChecks, "paths": paths,
-		"sizes": entry.Definition.Sizes, "kit": entry.Definition.Kit, "digest": entry.Definition.Digest,
-		"samples": samples, "sample": sample.Name, "data": sample.Data,
-		"refs": map[string]any{"glance": glance, "detail": detail},
-	})
+	writeJSON(w, body)
 }
 
 // importTileTypeFile serves POST /api/tile-type-files {"file"}: the file is
@@ -277,7 +266,7 @@ func (a LocalAPI) listTileTypes(w http.ResponseWriter, r *http.Request) {
 func (a LocalAPI) withTileType(next func(w http.ResponseWriter, r *http.Request, name string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
-		if !tileTypeName.MatchString(name) || a.TileTypes == nil {
+		if !tilelibrary.ValidName(name) || a.TileTypes == nil {
 			http.NotFound(w, r)
 			return
 		}

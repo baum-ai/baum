@@ -9,48 +9,10 @@ import (
 	"github.com/baum-ai/baum/tiles/view"
 )
 
-// BodyOf is a section's body: its own when it has one; else the one an older
-// section reads as, from before sections had a body: a prose block from its
-// summary (when it has one), a points block from its steps (each point
-// "**<Title>.** <Text>", its cites kept) and a tile block for each tile the
-// section owns, in the tiles' order.
-func BodyOf(s Section, tiles []Tile) []Block {
-	if len(s.Body) > 0 {
-		return s.Body
-	}
-	out := []Block{}
-	if text := strings.TrimSpace(s.Summary); text != "" {
-		out = append(out, Block{Type: BlockProse, Text: text})
-	}
-	if len(s.Steps) > 0 {
-		block := Block{Type: BlockPoints}
-		for _, step := range s.Steps {
-			text := strings.TrimSpace(step.Text)
-			if title := strings.TrimRight(strings.TrimSpace(step.Title), "."); title != "" {
-				text = strings.TrimSpace("**" + title + ".** " + text)
-			}
-			cites := step.Cites
-			if cites == nil {
-				cites = []Anchor{}
-			}
-			block.Items = append(block.Items, Point{Text: text, Cites: cites})
-		}
-		out = append(out, block)
-	}
-	for _, t := range tiles {
-		if t.Owner == s.ID {
-			out = append(out, Block{Type: BlockTile, Tile: t.ID})
-		}
-	}
-	return out
-}
-
-// EnsureBodies leaves every section of the document with a body (BodyOf of
-// an older section), without a tile block that names a tile the document
+// EnsureBodies leaves every section of the document without a tile block that names a tile the document
 // does not have or another section owns, or that repeats an earlier one,
 // and with a tile block, at the end, for each tile the section owns that its
-// body does not place. It clears the summary and steps an older section
-// carried, so they are never written again. Never a section's text.
+// body does not place. Never a section's text.
 func EnsureBodies(d *Document) {
 	byID := map[string]Tile{}
 	for _, t := range d.Tiles {
@@ -60,7 +22,7 @@ func EnsureBodies(d *Document) {
 		s := &d.Sections[i]
 		body := []Block{}
 		placed := map[string]bool{}
-		for _, b := range BodyOf(*s, d.Tiles) {
+		for _, b := range s.Body {
 			if b.Type == BlockTile {
 				t, ok := byID[b.Tile]
 				if !ok || t.Owner != s.ID || placed[b.Tile] {
@@ -77,7 +39,6 @@ func EnsureBodies(d *Document) {
 			}
 		}
 		s.Body = body
-		s.Summary, s.Steps = "", nil
 	}
 }
 

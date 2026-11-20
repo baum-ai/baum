@@ -86,7 +86,7 @@ func TestBuildRegistersReadyCustomTiles(t *testing.T) {
 func TestBuildServesDefinitionsWithoutHTML(t *testing.T) {
 	withCustomTiles(t)
 	r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, tiles.Options{})
-	answer, err := Encode(r)
+	answer, err := Encode(Serve(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, nil, tiles.Options{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestBuildServesComposedCustomTilesWithoutHTML(t *testing.T) {
 	if r.View == nil || custom(r.View, libraryDef.Name) == nil {
 		t.Fatalf("not composed: %q", r.Problem)
 	}
-	answer, err := Encode(r)
+	answer, err := Encode(Serve(tileviewtest.Encode(t, tileviewtest.Base(t)), composition, nil, tiles.Options{}))
 	if err != nil {
 		t.Fatal(err)
 	}

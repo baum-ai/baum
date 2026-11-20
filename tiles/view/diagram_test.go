@@ -2,7 +2,6 @@ package view_test
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/tiles/view"
@@ -21,10 +20,6 @@ func TestDiagramSchema(t *testing.T) {
 	}
 	if view.DiagramSchema("code") != nil {
 		t.Error("a schema for a type that is not native")
-	}
-	// The view call's reply schema still holds the ids.
-	if !strings.Contains(string(view.ReplySchema()), `"id":{"type":"string","pattern":"^dg_[a-z0-9_]{1,60}$"}`) {
-		t.Error("the reply schema lost its diagrams' ids")
 	}
 }
 

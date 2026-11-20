@@ -154,18 +154,3 @@ func viewEmpty(c *view.Composition) bool {
 	return o.RiskSummary == "" && o.Verdict == nil && len(o.Screenshots) == 0 && o.Diagram == nil && len(o.Intent) == 0 &&
 		len(c.Sections) == 0 && len(c.Diagrams) == 0 && len(c.Library) == 0 && len(c.Authored) == 0
 }
-
-// ParseComposition parses a version's stored review view composition
-// (Version.Composition) for a reader, such as the tile analysis reading the
-// previous version's library tiles. It returns nil for none (NULL or empty)
-// and for one that cannot be read or is not a baum.composition/2.
-func ParseComposition(raw []byte) *view.Composition {
-	if len(raw) == 0 || len(raw) > tiles.MaxStoredComposition {
-		return nil
-	}
-	c, err := view.Parse(raw)
-	if err != nil {
-		return nil
-	}
-	return c
-}

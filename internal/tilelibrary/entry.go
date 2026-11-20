@@ -65,12 +65,16 @@ type RefusedError struct{ Err error }
 func (e *RefusedError) Error() string { return e.Err.Error() }
 func (e *RefusedError) Unwrap() error { return e.Err }
 
+// ValidName reports whether name has a type's name format: a lowercase
+// letter, then lowercase letters, digits and underscores, 64 at most.
+func ValidName(name string) bool { return namePattern.MatchString(name) }
+
 // CheckName refuses a name a library type may not have: not the format, a
 // built-in tile type's or custom, a built-in library type's, nor a prefix
 // that changes a tile's ID. Whether it is taken is the store's to say.
 func CheckName(name string) error {
 	switch {
-	case !namePattern.MatchString(name):
+	case !ValidName(name):
 		return errors.New("A tile type's name is 1 to 64 characters: a lowercase letter, then lowercase letters, digits and underscores")
 	case name == tiles.TypeCustom:
 		return errors.New("A tile type cannot be named custom")

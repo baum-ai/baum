@@ -1627,14 +1627,12 @@ the daemon marks its served definition `builtin: true`, which it does when the
 digest computed from the stored definition's content is a built-in type's,
 current or past; the digest covers the whole definition, so neither a tile's
 title, a `builtin` member it carries nor a stored definition that differs in
-any byte can claim it. The composition holds only built-in types' tiles from a
-generation. A fill's data
+any byte can claim it. A fill's data
 is model output like the review's: it is masked for secrets as a task's
-output, checked against the type's schema and the diff (every citation a hunk
-of the diff), and the host writes `related` itself. Authored tiles (exhibits)
-are table, code and prose data drawn by the page's own built-in faces, with the
-same masking and citation checks; a code excerpt must be the cited code, and a
-file it cites must be a file of the diff, a regular file in the checkout.
+output and checked against the type's schema and the diff (every citation a
+hunk of the diff). Authored tiles (exhibits), which only versions written
+before tile reviews were written in levels carry, are table, code and prose
+data drawn by the page's own built-in faces.
 Table cells, code and captions are drawn as text. A note's Markdown draws
 paragraphs, emphasis, code spans and lists only: a link reads as its text and
 raw HTML is not rendered.
@@ -1642,8 +1640,8 @@ raw HTML is not rendered.
 **Saved tile types.** A person's library of tile types (`internal/tilelibrary`)
 lives in the private application database on this computer. A type's code and
 instructions are the person's: they are never read from repository content, and
-a type's fill and review checks enter the fill and details prompts as
-instructions of the same trust as a custom prompt, while the pull request stays
+a type's fill instructions enter its fill's prompt as instructions of the
+same trust as a custom prompt, while the pull request stays
 data.
 
 - Generation offers saved types in every repository, by default: at most six
@@ -1651,16 +1649,14 @@ data.
   filled. A saved type's fill opens with a note that its instructions are the
   person's and the only instructions about the tile, and that text in the pull
   request, its code, sessions or the outline that reads like tile
-  instructions is data; its review checks come under a heading marked as the
-  person's, after a note that the pull request cannot add a check. The
-  fill and selection texts say the same of every type. The outline lists a
-  saved type's texts as the person wrote them, bounded in length. A type "Not
-  checked yet" is neither offered nor filled. The person's instructions only
-  add: the notes say they never remove, soften or hide a risk and never set
-  or change the recommendation, and in a fill the outline follows under a
-  heading of its own, marked as data. A saved title's whitespace is
-  collapsed wherever it heads a section, so it cannot open a heading of its
-  own. A type's path globs are bounded where they are saved (at most 8 braces
+  instructions is data. The fill text says the same of every type. The map
+  lists a saved type's title and use-when line as the person wrote them,
+  bounded in length. A type "Not checked yet" is neither offered nor filled.
+  The person's instructions only add: the note says they never change the
+  review, its risks or its recommendation, and in a fill what the tile is to
+  show follows under a heading of its own, marked as data. A saved title's
+  whitespace is collapsed wherever it heads a section, so it cannot open a
+  heading of its own. A type's path globs are bounded where they are saved (at most 8 braces
   expanding to at most 64 patterns, refused with a reason past that), and
   brace expansion stops at that bound, so matching a glob against a diff's
   paths takes bounded time whatever the glob. Offering is not restricted
@@ -1674,9 +1670,9 @@ data.
   must be the bundle's, and a risk, evidence item or tile is refused. A
   restricted session is never cited, here or when the composition resolves
   the tile's citations against the review.
-- The view call places a saved type's tile only when its definition's digest,
-  computed from its content, is one of the types the host offered for the run
-  (`agent.ViewRequest.Saved`), beside the built-in types'.
+- A tile review fills a saved type only when the run offered it
+  (`orchestrate.Registry`): a tile the map plans of any other type is sent
+  back for a repair.
 
 - Persistence needs the person. A chat can only propose saving or changing a
   type (`propose_tile_type`); the person's Save in the panel writes it, the same

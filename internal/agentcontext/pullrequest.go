@@ -407,21 +407,6 @@ func segment(kind, id string) error {
 	return nil
 }
 
-func callSessionTranscript(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-	var a struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return "", err
-	}
-	if err := segment("session", a.ID); err != nil {
-		return "", err
-	}
-	// The viewer answers only for a session the pull request's commits link.
-	body, err := readSource(ctx, c, args, "sessions/"+url.PathEscape(a.ID))
-	return string(body), err
-}
-
 func callChecks(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 	repository, number, err := c.pullTarget(args)
 	if err != nil {
