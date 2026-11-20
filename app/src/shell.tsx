@@ -158,6 +158,58 @@ function usePeek(folded: boolean) {
   return { peeking, over, leave, fold };
 }
 
+/** Keyboard focus in the sidebar, outside the menus it shows. */
+const KEYBOARD_FOCUS = ":focus-visible:not(.context-menu *)";
+
+/** Marks the element `data-keyboard-focus` while it holds keyboard focus
+ *  (`KEYBOARD_FOCUS`), which opens the folded sidebar. The page's CSS read
+ *  this with `:has()` before, but WebKitGTK re-checked that selector on every
+ *  element added anywhere in the page, so a large diff took seconds to show.
+ *  The attribute is set on the element itself, not through React state, so it
+ *  changes within the event, at the same moments the selector did: on focus
+ *  and key events in the element, after every render of its owner (which may
+ *  have removed the focused element without a blur), on any change to the
+ *  element's children (WebKit sends no blur for a focused element removed),
+ *  and when the window gains or loses focus, since `:focus-visible` does not
+ *  match in a window in the background and WebKit tells the element only with
+ *  `focus` and `blur`, which do not bubble. */
+function useKeyboardFocusWithin<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const sync = useCallback(() => {
+    const element = ref.current;
+    element?.toggleAttribute("data-keyboard-focus", !!element.querySelector(KEYBOARD_FOCUS));
+  }, []);
+  useLayoutEffect(sync);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    let frame = 0;
+    // The window's activation may land after its `focus` or `blur` event.
+    const later = () => {
+      sync();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(sync);
+    };
+    for (const type of ["focusin", "focusout", "keydown", "keyup"])
+      element.addEventListener(type, sync);
+    window.addEventListener("focus", later);
+    window.addEventListener("blur", later);
+    document.addEventListener("visibilitychange", later);
+    const changed = new MutationObserver(sync);
+    changed.observe(element, { childList: true, subtree: true });
+    return () => {
+      changed.disconnect();
+      cancelAnimationFrame(frame);
+      for (const type of ["focusin", "focusout", "keydown", "keyup"])
+        element.removeEventListener(type, sync);
+      window.removeEventListener("focus", later);
+      window.removeEventListener("blur", later);
+      document.removeEventListener("visibilitychange", later);
+    };
+  }, [sync]);
+  return ref;
+}
+
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
  *  panel, with what is left of the agents' plans above the foot. Each
@@ -215,6 +267,7 @@ export function Sidebar({
   }, [ready, preferences.sidebar]);
   const pinned = choice === "pinned" && !narrow;
   const peek = usePeek(!pinned);
+  const keyboardFocus = useKeyboardFocusWithin<HTMLDivElement>();
   const nested = inboxes && inboxes.list.length > 0;
   // A right click on Inbox makes or manages inboxes.
   const inboxMenu = useContextMenu();
@@ -299,6 +352,7 @@ export function Sidebar({
   };
   return (
     <div
+      ref={keyboardFocus}
       className="local-rail-lane"
       data-rail={pinned ? "pinned" : peek.peeking ? "open" : "folded"}
       onPointerEnter={peek.over}

@@ -341,6 +341,68 @@ test("review JSON stays folded and scrollable in an existing job transcript", as
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test("a long job transcript scrolls in the panel, never the window", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.route("**/api/jobs", (route) =>
+    route.fulfill({
+      json: {
+        jobs: [
+          {
+            id: "long-run",
+            clone: "fixture",
+            repository: "acme/demo",
+            pr: 7,
+            state: "completed",
+            phase: "finished",
+            calls: 1,
+            tokens: 10,
+            repairs: 0,
+            actual_cost_usd: null,
+            has_transcript: true,
+          },
+        ],
+      },
+    }),
+  );
+  // Each tool call carries a screen-reader label for its state; placed
+  // against the window, those labels lengthened it past the panel.
+  const entries = Array.from({ length: 30 }, (_, i) => [
+    { kind: "message", text: `Part ${i}. ${"Reading the code. ".repeat(12)}` },
+    ...[1, 2, 3].map((n) => ({
+      kind: "tool",
+      tool: "Read",
+      title: `file-${n}.go`,
+      text: "ok",
+      status: "completed",
+    })),
+  ])
+    .flat()
+    .map((entry, i) => ({ seq: i + 1, time: "2026-11-02T12:00:00Z", ...entry }));
+  await page.route("**/api/jobs/long-run/transcript?*", (route) =>
+    route.fulfill({ json: { entries, next: entries.length, more: false, done: true } }),
+  );
+  await page.goto(await launchURL());
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
+  const url = new URL(page.url());
+  url.search = "?page=jobs&job=long-run";
+  await page.goto(url.href);
+  await expect(page.getByText("Part 29.", { exact: false })).toBeAttached();
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(
+    true,
+  );
+  await page.mouse.move(640, 300);
+  for (let i = 0; i < 30; i++) await page.mouse.wheel(0, 400);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const main = document.querySelector(".local-main")!;
+        return main.scrollTop + main.clientHeight >= main.scrollHeight - 1;
+      }),
+    )
+    .toBe(true);
+  expect(await page.evaluate(() => scrollY)).toBe(0);
+});
+
 test("automatic review of a new head, shown as started automatically", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));

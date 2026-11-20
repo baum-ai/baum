@@ -2096,10 +2096,10 @@ function ListRow({
       aria-current={on || undefined}
       onClick={() => pick(row.key)}
     >
-      <ReviewDot state={dot} detail={row.entry.failure_reason} labelled={false} />
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
         <span className="upnext-row-line">
+          <ReviewDot state={dot} detail={row.entry.failure_reason} labelled={false} compact />
           <span
             className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
           >
@@ -2185,14 +2185,16 @@ function GroupListRow({
         aria-expanded={open}
         onClick={() => pick(line.key)}
       >
-        <ReviewDot state={groupDot} labelled={false} />
         <span className="upnext-row-text">
           <span className="upnext-row-title">
             {group.stack ? <StackIcon size={13} className="upnext-stack-icon" /> : null}
             {group.name}
           </span>
-          <span className="upnext-row-sub">
-            {[groupName(group), group.repository, memberKinds(members)].join(" · ")}
+          <span className="upnext-row-line">
+            <ReviewDot state={groupDot} labelled={false} compact />
+            <span className="upnext-row-sub">
+              {[groupName(group), group.repository, memberKinds(members)].join(" · ")}
+            </span>
           </span>
         </span>
         {groupDot ? <span className="sr-only">, {reviewDotLabel(groupDot)}</span> : null}

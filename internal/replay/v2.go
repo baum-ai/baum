@@ -46,9 +46,6 @@ var _ interface {
 
 func init() {
 	RegisterGenerator("v2", func(c GeneratorConfig) (Generator, error) {
-		if c.LibraryDir != "" {
-			return nil, errors.New("--library-dir goes with --generator tiles")
-		}
 		g := &V2Generator{}
 		for key, value := range c.Options {
 			if key != "concurrency" {
@@ -132,7 +129,7 @@ func (g *V2Generator) Generate(ctx context.Context, o generate.Options, c Case) 
 		}
 	}
 	o.Staged, o.NoReuse = true, true
-	o.Tiles = &generate.Tiles{Prompts: prompt.TilesPrompts{Overrides: g.PromptOverrides}}
+	o.Tiles = &generate.Tiles{}
 	o.V2 = &generate.V2{Prompts: prompt.V2Prompts{Overrides: g.PromptOverrides}, Record: record, NoReuse: true, Concurrency: g.Concurrency}
 	result, err := generate.Run(ctx, o)
 	out := Generated{Outcome: result.Outcome}
@@ -241,7 +238,7 @@ func (g *V2Generator) DocumentMetrics(document []byte) (map[string]float64, erro
 		if s.Details == "failed" {
 			m[MetricV2SectionsFailed]++
 		}
-		body := reviewv2.BodyOf(s, doc.Tiles)
+		body := s.Body
 		m[MetricV2Blocks] += float64(len(body))
 		for _, b := range body {
 			m[MetricV2Points] += float64(len(b.Items))

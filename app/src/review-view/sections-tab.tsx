@@ -39,7 +39,8 @@ import {
   type ViewTile,
 } from "./model";
 import { SectionViewBody, SectionViewTabs } from "./section-views";
-import { BLOCK_LABEL, ViewTileCard } from "./view-tile";
+import { BLOCK_LABEL } from "./native-tiles";
+import { ViewTileCard } from "./view-tile";
 
 /** How it works: the section read (the rail lists the sections, "Where this
  *  fits" first), which shows its views (its Overview: its summary, the tiles

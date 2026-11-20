@@ -74,7 +74,6 @@ deterministically, and `--limit` cuts the list):
 | `--detector-report` | Write the case ids by kind of detector evidence; see [Detectors](#detectors). |
 | `--case-file <path>` | Case ids from a file, one per line; blank lines and `#` comments are ignored. Same as repeating `--case`, and not combined with filters. |
 | `--chain` | Replay each pull request's revisions in order; see [Chains](#chains). |
-| `--compose-from-store`, `--compose-only --from-run <run>` | Run only the view call over reviews that already exist; see [Presenting reviews](#presenting-reviews). |
 | `--limit N`, `--shuffle-seed N` | Cut the selection, after a seeded shuffle if given. |
 
 Settings. The defaults are the desktop app's built-in ones: Claude Code, the
@@ -87,7 +86,7 @@ so a run does not depend on them; the backend is `claude` unless named.
 | `--backend claude\|codex`, `--model`, `--effort` | The agent. Empty model and effort are the agent's own. `--model` takes what the agent takes, such as an alias like `sonnet`. |
 | `--staged` (default), `--no-staged` | Write the review in stages, or in one pass. `--no-staged` wins over `--staged`. |
 | `--reuse` | See [Previous versions](#previous-versions). |
-| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. With the view call alone, or the `tiles` generator, `review-view` replaces the view call's prompt. |
+| `--prompt-override <id>=<file>` | Replace a staged prompt with the file's text; repeatable. The ids are `review-staged-shared`, `review-staged-outline`, `review-staged-details` and `review-staged-context`. The text replaces the built-in text before the `Submitting` heading, which stays baum's, exactly as a custom prompt does in the app. Needs a staged run. |
 | `--time-limit 10m` | Time limit of one case. |
 | `--claude-config-dir`, `--codex-home`, `--agent-env KEY=VALUE` | The config fields the app sets for its agents (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `agent_env`); repeatable for `--agent-env`. Without them the agent runs with the ambient login. |
 | `--no-transcript` | Do not keep the agent's transcript. |
@@ -121,115 +120,7 @@ leaves no files, so `--resume` runs it again.
 `BAUM_REPLAY_OUT`), which is outside any repository. Outputs hold private
 content and are never committed.
 
-## Presenting reviews
-
-The view call (`agent.ViewRun`) presents a review on its page: one call with
-no tools writes a `baum.composition/2` with the overview's verdict and risk
-summary, the diagrams and which tiles stand on each section, which the host
-checks, falling back to the tiles placed by their hunks when the call fails.
-Two flags run it alone, through the `view` generator, over reviews that
-already exist, so its prompt can be iterated on a frozen set for a few cents a
-case without running the analysis again; `--prompt-override
-review-view=<file>` replaces the prompt:
-
-```sh
-oss/bin/replay --dataset <dir> --compose-from-store --case-file <file outside git> --model sonnet
-oss/bin/replay --dataset <dir> --compose-only --from-run <out>/<earlier-tiles-run> --prompt-override review-view=<file> --model sonnet
-```
-
-- `--compose-from-store` presents the dataset's saved reviews
-  (`reviews/<machine>/<repository>.versions.sqlite`, with their write-ahead
-  logs, copied to a temporary directory that is removed when the run ends,
-  and read read-only). Cases are selected as usual; each presents the saved
-  version generated from its bundle (its metadata's `bundle_digest`), else the
-  latest version at the case's head, else the pull request's latest version.
-  The record says which (`review.match`: `bundle`, `head` or `latest`). A pull
-  request with no saved review fails with reason `internal`.
-- `--compose-only --from-run <run>` presents the review documents an earlier
-  run generated (`<run>/cases/<id>/document.json`), so the same analysis can be
-  presented by several prompts. From a run of the `tiles` generator it places
-  that run's library fills and exhibits again.
-
-Either flag runs the `view` generator whatever `--generator` names, and
-`--chain` is refused. Each case's `document.json` is a view record
-(`replay.view/1`: the composition, fallback and why, repair, the checks'
-fixes by kind and first problems, diagrams by type, which overview parts are
-set, placements, the input's size and cuts, seconds); beside it are
-`composition.json`, `view.json` (the view the tile route would serve),
-`input.txt` and `reply.json`. Validation checks the composition against its
-schema, that checking it again changes nothing, and that a view is served.
-`replay metrics` adds `view_fallback`, `view_repaired`, `view_fixes` and
-`view_fix_<kind>` (`view_fix_placed` counts the tiles the host placed and is
-not a fix), `view_diagrams` and `view_diagrams_<type>`,
-`view_overview_diagram`, `view_verdict`, `view_risk_summary`,
-`view_screenshots`, `view_intent`, `view_placed`, `view_sections_with_tiles`,
-`view_input_bytes`, `view_input_cut` and `view_seconds`. A call the run's
-interruption stopped is an interrupted case, never a fallback.
-
-### The whole pipeline with tiles
-
-`--generator tiles` generates each case as the desktop does with tile reviews
-on: the staged review with its tile analysis (library selection in the
-outline, a fill per selected library type and the exhibits call beside the
-details and the context), then the view call at its end, within the time
-it leaves (`generate.Options.Tiles`). `--generator-option library=off` offers
-no library type and `--generator-option exhibits=off` writes no authored
-tile; both off is the pipeline as it was before the analysis, a baseline for
-its cost, time and effect on the review.
-
-```sh
-oss/bin/replay --dataset <dir> --generator tiles --case-file <file outside git> --model sonnet
-```
-
-`--library-dir <dir>` loads the exported tile type files in a directory
-(`*.baumtile.json`, as Settings › Tile library exports them) as the person's
-saved types, each passing every check an import does, and offers them to
-each case as the desktop does (`tilelibrary.Offer`: those whose paths match
-the case's diff, at most six beside the built-in types). They have no record
-of use, so they rank by name, and none is pinned. The manifest's settings
-name each type with its digest (`saved_tile_types`), the per-type metrics
-include them, and `--library-dir` with another generator is refused. This
-measures whether a saved type is selected where it should be and whether its
-fills pass their checks:
-
-```sh
-oss/bin/replay --dataset <dir> --generator tiles --library-dir <types outside git> --case-file <file outside git> --model sonnet
-```
-
-The case's `document.json` is the review, as with the `review` generator, so
-the review metrics, `--chain` and `--reuse` apply; staged prompt overrides and
-`review-view` may both be given. `--no-staged` is refused. Beside the
-document:
-
-| File | Holds |
-| --- | --- |
-| `compose.json` | A record of the view stage (`replay.compose/2`): its fallback and why, repair, fixes by kind, input size, `cost_usd` and seconds, and `problem` when the version would have no composition. |
-| `composition.json` | The review view composition the version would store. |
-| `view.json` | The view the tile route would serve (`tileview.Build`). |
-| `provisional.json` | The composition drafts showed while the review was written. |
-| `inventory.txt`, `reply.json` | What the view call read and answered. |
-| `analysis.json` | The tile analysis: the outline's selection, each fill's state, reason, repair, time, cost and place on the served page, the exhibits returned, dropped by reason, dropped as restating the review and kept with the section each stands on, how long the review waited for them, and the points a library or authored tile states that another tile states too (`view.Duplicates`). |
-| `outcome.json` details | `outline_repairs` and `outline_rejections`: the outline stage's validation repairs and schema rejections, which the tile parts of its schema could add (compare a run with both options off). |
-| `fills/<type>.json`, `exhibits.json` | Each fill as it ended, its data included, and the exhibits call's result. |
-
-Validation is the review's (`ValidateStored`) plus the composition's, as
-above. `replay metrics` adds the review metrics, from `compose.json`
-`compose_fallback`, `compose_repaired`, `compose_fixes`,
-`compose_inventory_bytes`, `compose_seconds`, `compose_cost_usd` (the stage's
-share of `cost_usd`) and `compose_no_composition`, and from
-`analysis.json`: `library_selected`, `library_ready`, `library_reused`,
-`library_on_section` (on one of the review's sections, not Where this fits)
-and per type `library_<type>_selected`, `_ready`, `_not_applies`, `_dropped`,
-`_repaired`, `_reused` and `_on_section`;
-`fills_cost_usd`, `fills_seconds_max`; `exhibits_candidates` (proposed by the
-outline), `exhibits_called`, `exhibits_reused`, `exhibits_returned`, `exhibits_kept`, `exhibits_on_section`,
-`exhibits_dropped_<reason>`, `exhibits_cost_usd`, `exhibits_seconds`;
-`extras_wait_seconds`; and `extras_duplicate_pairs` and
-`extras_has_duplicate`. In a chain each
-revision is offered the composition the one before it got, when the same run
-generated it.
-
-### baum.review/2 in levels
+## baum.review/2 in levels
 
 `--generator v2` writes each case as a baum.review/2 document, as the desktop
 does with tile reviews on once the levels land (`generate.Options.V2`,
@@ -538,8 +429,8 @@ the directory, be one of the runner's files, be the same file as another name
 ignoring case, or be both a file and a directory that holds another artifact, or
 the case fails), and lists them
 in `outcome.json` under `artifacts`; a rerun of the case starts its directory over. A
-generator that produces more than one file, such as a composition next to the review
-it presents, returns the rest this way.
+generator that produces more than one file, such as the v2 generator's calls and
+levels record, returns the rest this way.
 
 Two optional interfaces add what depends on the format:
 

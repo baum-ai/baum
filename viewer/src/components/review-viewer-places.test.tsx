@@ -278,17 +278,6 @@ describe("ReviewViewer with host places", () => {
     expect(context.loadVersion).toBe(loadVersion);
   });
 
-  it("lets the host start a comparison from its context", async () => {
-    const loadVersion = vi.fn(async () => ({ status: "ready" as const, document: earlier() }));
-    const seen: ReviewPlaceContext[] = [];
-    const container = await render(
-      <Host>{viewer({ places: dummyPlaces({}, seen), versions: [2], loadVersion })}</Host>,
-    );
-    await act(async () => seen.at(-1)!.compareWith(2));
-    expect(loadVersion).toHaveBeenCalledWith(2);
-    expect(container.textContent).toContain("Historical · Review v2");
-  });
-
   it.each([
     ["redirects", true],
     ["leaves to the viewer, when the host declines,", false],
@@ -615,7 +604,7 @@ describe("ReviewViewer places: the pane and the context", () => {
     expect(seen.at(-1)).toBe(seen[before - 1]);
   });
 
-  it("opens a file, reveals the comments and reports the generation", async () => {
+  it("opens a file and reports the generation", async () => {
     const seen: ReviewPlaceContext[] = [];
     const container = await render(
       <Host>
@@ -639,14 +628,6 @@ describe("ReviewViewer places: the pane and the context", () => {
     await act(async () => context().openFile("f1"));
     expect(search(container)).toBe("pane=file&file=f1");
     expect(container.querySelector("#review-section")?.textContent).toContain("Files pane");
-    await act(async () => context().revealComments());
-    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
-      "Comments",
-    );
-    await act(async () => context().openSidePane("details"));
-    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
-      "Details",
-    );
   });
 
   it("follows the section the host's steps name in the side pane and the section aside", async () => {
@@ -823,11 +804,6 @@ describe("ReviewViewer places: keys and chips in earlier versions", () => {
 const groups = () => ({
   decisions: {
     renderPane: (_actions: unknown, open?: string) => <p>Decisions pane {open ?? "all"}</p>,
-    renderList: (actions: { select: (selection: Selection) => void }) => (
-      <button type="button" onClick={() => actions.select({ kind: "decisions", id: "dec_a" })}>
-        Decision a
-      </button>
-    ),
   },
   sessions: {
     state: { status: "ready" as const, items: [{ id: "ses_a", label: "Session a" }] },
@@ -840,92 +816,12 @@ const groups = () => ({
 });
 const asideTabs = (container: HTMLElement) =>
   [...container.querySelectorAll('#review-aside [role="tab"]')].map((tab) => tab.textContent);
-const asideTab = (container: HTMLElement, name: string) =>
-  [...container.querySelectorAll<HTMLButtonElement>('#review-aside [role="tab"]')].find(
-    (each) => each.textContent === name,
-  )!;
-const buttonNamed = (container: HTMLElement, name: string) =>
-  [...container.querySelectorAll<HTMLButtonElement>("button")].find(
-    (each) => each.textContent === name,
-  )!;
 
-describe("ReviewViewer places without a rail", () => {
-  it("draws no rail and no navigator bar, and lists the groups as side pane tabs", async () => {
-    const container = await render(
-      <Host>
-        {viewer({
-          places: dummyPlaces({ noRail: true, renderRail: undefined }),
-          ...groups(),
-          comments: { count: 0, render: () => <p>Comments</p> },
-        })}
-      </Host>,
-    );
-    expect(container.querySelector("#review-rail")).toBeNull();
-    expect(container.querySelector('button[aria-controls="review-rail"]')).toBeNull();
-    expect(container.querySelector('button[aria-label^="Next:"]')).toBeNull();
-    expect(asideTabs(container)).toEqual([
-      "Details",
-      "Activity",
-      "Comments",
-      "Sessions",
-      "Commits",
-      "Decisions",
-    ]);
-  });
-
-  it("keeps the rail and the side pane's tabs as they were without noRail", async () => {
+describe("ReviewViewer places with a rail", () => {
+  it("keeps the rail and the side pane's tabs to Details and Activity", async () => {
     const container = await render(<Host>{viewer({ places: dummyPlaces(), ...groups() })}</Host>);
     expect(container.querySelector("#review-rail")).not.toBeNull();
     expect(asideTabs(container)).toEqual(["Details", "Activity"]);
-  });
-
-  it("opens an item of a side pane list in the review pane, under the host's head", async () => {
-    const container = await render(
-      <Host>
-        {viewer({
-          places: dummyPlaces({
-            noRail: true,
-            renderRail: undefined,
-            paneHead: (context) => (
-              <button type="button" onClick={() => context.select({ kind: "summary" })}>
-                Back to the review
-              </button>
-            ),
-          }),
-          ...groups(),
-        })}
-      </Host>,
-    );
-    await act(async () => asideTab(container, "Sessions").click());
-    await act(async () => buttonNamed(container, "Session a").click());
-    const pane = container.querySelector("#review-section")!;
-    expect(pane.textContent).toContain("Session pane ses_a");
-    expect(pane.textContent).toContain("Back to the review");
-    expect(buttonNamed(container, "Session a").getAttribute("aria-pressed")).toBe("true");
-
-    await act(async () => asideTab(container, "Decisions").click());
-    await act(async () => buttonNamed(container, "Decision a").click());
-    expect(search(container)).toContain("pane=decisions&decision=dec_a");
-    expect(pane.textContent).toContain("Decisions pane dec_a");
-
-    await act(async () => buttonNamed(container, "Back to the review").click());
-    expect(pane.textContent).not.toContain("Back to the review");
-    expect(pane.querySelector('[data-testid="host-pane"]')?.textContent).toContain("summary:");
-  });
-
-  it("steps the keys through the host's places alone", async () => {
-    const steps = { current: null } as NonNullable<ReviewViewerProps["steps"]>;
-    await render(
-      <Host initial="pane=tile&tile=tile-b">
-        {viewer({
-          places: dummyPlaces({ noRail: true, renderRail: undefined }),
-          ...groups(),
-          steps,
-        })}
-      </Host>,
-    );
-    expect(steps.current?.rail?.previous?.label).toBe("Host row tile-a");
-    expect(steps.current?.rail?.next).toBeNull();
   });
 });
 

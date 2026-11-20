@@ -93,6 +93,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .visible_on_all_workspaces(true)
         .visible(false)
         .focused(false)
+        .initialization_script(crate::theme::script(
+            &app.state::<crate::theme::Store>().get(),
+        ))
         .on_navigation(navigation::is_tray_panel)
         .build()?;
     Ok(())

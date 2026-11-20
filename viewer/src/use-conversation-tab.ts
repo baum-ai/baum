@@ -2,17 +2,8 @@ import { useCallback } from "react";
 
 import { useStoredSetting } from "./use-stored-setting";
 
-/** The side pane's tabs. Sessions, Commits and Decisions are tabs only where
- *  a host's places draw no rail (`ReviewPlaces.noRail`). */
-export const CONVERSATION_TABS = [
-  "chat",
-  "details",
-  "activity",
-  "comments",
-  "sessions",
-  "commits",
-  "decisions",
-] as const;
+/** The side pane's tabs. */
+export const CONVERSATION_TABS = ["chat", "details", "activity", "comments"] as const;
 export type ConversationTab = (typeof CONVERSATION_TABS)[number];
 
 const STORAGE_KEY = "baum.review.conversation-tab";

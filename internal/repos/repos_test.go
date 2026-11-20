@@ -96,7 +96,7 @@ func TestClonesAndSettings(t *testing.T) {
 	if e = r.Remove(ctx, other.Path); e != nil {
 		t.Fatal(e)
 	}
-	if e = r.Update(ctx, c.ID, Settings{}); e != nil {
+	if e = r.UpdateRepository(ctx, c.Repository, Settings{}); e != nil {
 		t.Fatal(e)
 	}
 	if e = r.Remove(ctx, w.ID); e != nil {

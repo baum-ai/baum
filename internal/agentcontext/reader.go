@@ -53,6 +53,7 @@ var unreadable = []string{"/api/settings", "/api/debug", "/api/github", "/api/di
 var projectedReads = map[string][]string{
 	"diagnostics_summary":  {"/api/diagnostics"},
 	"settings_general":     {"/api/settings/appearance"},
+	"settings_appearance":  {"/api/settings/appearance"},
 	"settings_reviews":     {"/api/settings", "/api/settings/labs"},
 	"settings_fixes":       {"/api/settings"},
 	"settings_connections": {"/api/github-auth"},

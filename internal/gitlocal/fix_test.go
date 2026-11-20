@@ -442,22 +442,25 @@ func TestFixRunsNothingTheAgentWrote(t *testing.T) {
 	}
 	defer func() { _ = fix.Close() }()
 	marker := filepath.Join(t.TempDir(), "ran")
-	payload := "#!/bin/sh\necho \"$0\" >> '" + marker + "'\nexit 0\n"
+	// Forward slashes: git's configuration reads a backslash as an escape,
+	// and on Windows the shell takes either.
+	payload := "#!/bin/sh\necho \"$0\" >> '" + filepath.ToSlash(marker) + "'\nexit 0\n"
 	hooks := filepath.Join(fix.GitDir(), "hooks")
 	for _, hook := range []string{"pre-commit", "commit-msg", "post-commit", "pre-push", "post-checkout", "reference-transaction", "post-index-change", "pre-auto-gc"} {
 		write(t, hooks, hook, payload, 0o755)
 	}
 	write(t, t.TempDir(), "x", "", 0o644)
-	script := filepath.Join(t.TempDir(), "evil.sh")
-	write(t, filepath.Dir(script), "evil.sh", payload, 0o755)
+	scriptPath := filepath.Join(t.TempDir(), "evil.sh")
+	write(t, filepath.Dir(scriptPath), "evil.sh", payload, 0o755)
+	script := filepath.ToSlash(scriptPath)
 	agentConfig := strings.Join([]string{
-		"[core]", "\tfsmonitor = " + script, "\thooksPath = " + hooks, "\tsshCommand = " + script, "\tpager = " + script,
+		"[core]", "\tfsmonitor = " + script, "\thooksPath = " + filepath.ToSlash(hooks), "\tsshCommand = " + script, "\tpager = " + script,
 		"[filter \"evil\"]", "\tclean = " + script, "\tsmudge = " + script, "\tprocess = " + script, "\trequired = true",
 		"[diff \"evil\"]", "\ttextconv = " + script, "\tcommand = " + script,
 		"[merge \"evil\"]", "\tdriver = " + script,
 		"[gpg]", "\tprogram = " + script,
 		"[credential]", "\thelper = !" + script,
-		"[include]", "\tpath = " + filepath.Join(fix.GitDir(), "more"),
+		"[include]", "\tpath = " + filepath.ToSlash(filepath.Join(fix.GitDir(), "more")),
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(fix.GitDir(), "config"), []byte(agentConfig), 0o644); err != nil {
 		t.Fatal(err)

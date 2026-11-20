@@ -29,7 +29,8 @@ jobs:
           - os: windows
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    # The macOS and Windows test runs alone take 12 to 15 minutes.
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash

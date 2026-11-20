@@ -42,17 +42,11 @@ func TryLock(ctx context.Context, path string) (*Lock, error) {
 		return nil, err
 	}
 	// Create the file only when it is missing: nobody can hold a lock on a
-	// file that did not exist, so closing this descriptor drops none.
-	if f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600); err == nil {
-		if err = f.Close(); err != nil {
-			return nil, err
-		}
-		// On Windows the new file took its directory's ACL, which need not be
-		// private (the account records' lock sits in the config directory).
-		if err = privatefs.ProtectFile(path); err != nil {
-			return nil, err
-		}
-	} else if !errors.Is(err, os.ErrExist) {
+	// file that did not exist, so closing this descriptor drops none. The
+	// file is private from its creation (on Windows its directory's ACL need
+	// not be: the account records' lock sits in the config directory), so a
+	// concurrent caller that finds it existing never sees it unprotected.
+	if err := privatefs.CreateFile(path); err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, err
 	}
 	info, err := os.Lstat(path)

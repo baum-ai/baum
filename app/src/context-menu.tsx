@@ -142,18 +142,23 @@ export function useContextMenu() {
 /** Opens the right-click menu of what has the keys with ⌘. (Ctrl+. elsewhere),
  *  as the Menu key or Shift+F10 do where there are such keys: a context menu
  *  event on the focused element, which opens under it. Not in a text field
- *  or under a dialog. Mounted once, for the whole app. */
+ *  or under a dialog. An element marked `data-actions-target` takes the event
+ *  for a control inside it, even a field. Mounted once, for the whole app. */
 export function useActionsKey() {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
       if (!command || event.key !== "." || event.altKey || event.shiftKey || event.defaultPrevented)
         return;
-      const target = document.activeElement;
+      const active = document.activeElement;
+      // A control inside an element marked `data-actions-target` (a radio in
+      // a thumbnail's label) counts as that element having the keys.
+      const host = active instanceof HTMLElement ? active.closest("[data-actions-target]") : null;
+      const target = host instanceof HTMLElement ? host : active;
       if (
         !(target instanceof HTMLElement) ||
         target === document.body ||
-        target.closest("input, textarea, select, [contenteditable]") ||
+        (!host && target.closest("input, textarea, select, [contenteditable]")) ||
         document.querySelector("dialog[open]")
       )
         return;

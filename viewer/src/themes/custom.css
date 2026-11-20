@@ -1,27 +1,24 @@
-/* Active application theme overrides. Leave empty declarations to keep the
-   default theme. This file is loaded by every desktop screen.
+/* Build-time theme overrides, loaded by every desktop screen in the
+   baum-theme layer. Leave the declarations empty to keep the default palette.
 
-   Set base colors to recalculate the derived palette. Override any semantic
-   token directly when a derived result needs adjustment. Put declarations on
-   the document root so all dependent variables recalculate together. */
+   The person's own themes are separate: the app keeps a light and a dark slot,
+   each holding a theme (a base, light or dark, and token overrides), and sets
+   the active theme's tokens inline on the document root. Inline declarations
+   beat this file, so a chosen theme wins over what is set here.
+
+   Set seeds to recalculate the derived palette, or a semantic token to replace
+   one result. Put declarations on the document root so all dependent variables
+   recalculate together. */
 :root {
   /* Base overrides, for example:
   --brand-green-600: #2574a9;
   --brand-sand-100: #dbe8f4;
-  */
-  /* A derived color can be replaced without changing its base:
-  --surface-selected: color-mix(in srgb, var(--brand-green-600) 12%, var(--surface-page));
   */
 }
 
 :root[data-theme="dark"] {
   /* Optional dark-mode exceptions, for example:
   --surface-page: #14202a;
-  --surface-card: var(--surface-page);
   --action-primary: color-mix(in srgb, var(--brand-green-600) 65%, var(--color-paper));
   */
 }
-
-/* Multiple named themes can instead use :root[data-color-theme="ocean"].
-   data-color-theme selects the custom identity; data-theme remains light/dark.
-   Appearance preference updates do not overwrite data-color-theme. */

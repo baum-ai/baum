@@ -21,7 +21,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tab": "overview" }
+        "focus": { "tab": "overview" }
       }
     },
     {
@@ -31,7 +31,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tab": "overview", "anchor": "sec_rest" }
+        "focus": { "tab": "overview", "anchor": "sec_rest" }
       }
     },
     { "query": "page=pulls&clone=gone&pr=7", "context": { "page": "pulls" } },
@@ -74,7 +74,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tab": "sections", "tile": "risks" }
+        "focus": { "tab": "sections", "tile": "risks" }
       }
     },
     {
@@ -83,7 +83,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tab": "sections", "section": "context" }
+        "focus": { "tab": "sections", "section": "context" }
       }
     }
   ],
@@ -96,7 +96,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tab": "overview", "kind": "tile", "id": "sec_api", "title": "API changes" }
+        "focus": { "tab": "overview", "kind": "tile", "id": "sec_api", "title": "API changes" }
       },
       "tile": "sec_api"
     },
@@ -107,7 +107,7 @@
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "view": "tiles", "tab": "sections", "tile": "context" }
+        "focus": { "tab": "sections", "tile": "context" }
       },
       "tile": "context"
     }

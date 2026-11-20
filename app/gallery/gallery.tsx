@@ -176,37 +176,6 @@ export function verdict(type: string, data: unknown): { valid: boolean; reason?:
   return { valid: false, reason: `Fails the page's check of a ${type}: ${shape[type]}` };
 }
 
-const DARK_ROOT = ':root[data-theme="dark"]';
-
-/** The palette's tokens on any element marked `data-gallery-theme`, so one
- *  page can show both themes: the palette (and a custom theme) set them on
- *  the root element only, and a token derived there is not derived again
- *  under it. Read from the page's loaded stylesheets, in their order. */
-function scopedTheme(): string {
-  const out: string[] = [];
-  const walk = (rules: CSSRuleList) => {
-    for (const rule of rules) {
-      if (rule instanceof CSSStyleRule) {
-        if (rule.selectorText === ":root" || rule.selectorText === DARK_ROOT)
-          out.push(
-            rule.cssText
-              .replace(DARK_ROOT, '[data-gallery-theme="dark"]')
-              .replace(":root", "[data-gallery-theme]"),
-          );
-      } else if ("cssRules" in rule && !(rule instanceof CSSMediaRule))
-        walk((rule as CSSGroupingRule).cssRules);
-    }
-  };
-  for (const sheet of document.styleSheets) {
-    try {
-      walk(sheet.cssRules);
-    } catch {
-      // Another origin's sheet cannot be read; the app has none.
-    }
-  }
-  return out.join("\n");
-}
-
 // ---------- the server's diagrams ----------
 
 type Load = { state: "loading" } | { state: "failed"; error: string } | { state: "ready" };
@@ -375,11 +344,18 @@ function DiagramEntry({ shown, view }: { shown: Shown; view: View }) {
           {verdictNow.reason}
         </p>
       ) : null}
+      {/* Each panel is a theme scope, as a theme's thumbnail in Settings is: the
+          palette's recipes apply to it with its own base, so light and dark show
+          side by side. themes/custom.css sets the root only (the tile kit's
+          tokens read it that way) and is empty by default, so its build-time
+          overrides show on the page's own theme, not on both panels. */}
       <div className="flex flex-wrap items-start gap-3">
         {THEMES[view.theme].map((theme) => (
           <div
             key={theme}
             data-gallery-theme={theme}
+            data-theme-scope=""
+            data-theme={theme}
             className="flex-none rounded-md border border-default bg-surface-card text-primary"
             style={{ width: width.px + 2 * width.pad, padding: width.pad }}
           >
@@ -400,14 +376,6 @@ function DiagramEntry({ shown, view }: { shown: Shown; view: View }) {
 export function Gallery() {
   const server = useServer();
   const [view, setView] = useView();
-  const [scoped, setScoped] = useState(scopedTheme);
-  // A stylesheet edit (the palette, a theme) replaces the page's styles in
-  // place: copy the tokens again.
-  useEffect(() => {
-    const update = () => setScoped(scopedTheme());
-    import.meta.hot?.on("vite:afterUpdate", update);
-    return () => import.meta.hot?.off?.("vite:afterUpdate", update);
-  }, []);
 
   // The page's own chrome follows the one theme shown, light for both.
   useEffect(() => {
@@ -447,7 +415,6 @@ export function Gallery() {
 
   return (
     <div className="space-y-6 px-4 pb-16 text-primary" data-testid="gallery">
-      <style>{scoped}</style>
       <header className="sticky top-0 z-10 -mx-4 space-y-2 border-b border-default bg-surface-page px-4 py-3">
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <h1 className="text-lg font-semibold">Native diagram gallery</h1>

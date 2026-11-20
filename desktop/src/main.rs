@@ -26,6 +26,7 @@ mod onboarding;
 mod panel;
 mod settings;
 mod status;
+mod theme;
 mod tile_files;
 mod tray;
 mod updater;
@@ -394,6 +395,8 @@ fn main() {
             zoom::zoom_state,
             zoom::set_zoom,
             zoom::step_zoom,
+            theme::theme_state,
+            theme::save_theme,
             updater::update_state,
             updater::check_for_updates,
             updater::install_update,
@@ -409,6 +412,7 @@ fn main() {
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
             zoom::install(app.handle())?;
+            theme::install(app.handle())?;
             // Before the window, whose Settings page reads its state.
             updater::start(app.handle());
             tray::setup(app.handle());
@@ -432,9 +436,16 @@ fn main() {
                 // What this shell can host, for the page to read (see `declaration`).
                 .initialization_script(declaration::script(declaration::SHELL))
                 .initialization_script(zoom::SCRIPT)
+                .initialization_script(theme::script(&app.state::<theme::Store>().get()))
                 .on_page_load(|webview, payload| {
                     if payload.event() == tauri::webview::PageLoadEvent::Started {
                         zoom::apply(webview.as_ref());
+                        // Best effort: the init script holds the theme saved
+                        // at startup, so push the current one.
+                        let script = theme::script(&webview.state::<theme::Store>().get());
+                        if let Err(e) = webview.eval(&script) {
+                            eprintln!("baum desktop: cannot refresh the theme: {e}");
+                        }
                         // The page that opened the check window is gone.
                         check_window::close_soon(webview.app_handle());
                     }
@@ -508,8 +519,8 @@ mod tests {
     #[test]
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
-            "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom"],
-            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom", "allow-update-state", "allow-check-for-updates", "allow-install-update", "allow-cancel-update", "allow-dismiss-update-notice", "allow-save-tile-type", "allow-open-check-window", "allow-close-check-window"],
+            "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom", "allow-theme-state"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom", "allow-save-theme", "allow-update-state", "allow-check-for-updates", "allow-install-update", "allow-cancel-update", "allow-dismiss-update-notice", "allow-save-tile-type", "allow-open-check-window", "allow-close-check-window"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",
@@ -524,9 +535,10 @@ mod tests {
                 "allow-github-connection",
                 "allow-repositories",
                 "allow-finish-setup",
-                "allow-step-zoom"
+                "allow-step-zoom",
+                "allow-theme-state"
             ],
-            "tray-panel": ["allow-tray-panel", "allow-tray-panel-height", "allow-tray-action"],
+            "tray-panel": ["allow-tray-panel", "allow-tray-panel-height", "allow-tray-action", "allow-theme-state"],
             "tile-check": [],
         });
         let mut found = serde_json::Map::new();

@@ -342,7 +342,7 @@ func sectionView(doc []byte, id string) (map[string]any, error) {
 			}
 		default:
 			section := sectionOutline(d, s)
-			section["level_reasons"], section["body"], section["risks"] = s.LevelReasons, reviewv2.BodyOf(s, d.Tiles), s.Risks
+			section["level_reasons"], section["body"], section["risks"] = s.LevelReasons, s.Body, s.Risks
 			var tiles []map[string]any
 			for _, t := range d.Tiles {
 				if t.Owner == s.ID {
