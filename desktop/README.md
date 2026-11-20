@@ -1191,6 +1191,35 @@ the CPUs it had. The scenarios:
 | `filter` | `/` on the Inbox, type `retry` a key at a time, Enter to search titles; reports the Inbox's rows before and after | the Inbox's filter |
 | `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled; each must switch | two inboxes |
 | `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
+| `pages` | Every page and its main sub-views, rendered two ways and ranked slowest first (below) | |
+
+`pages` is the scenario for making every page render fast: it ranks the
+pages, so the slowest is the one to work on, and a change shows as that
+row's numbers going down. It covers the sidebar's pages (Inbox, Sessions,
+Timeline, Pull requests, Analytics, Repositories, Jobs, Settings) and the
+sub-views of a pull request's review (the largest reviewed pull request
+the Pull requests page links to), a session's transcript (the largest),
+New inbox and Edit inbox (opened, never saved). The sidebar's pages are read
+from the sidebar at run time, and the run fails if it lists one the scenario
+does not know (add it to `KNOWN` in `app/scripts/profile/pages.ts`), so a
+new page is not left out unseen. Each page is measured two ways: `nav`, as a
+person moves (it tries Ctrl+1 to Ctrl+8 and, because the app reads the key's
+place (`code`), which WebDriver's synthesized key events leave empty, clicks
+the sidebar's link instead; sub-views click their link, else use the history
+entry the app's own links make; the summary says which), and
+`direct`, a reload of the page's address. Each page must show real content
+(its list's rows, the review, the transcript...) and not a loader or an
+error, or the run fails; a page the data leaves empty reports `empty` in the
+table and is not timed. Its `## Pages` table has a row per page and way,
+slowest `content` first, then the empty ones: `content` and `settled` are the
+collector's navigation times (first frame with no loader, then with no
+request in flight as well), `commits` and `render ms` the root `app`
+region's counted in the page's own window, `long frames` and `requests` the
+ones that began in it, `request ms` the requests' summed time to their
+headers, and `DOM` the element count once it settled. Numbers are medians
+over the runs. The tour of `nav` visits comes last in each run, so the
+summary's other sections (metrics, interactions, components, requests)
+describe that tour alone.
 
 A scenario the data cannot run exits with status 3 and a summary saying
 why. A journey that does not go as planned fails rather than report
