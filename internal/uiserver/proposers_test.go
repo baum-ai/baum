@@ -455,7 +455,7 @@ func proposalCases() []proposalCase {
 		},
 		tool: "propose_inbox", args: map[string]any{"name": "Platform", "query": "repo=owner/repo", "color": "green"},
 		route: inboxPut(func(list []map[string]any) []map[string]any {
-			return append(list, map[string]any{"name": "Platform", "color": "green", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "repo=owner/repo", "no_bots": false, "badge": true})
+			return append(list, map[string]any{"name": "Platform", "color": "green", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "repo=owner/repo", "no_bots": false, "badge": true, "auto_review": true})
 		}),
 		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["badge"] = false; return list }),
 	}, {
@@ -468,6 +468,25 @@ func proposalCases() []proposalCase {
 			return list
 		}),
 		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["color"] = "red"; return list }),
+	}, {
+		name: "turn off automatic reviews of an inbox", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PageInbox}
+		},
+		tool: "propose_inbox", inbox: 1, args: map[string]any{"auto_review": false},
+		route: inboxPut(func(list []map[string]any) []map[string]any {
+			list[0]["auto_review"] = false
+			return list
+		}),
+		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["color"] = "red"; return list }),
+	}, {
+		name: "new inbox without automatic reviews", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PageInbox}
+		},
+		tool: "propose_inbox", args: map[string]any{"name": "Quiet", "auto_review": false},
+		route: inboxPut(func(list []map[string]any) []map[string]any {
+			return append(list, map[string]any{"name": "Quiet", "color": "blue", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "", "no_bots": false, "badge": true, "auto_review": false})
+		}),
+		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["badge"] = false; return list }),
 	}, {
 		name: "query of an inbox with the older fields", page: func(*proposalFixture) agentcontext.PageContext {
 			return agentcontext.PageContext{Page: agentcontext.PageInbox}

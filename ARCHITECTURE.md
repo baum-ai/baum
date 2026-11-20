@@ -6169,8 +6169,13 @@ it and `Queue.SubmitAutomatic` decides each job.
   pending head if it is eligible: the user's review is requested or the user
   authored it (narrowed to one of these, or widened to every pull request, by
   the `pull_requests` preference), it is not a draft, it is not from a fork,
-  and its author has known write access. Hook refresh applies the same rule
-  before it triggers a poll. Drafts get no automatic review, so pushes to a
+  and its author has known write access. With `pull_requests` `inboxes`, the
+  first condition is instead that a saved inbox with `auto_review` on holds
+  the PR (`inboxqueue.Service.AutoReview`, read once per snapshot and per
+  catch-up, so an inbox change counts from the next one); saved inboxes that
+  do not read skip the snapshot rather than drop pending heads. Hook refresh
+  applies the same rule before it triggers a poll, except that with
+  `inboxes` any pull request may qualify and the scheduler decides. Drafts get no automatic review, so pushes to a
   draft wait for "ready for review"; manual generation of a draft still works.
   A queued automatic job whose PR turned draft before it started is cancelled
   (`draft`) by the recheck before any model call, and its head is pending

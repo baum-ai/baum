@@ -50,7 +50,7 @@ func TestFreshReadCreatesDefault(t *testing.T) {
 	}
 	got := list(body)
 	if len(got) != 1 || got[0]["name"] != "Default" || got[0]["query"] != DefaultQuery || got[0]["what"] != "any" ||
-		got[0]["risk"] != "any" || got[0]["badge"] != true || got[0]["no_bots"] != false ||
+		got[0]["risk"] != "any" || got[0]["badge"] != true || got[0]["auto_review"] != true || got[0]["no_bots"] != false ||
 		len(got[0]["owners"].([]any)) != 0 || len(got[0]["repositories"].([]any)) != 0 || !idPattern.MatchString(got[0]["id"].(string)) {
 		t.Fatalf("default: %v", got)
 	}
@@ -227,5 +227,28 @@ func TestCorruptDocumentIsNeverInitialized(t *testing.T) {
 		if got := stored(t, h.path); got != corrupt {
 			t.Fatalf("document touched: %q", got)
 		}
+	}
+}
+
+func TestMissingAutoReviewReadsAsOnAndFalseRoundTrips(t *testing.T) {
+	h := newHarness(t)
+	seed(t, h, `{"revision":3,"initialized":true,"inboxes":[`+
+		`{"id":"`+strings.Repeat("a", 32)+`","name":"Old","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"query":"","no_bots":false,"badge":true},`+
+		`{"id":"`+strings.Repeat("b", 32)+`","name":"Off","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"query":"","no_bots":false,"badge":true,"auto_review":false}]}`)
+	store := Open(h.path)
+	state, err := store.Read()
+	if err != nil || len(state.Inboxes) != 2 || !state.Inboxes[0].AutoReview || state.Inboxes[1].AutoReview {
+		t.Fatalf("%+v %v", state, err)
+	}
+	// An inbox saved off stays off; the one without the key is written on.
+	next := state.Inboxes
+	next[0].AutoReview = false
+	next[1].AutoReview = true
+	if _, err := store.Replace(state.Revision, next); err != nil {
+		t.Fatal(err)
+	}
+	again, err := store.Read()
+	if err != nil || again.Inboxes[0].AutoReview || !again.Inboxes[1].AutoReview {
+		t.Fatalf("%+v %v", again, err)
 	}
 }

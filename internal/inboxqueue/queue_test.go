@@ -432,3 +432,132 @@ func TestInboxHandler(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+// autoReviewService builds a Service whose index holds entries (or fails with
+// indexErr) and whose saved inboxes are saved.
+func autoReviewService(entries []reviewindex.Entry, indexErr error, saved []inboxes.Inbox) *Service {
+	return &Service{
+		Index: func(context.Context) (reviewindex.Snapshot, error) {
+			return reviewindex.Snapshot{Entries: entries}, indexErr
+		},
+		Jobs:    func() []jobs.Job { return nil },
+		Groups:  func(context.Context) ([]reviewgroups.Group, error) { return nil, nil },
+		Snoozes: func() (json.RawMessage, error) { return nil, nil },
+		Inboxes: func() ([]inboxes.Inbox, error) { return saved, nil },
+		Now:     func() time.Time { return now },
+	}
+}
+
+func discovered(number int, mutate func(*discovery.PullRequest)) discovery.PullRequest {
+	pr := entry(number, nil).PullRequest
+	if mutate != nil {
+		mutate(&pr)
+	}
+	return pr
+}
+
+func TestAutoReviewHoldsNothingWithoutAnAutoReviewInbox(t *testing.T) {
+	requested := discovered(1, func(pr *discovery.PullRequest) { pr.ReviewRequestedFromMe = true })
+	// Every inbox is off: nothing matches, even an inbox with no filter.
+	off := autoReviewService(nil, nil, []inboxes.Inbox{{ID: "a", Query: "review-requested=@me"}, {ID: "b"}})
+	test, err := off.AutoReview(context.Background())
+	if err != nil || test(requested) {
+		t.Fatalf("all off: %v %v", test(requested), err)
+	}
+	// Inboxes unset: nothing matches and it is not an error.
+	unset := autoReviewService(nil, nil, nil)
+	unset.Inboxes = nil
+	if test, err = unset.AutoReview(context.Background()); err != nil || test(requested) {
+		t.Fatalf("unset: %v", err)
+	}
+	// Inboxes failing is an error.
+	failing := autoReviewService(nil, nil, nil)
+	failing.Inboxes = func() ([]inboxes.Inbox, error) { return nil, errors.New("unreadable") }
+	if _, err = failing.AutoReview(context.Background()); err == nil {
+		t.Fatal("unreadable inboxes accepted")
+	}
+}
+
+func TestAutoReviewMatchesAnyInboxWithItOn(t *testing.T) {
+	requested := discovered(1, func(pr *discovery.PullRequest) { pr.ReviewRequestedFromMe = true })
+	authored := discovered(2, func(pr *discovery.PullRequest) { pr.AuthoredByMe = true })
+	other := discovered(3, nil)
+	check := func(saved []inboxes.Inbox, want [3]bool) {
+		t.Helper()
+		test, err := autoReviewService(nil, nil, saved).AutoReview(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := [3]bool{test(requested), test(authored), test(other)}; got != want {
+			t.Fatalf("%+v: requested, authored, other = %v, want %v", saved, got, want)
+		}
+	}
+	check([]inboxes.Inbox{{ID: "a", Query: "review-requested=@me", AutoReview: true}}, [3]bool{true, false, false})
+	// The same inbox off holds nothing, while another on still matches.
+	check([]inboxes.Inbox{{ID: "a", Query: "review-requested=@me"}}, [3]bool{})
+	check([]inboxes.Inbox{
+		{ID: "a", Query: "review-requested=@me"},
+		{ID: "b", Query: "author=@me", AutoReview: true},
+	}, [3]bool{false, true, false})
+	// Any of the inboxes that are on.
+	check([]inboxes.Inbox{
+		{ID: "a", Query: "review-requested=@me", AutoReview: true},
+		{ID: "b", Query: "author=@me", AutoReview: true},
+	}, [3]bool{true, true, false})
+}
+
+func TestAutoReviewReadsTheIndexEntryForWhatDiscoveryLacks(t *testing.T) {
+	saved := []inboxes.Inbox{{ID: "merge", Query: "waiting=merge", AutoReview: true}}
+	authored := func(pr *discovery.PullRequest) { pr.AuthoredByMe = true }
+	pr := discovered(1, authored)
+	// Absent from the index, the kind comes from discovery alone: nothing
+	// to merge is known.
+	test, err := autoReviewService(nil, nil, saved).AutoReview(context.Background())
+	if err != nil || test(pr) {
+		t.Fatalf("not indexed: %v %v", test(pr), err)
+	}
+	// Indexed at the same head and ready to merge.
+	ready := []reviewindex.Entry{mine(1, func(e *reviewindex.Entry) { e.Merge = "ready" })}
+	test, err = autoReviewService(ready, nil, saved).AutoReview(context.Background())
+	if err != nil || !test(pr) {
+		t.Fatalf("indexed: %v %v", test(pr), err)
+	}
+	// Another pull request is not the indexed one.
+	if test(discovered(2, authored)) {
+		t.Fatal("matched a pull request the index holds nothing for")
+	}
+}
+
+func TestAutoReviewReadsDiscoveryMetadataOfAPullRequestNotIndexed(t *testing.T) {
+	saved := []inboxes.Inbox{
+		{ID: "failing", Query: "checks=failing", AutoReview: true},
+		{ID: "merge", Query: "waiting=merge", AutoReview: true},
+	}
+	test, err := autoReviewService(nil, nil, saved).AutoReview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !test(discovered(1, func(pr *discovery.PullRequest) { pr.Checks = "failing" })) {
+		t.Fatal("checks=failing missed discovery's failing checks")
+	}
+	ready := discovered(2, func(pr *discovery.PullRequest) {
+		pr.AuthoredByMe, pr.Merge, pr.Checks = true, "ready", "passing"
+	})
+	if !test(ready) {
+		t.Fatal("waiting=merge missed discovery's ready pull request")
+	}
+	if test(discovered(3, func(pr *discovery.PullRequest) { pr.Checks = "passing" })) {
+		t.Fatal("matched passing checks of someone else's pull request")
+	}
+}
+
+func TestAutoReviewMatchesFromDiscoveryWhenTheIndexFails(t *testing.T) {
+	saved := []inboxes.Inbox{{ID: "mine", Query: "author=@me", AutoReview: true}}
+	test, err := autoReviewService(nil, errors.New("index unreadable"), saved).AutoReview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !test(discovered(1, func(pr *discovery.PullRequest) { pr.AuthoredByMe = true })) || test(discovered(2, nil)) {
+		t.Fatal("discovery fields did not decide")
+	}
+}

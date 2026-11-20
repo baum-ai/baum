@@ -181,7 +181,7 @@ happen only when the user selects an install or add action. Displayed paths abbr
    choosing Claude Code or Codex for them adds their own model and effort row.
    A model can be a preset or a custom name. Choose whether reviews run
    automatically and, if so, for which pull requests (authored, requested,
-   both, or all open pull requests). The screen reads them with `baum internal reviews show` and saves changes
+   both, all open pull requests, or those in an inbox with automatic reviews on). The screen reads them with `baum internal reviews show` and saves changes
    with `baum internal reviews set` when the user opens baum at the end of
    setup. They are stored as app preferences in the repository registry, which
    the daemon rereads for every job. The native bridge forwards the review,

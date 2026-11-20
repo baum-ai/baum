@@ -50,6 +50,9 @@ export type InboxPageProps = {
   entries?: Entry[];
   /** How many saves the daemon has accepted; each shows "Saved" for a moment. */
   saves: number;
+  /** Whether automatic reviews follow the inboxes (Settings › Reviews), which
+   *  is when an inbox's own switch counts; null while unknown. */
+  reviewsFollowInboxes?: boolean | null;
   save: (inboxes: Inbox[]) => void;
   go: (href: string) => void;
   Link: ComponentType<ViewerLinkProps>;
@@ -233,6 +236,7 @@ function EditInbox({
   entries,
   saves,
   save,
+  reviewsFollowInboxes = null,
   Link,
 }: InboxPageProps & {
   inbox: Inbox;
@@ -482,6 +486,32 @@ function EditInbox({
                 className="local-switch"
                 checked={inbox.badge}
                 onChange={(event) => change({ badge: event.target.checked })}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Review automatically"
+              htmlFor={`${ids}-auto-review`}
+              detail={
+                reviewsFollowInboxes === false ? (
+                  <>
+                    Counts once{" "}
+                    <Link href={appURL("?page=settings&section=reviews")}>Settings › Reviews</Link>{" "}
+                    reviews the pull requests in your inboxes.
+                  </>
+                ) : inbox.auto_review ? (
+                  "baum reviews its pull requests on its own. Drafts, forks and authors without write access are skipped."
+                ) : (
+                  "baum reviews its pull requests only when you ask, unless another inbox holding them reviews automatically."
+                )
+              }
+            >
+              <input
+                id={`${ids}-auto-review`}
+                type="checkbox"
+                role="switch"
+                className="local-switch"
+                checked={inbox.auto_review}
+                onChange={(event) => change({ auto_review: event.target.checked })}
               />
             </SettingRow>
           </div>

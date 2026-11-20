@@ -63,6 +63,7 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 		{repository, "propose_repository_settings", map[string]any{"automatic": nil}, "acme/web:settings", `{"automatic":null}`},
 		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"name": "N"}, TargetNewInbox, `{"name":"N"}`},
 		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"id": strings.Repeat("a", 32), "badge": false}, TargetInbox + strings.Repeat("a", 32), `{"badge":false}`},
+		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"id": strings.Repeat("a", 32), "auto_review": false}, TargetInbox + strings.Repeat("a", 32), `{"auto_review":false}`},
 		{PageContext{Page: PageGroup, Group: "g1"}, "propose_group", map[string]any{"add": []int{3}}, TargetGroup + "g1", `{"add":[3]}`},
 		{PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12}, "propose_review_comment", map[string]any{"body": "b"}, "acme/web#12:review_comment", `{"body":"b"}`},
 	} {

@@ -360,7 +360,7 @@ func proposeTools() []Tool {
 		Description: "Proposes a change to the Settings page's Reviews section: whether automatic reviews are on, how they follow later pushes (updates: always reviews every push; on_open reviews once; on_change reviews once, then again only when the agent finds a push would change the review), for which pull requests (both: the person's own and those they were asked to review; authored; requested; all), and the harness reviews use (backend: auto, claude or codex), its model (empty for the harness's default) and effort. Only the fields given change. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"enabled":{"type":"boolean","description":"Automatic reviews on or off."},` +
-			`"pull_requests":{"type":"string","maxLength":32,"description":"both, authored, requested or all."},` +
+			`"pull_requests":{"type":"string","maxLength":32,"description":"both, authored, requested, all, or inboxes (the pull requests in a saved inbox whose auto_review is on)."},` +
 			`"updates":{"type":"string","maxLength":32,"description":"always, on_open or on_change."},` +
 			`"backend":{"type":"string","maxLength":32,"description":"auto, claude or codex."},` +
 			`"model":{"type":"string","maxLength":256},` +
@@ -594,14 +594,15 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name: "propose_inbox",
-		Description: "Proposes a new saved inbox, or with id a change to a saved one (see inboxes): its name, color, query (the Inbox filter syntax; test it with test_query) and whether the sidebar shows its count. Only the fields given change; a new inbox needs a name, and starts with no filter and a count. " +
+		Description: "Proposes a new saved inbox, or with id a change to a saved one (see inboxes): its name, color, query (the Inbox filter syntax; test it with test_query), whether the sidebar shows its count and whether its pull requests are reviewed automatically (auto_review, which applies while the Reviews setting's pull_requests is inboxes). Only the fields given change; a new inbox needs a name, and starts with no filter, a count and automatic reviews on. " +
 			"The person must have the Inbox open. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","pattern":"^[0-9a-f]{32}$","description":"The saved inbox to change; omit to propose a new one."},` +
 			`"name":{"type":"string","minLength":1,"maxLength":40},` +
 			`"color":{"type":"string","maxLength":16,"description":"blue, green, red, amber, purple or grey."},` +
 			`"query":{"type":"string","maxLength":500},` +
-			`"badge":{"type":"boolean"}},` +
+			`"badge":{"type":"boolean"},` +
+			`"auto_review":{"type":"boolean"}},` +
 			`"minProperties":1,"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -682,6 +683,8 @@ type InboxChange struct {
 	Color *string `json:"color,omitempty"`
 	Query *string `json:"query,omitempty"`
 	Badge *bool   `json:"badge,omitempty"`
+	// AutoReview is the inbox's inboxes.Inbox.AutoReview.
+	AutoReview *bool `json:"auto_review,omitempty"`
 }
 
 // GroupChange is the After of a review group proposal.

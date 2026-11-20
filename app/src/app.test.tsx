@@ -1107,6 +1107,14 @@ it("saves each review setting as it changes", async () => {
     },
   });
   expect(section().textContent).toContain("Saved");
+  // Reviews can follow the inboxes, each with its own switch.
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "inboxes");
+  expect(puts.at(-1)!.body).toMatchObject({ pull_requests: "inboxes" });
+  expect(node.querySelector("#review-all-note")).toBeNull();
+  expect(node.querySelector("#review-inboxes-note")!.textContent).toContain(
+    "Pull requests in any inbox with Review automatically on get reviewed.",
+  );
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "all");
   await choose(global, "on_change");
   expect(puts.at(-1)!.body).toMatchObject({ enabled: true, updates: "on_change" });
   expect(section().textContent).toContain("only when the change would alter it");

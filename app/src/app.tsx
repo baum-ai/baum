@@ -1477,6 +1477,9 @@ function Workspace({ url }: { url: UrlState }) {
     entries: indexedEntries,
     saves: inboxes.saves,
     save: inboxes.save,
+    reviewsFollowInboxes: automatic
+      ? automatic.enabled && automatic.pull_requests === "inboxes"
+      : null,
     go: navigate,
     Link: LocalLink,
   };
