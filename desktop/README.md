@@ -1089,6 +1089,37 @@ copies with a snapshot of the repository's reviews, and without it they start
 empty. `BAUM_RELAY_URL` is written to the home's `.profile`,
 which the daemon's environment comes from.
 
+`--seed-data[=SEED]`, instead, fills a home that has no data yet with the
+seeded profiling dataset ([`seeddata`](../internal/seeddata/README.md),
+seed 1 by default): 50 repositories with 1,200 open pull requests and about
+1,650 saved review versions, one pull request with a 5,000-line diff, Claude
+Code and Codex sessions of up to 3,000 prompts and 20 inboxes. On every
+machine a seed gives the same lists, pull requests, commits (by SHA),
+reviews, inboxes and transcripts, so before and after numbers compare;
+`--copy-data` copies this machine's data, which differs between machines and
+changes over time. Clone paths and the transcripts' working directories
+follow the home's path, so the dataset's digest is the same only for the
+same seed and the same home path. It is generated in `oss-test` (about 15
+seconds) and counted in `~/.local/state/baum/seeddata.json` in the
+instance's home, written last: a failed generation removes what it wrote. A
+home with other baum data and no `seeddata.json` is refused rather than run
+online. The daemon serves it with no GitHub and no model: the dataset names
+a fake GitHub token whose discovery cache it seeds, automatic reviews are
+off, and an instance whose home holds the dataset runs with an unreachable
+proxy for everything but loopback, so a refresh fails at once and the cache
+stays. The first start of a new home still downloads Claude Code into it,
+before the proxy is set, as every isolated home does; after that nothing
+leaves the machine. Its
+pull requests show as not refreshed from GitHub, and GitHub's panels on a
+pull request (checks, comment text) as unavailable. The sessions are recorded
+as ended when the dataset is written, and the Sessions page lists an ended
+session for a day; delete the home to write it again.
+
+```sh
+just desktop::isolated perf --seed-data --headless
+just desktop::isolated perf2 --seed-data=7 --headless
+```
+
 `--headless` runs the instance without a display of yours: the container
 starts its own headless Weston (`BAUM_ISOLATED_WIDTH` × `BAUM_ISOLATED_HEIGHT`,
 1440 × 900 by default) and the app draws there, so agents can run the real
