@@ -504,9 +504,10 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 
 // unrevisedClaims are the points and risks of a revision's reply (their
 // paths, and each described) whose text is a previous point's or risk's
-// word for word (whitespace aside) that cited a gone hunk, and that now
-// cite a hunk new to the pull request (reviewv2.Revised.New): the cites
-// moved to the new code, but the claims may no longer hold.
+// word for word (whitespace aside) that cited a gone hunk, whatever they
+// cite now: the code they described changed, but the claims may no longer
+// hold. Prose and note blocks, which cite nothing, are only marked in the
+// input.
 func unrevisedClaims(s sectionReply, rev reviewv2.Revised) (paths, claims []string) {
 	stale := map[string][]string{}
 	note := func(text string, cites []reviewv2.Anchor) {
@@ -535,17 +536,12 @@ func unrevisedClaims(s sectionReply, rev reviewv2.Revised) (paths, claims []stri
 		if !ok {
 			return
 		}
-		var fresh []string
-		for _, h := range hunkCites(cites) {
-			if slices.Contains(rev.New, h) && !slices.Contains(fresh, h) {
-				fresh = append(fresh, h)
-			}
-		}
-		if len(fresh) == 0 {
-			return
+		now := "it cites no hunk now"
+		if cited := hunkCites(cites); len(cited) > 0 {
+			now = "now " + strings.Join(cited, ", ")
 		}
 		paths = append(paths, path)
-		claims = append(claims, fmt.Sprintf("%q is the previous text unchanged, but the code it described changed (%s gone, now %s)", clean(text), strings.Join(gone, ", "), strings.Join(fresh, ", ")))
+		claims = append(claims, fmt.Sprintf("%q is the previous text unchanged, but the code it described changed (%s gone, %s)", clean(text), strings.Join(gone, ", "), now))
 	}
 	for i, b := range s.Body {
 		for j, p := range b.Items {

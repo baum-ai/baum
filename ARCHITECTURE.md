@@ -2831,9 +2831,10 @@ the levels of `agent/orchestrate` instead of the staged review:
    cites only the section's hunks now; otherwise it is sent back and the
    agent writes the section. A written revision that repeats a previous
    point or risk word for word (whitespace aside) whose cited hunks
-   included a gone one, now citing a hunk new to the pull request, is sent
-   back once with one finding listing them: its words may still match while
-   its meaning changed (a deadline that became an idle timeout). The check
+   included a gone one, whatever it cites now, is sent back once with one
+   finding listing them: its words may still match while its meaning
+   changed (a deadline that became an idle timeout). Prose and note blocks
+   cite nothing, so they are only marked in the input, not checked. The check
    runs on strict passes until it has sent the section back once; the same
    text on a later pass, or on the lenient last pass, is taken as checked.
    Its tile blocks place only the section's tiles

@@ -808,7 +808,6 @@ func TestRevisionRechecksClaimsOverChangedCode(t *testing.T) {
 	}{
 		{name: "lenient pass", reply: stale, lenient: true, recheck: true},
 		{name: "asked before", reply: stale, recheck: false},
-		{name: "cites still the unchanged hunk", reply: pollReply(oldPoint, oldRisk, hunkA), recheck: true},
 		{name: "rewritten", reply: pollReply("At most three repositories poll at once, each stopped after 45 s without progress.", "A poll that keeps making progress never times out.", hunkB), recheck: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -816,6 +815,12 @@ func TestRevisionRechecksClaimsOverChangedCode(t *testing.T) {
 				t.Errorf("sent back: %v %q", r.Rechecked, findings)
 			}
 		})
+	}
+	// The same stale claims moved onto code that did not change are sent back
+	// too: the code they described is gone wherever their cites point now.
+	if r, findings := check(pollReply(oldPoint, oldRisk, hunkA), rev, false, true); !r.Rechecked ||
+		!strings.Contains(findings, jsonText(oldPoint)+" is the previous text unchanged, but the code it described changed ("+hunkGone+" gone, now "+hunkA+")") {
+		t.Errorf("stale claims moved onto unchanged code: %v %q", r.Rechecked, findings)
 	}
 	// A claim kept word for word over unchanged code is not sent back, even
 	// when the section's other code is gone and it now cites a new hunk too.
