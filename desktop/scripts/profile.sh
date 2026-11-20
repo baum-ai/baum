@@ -141,6 +141,15 @@ fi
 [ "$check" = 1 ] && exit 0
 
 cache=${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}
+# Diagnostic switches, to measure what each does (README, Profiling):
+# BAUM_PROFILE_PAUSE=0 leaves a comparison's waiting side running, and
+# BAUM_PROFILE_SETTLE=0 starts each run without waiting for the instance
+# to go quiet.
+pause=${BAUM_PROFILE_PAUSE:-1}
+settle=${BAUM_PROFILE_SETTLE:-1}
+case $pause$settle in 00|01|10|11) ;; *) echo "profile: BAUM_PROFILE_PAUSE and BAUM_PROFILE_SETTLE take 0 or 1" >&2; exit 2 ;; esac
+[ "$pause" = 1 ] || echo "profile: BAUM_PROFILE_PAUSE=0: the waiting side keeps running (diagnostic)"
+[ "$settle" = 1 ] || echo "profile: BAUM_PROFILE_SETTLE=0: runs start without settling (diagnostic)"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 commit=$(git -C "$desktop" rev-parse --short HEAD 2>/dev/null || echo unknown)
 [ -n "$(git -C "$desktop/.." status --porcelain 2>/dev/null)" ] && commit="$commit+changes"
@@ -257,7 +266,7 @@ if [ -n "$baseline" ]; then
   }
   trap stop INT TERM HUP
 
-  run="node /oss/app/scripts/profile/run.ts $scenario --out /oss/desktop/$out --runs $runs --run-timeout $timeout"
+  run="BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario --out /oss/desktop/$out --runs $runs --run-timeout $timeout"
   # Each side runs in its own instance, the head's app built from this
   # checkout, the base's mounted from its build. Command lines for the
   # container's shell, so their quotes are meant.
@@ -311,7 +320,7 @@ if [ -n "$baseline" ]; then
           docker unpause "$(container "$going")" >/dev/null || true
           paused=
         fi
-        if [ "$paused" != "$waiting" ] && [ ! -f "$dir/$waiting.status" ]; then
+        if [ "$pause" = 1 ] && [ "$paused" != "$waiting" ] && [ ! -f "$dir/$waiting.status" ]; then
           docker pause "$(container "$waiting")" >/dev/null 2>&1 && paused=$waiting
         fi
         printf '%s' "$turn" >"$dir/go.tmp"
@@ -367,7 +376,7 @@ out=target/profile/$scenario-$stamp
 # runner, which launches it through WebKitWebDriver. A command line for the
 # container's shell, so its quotes are meant.
 # shellcheck disable=SC2089,SC2090
-BAUM_ISOLATED_RUN="cargo build --locked --quiet && node /oss/app/scripts/profile/run.ts $scenario \
+BAUM_ISOLATED_RUN="cargo build --locked --quiet && BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
 --app /oss/desktop/target/debug/baum-desktop --out /oss/desktop/$out --runs $runs \
 --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
 # shellcheck disable=SC2090

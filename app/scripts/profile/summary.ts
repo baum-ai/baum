@@ -17,6 +17,10 @@ export type Run = {
    *  order both sides' runs took, from 0. */
   side?: "base" | "head";
   order?: number;
+  /** What the machine was doing: the 1-minute load average as the run
+   *  began, the milliseconds it waited for its instance to go quiet first,
+   *  and the CPU its container used during it. */
+  conditions?: { load: number; settle: number; cpu?: number };
 };
 
 export type Chunk = {

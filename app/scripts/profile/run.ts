@@ -17,7 +17,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { cpus, homedir, loadavg } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
@@ -346,6 +346,7 @@ function environment(snapshot: Snapshot) {
     read("/sys/fs/cgroup/cpuset.cpus.effective") ||
     read("/sys/fs/cgroup/cpuset/cpuset.effective_cpus") ||
     "unknown";
+  entries["host CPUs"] = String(cpus().length);
   // The user agent's WebKit version is frozen; the package's is not.
   let webkit = "";
   try {
@@ -462,6 +463,47 @@ async function passTurn(at: number) {
   writeShared("turn", String(at + 1));
 }
 
+/** Milliseconds of CPU this container has used, from its cgroup (v2, then
+ *  v1's cpuacct), or undefined where neither can be read. */
+function containerCpu(): number | undefined {
+  for (const [path, parse] of [
+    ["/sys/fs/cgroup/cpu.stat", (t: string) => Number(t.match(/^usage_usec (\d+)/m)?.[1]) / 1000],
+    ["/sys/fs/cgroup/cpuacct/cpuacct.usage", (t: string) => Number(t) / 1e6],
+  ] as const) {
+    try {
+      const value = parse(readFileSync(path, "utf8"));
+      if (Number.isFinite(value)) return value;
+    } catch {}
+  }
+  return undefined;
+}
+
+/** BAUM_PROFILE_SETTLE=0 turns settling off, to measure without it. */
+const settling = process.env.BAUM_PROFILE_SETTLE !== "0";
+/** A quarter second in which the container used under this share of one
+ *  CPU counts as quiet. */
+const QUIET_SHARE = 0.1;
+
+/** Waits, at most `cap` ms, until the container (the app, its daemon and
+ *  compositor) has been quiet for a second: four quarter seconds each under
+ *  QUIET_SHARE of a CPU. A new home's daemon works through its clones for a
+ *  while after it starts, and a side just thawed catches up on what came
+ *  due while it was frozen; either would land in the runs. Returns the
+ *  milliseconds it waited. */
+async function settle(cap: number): Promise<number> {
+  const start = Date.now();
+  if (!settling || containerCpu() === undefined) return 0;
+  let quiet = 0;
+  let last = containerCpu()!;
+  while (quiet < 4 && Date.now() - start < cap) {
+    await sleep(250);
+    const now = containerCpu()!;
+    quiet = now - last < 250 * QUIET_SHARE ? quiet + 1 : 0;
+    last = now;
+  }
+  return Date.now() - start;
+}
+
 const collected: Run[] = [];
 let environmentFrom: Snapshot | undefined;
 
@@ -506,6 +548,10 @@ async function main() {
     : Array.from({ length: runs + 1 }, (_, index) => ({ index, at: undefined }));
   if (side) {
     await idle();
+    // Before the other side may run, so each side's daemon finishes its
+    // start on its own time.
+    const waited = await settle(300_000);
+    if (waited > 2_000) log(`waited ${Math.round(waited / 1000)} s for the instance to go quiet`);
     await bothReady();
   }
   for (const { index, at } of steps) {
@@ -515,7 +561,10 @@ async function main() {
     const what = index === 0 ? "the warm-up" : `run ${index}`;
     await limited(
       (async () => {
+        const settled = await settle(15_000);
+        const load = loadavg()[0]!;
         await restoreState();
+        const cpuBefore = containerCpu();
         const started = performance.now();
         const metrics = await scenario!.run(context, state as never);
         const wall = performance.now() - started;
@@ -529,6 +578,11 @@ async function main() {
           metrics: { ...metrics, ...scenario!.after?.(snapshot), ...standardMetrics(snapshot) },
           snapshot,
           ...(side ? { side, order: at } : {}),
+          conditions: {
+            load,
+            settle: settled,
+            ...(cpuBefore === undefined ? {} : { cpu: containerCpu()! - cpuBefore }),
+          },
         });
       })(),
       what,

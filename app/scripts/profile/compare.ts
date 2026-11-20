@@ -349,6 +349,8 @@ export function summariseComparison(c: Comparison): string {
         `metrics need p under ${(ALPHA / family).toFixed(4)} after Holm's adjustment, and the smallest possible p ` +
         `is ${pText(least)}. Use --runs 8 or more for verdicts on them.`,
     );
+  const busy = machineLoad(c);
+  if (busy) lines.push(busy);
   lines.push(
     "- Decide on the headline. When nothing changed, about one comparison in ten still flags " +
       "some metric, and one in twenty the headline: run it again before keeping a change.",
@@ -429,6 +431,7 @@ export function comparisonJson(c: Comparison) {
       order: run.order,
       warmup: run.index === 0,
       wall: run.wall,
+      ...(run.conditions ? { conditions: run.conditions } : {}),
       metrics: run.metrics,
     }));
   return {
@@ -463,4 +466,28 @@ export function daemonFailure(out: string, side?: Side): string | undefined {
         "store schemas, such as a commit after the migration."
       : "")
   );
+}
+
+/** The share of the machine's CPUs a load average above which the
+ *  summary warns that other work may have made the runs noisy. */
+export const BUSY_LOAD = 0.75;
+
+/** A verdict line on the machine's load as the runs began, when the runs
+ *  recorded it: a warning when it was high, since load from other work
+ *  widens the runs' spread and hides small changes. */
+export function machineLoad(c: Comparison): string | undefined {
+  const loads = (p: Profile) => p.runs.flatMap((r) => (r.conditions ? [r.conditions.load] : []));
+  const base = loads(c.base);
+  const head = loads(c.head);
+  if (!base.length || !head.length) return undefined;
+  const cpus = Number(c.head.environment["host CPUs"]) || 0;
+  const all = [...base, ...head];
+  const max = Math.max(...all);
+  const text =
+    `load average ${percentile(base, 50).toFixed(1)} (base) and ${percentile(head, 50).toFixed(1)} ` +
+    `(head) at the median run, at most ${max.toFixed(1)}` +
+    (cpus ? `, on ${cpus} CPUs` : "");
+  if (cpus && max > BUSY_LOAD * cpus)
+    return `- **The machine was busy** (${text}): other work widens the runs' spread, so a small change may show as within noise. Run again when it is quieter.`;
+  return `- Machine: ${text}.`;
 }
