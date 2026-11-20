@@ -47,6 +47,10 @@ export type Frame = {
   /** The npm package it comes from, when it does. */
   package?: string;
   category: Category;
+  /** What tells it apart from other functions of the same name and place:
+   *  a package's functions by their original file and line, which `where`
+   *  leaves out. */
+  key?: string;
 };
 
 // --- Source maps -----------------------------------------------------------
@@ -182,13 +186,14 @@ export class SourceMap {
    *  0-based `line` and `column` of the bundle. V8 places a function at its
    *  parameters, so its name is one of the mappings just before: the one
    *  whose text in the bundle is `minified`. A name the minifier kept
-   *  (a method, a property) maps to no name and stays. */
-  functionName(line: number, column: number, minified: string): string {
+   *  (a method, a property) maps to no name and stays. Undefined when no
+   *  mapping nearby has the name's text. */
+  functionName(line: number, column: number, minified: string): string | undefined {
     const token = minified.split(/[ .]/).at(-1) ?? "";
     if (!token) return minified;
     const hit = this.at(line, column);
     const text = this.generated[line];
-    if (!hit || text === undefined) return minified;
+    if (!hit || text === undefined) return undefined;
     const [segments, index] = hit;
     for (let i = index; i >= 0 && i > index - 8; i--) {
       const segment = segments[i]!;
@@ -200,7 +205,7 @@ export class SourceMap {
           : minified;
       }
     }
-    return minified;
+    return undefined;
   }
 }
 
@@ -291,21 +296,19 @@ export class Symbolizer {
     if (!call.url) return { name: anonymous, where: "browser", category: "js" };
     const map = this.map(call.url);
     const original = map?.original(call.lineNumber, call.columnNumber);
-    if (!map || !original) {
-      const file = call.url.replace(/^[a-z]+:\/\/[^/]+/, "").replace(/^\/s\/[^/]+\//, "/");
-      return {
-        name: anonymous,
-        where: `${file}:${call.lineNumber + 1}:${call.columnNumber + 1}`,
-        category: "js",
-      };
-    }
-    const name = call.functionName
+    const bundled = `${call.url.replace(/^[a-z]+:\/\/[^/]+/, "").replace(/^\/s\/[^/]+\//, "/")}:${call.lineNumber + 1}:${call.columnNumber + 1}`;
+    if (!map || !original) return { name: anonymous, where: bundled, category: "js" };
+    const resolved = call.functionName
       ? map.functionName(call.lineNumber, call.columnNumber, call.functionName)
       : anonymous;
+    const name = resolved ?? call.functionName;
     const pkg = packageOf(original.source);
+    const source = `${displayPath(original.source)}:${original.line}`;
+    // A minified name the map could not resolve says nothing on its own.
+    const where = (place: string) => (resolved === undefined ? `${place}, ${bundled}` : place);
     return pkg
-      ? { name, where: pkg, package: pkg, category: "js" }
-      : { name, where: `${displayPath(original.source)}:${original.line}`, category: "js" };
+      ? { name, where: where(pkg), package: pkg, category: "js", key: `${source}\n${name}` }
+      : { name, where: where(source), category: "js" };
   }
 }
 
@@ -344,7 +347,8 @@ export function timeline(profile: CpuProfile, symbolize: Symbolizer): Timeline {
   const nodes = new Int32Array(samples.length);
   let at = profile.startTime;
   for (let i = 0; i < samples.length; i++) {
-    at += deltas[i] ?? 0;
+    // A negative delta (a clock step) would put samples out of order.
+    at += Math.max(0, deltas[i] ?? 0);
     times[i] = at;
     nodes[i] = index.get(samples[i]!) ?? 0;
   }
@@ -385,11 +389,16 @@ export const clockScript = (ms = 30) => `
   }
   return ${CLOCK_FUNCTION}();`;
 
+/** The fewest samples of CLOCK_FUNCTION to line the clocks up from: its
+ *  30 ms give some 120 at 250 µs. */
+export const CLOCK_MIN_SAMPLES = 10;
+
 /** The profile's clock less the page's performance.now(), in microseconds,
  *  from the samples taken while CLOCK_FUNCTION ran from `start` to `end`
  *  (page milliseconds). Its first sample is no earlier than `start` and its
  *  last no later than `end`, so the mean of the two is within half a
- *  sampling interval. Undefined when no sample caught it. */
+ *  sampling interval. Undefined when too few samples caught it or they
+ *  span too little of it. */
 export function clockOffset(line: Timeline, start: number, end: number): number | undefined {
   const marked = new Uint8Array(line.frames.length);
   line.frames.forEach((frame, i) => {
@@ -401,18 +410,25 @@ export function clockOffset(line: Timeline, start: number, end: number): number 
   };
   let first: number | undefined;
   let last: number | undefined;
+  let count = 0;
   for (let i = 0; i < line.times.length; i++) {
     if (!onStack(line.nodes[i]!)) continue;
+    count++;
     first ??= line.times[i]!;
     last = line.times[i]!;
   }
-  if (first === undefined || last === undefined) return undefined;
+  // Too few samples, or a sampler starved for part of the spin (shared
+  // CPUs), would put the offset milliseconds out: such a run is left
+  // unaligned rather than attributed wrongly.
+  const span = (end - start) * 1000;
+  if (first === undefined || last === undefined || count < CLOCK_MIN_SAMPLES) return undefined;
+  if (last - first < 0.8 * span) return undefined;
   return (first - start * 1000 + (last - end * 1000)) / 2;
 }
 
 // --- Adding up ---------------------------------------------------------------
 
-const frameKey = (frame: Frame) => `${frame.name}\n${frame.where}`;
+const frameKey = (frame: Frame) => frame.key ?? `${frame.name}\n${frame.where}`;
 
 export type FunctionTime = Frame & {
   /** Microseconds, summed over the windows given. */
@@ -579,7 +595,7 @@ export function cpuSection(
     "",
     `The renderer's main thread, sampled every ${intervalUs} µs in each measured run (not the warm-up), ` +
       "from the collector's reset (a cold start's page load) to its snapshot. Functions are named by the profiling build's " +
-      "source maps; a package's frames by their package; `browser` marks the DOM's and V8's own " +
+      "source maps, at the line the function starts on, not the hot line inside it; a package's frames by their package; `browser` marks the DOM's and V8's own " +
       "functions, whose time includes the style and layout they force. Times are per run. " +
       `${per(all)} ms a run: JavaScript ${share(sums.js, all)}, outside it ${share(sums.program, all)} ` +
       `(style, layout, paint and the browser's own work, \`(program)\`), garbage collection ${share(sums.gc, all)}, ` +
@@ -601,7 +617,7 @@ export function cpuSection(
     "### Functions by self time",
     "",
     ...table(
-      ["function", "where", "self ms", "share", "total ms"],
+      ["function", "where (function starts at)", "self ms", "share", "total ms"],
       functions.map((f) => [
         `\`${f.name}\``,
         f.where || "–",

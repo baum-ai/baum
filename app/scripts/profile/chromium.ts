@@ -5,7 +5,7 @@
 // same scenarios. Each measured run records a CPU profile through
 // chromedriver's Chrome DevTools Protocol endpoint; cpu.ts reads them.
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Snapshot } from "../../src/perf-collector.ts";
@@ -22,6 +22,9 @@ import { createSession, type Session } from "./webdriver.ts";
 
 /** Where isolated.Dockerfile puts them. */
 export const CHROMEDRIVER = "/opt/chromium/chromedriver";
+/** chromedriver's arguments: only severe messages, so no command (the
+ *  launch URL holds the daemon's capability) reaches driver.log. */
+export const CHROMEDRIVER_ARGS = ["--log-level=SEVERE"];
 const CHROME = "/opt/chromium/chrome";
 
 /** Microseconds between samples. 250 µs gives a 16 ms frame some 60
@@ -46,7 +49,10 @@ export function launchUrl(baum: string): string {
   const { url } = JSON.parse(readFileSync(join(status.state, "credential.json"), "utf8")) as {
     url?: string;
   };
-  if (!url) throw new Error(`${status.state}/credential.json holds no launch URL`);
+  // The app's rule: the daemon's loopback origin, the capability in the
+  // fragment. The URL itself is never logged.
+  if (!url || !/^http:\/\/127\.0\.0\.1:\d+\/(#|$)/.test(url))
+    throw new Error(`${status.state}/credential.json holds no http://127.0.0.1:<port>/ launch URL`);
   return url;
 }
 
@@ -57,6 +63,10 @@ export async function launchChromium(
   baum: string,
   cpu: CpuRecorder,
 ): Promise<Session> {
+  const profile = join(homedir(), ".cache/baum-profile/chromium");
+  // A browser that did not quit (a killed run) leaves its lock, which makes
+  // the next one refuse the profile; only one runs per instance.
+  rmSync(join(profile, "SingletonLock"), { force: true });
   const session = await createSession(driver, {
     browserName: "chrome",
     "goog:chromeOptions": {
@@ -72,7 +82,7 @@ export async function launchChromium(
         "--enable-precise-memory-info",
         // Its cache stays in the instance's home between launches, as
         // WebKit's does.
-        `--user-data-dir=${join(homedir(), ".cache/baum-profile/chromium")}`,
+        `--user-data-dir=${profile}`,
       ],
     },
   });
@@ -137,6 +147,8 @@ export class CpuRecorder {
       JSON.stringify(offset === undefined ? profile : { ...profile, baumClockOffset: offset }),
     );
     const size = statSync(join(this.out, file)).size;
+    if (line.times.length === 0)
+      console.error(`profile: ${file} holds no samples; the run's CPU section is empty`);
     console.log(
       `profile: ${file}, ${(size / 1024 / 1024).toFixed(1)} MiB, ${line.times.length} samples` +
         (offset === undefined ? "; its clock could not be lined up with the page's" : ""),

@@ -7,6 +7,7 @@ import {
   aggregate,
   breakdown,
   CLOCK_FUNCTION,
+  CLOCK_MIN_SAMPLES,
   clockOffset,
   cpuSection,
   decodeMappings,
@@ -60,7 +61,7 @@ function encode(lines: Segment[][]) {
 
 // A tiny bundle: line 0 `function Ke(a){return a}`, line 1
 // `const Zt=(b)=>b;class Q{render(){}}`.
-const CODE = "function Ke(a){return a}\nconst Zt=(b)=>b;class Q{render(){}}";
+const CODE = "function Ke(a){return a}\nconst Zt=(b)=>b;class Q{render(){}};class P{render(){}}";
 const SEGMENTS: Segment[][] = [
   [
     [0, 0, 9, 0],
@@ -70,8 +71,10 @@ const SEGMENTS: Segment[][] = [
   [
     [6, 0, 19, 6, 1], // Zt -> scrollTo
     [9, 0, 19, 15],
-    [25, 1, 4, 2], // render, a kept name
-    [31, 1, 4, 8],
+    [24, 1, 4, 2], // render, a kept name
+    [30, 1, 4, 8],
+    [44, 1, 40, 2], // another render in the same package
+    [50, 1, 40, 8],
   ],
 ];
 const RAW = {
@@ -120,10 +123,10 @@ describe("source maps", () => {
     assert.equal(MAP.functionName(0, 11, "Ke"), "highlight");
     assert.equal(MAP.functionName(1, 9, "Zt"), "scrollTo");
     // A method name the minifier kept has no name of its own.
-    assert.equal(MAP.functionName(1, 31, "render"), "render");
-    assert.equal(MAP.functionName(1, 31, "Q.render"), "Q.render");
-    // Not found near the position: left as V8 named it.
-    assert.equal(MAP.functionName(0, 11, "Xy"), "Xy");
+    assert.equal(MAP.functionName(1, 30, "render"), "render");
+    assert.equal(MAP.functionName(1, 30, "Q.render"), "Q.render");
+    // Not found near the position: unresolved.
+    assert.equal(MAP.functionName(0, 11, "Xy"), undefined);
   });
 
   it("resolves sources against the map and its sourceRoot", () => {
@@ -190,10 +193,29 @@ describe("naming frames", () => {
       where: "oss/app/src/review/diff.tsx:10",
       category: "js",
     });
-    assert.deepEqual(symbolizer.frame(call("render", BUNDLE, 1, 31)), {
+    assert.deepEqual(symbolizer.frame(call("render", BUNDLE, 1, 30)), {
       name: "render",
       where: "react-dom",
       package: "react-dom",
+      category: "js",
+      key: "oss/app/node_modules/.pnpm/react-dom@19.2.0/node_modules/react-dom/cjs/react-dom.js:5\nrender",
+    });
+  });
+
+  it("keeps a package's functions of the same name apart", () => {
+    const line = timeline(
+      profile([[call("render", BUNDLE, 1, 30)], [call("render", BUNDLE, 1, 50)]]),
+      symbolizer,
+    );
+    const renders = aggregate([{ line }]).filter((f) => f.name === "render");
+    assert.equal(renders.length, 2);
+    assert.ok(renders.every((f) => f.where === "react-dom"));
+  });
+
+  it("shows the bundle's place for a name it cannot resolve", () => {
+    assert.deepEqual(symbolizer.frame(call("Xy", BUNDLE, 0, 11)), {
+      name: "Xy",
+      where: "oss/app/src/review/diff.tsx:10, /assets/app-x.js:1:12",
       category: "js",
     });
   });
@@ -245,7 +267,7 @@ function profile(stacks: CallFrame[][], interval = 250, start = 1_000_000): CpuP
 
 const A = call("Ke", BUNDLE, 0, 11); // highlight
 const B = call("Zt", BUNDLE, 1, 9); // scrollTo
-const R = call("render", BUNDLE, 1, 31); // react-dom's
+const R = call("render", BUNDLE, 1, 30); // react-dom's
 const PROGRAM = call("(program)");
 const GC = call("(garbage collector)");
 const IDLE = call("(idle)");
@@ -317,14 +339,54 @@ describe("the clocks", () => {
   it("lines the profile up with the page from the clock function's samples", () => {
     const clock = call(CLOCK_FUNCTION, "", 1, 2);
     // Page time 100 ms is profile time 5 000 000 µs: offset 4 900 000 µs.
-    // The clock function runs from page 100 to 102 ms; sampled every
+    // The clock function runs from page 100 to 105 ms; sampled every
     // 250 µs from 5 000 100 µs.
-    const stacks = [[A], ...Array.from({ length: 8 }, () => [clock]), [IDLE]];
+    const stacks = [[A], ...Array.from({ length: 20 }, () => [clock]), [IDLE]];
     const p = profile(stacks, 250, 5_000_100 - 250);
     const line = timeline(p, symbolizer);
-    const offset = clockOffset(line, 100, 102)!;
+    const offset = clockOffset(line, 100, 105)!;
     assert.ok(Math.abs(offset - 4_900_000) <= 125, `offset ${offset}`);
     assert.equal(clockOffset(timeline(profile([[A]]), symbolizer), 1, 2), undefined);
+  });
+
+  it("leaves the clocks unaligned on too few samples", () => {
+    const clock = call(CLOCK_FUNCTION, "", 1, 2);
+    // One sample, then nine: neither is enough for 30 ms.
+    for (const length of [1, CLOCK_MIN_SAMPLES - 1]) {
+      const p = profile(
+        Array.from({ length }, () => [clock]),
+        3000,
+        5_000_000,
+      );
+      assert.equal(clockOffset(timeline(p, symbolizer), 0, 30), undefined, `${length} samples`);
+    }
+  });
+
+  it("leaves the clocks unaligned when the sampler starved for part of the spin", () => {
+    const clock = call(CLOCK_FUNCTION, "", 1, 2);
+    // 30 ms of spin, but the samples cover only its first 10 ms.
+    const p = profile(
+      Array.from({ length: 41 }, () => [clock]),
+      250,
+      5_000_000,
+    );
+    assert.equal(clockOffset(timeline(p, symbolizer), 0, 30), undefined);
+    // Covering 26 of its 30 ms, with a gap in the middle, is enough.
+    const gappy = profile(
+      Array.from({ length: 40 }, () => [clock]),
+      250,
+      5_000_000,
+    );
+    gappy.timeDeltas![20] = 16_000;
+    assert.notEqual(clockOffset(timeline(gappy, symbolizer), 0, 30), undefined);
+  });
+
+  it("keeps samples in order across a negative time delta", () => {
+    const p = profile([[A], [B], [A]]);
+    p.timeDeltas = [0, -500, 250];
+    const line = timeline(p, symbolizer);
+    assert.deepEqual([...line.times], [1_000_000, 1_000_000, 1_000_250]);
+    assert.ok([...line.weights].every((w) => w >= 0));
   });
 });
 

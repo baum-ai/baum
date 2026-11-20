@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
 import { readChunks } from "./bundle.ts";
-import { CHROMEDRIVER, CpuRecorder, launchChromium } from "./chromium.ts";
+import { CHROMEDRIVER, CHROMEDRIVER_ARGS, CpuRecorder, launchChromium } from "./chromium.ts";
 import { scenarios, Skip, type Context } from "./scenarios.ts";
 import { standardMetrics, summarise, type Profile, type Run } from "./summary.ts";
 import { newSession, waitForDriver, WebDriverError, type Session } from "./webdriver.ts";
@@ -80,11 +80,25 @@ const desktopConfig = join(homedir(), ".config/com.usebaum.desktop/desktop.json"
 process.env.TAURI_WEBVIEW_AUTOMATION = "true";
 const driverLog = createWriteStream(join(out, "driver.log"));
 const cpu = chromium ? new CpuRecorder(out, values.dist) : undefined;
-const driver = spawn(chromium ? CHROMEDRIVER : "WebKitWebDriver", [`--port=${values.port}`], {
-  stdio: ["ignore", "pipe", "pipe"],
+if (chromium && !existsSync(CHROMEDRIVER)) {
+  console.error(
+    `profile: ${CHROMEDRIVER} is not in this image: Chrome for Testing has chromedriver for x86-64 Linux only`,
+  );
+  process.exit(2);
+}
+const driver = spawn(
+  chromium ? CHROMEDRIVER : "WebKitWebDriver",
+  [`--port=${values.port}`, ...(chromium ? CHROMEDRIVER_ARGS : [])],
+  { stdio: ["ignore", "pipe", "pipe"] },
+);
+driver.on("error", (error) => {
+  console.error(`profile: the WebDriver server did not start: ${error.message}`);
+  process.exit(1);
 });
-driver.stdout.pipe(driverLog);
-driver.stderr.pipe(driverLog);
+/** The daemon's capability, in a launch URL's fragment, is never logged. */
+const scrub = (text: string) => text.replace(/#token=[^\s"'\\]+/g, "#token=…");
+for (const stream of [driver.stdout, driver.stderr])
+  stream.on("data", (chunk: Buffer) => driverLog.write(scrub(chunk.toString())));
 const driverBase = `http://127.0.0.1:${values.port}`;
 
 let session: Session | undefined;
@@ -181,7 +195,7 @@ async function launch() {
             "since (check, isolated, build) may have rebuilt it for production",
         );
       throw new Error(
-        `the app did not open the daemon's page within two minutes; it shows ${at.replace(/\/s\/[^/]+/, "/s/…")}`,
+        `the app did not open the daemon's page within two minutes; it shows ${scrub(at.replace(/\/s\/[^/]+/, "/s/…"))}`,
       );
     }
     await sleep(50);

@@ -1269,12 +1269,15 @@ The instance starts as usual, with its daemon, its data and the profiling
 frontend in the sidecar, but no app: the runner starts the daemon with the
 bundled `baum daemon ensure`, as the app does, and Playwright's Chromium
 (Chrome for Testing, headless, in the `desktop-isolated` image) opens the
-launch URL from its `credential.json` (see
+launch URL from its `credential.json` (the capability in it is never
+logged: chromedriver logs only severe messages, and the runner scrubs
+`#token=` from `driver.log`; see
 [Attaching to the daemon](#attaching-to-the-daemon)). chromedriver of the
 same version drives it with the same WebDriver commands as WebKitWebDriver,
 so the scenarios are the same code. The image takes both at the Playwright
 version `../app`'s lockfile pins (`chromium.test.ts` checks), from Chrome for
-Testing, which has chromedriver for x86-64 Linux only. Each measured run
+Testing, which has chromedriver for x86-64 Linux only, so on another Docker
+engine `--engine chromium` stops before building anything. Each measured run
 (not the warm-up) samples the page's main thread every 250 µs through
 chromedriver's DevTools Protocol endpoint (`Profiler.start` and `stop`):
 enough samples to tell a 16 ms frame's stacks apart at a few percent of
@@ -1292,15 +1295,22 @@ The summary then ends with a CPU section:
 - the 20 functions with the most self time per run, with their total time
   (callees included, a recursive function counted once). Each is named by
   the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
-  at the line its function starts, `oss/app/src/up-next.tsx:1396`; a
-  package's functions by the package (`react-dom`); `browser` for the DOM's
-  and V8's own functions, whose time includes the style and layout they
-  force (`getBoundingClientRect`, `scrollIntoView`);
+  at the line its function starts, `oss/app/src/up-next.tsx:1396`, not the
+  hot line inside it: V8's line ticks give a bundle line without a column,
+  and the minified bundles are a few lines long, so they map to nothing. A
+  package's functions show as the package (`react-dom`) but are told apart
+  by their own source line; `browser` marks the DOM's and V8's own
+  functions, whose time includes the style and layout they force
+  (`getBoundingClientRect`, `scrollIntoView`). A minified name the map
+  cannot resolve keeps its bundle place beside it. `(program)` and
+  `(garbage collector)` are rows too, and often the top one: time outside
+  JavaScript;
 - for the five slowest interactions and the three longest frames, that
   breakdown within the interaction (from the input to the frame after it)
   or frame, its functions with the most self time, and its three heaviest
   JavaScript stacks, innermost first, at most eight frames, a package's
-  consecutive frames as one (`[react-dom ×56]`). Idle time within an
+  consecutive frames as one (`[react-dom ×56]`: 56 more frames of
+  react-dom, mostly React walking its tree of components). Idle time within an
   interaction or frame was spent off the main thread: raster, compositing
   or the driver, which the profile does not see.
 
@@ -1309,7 +1319,11 @@ page's `performance.now()` with the profile's clock: after the snapshot it
 runs a function, `__baumProfileClock`, that spins 30 ms and returns the
 page times it started and ended. Its first sample is no earlier than the
 start and its last no later than the end, so the clocks' offset is the mean
-of the two differences, to within half a sampling interval. It is kept in
+of the two differences, to within half a sampling interval. A run whose
+spin got fewer than ten samples, or samples spanning less than 80% of it (a
+sampler starved on shared CPUs), is left unaligned rather than
+misattributed: the summary says so and leaves its interactions and frames
+out. The offset is kept in
 each profile as `baumClockOffset` (microseconds, profile time less page
 time).
 

@@ -77,6 +77,12 @@ fi
 case $runs in ''|0|*[!0-9]*) echo "profile: --runs takes a number from 1: $runs" >&2; exit 2 ;; esac
 case $timeout in ''|0|*[!0-9]*) echo "profile: --run-timeout takes a number of seconds: $timeout" >&2; exit 2 ;; esac
 case $engine in webkit|chromium) ;; *) echo "profile: --engine is webkit or chromium: $engine" >&2; exit 2 ;; esac
+# The image's Chromium comes with Chrome for Testing's chromedriver, which
+# exists for x86-64 Linux only (isolated.Dockerfile).
+if [ "$engine" = chromium ] && [ "$(docker info --format '{{.Architecture}}' 2>/dev/null || uname -m)" != x86_64 ]; then
+  echo "profile: --engine chromium needs an x86-64 Docker engine: Chrome for Testing has no chromedriver for this one" >&2
+  exit 2
+fi
 case $name in ''|*[!a-z0-9-]*) echo "profile: the name may only hold lowercase letters, digits and dashes: $name" >&2; exit 2 ;; esac
 [ "$check" = 1 ] && exit 0
 
