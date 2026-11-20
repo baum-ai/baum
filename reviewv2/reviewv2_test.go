@@ -330,6 +330,63 @@ func TestRevisableSections(t *testing.T) {
 	if got := RevisableSections(first, authored(t).Sections); len(got) != 0 {
 		t.Errorf("unchanged sections were revised: %v", got)
 	}
+	if r.Additive() {
+		t.Error("a change with a gone hunk is additive")
+	}
+
+	// A hunk that moves between sections is moved in the one and joined, with
+	// its old section's risks on it, in the other.
+	moved := authored(t)
+	moved.Sections[0].Hunks = []string{"h_a00000000003"}
+	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
+	revised = RevisableSections(first, moved.Sections)
+	policy, delivery := revised["sec_retry_policy"], revised["sec_delivery_errors"]
+	if !slices.Equal(policy.Moved, []MovedHunk{{ID: "h_a00000000001", To: "sec_delivery_errors"}}) || len(policy.Gone) != 0 || policy.Additive() {
+		t.Errorf("policy: %+v", policy)
+	}
+	if !slices.Equal(delivery.Joined, []JoinedHunk{{ID: "h_a00000000001", From: "sec_retry_policy"}}) || len(delivery.New) != 0 || !delivery.Additive() ||
+		len(delivery.JoinedRisks) != 1 || delivery.JoinedRisks[0].From != "sec_retry_policy" || delivery.JoinedRisks[0].Risk.ID != "rsk_unbounded_retries" {
+		t.Errorf("delivery: %+v", delivery)
+	}
+
+	// A baum.review/1 previous version is never revised from.
+	v1 := readFile(t, "v1.review.json")
+	prior, err := Read(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range prior.Sections {
+		prior.Sections[i].Hunks = append(prior.Sections[i].Hunks, "h_b00000000009")
+	}
+	if got := RevisableSections(v1, prior.Sections); len(got) != 0 {
+		t.Errorf("a baum.review/1 version was revised from: %v", got)
+	}
+}
+
+// A risk the new version names in another section than the previous one's
+// is carried there with the version it was introduced in, and not mitigated
+// in its old section.
+func TestRiskMovesBetweenSections(t *testing.T) {
+	first := encode(t, completeFixture(t, authored(t), 1, nil))
+	next := authored(t)
+	next.Sections[1].Risks = next.Sections[0].Risks
+	next.Sections[0].Risks = []Risk{}
+	out := completeFixture(t, next, 2, first)
+	seen := 0
+	for _, s := range out.Sections {
+		for _, r := range s.Risks {
+			if r.ID != "rsk_unbounded_retries" {
+				continue
+			}
+			seen++
+			if s.ID != "sec_delivery_errors" || r.State != "active" || r.IntroducedVersion == nil || *r.IntroducedVersion != 1 {
+				t.Errorf("%s: %+v (introduced %v)", s.ID, r, r.IntroducedVersion)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Errorf("the moved risk is in %d sections", seen)
+	}
 }
 
 func TestGistAndSentences(t *testing.T) {

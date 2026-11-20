@@ -122,6 +122,10 @@ type V2Level struct {
 	Failed  int      `json:"failed"`
 	Reused  int      `json:"reused"`
 	Skipped int      `json:"skipped"`
+	// Kept and Revised count the sections that ran from their previous
+	// text, kept or revised; Ran counts them too.
+	Kept    int `json:"kept,omitempty"`
+	Revised int `json:"revised,omitempty"`
 }
 
 func (g *V2Generator) Generate(ctx context.Context, o generate.Options, c Case) (Generated, error) {
@@ -155,7 +159,7 @@ func (g *V2Generator) Generate(ctx context.Context, o generate.Options, c Case) 
 			list = pricing.Active()
 		}
 		for name, l := range result.V2.Levels {
-			level := V2Level{Calls: l.Calls, Tokens: l.Tokens, Repairs: l.ValidationRepairs, Seconds: l.Seconds, Ran: l.Ran, Failed: l.Failed, Reused: l.Reused, Skipped: l.Skipped}
+			level := V2Level{Calls: l.Calls, Tokens: l.Tokens, Repairs: l.ValidationRepairs, Seconds: l.Seconds, Ran: l.Ran, Failed: l.Failed, Reused: l.Reused, Skipped: l.Skipped, Kept: l.Kept, Revised: l.Revised}
 			if l.Calls > 0 {
 				level.CostUSD = list.BackendOutcomeCost(o.Backend.Name(), cmpOr(l.Model, result.Outcome.Model), l.Outcome)
 			}
@@ -267,18 +271,20 @@ func (g *V2Generator) Validate(document []byte, c Case) []string {
 
 // The v2 metrics.
 const (
-	MetricV2Sections       = "v2_sections"
-	MetricV2Logical        = "v2_logical_sections"
-	MetricV2SectionsFailed = "v2_sections_failed"
-	MetricV2Tiles          = "v2_tiles"
-	MetricV2TilesReady     = "v2_tiles_ready"
-	MetricV2TilesFailed    = "v2_tiles_failed"
-	MetricV2ContextMissing = "v2_context_missing"
-	MetricV2OverviewFailed = "v2_overview_failed"
-	MetricV2Blocks         = "v2_blocks"
-	MetricV2Points         = "v2_points"
-	MetricV2Risks          = "v2_risks"
-	MetricV2Repairs        = "v2_repairs"
+	MetricV2Sections        = "v2_sections"
+	MetricV2Logical         = "v2_logical_sections"
+	MetricV2SectionsFailed  = "v2_sections_failed"
+	MetricV2Tiles           = "v2_tiles"
+	MetricV2TilesReady      = "v2_tiles_ready"
+	MetricV2TilesFailed     = "v2_tiles_failed"
+	MetricV2ContextMissing  = "v2_context_missing"
+	MetricV2OverviewFailed  = "v2_overview_failed"
+	MetricV2Blocks          = "v2_blocks"
+	MetricV2Points          = "v2_points"
+	MetricV2Risks           = "v2_risks"
+	MetricV2Repairs         = "v2_repairs"
+	MetricV2SectionsKept    = "v2_sections_kept"
+	MetricV2SectionsRevised = "v2_sections_revised"
 )
 
 // DocumentMetrics measures a baum.review/2 document: its sections, tiles by
@@ -332,7 +338,8 @@ func (g *V2Generator) ArtifactMetrics(read func(string) ([]byte, error)) (map[st
 	if err := json.Unmarshal(raw, &record); err != nil || record.Schema != V2RecordName {
 		return nil, errors.New("levels.json is not a v2 record")
 	}
-	m := map[string]float64{MetricV2Repairs: float64(record.Repairs)}
+	m := map[string]float64{MetricV2Repairs: float64(record.Repairs), MetricV2SectionsKept: float64(record.Levels[orchestrate.LevelSections].Kept),
+		MetricV2SectionsRevised: float64(record.Levels[orchestrate.LevelSections].Revised)}
 	for _, name := range orchestrate.Levels {
 		l := record.Levels[name]
 		m["v2_"+name+"_calls"] = float64(l.Calls)
@@ -352,6 +359,8 @@ func (g *V2Generator) Definitions() map[string]string {
 		MetricV2Tiles: "tiles of the document", MetricV2TilesReady: "tiles ready", MetricV2TilesFailed: "tiles that failed",
 		MetricV2ContextMissing: "1 when the document has no context", MetricV2OverviewFailed: "1 when the overview fell back",
 		MetricV2Blocks: "body blocks over every section", MetricV2Points: "points over every section's points blocks", MetricV2Risks: "risks over every section", MetricV2Repairs: "validation repairs over every call",
+		MetricV2SectionsKept:    "sections whose agent kept the previous version's text (its hunks changed)",
+		MetricV2SectionsRevised: "sections whose agent revised the previous version's text (its hunks changed)",
 	}
 	for _, name := range orchestrate.Levels {
 		d["v2_"+name+"_calls"] = "model calls of the " + name + " level"

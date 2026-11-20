@@ -149,15 +149,17 @@ The case's `document.json` is the completed document. Beside it:
 | --- | --- |
 | `calls/<level>/<id>/prompt.md`, `input.txt` | A call's instructions (with the tools and workspace sections) and the data after them. The levels are `map`, `sections`, `context`, `tiles` and `overview`; the id is the section's or tile's. |
 | `calls/<level>/<id>/reply.json`, `reply-2.json`, `findings-N.txt` | Each pass's reply, masked, and what the host found in it when it sent it back. A library tile's reply is its fill's data. |
-| `levels.json` | A `replay.v2/1` record: calls, tokens, repairs, seconds and `cost_usd` per level, the calls that ran, failed, were reused or skipped, and the document's generation record. |
+| `levels.json` | A `replay.v2/1` record: calls, tokens, repairs, seconds and `cost_usd` per level, the calls that ran, failed, were reused or skipped, the sections among those that ran that kept or revised their previous version's text (`kept`, `revised`), and the document's generation record. |
 
 Validation checks the schema and that every hunk is in a section.
 `replay metrics` reports, from the document, `v2_sections`,
 `v2_logical_sections`, `v2_sections_failed`, `v2_tiles`, `v2_tiles_ready`,
 `v2_tiles_failed`, `v2_tiles_type_<type>`, `v2_blocks`, `v2_points`, `v2_risks`,
 `v2_context_missing` and `v2_overview_failed`; from `levels.json`
-`v2_repairs` and per level `v2_<level>_calls`, `_tokens`, `_seconds`,
-`_failed` and `_cost_usd`.
+`v2_repairs`, `v2_sections_kept` and `v2_sections_revised` (sections whose
+hunks changed and whose agent kept or revised the previous version's text),
+and per level `v2_<level>_calls`, `_tokens`, `_seconds`, `_failed` and
+`_cost_usd`.
 
 With `--chain`, each revision after the first reads the baum.review/2 document
 the one before it generated as its previous version (`generate.V2.Previous`,

@@ -314,16 +314,14 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, re
 	p := o.plan
 	o.mu.Unlock()
 	input := basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p) + "\n" + sectionBrief(s, planned, p.Hunks)
-	var previous *reviewv2.Section
 	if rev != nil {
-		input += "\n" + revisionBlock(*rev, o.facts)
-		previous = &rev.Previous
+		input += "\n" + revisionBlock(*rev)
 	}
 	var result sectionResult
 	c := call{level: LevelSections, id: s.ID, label: label("section", s.ID), input: input, schema: SectionSchema(o.registry.names()),
 		instructions: o.prompt.Section + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("section", s.ID)) + "`.\n"}
 	c.check = func(reply []byte, lenient bool) string {
-		r, findings := checkSection(reply, s, previous, planned, o.tileIDs(), o.facts, o.registry, lenient)
+		r, findings := checkSection(reply, s, rev, planned, o.tileIDs(), o.facts, o.registry, lenient)
 		if findings == "" {
 			result = r
 		}

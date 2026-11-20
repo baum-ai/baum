@@ -64,6 +64,25 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
+	// A risk the new version names in another section than the previous
+	// one's (its code moved there) carries: its old section does not mitigate
+	// it, and its new one keeps the version it was introduced in.
+	namedBy := map[string]string{}
+	for _, s := range d.Sections {
+		for _, r := range s.Risks {
+			if _, taken := namedBy[r.ID]; !taken {
+				namedBy[r.ID] = s.ID
+			}
+		}
+	}
+	priorRisks := map[string]Risk{}
+	for _, s := range prior.sections {
+		for _, r := range s.Risks {
+			if _, taken := priorRisks[r.ID]; !taken && r.State != "mitigated" {
+				priorRisks[r.ID] = r
+			}
+		}
+	}
 	for i := range d.Sections {
 		s := &d.Sections[i]
 		if s.Hunks == nil {
@@ -73,7 +92,11 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 			s.LevelReasons = []LevelReason{}
 		}
 		old, found := prior.sections[s.ID]
-		s.Risks = reconcileRisks(old.Risks, s.Risks, found, prior.version, in.Version, s.Details != "" || len(s.Hunks) == 0)
+		elsewhere := map[string]bool{}
+		for id, owner := range namedBy {
+			elsewhere[id] = owner != s.ID
+		}
+		s.Risks = reconcileRisks(old.Risks, s.Risks, found, prior.version, in.Version, s.Details != "" || len(s.Hunks) == 0, elsewhere, priorRisks)
 	}
 	completeTiles(&d, &b)
 	EnsureBodies(&d)
@@ -251,8 +274,11 @@ func previousOf(document []byte, fromBundle *bundle.PreviousVersion) (previous, 
 // section's risks first, each active again when the section names it,
 // mitigated in this version when it no longer does (or kept as it was when
 // retained: the section's details are not written, or it has no hunks), then
-// the section's new risks, introduced in this version.
-func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int, retained bool) []Risk {
+// the section's new risks, introduced in this version. A previous risk the
+// version names in another section (elsewhere) is left to it; a new risk
+// that was an active risk of another previous section (moved) keeps the
+// version it was introduced in.
+func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int, retained bool, elsewhere map[string]bool, moved map[string]Risk) []Risk {
 	byID := map[string]Risk{}
 	for _, r := range current {
 		byID[r.ID] = r
@@ -268,6 +294,9 @@ func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int
 				introduced = max(version-1, 1)
 			}
 			next, named := byID[old.ID]
+			if !named && elsewhere[old.ID] && old.State != "mitigated" {
+				continue
+			}
 			delete(byID, old.ID)
 			if named && !retained {
 				next.State, next.IntroducedVersion, next.MitigatedVersion = "active", &introduced, nil
@@ -297,7 +326,17 @@ func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int
 		if _, fresh := byID[r.ID]; !fresh {
 			continue
 		}
-		r.State, r.IntroducedVersion, r.MitigatedVersion = "active", &version, nil
+		introduced := version
+		if old, ok := moved[r.ID]; ok {
+			introduced = priorVersion
+			if old.IntroducedVersion != nil {
+				introduced = *old.IntroducedVersion
+			}
+			if introduced < 1 {
+				introduced = max(version-1, 1)
+			}
+		}
+		r.State, r.IntroducedVersion, r.MitigatedVersion = "active", &introduced, nil
 		out = append(out, r)
 	}
 	return out

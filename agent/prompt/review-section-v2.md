@@ -13,8 +13,10 @@ named in the input; it is in the run directory.
   section ends and the others begin), your section's brief (its title,
   gist, scope, level and why) and the tiles the map planned for it.
 - On a new version whose commits changed your section's code: your section
-  as the previous version wrote it (its body and risks) and each of your
-  hunks against the previous version's: `unchanged`, `new`, `moved` (to
+  as the previous version wrote it (its body and risks, and the IDs of risks
+  fixed earlier) and each of your hunks against the previous version's:
+  `unchanged`, `new`, `joined` (unchanged code the previous version reviewed
+  in another section, with the risks it raised on it there), `moved` (now in
   another section) or `gone` (no longer in the pull request, with where it
   was). See "Revising the previous version".
 - Your tools, for your hunks' patches, the code around them, the linked
@@ -137,16 +139,24 @@ version should find only what the new commits changed.
 - Keep what still holds word for word: the same blocks, wording and order,
   and the same risks with the same IDs and text.
 - Change only what the new, moved and gone hunks change. Read their
-  patches, and check every claim you keep against the current diff.
+  patches, and check every claim you keep against the current diff. A gone
+  hunk's code was edited or removed: a new hunk often holds its new form.
+- Joined code is not new: the previous version reviewed it in another
+  section. Do not rewrite claims because of it. Carry the risks the
+  previous version raised on it, with their IDs, where they still apply.
+- Claims and risks about a moved hunk now belong to the section that has
+  it, which sees it as joined: leave them out of yours.
 - Remove what no longer holds: a block, a point or a risk the new code
-  makes untrue, or one that rests only on a moved hunk, which another
-  section now covers. Leave out a risk the new commits fixed.
-- Cite the current hunks. A gone hunk cannot be cited any more: a kept
-  point or risk that cited one cites the hunk that now holds its code.
-- Answer `keep: true`, with `body` and `risks` empty, only when no claim
-  is affected by the change and nothing in the previous text cites a gone
-  hunk. The host then keeps the previous body and risks. Answer `tiles`
-  and `propose` as usual.
+  makes untrue. Leave out a risk the new commits fixed, and never give a
+  new risk an ID listed as fixed.
+- Cite the current hunks of your section. A kept point or risk that cited
+  a gone hunk cites the hunk that now holds its code.
+- Answer `keep: true`, with `body` and `risks` empty, only when the change
+  only adds code: some hunks are unchanged, none is moved or gone, and no
+  claim is affected by what was added. The host then keeps the previous
+  body and risks; answer `tiles` and `propose` as usual. If anything the
+  text described was changed or removed, write the section instead,
+  copying word for word what still holds.
 
 ## Final checklist
 

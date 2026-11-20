@@ -185,8 +185,11 @@ type LevelOutcome struct {
 	// Seconds is the level's wall time, from its first call's start to its
 	// last call's end.
 	Seconds float64 `json:"seconds"`
-	// Ran, Failed, Reused and Skipped count its calls by status.
+	// Ran, Failed, Reused and Skipped count its calls by status. Kept and
+	// Revised count, among those that ran, the sections that kept or
+	// revised their previous text (ReasonKept, ReasonRevised).
 	Ran, Failed, Reused, Skipped int
+	Kept, Revised                int
 
 	started, ended time.Time
 }
@@ -496,6 +499,12 @@ func (o *orchestration) record(level, id, status, reason string) {
 	switch status {
 	case StatusRan:
 		l.Ran++
+		switch reason {
+		case ReasonKept:
+			l.Kept++
+		case ReasonRevised:
+			l.Revised++
+		}
 	case StatusFailed:
 		l.Failed++
 	case StatusReused:

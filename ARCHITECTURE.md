@@ -2095,10 +2095,16 @@ overview and the tiles, owned where the review page placed them.
 sections a new map keeps with the same hunks, their body and
 active risks and their ready tiles, so the orchestration writes them
 without a call. `reviewv2.RevisableSections` gives the logical sections a
-new map keeps under the same ID over other hunks, with a complete body:
-their previous body and active risks, and each hunk unchanged, new or gone
+new map keeps under the same ID over other hunks, with a complete body, of
+a previous `baum.review/2` version (a converted `baum.review/1` one gives
+none): their previous body and active risks, their fixed risks' IDs, and
+each hunk unchanged, new, joined (in another previous section, with that
+section's active risks on it), moved (to another section now) or gone
 (with its path and range in the previous index). Their agents revise that
-text (see "Tiles in the pipeline"). `reviewv2.Substrate` is the tile document a
+text (see "Tiles in the pipeline"). `Complete` carries a risk across
+sections: a previous risk a different section of the new version names is
+not mitigated in its old section, and keeps its introduced version in the
+new one. `reviewv2.Substrate` is the tile document a
 `baum.review/2` document's library and added tiles are checked against.
 
 **Storage and serving.** A version's document is either schema; the store's
@@ -2776,16 +2782,21 @@ the levels of `agent/orchestrate` instead of the staged review:
    context agent run at once. A section whose hunks are unchanged since the
    previous version keeps its text and tiles without a call. A logical
    section the previous version wrote under the same ID over other hunks is
-   revised: its input adds the previous body and active risks, as
-   model-written data, and each hunk's status (unchanged, new, moved to
-   another section, or gone, with where it was). The agent keeps what still
-   holds word for word and changes only what the new code changes, or
-   answers `keep`, and the host takes the previous body and risks (their
-   IDs, so the risks' history carries). A keep is sent back when there is no
-   previous text or when that text cites a hunk the pull request no longer
-   has; its tile blocks place only the section's tiles now. The section's
-   call record says `ran`, with the reason that it revised or kept the
-   previous text. `Run.NoReuse` turns off reuse and revision alike.
+   revised: its input adds, as model-written data, the previous body and
+   active risks, the IDs of risks fixed earlier, each hunk's status
+   (unchanged, new, joined from another previous section, moved to another
+   section, or gone, with where it was) and the risks the previous version
+   raised on joined hunks. The agent keeps what still holds word for word
+   and changes only what the new code changes, or answers `keep`, and the
+   host takes the previous body and risks (their IDs, so the risks' history
+   carries). A keep is accepted only when the change adds code and nothing
+   else (some hunk unchanged, none moved or gone) and the previous text
+   cites only the section's hunks now; otherwise it is sent back and the
+   agent writes the section. Its tile blocks place only the section's tiles
+   now. The section's call record says `ran`, with the reason that it
+   revised or kept the previous text, and the level counts kept and revised
+   sections (replay's `v2_sections_kept`, `v2_sections_revised`).
+   `Run.NoReuse` turns off reuse and revision alike.
 3. **Tiles.** Each planned tile is drawn by a call of its own as soon as
    its owner is written. Native types share the tile prompt; a dedicated type
    goes through the library's fill (`agent.Generator.FillTile`); a code tile

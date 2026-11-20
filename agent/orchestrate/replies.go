@@ -293,20 +293,21 @@ type sectionResult struct {
 
 // checkSection checks a section agent's reply. taken are the IDs of the
 // tiles the document already has, which a proposed tile's ID may not repeat
-// (it is made unique). previous is the section's text in the previous
-// version when the agent was given it to revise (reviewv2.Revised), else
-// nil.
+// (it is made unique). rev is the section's previous text and its hunks'
+// statuses when the agent was given them to revise, else nil.
 //
 // A tile block must name a tile of this section that is kept: planned and
 // not dropped by this reply, or the tile it proposes. One that names
 // anything else is dropped, and a tile the body places twice is placed
 // where it first is.
 //
-// A reply that keeps (keep, with no body or risks) takes previous's body and
-// risks as they are, its tiles and proposal checked as any reply's. It is
-// sent back when there is no previous text, or when that text cites a hunk
-// this pull request no longer has: the agent then writes the section.
-func checkSection(reply []byte, section reviewv2.Section, previous *reviewv2.Section, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
+// A reply that keeps (keep, with no body or risks) takes the previous body
+// and risks as they are, its tiles and proposal checked as any reply's. It
+// is sent back when there is no previous text, when the change is not only
+// added code (reviewv2.Revised.Additive: what the text describes may have
+// changed even where it cites nothing), or when the text cites a hunk the
+// section no longer has; the agent then writes the section.
+func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
 	var s sectionReply
 	if problem := decode(reply, &s); problem != "" {
 		return sectionResult{}, problem
@@ -315,10 +316,12 @@ func checkSection(reply []byte, section reviewv2.Section, previous *reviewv2.Sec
 	out := sectionResult{Briefs: map[string]tileBrief{}, Dropped: map[string]string{}, Body: []reviewv2.Block{}, Risks: []reviewv2.Risk{}}
 	if s.Keep {
 		switch {
-		case previous == nil:
+		case rev == nil:
 			c.add("/keep", "there is no previous version of this section to keep; set keep to false and write the body and risks")
 		case len(s.Body) > 0 || len(s.Risks) > 0:
 			c.add("/keep", "keep takes the previous body and risks as they were; leave body and risks empty, or set keep to false and write them all")
+		case !rev.Additive():
+			c.add("/keep", "the code this text describes changed (hunks of the previous version are moved or gone, or none is unchanged); set keep to false and write the section, copying word for word what still holds")
 		default:
 			out.Kept = true
 		}
@@ -406,10 +409,10 @@ func checkSection(reply []byte, section reviewv2.Section, previous *reviewv2.Sec
 	}
 	placed := map[string]bool{}
 	if out.Kept {
-		var gone []string
-		out.Body, out.Risks = keptText(*previous, placeable, f, &gone)
-		if len(gone) > 0 {
-			c.add("/keep", "the previous text cites hunks this pull request no longer has (%s); set keep to false and write the section, keeping what still holds word for word and citing the current hunks", strings.Join(gone, ", "))
+		var outside []string
+		out.Body, out.Risks = keptText(rev.Previous, section.Hunks, placeable, f, &outside)
+		if len(outside) > 0 {
+			c.add("/keep", "the previous text cites hunks this section no longer has (%s); set keep to false and write the section, keeping what still holds word for word and citing the current hunks", strings.Join(outside, ", "))
 		}
 		// The previous text passed these checks when it was written: only
 		// what is wrong with its structure now sends the keep back.
@@ -473,13 +476,14 @@ func checkSection(reply []byte, section reviewv2.Section, previous *reviewv2.Sec
 }
 
 // keptText is a kept section's previous body and risks as this version
-// holds them: cites to what the pull request still has (the hunks it no
-// longer has are added to gone), and tile blocks only for placeable tiles.
-func keptText(previous reviewv2.Section, placeable map[string]string, f *facts, gone *[]string) ([]reviewv2.Block, []reviewv2.Risk) {
+// holds them: cites to what the pull request still has (cited hunks that
+// are not among hunks, the section's now, are added to outside), and tile
+// blocks only for placeable tiles.
+func keptText(previous reviewv2.Section, hunks []string, placeable map[string]string, f *facts, outside *[]string) ([]reviewv2.Block, []reviewv2.Risk) {
 	resolve := func(in []json.RawMessage) []json.RawMessage {
 		for _, id := range hunkCites(in) {
-			if _, ok := f.hunks[id]; !ok && !slices.Contains(*gone, id) {
-				*gone = append(*gone, id)
+			if !slices.Contains(hunks, id) && !slices.Contains(*outside, id) {
+				*outside = append(*outside, id)
 			}
 		}
 		kept, _ := f.cites(in)
