@@ -156,6 +156,28 @@ describe("snapshot and reset", () => {
   });
 });
 
+describe("progress", () => {
+  it("gives the latest navigation and counts interactions, dropped ones too", () => {
+    const { clock, collector } = setup();
+    expect(collector.progress()).toEqual({ navigation: undefined, interactions: 0 });
+    collector.navigation("?page=pulls");
+    clock.now = 2;
+    collector.render("main", "update", 1, 1);
+    collector.frame(16);
+    for (let i = 0; i < LIMIT + 2; i++)
+      collector.interaction({ type: "keydown", target: "j", start: i, delay: 0, duration: 1 });
+    const progress = collector.progress();
+    expect(progress).toEqual({
+      navigation: { search: "?page=pulls", start: 0, content: 16, settled: 16 },
+      interactions: LIMIT + 2,
+    });
+    progress.navigation!.search = "changed";
+    expect(collector.progress().navigation!.search).toBe("?page=pulls");
+    collector.reset();
+    expect(collector.progress().interactions).toBe(0);
+  });
+});
+
 describe("labels", () => {
   it("strip the origin and secret namespace from request paths", () => {
     const base = "http://127.0.0.1:4167/s/secret-ns/";
