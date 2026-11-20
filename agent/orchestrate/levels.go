@@ -23,6 +23,7 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	planned := slices.Clone(o.plan.Tiles)
 	o.mu.Unlock()
 	reused := o.reuse(sections)
+	revised := o.revisions(sections)
 	var toWrite []reviewv2.Section
 	for _, s := range sections {
 		switch {
@@ -80,7 +81,7 @@ func (o *orchestration) middleLevels(ctx context.Context) {
 	// own do, but never pass through it: a section cannot drop them.
 	for _, s := range toWrite {
 		middle.Go(func() {
-			list := o.sectionLevel(ctx, s, ownedBy(s.ID))
+			list := o.sectionLevel(ctx, s, revised[s.ID], ownedBy(s.ID))
 			startTiles(s.ID, append(list, mandatory[s.ID]...))
 		})
 	}
@@ -247,6 +248,20 @@ func (o *orchestration) reuse(sections []reviewv2.Section) map[string]bool {
 	return reused
 }
 
+// revisions are, by ID, the logical sections the previous version wrote
+// over other hunks (reviewv2.RevisableSections), whose agents start from the
+// previous text. A run that reuses nothing revises nothing either.
+func (o *orchestration) revisions(sections []reviewv2.Section) map[string]*reviewv2.Revised {
+	out := map[string]*reviewv2.Revised{}
+	if len(o.run.Previous) == 0 || o.run.NoReuse {
+		return out
+	}
+	for id, r := range reviewv2.RevisableSections(o.run.Previous, sections) {
+		out[id] = &r
+	}
+	return out
+}
+
 // mechanical writes the mechanical section's one prose block from its
 // hunks' roles: no call, no risks.
 func (o *orchestration) mechanical(s reviewv2.Section) {
@@ -292,17 +307,23 @@ func joinWords(parts []string) string {
 }
 
 // sectionLevel writes one section and returns its tiles, sharpened, for the
-// tile level. A section that fails keeps the map's briefs for its tiles.
-func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, planned []reviewv2.Tile) []reviewv2.Tile {
+// tile level. A section that fails keeps the map's briefs for its tiles. A
+// revised section (rev) is written from its previous text, or keeps it.
+func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, rev *reviewv2.Revised, planned []reviewv2.Tile) []reviewv2.Tile {
 	o.mu.Lock()
 	p := o.plan
 	o.mu.Unlock()
 	input := basics(o.run.Bundle, o.run.Worktree) + "\n" + diffIndex(o.run.Bundle) + "\n" + mapBlock(p) + "\n" + sectionBrief(s, planned, p.Hunks)
+	var previous *reviewv2.Section
+	if rev != nil {
+		input += "\n" + revisionBlock(*rev, o.facts)
+		previous = &rev.Previous
+	}
 	var result sectionResult
 	c := call{level: LevelSections, id: s.ID, label: label("section", s.ID), input: input, schema: SectionSchema(o.registry.names()),
 		instructions: o.prompt.Section + "\nYour reply's schema file: `" + agent.TaskSchemaFile(label("section", s.ID)) + "`.\n"}
 	c.check = func(reply []byte, lenient bool) string {
-		r, findings := checkSection(reply, s, planned, o.tileIDs(), o.facts, o.registry, lenient)
+		r, findings := checkSection(reply, s, previous, planned, o.tileIDs(), o.facts, o.registry, lenient)
 		if findings == "" {
 			result = r
 		}
@@ -339,7 +360,14 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 	o.setSection(s.ID, func(sec *reviewv2.Section) {
 		sec.Body, sec.Risks, sec.Details = result.Body, result.Risks, ""
 	})
-	o.record(LevelSections, s.ID, StatusRan, "")
+	why := ""
+	switch {
+	case result.Kept:
+		why = ReasonKept
+	case rev != nil:
+		why = ReasonRevised
+	}
+	o.record(LevelSections, s.ID, StatusRan, why)
 	if extra := result.Propose; extra != nil {
 		o.budget.expect(2, 1)
 		out = append(out, *extra)

@@ -44,6 +44,7 @@ type plannedTile struct {
 }
 
 type sectionReply struct {
+	Keep    bool         `json:"keep"`
 	Body    []blockReply `json:"body"`
 	Risks   []riskReply  `json:"risks"`
 	Tiles   []tileBrief  `json:"tiles"`
@@ -286,23 +287,45 @@ type sectionResult struct {
 	Briefs  map[string]tileBrief
 	Propose *reviewv2.Tile
 	Dropped map[string]string
+	// Kept is a reply that kept the previous version's body and risks.
+	Kept bool
 }
 
 // checkSection checks a section agent's reply. taken are the IDs of the
 // tiles the document already has, which a proposed tile's ID may not repeat
-// (it is made unique).
+// (it is made unique). previous is the section's text in the previous
+// version when the agent was given it to revise (reviewv2.Revised), else
+// nil.
 //
 // A tile block must name a tile of this section that is kept: planned and
 // not dropped by this reply, or the tile it proposes. One that names
 // anything else is dropped, and a tile the body places twice is placed
 // where it first is.
-func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
+//
+// A reply that keeps (keep, with no body or risks) takes previous's body and
+// risks as they are, its tiles and proposal checked as any reply's. It is
+// sent back when there is no previous text, or when that text cites a hunk
+// this pull request no longer has: the agent then writes the section.
+func checkSection(reply []byte, section reviewv2.Section, previous *reviewv2.Section, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
 	var s sectionReply
 	if problem := decode(reply, &s); problem != "" {
 		return sectionResult{}, problem
 	}
 	c := &checker{lenient: lenient}
 	out := sectionResult{Briefs: map[string]tileBrief{}, Dropped: map[string]string{}, Body: []reviewv2.Block{}, Risks: []reviewv2.Risk{}}
+	if s.Keep {
+		switch {
+		case previous == nil:
+			c.add("/keep", "there is no previous version of this section to keep; set keep to false and write the body and risks")
+		case len(s.Body) > 0 || len(s.Risks) > 0:
+			c.add("/keep", "keep takes the previous body and risks as they were; leave body and risks empty, or set keep to false and write them all")
+		default:
+			out.Kept = true
+		}
+		if !out.Kept {
+			return out, c.String()
+		}
+	}
 	slug := strings.TrimPrefix(section.ID, "sec_")
 	ids := map[string]bool{}
 	for i, risk := range s.Risks {
@@ -382,6 +405,23 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 		}
 	}
 	placed := map[string]bool{}
+	if out.Kept {
+		var gone []string
+		out.Body, out.Risks = keptText(*previous, placeable, f, &gone)
+		if len(gone) > 0 {
+			c.add("/keep", "the previous text cites hunks this pull request no longer has (%s); set keep to false and write the section, keeping what still holds word for word and citing the current hunks", strings.Join(gone, ", "))
+		}
+		// The previous text passed these checks when it was written: only
+		// what is wrong with its structure now sends the keep back.
+		kept := &checker{lenient: true}
+		kept.merge(reviewv2.CheckSection(reviewv2.Section{ID: section.ID, Kind: section.Kind, Body: out.Body, Risks: out.Risks}, f.refs))
+		c.findings = append(c.findings, kept.findings...)
+		if len(c.findings) > 0 {
+			return out, c.String()
+		}
+		out.Body, _ = reviewv2.CheckBody(out.Body, f.refs)
+		return out, ""
+	}
 	for i, block := range s.Body {
 		at := fmt.Sprintf("/body/%d", i)
 		b := reviewv2.Block{Type: block.Type}
@@ -430,6 +470,44 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 	// MaxPoints.
 	out.Body, _ = reviewv2.CheckBody(out.Body, f.refs)
 	return out, ""
+}
+
+// keptText is a kept section's previous body and risks as this version
+// holds them: cites to what the pull request still has (the hunks it no
+// longer has are added to gone), and tile blocks only for placeable tiles.
+func keptText(previous reviewv2.Section, placeable map[string]string, f *facts, gone *[]string) ([]reviewv2.Block, []reviewv2.Risk) {
+	resolve := func(in []json.RawMessage) []json.RawMessage {
+		for _, id := range hunkCites(in) {
+			if _, ok := f.hunks[id]; !ok && !slices.Contains(*gone, id) {
+				*gone = append(*gone, id)
+			}
+		}
+		kept, _ := f.cites(in)
+		return kept
+	}
+	body := []reviewv2.Block{}
+	placed := map[string]bool{}
+	for _, b := range previous.Body {
+		if b.Type == reviewv2.BlockTile {
+			id, ok := placeable[b.Tile]
+			if !ok || placed[id] {
+				continue
+			}
+			placed[id] = true
+			b.Tile = id
+		}
+		b.Items = slices.Clone(b.Items)
+		for i := range b.Items {
+			b.Items[i].Cites = resolve(b.Items[i].Cites)
+		}
+		body = append(body, b)
+	}
+	risks := []reviewv2.Risk{}
+	for _, r := range previous.Risks {
+		r.Cites = resolve(r.Cites)
+		risks = append(risks, r)
+	}
+	return body, risks
 }
 
 func deref(s *string) string {

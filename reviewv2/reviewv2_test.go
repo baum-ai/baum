@@ -304,6 +304,34 @@ func TestReusableSections(t *testing.T) {
 	}
 }
 
+// A section under the same ID over other hunks is revised from its previous
+// text: each hunk unchanged, new or gone (with where it was); an unchanged
+// one, a mechanical one and a new ID are not.
+func TestRevisableSections(t *testing.T) {
+	first := encode(t, completeFixture(t, authored(t), 1, nil))
+	next := authored(t)
+	next.Sections[0].Hunks = []string{"h_a00000000001", "h_b00000000009"}
+	next.Sections[2].Hunks = []string{"h_b00000000008"}
+	next.Sections = append(next.Sections, Section{ID: "sec_new", Kind: KindLogical, Hunks: []string{"h_b00000000007"}})
+	revised := RevisableSections(first, next.Sections)
+	if len(revised) != 1 {
+		t.Fatalf("revised = %v", revised)
+	}
+	r := revised["sec_retry_policy"]
+	if !slices.Equal(r.Unchanged, []string{"h_a00000000001"}) || !slices.Equal(r.New, []string{"h_b00000000009"}) {
+		t.Errorf("hunks: %+v", r)
+	}
+	if len(r.Gone) != 1 || r.Gone[0] != (GoneHunk{ID: "h_a00000000003", Path: "internal/delivery/retry_test.go", Start: 1, Count: 5}) {
+		t.Errorf("gone: %+v", r.Gone)
+	}
+	if len(r.Previous.Body) != 4 || len(r.Previous.Risks) != 1 || r.Previous.Risks[0].ID != "rsk_unbounded_retries" || r.Previous.Risks[0].State != "" || r.Previous.Risks[0].IntroducedVersion != nil {
+		t.Errorf("previous text: %+v", r.Previous)
+	}
+	if got := RevisableSections(first, authored(t).Sections); len(got) != 0 {
+		t.Errorf("unchanged sections were revised: %v", got)
+	}
+}
+
 func TestGistAndSentences(t *testing.T) {
 	for _, tc := range []struct{ in, gist string }{
 		{"One thing happens. Then another.", "One thing happens."},
