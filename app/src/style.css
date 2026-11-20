@@ -587,8 +587,13 @@ body {
   padding: 0.75rem 1.5rem 0;
 }
 /* What scrolls, a size container so a pane held beside the page (the
-   review's rail) can fill the panel's height rather than the window's. */
+   review's rail) can fill the panel's height rather than the window's.
+   Positioned, so what is placed absolutely in a page (a transcript's
+   screen-reader labels) scrolls with it: placed against the window instead,
+   it would lengthen the window, and scrolling past the page's end would then
+   scroll the whole app away. */
 .local-main {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
