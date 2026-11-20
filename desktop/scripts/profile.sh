@@ -115,6 +115,17 @@ if [ -n "$baseline" ]; then
     echo "  Compare against a commit that has oss/app/scripts/profile (the profiling runner) or later." >&2
     exit 2
   fi
+  # Both sides run on the dataset this checkout's generator writes, in its
+  # schemas: a baseline whose application database is older refuses it.
+  version() { sed -n 's/^const Version = \([0-9][0-9]*\)$/\1/p'; }
+  head_schema=$(version <"$desktop/../internal/appdb/appdb.go")
+  base_schema=$(git -C "$desktop" show "$sha:oss/internal/appdb/appdb.go" 2>/dev/null | version)
+  if [ -n "$head_schema" ] && [ -n "$base_schema" ] && [ "$head_schema" -gt "$base_schema" ]; then
+    echo "profile: this checkout's application database is schema $head_schema and $baseline's is $base_schema:" >&2
+    echo "  both sides run on the dataset this checkout writes, which the baseline's daemon cannot open." >&2
+    echo "  Compare against a ref with schema $head_schema, such as a commit after the migration." >&2
+    exit 2
+  fi
   [ -n "$runs_given" ] || runs=8
 fi
 [ "$check" = 1 ] && exit 0
@@ -125,6 +136,20 @@ commit=$(git -C "$desktop" rev-parse --short HEAD 2>/dev/null || echo unknown)
 [ -n "$(git -C "$desktop/.." status --porcelain 2>/dev/null)" ] && commit="$commit+changes"
 
 if [ -n "$baseline" ]; then
+  have_flock=0
+  command -v flock >/dev/null 2>&1 && have_flock=1
+  homes=$cache/desktop-homes
+  mkdir -p "$homes"
+  # One comparison per name: a second would empty the first one's homes.
+  # The lock (on fd 8) is held, by this shell and the instances it starts,
+  # for the whole comparison.
+  exec 8>"$homes/.compare-$name.lock"
+  if [ "$have_flock" = 1 ] && ! flock -n 8 ||
+    [ -n "$(docker ps -q --filter "name=^baum-desktop-$name-head\$" --filter "name=^baum-desktop-$name-base\$")" ]; then
+    echo "profile: a comparison named $name is running; give this one another --name" >&2
+    exit 1
+  fi
+
   # The baseline's build: its profiling frontend, viewer, sidecar and the
   # app's debug build, made by its own recipes in a worktree all comparisons
   # share, and kept by commit.
@@ -132,7 +157,7 @@ if [ -n "$baseline" ]; then
   build=$builds/$sha
   mkdir -p "$builds"
   exec 9>"$builds/lock"
-  if command -v flock >/dev/null 2>&1 && ! flock -n 9; then
+  if [ "$have_flock" = 1 ] && ! flock -n 9; then
     echo "profile: another comparison is building a baseline; waiting"
     flock 9
   fi
@@ -166,31 +191,62 @@ if [ -n "$baseline" ]; then
     mv "$build.tmp" "$build"
   fi
   touch "$build"
-  # The three most recent baselines stay; each is some 400 MB.
-  # shellcheck disable=SC2010,SC2012 # the names are commit hashes
-  ls -1t "$builds" | grep -E '^[0-9a-f]{40}$' | tail -n +4 | while IFS= read -r old; do rm -rf "${builds:?}/$old"; done
+  # In use until this comparison ends: a shared lock on fd 7, taken while
+  # fd 9's lock is held, as every eviction is.
+  exec 7>"$build.inuse"
+  [ "$have_flock" = 0 ] || flock -s 7
+  # The three most recent baselines stay, each some 400 MB, and any other a
+  # comparison is using.
+  if [ "$have_flock" = 1 ]; then
+    # shellcheck disable=SC2010,SC2012 # the names are commit hashes
+    ls -1t "$builds" | grep -E '^[0-9a-f]{40}$' | tail -n +4 | while IFS= read -r old; do
+      if (flock -n -x 6) 6>"$builds/$old.inuse"; then
+        rm -rf "${builds:?}/$old" "${builds:?}/$old.inuse"
+      fi
+    done
+  fi
   exec 9>&-
 
   # Both sides start from homes in the same state: the same seed at the
   # same path in each container, written by this checkout's generator for
   # both (isolated.sh), since the dataset a seed gives changes between
   # commits, gives the same dataset (the runners check its digest), and
-  # nothing a previous comparison left. The Claude Code
-  # each home installs stays.
+  # nothing a previous comparison left. Only the Claude Code each home
+  # installed stays (~/.local/bin/claude and ~/.local/share/claude).
   seed=--seed-data
   case $pass in *--seed-data=*) seed=$(printf '%s\n' "$pass" | grep -- '--seed-data=' | tail -n 1) ;; esac
   for side in head base; do
-    home=$cache/desktop-homes/$name-$side
+    home=$homes/$name-$side
     [ -d "$home" ] || continue
     chmod -R u+w "$home"
     find "$home" -mindepth 1 -maxdepth 1 ! -name .local -exec rm -rf {} +
     [ ! -d "$home/.local" ] || find "$home/.local" -mindepth 1 -maxdepth 1 ! -name share ! -name bin -exec rm -rf {} +
+    [ ! -d "$home/.local/bin" ] || find "$home/.local/bin" -mindepth 1 -maxdepth 1 ! -name claude -exec rm -rf {} +
     [ ! -d "$home/.local/share" ] || find "$home/.local/share" -mindepth 1 -maxdepth 1 ! -name claude -exec rm -rf {} +
   done
 
   out=target/profile/$scenario-vs-$short-$stamp
   dir=$desktop/$out
   mkdir -p "$dir"
+  container() { echo "baum-desktop-$name-$1"; }
+
+  # Ctrl-C, or any other end: neither container is left frozen or running,
+  # and a runner still waiting learns why.
+  # shellcheck disable=SC2329 # the trap runs it
+  stop() {
+    trap - INT TERM HUP
+    [ -f "$dir/failed" ] || echo "interrupted" >"$dir/failed"
+    for side in head base; do
+      docker unpause "$(container "$side")" >/dev/null 2>&1 || true
+      docker stop "$(container "$side")" >/dev/null 2>&1 || true
+    done
+    # shellcheck disable=SC2046 # one job id a word
+    kill $(jobs -p) 2>/dev/null || true
+    echo "profile: interrupted; stopped both instances; see $dir" >&2
+    exit 130
+  }
+  trap stop INT TERM HUP
+
   run="node /oss/app/scripts/profile/run.ts $scenario --out /oss/desktop/$out --runs $runs --run-timeout $timeout"
   # Each side runs in its own instance, the head's app built from this
   # checkout, the base's mounted from its build. Command lines for the
@@ -212,10 +268,55 @@ if [ -n "$baseline" ]; then
     [ "$status" = 0 ] || [ -f "$dir/failed" ] || printf '%s: its instance exited with status %s\n' "$1" "$status" >"$dir/failed"
     echo "$status" >"$dir/$1.status"
   }
+
+  # The side whose place in the order (compare.ts's schedule) is $1.
+  step_side() {
+    [ "$1" -eq 0 ] && { echo head; return; }
+    [ "$1" -eq 1 ] && { echo base; return; }
+    pair=$((($1 - 2) / 2 + 1))
+    if [ $((pair % 2)) = $((($1 - 2) % 2)) ]; then echo base; else echo head; fi
+  }
+  # From the first run on, the side waiting is frozen (docker pause) while
+  # the other runs: once the turn reaches a place, the other side's
+  # container is paused and this side's unpaused, and only then may it go
+  # (the file go). A side is paused only once it handed the turn on, so
+  # never inside a run. Both are unpaused at the end, or when either stops.
+  conduct() {
+    total=$((2 * runs + 2))
+    until { [ -f "$dir/head.ready" ] && [ -f "$dir/base.ready" ]; } || [ -f "$dir/failed" ] ||
+      [ -f "$dir/head.status" ] || [ -f "$dir/base.status" ]; do
+      sleep 0.1
+    done
+    paused=
+    granted=-1
+    while [ ! -f "$dir/failed" ] && [ ! -f "$dir/head.status" ] && [ ! -f "$dir/base.status" ]; do
+      turn=$(cat "$dir/turn" 2>/dev/null || echo 0)
+      [ "$turn" -lt "$total" ] || break
+      if [ "$turn" != "$granted" ]; then
+        going=$(step_side "$turn")
+        waiting="head"
+        [ "$going" = base ] || waiting="base"
+        if [ "$paused" = "$going" ]; then
+          docker unpause "$(container "$going")" >/dev/null
+          paused=
+        fi
+        if [ "$paused" != "$waiting" ]; then
+          docker pause "$(container "$waiting")" >/dev/null
+          paused=$waiting
+        fi
+        printf '%s' "$turn" >"$dir/go.tmp"
+        mv "$dir/go.tmp" "$dir/go"
+        granted=$turn
+      fi
+      sleep 0.05
+    done
+    [ -z "$paused" ] || docker unpause "$(container "$paused")" >/dev/null 2>&1 || true
+  }
+
   (side head "$head_run" 2>&1 | awk '{ print "head: " $0; fflush() }') &
   # The base starts once the head's container runs, so the two do not build
   # the image or seed at once.
-  until [ -f "$dir/head.status" ] || [ -n "$(docker ps -q --filter "name=^baum-desktop-$name-head\$")" ]; do
+  until [ -f "$dir/head.status" ] || [ -n "$(docker ps -q --filter "name=^$(container head)\$")" ]; do
     sleep 1
   done
   if [ -f "$dir/head.status" ]; then
@@ -223,8 +324,10 @@ if [ -n "$baseline" ]; then
     echo 1 >"$dir/base.status"
   else
     (side base "$base_run" 2>&1 | awk '{ print "base: " $0; fflush() }') &
+    conduct &
   fi
   wait
+  trap - INT TERM HUP
   status=$(cat "$dir/head.status")
   [ "$status" != 0 ] || status=$(cat "$dir/base.status")
   if [ -f "$dir/summary.md" ]; then

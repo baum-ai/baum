@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   compareMetrics,
   comparisonJson,
+  daemonFailure,
   holm,
   rankSumTest,
   schedule,
@@ -91,6 +92,8 @@ describe("rankSumTest", () => {
     // Ranks 1.5, 1.5, 3.5, 3.5 against 5..8: still the most extreme split.
     assert.ok(Math.abs(rankSumTest([1, 1, 2, 2], [3, 4, 5, 6]) - 2 / 70) < 1e-12);
     assert.ok(rankSumTest([1, 2, 2, 3], [2, 2, 3, 4]) > 0.2);
+    // Unequal ties: three of the four 1s on one side.
+    assert.ok(Math.abs(rankSumTest([1, 1, 1], [1, 2, 3]) - 0.4) < 1e-12);
   });
 
   it("matches the smallest p it can give", () => {
@@ -113,6 +116,12 @@ describe("holm", () => {
     assert.ok(Math.abs(adjusted[1]! - 0.06) < 1e-12);
     assert.ok(Math.abs(adjusted[2]! - 0.06) < 1e-12);
     assert.deepEqual(holm([0.5, 0.9]), [1, 1]);
+    // 0.012 × 4 = 0.048 lifts 0.015 × 3 = 0.045, and 0.04 × 2 = 0.08 lifts
+    // 0.045 × 1; order kept.
+    const lifted = holm([0.045, 0.012, 0.04, 0.015]);
+    [0.08, 0.048, 0.08, 0.048].forEach((expected, i) =>
+      assert.ok(Math.abs(lifted[i]! - expected) < 1e-12, `${i}: ${lifted[i]}`),
+    );
   });
 });
 
@@ -262,6 +271,17 @@ describe("summariseComparison", () => {
     assert.match(text, /With 5 and 5 runs only the headline can show a change/);
   });
 
+  it("lists counts that differ before times, and metrics one side lacks apart", () => {
+    const head = coldStarts(5, 2, 300, { requests_count: 112, assets_count: 11 });
+    const text = summariseComparison(comparison(coldStarts(5, 1), head));
+    const differs = text.indexOf("**requests_count** differs");
+    const headline = text.indexOf("**launch_to_content** (headline)");
+    const only = text.indexOf("**assets_count** is only in head");
+    assert.ok(headline > 0 && headline < differs && differs < only, text);
+    assert.match(text, /The other \d+ metrics are within noise or the same\./);
+    assert.match(text, /Decide on the headline/);
+  });
+
   it("says when too few runs can show nothing", () => {
     const text = summariseComparison(comparison(coldStarts(3, 1), coldStarts(3, 2)));
     assert.match(text, /3 and 3 runs cannot show any change \(the smallest possible p is 0\.100\)/);
@@ -312,5 +332,18 @@ describe("comparisonJson", () => {
       ["head0@0", "base0@1", "head1@2", "base1@3", "base2@4", "head2@5"],
     );
     assert.equal(json.metrics[0]!.metric, "launch_to_content");
+  });
+});
+
+describe("daemonFailure", () => {
+  const out =
+    "baum: starting\nbaum: application database schema 3 is newer than supported version 2\n";
+
+  it("quotes the daemon's last words, with a hint for a base that cannot read the schema", () => {
+    const base = daemonFailure(out, "base")!;
+    assert.match(base, /^The daemon said: baum: application database schema 3 is newer/);
+    assert.match(base, /compare against a ref with the same store schemas/);
+    assert.doesNotMatch(daemonFailure(out, "head")!, /compare against/);
+    assert.equal(daemonFailure("\n"), undefined);
   });
 });

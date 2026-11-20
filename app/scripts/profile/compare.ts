@@ -311,27 +311,32 @@ export function summariseComparison(c: Comparison): string {
   ];
   if (c.partial) lines.push("", `**Partial: ${c.partial}**`);
 
-  const verdicts = rows.filter((r) => r.headline || CHANGED.includes(r.verdict));
   const headlineRow = rows.find((r) => r.headline);
   const changed = rows.filter((r) => CHANGED.includes(r.verdict));
+  const only = rows.filter((r) => r.verdict === "only in base" || r.verdict === "only in head");
   const notesDiffer =
     JSON.stringify(c.base.notes.toSorted()) !== JSON.stringify(c.head.notes.toSorted());
   lines.push("", "## Verdict", "");
   if (headlineRow?.base && headlineRow.head) lines.push(verdictLine(headlineRow));
   else lines.push(`- **${c.headline}** (headline): not measured on both sides.`);
-  for (const row of verdicts) if (!row.headline) lines.push(verdictLine(row));
-  for (const row of rows)
-    if (row.verdict === "only in base" || row.verdict === "only in head")
-      lines.push(verdictLine(row));
+  // What differs in every run first: the journeys or the work differ, which
+  // matters before any time does.
+  for (const row of changed)
+    if (!row.headline && row.verdict === "differs") lines.push(verdictLine(row));
   if (notesDiffer)
     lines.push(
       `- The journeys differ: base found ${c.base.notes.map((t) => `"${t}"`).join(" ") || "nothing to note"}; ` +
         `head found ${c.head.notes.map((t) => `"${t}"`).join(" ") || "nothing to note"}.`,
     );
-  const others = rows.filter((r) => !r.headline && !CHANGED.includes(r.verdict));
-  if (!changed.length && !notesDiffer)
-    lines.push(`- Nothing changed beyond noise: the ${others.length} other metrics are within it.`);
-  else lines.push(`- The other ${others.length} metrics are within noise.`);
+  for (const row of changed)
+    if (!row.headline && row.verdict !== "differs") lines.push(verdictLine(row));
+  for (const row of only) lines.push(verdictLine(row));
+  const others = rows.filter(
+    (r) => !r.headline && !CHANGED.includes(r.verdict) && !only.includes(r),
+  ).length;
+  if (!changed.length && !notesDiffer && !only.length)
+    lines.push(`- Nothing changed beyond noise: the ${others} other metrics are within it.`);
+  else lines.push(`- The other ${others} metrics are within noise or the same.`);
   const family = rows.filter((r) => !r.headline && r.p !== undefined).length;
   const least = smallestP(n, m);
   if (least >= ALPHA)
@@ -344,6 +349,10 @@ export function summariseComparison(c: Comparison): string {
         `metrics need p under ${(ALPHA / family).toFixed(4)} after Holm's adjustment, and the smallest possible p ` +
         `is ${pText(least)}. Use --runs 8 or more for verdicts on them.`,
     );
+  lines.push(
+    "- Decide on the headline. When nothing changed, about one comparison in ten still flags " +
+      "some metric, and one in twenty the headline: run it again before keeping a change.",
+  );
 
   lines.push(
     "",
@@ -433,4 +442,25 @@ export function comparisonJson(c: Comparison) {
     ),
     metrics: compareMetrics(c.base.runs, c.head.runs, c.headline),
   };
+}
+
+/** Why a side's daemon would not start, from the end of its daemon.out,
+ *  with a hint when the base's daemon refuses the dataset this checkout's
+ *  generator wrote because its stores' schema is newer than it reads. */
+export function daemonFailure(out: string, side?: Side): string | undefined {
+  const line = out
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (!line) return undefined;
+  const schema = /newer than|schema/i.test(line);
+  return (
+    `The daemon said: ${line}` +
+    (schema && side === "base"
+      ? ". Both sides run on the dataset this checkout's generator writes, in this checkout's " +
+        "schemas, which the baseline's daemon does not read: compare against a ref with the same " +
+        "store schemas, such as a commit after the migration."
+      : "")
+  );
 }

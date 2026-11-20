@@ -22,7 +22,13 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
 import { readChunks } from "./bundle.ts";
-import { comparisonJson, schedule, summariseComparison, type Side } from "./compare.ts";
+import {
+  comparisonJson,
+  daemonFailure,
+  schedule,
+  summariseComparison,
+  type Side,
+} from "./compare.ts";
 import { scenarios, Skip, type Context } from "./scenarios.ts";
 import { standardMetrics, summarise, type Profile, type Run } from "./summary.ts";
 import { newSession, waitForDriver, WebDriverError, type Session } from "./webdriver.ts";
@@ -187,8 +193,16 @@ async function launch() {
             "frontend that is not the profiling build. just desktop::profile builds it; a recipe " +
             "since (check, isolated, build) may have rebuilt it for production",
         );
+      let said: string | undefined;
+      try {
+        said = daemonFailure(
+          readFileSync(join(homedir(), ".local/state/baum/daemon/daemon.out"), "utf8"),
+          side,
+        );
+      } catch {}
       throw new Error(
-        `the app did not open the daemon's page within two minutes; it shows ${at.replace(/\/s\/[^/]+/, "/s/…")}`,
+        `the app did not open the daemon's page within two minutes; it shows ${at.replace(/\/s\/[^/]+/, "/s/…")}` +
+          (said ? `. ${said}` : ""),
       );
     }
     await sleep(50);
@@ -423,8 +437,12 @@ async function bothReady() {
 }
 
 const turn = () => Number(readShared("turn") ?? "0");
+/** Waits for the host (profile.sh) to say this side may run its place in
+ *  the order, which it does once the turn reached it and it has frozen the
+ *  other side's container (docker pause), so the waiting side's daemon, app
+ *  and compositor take no CPU from the side measured. */
 const myTurn = (at: number) =>
-  waitOther(() => (turn() === at ? true : undefined), "finish its run");
+  waitOther(() => (readShared("go") === String(at) ? true : undefined), "finish its run");
 
 /** Leaves the app on a page with no script while the other side runs, so
  *  it does no work then: one of the daemon's JSON records, since the app

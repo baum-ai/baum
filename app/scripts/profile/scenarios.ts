@@ -286,7 +286,7 @@ async function nextPlace(ctx: Context) {
 
 const review: Scenario<ReviewState> = {
   name: "review",
-  headline: "long_frame_total",
+  headline: "open_content",
   description:
     "From the Inbox, opens the largest pull request with a review (by lines changed, or by " +
     "review size without GitHub's counts) in the " +
