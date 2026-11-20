@@ -22,9 +22,14 @@ type Reused struct {
 // risks); the map's fields (title, gist, level) are the new map's. A
 // reusable section's tiles are its ready tiles in the previous version.
 //
+// A section renamed over exactly a previous baum.review/2 section's hunks
+// (RenamedSections; sections is then every section of the new map, its
+// hunks placed by current) is reusable too: it takes that section's text
+// and tiles, now owned under its ID, and Complete carries the risks.
+//
 // A host that offers images the previous version was not offered should
 // reuse nothing (review.NewImages), since only a section agent places them.
-func ReusableSections(previous []byte, sections []Section) map[string]Reused {
+func ReusableSections(previous []byte, sections []Section, current *Refs) map[string]Reused {
 	if len(previous) == 0 {
 		return nil
 	}
@@ -36,16 +41,28 @@ func ReusableSections(previous []byte, sections []Section) map[string]Reused {
 	for _, s := range prior.Sections {
 		byID[s.ID] = s
 	}
+	var renamed map[string]string
+	if IsV2(previous) {
+		renamed = renames(prior, sections, current)
+	}
 	out := map[string]Reused{}
 	for _, s := range sections {
-		old, ok := byID[s.ID]
+		from := s.ID
+		if old, ok := renamed[s.ID]; ok {
+			from = old
+		}
+		old, ok := byID[from]
 		if !ok || old.Details != "" || !sameHunks(old.Hunks, s.Hunks) {
 			continue
 		}
 		reused := s
 		reused.Body, reused.Risks = writtenText(old)
 		reused.Details, reused.Derived = "", nil
-		out[s.ID] = Reused{Section: reused, Tiles: readyTiles(prior, s.ID)}
+		tiles := readyTiles(prior, from)
+		for i := range tiles {
+			tiles[i].Owner = s.ID
+		}
+		out[s.ID] = Reused{Section: reused, Tiles: tiles}
 	}
 	return out
 }
@@ -267,7 +284,7 @@ func RevisableSections(previous []byte, sections []Section, current *Refs) map[s
 	out := map[string]Revised{}
 	for _, s := range sections {
 		old, ok := v.byID[v.predecessor(s.ID)]
-		if !ok || s.Kind != KindLogical || len(s.Hunks) == 0 || old.Kind != KindLogical || old.Details != "" || len(old.Body) == 0 || old.ID == s.ID && sameHunks(old.Hunks, s.Hunks) {
+		if !ok || s.Kind != KindLogical || len(s.Hunks) == 0 || old.Kind != KindLogical || old.Details != "" || len(old.Body) == 0 || sameHunks(old.Hunks, s.Hunks) {
 			continue
 		}
 		r := Revised{Previous: Section{ID: old.ID, Title: old.Title, Kind: old.Kind, Hunks: slices.Clone(old.Hunks)}}
@@ -333,7 +350,9 @@ func JoinedSections(previous []byte, sections []Section, current *Refs) map[stri
 // version numbers its own new file, so code added above shifts them and this
 // is a heuristic), or on the path they share only when it is the one file of
 // both. Shared paths alone say too little: two parts of a change often edit
-// one file. The best pairs are taken first: most shared hunks, then most
+// one file. Lines and the one file count only for an edit: a hunk new to
+// this diff against one gone from it (matchCode). A previous section
+// without a complete text (pending, failed or empty) is never continued. The best pairs are taken first: most shared hunks, then most
 // overlapping hunks, then most shared paths, then the earlier section of the
 // new map and then of the previous version. A section on either side is in
 // at most one pair.
@@ -365,13 +384,23 @@ func (m codeMatch) compare(o codeMatch) int {
 
 // matchCode measures a new section's hunks (placed by current) against a
 // previous section's (placed by before, its index), and says whether they
-// are clearly the same code.
+// are clearly the same code. Only an edit can make one hunk another: a
+// line overlap counts only between a hunk the previous diff did not have
+// and a previous hunk the current diff no longer has, and the one file of
+// both counts only when a previous hunk on it is gone.
 func matchCode(next []string, current *Refs, old []string, before *Refs) (codeMatch, bool) {
 	var m codeMatch
-	nextPaths, oldPaths := map[string]bool{}, map[string]bool{}
+	nextPaths, oldPaths, gonePaths := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	var gone []string
 	for _, h := range old {
-		if p := before.Hunks[h].Path; p != "" {
-			oldPaths[p] = true
+		p := before.Hunks[h].Path
+		if p == "" {
+			continue
+		}
+		oldPaths[p] = true
+		if !current.HasHunk(h) {
+			gonePaths[p] = true
+			gone = append(gone, h)
 		}
 	}
 	for _, h := range next {
@@ -384,23 +413,25 @@ func matchCode(next []string, current *Refs, old []string, before *Refs) (codeMa
 			continue
 		}
 		nextPaths[ref.Path] = true
-		if shared || ref.Start < 1 {
+		if shared || ref.Start < 1 || before.HasHunk(h) {
 			continue
 		}
 		last := ref.Start + max(ref.Count, 1) - 1
-		if slices.ContainsFunc(old, func(o string) bool {
+		if slices.ContainsFunc(gone, func(o string) bool {
 			was := before.Hunks[o]
 			return was.Path == ref.Path && was.Start > 0 && was.Start <= last && ref.Start <= was.Start+max(was.Count, 1)-1
 		}) {
 			m.overlapping++
 		}
 	}
+	only := ""
 	for p := range nextPaths {
 		if oldPaths[p] {
 			m.paths++
+			only = p
 		}
 	}
-	onlyFile := m.paths == 1 && len(nextPaths) == 1 && len(oldPaths) == 1
+	onlyFile := m.paths == 1 && len(nextPaths) == 1 && len(oldPaths) == 1 && gonePaths[only]
 	return m, m.hunks > 0 || m.overlapping > 0 || onlyFile
 }
 
@@ -427,7 +458,10 @@ func renames(prior Document, sections []Section, current *Refs) map[string]strin
 			continue
 		}
 		for j, old := range prior.Sections {
-			if old.Kind != KindLogical || len(old.Hunks) == 0 || inMap[old.ID] {
+			// A previous section without a complete text is not continued:
+			// its code and risks go the joined way, which its successor's
+			// agent sees.
+			if old.Kind != KindLogical || len(old.Hunks) == 0 || inMap[old.ID] || old.Details != "" || len(old.Body) == 0 {
 				continue
 			}
 			if m, ok := matchCode(s.Hunks, current, old.Hunks, before); ok {

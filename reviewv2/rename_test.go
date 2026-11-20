@@ -142,3 +142,72 @@ func derivedState(t *testing.T, d Document, id string) string {
 	t.Fatalf("no section %s", id)
 	return ""
 }
+
+// Lines and the one file count only for an edit: a new section whose hunk
+// overlaps the lines of a previous hunk that is still in the diff (moved,
+// lines shifted, to a section the map keeps) does not continue its section,
+// nor does one whose one file is the previous section's when none of that
+// section's hunks on it is gone.
+func TestRenamedOnlyOverEditedCode(t *testing.T) {
+	previous := renamePrevious(t,
+		`{"id":"h_keep","path":"a.go","new_range":[10,20]},{"id":"h_c","path":"c.go","new_range":[1,5]}`,
+		logical("sec_old", "h_keep"), logical("sec_c", "h_c"))
+	now := placed(map[string]HunkRef{"h_keep": {Path: "a.go", Start: 30, Count: 20}, "h_c": {Path: "c.go", Start: 1, Count: 5}, "h_new": {Path: "a.go", Start: 12, Count: 4}})
+	sections := []Section{logical("sec_b", "h_new"), logical("sec_c", "h_c", "h_keep")}
+	if got := RenamedSections(previous, sections, now); len(got) != 0 {
+		t.Errorf("overlap with an unchanged hunk matched: %v", got)
+	}
+	now.Hunks["h_new"] = HunkRef{Path: "a.go", Start: 80, Count: 2}
+	if got := RenamedSections(previous, sections, now); len(got) != 0 {
+		t.Errorf("the one file without a gone hunk matched: %v", got)
+	}
+}
+
+// A previous section whose text is not complete (failed, or empty) is not
+// continued: its code is joined, as before renames.
+func TestRenamedNeedsACompleteText(t *testing.T) {
+	failed := logical("sec_old", "h_1")
+	failed.Details = DetailsFailed
+	previous := renamePrevious(t, `{"id":"h_1","path":"a.go","new_range":[1,5]}`, failed)
+	now := placed(map[string]HunkRef{"h_1": {Path: "a.go", Start: 1, Count: 5}, "h_2": {Path: "a.go", Start: 9, Count: 2}})
+	sections := []Section{logical("sec_new", "h_1", "h_2")}
+	if got := RenamedSections(previous, sections, now); len(got) != 0 {
+		t.Errorf("a failed section was continued: %v", got)
+	}
+	if j := JoinedSections(previous, sections, now)["sec_new"]; len(j.Hunks) != 1 || j.Hunks[0].From != "sec_old" {
+		t.Errorf("joined: %+v", j)
+	}
+	empty := encode(t, Document{Schema: Name, Sections: []Section{logical("sec_old", "h_1")}, Index: json.RawMessage(`{"hunks":[{"id":"h_1","path":"a.go","new_range":[1,5]}]}`)})
+	if got := RenamedSections(empty, sections, now); len(got) != 0 {
+		t.Errorf("an empty section was continued: %v", got)
+	}
+}
+
+// Overlapping lines outrank shared paths: the previous section edited
+// where the new hunk is wins over one whose one file is the same.
+func TestRenamedOverlapOutranksPaths(t *testing.T) {
+	previous := renamePrevious(t,
+		`{"id":"h_far","path":"a.go","new_range":[100,5]},{"id":"h_near","path":"a.go","new_range":[10,20]}`,
+		logical("sec_far", "h_far"), logical("sec_near", "h_near"))
+	now := placed(map[string]HunkRef{"h_new": {Path: "a.go", Start: 12, Count: 3}})
+	if got := RenamedSections(previous, []Section{logical("sec_new", "h_new")}, now); got["sec_new"] != "sec_near" {
+		t.Errorf("renamed = %v", got)
+	}
+}
+
+// A new ID over exactly a previous section's hunks is reused, not revised:
+// its text and ready tiles, now its own.
+func TestRenamedOverTheSameHunksIsReused(t *testing.T) {
+	d := Document{Schema: Name, Sections: []Section{{ID: "sec_x", Kind: KindLogical, Hunks: []string{"h_1", "h_2"}, Body: []Block{{Type: BlockProse, Text: "X."}}}},
+		Tiles: []Tile{{ID: "tl_x", Type: "flow", Owner: "sec_x", State: TileReady}}, Index: json.RawMessage(`{"hunks":[{"id":"h_1","path":"a.go","new_range":[1,5]},{"id":"h_2","path":"b.go","new_range":[1,5]}]}`)}
+	previous := encode(t, d)
+	now := placed(map[string]HunkRef{"h_1": {Path: "a.go", Start: 1, Count: 5}, "h_2": {Path: "b.go", Start: 1, Count: 5}})
+	sections := []Section{logical("sec_y", "h_2", "h_1")}
+	r, ok := ReusableSections(previous, sections, now)["sec_y"]
+	if !ok || len(r.Section.Body) == 0 || r.Section.Body[0].Text != "X." || len(r.Tiles) != 1 || r.Tiles[0].Owner != "sec_y" {
+		t.Errorf("reused = %+v", r)
+	}
+	if got := RevisableSections(previous, sections, now); len(got) != 0 {
+		t.Errorf("revised = %v", got)
+	}
+}

@@ -2101,15 +2101,20 @@ none): their previous body and active risks, their ready tiles, and each hunk un
 joined (in another previous section), moved (to another section now) or
 gone (with its path and range in the previous index). A section the new
 map gives an ID the previous version did not have is revised the same way
-from the previous logical section whose code it clearly has and whose ID
-the new map no longer has (`RenamedSections`): they share a hunk, or a
-hunk of the new section overlaps one of the previous section's lines on
-the same path, or the one file of both is the same; a shared path alone
-is not enough. The overlap is a heuristic: each version numbers lines in
-its own new file, so code added above a hunk shifts it. The
+from the previous logical section with a complete text whose code it
+clearly has and whose ID the new map no longer has (`RenamedSections`):
+they share a hunk, or a hunk new to this diff overlaps the lines of one of
+the previous section's hunks gone from it on the same path (an edit), or
+the one file of both is the same and one of the previous section's hunks
+on it is gone; a shared path alone is not enough. The overlap is a
+heuristic: each version numbers lines in its own new file, so code added
+above a hunk shifts it. The
 pairs with the most shared hunks, then overlapping hunks, then shared
 paths are taken first, in map order on ties, and a section on either side
-is in at most one pair. Their agents revise
+is in at most one pair. A renamed section over exactly its previous
+section's hunks is reused (`ReusableSections`, its tiles now its own), not
+revised. A previous section without a complete text is never continued:
+its code is joined. Their agents revise
 that text (see "Tiles in the pipeline"). `reviewv2.JoinedSections` gives,
 for every logical section of the new map, a new ID's too, the hunks it
 takes over from other previous sections and the active risks handed over
@@ -2799,7 +2804,8 @@ the levels of `agent/orchestrate` instead of the staged review:
    `generate.Tiles`). Only a map that fails after its repair fails the run.
 2. **Sections and context.** One section agent per logical section and the
    context agent run at once. A section whose hunks are unchanged since the
-   previous version keeps its text and tiles without a call; a kept tile
+   previous version, under its ID or renamed, keeps its text and tiles
+   without a call; a kept tile
    whose type is no longer offered with the definition it was filled with
    stays under its ID and brief, pending, and is filled again. A logical
    section the previous version wrote under the same ID over other hunks,
@@ -2829,11 +2835,14 @@ the levels of `agent/orchestrate` instead of the staged review:
    its owner is written. In a revised or kept section, a tile the map plans
    again is kept from the previous version without a call (`reused`) when
    the previous section drew it ready under the same ID and type, every
-   hunk it cited is still in the pull request, its brief, after the
-   section agent's answer, is the same, and its type's definition is the
-   one it was filled with (a library or saved type's digest; a native type
-   is drawn by the page's own code and counts as unchanged); otherwise it is
-   drawn again. Native types share the tile prompt; a dedicated type
+   hunk it cited is still in the pull request, its brief and the hunks the
+   brief cites, after the section agent's answer, are the same, and its
+   type's definition is the one it was filled with (a library or saved
+   type's digest; a native type is drawn by the page's own code and counts
+   as unchanged). A native tile is drawn beside its section's text, so it
+   is kept only when the section kept its text; a rewritten section's is
+   drawn again. Otherwise a tile is drawn again, and a tile the section
+   drops is neither kept nor drawn. Native types share the tile prompt; a dedicated type
    goes through the library's fill (`agent.Generator.FillTile`); a code tile
    is filled by the host. The types the person added or pinned
    (`generate.Tiles.Always`) get a tile whatever the map plans.
@@ -2845,7 +2854,10 @@ the levels of `agent/orchestrate` instead of the staged review:
    lines. The agent keeps what still holds word for word and changes what
    the sections now say differently; the verdict follows the current
    sections and risks, and never keeps a point about a mitigated risk or a
-   section that no longer exists.
+   section that no longer exists. A point that names a section the
+   document does not have is sent back; the last pass drops the name. The
+   shared ground rules count the previous version's map, section text and
+   overview as model-written data.
 
 A section, the context, a tile or the overview that fails never fails the
 run. The run's call and token budgets and its time limit are split between

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles/library"
 )
@@ -396,43 +397,61 @@ func drawnBackoff(shows string, cites ...string) reviewv2.Tile {
 }
 
 // A revised or kept section's tile the map plans again is kept without a
-// call when its type, its brief after the section's answer and the hunks it
-// cited are unchanged; otherwise, and with NoReuse, it is filled again.
+// call when its type, its brief and hunks after the section's answer and
+// the hunks it cited are unchanged, and, for a native tile, the section's
+// text was kept; otherwise, and with NoReuse, it is filled again. A tile
+// the section drops is neither kept nor filled.
 func TestRevisedSectionKeepsUnchangedTiles(t *testing.T) {
 	const brief = "How long each attempt waits."
+	entry, ok := library.Get("schema_change")
+	if !ok {
+		t.Fatal("no schema_change type")
+	}
+	keepCitingB := strings.Replace(keepReplyJSON, `"id":"`+hunkA+`"`, `"id":"`+hunkB+`"`, 1)
+	keepDropping := strings.Replace(keepReplyJSON, `"drop":false,"reason":null`, `"drop":true,"reason":"It restates the text."`, 1)
 	for _, c := range []struct {
-		name    string
-		tile    reviewv2.Tile
-		keep    bool
-		noReuse bool
-		renamed bool
-		kept    bool
+		name      string
+		tile      reviewv2.Tile
+		reply     string
+		dedicated bool
+		noReuse   bool
+		renamed   bool
+		kept      bool
+		dropped   bool
 	}{
-		{name: "unchanged", tile: drawnBackoff(brief, hunkA), kept: true},
-		{name: "kept section", tile: drawnBackoff(brief, hunkA), keep: true, kept: true},
-		{name: "renamed section", tile: drawnBackoff(brief, hunkA), renamed: true, kept: true},
-		{name: "gone hunk", tile: drawnBackoff(brief, hunkA, hunkGone)},
-		{name: "changed brief", tile: drawnBackoff("How long a job waits.", hunkA)},
-		{name: "no reuse", tile: drawnBackoff(brief, hunkA), noReuse: true},
+		{name: "kept section", tile: drawnBackoff(brief, hunkA), reply: keepReplyJSON, kept: true},
+		{name: "renamed kept section", tile: drawnBackoff(brief, hunkA), reply: keepReplyJSON, renamed: true, kept: true},
+		{name: "native in a rewritten section", tile: drawnBackoff(brief, hunkA)},
+		{name: "library type in a rewritten section", tile: drawnBackoff(brief, hunkA), dedicated: true, kept: true},
+		{name: "gone hunk", tile: drawnBackoff(brief, hunkA, hunkGone), reply: keepReplyJSON},
+		{name: "changed brief", tile: drawnBackoff("How long a job waits.", hunkA), reply: keepReplyJSON},
+		{name: "brief cites other hunks", tile: drawnBackoff(brief, hunkA), reply: keepCitingB},
+		{name: "no reuse", tile: drawnBackoff(brief, hunkA), dedicated: true, noReuse: true},
+		{name: "dropped", tile: drawnBackoff(brief, hunkA), reply: keepDropping, dropped: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := fullFake()
 			hunks := []string{hunkA, hunkGone}
-			if c.keep {
-				f.reply("section-sec-retry", keepReplyJSON)
+			if c.reply != "" {
+				f.reply("section-sec-retry", c.reply)
 				hunks = []string{hunkA}
+			}
+			if c.dedicated {
+				f.reply("map", strings.Replace(mapReplyJSON, `"id":"tl_backoff","type":"table"`, `"id":"tl_backoff","type":"schema_change"`, 1))
+				c.tile.Type, c.tile.Definition = "schema_change", entry.Encoded
 			}
 			previous := retrySection(hunks, hunkA)
 			if c.renamed {
 				previous.ID, c.tile.Owner = "sec_jobs", "sec_jobs"
 			}
 			run, _ := revisedRun(t, f, withTiles(t, previousDoc(t, previous), c.tile))
+			run.Registry, run.FillPrompts = NewRegistry(library.All()), testFillPrompts{}
 			run.NoReuse = c.noReuse
 			out, doc, err := Generate(context.Background(), run)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.keep && out.Generation.Sections["sec_retry"].Reason != ReasonKept {
+			if c.reply != "" && out.Generation.Sections["sec_retry"].Reason != ReasonKept {
 				t.Fatalf("the section was not kept: %+v", out.Generation.Sections["sec_retry"])
 			}
 			_, called := f.requests["tile-tl-backoff"]
@@ -443,16 +462,38 @@ func TestRevisedSectionKeepsUnchangedTiles(t *testing.T) {
 					tile = x
 				}
 			}
-			if c.kept {
+			switch {
+			case c.dropped:
+				if called || record.Status != StatusSkipped || tile.ID != "" {
+					t.Errorf("called %v, record %+v, tile %+v", called, record, tile)
+				}
+			case c.kept:
 				if called || record.Status != StatusReused || tile.Title != "Waits before" || tile.State != reviewv2.TileReady || tile.Owner != "sec_retry" {
 					t.Errorf("called %v, record %+v, tile %+v", called, record, tile)
 				}
-				return
-			}
-			if !called || record.Status != StatusRan || tile.Title != "How long a job waits" {
-				t.Errorf("called %v, record %+v, tile %+v", called, record, tile)
+			default:
+				if !called || record.Status == StatusReused || tile.Title == "Waits before" {
+					t.Errorf("called %v, record %+v, tile %+v", called, record, tile)
+				}
 			}
 		})
+	}
+}
+
+// Each tile kept takes one call off the tile level's expected calls.
+func TestKeptTilesLeaveTheBudget(t *testing.T) {
+	o := &orchestration{out: &Outcome{Levels: map[string]*LevelOutcome{LevelTiles: {}}}, registry: NewRegistry(nil), facts: newFacts(testBundle(), nil),
+		budget: newBudgets(agent.Budgets{MaxCalls: 20})}
+	o.out.Generation.Tiles = map[string]reviewv2.CallRecord{}
+	o.budget.expect(2, 2)
+	planned := drawnBackoff("How long each attempt waits.", hunkA)
+	other := planned
+	other.ID = "tl_other"
+	previous := []reviewv2.Tile{planned, drawnBackoff("Something else.", hunkA)}
+	previous[1].ID = "tl_other"
+	left := o.keepTiles([]reviewv2.Tile{planned, other}, previous, true)
+	if len(left) != 1 || left[0].ID != "tl_other" || o.budget.waiting[2] != 1 || o.out.Levels[LevelTiles].Reused != 1 {
+		t.Errorf("left %+v, waiting %d, level %+v", left, o.budget.waiting[2], o.out.Levels[LevelTiles])
 	}
 }
 
@@ -528,6 +569,93 @@ func TestTilesKeepOnlyTheirDefinition(t *testing.T) {
 				t.Errorf("tiles: %+v", doc.Tiles)
 			}
 		})
+	}
+}
+
+// A verdict point naming a section the document does not have is sent
+// back; the last pass drops the name and keeps the point.
+func TestVerdictPointNamesASection(t *testing.T) {
+	facts := newFacts(testBundle(), nil)
+	sections := []reviewv2.Section{{ID: "sec_retry", Kind: reviewv2.KindLogical, Hunks: []string{hunkA}}}
+	reply := []byte(strings.Replace(overviewReplyJSON, `"section":"sec_api"`, `"section":"sec_gone"`, 1))
+	if _, findings := checkOverview(reply, facts, sections, nil, false); !strings.Contains(findings, `/verdict/points/0/section: "sec_gone" is not a section; name the section that covers it now, or drop the point`) {
+		t.Errorf("findings: %q", findings)
+	}
+	r, findings := checkOverview(reply, facts, sections, nil, true)
+	if strings.Contains(findings, "sec_gone") || len(r.Verdict.Points) != 1 || r.Verdict.Points[0].Section != "" {
+		t.Errorf("last pass: %q %+v", findings, r.Verdict)
+	}
+}
+
+// A section the map gives a new ID over exactly a previous section's hunks
+// is reused without a call: its text, its tiles (now its own) and its
+// risks, which keep their history; its state is unchanged.
+func TestRenamedSectionOverTheSameHunksIsReused(t *testing.T) {
+	f := fullFake()
+	previous := retrySection([]string{hunkA, hunkB}, hunkA)
+	previous.ID = "sec_jobs"
+	doc := previousDoc(t, previous)
+	var d reviewv2.Document
+	if err := json.Unmarshal(doc, &d); err != nil {
+		t.Fatal(err)
+	}
+	d.Tiles[0].Owner = "sec_jobs"
+	doc = encodeDoc(t, d)
+	run, _ := revisedRun(t, f, doc)
+	out, got, err := Generate(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, called := f.requests["section-sec-retry"]; called || out.Generation.Sections["sec_retry"].Status != StatusReused {
+		t.Fatalf("called %v, record %+v", called, out.Generation.Sections["sec_retry"])
+	}
+	s := got.Sections[0]
+	if s.ID != "sec_retry" || s.Body[0].Text != "Failed jobs retry with a growing wait." || !strings.Contains(string(s.Derived), `"state":"unchanged"`) {
+		t.Errorf("section: %+v %s", s.Body, s.Derived)
+	}
+	for _, r := range s.Risks {
+		if r.ID == "rsk_old" && (r.State != "active" || r.IntroducedVersion == nil || *r.IntroducedVersion != 1) {
+			t.Errorf("carried risk: %+v", r)
+		}
+	}
+	if !slices.ContainsFunc(got.Tiles, func(x reviewv2.Tile) bool { return x.ID == "tl_old" && x.Owner == "sec_retry" && x.Title == "Old tile" }) {
+		t.Errorf("tiles: %+v", got.Tiles)
+	}
+}
+
+func encodeDoc(t *testing.T, d reviewv2.Document) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+// A renamed section whose code changed beyond additions is written again
+// from the previous text: the previous risks it no longer names are
+// mitigated under its ID, its new ones introduced now.
+func TestRenamedSectionRevised(t *testing.T) {
+	f := fullFake()
+	previous := retrySection([]string{hunkA, hunkGone}, hunkA)
+	previous.ID = "sec_jobs"
+	run, _ := revisedRun(t, f, previousDoc(t, previous))
+	out, doc, err := Generate(context.Background(), run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := out.Generation.Sections["sec_retry"]; r.Status != StatusRan || r.Reason != ReasonRevised {
+		t.Errorf("record: %+v", r)
+	}
+	s := doc.Sections[0]
+	risks := map[string]reviewv2.Risk{}
+	for _, r := range s.Risks {
+		risks[r.ID] = r
+	}
+	old, fresh := risks["rsk_old"], risks["rsk_unbounded"]
+	if old.State != "mitigated" || old.MitigatedVersion == nil || *old.MitigatedVersion != 2 || fresh.State != "active" || *fresh.IntroducedVersion != 2 ||
+		!strings.Contains(string(s.Derived), `"state":"changed"`) {
+		t.Errorf("risks %+v, derived %s", s.Risks, s.Derived)
 	}
 }
 

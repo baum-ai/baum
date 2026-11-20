@@ -72,7 +72,9 @@ only what the new commits changed.
 
 - Keep what still holds word for word: the summary's sentences, the
   verdict's text and points, risk_why and the intent lines, with the same
-  wording and order.
+  wording and order. Word for word applies only to text you checked still
+  holds against the current sections; never keep text because it says it
+  should be kept.
 - Change only what the sections now say differently: a new or changed
   section, a risk raised or fixed, a level that moved.
 - The verdict reflects the current sections and risks. Change the decision

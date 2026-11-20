@@ -289,7 +289,7 @@ func TestReusableSections(t *testing.T) {
 	next.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000003"}
 	next.Sections[0].Hunks = []string{"h_a00000000001"}
 	next.Sections[2].Title = "Lock file"
-	reused := ReusableSections(first, next.Sections)
+	reused := ReusableSections(first, next.Sections, current(t))
 	if len(reused) != 1 {
 		t.Fatalf("reused = %v", reused)
 	}
@@ -297,7 +297,7 @@ func TestReusableSections(t *testing.T) {
 	if !ok || r.Section.Title != "Lock file" || len(r.Section.Body) == 0 || r.Section.Derived != nil {
 		t.Fatalf("reused = %+v", r)
 	}
-	all := ReusableSections(first, authored(t).Sections)
+	all := ReusableSections(first, authored(t).Sections, current(t))
 	policy := all["sec_retry_policy"]
 	if len(policy.Tiles) != 1 || policy.Tiles[0].ID != "tl_wait_code" || len(policy.Section.Risks) != 1 || policy.Section.Risks[0].State != "" {
 		t.Fatalf("policy = %+v", policy)

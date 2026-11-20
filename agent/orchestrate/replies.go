@@ -652,8 +652,14 @@ func checkOverview(reply []byte, f *facts, docSections []reviewv2.Section, tiles
 	verdict.Text = c.text("/verdict/text", o.Verdict.Text, reviewv2.MaxVerdictText, true)
 	for i, p := range o.Verdict.Points {
 		point := reviewv2.VerdictPoint{Text: c.text(fmt.Sprintf("/verdict/points/%d/text", i), p.Text, reviewv2.MaxPointText, true)}
-		if p.Section != nil && sections[*p.Section] {
+		switch {
+		case p.Section == nil:
+		case sections[*p.Section]:
 			point.Section = *p.Section
+		case !lenient:
+			// A point kept from the previous version may name a section
+			// the map no longer has; the last pass drops the name instead.
+			c.add(fmt.Sprintf("/verdict/points/%d/section", i), "%q is not a section; name the section that covers it now, or drop the point", *p.Section)
 		}
 		verdict.Points = append(verdict.Points, point)
 	}
