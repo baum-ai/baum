@@ -12,10 +12,11 @@ import (
 
 // costBound is the most one custom tile's data may take to check against
 // the worst schema the dialect allows. The race detector slows the
-// validator several times over, so it gets more.
+// validator about twenty times over, most of it in regexp's backtracker, so
+// it gets more. Builds without it (Windows in CI) keep the tight bound.
 func costBound() time.Duration {
 	if raceEnabled {
-		return 500 * time.Millisecond
+		return time.Second
 	}
 	return 50 * time.Millisecond
 }
