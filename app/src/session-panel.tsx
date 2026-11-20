@@ -17,7 +17,10 @@ import { Badge, Button, CloseButton, LiveDot, SegmentedControl } from "@baum/vie
 import { cn } from "@baum/viewer/components/classnames";
 import { agentName, homePath, LocalRequestError } from "./api";
 import {
+  archiveConversation,
   closeConversation,
+  uncleanDirectory,
+  type UncleanDirectory,
   confirmProposal,
   dismissProposal,
   listConversations,
@@ -178,6 +181,32 @@ export function usePageReport(context: PageContext, enabled: boolean) {
     );
     return () => clearTimeout(timer);
   }, [key, enabled, epoch]);
+}
+
+/** What a refused archive would lose, in words for the person to weigh. */
+export function uncleanText(unclean: UncleanDirectory): string {
+  const held: string[] = [];
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  if (unclean.changed > 0)
+    held.push(
+      unclean.worktree
+        ? count(unclean.changed, "uncommitted change", "uncommitted changes")
+        : count(unclean.changed, "file", "files"),
+    );
+  if (unclean.unpushed)
+    held.push(
+      `${count(unclean.unpushed, "commit", "commits")} on ${unclean.branch ?? "its branch"} that no remote has`,
+    );
+  if (unclean.detached) held.push(`${count(unclean.detached, "commit", "commits")} on no branch`);
+  if (unclean.unreadable) held.push(`work that could not be checked (${unclean.unreadable})`);
+  const where = unclean.worktree ? "worktree" : "directory";
+  let text = `Archiving removes this session's ${where}, which holds ${held.join(" and ")}.`;
+  const named = (unclean.paths ?? []).slice(0, 5);
+  if (named.length > 0) {
+    const rest = unclean.changed - named.length;
+    text += ` ${named.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}.`;
+  }
+  return `${text} It cannot be brought back.`;
 }
 
 /** The daemon's conversations, newest first, and whether it runs the panel
@@ -459,6 +488,9 @@ function SessionPanel({
   const position = (chosen === "left" || chosen === "right") && !sideFits ? "bottom" : chosen;
   const side = position === "left" || position === "right";
   const id = panel.conversation;
+  // The session shown when a close or archive answers, which may be another.
+  const shownId = useRef(id);
+  shownId.current = id;
   const { conversation, error: readError, update } = useConversation(id);
   const { proposals, read: readProposals } = useProposals(id);
   const [mode, setMode] = useState<PanelMode | null>(null);
@@ -587,7 +619,13 @@ function SessionPanel({
   // The model the session runs, once its transcript names it.
   const [usedModel, setUsedModel] = useState("");
   useEffect(() => setUsedModel(""), [id]);
-  const [closing, setClosing] = useState(false);
+  // A close or archive that asks first: of a session whose agent works, or
+  // an archive that would lose the work in its directory.
+  const [asking, setAsking] = useState<
+    | { kind: "close" | "archive"; session: ConversationSummary }
+    | { kind: "discard"; session: ConversationSummary; unclean: UncleanDirectory }
+    | null
+  >(null);
   const latestPage = useRef(page);
   latestPage.current = page;
 
@@ -657,25 +695,61 @@ function SessionPanel({
           .filter(Boolean)
           .join(" · "),
         onSelect: () => sessionPanel.select(c.id),
+        actions: () => sessionActions(c, false),
       });
-    if (id && conversation && !closed)
-      items.push({
-        label: "Close this session",
-        danger: true,
-        note: running ? "Stops the turn running; its directory stays" : "Its directory stays",
-        // While the agent works, closing it stops the turn: asked first.
-        onSelect: () => (running ? setClosing(true) : close()),
-      });
+    if (id && conversation) items.push(...sessionActions(conversation, true));
     return items;
   };
-  const close = () => {
-    if (!id) return;
-    void closeConversation(id).then(update, (e: unknown) =>
-      toast({
-        title: "Could not close the session",
-        detail: e instanceof Error ? e.message : undefined,
-        error: true,
-      }),
+  /** Closing and archiving a session: from the picker's foot for the one
+   *  shown, and from a right click on any session in it. */
+  const sessionActions = (c: ConversationSummary, shown: boolean): MenuItem[] => {
+    const working = c.state === "running";
+    const items: MenuItem[] = [];
+    if (c.state !== "closed")
+      items.push({
+        label: shown ? "Close this session" : "Close session",
+        danger: true,
+        note: working ? "Stops the turn running; its directory stays" : "Its directory stays",
+        // While the agent works, closing it stops the turn: asked first.
+        onSelect: () => (working ? setAsking({ kind: "close", session: c }) : close(c)),
+      });
+    items.push({
+      label: shown ? "Archive this session" : "Archive session",
+      danger: true,
+      note: "Leaves the list; the worktree or directory baum made goes",
+      onSelect: () => (working ? setAsking({ kind: "archive", session: c }) : archive(c)),
+    });
+    return items;
+  };
+  const close = (c: ConversationSummary) => {
+    void closeConversation(c.id).then(
+      (closedOne) => {
+        if (closedOne.id === shownId.current) update(closedOne);
+      },
+      (e: unknown) =>
+        toast({
+          title: "Could not close the session",
+          detail: e instanceof Error ? e.message : undefined,
+          error: true,
+        }),
+    );
+  };
+  const archive = (c: ConversationSummary, discard = false) => {
+    void archiveConversation(c.id, discard).then(
+      () => {
+        if (c.id === shownId.current) sessionPanel.select(null);
+        toast({ title: "Archived the session", detail: c.title || "Untitled session" });
+      },
+      (e: unknown) => {
+        const unclean = uncleanDirectory(e);
+        if (unclean) setAsking({ kind: "discard", session: c, unclean });
+        else
+          toast({
+            title: "Could not archive the session",
+            detail: e instanceof Error ? e.message : undefined,
+            error: true,
+          });
+      },
     );
   };
   // The message the panel's keys are on, marked as the transcript page marks
@@ -869,20 +943,49 @@ function SessionPanel({
       }}
     >
       {menu.menu}
-      {closing ? (
+      {asking?.kind === "close" ? (
         <ConfirmDialog
           title="Close this session while the agent works?"
           action="Close session"
           danger
           pending={false}
-          close={() => setClosing(false)}
+          close={() => setAsking(null)}
           confirm={() => {
-            setClosing(false);
-            close();
+            setAsking(null);
+            close(asking.session);
           }}
         >
           Closing it stops the turn running now. Its directory and what the agent changed there
           stay.
+        </ConfirmDialog>
+      ) : asking?.kind === "archive" ? (
+        <ConfirmDialog
+          title="Archive this session while the agent works?"
+          action="Archive session"
+          danger
+          pending={false}
+          close={() => setAsking(null)}
+          confirm={() => {
+            setAsking(null);
+            archive(asking.session);
+          }}
+        >
+          Archiving it stops the turn running now. If the agent left work in the session's worktree
+          or directory, you are asked again before it goes.
+        </ConfirmDialog>
+      ) : asking?.kind === "discard" ? (
+        <ConfirmDialog
+          title="Archive and discard this session's work?"
+          action="Discard and archive"
+          danger
+          pending={false}
+          close={() => setAsking(null)}
+          confirm={() => {
+            setAsking(null);
+            archive(asking.session, true);
+          }}
+        >
+          {uncleanText(asking.unclean)}
         </ConfirmDialog>
       ) : null}
       {position !== "top" ? (

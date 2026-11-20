@@ -32,6 +32,10 @@ export type MenuItem = {
   checked?: boolean;
   disabled?: boolean;
   note?: string;
+  /** What can be done with the choice itself (a session in a picker): a
+   *  right click on it, or the Menu key, Shift+F10 or ⌘. while it has the
+   *  keys, shows these in place of the menu. */
+  actions?: () => MenuItem[];
 };
 
 type Open = {
@@ -47,6 +51,9 @@ type Open = {
   /** Where the keys go back to when it closes, when not to `anchor`: a menu
    *  a shortcut opened gives them back to where they were. */
   returnTo?: Element | null;
+  /** Counts the menus a choice's actions replaced it with, so each is a
+   *  menu of its own. */
+  nested?: number;
 };
 
 /** The key that opens the menu of what has the keys, as the app's own
@@ -135,7 +142,19 @@ export function useContextMenu() {
     const rect = anchor.getBoundingClientRect();
     setState({ x: rect.right, y: rect.bottom + 4, items, label, anchor, last, returnTo });
   };
-  const menu = state ? <ContextMenu {...state} id={id} close={() => setState(null)} /> : null;
+  // A choice's actions replace the menu where they were asked for; the keys
+  // still go back to what opened the first.
+  const nest = (x: number, y: number, items: MenuItem[], label: string, returnTo: Element | null) =>
+    setState((was) => ({ x, y, items, label, returnTo, nested: (was?.nested ?? 0) + 1 }));
+  const menu = state ? (
+    <ContextMenu
+      key={state.nested ?? 0}
+      {...state}
+      id={id}
+      close={() => setState(null)}
+      nest={nest}
+    />
+  ) : null;
   return { open, openFrom, menu, id, anchor: state?.anchor ?? null };
 }
 
@@ -236,7 +255,12 @@ function ContextMenu({
   returnTo,
   id,
   close,
-}: Open & { id: string; close: () => void }): ReactNode {
+  nest,
+}: Open & {
+  id: string;
+  close: () => void;
+  nest: (x: number, y: number, items: MenuItem[], label: string, returnTo: Element | null) => void;
+}): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState({ left: x, top: y });
   // What had the keys before the menu took them, given back when it closes.
@@ -266,14 +290,20 @@ function ContextMenu({
     const list = choices();
     (last ? list[list.length - 1] : list[0])?.focus();
   }, [x, y]);
+  // Set once a choice's actions replaced the menu: until its listeners go,
+  // what the new menu does (taking the keys) must not close it.
+  const replaced = useRef(false);
   // A click elsewhere, a scroll or the window losing focus closes it.
   useEffect(() => {
+    const shut = () => {
+      if (!replaced.current) close();
+    };
     const outside = (event: PointerEvent) => {
       const target = event.target as Node;
       if (ref.current?.contains(target)) return;
       // Its own button toggles it: the click that follows leaves it closed.
       if (anchor?.contains(target)) anchor.dataset.closing = "";
-      close();
+      shut();
     };
     // A menu hung under its button closes only when what scrolled moves the
     // button: the page, or a box that holds it. Another box scrolling, such
@@ -281,24 +311,24 @@ function ContextMenu({
     const scrolled = (event: Event) => {
       const target = event.target;
       if (anchor && target instanceof Element && !target.contains(anchor)) return;
-      close();
+      shut();
     };
     document.addEventListener("pointerdown", outside, true);
     window.addEventListener("scroll", scrolled, true);
-    window.addEventListener("resize", close);
-    window.addEventListener("blur", close);
+    window.addEventListener("resize", shut);
+    window.addEventListener("blur", shut);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("scroll", scrolled, true);
-      window.removeEventListener("resize", close);
-      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", shut);
+      window.removeEventListener("blur", shut);
     };
   }, [close, anchor]);
   // Escape closes it wherever the keys are, and does nothing else: the page's
   // own Escape (clearing its row) waits for the next one.
   useEffect(() => {
     const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || replaced.current) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       dismiss();
@@ -347,7 +377,22 @@ function ContextMenu({
       className="context-menu fixed z-50 w-max max-w-[320px] min-w-[200px]"
       style={{ left: at.left, top: at.top }}
       onKeyDown={keys}
-      onContextMenu={(event) => event.preventDefault()}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        const choice = (event.target as HTMLElement).closest<HTMLElement>("[role^=menuitem]");
+        const item = choice ? items[choices().indexOf(choice)] : undefined;
+        const actions = item?.actions?.() ?? [];
+        if (!choice || !item || actions.length === 0) return;
+        let { clientX: x, clientY: y } = event;
+        // The keyboard's menu event has no pointer: it opens beside the choice.
+        if (x === 0 && y === 0) {
+          const rect = choice.getBoundingClientRect();
+          x = rect.left + 12;
+          y = rect.bottom;
+        }
+        replaced.current = true;
+        nest(x, y, actions, item.label, opener);
+      }}
     >
       {items.map((item, index) => (
         <MenuChoice
