@@ -104,12 +104,8 @@ if [ "$copy" = 1 ]; then
   # Mounted writable so sqlite3 can read databases a running daemon holds
   # open (WAL) and take a consistent snapshot; nothing is written.
   set --
-  if [ -f "$home/.local/state/baum/seeddata.json" ]; then
-    echo "isolated: $name already has the seeded dataset, kept; delete $home to start again"
-  elif [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
-    # It would run online, with whatever data it holds.
-    echo "isolated: $name has baum data that is not the seeded dataset; delete $home to seed it" >&2
-    exit 1
+  if [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
+    echo "isolated: $name already has baum data, kept; delete $home to start again"
   else
     for pair in "${XDG_CONFIG_HOME:-$HOME/.config}/baum:/seed/config" "${XDG_STATE_HOME:-$HOME/.local/state}/baum:/seed/state"; do
       [ -d "${pair%:*}" ] && set -- "$@" -v "$pair"

@@ -202,11 +202,20 @@ func writeSessionEvents(dir string, sessions []*sessionPlan, sessionsAt time.Tim
 	return nil
 }
 
+// writePrivate creates path, refusing one that exists (fs.ErrExist).
 func writePrivate(path, text string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(text), 0o600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(text); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // hash is FNV-1a, to seed a stream from a name.

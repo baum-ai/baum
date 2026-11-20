@@ -237,3 +237,28 @@ func TestAFailedGenerationLeavesNoBaumData(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAnOccupiedClonePathIsLeftAlone(t *testing.T) {
+	requireGit(t)
+	home := filepath.Join(t.TempDir(), "home")
+	o := small(5, home)
+	first := plan(o.withDefaults())[0]
+	work := filepath.Join(home, "src", first.owner, first.name, "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(work), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(work, []byte("uncommitted"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(context.Background(), o); err == nil {
+		t.Fatal("generation over an existing clone succeeded")
+	}
+	if got, err := os.ReadFile(work); err != nil || string(got) != "uncommitted" {
+		t.Fatalf("the existing clone was changed: %q, %v", got, err)
+	}
+	for _, part := range []string{".local/state/baum", ".config/baum", MarkerFile} {
+		if _, err := os.Stat(filepath.Join(home, part)); !os.IsNotExist(err) {
+			t.Errorf("%s is left after a failed generation: %v", part, err)
+		}
+	}
+}

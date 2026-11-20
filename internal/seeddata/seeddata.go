@@ -165,6 +165,19 @@ func Generate(ctx context.Context, o Options) (Result, error) {
 	return result, err
 }
 
+// claim refuses a path something else already holds, so a failed
+// generation never removes what it did not write, and tells wrote of one
+// that is free.
+func claim(path string, wrote func(string)) error {
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("seeddata: %s already exists", path)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	wrote(path)
+	return nil
+}
+
 // writeDataset writes the dataset into home, telling wrote each clone and
 // transcript it writes.
 func writeDataset(ctx context.Context, o Options, home string, wrote func(string)) (Result, error) {
@@ -184,8 +197,13 @@ func writeDataset(ctx context.Context, o Options, home string, wrote func(string
 	if err := writePrivate(filepath.Join(config, "config.toml"), fmt.Sprintf("github_token = %q\n", Token)); err != nil {
 		return Result{}, err
 	}
-	// The desktop app's first-run setup is done.
-	if err := writePrivate(filepath.Join(home, ".config", "com.usebaum.desktop", "desktop.json"), `{"setup":{"onboarded":true,"commands":[]}}`+"\n"); err != nil {
+	// The desktop app's first-run setup is done, replacing any settings an
+	// earlier run of the app left.
+	desktop := filepath.Join(home, ".config", "com.usebaum.desktop")
+	if err := os.MkdirAll(desktop, 0o700); err != nil {
+		return Result{}, err
+	}
+	if err := os.WriteFile(filepath.Join(desktop, "desktop.json"), []byte(`{"setup":{"onboarded":true,"commands":[]}}`+"\n"), 0o600); err != nil {
 		return Result{}, err
 	}
 	registry, err := repos.Open(appDB)
@@ -210,7 +228,9 @@ func writeDataset(ctx context.Context, o Options, home string, wrote func(string
 	clones := make([]string, len(plans))
 	for i, r := range plans {
 		dir := filepath.Join(home, "src", r.owner, r.name)
-		wrote(dir)
+		if err := claim(dir, wrote); err != nil {
+			return Result{}, err
+		}
 		g, err := writeRepository(ctx, o, r, dir)
 		if err != nil {
 			return Result{}, fmt.Errorf("writing %s: %w", r.identity(), err)
@@ -266,7 +286,10 @@ func writeDataset(ctx context.Context, o Options, home string, wrote func(string
 			write = writeCodexRollout
 		}
 		size, err := write(o, home, s)
-		wrote(s.path)
+		// A transcript already there is someone else's: never removed.
+		if !errors.Is(err, fs.ErrExist) {
+			wrote(s.path)
+		}
 		if err != nil {
 			return Result{}, err
 		}
