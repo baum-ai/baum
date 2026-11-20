@@ -1,15 +1,16 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { legacyAnswer1303, REVIEW_1303 } from "../src/review-view/fixture-1303";
+import { REVIEW_1303 } from "../src/review-view/fixture-1303";
+import { reviewDocumentFor } from "../../viewer/test/review-document";
 import { launchURL } from "./inbox-helpers";
 
-// The review page's rail and places (`?view=tiles`) on the fixture's acme/demo#7,
+// The review page's rail and places on the fixture's acme/demo#7,
 // whose tile route answers with #1303's baum.review/2 document, as the daemon
 // serves it. REVIEW_VIEW_SHOTS=<dir> also writes a picture of each
 // place at each width, light and dark.
 
-const PR7 = "repository=acme%2Fdemo&pr=7&view=tiles";
+const PR7 = "repository=acme%2Fdemo&pr=7";
 const SHOTS = process.env.REVIEW_VIEW_SHOTS ?? "";
 
 async function open(
@@ -151,6 +152,39 @@ test("a section's views switch, keep their place in the address and reset per se
   await page.goBack();
   await expect(page).not.toHaveURL(/section_view/);
   expect(errors).toEqual([]);
+});
+
+test("a flow tile lays out across, then with its labels, as the page widens", async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await open(page, PR7);
+  const flow = page.locator(".flow").first();
+  await expect(flow).toBeVisible();
+  // The Overview's flow has 5 columns and lane labels: lanes as rows from
+  // 8.5rem a column (42.5rem), the labels in a column of their own from
+  // 9rem a column and 6rem (51rem), at the default 16px root font size.
+  const seen = new Set<string>();
+  for (const width of [390, 900, 1100, 1300, 1500, 1800]) {
+    await page.setViewportSize({ width, height: 900 });
+    // The attributes follow the width the flow is given, as it settles.
+    const state = () =>
+      flow.evaluate((el) => ({
+        px: el.clientWidth,
+        across: el.hasAttribute("data-across"),
+        labels: el.hasAttribute("data-labels"),
+      }));
+    await expect
+      .poll(async () => {
+        const now = await state();
+        return now.across === now.px >= 680 && now.labels === now.px >= 816;
+      })
+      .toBe(true);
+    const now = await state();
+    seen.add(`${now.across}/${now.labels}`);
+  }
+  // It was a list, then across, then with labels.
+  expect(seen).toContain("false/false");
+  expect(seen).toContain("true/false");
+  expect(seen).toContain("true/true");
 });
 
 for (const width of [390, 900, 1440]) {
@@ -411,10 +445,38 @@ test("a version that was not arranged opens on the rail too", async ({ page }) =
 test("a baum.review/1 version draws its own Summary and sections in the rail", async ({ page }) => {
   const errors = watchErrors(page);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await open(page, PR7, legacyAnswer1303());
+  // Any stored baum.review/1 document will do: the routes below answer with it.
+  const stored = reviewDocumentFor("acme/widgets", 42)!;
+  const section = stored.sections[0]!;
+  await open(page, PR7, { document: stored });
   await expect(tilesRail(page)).toBeVisible();
   await expect(page.getByRole("heading", { name: "Summary", level: 2 })).toBeVisible();
-  await open(page, `${PR7}&pane=section&section=sec_allowlist`, legacyAnswer1303());
-  await expect(page.getByRole("heading", { name: "What a phone can do" })).toBeVisible();
+  await open(page, `${PR7}&pane=section&section=${section.id}`, { document: stored });
+  await expect(page.getByRole("heading", { name: section.title })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("k back to the first block, and to the first place, shows the review's header again", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 480 });
+  await open(page, `${PR7}&pane=section&section=sec_allowlist`);
+  const blocks = page.locator("[data-review-block]");
+  await expect(blocks.first()).toBeVisible();
+  const top = () => page.evaluate(() => document.querySelector(".local-main")!.scrollTop);
+  const count = await blocks.count();
+  for (let i = 0; i < count; i++) await page.keyboard.press("j");
+  await expect.poll(top).toBeGreaterThan(0);
+  for (let i = 0; i < count; i++) await page.keyboard.press("k");
+  await expect.poll(top).toBe(0);
+  // Back through the places to the first, the page starts at its top too.
+  for (let i = 0; i < count; i++) await page.keyboard.press("j");
+  await expect.poll(top).toBeGreaterThan(0);
+  for (let i = 0; i < 6; i++) await page.keyboard.press("Shift+K");
+  await expect.poll(top).toBe(0);
+  // On the first place already, Shift+K still takes a scrolled page back up.
+  await page.evaluate(() => document.querySelector(".local-main")!.scrollTo({ top: 200 }));
+  await expect.poll(top).toBeGreaterThan(0);
+  await page.keyboard.press("Shift+K");
+  await expect.poll(top).toBe(0);
 });

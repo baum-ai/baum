@@ -180,7 +180,7 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 	f := newSettingsFixture(t)
 	chat, action := f.tokens(t)
-	leaks := []string{"SENTINEL", "sentinel", f.home, f.clonePath, "login/device", "user_code", "verification_uri", `"path":`, `"detail":`, `"fix":`, "common_dir", "/etc/", "budgets", "caps"}
+	leaks := []string{"SENTINEL", "sentinel", f.home, f.clonePath, jsonText(f.home), jsonText(f.clonePath), "login/device", "user_code", "verification_uri", `"path":`, `"detail":`, `"fix":`, "common_dir", "/etc/", "budgets", "caps"}
 	noLeak := func(what, text string, extra ...string) {
 		t.Helper()
 		for _, leak := range append(leaks, extra...) {
@@ -198,7 +198,7 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 	} {
 		body := string(f.route(t, path))
 		for _, want := range planted {
-			if !strings.Contains(body, want) {
+			if !strings.Contains(body, want) && !strings.Contains(body, jsonText(want)) {
 				t.Fatalf("%s lacks the planted %q: %s", path, want, body)
 			}
 		}

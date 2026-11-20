@@ -190,7 +190,9 @@ type Options struct {
 	// Frames is the frame registry a claimed job's definition is
 	// registered in; nil is tileview's.
 	Frames *tileframes.Registry
-	// Publish sends a tile_check event; nil sends none.
+	// Publish sends a tile_check event; nil sends none. It is called with
+	// the checker's lock held, so a job's events keep their order: it must
+	// not block or call back into the checker.
 	Publish func(Event)
 	// Subscribed reports whether the app's event stream is connected; nil
 	// counts it as connected. With no app and no runner polling, a check
@@ -569,8 +571,10 @@ func (c *Checker) enqueue(j *job, limit int) error {
 	j.queued = now
 	c.queue = append(c.queue, j)
 	c.poke()
-	c.mu.Unlock()
+	// Published under the lock: a runner already polling claims the job as
+	// soon as the lock is free, and its running must not come first.
 	c.publish(j.ID, StateQueued)
+	c.mu.Unlock()
 	return nil
 }
 
@@ -688,8 +692,8 @@ func (c *Checker) Next(ctx context.Context, wait time.Duration) (Job, bool) {
 				j.alive, j.limit = now, now.Add(c.opts.Hang+time.Duration(frames(j.Job))*frameBudget)
 				j.timer = time.AfterFunc(c.opts.Hang, func() { c.expire(j) })
 			}
-			c.mu.Unlock()
 			c.publish(j.ID, StateRunning)
+			c.mu.Unlock()
 			return j.Job, true
 		}
 		wake := c.wake
@@ -753,17 +757,19 @@ func (c *Checker) hung(j *job) {
 	}
 	c.running, c.freed = nil, time.Now()
 	c.poke()
-	waiting := slices.Clone(c.queue)
 	c.mu.Unlock()
 	c.frames.MarkHung(j.Digest)
 	c.publish(j.ID, StateHung)
 	j.errors = append(j.errors, problem(CodeHang, "The component never finished drawing, and the app stopped answering while it drew (an endless loop?)."))
 	c.finish(j, c.result(j, VerdictHang))
 	// The page closes a runner that hung; the jobs still waiting need it
-	// back, so they are announced again.
-	for _, w := range waiting {
+	// back, so they are announced again. Under the lock, so a job claimed
+	// meanwhile is not announced queued after its running.
+	c.mu.Lock()
+	for _, w := range c.queue {
 		c.publish(w.ID, StateQueued)
 	}
+	c.mu.Unlock()
 }
 
 // expire runs when a claimed job's hang timer fires: a job whose runner
@@ -834,8 +840,8 @@ func (c *Checker) Requeue(id string) {
 	c.running, j.claimed = nil, false
 	c.queue = append([]*job{j}, c.queue...)
 	c.poke()
-	c.mu.Unlock()
 	c.publish(j.ID, StateQueued)
+	c.mu.Unlock()
 }
 
 // frames is how many frames the runner draws for a job, as its matrix has

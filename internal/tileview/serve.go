@@ -2,7 +2,6 @@ package tileview
 
 import (
 	"encoding/json"
-	"slices"
 
 	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/tiledrafts"
@@ -57,7 +56,7 @@ func Serve(document, composition []byte, added []AddedTile, opts tiles.Options) 
 		return serveV2(document, added)
 	}
 	built := BuildWith(document, composition, added, opts)
-	d, err := reviewv2.FromV1(built.Document, composition)
+	d, err := reviewv2.FromV1(built.Document)
 	if err != nil {
 		problem := built.Problem
 		if problem == "" {
@@ -140,15 +139,9 @@ func addedTiles(d reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {
 		workstats.Inc("tileview.views_ignored")
 		return nil
 	}
-	current := map[string][]string{}
-	var order []string
-	for _, s := range d.Sections {
-		current[s.ID] = s.Hunks
-		order = append(order, s.ID)
-	}
 	for _, t := range checked {
 		note := notes[t.ID]
-		tile := reviewv2.Tile{ID: t.ID, Type: definitionName(t.Definition), Owner: ownerFor(note.Section, t.Covers, current, order), Title: t.Title, Data: t.Data,
+		tile := reviewv2.Tile{ID: t.ID, Type: definitionName(t.Definition), Owner: reviewv2.OwnerFor(d, note.Section, t.Covers), Title: t.Title, Data: t.Data,
 			State: t.State, Definition: t.Definition, Problems: t.Problems, Cites: []reviewv2.Anchor{}, Added: true, From: note.From, Filling: note.Filling}
 		if tile.Type == "" {
 			tile.Type = tiles.TypeCustom
@@ -159,31 +152,6 @@ func addedTiles(d reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {
 		out = append(out, tile)
 	}
 	return out
-}
-
-// ownerFor is where an added tile stands: the section it was added on when
-// the document has it (or context), else the section whose hunks it covers
-// most, the first on a tie, else context.
-func ownerFor(section string, covers []string, current map[string][]string, order []string) string {
-	if section == reviewv2.OwnerContext {
-		return section
-	}
-	if _, ok := current[section]; ok {
-		return section
-	}
-	best, most := reviewv2.OwnerContext, 0
-	for _, id := range order {
-		n := 0
-		for _, h := range covers {
-			if slices.Contains(current[id], h) {
-				n++
-			}
-		}
-		if n > most {
-			best, most = id, n
-		}
-	}
-	return best
 }
 
 // registerTileFrames registers the frame document of each ready tile with
@@ -220,15 +188,8 @@ func registerTileFrames(ts []reviewv2.Tile) Frames {
 	return registered
 }
 
-// Encodable is an answer Encode takes: the tile routes' Served, or the
-// review page's view (Response) that replay and tests read.
-type Encodable interface{ frames() Frames }
-
-func (s Served) frames() Frames   { return s.Frames }
-func (r Response) frames() Frames { return r.Frames }
-
 // Encode returns the encoded answer with its ETag.
-func Encode(r Encodable) (Answer, error) {
-	body, err := etagjson.Encode(r)
-	return Answer{Body: body, Frames: r.frames()}, err
+func Encode(s Served) (Answer, error) {
+	body, err := etagjson.Encode(s)
+	return Answer{Body: body, Frames: s.Frames}, err
 }

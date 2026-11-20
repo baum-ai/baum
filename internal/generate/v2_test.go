@@ -147,7 +147,7 @@ func TestV2RunFillsTheAlwaysTypes(t *testing.T) {
 	o := f.options(t)
 	o.Budgets.MaxCalls = 0
 	o.Tiles = &generate.Tiles{
-		Always: []agent.AlwaysTile{{Name: "api_change"}},
+		Always: []string{"api_change"},
 		Saved: func(context.Context, []string, []string) ([]library.Entry, []library.Entry) {
 			e, _ := library.Get("schema_change")
 			e.Definition.Name = "team_schema"

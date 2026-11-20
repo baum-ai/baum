@@ -13,35 +13,6 @@ func isTile(b Block, id string) bool {
 	return b.Type == BlockTile && b.Tile == id && b.Title == "" && b.Text == "" && len(b.Items) == 0
 }
 
-func TestBodyOf(t *testing.T) {
-	tiles := []Tile{{ID: "tl_a", Owner: "sec_x"}, {ID: "tl_other", Owner: "sec_y"}, {ID: "tl_b", Owner: "sec_x"}}
-	cite := HunkAnchor("h_a00000000001", nil)
-	older := Section{ID: "sec_x", Summary: "It does a thing.", Steps: []Step{
-		{ID: "st_1", Title: "First.", Text: "One happens.", Cites: []Anchor{cite}},
-		{ID: "st_2", Title: "Second", Text: "Two happens."},
-	}}
-	body := BodyOf(older, tiles)
-	if len(body) != 4 || body[0].Type != BlockProse || body[0].Text != "It does a thing." {
-		t.Fatalf("body = %+v", body)
-	}
-	if p := body[1]; p.Type != BlockPoints || len(p.Items) != 2 || p.Items[0].Text != "**First.** One happens." || len(p.Items[0].Cites) != 1 ||
-		p.Items[1].Text != "**Second.** Two happens." || p.Items[1].Cites == nil {
-		t.Fatalf("points = %+v", body[1])
-	}
-	if !isTile(body[2], "tl_a") || !isTile(body[3], "tl_b") {
-		t.Fatalf("tile blocks = %+v", body[2:])
-	}
-	// A section with a body keeps it, whatever it carries besides.
-	own := Section{ID: "sec_x", Summary: "Old.", Body: []Block{{Type: BlockNote, Text: "Mine."}}}
-	if got := BodyOf(own, tiles); len(got) != 1 || got[0].Text != "Mine." {
-		t.Fatalf("own body = %+v", got)
-	}
-	// Nothing to derive from is an empty body, never an invented one.
-	if got := BodyOf(Section{ID: "sec_z"}, tiles); len(got) != 0 {
-		t.Fatalf("empty = %+v", got)
-	}
-}
-
 func TestEnsureBodies(t *testing.T) {
 	d := Document{
 		Sections: []Section{
@@ -52,8 +23,8 @@ func TestEnsureBodies(t *testing.T) {
 				{Type: BlockTile, Tile: "tl_foreign"},  // owned by another section
 				{Type: BlockTile, Tile: "tl_second"},   // placed twice
 				{Type: BlockTile, Tile: "tl_overview"}, // not a section's tile
-			}, Summary: "kept out", Steps: []Step{{ID: "st_1"}}},
-			{ID: "sec_b", Summary: "Older.", Steps: []Step{{ID: "st_1", Title: "T", Text: "X."}}},
+			}},
+			{ID: "sec_b", Body: []Block{{Type: BlockProse, Text: "Older."}, {Type: BlockPoints, Items: []Point{{Text: "X."}}}}},
 			{ID: "sec_c"},
 		},
 		Tiles: []Tile{
@@ -77,18 +48,15 @@ func TestEnsureBodies(t *testing.T) {
 	if got := strings.Join(ids(a.Body), ","); got != "tl_second,tl_first,tl_added" || a.Body[0].Type != BlockProse || len(a.Body) != 4 {
 		t.Fatalf("sec_a body = %+v", a.Body)
 	}
-	if a.Summary != "" || a.Steps != nil {
-		t.Errorf("the older text is written again: %q %v", a.Summary, a.Steps)
-	}
 	b := d.Sections[1]
-	if len(b.Body) != 3 || b.Body[0].Text != "Older." || b.Body[1].Type != BlockPoints || b.Body[2].Tile != "tl_foreign" || b.Summary != "" || b.Steps != nil {
+	if len(b.Body) != 3 || b.Body[0].Text != "Older." || b.Body[1].Type != BlockPoints || b.Body[2].Tile != "tl_foreign" {
 		t.Fatalf("sec_b body = %+v", b)
 	}
 	if c := d.Sections[2]; c.Body == nil || len(c.Body) != 0 {
 		t.Fatalf("sec_c body = %#v", c.Body)
 	}
 	encoded, _ := json.Marshal(d.Sections[2])
-	if !strings.Contains(string(encoded), `"body":[]`) || strings.Contains(string(encoded), `"summary"`) || strings.Contains(string(encoded), `"steps"`) {
+	if !strings.Contains(string(encoded), `"body":[]`) {
 		t.Errorf("encoded = %s", encoded)
 	}
 	// Running it again changes nothing.
@@ -105,7 +73,7 @@ func TestCompleteLeavesEveryBody(t *testing.T) {
 	d.Sections[0].Body = append(d.Sections[0].Body, Block{Type: BlockTile, Tile: "tl_nowhere"})
 	out := completeFixture(t, d, 1, nil)
 	for _, s := range out.Sections {
-		if len(s.Body) == 0 || s.Summary != "" || s.Steps != nil {
+		if len(s.Body) == 0 {
 			t.Errorf("section %s: %+v", s.ID, s)
 		}
 	}
@@ -120,19 +88,10 @@ func TestCompleteLeavesEveryBody(t *testing.T) {
 	if strings.Join(placed, ",") != "tl_wait_code" {
 		t.Errorf("sec_retry_policy tile blocks = %v", placed)
 	}
-	// The older section (a summary and steps) is derived, with its tile.
-	older := out.Sections[1].Body
-	if len(older) != 3 || older[0].Type != BlockProse || older[1].Type != BlockPoints || !isTile(older[2], "tl_error_paths") {
-		t.Errorf("derived body = %+v", older)
-	}
-	// What was written is not changed in place.
-	if len(d.Sections[1].Body) != 0 || d.Sections[1].Summary == "" {
-		t.Error("Complete changed the authored document")
-	}
 	// Read gives a stored document without bodies one.
-	stored := encode(t, Document{Schema: Name, Sections: []Section{{ID: "sec_a", Summary: "Older.", Hunks: []string{}}}, Tiles: []Tile{{ID: "tl_a", Owner: "sec_a"}}})
+	stored := encode(t, Document{Schema: Name, Sections: []Section{{ID: "sec_a", Hunks: []string{}}}, Tiles: []Tile{{ID: "tl_a", Owner: "sec_a"}}})
 	read, err := Read(stored)
-	if err != nil || len(read.Sections[0].Body) != 2 || read.Sections[0].Body[1].Tile != "tl_a" || read.Sections[0].Summary != "" {
+	if err != nil || len(read.Sections[0].Body) != 1 || read.Sections[0].Body[0].Tile != "tl_a" {
 		t.Fatalf("Read = %+v, %v", read.Sections, err)
 	}
 }
@@ -213,16 +172,13 @@ func encodeBlocks(t *testing.T, blocks []Block) []byte {
 // A section converted from baum.review/1 has a body: prose from its summary,
 // points from its behaviour steps, and a tile block for each tile it owns.
 func TestFromV1Body(t *testing.T) {
-	d, err := FromV1(readFile(t, "v1.review.json"), readFile(t, "v1.composition.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := fromV1WithComposition(t, readFile(t, "v1.review.json"), readFile(t, "v1.composition.json"))
 	tilesOf := map[string][]string{}
 	for _, tile := range d.Tiles {
 		tilesOf[tile.Owner] = append(tilesOf[tile.Owner], tile.ID)
 	}
 	for _, s := range d.Sections {
-		if len(s.Body) == 0 || s.Body[0].Type != BlockProse || s.Summary != "" || s.Steps != nil {
+		if len(s.Body) == 0 || s.Body[0].Type != BlockProse {
 			t.Fatalf("section %s: %+v", s.ID, s)
 		}
 		var placed []string

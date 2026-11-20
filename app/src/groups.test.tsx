@@ -302,7 +302,10 @@ it("renders a group as one row with its members nested when expanded", async () 
   expect(bucket("Your pull requests").textContent).toContain("Auth rework");
   expect(bucket("Your pull requests").textContent).toContain("Group of 2");
   expect(bucket("Your pull requests").textContent).toContain("acme/demo · #2, #3");
-  expect(bucket("Your pull requests").textContent).toContain("Group review outdated");
+  expect(
+    bucket("Your pull requests").querySelector('[data-row-id^="group:"] .review-dot .sr-only')
+      ?.textContent,
+  ).toBe("Review outdated");
   // One group row, counted as one row; nothing is repeated loose.
   expect(bucket("Your pull requests").textContent).toContain("Your pull requests 1");
   expect(bucket("Other pull requests")).toBeNull();

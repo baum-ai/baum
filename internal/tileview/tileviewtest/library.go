@@ -11,8 +11,8 @@ import (
 )
 
 // LibraryComposition returns a review view composition of the review (as
-// JSON) as a generation with tile reviews on stores it when the view call
-// placed nothing: two library tiles, filled from the library's synthetic
+// JSON) as an older generation with tile reviews on stored it when its view
+// call placed nothing: two library tiles, filled from the library's synthetic
 // samples (schema_change's postgres-migration, which has a destructive
 // change, and api_change's first sample), and two authored tiles, a table
 // and a code excerpt, all placed by the host on the section whose hunk they

@@ -29,7 +29,7 @@ import {
 import { readFileGrouping } from "./file-grouping";
 import { ViewPane } from "./view-pane";
 
-export const TAB_LABEL = {
+const TAB_LABEL = {
   overview: "Overview",
   sections: "How it works",
   code: "Files changed",
@@ -314,11 +314,7 @@ function stepsOf(
 }
 
 /** The changed files in the order the file list shows them, each once. */
-export function listedFiles(
-  files: ViewFile[],
-  grouping: FileGrouping,
-  list: ListedSection[],
-): ViewFile[] {
+function listedFiles(files: ViewFile[], grouping: FileGrouping, list: ListedSection[]): ViewFile[] {
   const seen = new Set<string>();
   return groupFiles(files, grouping, list)
     .flatMap((group) => group.files)

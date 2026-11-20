@@ -11,7 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
+
+	"github.com/baum-ai/baum/reviewv2"
 )
 
 // The tools a review's agent reads most beyond the page's own: a pull
@@ -113,7 +116,8 @@ func callSessionTranscriptPaged(ctx context.Context, c CallContext, args json.Ra
 		return "", err
 	}
 	if a.FromTurn == 0 && a.Limit == 0 {
-		return callSessionTranscript(ctx, c, args)
+		body, err := sessionTranscriptBody(ctx, c, args)
+		return string(body), err
 	}
 	body, err := sessionTranscriptBody(ctx, c, args)
 	if err != nil {
@@ -251,18 +255,20 @@ func callTranscriptSearch(ctx context.Context, c CallContext, args json.RawMessa
 	return compactJSON(out)
 }
 
-// snippetOf is text around the first of words text holds.
+// snippetOf is text around the first of words text holds, found without
+// regard to case. The text is lowered one character at a time, so the
+// offsets of the match are the original's.
 func snippetOf(text string, words []string) (string, bool) {
-	lower := strings.ToLower(text)
 	at := -1
 	for _, w := range words {
-		if i := strings.Index(lower, w); i >= 0 && (at < 0 || i < at) {
+		if i := indexFold(text, w); i >= 0 && (at < 0 || i < at) {
 			at = i
 		}
 	}
 	if at < 0 {
 		return "", false
 	}
+	at = min(at, len(text))
 	start, end := max(at-snippetRadius, 0), min(at+snippetRadius, len(text))
 	for start > 0 && !utf8.RuneStart(text[start]) {
 		start--
@@ -278,6 +284,43 @@ func snippetOf(text string, words []string) (string, bool) {
 		snippet += "…"
 	}
 	return snippet, true
+}
+
+// indexFold is the byte offset in text of the first match of word, a
+// lowercase string, comparing each character of text lowered; -1 when there
+// is none. Unlike strings.Index over strings.ToLower(text), the offset is
+// into text itself: lowering can change a character's byte length.
+func indexFold(text, word string) int {
+	if word == "" {
+		return 0
+	}
+	for i := 0; i < len(text); {
+		if !utf8.RuneStart(text[i]) {
+			i++
+			continue
+		}
+		if matchFold(text[i:], word) {
+			return i
+		}
+		_, n := utf8.DecodeRuneInString(text[i:])
+		i += n
+	}
+	return -1
+}
+
+// matchFold reports whether text begins with word, text's characters lowered.
+func matchFold(text, word string) bool {
+	for _, w := range word {
+		if text == "" {
+			return false
+		}
+		r, n := utf8.DecodeRuneInString(text)
+		if unicode.ToLower(r) != w {
+			return false
+		}
+		text = text[n:]
+	}
+	return true
 }
 
 // cutText is text at most n bytes, on a character boundary.
@@ -746,41 +789,43 @@ func callFileAnyRev(ctx context.Context, c CallContext, args json.RawMessage) (s
 	return string(body), nil
 }
 
-// versionShape is what review_version_diff compares of a review document,
-// baum.review/1 or /2.
+// versionShape is what review_version_diff compares of a review document:
+// either schema read as baum.review/2 (readReview), with the schema it was
+// stored in.
 type versionShape struct {
-	Schema  string    `json:"schema"`
-	Review  docHeader `json:"review"`
-	Summary struct {
-		Recommendation *struct {
-			Decision string `json:"decision"`
-			Text     string `json:"text"`
-		} `json:"recommendation"`
-		RiskScore *struct {
-			Status string `json:"status"`
-			Score  *int   `json:"score"`
-		} `json:"risk_score"`
-	} `json:"summary"`
-	Sections []struct {
-		ID    string   `json:"id"`
-		Title string   `json:"title"`
-		Kind  string   `json:"kind"`
-		Hunks []string `json:"hunks"`
-		Risks []struct {
-			ID               string `json:"id"`
-			Tier             string `json:"tier"`
-			Category         string `json:"category"`
-			Text             string `json:"text"`
-			State            string `json:"state"`
-			MitigatedVersion *int   `json:"mitigated_version"`
-		} `json:"risks"`
-	} `json:"sections"`
-	Index struct {
-		Hunks []struct {
-			ID   string `json:"id"`
-			Path string `json:"path"`
-		} `json:"hunks"`
-	} `json:"index"`
+	Schema string
+	Header reviewHeader
+	Doc    reviewv2.Document
+}
+
+func readVersionShape(body []byte) (versionShape, error) {
+	doc, header, err := readReview(body)
+	if err != nil {
+		return versionShape{}, err
+	}
+	var head struct {
+		Schema   string `json:"schema"`
+		Sections []struct {
+			ID      string          `json:"id"`
+			Title   string          `json:"title"`
+			Hunks   []string        `json:"hunks"`
+			Risks   []reviewv2.Risk `json:"risks"`
+			Derived struct {
+				State string `json:"state"`
+			} `json:"derived"`
+		} `json:"sections"`
+	}
+	_ = json.Unmarshal(body, &head)
+	// Reading a baum.review/1 version leaves out its stale sections, which
+	// the version still holds: a section that went stale is not removed.
+	if head.Schema != reviewv2.Name {
+		for _, s := range head.Sections {
+			if s.Derived.State == "stale" {
+				doc.Sections = append(doc.Sections, reviewv2.Section{ID: s.ID, Title: s.Title, Hunks: s.Hunks, Risks: s.Risks})
+			}
+		}
+	}
+	return versionShape{Schema: head.Schema, Header: header, Doc: doc}, nil
 }
 
 func callReviewVersionDiff(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -821,21 +866,17 @@ func callReviewVersionDiff(ctx context.Context, c CallContext, args json.RawMess
 		if missing {
 			return versionShape{}, fmt.Errorf("version %d is not saved", version)
 		}
-		var shape versionShape
-		if err := json.Unmarshal(body, &shape); err != nil {
-			return versionShape{}, errors.New("the review is not readable")
-		}
-		return shape, nil
+		return readVersionShape(body)
 	}
 	to, err := read(a.To)
 	if err != nil {
 		return "", err
 	}
 	if a.From == 0 {
-		a.From = to.Review.Version - 1
+		a.From = to.Header.Version - 1
 	}
-	if a.From < 1 || a.From >= to.Review.Version {
-		return "", fmt.Errorf("from must be a saved version before %d", to.Review.Version)
+	if a.From < 1 || a.From >= to.Header.Version {
+		return "", fmt.Errorf("from must be a saved version before %d", to.Header.Version)
 	}
 	from, err := read(a.From)
 	if err != nil {
@@ -889,8 +930,8 @@ type riskRef struct {
 }
 
 func diffVersions(from, to versionShape) versionDiff {
-	d := versionDiff{Versions: [2]int{from.Review.Version, to.Review.Version},
-		Heads:         map[string]string{"from": from.Review.Head, "to": to.Review.Head},
+	d := versionDiff{Versions: [2]int{from.Header.Version, to.Header.Version},
+		Heads:         map[string]string{"from": from.Header.Head, "to": to.Header.Head},
 		SectionsAdded: []sectionRef{}, SectionsRemoved: []sectionRef{}, SectionsRenamed: []sectionRename{}, HunksMoved: []hunkMove{},
 		RisksAdded: []riskRef{}, RisksMitigated: []riskRef{}, RisksRemoved: []riskRef{}}
 	if from.Schema != to.Schema {
@@ -903,7 +944,7 @@ func diffVersions(from, to versionShape) versionDiff {
 		state   string
 	}
 	oldRisks := map[string]riskAt{}
-	for _, s := range from.Sections {
+	for _, s := range from.Doc.Sections {
 		oldSections[s.ID] = s.Title
 		for _, h := range s.Hunks {
 			oldHunks[h] = s.ID
@@ -913,13 +954,20 @@ func diffVersions(from, to versionShape) versionDiff {
 		}
 	}
 	paths := map[string]string{}
-	for _, h := range to.Index.Hunks {
+	var index struct {
+		Hunks []struct {
+			ID   string `json:"id"`
+			Path string `json:"path"`
+		} `json:"hunks"`
+	}
+	_ = json.Unmarshal(to.Doc.Index, &index)
+	for _, h := range index.Hunks {
 		paths[h.ID] = h.Path
 	}
 	newSections := map[string]bool{}
 	newHunks := map[string]bool{}
 	newRisks := map[string]bool{}
-	for _, s := range to.Sections {
+	for _, s := range to.Doc.Sections {
 		newSections[s.ID] = true
 		switch title, ok := oldSections[s.ID]; {
 		case !ok:
@@ -950,7 +998,7 @@ func diffVersions(from, to versionShape) versionDiff {
 			}
 		}
 	}
-	for _, s := range from.Sections {
+	for _, s := range from.Doc.Sections {
 		if !newSections[s.ID] {
 			d.SectionsRemoved = append(d.SectionsRemoved, sectionRef{s.ID, s.Title})
 		}
@@ -966,19 +1014,22 @@ func diffVersions(from, to versionShape) versionDiff {
 		}
 	}
 	decision := func(v versionShape) any {
-		if v.Summary.Recommendation == nil {
+		if v.Doc.Summary.Verdict == nil {
 			return nil
 		}
-		return v.Summary.Recommendation.Decision
+		return v.Doc.Summary.Verdict.Decision
 	}
 	if a, b := decision(from), decision(to); a != b {
 		d.Recommendation = map[string]any{"from": a, "to": b}
 	}
 	score := func(v versionShape) any {
-		if v.Summary.RiskScore == nil || v.Summary.RiskScore.Score == nil {
+		var rs struct {
+			Score *int `json:"score"`
+		}
+		if json.Unmarshal(v.Doc.Summary.RiskScore, &rs) != nil || rs.Score == nil {
 			return nil
 		}
-		return *v.Summary.RiskScore.Score
+		return *rs.Score
 	}
 	if a, b := score(from), score(to); a != b {
 		d.RiskScore = map[string]any{"from": a, "to": b}

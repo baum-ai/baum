@@ -71,15 +71,6 @@ func (rr reviewRead) version(ctx context.Context, w http.ResponseWriter) (store.
 	return version, true
 }
 
-// tileLibrary serves GET /api/tile-library: the built-in library tile types
-// this version ships (tileview.Library), as {"types": [...]}, each with its
-// name, title, use-when line, glance line, sizes, kit and digest, never its
-// source. The review page names a custom tile whose digest is listed as
-// baum's own.
-func tileLibrary(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{"types": tileview.Library()})
-}
-
 // tilesHandler serves GET /api/tiles: the version as a baum.review/2
 // document (tileview.Serve: a baum.review/2 version as stored, a
 // baum.review/1 version converted with its stored composition, if any),

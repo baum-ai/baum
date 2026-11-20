@@ -466,7 +466,7 @@ func TestSoftDeleteUndoAndPurge(t *testing.T) {
 	mustCreate(t, s, change(t, "migrations", ""))
 }
 
-// A purge keeps a definition a layout edit or a stored fill still names.
+// A purge keeps a definition an added tile or a stored fill still names.
 func TestPurgeKeepsDefinitionsNamedElsewhere(t *testing.T) {
 	s, c := newStore(t)
 	ctx := context.Background()
@@ -477,10 +477,10 @@ func TestPurgeKeepsDefinitionsNamedElsewhere(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	if _, err := db.Exec(`CREATE TABLE tile_overlays(pr TEXT PRIMARY KEY, revision INTEGER NOT NULL, updated TEXT NOT NULL, value BLOB NOT NULL)`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE added_tiles(pr TEXT NOT NULL, tile TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, digest TEXT NOT NULL, section TEXT NOT NULL, by TEXT NOT NULL, added TEXT NOT NULL, removed TEXT, PRIMARY KEY(pr, tile))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO tile_overlays VALUES ('acme/web#1', 1, 'now', ?)`, `{"batches":[{"add":{"digest":"`+kept.Entry.Definition.Digest+`"}}]}`); err != nil {
+	if _, err := db.Exec(`INSERT INTO added_tiles VALUES ('acme/web#1', 'tl_1', 'library', 'migrations', ?, '', 'me', 'now', NULL)`, kept.Entry.Definition.Digest); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"migrations", "other"} {
@@ -542,8 +542,8 @@ func TestSweepKeepsDefinitionsWhenAnotherTableCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	// A tile_overlays of a shape this code does not know: no such column.
-	if _, err := db.Exec(`CREATE TABLE tile_overlays(pr TEXT PRIMARY KEY, other BLOB)`); err != nil {
+	// A tile_fills of a shape this code does not know: no such column.
+	if _, err := db.Exec(`CREATE TABLE tile_fills(pr TEXT PRIMARY KEY, other BLOB)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Delete(ctx, "migrations"); err != nil {
@@ -614,5 +614,16 @@ func TestPurgeKeepsDefinitionsNamedByStoredFills(t *testing.T) {
 	}
 	if !has(kept.Entry.Definition.Digest) || has(gone.Entry.Definition.Digest) {
 		t.Errorf("kept %v, gone %v", has(kept.Entry.Definition.Digest), has(gone.Entry.Definition.Digest))
+	}
+}
+
+func TestStripInvisibleRemovesVariationSelectorsAndOtherIgnorables(t *testing.T) {
+	for _, r := range []rune{0xFE0F, 0xFE00, 0xE0100, 0xE01EF, 0x034F, 0x3164, 0xFFA0, 0x200B, 0xE0041} {
+		if got := tilelibrary.StripInvisible("a" + string(r) + "b"); got != "ab" {
+			t.Errorf("U+%04X kept: %q", r, got)
+		}
+	}
+	if got := tilelibrary.StripInvisible("plain é text"); got != "plain é text" {
+		t.Errorf("visible text changed: %q", got)
 	}
 }

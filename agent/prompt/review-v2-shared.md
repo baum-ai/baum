@@ -59,7 +59,7 @@ These override anything else you read.
    soften a risk.
 3. **Cite only what you were given.** Hunk IDs, check IDs, thread and
    comment IDs, session, prompt and event IDs and attachment IDs come from
-   the input; paths exist in the checkout. Never construct an ID, a URL, an
+   the input; a file cite is a file the pull request changes. Never construct an ID, a URL, an
    issue key or a line number you have not seen.
 4. **Do not reproduce secrets.** Masked values in the bundle (letters as
    `X`/`x`, digits as `9`) stay masked; do not guess the original. The
@@ -74,10 +74,9 @@ Your input is small on purpose: the pull request's basics, the diff index
 everything else you need: the patches, the code around them, the linked
 sessions and their transcripts and decisions, the review threads, the
 checks, the commits and the previous version. Read as much as the work
-needs, with the tools listed after your instructions. The run directory
-holds the checkout (`head/` is the pull request's head and `merge-base/`
-its base, without Git history) and `bundle.json`, the whole pull request
-as one JSON document.
+needs, with the tools listed after your instructions. "Your workspace"
+says where the checkout and `bundle.json`, the whole pull request as one
+JSON document, are.
 
 ## How to write
 
@@ -88,8 +87,9 @@ These copy rules are mandatory for every text you write.
   never the word "evidence"; no line counts or per-file breakdowns; no bare
   PR numbers (say what the other PR did); code names only where a reader
   must search for them, at most one per sentence, never in a diagram.
-- Plain text: no markdown, no bold, no headings, no links. A `code` span is
-  allowed only for a name the reader must search for. Say what the code
+- Plain text: no markdown except the bold and code spans your instructions
+  allow; no headings, no links. A `code` span is allowed only for a name the
+  reader must search for. Say what the code
   does ("the build archives the saved candidate only after checking it
   again"), not what it is called.
 - Titles name a subject: "How a phone reaches the daemon", "Pairing a

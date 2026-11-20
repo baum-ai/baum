@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/baum-ai/baum/internal/invisible"
 	"github.com/baum-ai/baum/internal/reviewindex"
 )
 
@@ -69,7 +70,7 @@ func hidden(r rune, multiline bool) bool {
 	switch {
 	case multiline && (r == '\n' || r == '\t'):
 		return false
-	case unicode.IsControl(r), r == utf8.RuneError, invisible(r):
+	case unicode.IsControl(r), r == utf8.RuneError, invisible.Is(r):
 		return true
 	case unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
 		// Line and paragraph separators break lines where the app may not:
@@ -77,23 +78,6 @@ func hidden(r rune, multiline bool) bool {
 		return true
 	}
 	return false
-}
-
-// invisible reports whether r is a default-ignorable code point, which
-// renders as nothing or changes how the text around it renders: format
-// characters (Cf: bidirectional controls, zero-width characters, the soft
-// hyphen, tags), variation selectors and the other default-ignorables (the
-// combining grapheme joiner U+034F, the Hangul fillers U+115F, U+1160, U+3164
-// and U+FFA0, the Khmer inherent vowels U+17B4 and U+17B5). Go's tables have
-// no Default_Ignorable_Code_Point property; these three are what it is made
-// of, and the named ones are listed again so a table change cannot drop
-// them.
-func invisible(r rune) bool {
-	switch r {
-	case 0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x3164, 0xFFA0:
-		return true
-	}
-	return unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Variation_Selector, r) || unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r)
 }
 
 // plain is untrusted text as a summary shows it: valid UTF-8, with each

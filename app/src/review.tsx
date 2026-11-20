@@ -76,7 +76,6 @@ import { LiveSessionCard, liveSessionLabel } from "./sessions";
 import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
-  PullRequestDecisionsList,
   PullRequestDecisionsPane,
   usePullRequestDecisions,
   type PullRequestDecisionsRead,
@@ -1373,14 +1372,6 @@ export function LocalReview({
                             live={running}
                             heading
                             open={open}
-                          />
-                        ),
-                        renderList: (actions, selected) => (
-                          <PullRequestDecisionsList
-                            read={decisions}
-                            live={running}
-                            selected={selected}
-                            onOpen={(id) => actions.select({ kind: "decisions", id })}
                           />
                         ),
                       }

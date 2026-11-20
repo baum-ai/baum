@@ -6,7 +6,7 @@ import { inboxGroups } from "./inbox";
 import { App } from "./app";
 import { ReviewSettingsForm } from "./desktop/reviews";
 import { useLocation } from "./location";
-import { appBase, cost, filtered, type Entry, type Clone } from "./api";
+import { appBase, cost, filtered, type Entry, type Clone, type Job } from "./api";
 import { forgetLastRows } from "./shortcuts";
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
@@ -46,6 +46,7 @@ let root: Root;
 let node: HTMLDivElement;
 let fail = false;
 let entries: Entry[] = [];
+let jobs: Partial<Job>[] = [];
 let streams: string[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -54,6 +55,7 @@ beforeEach(() => {
   localStorage.clear();
   fail = false;
   entries = [];
+  jobs = [];
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
@@ -84,7 +86,7 @@ beforeEach(() => {
               : path === "/s/test-ns/api/prs?view=health"
                 ? []
                 : path === "/s/test-ns/api/jobs"
-                  ? { jobs: [] }
+                  ? { jobs }
                   : {},
       );
     }),
@@ -306,13 +308,50 @@ it("shows actionable launch authorization failure", async () => {
   expect(node.textContent).toContain("Open this page from the baum desktop app");
   expect(node.textContent).not.toContain("Generate reviews");
 });
-it("keeps generating and failed indications without old generation columns", async () => {
-  entries = [entry(1, "outdated"), entry(2, "failed"), entry(3, "current"), entry(4, "generating")];
+it("puts a dot before each title for how its saved review stands, explained in a note", async () => {
+  entries = [
+    entry(1, "outdated"),
+    { ...entry(2, "failed"), failure_reason: "interrupted" },
+    entry(3, "current"),
+    entry(4, "generating"),
+    entry(5, "no_review"),
+    entry(6, "no_review"),
+    entry(7, "failed"),
+  ];
+  // A queued review, and a running one the daemon's index hasn't marked yet.
+  jobs = [
+    { id: "j6", repository: "acme/demo", pr: 6, state: "queued" },
+    { id: "j7", repository: "acme/demo", pr: 7, state: "running" },
+  ];
   await act(async () => root.render(<App />));
   const inbox = node.querySelector(".local-inbox")!;
-  expect(inbox.textContent).toContain("Review failed");
-  expect(inbox.textContent).toContain("Generating review");
-  expect(inbox.textContent).not.toMatch(/outdated|current|Generated|Cost|v1|—/);
+  const dot = (n: number) =>
+    inbox
+      .querySelector(`input[aria-label="Select acme/demo #${n}"]`)!
+      .closest("li")!
+      .querySelector(".review-dot")!;
+  const label = (n: number) => dot(n).querySelector(".sr-only")?.textContent;
+  const note = (n: number) => dot(n).querySelector("[popover]")!.textContent;
+  expect(label(1)).toBe("Review outdated");
+  expect(label(2)).toBe("Review failed");
+  expect(label(3)).toBe("Review ready");
+  expect(label(4)).toBe("Generating review");
+  expect(label(6)).toBe("Generating review");
+  expect(label(7)).toBe("Generating review");
+  // A list row carries no buttons: the dot is not one.
+  expect(dot(3).querySelector("button")).toBeNull();
+  // No saved review: an empty slot, so the titles still line up.
+  expect(dot(5).childElementCount).toBe(0);
+  // The note says what the dot means, and why a review failed.
+  expect(note(2)).toBe("Review failed. The review could not be generated. Reason: interrupted.");
+  expect(note(1)).toBe("Review outdated. There are changes since the review was written.");
+  // The dot comes before the title.
+  const row = dot(3).closest("li")!;
+  expect(
+    dot(3).compareDocumentPosition(row.querySelector(".inbox-pr-title")!) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(inbox.textContent).not.toMatch(/Generated|Cost|v1|—/);
 });
 it("shows GitHub states that ask for something, one merge status, and nothing for normal states", async () => {
   entries = [entry(1), entry(2), entry(3), entry(4), entry(5), entry(6)];

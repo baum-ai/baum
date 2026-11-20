@@ -7,13 +7,13 @@ import type { ReviewDocument } from "@baum/viewer/review-document";
 import { fixtureTile } from "../tiles/fixture-test-helper";
 import { TileHostContext, type TileHost } from "../tiles/host";
 import type { TileContext } from "../tiles/types";
-import { tiledDocument } from "../api";
 import type { ReviewV2 } from "./document";
-import { legacyAnswer1303, REVIEW_1303, review1303 } from "./fixture-1303";
+import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
 import { drawnAs, ViewTileCard } from "./view-tile";
+import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -662,8 +662,8 @@ describe("the native tiles", () => {
     });
     const flow = container.querySelector<HTMLElement>(".flow")!;
     expect(flow.style.getPropertyValue("--flow-columns")).toBe("5");
-    // 5 columns of 8.5rem, then of 9rem beside the labels (6rem).
-    expect([flow.dataset.wide, flow.dataset.wider]).toEqual(["44", "52"]);
+    // Without a measured width the flow is the list going down.
+    expect([flow.dataset.across, flow.dataset.labels]).toEqual([undefined, undefined]);
     const columns = (lane: Element) =>
       [...lane.querySelectorAll<HTMLElement>("li")].map((li) =>
         li.style.getPropertyValue("--flow-column"),
@@ -676,6 +676,39 @@ describe("the native tiles", () => {
     expect(lanes[1]?.textContent).toContain("After Choose");
     expect(lanes[1]?.querySelector('[data-join="branch"]')).not.toBeNull();
     expect(lanes[3]?.querySelector('[data-join="branch"]')).toBeNull();
+  });
+
+  it("gives a branch longer than the first lane a column for every step", async () => {
+    const container = await card({
+      ...tileOf("dg_pairing"),
+      data: {
+        source: [],
+        lanes: [
+          { label: "Newer", steps: [{ title: "Ask" }, { title: "Split" }, { title: "Keep" }] },
+          {
+            label: "Older",
+            from: 1,
+            steps: [
+              { title: "Refused" },
+              { title: "Ask again" },
+              { title: "Split" },
+              { title: "Keep" },
+            ],
+          },
+        ],
+      },
+    });
+    const flow = container.querySelector<HTMLElement>(".flow")!;
+    expect(flow.style.getPropertyValue("--flow-columns")).toBe("4");
+    const lanes = [...container.querySelectorAll("[data-lane]")].map((lane) =>
+      [...lane.querySelectorAll<HTMLElement>("li")].map((li) =>
+        li.style.getPropertyValue("--flow-column"),
+      ),
+    );
+    expect(lanes).toEqual([
+      ["1", "2", "3"],
+      ["1", "2", "3", "4"],
+    ]);
   });
 
   it("draws columns under their labels", async () => {
@@ -728,8 +761,8 @@ describe("the native tiles", () => {
     expect(rows("added")).toHaveLength(2);
     expect(rows("changed")).toHaveLength(2);
     expect(rows("changed")[0]?.querySelector("del")?.textContent).toBe("Plaintext and a token");
-    expect(container.textContent).toContain("added by this pull request");
-    expect(container.textContent).toContain("changed by this pull request");
+    // The pills explain themselves: the legend leaves them out.
+    expect(container.textContent).not.toContain("by this pull request");
     const only = container.querySelector<HTMLInputElement>('input[role="switch"]');
     expect(only?.checked).toBe(false);
     await click(only as HTMLElement);
@@ -913,22 +946,47 @@ describe("pending cards", () => {
   });
 });
 
-// TEMPORARY, with from-v1.ts: until the daemon answers baum.review/2.
-describe("a baum.review/1 answer with its view", () => {
-  it("draws the same page as the baum.review/2 document", async () => {
-    const legacy = tiledDocument(legacyAnswer1303() as Parameters<typeof tiledDocument>[0]);
-    expect(legacy.schema).toBe("baum.review/1");
-    const overview = await page("", legacy);
-    const drawn = panel(overview).textContent;
-    act(() => root?.unmount());
-    expect(panel(await page()).textContent).toBe(drawn);
-    act(() => root?.unmount());
-    const section = await page("pane=section&section=sec_allowlist", legacy);
-    expect(
-      [...panel(section).querySelectorAll<HTMLElement>("[data-tile]")].map(
-        (each) => each.dataset.tile,
-      ),
-    ).toEqual(["dg_allowlist", "dg_always_allow", "lib_api_change", "code_remote_routes"]);
+// ---------- a baum.review/1 version ----------
+
+const v1 = () => structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+
+describe("a baum.review/1 version in the review shell", () => {
+  it("keeps the rail, drawing the Summary and each section with the viewer's own pages", async () => {
+    const document = v1();
+    const container = await page("", document);
+    const labels = railRows(container).map(rowLabel);
+    expect(labels[0]).toBe("Overview");
+    expect(labels).toContain("How it works");
+    expect(labels).toContain("Files changed");
+    // No "Where this fits" place: a v1 context is part of its Summary.
+    expect(labels).not.toContain("Where this fits");
+    // The v1 Summary.
+    const summary = pane(container).textContent ?? "";
+    expect(summary).toContain(document.summary.text.slice(0, 20));
+    // A section's evidence, in the viewer's own section page.
+    const section = document.sections[0]!;
+    await click(
+      railRows(container).find(
+        (row) => rowLabel(row) === section.title && row !== railRows(container)[0],
+      )!,
+    );
+    expect(search.get("section")).toBe(section.id);
+    expect(pane(container).textContent).toContain(section.evidence[0]!.claim);
+    // A section the agent review has a finding on shows it.
+    const behavior = document.sections.find((each) => each.id === "behavior")!;
+    await click(railRows(container).find((row) => rowLabel(row) === behavior.title)!);
+    expect(search.get("section")).toBe("behavior");
+    expect(pane(container).textContent).toContain("Guard the repository read");
+    // Files changed is the app's own list and diffs.
+    await click(railRows(container).find((row) => rowLabel(row) === "Files changed")!);
+    expect(pane(container).querySelector('nav[aria-label="Changed files"]')).not.toBeNull();
+    expect(pane(container).querySelector("#review-view-file")).not.toBeNull();
+  });
+
+  it("shows a baum.review/2 version's section body, not the viewer's section page", async () => {
+    const container = await page("pane=section&section=sec_pairing", review1303());
+    expect(pane(container).querySelector('[role="tablist"]')).not.toBeNull();
+    expect(railRows(container).map(rowLabel)).toContain("Where this fits");
   });
 });
 
@@ -1032,7 +1090,7 @@ describe("a section's body", () => {
     expect(rows[1]!.querySelector("button")).toBeNull();
   });
 
-  it("reads an older document's summary and steps as the same blocks", async () => {
+  it("draws a section's prose and points blocks", async () => {
     const container = await page("pane=section&section=sec_allowlist");
     const body = panel(container).querySelector<HTMLElement>("[data-section-body]")!;
     expect(
@@ -1091,6 +1149,35 @@ describe("a section's body", () => {
     expect(more.textContent).toContain("A secret is made.");
     await click(boxes[0]!);
     expect(more.textContent).not.toContain("A secret is made.");
+  });
+  it("marks a flow's new steps with a pill and can show only them", async () => {
+    const flow = tileOf("dg_pairing");
+    const container = await card({
+      ...flow,
+      data: {
+        lanes: [
+          {
+            steps: [
+              { title: "Offer", tone: "new" },
+              { title: "Scan", tone: "good" },
+              { title: "Pair" },
+            ],
+          },
+        ],
+        source: [],
+      },
+    });
+    const steps = [...container.querySelectorAll<HTMLElement>(".flow li")];
+    expect(steps[0]?.textContent).toContain("New");
+    expect(steps[1]?.textContent).not.toContain("New");
+    const legend = container.querySelector('[aria-label="Legend"]')?.textContent ?? "";
+    expect(legend).toContain("works or is allowed");
+    expect(legend).not.toContain("by this pull request");
+    const only = container.querySelector<HTMLInputElement>('input[role="switch"]');
+    expect(only?.checked).toBe(false);
+    await click(only as HTMLElement);
+    expect(only?.checked).toBe(true);
+    expect(container.querySelectorAll(".flow li[data-faded]")).toHaveLength(2);
   });
 });
 

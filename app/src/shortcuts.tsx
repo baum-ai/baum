@@ -2,6 +2,7 @@ import { usePreferences, type PageModifier } from "./preferences";
 import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { ReviewSteps } from "@baum/viewer/components/review-viewer";
+import { scrollToTop } from "@baum/viewer/components/scroller";
 import { CloseButton } from "@baum/viewer/components/ui";
 import { SectionLabel } from "@baum/viewer/components/section-label";
 import { PAGES, type Page } from "./pages";
@@ -519,7 +520,7 @@ export function useFocusRow(
     const target = rowLink(focused);
     target?.focus({ preventScroll: true });
     const row = target?.closest<HTMLElement>("[data-row-id]");
-    if (row && first && !returning.current) scrollAreas(row)[0]?.scrollTo?.({ top: 0 });
+    if (row && first && !returning.current) scrollToTop(row);
     else if (row && !inSight(row))
       row.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
     returning.current = false;

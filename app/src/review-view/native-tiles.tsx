@@ -1,4 +1,13 @@
-import { type CSSProperties, type ReactNode, useState } from "react";
+import {
+  type CSSProperties,
+  type PointerEvent,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import "./flow.css";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
@@ -13,16 +22,13 @@ import type {
   TableData,
   Tone,
 } from "./model";
+import { isRecord, isString } from "../tiles/types";
 
 /** The diagrams and tables the view call writes, drawn by the page itself:
  *  a flow of steps in lanes, columns of items, a sequence of messages
  *  between actors, and a table. Each is held in a container, so it lays
  *  itself out by the room it has: lanes wrap and then stack, columns stack,
  *  and a sequence becomes a list of its messages, never widening the page. */
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isString = (value: unknown): value is string => typeof value === "string";
 
 /** A step's, item's or message's box by its tone. */
 const BOX: Record<Tone, string> = {
@@ -58,7 +64,9 @@ const TONES = new Set<string>(["plain", "new", "good", "bad", "muted", "missing"
 const toneOf = (tone: unknown): Tone =>
   isString(tone) && TONES.has(tone) ? (tone as Tone) : "plain";
 
-const LANE_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
+/** The small uppercase label above a block of a section's body (a tile's
+ *  title in the bare variant too), and above a flow's lane. */
+export const BLOCK_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
 
 /** One step, item or message: its title and an optional note under it. */
 function Box({
@@ -68,15 +76,22 @@ function Box({
   className,
   pressed,
   onPress,
+  onPeek,
+  change,
 }: {
   title: string;
   note?: string;
   tone: Tone;
+  /** What the pull request does to it, marked as a sequence marks a
+   *  message: a pill over the title and a bar at the left edge. */
+  change?: Change | null;
   className?: string;
   /** Set when the box opens something: it is then a button, `pressed` while
    *  what it opens is shown. */
   pressed?: boolean;
   onPress?: () => void;
+  /** Called with true while a mouse is over the box, false when it leaves. */
+  onPeek?: (on: boolean) => void;
 }) {
   const Element = onPress ? "button" : "div";
   return (
@@ -84,8 +99,14 @@ function Box({
       {...(onPress
         ? { type: "button" as const, "aria-pressed": pressed ?? false, onClick: onPress }
         : {})}
+      {...(onPeek
+        ? {
+            onPointerEnter: (event: PointerEvent) => event.pointerType === "mouse" && onPeek(true),
+            onPointerLeave: () => onPeek(false),
+          }
+        : {})}
       className={cn(
-        "grid min-w-0 content-start gap-0.5 rounded-md border px-3 py-2 [overflow-wrap:anywhere]",
+        "relative grid min-w-0 content-start gap-0.5 rounded-md border px-3 py-2 [overflow-wrap:anywhere]",
         BOX[tone],
         tone === "muted" && "opacity-80",
         onPress &&
@@ -97,6 +118,14 @@ function Box({
         className,
       )}
     >
+      {change ? (
+        <>
+          <ChangeBar change={change} />
+          <span className="mb-1 justify-self-start">
+            <ChangePill change={change} />
+          </span>
+        </>
+      ) : null}
       <InlineMarkdown className={cn("text-sm font-medium leading-snug", INK[tone])}>
         {title}
       </InlineMarkdown>
@@ -141,12 +170,18 @@ export function validFlow(data: unknown): data is FlowData {
   );
 }
 
-/** The container widths (rem) flow.css has rules for: from `wide`, the
- *  lanes are rows of one grid under their labels (about 8.5rem a column);
- *  from `wider`, the labels have a column of their own. Narrower, each lane
- *  is a list going down. */
-const WIDTHS = [28, 32, 36, 40, 44, 48, 52, 56, 64, 72];
-const widthFor = (rem: number) => WIDTHS.find((width) => width >= rem);
+/** Whether a flow of `columns` steps fits the lanes-as-rows layout (about
+ *  8.5rem a column) and, if it has lane labels, the labels in a column of
+ *  their own (6rem more, columns of 9rem) in `rem` of room. Never under 28rem,
+ *  and a flow of many columns stops asking at 72rem (its labels never fit
+ *  past it). Narrower, each lane is a list going down. */
+export function flowFit(columns: number, labelled: boolean, rem: number) {
+  const labels = columns * 9 + 6;
+  return {
+    across: rem >= Math.min(Math.max(columns * 8.5, 28), 72),
+    labels: labelled && labels <= 72 && rem >= Math.max(labels, 28),
+  };
+}
 
 /** The step of the first lane a later lane branches off (from 1), or 0 for
  *  a lane of its own. */
@@ -156,29 +191,181 @@ const branchOf = (data: FlowData, at: number) => {
   return at > 0 && typeof from === "number" && from >= 1 && from <= first ? from : 0;
 };
 
+/** A connector's path and the arrowheads at its ends. `kind`: a line
+ *  between steps, a branch's elbow, or the rule over a lane of its own. */
+type Wire = { d: string; heads: string[]; kind: "step" | "branch" | "apart" };
+
+/** An arrowhead whose tip is at (x, y), pointing right or down. */
+const head = (x: number, y: number, down: boolean) =>
+  down
+    ? `M${x - 4} ${y - 6} L${x} ${y} L${x + 4} ${y - 6}`
+    : `M${x - 6} ${y - 4} L${x} ${y} L${x - 6} ${y + 4}`;
+
+/** The connectors between the boxes while the lanes are rows of the grid:
+ *  a line between each step and the next, and for a branch an elbow down
+ *  from the step it leaves after into its first step. Measured from the
+ *  laid-out boxes, so it follows any width; none while each lane is a list,
+ *  where the arrows are text. `unlinked`: the branches whose elbow can't be
+ *  drawn plainly (moved left of their step, or another lane in the way),
+ *  which name their step in words instead. */
+function useWires(
+  data: FlowData,
+  root: RefObject<HTMLDivElement | null>,
+  layout: { across: boolean; labels: boolean },
+) {
+  const [drawn, setDrawn] = useState<Drawn>(NOTHING_DRAWN);
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element) return;
+    const measure = () => {
+      const steps = element.querySelector(".flow-steps");
+      if (!steps || getComputedStyle(steps).display !== "contents") {
+        setDrawn(NOTHING_DRAWN);
+        return;
+      }
+      const origin = element.getBoundingClientRect();
+      const box = (lane: number, step: number) => {
+        const found = element.querySelector(`[data-step="${lane}:${step}"] > :last-child`);
+        if (!found) return undefined;
+        const rect = found.getBoundingClientRect();
+        return {
+          left: rect.left - origin.left,
+          right: rect.right - origin.left,
+          top: rect.top - origin.top,
+          bottom: rect.bottom - origin.top,
+        };
+      };
+      const next: Wire[] = [];
+      const unlinked: number[] = [];
+      const gap = 3;
+      data.lanes.forEach((lane, at) => {
+        lane.steps.forEach((step, position) => {
+          if (position === 0 || step.join === "none") return;
+          const a = box(at, position - 1);
+          const b = box(at, position);
+          if (!a || !b || b.left <= a.right) return;
+          const y = (Math.max(a.top, b.top) + Math.min(a.bottom, b.bottom)) / 2;
+          const [x0, x1] = [a.right + gap, b.left - gap];
+          const heads = [head(x1, y, false)];
+          if (step.join === "both")
+            heads.push(`M${x0 + 6} ${y - 4} L${x0} ${y} L${x0 + 6} ${y + 4}`);
+          next.push({ d: `M${x0} ${y} H${x1}`, heads, kind: "step" });
+        });
+        const from = branchOf(data, at);
+        if (!from && at > 0) {
+          // A later lane of its own starts a separate path: a dashed rule
+          // between it and the lanes above.
+          const above = Math.max(
+            ...data.lanes
+              .slice(0, at)
+              .flatMap((each, lane) => each.steps.map((_, step) => box(lane, step)?.bottom ?? 0)),
+          );
+          const label = element.querySelector(`[data-lane="${at}"] > .flow-label`);
+          const first = box(at, 0);
+          const top = Math.min(
+            first?.top ?? Infinity,
+            label ? label.getBoundingClientRect().top - origin.top : Infinity,
+          );
+          if (Number.isFinite(above) && Number.isFinite(top) && top > above) {
+            const y = Math.round((above + top) / 2) + 0.5;
+            next.push({ d: `M0 ${y} H${origin.width}`, heads: [], kind: "apart" });
+          }
+        }
+        if (!from) return;
+        const a = box(0, from - 1);
+        const b = box(at, 0);
+        if (!a || !b) return;
+        const x = (a.left + a.right) / 2;
+        const y0 = a.bottom + gap;
+        const y1 = (b.top + b.bottom) / 2;
+        // The line drops from the step's middle: something in a lane between
+        // under it, or a lane of its own between, would read as the source.
+        const blocked = data.lanes.slice(1, at).some(
+          (each, lane) =>
+            !branchOf(data, lane + 1) ||
+            each.steps.some((_, step) => {
+              const other = box(lane + 1, step);
+              return other !== undefined && other.left <= x && other.right >= x;
+            }),
+        );
+        if (blocked || b.left <= a.right || y1 <= y0) {
+          unlinked.push(at);
+          return;
+        }
+        const r = Math.min(6, (y1 - y0) / 2);
+        next.push({
+          d: `M${x} ${y0} V${y1 - r} Q${x} ${y1} ${x + r} ${y1} H${b.left - gap}`,
+          heads: [head(b.left - gap, y1, false)],
+          kind: "branch",
+        });
+      });
+      setDrawn({ grid: true, wires: next, unlinked });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [data, root, layout]);
+  return drawn;
+}
+
+/** `grid`: the lanes are rows of the grid, where the wires replace the
+ *  arrows' text. */
+type Drawn = { grid: boolean; wires: Wire[]; unlinked: number[] };
+const NOTHING_DRAWN: Drawn = { grid: false, wires: [], unlinked: [] };
+
 export function FlowDiagram({ data }: { data: FlowData }) {
-  // The step whose detail shows under the flow, as [lane, step].
+  // The step whose detail shows under the flow, as [lane, step]: the one
+  // the mouse is over, else the one clicked.
   const [picked, setPicked] = useState<[number, number] | null>(null);
-  const opened = picked ? data.lanes[picked[0]]?.steps[picked[1]] : undefined;
+  const [peeked, setPeeked] = useState<[number, number] | null>(null);
+  // A new flow may have no step where the mouse was.
+  useEffect(() => setPeeked(null), [data]);
+  const shown = peeked ?? picked;
+  const opened = shown ? data.lanes[shown[0]]?.steps[shown[1]] : undefined;
+  const root = useRef<HTMLDivElement>(null);
+  // Steps the pull request didn't add are faded while this is on.
+  const [focused, setFocused] = useState(false);
   const clickable = data.lanes.some((lane) => lane.steps.some((step) => step.more?.trim()));
   const labelled = data.lanes.some((lane) => lane.label);
   const branches = data.lanes.map((_, at) => branchOf(data, at));
-  // As many columns as the longest lane that is not a branch; a branch
-  // starts after its step and moves left if it would run past the end.
-  const columns = Math.max(
-    1,
-    ...data.lanes.map((lane, at) => (branches[at] ? 0 : lane.steps.length)),
-  );
+  // As many columns as the longest lane, so every step has a cell of its
+  // own; a branch starts after its step and moves left if it would run past
+  // the end.
+  const columns = Math.max(1, ...data.lanes.map((lane) => lane.steps.length));
   const startOf = (at: number) => {
     const from = branches[at] ?? 0;
     const steps = data.lanes[at]?.steps.length ?? 1;
     return from ? Math.max(1, Math.min(from + 1, columns - steps + 1)) : 1;
   };
+  // Measured, since the layout depends on the width the tile is given.
+  // Before the first measure the flow is the list going down.
+  const [fit, setFit] = useState({ across: false, labels: false });
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const measure = () => {
+      const rem =
+        el.clientWidth /
+        (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16);
+      const next = flowFit(columns, labelled, rem);
+      setFit((now) => (now.across === next.across && now.labels === next.labels ? now : next));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [columns, labelled, root]);
+  const { grid: measured, wires, unlinked } = useWires(data, root, fit);
   const grid = (
     <div
+      ref={root}
       className="flow"
-      data-wide={widthFor(columns * 8.5) ?? WIDTHS[WIDTHS.length - 1]}
-      data-wider={labelled ? widthFor(columns * 9 + 6) : undefined}
+      data-drawn={measured ? "" : undefined}
+      data-across={fit.across || undefined}
+      data-labels={fit.labels || undefined}
       style={{ "--flow-columns": columns } as CSSProperties}
     >
       {data.lanes.map((lane, at) => {
@@ -187,15 +374,22 @@ export function FlowDiagram({ data }: { data: FlowData }) {
         return (
           <div
             key={at}
-            data-lane=""
+            data-lane={at}
             data-branch={from || undefined}
             className="flow-lane"
             style={{ "--flow-row": at + 1, "--flow-start": startOf(at) } as CSSProperties}
           >
-            {labelled ? (
-              <InlineMarkdown className={cn("flow-label", LANE_LABEL)}>
-                {lane.label ?? ""}
-              </InlineMarkdown>
+            {labelled || (after && unlinked.includes(at)) ? (
+              <span className={cn("flow-label", BLOCK_LABEL)}>
+                <InlineMarkdown>{lane.label ?? ""}</InlineMarkdown>
+                {after && unlinked.includes(at) ? (
+                  // The grid draws no elbow for this branch: say where it
+                  // starts, as the list does.
+                  <span className="tracking-normal normal-case">
+                    {lane.label ? " · " : ""}after <InlineMarkdown>{after}</InlineMarkdown>
+                  </span>
+                ) : null}
+              </span>
             ) : null}
             {after ? (
               <p className="flow-after text-xs text-tertiary">
@@ -206,10 +400,15 @@ export function FlowDiagram({ data }: { data: FlowData }) {
               {lane.steps.map((step, position) => (
                 <li
                   key={position}
-                  className="flow-step"
+                  data-step={`${at}:${position}`}
+                  data-faded={(focused && toneOf(step.tone) !== "new") || undefined}
+                  className={cn(
+                    "flow-step transition-opacity",
+                    focused && toneOf(step.tone) !== "new" && "opacity-35",
+                  )}
                   style={
                     {
-                      "--flow-column": Math.min(startOf(at) + position, columns),
+                      "--flow-column": startOf(at) + position,
                     } as CSSProperties
                   }
                 >
@@ -217,13 +416,22 @@ export function FlowDiagram({ data }: { data: FlowData }) {
                   <Box
                     title={step.title}
                     note={step.note}
-                    tone={toneOf(step.tone)}
+                    tone={toneOf(step.tone) === "new" ? "plain" : toneOf(step.tone)}
+                    change={toneOf(step.tone) === "new" ? "added" : null}
                     {...(step.more?.trim()
                       ? {
                           pressed: picked?.[0] === at && picked[1] === position,
                           onPress: () =>
                             setPicked((now) =>
                               now?.[0] === at && now[1] === position ? null : [at, position],
+                            ),
+                          onPeek: (on: boolean) =>
+                            setPeeked((now) =>
+                              on
+                                ? [at, position]
+                                : now?.[0] === at && now[1] === position
+                                  ? null
+                                  : now,
                             ),
                         }
                       : {})}
@@ -234,14 +442,37 @@ export function FlowDiagram({ data }: { data: FlowData }) {
           </div>
         );
       })}
+      {wires.length ? (
+        <svg
+          aria-hidden
+          className={cn("flow-wires text-tertiary transition-opacity", focused && "opacity-35")}
+        >
+          {wires.map((wire, at) => (
+            <g key={at}>
+              <path d={wire.d} strokeDasharray={wire.kind === "apart" ? "3 4" : undefined} />
+              {wire.heads.map((each, position) => (
+                <path key={position} d={each} />
+              ))}
+            </g>
+          ))}
+        </svg>
+      ) : null}
     </div>
   );
-  if (!clickable) return grid;
+  const legend = <FlowKey data={data} wires={wires} focused={focused} onFocus={setFocused} />;
+  if (!clickable)
+    return (
+      <div className="grid min-w-0 gap-2.5">
+        {grid}
+        {legend}
+      </div>
+    );
   return (
     <div className="grid min-w-0 gap-2.5">
       {grid}
+      {legend}
       <div
-        aria-live="polite"
+        aria-live={peeked ? "off" : "polite"}
         data-flow-more=""
         className="max-w-[72ch] space-y-1.5 text-base text-secondary"
       >
@@ -253,7 +484,7 @@ export function FlowDiagram({ data }: { data: FlowData }) {
             <InlineMarkdown className="block">{opened.more}</InlineMarkdown>
           </div>
         ) : (
-          <p className="text-xs text-tertiary">Click a step for its detail.</p>
+          <p className="text-xs text-tertiary">Click a step for its detail, or hover over it.</p>
         )}
       </div>
     </div>
@@ -291,7 +522,7 @@ export function ColumnsDiagram({ data }: { data: ColumnsData }) {
             aria-label={column.label}
             className="grid min-w-0 content-start gap-1.5"
           >
-            <h4 className={cn(LANE_LABEL, LABEL_INK[tone])}>
+            <h4 className={cn(BLOCK_LABEL, LABEL_INK[tone])}>
               <InlineMarkdown>{column.label}</InlineMarkdown>
             </h4>
             <ul className="grid gap-1.5">
@@ -536,6 +767,83 @@ function LineSample({ tone, reply = false }: { tone: Tone; reply?: boolean }) {
   );
 }
 
+/** A legend swatch's edge by tone, so a pale fill still shows. */
+const SWATCH: Partial<Record<Tone, string>> = {
+  good: "border-status-positive",
+  bad: "border-status-critical",
+  muted: "border-default",
+};
+
+/** Under a flow, a legend of the marks it uses, only those: the tones'
+ *  boxes, a branch and a separate path, in the sequence's style. */
+function FlowKey({
+  data,
+  wires,
+  focused,
+  onFocus,
+}: {
+  data: FlowData;
+  wires: Wire[];
+  focused: boolean;
+  onFocus: (on: boolean) => void;
+}) {
+  const tones = new Set(data.lanes.flatMap((lane) => lane.steps.map((step) => toneOf(step.tone))));
+  const toggle = tones.has("new") && [...tones].some((tone) => tone !== "new");
+  // Only what is drawn: the list a narrow flow becomes says these in words.
+  const branch = wires.some((wire) => wire.kind === "branch");
+  const apart = wires.some((wire) => wire.kind === "apart");
+  const entry = (key: string, sample: ReactNode, text: string) => (
+    <li key={key} className="inline-flex items-center gap-1.5">
+      {sample}
+      {text}
+    </li>
+  );
+  const entries = [
+    ...(["good", "bad", "muted", "missing"] as const).map((tone) =>
+      tones.has(tone)
+        ? entry(
+            tone,
+            <span
+              aria-hidden
+              className={cn("h-3 w-4 rounded-sm border", BOX[tone], SWATCH[tone])}
+            />,
+            TONE_MEANS[tone] ?? "",
+          )
+        : null,
+    ),
+    branch
+      ? entry(
+          "branch",
+          <span aria-hidden className="h-2.5 w-3 rounded-bl-sm border-b border-l border-current" />,
+          "another path from a step",
+        )
+      : null,
+    apart
+      ? entry(
+          "apart",
+          <span aria-hidden className="w-5 border-t border-dashed border-current" />,
+          "a separate path",
+        )
+      : null,
+  ].filter(Boolean);
+  if (entries.length === 0 && !toggle) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-subtle pt-2.5">
+      <ul
+        aria-label="Legend"
+        className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-tertiary"
+      >
+        {entries}
+      </ul>
+      {toggle ? (
+        <Toggle checked={focused} onChange={onFocus} className="ml-auto text-sm">
+          Show only changes
+        </Toggle>
+      ) : null}
+    </div>
+  );
+}
+
 /** Under a sequence, a legend of the marks it uses, only those, and, when
  *  some messages changed and some did not, a switch that fades the rest. */
 function SequenceKey({
@@ -559,15 +867,6 @@ function SequenceKey({
     </li>
   );
   const entries = [
-    ...(["added", "changed"] as const).map((change) =>
-      changes.has(change)
-        ? entry(
-            change,
-            <ChangePill change={change} />,
-            change === "added" ? "added by this pull request" : "changed by this pull request",
-          )
-        : null,
-    ),
     ...(["good", "bad", "muted", "missing"] as const).map((tone) =>
       tones.has(tone) ? entry(tone, <LineSample tone={tone} />, TONE_MEANS[tone] ?? "") : null,
     ),
@@ -714,7 +1013,7 @@ type Row = { key: string; cells: TableCell[] };
 
 /** The rows a long table shows until it is opened: enough to read what it
  *  compares without it outweighing the section around it. */
-export const TABLE_ROWS_SHOWN = 8;
+const TABLE_ROWS_SHOWN = 8;
 
 /** A table cell: its text, or what it is now (emphasised) after what it was
  *  before the change (struck through). */

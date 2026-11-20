@@ -568,21 +568,9 @@ func (s *Store) setDeleted(ctx context.Context, name string, deleted bool) error
 	})
 }
 
-// Purge removes the types deleted longer ago than UndoWindow, their
+// purge removes the types deleted longer ago than UndoWindow, their
 // versions, and the definitions nothing names any more. Every write does the
-// same first; the daemon may also call it.
-func (s *Store) Purge(ctx context.Context) error {
-	_, release, err := appdb.Acquire(s.Path, true)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	release()
-	return s.write(ctx, func(conn querierExec) error { return purge(ctx, conn, s.now()) })
-}
-
+// same first.
 func purge(ctx context.Context, conn querierExec, now time.Time) error {
 	cutoff := now.Add(-UndoWindow).Format(time.RFC3339Nano)
 	if _, err := conn.ExecContext(ctx, `DELETE FROM tile_type_versions WHERE name IN (SELECT name FROM tile_types WHERE deleted IS NOT NULL AND deleted <= ?)`, cutoff); err != nil {
@@ -595,8 +583,8 @@ func purge(ctx context.Context, conn querierExec, now time.Time) error {
 }
 
 // sweep removes the definitions no type version names and no other feature's
-// table (tile_overlays, tile_fills, when they exist) names by digest: a
-// definition is kept while named elsewhere.
+// table (ReferencingTables, when they exist) names by digest: a definition
+// is kept while named elsewhere.
 func sweep(ctx context.Context, conn querierExec) error {
 	rows, err := conn.QueryContext(ctx, `SELECT digest FROM tile_definitions WHERE digest NOT IN (
   SELECT digest FROM tile_type_versions UNION SELECT digest FROM tile_types)`)
@@ -628,16 +616,18 @@ func sweep(ctx context.Context, conn querierExec) error {
 	return nil
 }
 
+// ReferencingTables are the other features' tables with a digest column
+// that name tile definitions: added tiles and the fills of them. The sweep
+// here and addedtiles.Sweep both keep what they name.
+var ReferencingTables = []string{"added_tiles", "tile_fills"}
+
 // namedElsewhere reports whether another feature's table names a digest. A
 // missing table names nothing; any other error keeps the definition, since
 // removing one a stored review or layout may name cannot be undone.
 func namedElsewhere(ctx context.Context, q queryer, digest string) bool {
-	for _, query := range []string{
-		`SELECT 1 FROM tile_overlays WHERE instr(CAST(value AS TEXT), ?) > 0 LIMIT 1`,
-		`SELECT 1 FROM tile_fills WHERE digest = ? LIMIT 1`,
-	} {
+	for _, table := range ReferencingTables {
 		var one int
-		err := q.QueryRowContext(ctx, query, digest).Scan(&one)
+		err := q.QueryRowContext(ctx, `SELECT 1 FROM `+table+` WHERE digest = ? LIMIT 1`, digest).Scan(&one)
 		switch {
 		case err == nil:
 			return true

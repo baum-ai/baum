@@ -1210,6 +1210,17 @@ select.local-field {
   overflow-wrap: anywhere;
   line-height: 1.4;
 }
+/* The review dot's slot (review-dot.tsx) before every title, empty without a
+   saved review so titles line up; one title line high, the dot centred in it. */
+.review-dot {
+  flex: none;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.875rem;
+  height: 1.4em;
+}
 .inbox-meta {
   overflow-wrap: anywhere;
   margin-top: 0.2rem;
@@ -5584,8 +5595,11 @@ dialog.shortcuts-sheet[open] {
   padding-top: 0.5rem;
   font-size: var(--text-base);
 }
+/* Sized by its rows (an auto basis), shrinking to the dialog's max-height.
+   With a 0% basis (`flex: 1`), WebKitGTK sizes the dialog from the basis and
+   the list collapses to nothing under the search field. */
 .shortcuts-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   padding: 0 0.35rem 0.75rem;
   overflow-y: auto;
@@ -5898,6 +5912,11 @@ kbd.key-hint {
 .upnext-row-sub {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+/* The review dot's slot (review-dot.tsx) sits on the title's line. */
+.upnext-row > .review-dot {
+  font-size: var(--text-base);
+  height: 1lh;
 }
 /* The line under the title, its inbox tag after it: a long line gives way first. */
 .upnext-row-line {

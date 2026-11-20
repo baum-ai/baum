@@ -17,6 +17,16 @@ async function openLibrary(page: Page) {
   await expect(section(page)).toBeVisible();
 }
 
+/** Waits for the pane's detail preview to draw. A page load forgets its
+ *  measured height, so it starts at a placeholder and grows when it draws,
+ *  moving Pin to repositories and Versions down: a click on them before
+ *  then can land on the preview instead. */
+async function previewDrawn(page: Page) {
+  const detail = pane(page).locator('[data-preview-frame="detail"]');
+  await detail.scrollIntoViewIfNeeded();
+  await expect(detail).toHaveAttribute("data-frame-state", "ready", { timeout: 20000 });
+}
+
 /** The page context bodies the app sends to `PUT api/console/page`. */
 function reportedPages(page: Page) {
   const bodies: Record<string, unknown>[] = [];
@@ -86,6 +96,7 @@ test("renames a type and restores the version before the rename", async ({ page 
   await expect(
     pane(page).getByRole("heading", { name: "Public interfaces", level: 3 }),
   ).toBeVisible();
+  await previewDrawn(page);
   await versions
     .nth(1)
     .getByRole("button", { name: /^Restore/ })
@@ -102,6 +113,7 @@ test("pins a type to a repository and unpins it", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await openLibrary(page);
   await row(page, "migration_steps").getByRole("link").click();
+  await previewDrawn(page);
   const demo = pane(page).getByRole("switch", { name: "acme/demo" });
   const other = pane(page).getByRole("switch", { name: "acme/other" });
   await expect(demo).toBeChecked();

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"regexp"
 	"sync"
 	"time"
 
@@ -149,9 +148,6 @@ func (p *Proposers) tileTypeTarget(name string) (*target, error) {
 	}, nil
 }
 
-// tileTypeName is a name in a preview route's path: a type's name.
-var tileTypeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-
 // tileTypePreview serves GET /api/tile-types/{name}/preview?sample=: a
 // built-in or saved type drawn without a review, as the Tile library page
 // shows it: the type's served definition (its HTML replaced by its length,
@@ -166,7 +162,7 @@ var tileTypeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 // samples are synthetic.
 func (a LocalAPI) tileTypePreview(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !tileTypeName.MatchString(name) {
+	if !tilelibrary.ValidName(name) {
 		http.NotFound(w, r)
 		return
 	}
@@ -187,10 +183,6 @@ func (a LocalAPI) tileTypePreview(w http.ResponseWriter, r *http.Request) {
 		}
 		a.checkOnFirstPreview(r.Context(), name)
 	}
-	samples := make([]string, len(entry.Samples))
-	for i, s := range entry.Samples {
-		samples[i] = s.Name
-	}
 	pick := r.URL.Query().Get("sample")
 	index := 0
 	if pick != "" {
@@ -210,17 +202,29 @@ func (a LocalAPI) tileTypePreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the tile's frame document could not be made", http.StatusUnprocessableEntity)
 		return
 	}
+	body := previewBody(entry, sample)
+	body["name"], body["builtin"], body["glance_line"] = name, library.IsBuiltin(entry.Encoded), entry.Glance
+	body["definition"] = tileview.ServedLibraryDefinition(entry.Encoded)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, body)
+}
+
+// previewBody is the part of a type's preview its two routes share: the
+// definition's facts and the sample's data, with what the page would send a
+// frame for its citations.
+func previewBody(entry library.Entry, sample library.Sample) map[string]any {
+	samples := make([]string, len(entry.Samples))
+	for i, s := range entry.Samples {
+		samples[i] = s.Name
+	}
 	glance, _ := sample.Refs("glance")
 	detail, _ := sample.Refs("detail")
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, map[string]any{
-		"name": name, "builtin": library.IsBuiltin(entry.Encoded),
-		"title": entry.Definition.Title, "use_when": entry.Definition.UseWhen, "glance_line": entry.Glance,
+	return map[string]any{
+		"title": entry.Definition.Title, "use_when": entry.Definition.UseWhen,
 		"sizes": entry.Definition.Sizes, "kit": entry.Definition.Kit, "digest": entry.Definition.Digest,
-		"definition": tileview.ServedLibraryDefinition(entry.Encoded),
-		"samples":    samples, "sample": sample.Name, "data": sample.Data,
+		"samples": samples, "sample": sample.Name, "data": sample.Data,
 		"refs": map[string]any{"glance": glance, "detail": detail},
-	})
+	}
 }
 
 // previewChecked holds the digests whose deferred render check has run or

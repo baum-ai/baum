@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -19,29 +20,8 @@ import (
 // (reviewv2.Max*), which its checks hold every level to. A text over its
 // character limit by at most a quarter is cut, at a sentence's end where
 // one is near; one further over, or over its words or sentences, is sent
-// back for a repair.
+// back for a repair. These are the levels' own.
 const (
-	MaxTitleWords    = reviewv2.MaxTitleWords
-	MaxSectionTitle  = reviewv2.MaxTitle
-	MaxGist          = reviewv2.MaxGist
-	MaxScope         = reviewv2.MaxScope
-	MaxLevelReason   = reviewv2.MaxLevelReason
-	MaxSummary       = reviewv2.MaxSummary
-	MaxStepTitle     = reviewv2.MaxStepTitle
-	MaxStepText      = reviewv2.MaxStepText
-	MaxRiskText      = reviewv2.MaxRiskText
-	MaxShows         = reviewv2.MaxShows
-	MaxContextText   = reviewv2.MaxContextPart
-	MaxContextFiles  = reviewv2.MaxContextFiles
-	MaxLede          = reviewv2.MaxSummary
-	MaxVerdictText   = reviewv2.MaxVerdictText
-	MaxPointText     = reviewv2.MaxPointText
-	MaxRiskWhy       = reviewv2.MaxRiskWhy
-	MaxIntentText    = reviewv2.MaxIntentText
-	MaxTiles         = reviewv2.MaxTiles
-	MaxCites         = reviewv2.MaxCites
-	MaxTileTitle     = reviewv2.MaxTileTitle
-	MaxCaption       = reviewv2.MaxCaption
 	MaxSectionTiles  = 2
 	MaxReasonText    = 200
 	maxFindingsShown = 24
@@ -171,7 +151,7 @@ func (c *checker) copyRules(path, s string) {
 
 // text checks one text: cleaned, the copy rules, required, its sentences
 // (none when max is 0) and its length.
-func (c *checker) text(path, s string, limit, maxSentences int, required bool) string {
+func (c *checker) text(path, s string, limit int, required bool) string {
 	s = clean(s)
 	if s == "" {
 		if required {
@@ -183,8 +163,7 @@ func (c *checker) text(path, s string, limit, maxSentences int, required bool) s
 	// A text a quarter over its limit at most is cut to it, at a sentence's
 	// end where one is near; further over, it is left for the document
 	// layer's checks to send back, or cut on the last pass. Its sentences
-	// are theirs to count (maxSentences says what they hold it to).
-	_ = maxSentences
+	// are theirs to count.
 	if n := utf8.RuneCountInString(s); n > limit+limit/4 && !c.lenient {
 		return s
 	}
@@ -220,13 +199,12 @@ func balanced(s string) string {
 }
 
 // title checks a title: a plain subject of a few words, never two things
-// joined by a comma.
-func (c *checker) title(path, s string, limit, maxWords int) string {
-	s = c.text(path, s, limit, 0, true)
+// joined by a comma. The document layer's checks count its words.
+func (c *checker) title(path, s string, limit int) string {
+	s = c.text(path, s, limit, true)
 	if s == "" {
 		return s
 	}
-	_ = maxWords // the document layer's checks count a title's words
 	return strings.TrimRight(s, ".")
 }
 
@@ -275,6 +253,7 @@ type facts struct {
 	sessions  map[string]bool
 	hasBody   bool
 	pathCache map[string]bool
+	pathMu    sync.Mutex
 	// refs are what the document layer's checks resolve cites against.
 	refs *reviewv2.Refs
 }
@@ -323,10 +302,13 @@ func (f *facts) hasPath(path string) bool {
 	if path == "" || !filepath.IsLocal(path) {
 		return false
 	}
-	if ok, seen := f.pathCache[path]; seen {
+	f.pathMu.Lock()
+	ok, seen := f.pathCache[path]
+	f.pathMu.Unlock()
+	if seen {
 		return ok
 	}
-	ok := false
+	ok = false
 	if _, isHunk := f.pathOfHunk(path); isHunk {
 		ok = true
 	}
@@ -335,7 +317,9 @@ func (f *facts) hasPath(path string) bool {
 			ok = true
 		}
 	}
+	f.pathMu.Lock()
 	f.pathCache[path] = ok
+	f.pathMu.Unlock()
 	return ok
 }
 
@@ -359,7 +343,7 @@ type anchor struct {
 	Event   string `json:"event,omitempty"`
 }
 
-// cites keeps the cites that resolve, once each, at most MaxCites, in the
+// cites keeps the cites that resolve, once each, at most reviewv2.MaxCites, in the
 // stored anchor shape: a hunk's lines only when they fall inside it. It
 // returns how many it dropped.
 func (f *facts) cites(in []json.RawMessage) ([]json.RawMessage, int) {
@@ -385,7 +369,7 @@ func (f *facts) cites(in []json.RawMessage) ([]json.RawMessage, int) {
 			}
 			keep = hunk
 		case "file":
-			if f.hasPath(a.Path) {
+			if p := strings.TrimPrefix(strings.TrimPrefix(a.Path, "head/"), "merge-base/"); f.refs.Files[p] {
 				keep = map[string]any{"type": "file", "path": strings.TrimPrefix(strings.TrimPrefix(a.Path, "head/"), "merge-base/")}
 			}
 		case "prompt":
@@ -422,7 +406,7 @@ func (f *facts) cites(in []json.RawMessage) ([]json.RawMessage, int) {
 			continue
 		}
 		encoded, _ := json.Marshal(keep)
-		if seen[string(encoded)] || len(out) == MaxCites {
+		if seen[string(encoded)] || len(out) == reviewv2.MaxCites {
 			continue
 		}
 		seen[string(encoded)] = true

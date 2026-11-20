@@ -7,41 +7,11 @@ import (
 	"errors"
 	"slices"
 	"time"
-
-	"github.com/baum-ai/baum/tiles/library"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
 // MaxUsedIn bounds the repositories a type remembers being used in: the
 // most recent ones are kept.
 const MaxUsedIn = 50
-
-// UsedTypes are the names of the saved types a stored review view
-// composition holds a ready fill of: its library tiles that are not pending
-// and not built in, each once. A composition that does not parse holds
-// none.
-func UsedTypes(composition json.RawMessage) []string {
-	if len(composition) == 0 {
-		return nil
-	}
-	c, err := view.Parse(composition)
-	if err != nil {
-		return nil
-	}
-	var names []string
-	for _, lib := range c.Library {
-		if lib.Pending || library.IsBuiltin(lib.Definition) {
-			continue
-		}
-		var def struct {
-			Name string `json:"name"`
-		}
-		if json.Unmarshal(lib.Definition, &def) == nil && def.Name != "" && !slices.Contains(names, def.Name) {
-			names = append(names, def.Name)
-		}
-	}
-	return names
-}
 
 // RecordUse records that a version of a pull request in repository was
 // stored with a ready fill of each named type: their used_at becomes now

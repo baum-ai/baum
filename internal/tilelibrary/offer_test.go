@@ -2,7 +2,6 @@ package tilelibrary_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
 func names(entries []library.Entry) []string {
@@ -182,26 +180,12 @@ func TestMatchPath(t *testing.T) {
 }
 
 // A stored version's ready fills of saved types are recorded: used_at and
-// used_in, which the library page shows and offering ranks by. Built-in and
-// pending tiles are not saved types' fills.
+// used_in, which the library page shows and offering ranks by.
 func TestRecordUse(t *testing.T) {
 	s, clock := newStore(t)
 	ctx := context.Background()
 	saved := mustCreate(t, s, change(t, "migrations", ""))
-	builtin, _ := library.Get("api_change")
-	composition, _ := json.Marshal(view.Composition{Schema: view.CompositionName, Library: []tiles.LibraryTile{
-		{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`)},
-		{Definition: builtin.Encoded, Data: json.RawMessage(`{}`)},
-		{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`)},
-	}})
-	used := tilelibrary.UsedTypes(composition)
-	if !slices.Equal(used, []string{"migrations"}) {
-		t.Fatalf("used %v", used)
-	}
-	pending, _ := json.Marshal(view.Composition{Schema: view.CompositionName, Library: []tiles.LibraryTile{{Definition: saved.Entry.Encoded, Data: json.RawMessage(`{}`), Pending: true}}})
-	if got := tilelibrary.UsedTypes(pending); len(got) != 0 {
-		t.Errorf("a pending tile counts as used: %v", got)
-	}
+	used := []string{saved.Entry.Definition.Name}
 	if err := s.RecordUse(ctx, "o/r", append(used, "unknown")); err != nil {
 		t.Fatal(err)
 	}

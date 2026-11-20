@@ -131,7 +131,7 @@ func (o *orchestration) mandatoryTiles(sections []reviewv2.Section) map[string][
 		}
 		planned[name] = true
 		t := reviewv2.Tile{ID: mandatoryTileID(name, taken), Type: name, Owner: owner, Cites: hunkAnchors(hunks), State: reviewv2.TilePending,
-			Shows: cut(kind.Title+" of this pull request, a tile filled on every review of it", MaxShows)}
+			Shows: cut(kind.Title+" of this pull request, a tile filled on every review of it", reviewv2.MaxShows)}
 		taken[t.ID] = true
 		o.setTile(t)
 		out[owner] = append(out[owner], t)
@@ -317,11 +317,6 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 		o.publish()
 		return planned
 	}
-	o.uniqueProposal(&result)
-	o.setSection(s.ID, func(sec *reviewv2.Section) {
-		sec.Body, sec.Risks, sec.Details = result.Body, result.Risks, ""
-	})
-	o.record(LevelSections, s.ID, StatusRan, "")
 	var out []reviewv2.Tile
 	for _, t := range planned {
 		if why, dropped := result.Dropped[t.ID]; dropped {
@@ -339,8 +334,13 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 		o.setTile(t)
 		out = append(out, t)
 	}
-	if extra := result.Propose; extra != nil && o.tileCount() < MaxTiles {
-		o.setTile(*extra)
+	// The section's drops free their places before its proposal claims one.
+	o.claimProposal(&result)
+	o.setSection(s.ID, func(sec *reviewv2.Section) {
+		sec.Body, sec.Risks, sec.Details = result.Body, result.Risks, ""
+	})
+	o.record(LevelSections, s.ID, StatusRan, "")
+	if extra := result.Propose; extra != nil {
 		o.budget.expect(2, 1)
 		out = append(out, *extra)
 	}
@@ -362,19 +362,36 @@ func (o *orchestration) tileIDs() map[string]bool {
 	return ids
 }
 
-// uniqueProposal gives a section's proposed tile an ID no tile has now (a
+// claimProposal gives a section's proposed tile an ID no tile has now (a
 // section written at the same time may have taken the one it checked), and
-// the body's tile blocks that place it the new ID.
-func (o *orchestration) uniqueProposal(result *sectionResult) {
+// the body's tile blocks that place it the new ID. The ID check, the
+// reviewv2.MaxTiles check and the insert happen under one hold of o.mu, so sections
+// running together cannot take the same ID or exceed the cap. A proposal
+// over the cap is dropped from result.
+func (o *orchestration) claimProposal(result *sectionResult) {
 	extra := result.Propose
 	if extra == nil {
 		return
 	}
-	taken := o.tileIDs()
 	id := extra.ID
+	o.mu.Lock()
+	taken := map[string]bool{}
+	for _, t := range o.plan.Tiles {
+		taken[t.ID] = true
+	}
+	for _, t := range o.tiles {
+		taken[t.ID] = true
+	}
 	for n := 2; taken[extra.ID]; n++ {
 		extra.ID = fmt.Sprintf("%s_%d", id, n)
 	}
+	if len(o.tiles) >= reviewv2.MaxTiles {
+		o.mu.Unlock()
+		result.Propose = nil
+		return
+	}
+	o.tiles = append(o.tiles, *extra)
+	o.mu.Unlock()
 	if extra.ID == id {
 		return
 	}
@@ -383,12 +400,6 @@ func (o *orchestration) uniqueProposal(result *sectionResult) {
 			result.Body[i].Tile = extra.ID
 		}
 	}
-}
-
-func (o *orchestration) tileCount() int {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return len(o.tiles)
 }
 
 // contextLevel writes "Where this fits". A context that fails is left out.
@@ -462,7 +473,7 @@ func (o *orchestration) codeTile(t reviewv2.Tile) {
 		data.Lines = lines
 	}
 	t.Data, _ = json.Marshal(data)
-	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), MaxTileTitle)
+	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), reviewv2.MaxTileTitle)
 	t.State = reviewv2.TileReady
 	o.setTile(t)
 	o.record(LevelTiles, t.ID, StatusSkipped, "the host fills a code tile")

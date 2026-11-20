@@ -276,3 +276,34 @@ test("j and k move through the review Summary", async ({ page }) => {
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/pane=section.*section=/);
 });
+
+/** How far the list's rows are scrolled, by the panel and any scroller
+ *  between: 0 once everything above the first row shows again. */
+const panelTop = (page: Page, rows: string) =>
+  page.evaluate((rows) => {
+    let top = 0;
+    for (let up = document.querySelector(rows)!.parentElement; up; up = up.parentElement)
+      top += up.scrollTop;
+    return top;
+  }, rows);
+
+for (const [name, open, rows] of [
+  ["Pull requests", "Pull requests", '[aria-label="Pull request inbox"] [data-row-id]'],
+  ["the Inbox", null, "button.upnext-row"],
+] as const)
+  test(`g on ${name} goes back to the top, with the page's bar`, async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 360 });
+    await page.goto(await launchURL());
+    if (open) await page.getByRole("link", { name: open, exact: true }).first().click();
+    await expect(page.locator(rows).first()).toBeVisible();
+    await page.keyboard.press("G");
+    await expect.poll(() => panelTop(page, rows)).toBeGreaterThan(0);
+    await page.keyboard.press("g");
+    await expect.poll(() => panelTop(page, rows)).toBe(0);
+    // k up to the first row does the same.
+    await page.keyboard.press("G");
+    await expect.poll(() => panelTop(page, rows)).toBeGreaterThan(0);
+    const count = await page.locator(rows).count();
+    for (let i = 0; i < count; i++) await page.keyboard.press("k");
+    await expect.poll(() => panelTop(page, rows)).toBe(0);
+  });

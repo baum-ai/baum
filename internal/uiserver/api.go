@@ -597,7 +597,6 @@ func (a LocalAPI) Handler() *LocalHandler {
 	}
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
-	mux.HandleFunc("GET /api/tile-library", tileLibrary)
 	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
 	a.tileLibraryRoutes(mux)
 	a.addedRoutes(mux)
@@ -673,6 +672,12 @@ func apiError(w http.ResponseWriter, err error) {
 func defaultAgentDir(cfg config.Config, agent agentdirs.Agent) string {
 	for _, entry := range cfg.AgentEnviron() {
 		if value, ok := strings.CutPrefix(entry, agent.Env+"="); ok && value != "" {
+			// Cleaned as the known directories are: "~/.claude.personal"
+			// expands to home + "/.claude.personal", which on Windows is not
+			// the same string as the recorded directory.
+			if dir, err := agentdirs.Normalize(value); err == nil {
+				return dir
+			}
 			return value
 		}
 	}

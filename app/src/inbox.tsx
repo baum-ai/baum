@@ -56,6 +56,7 @@ import { ListPagination, useListPage } from "./list-pagination";
 import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
+import { groupDotState, ReviewDot, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
   inboxAction,
@@ -277,7 +278,7 @@ export function Inbox({
       ?.querySelector<HTMLElement>(".inbox-pr-title");
   // Focus goes to the row's own link, so a screen reader reads the row as it
   // moves, and the row scrolls into view.
-  useFocusRow(focusedKey, rowLink);
+  useFocusRow(focusedKey, rowLink, focusedKey !== null && focusedKey === items[0]?.id);
   useGitHubKey(focused?.entry?.pull_request.url || undefined);
   useShortcuts((event) => {
     if (event.key === "Escape") {
@@ -624,32 +625,14 @@ export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
     </span>
   );
 }
-/** The baum review's state, only when it asks for something: a review being
- *  generated, or one that failed. A current or outdated review needs nothing
- *  from the reader here; its risk is in the first column. */
+/** A review waits for a local clone; how a saved review stands is the dot
+ *  before the title (ReviewDot). */
 function ReviewActivity({ entry }: { entry: Entry }) {
   if (entry.needs_clone)
     return (
       <span className="inbox-activity text-status-caution">
         <WarningIcon size={12} className="flex-none" />
         Needs a local clone
-      </span>
-    );
-  if (entry.status === "generating")
-    return (
-      <span className="inbox-activity text-secondary">
-        <NineDots size={14} />
-        Generating review
-      </span>
-    );
-  if (entry.status === "failed")
-    return (
-      <span
-        className="inbox-activity text-status-critical"
-        title={entry.failure_reason ?? entry.store_error}
-      >
-        <WarningIcon size={14} className="flex-none" />
-        Review failed
       </span>
     );
   return null;
@@ -973,6 +956,7 @@ function GroupRow({
         <RiskCell risk={group.risk_score} />
         <div className="min-w-0">
           <div className="flex min-w-0 items-baseline gap-2">
+            <ReviewDot state={groupDotState(group, job?.state)} />
             {group.stack ? (
               // The hosted pull request list's mark for a stack.
               <span
@@ -996,14 +980,7 @@ function GroupRow({
           <p title={metadata} className="inbox-meta text-xs text-tertiary">
             {metadata}
           </p>
-          {isActiveJob(job) ? (
-            <span className="inbox-activity text-secondary">
-              <NineDots size={14} />
-              Generating group review
-            </span>
-          ) : group.stack ? null : group.outdated ? (
-            <span className="inbox-activity">Group review outdated</span>
-          ) : group.version_count === 0 ? (
+          {!group.stack && !isActiveJob(job) && group.version_count === 0 ? (
             <span className="inbox-activity">No group review yet</span>
           ) : null}
         </div>
@@ -1079,6 +1056,7 @@ function InboxRow({
       <RiskCell risk={entry.risk_score} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-2">
+          <ReviewDot state={reviewDotState(entry.status)} detail={entry.failure_reason} />
           <Link
             href={href}
             title={pr.title}

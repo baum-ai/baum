@@ -4,31 +4,27 @@ import (
 	"context"
 	"slices"
 
-	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/generate"
-	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilelibrary"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles/library"
 )
 
 // offerSaved adds the person's saved tile types to a new review's tiles:
-// the types pinned to the repository are filled whatever the outline
-// answers, each with the last data held for it (as an added type is), and
-// up to tilelibrary.MaxOffered other saved types whose paths the diff
-// matches are offered to the outline (tilelibrary.Offer, once the pull
-// request is assembled). Without a library it adds nothing.
-func (l *Local) offerSaved(ctx context.Context, t *generate.Tiles, versions *store.Store, key store.Key, repository string) {
+// the types pinned to the repository are filled whatever the map answers,
+// as an added type is, and up to tilelibrary.MaxOffered other saved types
+// whose paths the diff matches are offered to the map (tilelibrary.Offer,
+// once the pull request is assembled). Without a library it adds nothing.
+func (l *Local) offerSaved(ctx context.Context, t *generate.Tiles, repository string) {
 	if t == nil || l.TileLibrary == nil {
 		return
 	}
 	pinned := l.pinnedTypes(ctx, repository)
-	var names []string
 	for _, name := range pinned {
-		if !slices.ContainsFunc(t.Always, func(a agent.AlwaysTile) bool { return a.Name == name }) {
-			names = append(names, name)
+		if !slices.Contains(t.Always, name) {
+			t.Always = append(t.Always, name)
 		}
 	}
-	t.Always = append(t.Always, l.lastTiles(ctx, versions, key, names)...)
 	lib := l.TileLibrary
 	t.Saved = func(ctx context.Context, diffPaths, taken []string) ([]library.Entry, []library.Entry) {
 		always, offered, err := lib.Offer(ctx, tilelibrary.Offering{Repository: repository, DiffPaths: diffPaths, Pinned: pinned, Taken: taken})
@@ -60,7 +56,7 @@ func (l *Local) recordTileUse(ctx context.Context, repository string, result gen
 	if l.TileLibrary == nil {
 		return
 	}
-	names := tilelibrary.UsedTypes(result.Composition)
+	names := reviewv2.ReadyTypes(result.Document)
 	if len(names) == 0 {
 		return
 	}

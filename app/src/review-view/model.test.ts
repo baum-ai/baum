@@ -3,6 +3,7 @@ import type { Anchor, IndexedHunk, IndexedHunkLine } from "@baum/viewer/review-d
 import { chromeOf } from "./chrome";
 import { parseReviewV2, type ReviewV2, type V2Section } from "./document";
 import { REVIEW_1303, review1303 } from "./fixture-1303";
+import { bodyOfSteps } from "./from-v1";
 import {
   CODE_PLACE,
   commentSelection,
@@ -72,9 +73,15 @@ describe("parseReviewV2", () => {
           id: "sec_a",
           title: "A",
           hunks: ["h_a", 7],
-          steps: [{ id: "s1", text: "Does it.", cites: [{ type: "hunk", id: "h_a" }, 3] }, {}],
+          body: [
+            {
+              type: "points",
+              items: [{ text: "Does it.", cites: [{ type: "hunk", id: "h_a" }, 3] }, {}],
+            },
+          ],
           risks: [{ id: "r1", tier: "odd", text: "May break." }, { id: "r2" }],
           details: "pending",
+          derived: { state: "new" },
         },
         { title: "No id" },
       ],
@@ -94,11 +101,10 @@ describe("parseReviewV2", () => {
     expect(review?.sections).toHaveLength(1);
     const [section] = review!.sections;
     expect(section?.hunks).toEqual(["h_a"]);
-    // A section with steps and no body reads them as a points block.
     expect(section?.body).toEqual([
       {
         type: "points",
-        items: [{ id: "s1", text: "Does it.", cites: [{ type: "hunk", id: "h_a" }] }],
+        items: [{ text: "Does it.", cites: [{ type: "hunk", id: "h_a" }] }],
       },
       // The section's tile, which no body placed.
       { type: "tile", tile: "dg_a" },
@@ -106,15 +112,12 @@ describe("parseReviewV2", () => {
     // A tier the page does not know reads as low.
     expect(section?.risks.map((risk) => [risk.id, risk.tier])).toEqual([["r1", "low"]]);
     expect(detailsOf(section!)).toBe("pending");
-    expect(section?.derived.state).toBe("new");
     // A state the page does not know is drawn as unavailable.
     expect(review?.tiles.map((tile) => [tile.id, tile.state, tile.owner])).toEqual([
       ["dg_a", "ready", "sec_a"],
       ["dg_b", "unavailable", ""],
     ]);
-    // The index and stats are filled in where a draft has none yet.
     expect(review?.index.hunks).toEqual([]);
-    expect(review?.stats.files).toBe(0);
   });
 
   it("gives a native tile its caption and citations in its data", () => {
@@ -125,7 +128,7 @@ describe("parseReviewV2", () => {
     });
   });
 
-  it("draws a code tile from the text the host filled, else from the hunk's lines", () => {
+  it("draws a code tile from the text the host filled, and leaves one without as it is", () => {
     const filled = REVIEW.tiles.find((each) => each.id === "code_remote_routes")!;
     expect(filled.data).toEqual({
       language: "go",
@@ -142,13 +145,20 @@ describe("parseReviewV2", () => {
           owner: "sec_allowlist",
           title: "X",
           state: "ready",
+          data: { hunk: "h_routes", lines: [61, 64], text: "x := 1" },
+        },
+        {
+          id: "code_y",
+          type: "code",
+          owner: "sec_allowlist",
+          title: "Y",
+          state: "unavailable",
           data: { hunk: "h_routes", lines: [61, 64] },
         },
       ],
-    })!.tiles[0]!;
-    expect((read.data as { content: string }).content).toBe(
-      (filled.data as { content: string }).content,
-    );
+    })!.tiles;
+    expect(read[0]!.data).toMatchObject({ language: "go", content: "x := 1" });
+    expect(read[1]!.data).toEqual({ hunk: "h_routes", lines: [61, 64] });
   });
 });
 
@@ -669,9 +679,6 @@ describe("a section's body", () => {
           { type: "tile", tile: "dg_a" },
           { type: "note", text: "Aside." },
         ],
-        // Written beside a body, they are ignored.
-        summary: "Old summary.",
-        steps: [{ id: "s1", text: "Old step." }],
       },
       [tile("dg_a", "sec_a")],
     );
@@ -703,29 +710,31 @@ describe("a section's body", () => {
     expect(section.body).toEqual([{ type: "points", items: [{ text: "Kept", cites: [] }] }]);
   });
 
-  it("reads a section with no body from its summary, steps and tiles", () => {
-    const old = {
-      summary: "What it does.",
-      steps: [
-        { id: "s1", title: "Reads", text: "It reads.", cites: [{ type: "hunk", id: "h_a" }] },
-        { id: "s2", title: "", text: "It writes." },
-      ],
-    };
+  it("places a tile no body placed after the blocks", () => {
     const tiles = [tile("dg_a", "sec_a"), tile("dg_b", "sec_b"), tile("dg_c", "sec_a")];
-    for (const written of [old, { ...old, body: [] }]) {
-      expect(read(written, tiles).body).toEqual([
-        { type: "prose", text: "What it does." },
-        {
-          type: "points",
-          items: [
-            { id: "s1", text: "**Reads.** It reads.", cites: [{ type: "hunk", id: "h_a" }] },
-            { id: "s2", text: "It writes.", cites: [] },
-          ],
-        },
-        { type: "tile", tile: "dg_a" },
-        { type: "tile", tile: "dg_c" },
-      ]);
-    }
+    expect(read({ body: [{ type: "prose", text: "What it does." }] }, tiles).body).toEqual([
+      { type: "prose", text: "What it does." },
+      { type: "tile", tile: "dg_a" },
+      { type: "tile", tile: "dg_c" },
+    ]);
+  });
+
+  it("builds a baum.review/1 section's body from its summary and steps", () => {
+    expect(
+      bodyOfSteps("What it does.", [
+        { id: "s1", title: "Reads", text: "It reads.", cites: [{ type: "hunk", id: "h_a" }] },
+        { id: "s2", title: "", text: "It writes.", cites: [] },
+      ]),
+    ).toEqual([
+      { type: "prose", text: "What it does." },
+      {
+        type: "points",
+        items: [
+          { id: "s1", text: "**Reads.** It reads.", cites: [{ type: "hunk", id: "h_a" }] },
+          { id: "s2", text: "It writes.", cites: [] },
+        ],
+      },
+    ]);
   });
 
   it("ignores a tile block naming a missing tile or another section's, and a repeat", () => {

@@ -2133,8 +2133,6 @@ const MAX_JOB_CONCURRENCY = 4;
 /** The labs switch that arranges new reviews as tiles: one more model call
  *  after a review is written chooses which tiles lead. Off by default. */
 function TileReviewsRow() {
-  // Which page an arranged version opens on follows the switch.
-  const { refresh } = usePreferences();
   const [on, setOn] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -2157,7 +2155,6 @@ function TileReviewsRow() {
         "PUT",
       );
       setOn(answer.tile_reviews);
-      refresh();
     } catch (e) {
       setOn(before);
       setError(errorText(e));
@@ -2173,7 +2170,7 @@ function TileReviewsRow() {
         error ? (
           <Alert>{error}</Alert>
         ) : (
-          "After a review is written, one more short call arranges its tile page: which tiles lead and how large they are."
+          "After a review is written, one more short call arranges its tile page: which tiles it shows and in what order."
         )
       }
     >

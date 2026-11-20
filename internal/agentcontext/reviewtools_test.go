@@ -23,7 +23,7 @@ func bigReview(head string) string {
 		hunkID := fmt.Sprintf("h_%d", i)
 		hunks = append(hunks, fmt.Sprintf(`{"id":%q,"path":"pkg/file%d.go","change":"modified","additions":3,"deletions":1}`, hunkID, i))
 		state := ""
-		details := fmt.Sprintf(`"summary":"CANARY-DETAILS-%s %s","steps":[{"id":"st_1","title":"Step","text":"CANARY-STEP-%s","cites":[]}],"risks":[{"id":"rsk_1","tier":"low","category":"c","text":"CANARY-RISK-%s","cites":[]}],"derived":{"state":"new"}`, id, strings.Repeat("padding ", 400), id, id)
+		details := fmt.Sprintf(`"body":[{"type":"prose","text":"CANARY-DETAILS-%s %s"},{"type":"points","items":[{"text":"CANARY-STEP-%s","cites":[]}]}],"risks":[{"id":"rsk_1","tier":"low","category":"c","text":"CANARY-RISK-%s","cites":[]}],"derived":{"state":"new"}`, id, strings.Repeat("padding ", 400), id, id)
 		switch i {
 		case 3:
 			state = `"details":"failed",`
@@ -54,7 +54,7 @@ const reviewDraftDocument = `{"schema":"baum.review/2","review":{"version":3,"he
  "summary":{"title":"","text":"DRAFT-OVERVIEW","change_kind":"feature","verdict":null,"risk_why":"","risk_score":null,"review_minutes":null},
  "overview":{"screenshots":[],"diagram":null,"intent":[]},"context":null,
  "sections":[{"id":"sec_1","title":"First","kind":"logical","hunks":["h_1"],"gist":"a","level":2,"level_reasons":[],"details":"pending","summary":"","steps":[],"risks":[]},
-  {"id":"sec_2","title":"Second","kind":"logical","hunks":["h_2"],"gist":"b","level":2,"level_reasons":[],"summary":"DRAFT-DETAILS-2","steps":[],"risks":[]}],"tiles":[],"stats":{},"index":{"hunks":[{"id":"h_1","path":"a.go"},{"id":"h_2","path":"b.go"}]}}`
+  {"id":"sec_2","title":"Second","kind":"logical","hunks":["h_2"],"gist":"b","level":2,"level_reasons":[],"body":[{"type":"prose","text":"DRAFT-DETAILS-2"}],"risks":[]}],"tiles":[],"stats":{},"index":{"hunks":[{"id":"h_1","path":"a.go"},{"id":"h_2","path":"b.go"}]}}`
 
 // reviewDaemon answers the routes the review tools read.
 type reviewDaemon struct {
