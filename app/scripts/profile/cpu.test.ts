@@ -153,7 +153,7 @@ describe("source maps", () => {
       "@tanstack/react-virtual",
     );
     assert.equal(packageOf("/oss/app/src/a.ts"), undefined);
-    assert.equal(displayPath("/home/me/repo/oss/app/src/a.ts"), "oss/app/src/a.ts");
+    assert.equal(displayPath("/home/dev/repo/oss/app/src/a.ts"), "oss/app/src/a.ts");
   });
 
   it("finds the build's own maps", () => {
