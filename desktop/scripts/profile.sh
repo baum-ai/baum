@@ -280,7 +280,8 @@ if [ -n "$baseline" ]; then
   # the other runs: once the turn reaches a place, the other side's
   # container is paused and this side's unpaused, and only then may it go
   # (the file go). A side is paused only once it handed the turn on, so
-  # never inside a run. Both are unpaused at the end, or when either stops.
+  # never inside a run. A side that has run all its runs exits, so it is
+  # left as it is. Both are unpaused at the end, or when either fails.
   conduct() {
     total=$((2 * runs + 2))
     until { [ -f "$dir/head.ready" ] && [ -f "$dir/base.ready" ]; } || [ -f "$dir/failed" ] ||
@@ -289,7 +290,7 @@ if [ -n "$baseline" ]; then
     done
     paused=
     granted=-1
-    while [ ! -f "$dir/failed" ] && [ ! -f "$dir/head.status" ] && [ ! -f "$dir/base.status" ]; do
+    while [ ! -f "$dir/failed" ] && [ ! -f "$dir/head.status" ]; do
       turn=$(cat "$dir/turn" 2>/dev/null || echo 0)
       [ "$turn" -lt "$total" ] || break
       if [ "$turn" != "$granted" ]; then
@@ -297,12 +298,11 @@ if [ -n "$baseline" ]; then
         waiting="head"
         [ "$going" = base ] || waiting="base"
         if [ "$paused" = "$going" ]; then
-          docker unpause "$(container "$going")" >/dev/null
+          docker unpause "$(container "$going")" >/dev/null || true
           paused=
         fi
-        if [ "$paused" != "$waiting" ]; then
-          docker pause "$(container "$waiting")" >/dev/null
-          paused=$waiting
+        if [ "$paused" != "$waiting" ] && [ ! -f "$dir/$waiting.status" ]; then
+          docker pause "$(container "$waiting")" >/dev/null 2>&1 && paused=$waiting
         fi
         printf '%s' "$turn" >"$dir/go.tmp"
         mv "$dir/go.tmp" "$dir/go"
