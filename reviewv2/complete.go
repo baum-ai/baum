@@ -253,13 +253,19 @@ func previousOf(document []byte, fromBundle *bundle.PreviousVersion) (previous, 
 // section, by the section they leave (handedOff, risk IDs) and the one they
 // join (handedIn, the previous risk by ID): a section of the new version
 // names the risk's ID citing a hunk the previous risk cited, and every hunk
-// it cited has left its old section (HandedOver). Any other risk of the
-// same ID in another section is a different risk.
+// it cited has left its old section (HandedOver); when its hunks split, only
+// the section that has the first of them (heir) inherits it. Any other risk
+// of the same ID in another section is a different risk.
 func handOvers(prior previous, sections []Section) (map[string]map[string]bool, map[string]map[string]Risk) {
 	off, in := map[string]map[string]bool{}, map[string]map[string]Risk{}
-	hunks := map[string][]string{}
+	hunks, owner := map[string][]string{}, map[string]string{}
 	for _, s := range sections {
 		hunks[s.ID] = s.Hunks
+		for _, h := range s.Hunks {
+			if _, taken := owner[h]; !taken {
+				owner[h] = s.ID
+			}
+		}
 	}
 	ids := make([]string, 0, len(prior.sections))
 	for id := range prior.sections {
@@ -272,8 +278,9 @@ func handOvers(prior previous, sections []Section) (map[string]map[string]bool, 
 				continue
 			}
 			cited := CitedHunks(old.Cites)
+			to := heir(cited, owner)
 			for _, s := range sections {
-				if s.ID == from || in[s.ID][old.ID].ID != "" {
+				if s.ID != to || s.ID == from || in[s.ID][old.ID].ID != "" {
 					continue
 				}
 				i := slices.IndexFunc(s.Risks, func(r Risk) bool { return r.ID == old.ID })
@@ -299,7 +306,8 @@ func handOvers(prior previous, sections []Section) (map[string]map[string]bool, 
 // mitigated in this version when it no longer does (or kept as it was when
 // retained: the section's details are not written, or it has no hunks), then
 // the section's new risks, introduced in this version. A previous risk
-// handed off to another section with its code (handOvers) is left to it; a
+// handed off to another section with its code (handOvers) is left to it,
+// and dropped here even when the section still names it; a
 // new risk handed in from another previous section keeps the version it was
 // introduced in.
 func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int, retained bool, handedOff map[string]bool, handedIn map[string]Risk) []Risk {
@@ -318,7 +326,9 @@ func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int
 				introduced = max(version-1, 1)
 			}
 			next, named := byID[old.ID]
-			if !named && handedOff[old.ID] {
+			if handedOff[old.ID] {
+				// Its code left: a copy the section still names is dropped.
+				delete(byID, old.ID)
 				continue
 			}
 			delete(byID, old.ID)

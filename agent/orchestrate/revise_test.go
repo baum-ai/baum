@@ -231,8 +231,13 @@ func TestKeepChecks(t *testing.T) {
 	if _, findings := check(keepReplyJSON, nil); !strings.Contains(findings, "/keep: there is no previous version") {
 		t.Errorf("a keep without a previous text: %q", findings)
 	}
-	if _, findings := checkSection([]byte(sectionReplyJSON(`[]`)), section, nil, []string{"rsk_unbounded"}, planned, map[string]bool{}, facts, NewRegistry(nil), true); !strings.Contains(findings, "/risks/0/id: rsk_unbounded is a risk fixed in an earlier version; give this risk a new ID") {
+	// A risk that takes a fixed ID is sent back, and renamed on the last pass.
+	fixed := []string{"rsk_unbounded", "rsk_unbounded_2"}
+	if _, findings := checkSection([]byte(sectionReplyJSON(`[]`)), section, nil, fixed, planned, map[string]bool{}, facts, NewRegistry(nil), false); !strings.Contains(findings, "/risks/0/id: rsk_unbounded is a risk fixed in an earlier version; give this risk a new ID") {
 		t.Errorf("a fixed risk ID: %q", findings)
+	}
+	if r, findings := checkSection([]byte(sectionReplyJSON(`[]`)), section, nil, fixed, planned, map[string]bool{}, facts, NewRegistry(nil), true); findings != "" || len(r.Risks) != 1 || r.Risks[0].ID != "rsk_unbounded_3" {
+		t.Errorf("a fixed risk ID on the last pass: %q %+v", findings, r.Risks)
 	}
 	withBody := strings.Replace(sectionReplyJSON(`[]`), `"keep":false`, `"keep":true`, 1)
 	if _, findings := check(withBody, additive); !strings.Contains(findings, "/keep: keep takes the previous body") {

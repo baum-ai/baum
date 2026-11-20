@@ -334,6 +334,14 @@ func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised,
 	ids := map[string]bool{}
 	for i, risk := range s.Risks {
 		at := fmt.Sprintf("/risks/%d", i)
+		// The last pass renames a risk that takes a fixed ID rather than
+		// lose the section over it.
+		if slices.Contains(fixed, risk.ID) && lenient {
+			id := risk.ID
+			for n := 2; slices.Contains(fixed, risk.ID) || ids[risk.ID] || slices.ContainsFunc(s.Risks, func(r riskReply) bool { return r.ID == risk.ID }); n++ {
+				risk.ID = fmt.Sprintf("%s_%d", id, n)
+			}
+		}
 		switch {
 		case !riskID.MatchString(risk.ID) || ids[risk.ID]:
 			c.add(at+"/id", "must be rsk_ and a slug no other risk of the section has")

@@ -634,6 +634,44 @@ func TestRisksFollowTheirCode(t *testing.T) {
 	}
 }
 
+// A risk whose code splits between sections goes to the one that has its
+// first cited hunk; another section's copy of its ID is a new risk. A
+// handed-off risk the old section still names is dropped there.
+func TestRiskHeir(t *testing.T) {
+	split := authored(t)
+	split.Sections[0].Risks[0].Cites = []Anchor{HunkAnchor("h_a00000000001", nil), HunkAnchor("h_a00000000003", nil)}
+	first := encode(t, completeFixture(t, split, 1, nil))
+	risk := split.Sections[0].Risks[0]
+	onB, onC := risk, risk
+	onB.Cites, onC.Cites = []Anchor{HunkAnchor("h_a00000000001", nil)}, []Anchor{HunkAnchor("h_a00000000003", nil)}
+	next := authored(t)
+	next.Sections = []Section{
+		{ID: "sec_b", Kind: KindLogical, Hunks: []string{"h_a00000000001"}, Body: []Block{{Type: BlockProse, Text: "B."}}, Risks: []Risk{onB}},
+		{ID: "sec_c", Kind: KindLogical, Hunks: []string{"h_a00000000003"}, Body: []Block{{Type: BlockProse, Text: "C."}}, Risks: []Risk{onC}},
+		next.Sections[1], next.Sections[2],
+	}
+	joined := JoinedSections(first, next.Sections)
+	if len(joined["sec_b"].Risks) != 1 || len(joined["sec_c"].Hunks) != 1 || len(joined["sec_c"].Risks) != 0 {
+		t.Errorf("joined: %+v", joined)
+	}
+	copies := riskIn(completeFixture(t, next, 2, first), risk.ID)
+	b, c := copies["sec_b"], copies["sec_c"]
+	if len(copies) != 2 || b.IntroducedVersion == nil || *b.IntroducedVersion != 1 || c.IntroducedVersion == nil || *c.IntroducedVersion != 2 {
+		t.Errorf("split heirs: %+v", copies)
+	}
+
+	// The policy section's hunk moves to the delivery section, which raises
+	// the risk; the policy section still names it.
+	moved := authored(t)
+	moved.Sections[0].Hunks = []string{"h_a00000000003"}
+	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
+	moved.Sections[1].Risks = moved.Sections[0].Risks
+	copies = riskIn(completeFixture(t, moved, 2, encode(t, completeFixture(t, authored(t), 1, nil))), risk.ID)
+	if len(copies) != 1 || copies["sec_delivery_errors"].State != "active" {
+		t.Errorf("handed off and still named: %+v", copies)
+	}
+}
+
 // The fixed risk IDs are those mitigated and nowhere active.
 func TestFixedRiskIDs(t *testing.T) {
 	one := 1

@@ -2105,11 +2105,11 @@ for every logical section of the new map, a new ID's too, the hunks it
 takes over from other previous sections and the active risks handed over
 with them; `FixedRiskIDs` the IDs of risks mitigated and nowhere active.
 A risk is handed over with its code (`HandedOver`): it cites a hunk the
-receiving section has and every hunk it cites has left its old section.
-`Complete` follows the same rule: a previous risk that a section of the new
-version names under its ID, citing a hunk it cited, after all its hunks
-left its section, is not mitigated in its old section and keeps its
-introduced version. Any other risk of the same ID elsewhere is a new risk,
+receiving section has and every hunk it cites has left its old section;
+when its hunks split, only the section that has the first of them gets it.
+`Complete` follows the same rule: a previous risk that that section names
+under its ID, citing a hunk it cited, is dropped from its old section (even
+where that section still names it) and keeps its introduced version. Any other risk of the same ID elsewhere is a new risk,
 and the old one is mitigated where it was. `reviewv2.Substrate` is the tile document a
 `baum.review/2` document's library and added tiles are checked against.
 
@@ -2795,7 +2795,8 @@ the levels of `agent/orchestrate` instead of the staged review:
    joined hunks. Any other section that takes over code from a previous
    section, a new ID's included, gets a shorter block: the joined hunks,
    the risks handed over with them and the fixed IDs. A reply risk that
-   takes a fixed ID is sent back. The agent keeps what still holds word for word
+   takes a fixed ID is sent back, or renamed (`_2`, `_3`, …) on the last
+   pass. The agent keeps what still holds word for word
    and changes only what the new code changes, or answers `keep`, and the
    host takes the previous body and risks (their IDs, so the risks' history
    carries). A keep is accepted only when the change adds code and nothing

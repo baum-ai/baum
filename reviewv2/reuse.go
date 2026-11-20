@@ -101,7 +101,8 @@ type JoinedHunk struct {
 }
 
 // JoinedRisk is an active risk of another previous section (From), without
-// its lifecycle fields, handed over with joined code (HandedOver).
+// its lifecycle fields, handed over with joined code (HandedOver) to the
+// section that has the first of its hunks any section has.
 type JoinedRisk struct {
 	From string
 	Risk Risk
@@ -131,6 +132,18 @@ func HandedOver(cited, stayed []string, has func(string) bool) bool {
 		return false
 	}
 	return !slices.ContainsFunc(cited, func(h string) bool { return slices.Contains(stayed, h) })
+}
+
+// heir is the section a handed-over risk goes to when its code split: the
+// one that has, of the hunks it cites (cited, in its cite order), the first
+// any section has (owner, by hunk); "" when none has one.
+func heir(cited []string, owner map[string]string) string {
+	for _, h := range cited {
+		if s, ok := owner[h]; ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // versions is a previous baum.review/2 document against a new map (every
@@ -192,7 +205,8 @@ func (v *versions) joined(s Section) Joined {
 		}
 		_, active := writtenText(other)
 		for _, risk := range active {
-			if HandedOver(CitedHunks(risk.Cites), v.hunks[other.ID], func(h string) bool { return took[h] }) {
+			cited := CitedHunks(risk.Cites)
+			if heir(cited, v.owner) == s.ID && HandedOver(cited, v.hunks[other.ID], func(h string) bool { return took[h] }) {
 				out.Risks = append(out.Risks, JoinedRisk{From: other.ID, Risk: risk})
 			}
 		}
