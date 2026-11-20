@@ -32,6 +32,8 @@ usage: isolated.sh [name] [--copy-data | --seed-data[=SEED]] [--workspace DIR]..
 BAUM_RELAY_URL, when set, is passed to the instance's daemon.
 BAUM_ISOLATED_RUN, when set, is the shell command the container runs in the
 prepared home instead of the app (scripts/profile.sh runs its scenarios so).
+BAUM_ISOLATED_VOLUMES, when set, holds further docker -v values, one a line
+(scripts/profile.sh mounts a baseline's build so).
 EOF
 }
 
@@ -154,6 +156,9 @@ for store in $stores; do
   copy=$home/review-stores/$(store_key "$store")
   mkdir -p "$copy"
   set -- "$@" -v "$copy:$store"
+done
+for volume in ${BAUM_ISOLATED_VOLUMES:-}; do
+  set -- "$@" -v "$volume"
 done
 IFS=$old_ifs
 echo "isolated: $name, home $home"

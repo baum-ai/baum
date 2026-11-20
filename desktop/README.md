@@ -1301,6 +1301,93 @@ requests and the inboxes and Pull requests stay empty: `jk` skips, and
 sessions are recorded as ended, so in `session-panel` nothing streams: it
 measures the panel open on an ended conversation, and the summary says so.
 
+#### Comparing with a baseline
+
+`--baseline REF` says whether this checkout is faster or slower than REF
+(a commit, branch or tag), for people and agents who keep a change only if
+it helps:
+
+```sh
+just desktop::profile cold-start --baseline origin/main
+just desktop::profile jk --baseline HEAD~1 --runs 12
+just desktop::profile review --baseline origin/main --metric open_content
+```
+
+Both sides are this checkout's runner and scenarios, so the journey is the
+same; only the app under test differs. The baseline's app is its profiling
+frontend, viewer, sidecar and the Rust shell's debug build, all built from
+REF by REF's own recipes in a worktree that comparisons share,
+`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/profile-baselines/worktree`, and
+kept by commit beside it, so comparing against the same commit again
+builds nothing; the three most recent stay. The shell is built per side
+because its connecting screen and commands are part of what cold start
+measures. A REF from before the profiling runner has no
+`__baumPerf.progress()` to drive, so the comparison stops before building,
+saying so; `main` is such a REF until the runner merges.
+
+Each side runs in its own headless instance, `NAME-head` and `NAME-base`
+(`profile-head` and `profile-base` by default), at the same time: two
+containers, each with its own daemon, which keeps running between launches
+as it does for a user. Their homes are emptied (but for the Claude Code
+they installed) and seeded afresh with the same seed (`--seed-data=SEED`,
+1 by default) at the same path, so both start from the same data and from
+no cache; the runners check that the datasets' digests match before the
+first run. A home of its own per side means one version's daemon never
+migrates or caches what the other then reads. `--copy-data` and
+`--workspace` do not apply.
+
+The runners take turns through files in the comparison's directory: each
+side's warm-up, then the runs in pairs whose order alternates (head then
+base, base then head, ...), so drift from other work on the machine, and
+any advantage of going first or second, falls on both sides alike. The side
+waiting leaves its app on a page with no script (one of the
+daemon's JSON records). `--runs N` is the runs a side, 8 by
+default. Single cold starts on a loaded machine vary from 680 to 970 ms,
+while medians of five agree within about 3%; and with five runs a side the test
+below can call at most one metric (the headline) changed, since the others
+need a smaller p than five runs can give. Eight lets every metric reach a
+verdict on a clear change; more find smaller ones.
+
+The verdict per metric: the two-sided Mann-Whitney U test, exact (every
+way to split the pooled runs into the two groups, ties at their mean rank),
+which assumes no distribution and, with few runs, cannot give a small p:
+three runs a side never show a change. The scenario's headline metric (or
+`--metric`) is tested on its own at p < 0.05; the others together, with
+Holm's adjustment, so the chance that any of them is called changed when
+nothing changed stays under 5% however many there are. A change must also
+move the median at least 2 ms (1 for counts) and 2%, or it is called
+negligible. Counts that are the same in every run of each side (presses,
+rows, requests, DOM nodes) are compared as they are: a difference there is
+no noise but a journey or work that differs, and it is listed first among
+the changes. One verdict in twenty at p < 0.05 is wrong when nothing
+changed, so an agent that tries many changes should run a comparison again
+before keeping one it would not otherwise.
+
+| Scenario | Headline |
+| --- | --- |
+| `cold-start` | `launch_to_content` |
+| `jk` | `interaction_median` |
+| `review` | `long_frame_total` |
+| `filter` | `keystroke_median` |
+| `switch-inboxes` | `switch_content_median` |
+| `session-panel` | `open_duration` |
+
+A comparison goes to `target/profile/<scenario>-vs-<commit>-<time>/`:
+
+- `summary.md`: the verdict first (the headline, then each metric that
+  changed, and whether the runs could show a change at all), then every
+  metric's median and range on both sides, the change, p and the verdict,
+  and both bundles' sizes.
+- `metrics.json`: every run's metrics with its side and its place in the
+  order, and each metric's comparison.
+- `head/` and `base/`: each side's own profile, as above.
+
+What a comparison cannot tell: both sides share the machine and its load
+(interleaving spreads it, it does not remove it), the sides run at the same
+time, so the idle one's daemon and compositor are there during the other's
+runs, and a change smaller than the floor, or than the runs' spread, shows
+as within noise rather than as no change.
+
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
 release runs them, without a Developer ID, so the app is signed ad hoc and not

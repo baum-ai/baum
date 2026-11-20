@@ -3,14 +3,26 @@
 // each, and writes metrics.json and summary.md. `just desktop::profile`
 // (oss/desktop/scripts/profile.sh) runs it inside the headless isolated
 // container; see the desktop README's Profiling section.
+// With --side, it is one side of a comparison (profile.sh --baseline): two
+// runners, one per side in containers of their own, take turns through
+// files in --out (compare.ts's schedule), and head's writes the comparison.
 // usage: node run.ts <scenario> --app BINARY --out DIR [--runs N] [--dist DIR]
+//        [--side base|head] [--headline METRIC]
 import { execFileSync, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
 import { readChunks } from "./bundle.ts";
+import { comparisonJson, schedule, summariseComparison, type Side } from "./compare.ts";
 import { scenarios, Skip, type Context } from "./scenarios.ts";
 import { standardMetrics, summarise, type Profile, type Run } from "./summary.ts";
 import { newSession, waitForDriver, WebDriverError, type Session } from "./webdriver.ts";
@@ -25,6 +37,8 @@ const { values, positionals } = parseArgs({
     port: { type: "string", default: "4444" },
     "run-timeout": { type: "string", default: "600" },
     env: { type: "string", multiple: true, default: [] },
+    side: { type: "string" },
+    headline: { type: "string" },
   },
 });
 const name = positionals[0] ?? "";
@@ -41,7 +55,15 @@ if (!Number.isInteger(runs) || runs < 1) {
   process.exit(2);
 }
 const runTimeout = Number(values["run-timeout"]) * 1000;
-const out = values.out;
+if (values.side !== undefined && values.side !== "base" && values.side !== "head") {
+  console.error(`profile: --side is base or head: ${values.side}`);
+  process.exit(2);
+}
+const side = values.side as Side | undefined;
+/** A comparison's directory, shared by both sides' containers. */
+const shared = values.out;
+/** This side's metrics.json and summary.md. */
+const out = side ? join(shared, side) : shared;
 mkdirSync(out, { recursive: true });
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const log = (text: string) => console.log(`profile: ${text}`);
@@ -338,6 +360,83 @@ function limited<T>(work: Promise<T>, what: string): Promise<T> {
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Taking turns with the other side of a comparison, through files in the
+// shared directory: `turn` holds the place in the order whose run may go,
+// `failed` why a side stopped, `<side>.ready` the data a side runs on.
+const other: Side = side === "head" ? "base" : "head";
+const order = schedule(runs);
+const sharedFile = (name: string) => join(shared, name);
+const readShared = (name: string) => {
+  try {
+    return readFileSync(sharedFile(name), "utf8");
+  } catch {
+    return undefined;
+  }
+};
+const writeShared = (name: string, text: string) => {
+  writeFileSync(sharedFile(`${name}.${side}.tmp`), text);
+  renameSync(sharedFile(`${name}.${side}.tmp`), sharedFile(name));
+};
+
+/** The other side stopped, so this one does too. */
+class OtherSideFailed extends Error {}
+
+/** Waits until `ready` returns something, or the other side fails. */
+async function waitOther<T>(ready: () => T | undefined, what: string): Promise<T> {
+  // The other side may be launching, or preparing, or running two runs.
+  const end = Date.now() + 3 * runTimeout;
+  for (;;) {
+    const failed = readShared("failed");
+    if (failed !== undefined) throw new OtherSideFailed(`the ${other} side failed: ${failed}`);
+    const value = ready();
+    if (value !== undefined) return value;
+    if (Date.now() > end)
+      throw new Error(`the ${other} side did not ${what} within ${(3 * runTimeout) / 1000} s`);
+    await sleep(50);
+  }
+}
+
+/** Both sides launched and prepared, on the same seeded dataset. */
+async function bothReady() {
+  const data = (path: string) => {
+    try {
+      return JSON.parse(readFileSync(path, "utf8")) as { seed?: number; digest?: string };
+    } catch {
+      return undefined;
+    }
+  };
+  const mine = data(join(homedir(), ".local/state/baum/seeddata.json"));
+  if (!mine?.digest)
+    throw new Error("a comparison runs on the seeded dataset, and this side's home has none");
+  writeShared(`${side}.ready`, JSON.stringify(mine));
+  const theirs = await waitOther(() => {
+    const text = readShared(`${other}.ready`);
+    return text === undefined
+      ? undefined
+      : (JSON.parse(text) as { seed?: number; digest?: string });
+  }, "launch and prepare");
+  if (theirs.digest !== mine.digest)
+    throw new Error(
+      `the sides' seeded datasets differ (${side}: seed ${mine.seed}, digest ${mine.digest}; ` +
+        `${other}: seed ${theirs.seed}, digest ${theirs.digest}), so their numbers would not compare`,
+    );
+}
+
+const turn = () => Number(readShared("turn") ?? "0");
+const myTurn = (at: number) =>
+  waitOther(() => (turn() === at ? true : undefined), "finish its run");
+
+/** Leaves the app on a page with no script while the other side runs, so
+ *  it does no work then: one of the daemon's JSON records, since the app
+ *  refuses to navigate off the daemon (about:blank too). */
+const idle = () => page().navigate(`${base}api/ui-state/tour`);
+
+/** Hands the turn on, the app idle. */
+async function passTurn(at: number) {
+  await idle();
+  writeShared("turn", String(at + 1));
+}
+
 const collected: Run[] = [];
 let environmentFrom: Snapshot | undefined;
 
@@ -357,6 +456,7 @@ function write(partial?: string) {
     runs: measured,
     chunks: values.dist && existsSync(values.dist) ? readChunks(values.dist) : [],
   };
+  if (side) profile.side = side;
   writeFileSync(join(out, "metrics.json"), `${JSON.stringify(profile, null, 2)}\n`);
   writeFileSync(join(out, "summary.md"), summarise(profile));
 }
@@ -376,8 +476,17 @@ async function main() {
     })(),
     "preparing the scenario",
   );
-  for (let index = 0; index <= runs; index++) {
-    log(index === 0 ? "warm-up" : `run ${index} of ${runs}`);
+  const steps = side
+    ? order.flatMap((step, at) => (step.side === side ? [{ index: step.index, at }] : []))
+    : Array.from({ length: runs + 1 }, (_, index) => ({ index, at: undefined }));
+  if (side) {
+    await idle();
+    await bothReady();
+  }
+  for (const { index, at } of steps) {
+    if (at !== undefined) await myTurn(at);
+    const label = side ? `${side} ` : "";
+    log(index === 0 ? `${label}warm-up` : `${label}run ${index} of ${runs}`);
     const what = index === 0 ? "the warm-up" : `run ${index}`;
     await limited(
       (async () => {
@@ -394,18 +503,70 @@ async function main() {
           wall,
           metrics: { ...metrics, ...scenario!.after?.(snapshot), ...standardMetrics(snapshot) },
           snapshot,
+          ...(side ? { side, order: at } : {}),
         });
       })(),
       what,
     );
     write(index < runs ? `${done()} so far` : undefined);
+    if (at !== undefined) await passTurn(at);
   }
+}
+
+/** Head's last step: once base has run all its runs, or stopped, the
+ *  comparison of the two. */
+async function compare(partial?: string) {
+  if (side !== "head") return;
+  if (!partial)
+    await waitOther(() => (turn() >= order.length ? true : undefined), "finish its runs").catch(
+      (error: Error) => {
+        partial = error.message;
+      },
+    );
+  const read = (which: Side) => {
+    try {
+      return JSON.parse(readFileSync(join(shared, which, "metrics.json"), "utf8")) as Profile;
+    } catch {
+      return undefined;
+    }
+  };
+  const base = read("base");
+  const head = read("head");
+  if (!base || !head) {
+    writeFileSync(
+      join(shared, "summary.md"),
+      `# Profile comparison: ${scenario!.name}\n\nNo comparison: ${partial ?? "a side wrote no runs"}.\n`,
+    );
+    return;
+  }
+  const reason = partial ?? base.partial ?? head.partial;
+  const comparison = {
+    scenario: scenario!.name,
+    description: scenario!.description,
+    headline: values.headline ?? scenario!.headline,
+    baseLabel: [base.environment.ref, base.environment.commit].filter(Boolean).join(" at "),
+    headLabel: head.environment.commit ?? "unknown",
+    base,
+    head,
+    ...(reason ? { partial: reason } : {}),
+  };
+  writeFileSync(join(shared, "summary.md"), summariseComparison(comparison));
+  writeFileSync(
+    join(shared, "metrics.json"),
+    `${JSON.stringify(comparisonJson(comparison), null, 2)}\n`,
+  );
 }
 
 let code = 0;
 try {
   await main();
+  await compare();
 } catch (error) {
+  if (side && !(error instanceof OtherSideFailed))
+    writeShared(
+      "failed",
+      `${side}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+    );
   if (error instanceof Skip) {
     writeFileSync(
       join(out, "summary.md"),
@@ -437,6 +598,9 @@ try {
     }
     code = 1;
   }
+  await compare(error instanceof Error ? error.message.split("\n")[0] : String(error)).catch(
+    () => {},
+  );
 } finally {
   if (session) await Promise.race([session.close().catch(() => {}), sleep(10_000)]);
   driver.kill();

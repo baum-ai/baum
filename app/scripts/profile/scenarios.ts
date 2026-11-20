@@ -46,6 +46,9 @@ export type Context = {
 export type Scenario<State = unknown> = {
   name: string;
   description: string;
+  /** The metric a comparison (--baseline) judges first and on its own:
+   *  what a person waits on in this journey. */
+  headline: string;
   /** Once, on the launched app, before the warm-up: finds what the runs
    *  need in the data, or throws Skip. */
   prepare?(ctx: Context): Promise<State>;
@@ -114,6 +117,7 @@ function navigationMetrics(prefix: string, navigations: Navigation[]) {
 
 const coldStart: Scenario = {
   name: "cold-start",
+  headline: "launch_to_content",
   description:
     "Quits and launches the app, then waits for the Inbox's content. launch_to_content runs from " +
     "the launch to the Inbox's first content frame; the other times are from the document's " +
@@ -187,6 +191,7 @@ const PRESSES = 50;
 
 const jk: Scenario<List> = {
   name: "jk",
+  headline: "interaction_median",
   description:
     `Presses j and k ${PRESSES} times on the list with the most pull requests (an inbox or ` +
     "Pull requests), down its page of rows and back up, each press after the frame of the one before.",
@@ -281,6 +286,7 @@ async function nextPlace(ctx: Context) {
 
 const review: Scenario<ReviewState> = {
   name: "review",
+  headline: "long_frame_total",
   description:
     "From the Inbox, opens the largest pull request with a review (by lines changed, or by " +
     "review size without GitHub's counts) in the " +
@@ -436,6 +442,7 @@ const QUERY = "retry";
 
 const filter: Scenario = {
   name: "filter",
+  headline: "keystroke_median",
   description:
     `Opens the Inbox's filter with / and types \`${QUERY}\` a key at a time, then Enter applies ` +
     "it as a title search. Rows are the Inbox's, on every page.",
@@ -491,6 +498,7 @@ const SWITCH_LIMIT = 6;
 
 const switchInboxes: Scenario<SwitchState> = {
   name: "switch-inboxes",
+  headline: "switch_content_median",
   description: `Steps through up to ${SWITCH_LIMIT} inboxes with Shift+J and back with Shift+K, waiting for each to settle.`,
   async prepare(ctx) {
     await ctx.open("");
@@ -536,6 +544,7 @@ const PANEL_SECONDS = 60;
 
 const sessionPanel: Scenario<PanelState> = {
   name: "session-panel",
+  headline: "open_duration",
   description:
     `Opens the session panel with Control+\` on the Inbox, on the latest console conversation ` +
     `(a running one if any), and leaves it open for ${PANEL_SECONDS} s.`,

@@ -13,6 +13,10 @@ export type Run = {
    *  in a unit of its own (`_count`, `_bytes`, `_px`). */
   metrics: Record<string, number>;
   snapshot: Snapshot;
+  /** In a comparison (--baseline): which side ran it, and its place in the
+   *  order both sides' runs took, from 0. */
+  side?: "base" | "head";
+  order?: number;
 };
 
 export type Chunk = {
@@ -35,6 +39,8 @@ export type Profile = {
   warmup: Run;
   runs: Run[];
   chunks: Chunk[];
+  /** In a comparison (--baseline), the side this profile is. */
+  side?: "base" | "head";
 };
 
 export type Stats = { n: number; median: number; p95: number; min: number; max: number };
