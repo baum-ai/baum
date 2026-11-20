@@ -54,6 +54,31 @@ func TestInlineImages(t *testing.T) {
 			t.Errorf("%s became %s", plain, got)
 		}
 	}
+	// However often the data repeats a reference, the URLs stop at MaxInlined.
+	big := make([]byte, 3<<20)
+	bigID := "att_00000000000000000000000000000001"
+	if err := s.PutImage(ctx, pr, bigID, addedtiles.Image{ContentType: "image/png", Bytes: big}); err != nil {
+		t.Fatal(err)
+	}
+	refs := make([]string, 12)
+	for i := range refs {
+		refs[i] = addedtiles.ImageRef(bigID)
+	}
+	repeated, _ := json.Marshal(refs)
+	var urls []string
+	if err := json.Unmarshal(s.InlineImages(ctx, repeated), &urls); err != nil {
+		t.Fatal(err)
+	}
+	size, inlined := 0, 0
+	for _, u := range urls {
+		size += len(u)
+		if u != "" {
+			inlined++
+		}
+	}
+	if size > addedtiles.MaxInlined || inlined == 0 || inlined == len(refs) {
+		t.Errorf("%d of %d inlined, %d bytes", inlined, len(refs), size)
+	}
 	// By its id alone, whichever pull request stored it.
 	if image, err := s.ImageByID(ctx, imageID); err != nil || string(image.Bytes) != "png" {
 		t.Errorf("ImageByID: %+v %v", image, err)

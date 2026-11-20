@@ -21,9 +21,9 @@ import (
 // custom tile's data.
 const imageFileKey = "image_file"
 
-// The limits of the images of one custom tile's data: as many as an images
-// tile holds, and a total, since each is handed to its frame as a data:
-// URL.
+// The limits of the images of one custom tile's data: as many distinct
+// images as an images tile holds, and a total counting every time the data
+// names one, since each is handed to its frame as a data: URL.
 const (
 	maxCustomImages     = MaxAddedImages
 	maxCustomImageBytes = 16 << 20
@@ -38,11 +38,13 @@ func (a LocalAPI) customImages(ctx context.Context, pr string, data json.RawMess
 		return data, nil
 	}
 	type stored struct {
-		ref string
-		err error
+		ref  string
+		size int
+		err  error
 	}
 	byPath := map[string]stored{}
-	sizes := map[string]int{}
+	ids := map[string]bool{}
+	// Every occurrence counts: each becomes a whole data: URL in the frame.
 	total := 0
 	var first error
 	out, changed, err := addedtiles.MapValues(data, func(v any) (any, bool) {
@@ -64,13 +66,18 @@ func (a LocalAPI) customImages(ctx context.Context, pr string, data json.RawMess
 				if err != nil {
 					return stored{err: err}
 				}
-				id, err := a.putImageWithin(ctx, pr, image, sizes, &total)
+				id, err := a.putImageWithin(ctx, pr, image, ids)
 				if err != nil {
 					return stored{err: err}
 				}
-				return stored{ref: addedtiles.ImageRef(id)}
+				return stored{ref: addedtiles.ImageRef(id), size: len(image.bytes)}
 			}()
 			byPath[path] = s
+		}
+		if s.err == nil {
+			if total += s.size; total > maxCustomImageBytes {
+				s.err = fmt.Errorf("A tile's images are at most %d MiB together after downscaling, counting each time the data names one: name fewer or smaller images", maxCustomImageBytes>>20)
+			}
 		}
 		if s.err != nil && first == nil {
 			first = s.err
@@ -89,18 +96,14 @@ func (a LocalAPI) customImages(ctx context.Context, pr string, data json.RawMess
 }
 
 // putImageWithin stores an image of a custom tile's data unless it would
-// pass the limits of one tile's images, counting each distinct image once.
-func (a LocalAPI) putImageWithin(ctx context.Context, pr string, image readImageResult, sizes map[string]int, total *int) (string, error) {
+// be one more distinct image than a tile holds.
+func (a LocalAPI) putImageWithin(ctx context.Context, pr string, image readImageResult, ids map[string]bool) (string, error) {
 	id := imageID(image.bytes)
-	if _, ok := sizes[id]; !ok {
-		if len(sizes) == maxCustomImages {
+	if !ids[id] {
+		if len(ids) == maxCustomImages {
 			return "", fmt.Errorf("A tile's data names at most %d images", maxCustomImages)
 		}
-		if *total+len(image.bytes) > maxCustomImageBytes {
-			return "", fmt.Errorf("A tile's images are at most %d MiB together after downscaling: name fewer or smaller images", maxCustomImageBytes>>20)
-		}
-		sizes[id] = len(image.bytes)
-		*total += len(image.bytes)
+		ids[id] = true
 	}
 	return a.putImage(ctx, pr, image)
 }

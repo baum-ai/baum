@@ -1,9 +1,13 @@
 package uiserver
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +76,24 @@ func TestATileMadeInChatShowsAnImageFile(t *testing.T) {
 	}
 }
 
+// writeNoisePNG writes a w×h PNG of noise, which compresses poorly, to dir.
+func writeNoisePNG(t *testing.T, dir, name string, w, h int) string {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatal(err)
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, b.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // An image file is read as add_tile's images type reads one: an absolute
 // path to a PNG, JPEG, GIF or WebP image of at most 40 MiB, followed through
 // a link only to an image. Anything else is a failed check that names the
@@ -124,6 +146,17 @@ func TestImageFilesAChatTileRefuses(t *testing.T) {
 		if len(f.checker.sent) != sent {
 			t.Errorf("%s: the data was checked", c.name)
 		}
+	}
+	// Naming one image again counts again towards the total: each becomes a
+	// whole data: URL in the frame.
+	noise := writeNoisePNG(t, dir, "noise.png", 1200, 1200)
+	repeats := make([]string, 0, 64)
+	for range cap(repeats) {
+		repeats = append(repeats, noise)
+	}
+	answer := f.check(checkArgs(t, "screens", "", imageData(hunk, repeats...)))
+	if answer.Verdict != tilechecks.VerdictFail || len(answer.Errors) != 1 || !strings.Contains(answer.Errors[0].Message, "counting each time") {
+		t.Errorf("a repeated image: %+v", answer)
 	}
 	// An object with other keys is data, left to the schema.
 	data := imageData(hunk, many[0])

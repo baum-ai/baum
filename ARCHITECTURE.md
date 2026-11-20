@@ -1181,8 +1181,12 @@ schema has a string for an image, `check_tile`'s data may hold
 WebP, downscaled), stores it in `added_images` for the pull request, and puts
 `baum-image:att_<32 hex>` (`addedtiles.ImageRef`) in the object's place,
 before the data is masked, checked against the schema and kept. A tile's
-data names at most 6 images, 16 MiB together after downscaling; the
-references count against its 64 KiB, the images do not. A file that cannot
+data names at most 6 distinct images, 16 MiB together after downscaling,
+counting an image each time the data names it (each becomes a whole `data:`
+URL); the references count against its 64 KiB, the images do not. Inlining
+stops at 24 MiB of `data:` URLs a tile (`addedtiles.MaxInlined`, and the
+page's `MAX_INLINED`), past which a reference becomes an empty string, so
+references repeated or written by hand cannot grow the data without bound. A file that cannot
 be read, is not an image or is over a limit is a `fail` with `data_invalid`,
 and nothing is checked. Whatever hands the data to a frame puts each stored
 image there as a `data:` URL in its reference's place, so the tile draws it

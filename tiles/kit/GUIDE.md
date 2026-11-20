@@ -167,8 +167,8 @@ that string's place. The host reads the file (PNG, JPEG, GIF or WebP, at
 most 40 MiB), downscales it as it does a screenshot, stores it with the
 pull request's added tiles and keeps a short reference in the string; the
 frame gets the string as a `data:image/…` URL. A tile's data names at most
-6 images, 16 MiB together after downscaling, and they do not count against
-its 64 KiB. Samples cannot name files (section 8): leave their image
+6 images, 16 MiB together after downscaling (an image named twice counts
+twice), and they do not count against its 64 KiB. Samples cannot name files (section 8): leave their image
 strings `null`, or use a tiny `data:` URL. The edge samples fill an image
 string with text, so draw it only when it is an image:
 

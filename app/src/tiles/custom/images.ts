@@ -25,19 +25,34 @@ export function imageRefs(data: unknown): string[] {
   return [...ids];
 }
 
+/** How many characters of `data:` URLs one tile's data gets, counting every
+ *  reference (as the daemon's `addedtiles.MaxInlined`): data can repeat a
+ *  reference far past the images' own limits. */
+export const MAX_INLINED = 24 * 1024 * 1024;
+
 /** The data with each reference replaced by its image's `data:` URL, or by
- *  an empty string when the image could not be read. */
-export function withImages(data: unknown, urls: ReadonlyMap<string, string>): unknown {
-  if (typeof data === "string") {
-    const id = IMAGE_REF.exec(data)?.[1];
-    return id ? (urls.get(id) ?? "") : data;
-  }
-  if (Array.isArray(data)) return data.map((value) => withImages(value, urls));
-  if (typeof data === "object" && data !== null)
-    return Object.fromEntries(
-      Object.entries(data).map(([key, value]) => [key, withImages(value, urls)]),
-    );
-  return data;
+ *  an empty string when the image could not be read or the URLs before it
+ *  already reach `MAX_INLINED`. */
+export function withImages(
+  data: unknown,
+  urls: ReadonlyMap<string, string>,
+  limit = MAX_INLINED,
+): unknown {
+  let total = 0;
+  const swap = (value: unknown): unknown => {
+    if (typeof value === "string") {
+      const id = IMAGE_REF.exec(value)?.[1];
+      if (!id) return value;
+      const url = urls.get(id) ?? "";
+      total += url.length;
+      return total > limit ? "" : url;
+    }
+    if (Array.isArray(value)) return value.map(swap);
+    if (typeof value === "object" && value !== null)
+      return Object.fromEntries(Object.entries(value).map(([key, each]) => [key, swap(each)]));
+    return value;
+  };
+  return swap(data);
 }
 
 /** The images read on this page, by address. A failed read is forgotten, so

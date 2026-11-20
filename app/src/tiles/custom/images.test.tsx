@@ -47,6 +47,12 @@ describe("a custom tile's stored images", () => {
     });
   });
 
+  it("are inlined only up to a total, however often the data repeats one", () => {
+    const urls = new Map([[ID, PNG_URL]]);
+    const limit = PNG_URL.length * 2;
+    expect(withImages([REF, REF, REF, REF], urls, limit)).toEqual([PNG_URL, PNG_URL, "", ""]);
+  });
+
   it("are read once as data: URLs, and only images", async () => {
     const load = vi.fn(async (url: string | URL | Request) =>
       String(url).endsWith("png") ? answer(PNG, "image/png") : answer("<p>hi</p>", "text/html"),

@@ -63,15 +63,21 @@ func (s *Service) ImageByID(ctx context.Context, id string) (Image, error) {
 	return image, err
 }
 
+// MaxInlined bounds the data: URLs InlineImages puts in one tile's data,
+// counting every reference: data can repeat a reference, or name one
+// without the check having stored it, far past the images' own limits.
+const MaxInlined = 24 << 20
+
 // InlineImages is data with each reference to a stored image replaced by
 // that image as a data: URL, for a frame to draw; a reference to an image
-// that is not stored becomes an empty string. Data without references, or
-// that is not JSON, is returned as it is.
+// that is not stored, or past MaxInlined, becomes an empty string. Data
+// without references, or that is not JSON, is returned as it is.
 func (s *Service) InlineImages(ctx context.Context, data json.RawMessage) json.RawMessage {
 	if !bytes.Contains(data, []byte(ImageRefPrefix)) {
 		return data
 	}
 	urls := map[string]string{}
+	total := 0
 	out, changed, err := MapStrings(data, func(v string) (string, bool) {
 		id, ok := ImageRefID(v)
 		if !ok {
@@ -83,6 +89,9 @@ func (s *Service) InlineImages(ctx context.Context, data json.RawMessage) json.R
 				url = "data:" + image.ContentType + ";base64," + base64.StdEncoding.EncodeToString(image.Bytes)
 			}
 			urls[id] = url
+		}
+		if total += len(url); total > MaxInlined {
+			return "", true
 		}
 		return url, true
 	})
