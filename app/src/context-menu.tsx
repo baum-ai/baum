@@ -158,6 +158,18 @@ export function useContextMenu() {
   return { open, openFrom, menu, id, anchor: state?.anchor ?? null };
 }
 
+/** Whether a key press is the actions key, ⌘. (Ctrl+. elsewhere). */
+function isActionsKey(event: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+}) {
+  const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+  return command && event.key === "." && !event.altKey && !event.shiftKey;
+}
+
 /** Opens the right-click menu of what has the keys with ⌘. (Ctrl+. elsewhere),
  *  as the Menu key or Shift+F10 do where there are such keys: a context menu
  *  event on the focused element, which opens under it. Not in a text field
@@ -166,9 +178,7 @@ export function useContextMenu() {
 export function useActionsKey() {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      const command = MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
-      if (!command || event.key !== "." || event.altKey || event.shiftKey || event.defaultPrevented)
-        return;
+      if (!isActionsKey(event) || event.defaultPrevented) return;
       const active = document.activeElement;
       // A control inside an element marked `data-actions-target` (a radio in
       // a thumbnail's label) counts as that element having the keys.
@@ -341,6 +351,15 @@ function ContextMenu({
   // to the next choice that starts with it, and Tab leaves the menu.
   const keys = (event: KeyboardEvent) => {
     event.stopPropagation();
+    // The window's ⌘. (useActionsKey) never sees a key the menu keeps: the
+    // menu opens the actions of the choice that has the keys itself.
+    if (isActionsKey(event)) {
+      event.preventDefault();
+      document.activeElement?.dispatchEvent(
+        new globalThis.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+      return;
+    }
     if (moveMenuFocus(event)) return;
     const list = choices();
     const index = list.indexOf(document.activeElement as HTMLElement);
