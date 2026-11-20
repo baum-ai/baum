@@ -42,8 +42,7 @@ func ReusableSections(previous []byte, sections []Section) map[string]Reused {
 			continue
 		}
 		reused := s
-		reused.Body = slices.Clone(BodyOf(old, prior.Tiles))
-		reused.Summary, reused.Steps = "", nil
+		reused.Body = slices.Clone(old.Body)
 		reused.Risks = []Risk{}
 		for _, r := range old.Risks {
 			if r.State == "mitigated" {

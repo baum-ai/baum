@@ -398,7 +398,6 @@ func (o *orchestration) runCall(ctx context.Context, c call) ([]byte, agent.Outc
 		prompt = c.instructions
 	}
 	input := "\n# Input\n\n" + c.input
-	_, ending := agent.RepairText(o.run.Generator.Backend.Name())
 	var accepted []byte
 	budgets.MaxRepairAttempts = max(budgets.MaxRepairAttempts, 1)
 	task := agent.Task{
@@ -409,8 +408,7 @@ func (o *orchestration) runCall(ctx context.Context, c call) ([]byte, agent.Outc
 	task.PassPrompt = func(pass agent.TaskPass) (string, error) {
 		text := prompt + input
 		if pass.Number > 1 {
-			text += "\n\nThis is validation repair of your previous reply, not a new task. Preserve valid content and correct only the reported problems.\nRejected reply:\n" +
-				string(pass.Rejected) + "\nThe host found:\n" + pass.Findings + fmt.Sprintf(ending, pass.Number-1, pass.Repairs)
+			text += agent.RepairReply(o.run.Generator.Backend.Name(), "reply", "host", pass)
 		}
 		return text, nil
 	}

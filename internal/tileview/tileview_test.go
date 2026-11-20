@@ -10,12 +10,13 @@ import (
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
 )
 
-func decode(t *testing.T, r Response) map[string]any {
+func decode(t *testing.T, r Served) map[string]any {
 	t.Helper()
 	body, err := Encode(r)
 	if err != nil {
@@ -35,11 +36,11 @@ func TestBuildServesTheReviewAndItsView(t *testing.T) {
 	if r.View == nil || r.Problem != "" {
 		t.Fatalf("view %v, problem %q", r.View != nil, r.Problem)
 	}
-	out := decode(t, r)
-	if out["document"].(map[string]any)["schema"] != "baum.review/1" || out["view"].(map[string]any)["schema"] != view.Name {
+	out := decode(t, Serve(tileviewtest.Encode(t, tileviewtest.Base(t)), nil, nil, tiles.Options{}))
+	if out["document"].(map[string]any)["schema"] != reviewv2.Name {
 		t.Fatalf("schemas %v", out)
 	}
-	for _, gone := range []string{"tiles", "added", "problem"} {
+	for _, gone := range []string{"view", "added", "problem"} {
 		if _, ok := out[gone]; ok {
 			t.Errorf("the answer has %q", gone)
 		}
@@ -56,8 +57,9 @@ func TestBuildFailureLeavesTheViewOutWithoutContent(t *testing.T) {
 		if r.View != nil || r.Problem == "" || strings.Contains(r.Problem, "PRIVATE_TEXT") {
 			t.Errorf("%s: view %v, problem %q", document, r.View != nil, r.Problem)
 		}
-		body, err := Encode(r)
-		if err != nil || !json.Valid(body.Body.Data) || strings.Contains(string(body.Body.Data), `"view"`) {
+		served := Serve([]byte(document), nil, nil, tiles.Options{})
+		body, err := Encode(served)
+		if err != nil || served.Problem == "" || strings.Contains(served.Problem, "PRIVATE_TEXT") || !json.Valid(body.Body.Data) {
 			t.Errorf("%s: %s %v", document, body.Body.Data, err)
 		}
 	}
@@ -123,7 +125,7 @@ func TestDraftOutlineMatchesTheGolden(t *testing.T) {
 // is the empty view's, byte for byte.
 func TestBuildWithoutAViewCompositionIsTheEmptyView(t *testing.T) {
 	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
-	want, err := Encode(Build(raw, nil, tiles.Options{}))
+	want, err := Encode(Serve(raw, nil, nil, tiles.Options{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +137,7 @@ func TestBuildWithoutAViewCompositionIsTheEmptyView(t *testing.T) {
 		"other":      []byte(`{"schema":"baum.composition/9","layout":{"entries":[]}}`),
 		"not json":   []byte(`PRIVATE_TEXT`),
 	} {
-		got, err := Encode(Build(raw, composition, tiles.Options{}))
+		got, err := Encode(Serve(raw, composition, nil, tiles.Options{}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,13 +153,13 @@ func ignoredCount() int64 { return workstats.Take().Counters["tileview.views_ign
 // without a problem for the reader and without quoting it.
 func TestBuildIgnoresAnUnusableCompositionAndCountsIt(t *testing.T) {
 	raw := tileviewtest.Encode(t, tileviewtest.Base(t))
-	want, _ := Encode(Build(raw, nil, tiles.Options{}))
+	want, _ := Encode(Serve(raw, nil, nil, tiles.Options{}))
 	for name, composition := range map[string][]byte{
 		"unreadable": []byte(`{"schema":"baum.composition/2","sections":"PRIVATE_TEXT"}`),
 		"oversized":  []byte(`{"schema":"baum.composition/2","x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`),
 	} {
 		before := ignoredCount()
-		r := Build(raw, composition, tiles.Options{})
+		r := Serve(raw, composition, nil, tiles.Options{})
 		got, err := Encode(r)
 		if err != nil || r.Problem != "" || string(got.Body.Data) != string(want.Body.Data) || ignoredCount() != before+1 {
 			t.Errorf("%s: problem %q, changed %v, counted %d: %v", name, r.Problem, string(got.Body.Data) != string(want.Body.Data), ignoredCount()-before, err)

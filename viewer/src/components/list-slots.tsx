@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
 
-import { CommitEntries, type CommitListState, type CommitLoaders, CommitList } from "./commit-list";
+import { CommitList, type CommitListState, type CommitLoaders } from "./commit-list";
 import { commitLabel, sessionLabel } from "./list-labels";
 import type { ReviewListSlot } from "./review-viewer";
 import {
   type HostSessionView,
-  SessionEntries,
   SessionList,
   type SessionListState,
   type SessionView,
@@ -13,8 +12,7 @@ import {
 
 /** The Sessions group for `ReviewViewer`'s `sessions` prop: the rail lists the
  *  sessions by title (else by agent) and the pane is a `SessionList`, with
- *  `renderSession` under a session opened alone; the side pane's list, where
- *  the rail is not drawn, is `SessionEntries`. The host's own `hosted`
+ *  `renderSession` under a session opened alone. The host's own `hosted`
  *  sessions (see `HostSessionView`) come first, are counted with the rest
  *  and mark the group while one is happening. A loading or failed state is
  *  passed through, so a link to the group survives while a host is still
@@ -59,15 +57,6 @@ export function sessionsSlot(
         empty={options.empty}
       />
     ),
-    renderList: (selected, actions) => (
-      <SessionEntries
-        state={state}
-        selected={selected}
-        actions={actions}
-        hosted={hosted}
-        empty={options.empty}
-      />
-    ),
   };
 }
 
@@ -87,9 +76,6 @@ export function commitsSlot(state: CommitListState, loaders: CommitLoaders = {})
         : { status: state.status },
     renderPane: (selected, actions) => (
       <CommitList state={state} selected={selected} actions={actions} loaders={loaders} />
-    ),
-    renderList: (selected, actions) => (
-      <CommitEntries state={state} selected={selected} actions={actions} />
     ),
   };
 }

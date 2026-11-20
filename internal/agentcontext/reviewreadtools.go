@@ -116,7 +116,8 @@ func callSessionTranscriptPaged(ctx context.Context, c CallContext, args json.Ra
 		return "", err
 	}
 	if a.FromTurn == 0 && a.Limit == 0 {
-		return callSessionTranscript(ctx, c, args)
+		body, err := sessionTranscriptBody(ctx, c, args)
+		return string(body), err
 	}
 	body, err := sessionTranscriptBody(ctx, c, args)
 	if err != nil {

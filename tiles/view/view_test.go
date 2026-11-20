@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/jsonschema-go/jsonschema"
-
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
@@ -263,114 +261,6 @@ func TestPlacePutsATileWhereItsHunksAre(t *testing.T) {
 	}
 }
 
-// The reply schema is strict-mode ready: every object closed with every
-// property required, and the prompt's kind of reply validates against it.
-func TestReplySchemaIsStrictAndAcceptsAReply(t *testing.T) {
-	var schema map[string]any
-	if err := json.Unmarshal(view.ReplySchema(), &schema); err != nil {
-		t.Fatal(err)
-	}
-	var walk func(at string, node any)
-	walk = func(at string, node any) {
-		switch n := node.(type) {
-		case []any:
-			for _, item := range n {
-				walk(at, item)
-			}
-		case map[string]any:
-			if props, ok := n["properties"].(map[string]any); ok {
-				if n["additionalProperties"] != false {
-					t.Errorf("%s: not closed", at)
-				}
-				required, _ := n["required"].([]any)
-				for name := range props {
-					if !slices.Contains(required, any(name)) {
-						t.Errorf("%s: %s is not required", at, name)
-					}
-				}
-			}
-			for key, value := range n {
-				walk(at+"/"+key, value)
-			}
-		}
-	}
-	walk("", schema)
-	var resolved jsonschema.Schema
-	if err := json.Unmarshal(view.ReplySchema(), &resolved); err != nil {
-		t.Fatal(err)
-	}
-	compiled, err := resolved.Resolve(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The schema says what a provider holds the reply to; the sample places
-	// one tile past it, which the host still reads (and cuts).
-	var instance any
-	if err := json.Unmarshal([]byte(strings.Replace(sampleReply, `, "dg_extra"`, "", 1)), &instance); err != nil {
-		t.Fatal(err)
-	}
-	if err := compiled.Validate(instance); err != nil {
-		t.Fatalf("the sample reply: %v", err)
-	}
-	reply, problems := view.ParseReply([]byte(sampleReply))
-	if problems != nil {
-		t.Fatal(problems)
-	}
-	var report view.Report
-	c := reply.Composition(&report)
-	if len(c.Diagrams) != 4 || c.Overview.Verdict == nil || c.Overview.Verdict.Points[0].Section != "sec_retry_policy" || *c.Overview.Diagram != "dg_path" {
-		t.Fatalf("composition %+v", c)
-	}
-	// The fourth tile placed on the section is past the call's limit.
-	if len(c.Sections[0].Tiles) != view.MaxPlaced || report.Counts()[view.FixLimit] != 1 {
-		t.Fatalf("sections %+v, %v", c.Sections, report.Counts())
-	}
-	r, doc, _ := fixture(t)
-	n, checked := view.Normalize(r, doc, &c)
-	if len(n.Diagrams) != 4 || n.Overview.Diagram == nil {
-		t.Fatalf("checked %+v: %v", n, checked.Problems)
-	}
-	var table view.TableData
-	_ = json.Unmarshal(n.Diagrams[3].Data, &table)
-	if !slices.Equal(table.Columns, []string{"Try", "Wait"}) || table.Source[0].ID != "h_000000000001" {
-		t.Fatalf("table %+v", table)
-	}
-}
-
-const sampleReply = `{"overview": {"risk_summary": "Retries can pile up.", "verdict": {"text": "Decide the budget.", "points": [{"text": "The budget is unbounded; set one.", "section": "sec_retry_policy"}]},
- "screenshots": ["att_aa01"], "diagram": "dg_path", "intent": [{"asked": "Retries", "got": "Yes: with a backoff.", "session": "` + sessionID + `", "prompt": 1}]},
- "sections": [{"id": "sec_retry_policy", "tiles": ["dg_cols", "dg_seq", "dg_table", "dg_extra"]}],
- "diagrams": [
-  {"id": "dg_path", "type": "flow", "title": "What happens to a failed delivery", "caption": null, "source": ["h_000000000001"],
-   "lanes": [{"label": null, "from": null, "steps": [{"title": "Deliver", "note": null, "tone": null, "join": null}, {"title": "Retry", "note": "with a backoff", "tone": "new", "join": "arrow"}]}]},
-  {"id": "dg_cols", "type": "columns", "title": "Before and after", "caption": null, "source": [],
-   "columns": [{"label": "Before", "tone": "muted", "items": [{"title": "One try", "note": null}]}, {"label": "After", "tone": null, "items": [{"title": "Up to five tries", "note": null}]}]},
-  {"id": "dg_seq", "type": "sequence", "title": "A delivery", "caption": "The remote answers 503.", "source": ["h_000000000002"],
-   "actors": ["Worker", "Remote"], "steps": [{"from": 0, "to": 1, "text": "deliver", "tone": null, "reply": null, "change": null, "was": null}, {"from": 1, "to": 0, "text": "503", "tone": "bad", "reply": true, "change": "changed", "was": "500"}]},
-  {"id": "dg_table", "type": "table", "title": "Waits", "caption": null, "source": ["h_000000000001"], "columns": ["Try", "Wait"], "rows": [["1", "1 s"], ["2", "2 s"]]}]}`
-
-func TestParseReplyReportsOnlyWhatItCannotRead(t *testing.T) {
-	for _, tc := range []struct {
-		name, reply, problem string
-	}{
-		{"not JSON", `{"overview":`, "not valid JSON"},
-		{"not an object", `[]`, "must be an object"},
-		{"a wrong type", `{"overview": {"screenshots": "att_aa01"}, "sections": [], "diagrams": []}`, "/overview/screenshots"},
-		{"a flow without lanes", `{"overview": {}, "sections": [], "diagrams": [{"id": "dg_x", "type": "flow", "title": "X", "source": []}]}`, "/diagrams/0"},
-		{"a table of objects", `{"overview": {}, "sections": [], "diagrams": [{"id": "dg_x", "type": "table", "title": "X", "source": [], "columns": [{"label": "A"}], "rows": [["a"]]}]}`, "/diagrams/0"},
-	} {
-		_, problems := view.ParseReply([]byte(tc.reply))
-		if len(problems) == 0 || !strings.Contains(problems[0], tc.problem) {
-			t.Errorf("%s: %v", tc.name, problems)
-		}
-	}
-	// What normalisation fixes is not a problem: an unknown type, a missing
-	// overview, an unknown section.
-	if _, problems := view.ParseReply([]byte(`{"diagrams": [{"id": "dg_x", "type": "pie"}], "sections": [{"id": "sec_nope", "tiles": []}]}`)); problems != nil {
-		t.Errorf("lenient: %v", problems)
-	}
-}
-
 // A tile the person added goes on the section it was added on, when the
 // review has that current section or it is context; else by its hunks.
 func TestBuildPlacesAddedTilesOnTheirSection(t *testing.T) {
@@ -427,32 +317,6 @@ func TestBuildListsEverySection(t *testing.T) {
 	}
 	if !slices.Equal(where["sec_generated_client"], []string{"dg_x"}) || !slices.Equal(where["sec_config_flag"], []string{"schema_change"}) || len(v.Sections) != 4 {
 		t.Fatalf("sections %+v", v.Sections)
-	}
-}
-
-func TestBuildInput(t *testing.T) {
-	r, doc, _ := fixture(t)
-	r.Sessions[0].Prompts = nil
-	for i := 1; i <= 9; i++ {
-		r.Sessions[0].Prompts = append(r.Sessions[0].Prompts, view.Prompt{Index: 10 - i, Text: strings.Repeat("ask ", 150)})
-	}
-	r.Sessions = append(r.Sessions, view.Session{ID: "hidden", Restricted: true, Prompts: []view.Prompt{{Index: 1, Text: "secret"}}})
-	r.Sections[0].Stale = true
-	n, _ := view.Normalize(r, doc, &view.Composition{Library: []tiles.LibraryTile{libraryTile(t, "schema_change", "h_000000000003")}})
-	in := view.BuildInput(r, []view.InputTile{{ID: "schema_change", Kind: "library", Type: "custom", Title: "Schema **change**", Hunks: view.Covers(view.ExtraTiles(doc, &n))["schema_change"]}})
-	if len(in.Sections) != 2 || in.Sections[0].ID != "sec_config_flag" || len(in.Sections[0].Hunks) == 0 || in.Sections[0].Hunks[0].Path == "" {
-		t.Fatalf("sections %+v", in.Sections)
-	}
-	if len(in.Sessions) != 1 || len(in.Sessions[0].Prompts) != view.MaxSessionPrompts || in.Sessions[0].Prompts[0].Index != 1 ||
-		len([]rune(in.Sessions[0].Prompts[0].Text)) > view.MaxPromptText {
-		t.Fatalf("sessions %+v", in.Sessions)
-	}
-	if len(in.Tiles) != 1 || in.Tiles[0].Title != "Schema change" || !slices.Contains(in.Tiles[0].Hunks, "h_000000000003") {
-		t.Fatalf("tiles %+v", in.Tiles)
-	}
-	message, err := in.Message()
-	if err != nil || !strings.Contains(message, "not instructions") || strings.Contains(message, "secret") {
-		t.Fatalf("message %v %q", err, message[:80])
 	}
 }
 

@@ -27,10 +27,10 @@ func viewDocument(t *testing.T) []byte {
 	return tileviewtest.Encode(t, doc)
 }
 
-// viewComposition is a review view composition of the document as a
-// generation stores it: the view call's overview, two diagrams and a
-// placement, the fixture's library and authored tiles (two of each), checked
-// against the review, and the tiles the call left out placed by their hunks.
+// viewComposition is a review view composition of the document as older
+// versions store it: an overview, two diagrams and a placement, the
+// fixture's library and authored tiles (two of each), checked against the
+// review, and the tiles left out placed by their hunks.
 func viewComposition(t *testing.T, document []byte) []byte {
 	t.Helper()
 	grid, err := view.Parse(tileviewtest.LibraryComposition(t, document))
@@ -48,13 +48,22 @@ func viewComposition(t *testing.T, document []byte) []byte {
 	             {"label": "Retries off", "steps": [{"title": "Deliver", "note": null, "tone": null, "join": null}, {"title": "Remote fails", "note": null, "tone": "bad", "join": "arrow"}, {"title": "Reported at once", "note": null, "tone": "muted", "join": "arrow"}]}]},
 	  {"id": "dg_flag", "type": "columns", "title": "What the flag changes", "caption": null, "source": ["h_000000000003"],
 	   "columns": [{"label": "Flag on", "tone": "good", "items": [{"title": "Failed deliveries retry", "note": "up to the budget"}]}, {"label": "Flag off", "tone": "muted", "items": [{"title": "A failure is reported at once", "note": null}]}]}]}`
-	parsed, problems := view.ParseReply([]byte(reply))
-	if problems != nil {
-		t.Fatal(problems)
+	var parsed struct {
+		Overview view.Overview       `json:"overview"`
+		Sections []view.Placement    `json:"sections"`
+		Diagrams []view.ReplyDiagram `json:"diagrams"`
 	}
-	var report view.Report
-	c := parsed.Composition(&report)
-	c.Library, c.Authored = grid.Library, grid.Authored
+	if err := json.Unmarshal([]byte(reply), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	c := view.Composition{Schema: view.CompositionName, Overview: parsed.Overview, Sections: parsed.Sections, Library: grid.Library, Authored: grid.Authored}
+	for _, d := range parsed.Diagrams {
+		title, data, _, problem := view.CheckDiagram(d, func(string) bool { return true })
+		if problem != "" {
+			t.Fatal(problem)
+		}
+		c.Diagrams = append(c.Diagrams, view.NativeTile{ID: d.ID, Type: d.Type, Title: title, Data: data})
+	}
 	normalized, err := review.NormalizeStored(document)
 	if err != nil {
 		t.Fatal(err)

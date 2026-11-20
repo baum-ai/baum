@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/internal/etagjson"
-	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tileframes"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
@@ -26,33 +25,29 @@ import (
 	"github.com/baum-ai/baum/tiles/view"
 )
 
-// Response is the body of a tile route. Document is the baum.review/1
-// document the other routes serve, with the stored-document rules applied and
-// the derived hunk URLs added; View is the review page's view of exactly
-// those bytes, or nil with Problem naming why it could not be built. The
-// problem never quotes the document.
+// Response is the review page's view of a baum.review/1 document (Build),
+// which Serve converts to the tile routes' answer. Document is the document
+// with the stored-document rules applied and the derived hunk URLs added;
+// View is the review page's view of exactly those bytes, or nil with Problem
+// naming why it could not be built. The problem never quotes the document.
 //
 // A custom tile's definition is served without its HTML (ServedDefinition):
 // the page loads the tile's frame document by its digest, which Frames
-// registers. The served definition no longer matches its digest, so nothing
+// registers, and that definition no longer matches its digest, so nothing
 // may check a served tile again.
 type Response struct {
-	Document json.RawMessage `json:"document"`
+	Document json.RawMessage
 	// View is the review page's view (baum.view/1, view.Build): the
 	// overview's model-written parts, every section with the tiles placed on
 	// it, and the tiles. It is built from the review and its review view
 	// composition (baum.composition/2); a version without one, or with an
 	// older composition, gets the empty view (view.Empty) with only the
 	// tiles the person added.
-	View    *view.View `json:"view,omitempty"`
-	Problem string     `json:"problem,omitempty"`
-	// Drafts are the pending cards of tiles being made in the session panel
-	// for the pull request, which the page shows on the section each will
-	// stand on; the tile route sets them on the latest version.
-	Drafts []tiledrafts.Draft `json:"drafts,omitempty"`
+	View    *view.View
+	Problem string
 	// Frames are the definitions of the ready custom tiles, kept to register
 	// them again when the answer is served from a cache.
-	Frames Frames `json:"-"`
+	Frames Frames
 	// checked are the view's library, authored and added tiles as checked,
 	// before their custom definitions were replaced by their served form;
 	// tests check them.
