@@ -50,7 +50,10 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0 (>= 2.40)"]
+        "depends": ["libwebkit2gtk-4.1-0 (>= 2.40)", "gstreamer1.0-libav"]
+      },
+      "appimage": {
+        "bundleMediaFramework": true
       }
     },
     "macOS": {

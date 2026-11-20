@@ -1399,10 +1399,18 @@ Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
 the 4.1 API (`libwebkit2gtk-4.1-0`), 2.40 or newer: the first release that
 sends the Fetch Metadata request headers (`Sec-Fetch-*`), without which no
 custom tile's frame loads. It declares its package dependencies and
-installs `baum-desktop` and `baum` in `/usr/bin`.
+installs `baum-desktop` and `baum` in `/usr/bin`. Video in reviews plays
+through the system's GStreamer: WebKitGTK depends on the base and good
+plugins (WebM: VP8, VP9, Opus), and the deb also depends on
+`gstreamer1.0-libav` for MP4 (H.264, AAC).
 
 The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
-glibc, HarfBuzz and the other libraries linuxdeploy leaves out. The image
+glibc, HarfBuzz and the other libraries linuxdeploy leaves out. It also
+carries the image's GStreamer with its base and good plugins
+(`bundleMediaFramework` in `tauri.conf.json`) and uses those instead of the
+system's, so WebM videos play without any GStreamer on the system. It
+carries no H.264 or AAC decoder (libav), so MP4 videos show as unavailable
+there. The image
 requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
 This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
 for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
