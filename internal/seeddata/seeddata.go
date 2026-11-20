@@ -125,7 +125,14 @@ type Result struct {
 // offline.
 const MarkerFile = ".local/state/baum/seeddata.json"
 
-// Generate writes the dataset into o.Home.
+// owned are the parts of a home Generate writes. One that did not exist
+// before is removed whole when generation fails; inside one that did (a
+// .claude folder Claude Code made, say), only what Generate wrote is.
+var owned = []string{".local/state/baum", ".config/baum", ".config/com.usebaum.desktop", "src", ".claude", ".codex"}
+
+// Generate writes the dataset into o.Home. The marker file (MarkerFile) is
+// written last; when generation fails, what it wrote is removed, so the
+// home holds either the whole dataset or no baum data.
 func Generate(ctx context.Context, o Options) (Result, error) {
 	o = o.withDefaults()
 	if o.Home == "" || !filepath.IsAbs(o.Home) {
@@ -142,6 +149,25 @@ func Generate(ctx context.Context, o Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	var fresh []string
+	for _, part := range owned {
+		if _, err := os.Lstat(filepath.Join(home, part)); errors.Is(err, fs.ErrNotExist) {
+			fresh = append(fresh, filepath.Join(home, part))
+		}
+	}
+	var written []string
+	result, err := writeDataset(ctx, o, home, func(path string) { written = append(written, path) })
+	if err != nil {
+		for _, path := range append(fresh, written...) {
+			_ = os.RemoveAll(path)
+		}
+	}
+	return result, err
+}
+
+// writeDataset writes the dataset into home, telling wrote each clone and
+// transcript it writes.
+func writeDataset(ctx context.Context, o Options, home string, wrote func(string)) (Result, error) {
 	state, config := filepath.Join(home, ".local", "state", "baum"), filepath.Join(home, ".config", "baum")
 	for _, dir := range []string{state, config} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -184,6 +210,7 @@ func Generate(ctx context.Context, o Options) (Result, error) {
 	clones := make([]string, len(plans))
 	for i, r := range plans {
 		dir := filepath.Join(home, "src", r.owner, r.name)
+		wrote(dir)
 		g, err := writeRepository(ctx, o, r, dir)
 		if err != nil {
 			return Result{}, fmt.Errorf("writing %s: %w", r.identity(), err)
@@ -239,6 +266,7 @@ func Generate(ctx context.Context, o Options) (Result, error) {
 			write = writeCodexRollout
 		}
 		size, err := write(o, home, s)
+		wrote(s.path)
 		if err != nil {
 			return Result{}, err
 		}

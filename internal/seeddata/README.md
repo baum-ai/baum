@@ -30,7 +30,10 @@ app's first-run setup done (`desktop.json`), and leaves
 Sizes are options (`seeddata.Options`, or the command's flags:
 `-repositories`, `-pull-requests`, `-large-diff`, `-inboxes`,
 `-claude-sessions`, `-codex-sessions`, `-long-transcript`,
-`-draft-comments`). It refuses a home that already has baum data.
+`-draft-comments`). It refuses a home that already has baum data. The
+marker is written last, and a generation that fails removes what it wrote
+(whole folders it created, and only its own clones and transcripts inside
+folders that were there before), so a home holds the whole dataset or none.
 
 ## How the daemon serves it offline
 
@@ -80,5 +83,7 @@ just oss-go test ./internal/seeddata
 
 `TestSameSeedSameData` writes a small dataset twice with one seed and once
 with another, `TestTheDaemonReadsIt` reads it back through the registry,
-discovery, the review index and the inboxes, and `TestDefaultsAreQuick`
-writes the default dataset (skipped with `-short`).
+discovery, the review index and the inboxes, and `TestDefaultsMeetTheCriteria`
+writes the default dataset and checks it meets the profiling criteria
+(skipped with `-short`); `TestAFailedGenerationLeavesNoBaumData` makes the
+last step fail and checks nothing of the dataset is left.

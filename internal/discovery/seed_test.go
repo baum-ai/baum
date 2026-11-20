@@ -2,6 +2,8 @@ package discovery
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -35,5 +37,46 @@ func TestSeedIsServedUnderItsCredential(t *testing.T) {
 	other := github.New(func(context.Context, string) (string, error) { return "another", nil }, github.Options{})
 	if _, err := New(other, dir).Cached(ctx, repo); err == nil {
 		t.Fatal("another credential read the seeded cache")
+	}
+}
+
+// failing refuses every request, as GitHub out of reach does.
+type failing struct{ requests *int }
+
+func (f failing) RoundTrip(*http.Request) (*http.Response, error) {
+	*f.requests++
+	return nil, errors.New("offline")
+}
+
+// Offline, a forced poll and a probe fail, and the seeded pull requests
+// stay, stale and with the error.
+func TestSeedSurvivesFailedPolls(t *testing.T) {
+	ctx := context.Background()
+	dir := appdbtest.TempDir(t)
+	requests := 0
+	client := github.New(func(context.Context, string) (string, error) { return "seeded", nil }, github.Options{Transport: failing{&requests}})
+	s := New(client, dir)
+	repo := github.Repository{Host: "github.com", Owner: "acme", Name: "app"}
+	if err := s.Seed(ctx, Snapshot{Repository: "acme/app", Viewer: "dana", NextPoll: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC),
+		PullRequests: []PullRequest{{Repository: "acme/app", Number: 7, Title: "Seeded", State: "OPEN"}, {Repository: "acme/app", Number: 9, Title: "Other", State: "OPEN"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		polled, err := s.PollNow(ctx, repo)
+		if err == nil || len(polled.PullRequests) != 2 || !polled.Stale || polled.Error == "" {
+			t.Fatalf("forced poll %d: %+v %v", i, polled, err)
+		}
+	}
+	if _, err := s.Probe(ctx, []github.Repository{repo}); err == nil {
+		t.Fatal("a probe with GitHub out of reach succeeded")
+	}
+	if requests == 0 {
+		t.Fatal("no request was attempted")
+	}
+	for _, reader := range []*Service{s, New(client, dir)} {
+		got, err := reader.Cached(ctx, repo)
+		if err != nil || len(got.PullRequests) != 2 || got.PullRequests[0].Title != "Seeded" || !got.Stale || got.Error == "" {
+			t.Fatalf("after the failed polls: %+v %v", got, err)
+		}
 	}
 }

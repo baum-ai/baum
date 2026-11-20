@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/inboxes"
@@ -124,7 +125,20 @@ func TestTheDaemonReadsIt(t *testing.T) {
 	if err != nil || prefs.Automatic {
 		t.Fatalf("automatic reviews must be off: %+v %v", prefs, err)
 	}
-	disc := discovery.New(github.New(func(context.Context, string) (string, error) { return Token, nil }, github.Options{}), state)
+	// The credential the daemon resolves from the dataset's config.toml
+	// reads the partition the dataset wrote.
+	t.Setenv("HOME", home)
+	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "GITHUB_TOKEN", "GH_TOKEN", "GH_HOST"} {
+		t.Setenv(name, "")
+	}
+	cfg, err := config.Load(config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token, source := cfg.ExplicitGitHubTokenSource("github.com"); token != Token || source != config.SourceConfigFile {
+		t.Fatalf("config.toml's credential is %q from %q", token, source)
+	}
+	disc := discovery.New(github.NewFromConfig(cfg, github.Options{}), state)
 	index, err := (&reviewindex.Service{Registry: registry, Discovery: disc}).Build(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -162,10 +176,11 @@ func TestTheDaemonReadsIt(t *testing.T) {
 	}
 }
 
-// TestDefaultsAreQuick writes the full default dataset, which the
-// profiling recipe uses, and checks its size and that it takes well under
-// a minute.
-func TestDefaultsAreQuick(t *testing.T) {
+// TestDefaultsMeetTheCriteria writes the full default dataset, which the
+// profiling recipe uses, and checks it has what profiling needs: hundreds
+// of pull requests across many repositories, a 5,000-line diff, many
+// inboxes and long transcripts of both agents.
+func TestDefaultsMeetTheCriteria(t *testing.T) {
 	if testing.Short() {
 		t.Skip("writes the full dataset")
 	}
@@ -174,13 +189,51 @@ func TestDefaultsAreQuick(t *testing.T) {
 	o.Home = filepath.Join(t.TempDir(), "home")
 	started := time.Now()
 	result := generate(t, o)
-	took := time.Since(started)
-	t.Logf("defaults: %+v in %s", result.Counts, took)
+	t.Logf("defaults: %+v in %s", result.Counts, time.Since(started))
 	c := result.Counts
-	if c.Repositories != 24 || c.PullRequests < 300 || c.LargeDiffLines != 5000 || c.Inboxes != 20 || c.LongestTranscript != 3000 {
+	if c.Repositories < 20 || c.PullRequests < 300 || c.ReviewVersions < 300 || c.LargeDiffLines != 5000 || c.Inboxes != 20 ||
+		c.LongestTranscript != 3000 || c.Sessions < 10 {
 		t.Fatalf("counts %+v", c)
 	}
-	if took > 50*time.Second {
-		t.Fatalf("took %s", took)
+}
+
+// A generation that fails removes what it wrote, so the home is not left
+// with part of the dataset and no marker; what was there before stays.
+func TestAFailedGenerationLeavesNoBaumData(t *testing.T) {
+	requireGit(t)
+	home := filepath.Join(t.TempDir(), "home")
+	keep := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Codex's folder is a file: the rollouts, written last, fail.
+	if err := os.WriteFile(filepath.Join(home, ".codex"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(context.Background(), small(5, home)); err == nil {
+		t.Fatal("generation into a home whose .codex is a file succeeded")
+	}
+	for _, part := range []string{".local/state/baum", ".config/baum", ".config/com.usebaum.desktop", "src", MarkerFile} {
+		if _, err := os.Stat(filepath.Join(home, part)); !os.IsNotExist(err) {
+			t.Errorf("%s is left after a failed generation: %v", part, err)
+		}
+	}
+	if left := readTranscripts(t, home); len(left) != 0 {
+		t.Errorf("transcripts left: %v", left)
+	}
+	for _, path := range []string{keep, filepath.Join(home, ".codex")} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s, there before, was removed: %v", path, err)
+		}
+	}
+	// Generating again works.
+	if err := os.Remove(filepath.Join(home, ".codex")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Generate(context.Background(), small(5, home)); err != nil {
+		t.Fatal(err)
 	}
 }

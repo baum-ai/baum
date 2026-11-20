@@ -18,8 +18,9 @@ usage: isolated.sh [name] [--copy-data | --seed-data[=SEED]] [--workspace DIR]..
   --seed-data[=SEED]
                    instead fill the instance's home with the seeded
                    profiling dataset (oss/internal/seeddata, seed 1 by
-                   default): the same data on every machine, served with
-                   no GitHub and no model; only when it has no data yet
+                   default): the same pull requests, reviews and
+                   sessions on every machine, served with no GitHub and
+                   no model; only when it has no data yet
   --workspace DIR  mount DIR read-only at the same path, so repositories
                    the app knows from the copied data are there; repeatable.
                    Their review stores get writable copies of the instance's,
@@ -43,6 +44,7 @@ while [ "$#" -gt 0 ]; do
   case $1 in
     --copy-data) copy=1 ;;
     --seed-data) seed=1 ;;
+    --seed-data=) usage >&2; exit 2 ;;
     --seed-data=*) seed=${1#--seed-data=} ;;
     --headless) headless=1 ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; workspaces="$workspaces
@@ -102,8 +104,12 @@ if [ "$copy" = 1 ]; then
   # Mounted writable so sqlite3 can read databases a running daemon holds
   # open (WAL) and take a consistent snapshot; nothing is written.
   set --
-  if [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
-    echo "isolated: $name already has baum data, kept; delete $home to start again"
+  if [ -f "$home/.local/state/baum/seeddata.json" ]; then
+    echo "isolated: $name already has the seeded dataset, kept; delete $home to start again"
+  elif [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
+    # It would run online, with whatever data it holds.
+    echo "isolated: $name has baum data that is not the seeded dataset; delete $home to seed it" >&2
+    exit 1
   else
     for pair in "${XDG_CONFIG_HOME:-$HOME/.config}/baum:/seed/config" "${XDG_STATE_HOME:-$HOME/.local/state}/baum:/seed/state"; do
       [ -d "${pair%:*}" ] && set -- "$@" -v "$pair"
@@ -119,8 +125,12 @@ if [ "$copy" = 1 ]; then
 fi
 
 if [ -n "$seed" ]; then
-  if [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
-    echo "isolated: $name already has baum data, kept; delete $home to start again"
+  if [ -f "$home/.local/state/baum/seeddata.json" ]; then
+    echo "isolated: $name already has the seeded dataset, kept; delete $home to start again"
+  elif [ -e "$home/.local/state/baum" ] || [ -e "$home/.config/baum" ]; then
+    # It would run online, with whatever data it holds.
+    echo "isolated: $name has baum data that is not the seeded dataset; delete $home to seed it" >&2
+    exit 1
   else
     # Its sessions are recorded as ended just now: the Sessions page lists
     # an ended session for a day.
