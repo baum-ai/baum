@@ -408,7 +408,7 @@ async function bothReady() {
   const mine = data(join(homedir(), ".local/state/baum/seeddata.json"));
   if (!mine?.digest)
     throw new Error("a comparison runs on the seeded dataset, and this side's home has none");
-  writeShared(`${side}.ready`, JSON.stringify(mine));
+  writeShared(`${side}.ready`, JSON.stringify({ seed: mine.seed, digest: mine.digest }));
   const theirs = await waitOther(() => {
     const text = readShared(`${other}.ready`);
     return text === undefined
