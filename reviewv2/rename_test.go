@@ -161,6 +161,18 @@ func TestRenamedOnlyOverEditedCode(t *testing.T) {
 	if got := RenamedSections(previous, sections, now); len(got) != 0 {
 		t.Errorf("the one file without a gone hunk matched: %v", got)
 	}
+
+	// The previous section's hunk on the file is gone (reverted), and the new
+	// section's only hunk there is unchanged code another section had: it is
+	// that section's code, not an edit of the gone one.
+	previous = renamePrevious(t,
+		`{"id":"h_gone","path":"f.go","new_range":[10,20]},{"id":"h_d","path":"f.go","new_range":[40,45]}`,
+		logical("sec_old", "h_gone"), logical("sec_d", "h_d"))
+	now = placed(map[string]HunkRef{"h_d": {Path: "f.go", Start: 40, Count: 6}, "h_x": {Path: "x.go", Start: 1, Count: 3}})
+	sections = []Section{logical("sec_b", "h_d"), logical("sec_d", "h_x")}
+	if got := RenamedSections(previous, sections, now); len(got) != 0 {
+		t.Errorf("the one file with only unchanged code matched: %v", got)
+	}
 }
 
 // A previous section whose text is not complete (failed, or empty) is not

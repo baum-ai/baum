@@ -387,10 +387,11 @@ func (m codeMatch) compare(o codeMatch) int {
 // are clearly the same code. Only an edit can make one hunk another: a
 // line overlap counts only between a hunk the previous diff did not have
 // and a previous hunk the current diff no longer has, and the one file of
-// both counts only when a previous hunk on it is gone.
+// both counts only when a previous hunk on it is gone and a hunk of the new
+// section on it is new.
 func matchCode(next []string, current *Refs, old []string, before *Refs) (codeMatch, bool) {
 	var m codeMatch
-	nextPaths, oldPaths, gonePaths := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	nextPaths, oldPaths, gonePaths, newPaths := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 	var gone []string
 	for _, h := range old {
 		p := before.Hunks[h].Path
@@ -413,6 +414,9 @@ func matchCode(next []string, current *Refs, old []string, before *Refs) (codeMa
 			continue
 		}
 		nextPaths[ref.Path] = true
+		if !before.HasHunk(h) {
+			newPaths[ref.Path] = true
+		}
 		if shared || ref.Start < 1 || before.HasHunk(h) {
 			continue
 		}
@@ -431,7 +435,7 @@ func matchCode(next []string, current *Refs, old []string, before *Refs) (codeMa
 			only = p
 		}
 	}
-	onlyFile := m.paths == 1 && len(nextPaths) == 1 && len(oldPaths) == 1 && gonePaths[only]
+	onlyFile := m.paths == 1 && len(nextPaths) == 1 && len(oldPaths) == 1 && gonePaths[only] && newPaths[only]
 	return m, m.hunks > 0 || m.overlapping > 0 || onlyFile
 }
 
