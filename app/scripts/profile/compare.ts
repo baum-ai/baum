@@ -351,6 +351,8 @@ export function summariseComparison(c: Comparison): string {
     );
   const busy = machineLoad(c);
   if (busy) lines.push(busy);
+  const uneven = unevenWork(c);
+  if (uneven) lines.push(uneven);
   lines.push(
     "- Decide on the headline. When nothing changed, about one comparison in ten still flags " +
       "some metric, and one in twenty the headline: run it again before keeping a change.",
@@ -490,4 +492,32 @@ export function machineLoad(c: Comparison): string | undefined {
   if (cpus && max > BUSY_LOAD * cpus)
     return `- **The machine was busy** (${text}): other work widens the runs' spread, so a small change may show as within noise. Run again when it is quieter.`;
   return `- Machine: ${text}.`;
+}
+
+/** How much more CPU a side's heaviest run may use than its lightest
+ *  before the summary says the runs did unequal work. */
+export const UNEVEN_CPU = 1.3;
+
+/** A verdict line when a side's container used much more CPU in some runs
+ *  than in others: the same journey costs about the same each time, so the
+ *  heavier runs carried other work (a new daemon still working through its
+ *  clones, a side catching up after it was frozen), which widens the
+ *  spread. */
+export function unevenWork(c: Comparison): string | undefined {
+  const sides = (["base", "head"] as const).flatMap((side) => {
+    const cpu = (side === "base" ? c.base : c.head).runs.flatMap((r) =>
+      r.conditions?.cpu === undefined ? [] : [r.conditions.cpu],
+    );
+    if (cpu.length < 2) return [];
+    const low = Math.min(...cpu);
+    const high = Math.max(...cpu);
+    return low > 0 && high / low > UNEVEN_CPU
+      ? [`${side} ${(low / 1000).toFixed(1)}–${(high / 1000).toFixed(1)} s`]
+      : [];
+  });
+  if (!sides.length) return undefined;
+  return (
+    `- **Uneven work in the runs**: the container's CPU per run ranged ${sides.join(", ")}. ` +
+    "The heavier runs carried other work, which widens the spread; see each run's conditions in metrics.json."
+  );
 }

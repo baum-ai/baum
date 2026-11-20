@@ -4,6 +4,8 @@ import {
   compareMetrics,
   comparisonJson,
   daemonFailure,
+  machineLoad,
+  unevenWork,
   holm,
   rankSumTest,
   schedule,
@@ -345,5 +347,38 @@ describe("daemonFailure", () => {
     assert.match(base, /compare against a ref with the same store schemas/);
     assert.doesNotMatch(daemonFailure(out, "head")!, /compare against/);
     assert.equal(daemonFailure("\n"), undefined);
+  });
+});
+
+describe("the conditions of the runs", () => {
+  const withConditions = (list: Run[], load: number, cpu: (i: number) => number) =>
+    list.map((run, i) => ({ ...run, conditions: { load, settle: 1000, cpu: cpu(i) } }));
+
+  it("reports the load, and warns when the machine was busy", () => {
+    const quiet = comparison(
+      withConditions(coldStarts(5, 1), 2, () => 9000),
+      withConditions(coldStarts(5, 2), 3, () => 9000),
+    );
+    quiet.head.environment["host CPUs"] = "24";
+    assert.match(
+      machineLoad(quiet)!,
+      /^- Machine: load average 2\.0 \(base\) and 3\.0 \(head\).*on 24 CPUs\.$/,
+    );
+    const busy = comparison(
+      withConditions(coldStarts(5, 1), 20, () => 9000),
+      withConditions(coldStarts(5, 2), 3, () => 9000),
+    );
+    busy.head.environment["host CPUs"] = "24";
+    assert.match(machineLoad(busy)!, /The machine was busy/);
+    assert.equal(unevenWork(quiet), undefined);
+  });
+
+  it("says when some runs carried other work", () => {
+    const c = comparison(
+      withConditions(coldStarts(5, 1), 2, (i) => (i < 2 ? 16000 : 9000)),
+      withConditions(coldStarts(5, 2), 2, () => 9000),
+    );
+    assert.match(unevenWork(c)!, /CPU per run ranged base 9\.0–16\.0 s\./);
+    assert.match(summariseComparison(c), /Uneven work in the runs/);
   });
 });
