@@ -32,7 +32,9 @@ Repositories lists the picked repositories and lets the person add more from Git
 
 ## settings
 
-Settings has seven sections: General (appearance and keyboard), Reviews (the review agent and automation), Fixes (the fix agent), Connections (GitHub and agent hooks), This computer (diagnostics, command line, updates, environment), Prompts (the prompts baum sends agents, customisable) and Tile library (the person's saved tile types). The 1 to 7 keys go to a section.
+Settings has eight sections: General (keyboard and plan usage), Appearance (the theme mode and the light and dark colour themes, with a thumbnail of each), Reviews (the review agent and automation), Fixes (the fix agent), Connections (GitHub and agent hooks), This computer (diagnostics, command line, updates, environment), Prompts (the prompts baum sends agents, customisable) and Tile library (the person's saved tile types). The 1 to 8 keys go to a section.
+
+Colour themes can be changed from any page, not only Appearance, and every change is a proposal the app previews at once: the person saves or dismisses it in the session panel. propose_theme makes a custom theme; when it names a custom theme the person has (theme_id), saving updates that theme in place, keeping its slots, and the card also offers Save as new theme. propose_theme_choice switches to an existing theme (built-in or custom) and/or the theme mode: it fills the light or dark theme in use unless the person names the other one, which then only shows as a thumbnail.
 
 The Tile library section lists the tile types the person saved, each marked Custom, with where it came from (made in chat or imported), its use-when line, the repositories it is pinned to and when a review last used it. A type opens in a pane (the page context's focus then names it as type): previews of its samples, its fill instructions, paths and versions. The person renames a type (its title only), pins it to repositories (a pinned type is always filled in that repository's generated reviews), restores an earlier version, exports it as a file, imports one and deletes it with Undo, all on the page. Edit in chat opens the session panel about the open type: read it with tile_type, change it with propose_tile_type, which the person saves.
 
@@ -142,5 +144,5 @@ Timeline: `/`: search the features or decisions; `Enter` opens or closes one.
 
 Settings:
 
-- `1–7`: go to a section. `j`, `k`, `↓`, `↑`: move. `Enter`, `l`, `→`: go into the section; `Space`, `Enter`: change the focused control.
+- `1–8`: go to a section. `j`, `k`, `↓`, `↑`: move. `Enter`, `l`, `→`: go into the section; `Space`, `Enter`: change the focused control.
 - `Escape`, `h`, `←`: back to the sections.

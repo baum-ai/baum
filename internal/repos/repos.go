@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,6 +26,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/themes"
 	"github.com/baum-ai/baum/internal/tilelibrary"
 )
 
@@ -117,6 +119,59 @@ type AppearancePreferences struct {
 	// ReviewPage is the page a review opens on: "full" (the review's
 	// sections) or "tiles" (its tile document); empty is full.
 	ReviewPage string `json:"review_page,omitempty"`
+	// LightTheme and DarkTheme are the ids of the themes used when Theme
+	// (system, light or dark) selects the light or the dark slot; empty is
+	// a built-in: default-light or default-dark. Any theme may sit in
+	// either slot. An id no longer in Themes counts as empty.
+	LightTheme string `json:"light_theme,omitempty"`
+	DarkTheme  string `json:"dark_theme,omitempty"`
+	// Themes are the custom colour themes, at most themes.MaxThemes.
+	Themes []CustomTheme `json:"themes,omitempty"`
+}
+
+// CustomTheme is a colour theme the person made: a base ("light" or "dark")
+// and colour overrides for the palette tokens themes.Tokens allows.
+type CustomTheme struct {
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Base   string            `json:"base"`
+	Tokens map[string]string `json:"tokens,omitempty"`
+}
+
+// validateThemes checks the custom themes a save adds or changes against
+// prev's: an id that is empty, long, repeated or a built-in's, and what
+// themes.Validate refuses. A theme saved before and unchanged is not checked,
+// so one that no longer validates never blocks saving something else, and the
+// count cap refuses growth past themes.MaxThemes only.
+func validateThemes(prev, list []CustomTheme) error {
+	if len(list) > themes.MaxThemes && len(list) > len(prev) {
+		return fmt.Errorf("at most %d custom themes", themes.MaxThemes)
+	}
+	stored := map[string]CustomTheme{}
+	for _, t := range prev {
+		stored[t.ID] = t
+	}
+	seen := map[string]bool{}
+	for _, b := range themes.Builtins {
+		seen[b.ID] = true
+	}
+	for _, t := range list {
+		repeated := seen[t.ID]
+		seen[t.ID] = true
+		if old, ok := stored[t.ID]; ok && !repeated && t.Name == old.Name && t.Base == old.Base && maps.Equal(t.Tokens, old.Tokens) {
+			continue
+		}
+		if t.ID == "" || len(t.ID) > 64 {
+			return errors.New("a theme id must be 1 to 64 bytes")
+		}
+		if repeated {
+			return fmt.Errorf("theme id %q is taken", t.ID)
+		}
+		if err := themes.Validate(themes.Theme{ID: t.ID, Name: t.Name, Base: t.Base, Tokens: t.Tokens}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan
@@ -345,6 +400,9 @@ func (p Preferences) Covers(authored, requested bool) bool {
 // refuses the jobs that use it.
 func (p Preferences) ValidateChange(prev Preferences) error {
 	if err := p.Validate(); err != nil {
+		return err
+	}
+	if err := validateThemes(prev.Appearance.Themes, p.Appearance.Themes); err != nil {
 		return err
 	}
 	if p.Backend != nil && !p.Backend.Desktop() && (prev.Backend == nil || *prev.Backend != *p.Backend) {

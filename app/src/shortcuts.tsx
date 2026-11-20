@@ -99,7 +99,7 @@ const SETTINGS_SHORTCUTS: Shortcut[] = [
     label: "Previous section",
     short: "sections",
   },
-  { keys: ["1–7"], label: "Go to a section", short: "section" },
+  { keys: ["1–8"], label: "Go to a section", short: "section" },
   { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section", short: "go in" },
   { keys: ["Space", "Enter"], label: "Change or press the focused control" },
   { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections", short: "back" },

@@ -1281,8 +1281,23 @@ them.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,
-and the settings chat reads and proposes it with the other appearance
-settings. A pending review comment may target a tile (`kind` `tile`, `id` the
+and the settings chat reads and proposes it with General's other
+settings (`settings_general`, `propose_appearance`). The same route carries the custom colour themes: `light_theme`
+and `dark_theme` name the theme of each slot (the built-in `default-light` and
+`default-dark` when empty) and `themes` lists the built-ins (`themes.Builtins`:
+Default light, Default dark, Birch, Parchment, Pine and Ember, with their
+tokens) and the person's own, kept in `AppearancePreferences` and validated by `internal/themes` (an
+allowlist of palette tokens, each a plain colour, and the contrast check that
+evaluates the palette's recipes from the tile kit's generated `tokens.css`).
+`POST`, `PATCH` and `DELETE /api/settings/appearance/themes[/{id}]` create,
+change and delete a theme: `PATCH` takes `name`, or `base` and `tokens` together
+(with or without a `name`) and replaces them in place through `editTheme`, which
+keeps the id and the slots and validates the theme as `POST` does (the same
+`themes.Validate` and caps; built-ins are refused with 400, a missing id is 404). Settings › Appearance shows the mode and slots as thumbnails (the
+agent reads them with `settings_appearance` and switches them with
+`propose_theme_choice`, from any page); its thumbnails are `[data-theme-scope]`
+elements of `palette.css`, which the tile kit's generated `tokens.css` carries
+too, though a tile frame has no such elements. A pending review comment may target a tile (`kind` `tile`, `id` the
 tile's ID); a comment on a section keeps its `section` target. After a
 rollback to a release without `tile` targets, a daemon finds a saved review
 record that holds one invalid and reads the whole saved-reviews document
@@ -1385,11 +1400,12 @@ text; the only markup it parses is the static parts of an author's
 bootstrap hears only its parent, only plain JSON values within its limits
 (1.5 million characters, 200,000 values, 64 deep), and drops anything
 malformed. It sends `hello {kit, registered}` once the author's scripts ran;
-takes one `init {face, size, theme, lang, data, refs, check?}`, then `update
-{data, refs}` (a fresh `#baum-root` each time) and `theme {theme}`; and sends
-`ready {metrics}` two frames after a render (with the fonts loaded; the
-metrics are the height, `text_chars`, `elements`, `media`, `empty_state`,
-`failed`, `unresolved`, `overflow_x`, `overflow_y` and `render_ms`), `resize
+takes one `init {face, size, theme, lang, data, refs, check?, tokens?}`, then
+`update {data, refs}` (a fresh `#baum-root` each time) and `theme {theme,
+tokens?}`; and sends `ready {metrics}` two frames after a render (with the
+fonts loaded; the metrics are the height, `text_chars`, `elements`, `media`,
+`empty_state`, `failed`, `unresolved`, `overflow_x`, `overflow_y` and
+`render_ms`), `resize
 {height}` for a detail once per frame (stopped, with a `layout_loop` error,
 when it grows ten times in a second by the same amount), `error {code,
 message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
@@ -1401,6 +1417,20 @@ An `init` with `check` (sent only by the render check's runner) settles on
 the frame's fonts and a message turn instead of two animation frames, since
 a hidden window runs none, and the runner may then send `measure`, which a
 detail answers with a `resize` of its height, changed or not.
+The optional `tokens` (`{"--token": "colour"}`) are a custom colour theme's
+overrides: the bootstrap sets each on the frame's root element and a later
+`theme` message replaces them (tokens it omits are removed, so omitting
+`tokens` clears them). They are checked like `themes.ValidateToken` in
+`internal/themes`: the token must be on the allowlist (`THEME_TOKENS`), the
+value at most 64 bytes and a hex, `rgb()`, `hsl()` or `oklch()` colour by the
+same grammar, ported from `parse.go`. A message with any bad token is dropped
+whole, as one with a bad `theme` is. A Go test keeps the allowlist equal to
+`themes.Tokens`, and `internal/themes/testdata/validate.json` is run against
+both validators. Because tokens are set
+inline on the tile's root and a later message that omits a token removes it, a
+tile script that sets an allowlisted custom property inline on `<html>` itself
+can be overwritten or removed by theme messages; tiles should set such
+properties on their own elements.
 A detail frame keeps a 4px inset on every side for focus rings and draws
 nothing else around its content; the host pads the pane, places the frame in
 the pane's content column where a built-in detail's body goes, and sets it
@@ -7211,7 +7241,7 @@ routes answer as the local API does for a capability it lacks: a read with
 | `POST /api/console/conversations/{id}/cancel` | stops the running turn (none running is no error) and answers the conversation |
 | `POST /api/console/conversations/{id}/close` | closes it: stops its turn, revokes its token, drops its proposals |
 | `PUT /api/console/page` | the page context the person has open (`SetPage`), for every open conversation's token |
-| `GET /api/console/conversations/{id}/proposals` | `{"proposals":[...]}`: each `agentcontext.Proposal` as the MCP server keeps it: `id`, `kind` (`diff` or `operation`), `page`, `target`, a change's `before`, `after` and `revision`, an operation's `operation` (`name`, `request`, `summary` with `action`, `details` and their `quoted`, `multiline` and `by_agent` markers, `model`, `effort`, `paid`, `irreversible`, and the summary's `revision`), and `context` |
+| `GET /api/console/conversations/{id}/proposals` | `{"proposals":[...]}`: each `agentcontext.Proposal` as the MCP server keeps it: `id`, `kind` (`diff` or `operation`), `page`, `target`, a change's `before`, `after` and `revision`, an operation's `operation` (`name`, `request`, `summary` with `action`, `details` and their `quoted`, `multiline` and `by_agent` markers, `model`, `effort`, `paid`, `irreversible`, and the summary's `revision`), and `context`; a colour theme proposal's `after` also carries `contrast_warnings` (the pairs under `themes.MinContrast`, added by the listing alone: the stored proposal is unchanged) |
 | `POST .../proposals/{proposal}/save` | saves a change with `{"value"}`, what the person typed (an agent environment variable's value), never the agent |
 | `POST .../proposals/{proposal}/confirm` | runs an operation at `{"revision"}`, the summary's revision the panel showed; 200 `{"outcome":{"status","message"}}` (the operation route's answer), or 409 `operation_changed` with `proposal` holding the new summary, nothing run, for the person to read and confirm again |
 | `POST .../proposals/{proposal}/dismiss` | closes it without saving or running it |
@@ -7359,7 +7389,7 @@ random bytes, an opaque consumer id and a revoke function, and refuses any
 consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
 repository and a pull request number. Nothing about tokens is persisted or
 logged. A chat may read any page and propose changes to the page it has
-open; an action only reads, within its repository: its tools default to its
+open (and, from any page, a colour theme or a switch of theme); an action only reads, within its repository: its tools default to its
 pull request and may read the repository's other pull requests. `SetPage(id, PageContext)` records a chat's
 page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
 `jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
@@ -7466,7 +7496,7 @@ version and source, each scrubbed with `doctor.Scrub` as the public issue
 summary scrubs them; a GitHub Enterprise token check is `other host`, and the
 token and backend checks give no source; never `home`, a check's path, detail
 or fix, the environment or the issue the Report a problem dialog drafts), and
-the Settings tools below: `settings_general` with `/api/settings/appearance`,
+the Settings tools below: `settings_general` and `settings_appearance` with `/api/settings/appearance`,
 `settings_reviews` with `/api/settings` and `/api/settings/labs`, `settings_fixes` with `/api/settings`,
 `settings_connections` with `/api/github-auth`, `settings_computer` with
 `/api/settings` and `/api/diagnostics`, and `prompts` and `prompt` with
@@ -7724,7 +7754,8 @@ home folder:
 
 | Tool | Scope | Section | Reads |
 | --- | --- | --- | --- |
-| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier, review page) and `Options.PlanChoices` (each plan's shown, default and explicit) |
+| `settings_general` | global | General | `/api/settings/appearance` (key hints, page shortcut modifier, review page) and `Options.PlanChoices` (each plan's shown, default and explicit) |
+| `settings_appearance` | global | Appearance | `/api/settings/appearance`: the `theme` mode, `light_theme` and `dark_theme`, `themes` as `{id, name, base, tokens, builtin}`. It adds `theme_tokens` (`themes.Seeds` and `themes.Roles()`), `theme_defaults` (`light` and `dark`: `themes.Resolve` with no overrides, allowlisted tokens as `#rrggbb` or `#rrggbbaa`), `slot_values` (the same for each slot's theme) and `theme_note` (the `theme` setting picks the active slot; system follows the operating system) |
 | `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences), and `tile_reviews` from `/api/settings/labs` |
 | `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
 | `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
@@ -7787,7 +7818,13 @@ after, the target's revision and the page context it was made on. A
 `Proposer` reads a target (`Current`), validates a change (`Validate`) and
 saves it (`Apply`), each given the page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
-one and a page with no proposer; it reads the target's value and revision
+one and a page with no proposer, with one exception: `ProposalAnywhere`
+(`"app"`, a sentinel and not a page) is for the two colour theme targets, `theme`
+and `theme_choice`, which are not about the page the person has open. For them
+`Propose` and `Save` skip the same-page check (some page must still be open),
+the proposer is `Options.Proposers["app"]` (the sentinel is never registered as
+a page), `Propose` refuses any target but those two under it and either of them
+under any real page, and the proposer resolves those two alone; it reads the target's value and revision
 itself, ignoring the agent's revision, refuses with the bare
 `ErrNotRecorded` a `Before` the agent sent that no longer matches, and
 records the proposal; nothing changes. A tool gets only a `Receipt` (id,
@@ -7809,11 +7846,26 @@ proposals only through the Go API for now.
 never through an agent: the value of an agent environment variable the agent
 proposed adding. It goes to `Apply` alone, is never kept in the proposal, and
 prints and logs as withheld. Every proposer but the agent environment's
-refuses one.
+refuses one. `SaveInput.Theme` (`{name, slot, mode}`, `slot` "", `light` or `dark`,
+`mode` "", `update` or `new`) is what the person chose when saving a theme
+proposal: the name they gave it, the slot a new theme goes in and whether the
+save updates the theme the proposal names or adds a new one, each defaulting to
+the proposal's name, its base and, for `mode`, `update` when the proposal has a
+`theme_id` and `new` otherwise. For a `theme_choice` only `slot` is read: the
+slot in use, which the app resolved (see the table).
+It is not secret, but like the value it reaches `Apply` alone; only the theme
+proposer takes one (`target.takesTheme`) and refuses a `Value`, and every other
+proposer refuses a `Theme`.
 
 The `propose_*` tools record proposals. Each is global (an action neither
 lists nor calls one), reads nothing, names its page and target, passes the
-change asked for as `After`, and answers the receipt and a fixed status. A
+change asked for as `After`, and answers the receipt and a fixed status
+(a new `propose_theme` or `propose_theme_choice` proposal drops the
+conversation's earlier open ones of either target, as a dismiss does, so only
+the newest is previewed and an older one
+never resurfaces when it is saved or dismissed; `propose_theme` adds `contrast_warnings`, the pairs of the proposed colours
+under 4.5:1, which it works out from its own arguments with
+`themes.Contrast`; it reads no state). A
 tool's schema bounds types and sizes only, so a value the page refuses
 reaches the proposer and is refused with the page's own words. Pages list
 their tools, and `current_page` lists a section's with its `section_tools`.
@@ -7822,7 +7874,9 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 
 | Page (section) | Tool | Target | Saved as |
 | --- | --- | --- | --- |
-| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier, review page) |
+| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (key hints, page modifier, review page; a `theme`, `light_theme` or `dark_theme` is refused, as `propose_theme_choice`'s) |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme`, a common tool listed on every page | `theme` | A new theme: `POST /api/settings/appearance/themes` (`addTheme`) with the name and slot from `SaveInput.Theme`, else the proposal's name and its base's slot; the id is made once outside the transaction. With a `theme_id` in `After` (it must name an existing custom theme: a built-in or unknown id is refused when proposed, with guidance to omit it) the default save is an update, `PATCH /api/settings/appearance/themes/{id}` (`editTheme`) replacing the base, tokens and name, keeping the id and slots: the name is `SaveInput.Theme.Name` when given, else the proposal's name (required, so an update always sets it; `propose_theme` asks the agent to pass the current name unless the person is renaming, and the app prefills its name field from the proposal and labels the action "Update and rename to ..." when the field differs from the stored name); if the theme was deleted since, the update fails with "the theme this edits was deleted: save it as a new theme instead" and `mode: new` still adds it. The revision is a constant, so changes to the slots or themes during the preview do not make the save stale. Its "before" is the names of the light and dark slots' themes. |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_theme_choice`, a common tool listed on every page | `theme_choice` | `PUT /api/settings/appearance` of `{theme_id, slot, theme}`: `theme_id` is any existing built-in or custom theme (an unknown one is refused when proposed, naming `settings_appearance`), `slot` is `light`, `dark` or, when the agent omitted it, `in_use` (`agentcontext.SlotInUse`), and `theme` is the mode (system, light or dark); one of `theme_id` and `theme` is required and `slot` needs a `theme_id`. The daemon cannot see the operating system's appearance, so `in_use` is for the app to resolve (as `activeSlot` does, using the proposal's mode when it has one); the app always saves `SaveInput.Theme.Slot` as `light` or `dark`, which fills `light_theme` or `dark_theme` (an explicit `slot` in the proposal wins; a save with `in_use` and no slot is refused). The tool answers the receipt and `applies_to`: the slot's name when the mode is light or dark, "the slot in use" otherwise. The revision is a constant, as for `theme`; its "before" is the mode and the names of the slots' themes. The Settings page no longer has a theme proposal: `propose_appearance` still refuses `theme`, `light_theme` and `dark_theme`. |
 | `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
 | `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
 | `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |

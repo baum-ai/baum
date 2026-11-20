@@ -110,6 +110,10 @@ func New(opts Options) *Server {
 	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
 		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, added: opts.Added, tileTypes: opts.TileTypes, chatTiles: opts.ChatTiles, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
+		if page == ProposalAnywhere {
+			// Not a page: only the proposer given for the sentinel.
+			return opts.Proposers[ProposalAnywhere]
+		}
 		spec, _ := s.page(page)
 		return spec.Proposer
 	}, s.operation, s.reader, opts.API)

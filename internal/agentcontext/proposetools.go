@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/baum-ai/baum/internal/themes"
 )
 
 // The propose_* tools: a chat suggests a change to what the open page edits,
@@ -25,6 +27,11 @@ import (
 //     TargetTimeLimits, TargetJobConcurrency, TargetCodexApprovals and
 //     TargetAgentEnv+NAME (This computer), TargetPrompt+id (Prompts, the
 //     global prompts).
+//   - any page (ProposalAnywhere, not a page): TargetTheme, a colour theme
+//     (new, or an edit of one of the person's) and TargetThemeChoice, a switch
+//     to an existing theme and/or the theme mode, which the app previews at
+//     once and the person saves from wherever they are. Every page lists
+//     propose_theme and propose_theme_choice.
 //   - repositories, showing a repository: RepositoryTarget(repository,
 //     TargetRepositorySettings) (Reviews), RepositoryTarget(repository,
 //     TargetPrompt+id) (Prompts).
@@ -34,6 +41,8 @@ import (
 //     pending review of the pull request the page shows.
 const (
 	TargetAppearance         = "appearance"
+	TargetThemeChoice        = "theme_choice"
+	TargetTheme              = "theme"
 	TargetPlanUsage          = "plan_usage/"
 	TargetReviews            = "reviews"
 	TargetDecisions          = "decisions"
@@ -137,6 +146,129 @@ func propose(ctx context.Context, c CallContext, page, target string, after any)
 	return string(out), err
 }
 
+// themeAnswer is what propose_theme answers: the usual receipt and status, and
+// the pairs of the proposed colours that are hard to read, so the agent can
+// propose again.
+type themeAnswer struct {
+	proposed
+	ContrastWarnings []themes.Warning `json:"contrast_warnings"`
+}
+
+// themeSeedList names the seeds for propose_theme's description.
+func themeSeedList() string { return strings.Join(themes.Seeds, ", ") }
+
+func proposeThemeTool() Tool {
+	return Tool{
+		Name: "propose_theme",
+		Description: "Proposes a custom colour theme for the baum app: a name, a base (light or dark) and colour overrides of the app's palette tokens. Works on any page. The app previews the proposal at once; nothing is saved until the person saves it, and the preview ends when they dismiss it. A new theme is saved with the name and the light or dark slot the person chooses (the slot the theme's base names unless they pick the other). " +
+			"When you are changing a custom theme the person already has, pass its id as theme_id (from settings_appearance; usually the custom theme in the slot in use): saving then updates that theme in place, keeping its slots, instead of adding another, and name should be its current name unless you are renaming it. Omit theme_id when the person asks for a new theme, or when you start from a built-in theme, which cannot change: a built-in or unknown theme_id is refused. " +
+			"Use settings_appearance to read the person's themes, the tokens a theme may set (theme_tokens) and what each resolves to by default (theme_defaults) in the light and dark themes. Prefer to change seeds, which the rest of the palette derives from: " + themeSeedList() + ". On a dark base the text colour comes from --color-paper (the text ramp mixes it toward --color-shadow) and the surfaces from --color-shadow, so set --color-paper to a light colour; --color-ink does not colour dark-theme text, so setting it there does nothing for text. On a light base --color-ink is the text and --color-paper the page. Set a role (the other tokens) only where a seed cannot reach. Each value is one colour: #rgb, #rrggbb, #rrggbbaa, rgb(), hsl() or oklch(). " +
+			"The answer lists contrast_warnings, the pairs of text and background colours under 4.5:1 contrast; propose again with different colours to fix them.",
+		InputSchema: json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{`+
+			`"theme_id":{"type":"string","maxLength":64,"description":"The id of the custom theme this changes, from settings_appearance. Omit for a new theme."},`+
+			`"name":{"type":"string","maxLength":%d,"description":"The theme's name, as the person will see it in their themes."},`+
+			`"base":{"type":"string","enum":["light","dark"],"description":"The built-in palette the tokens change: light or dark."},`+
+			`"tokens":{"type":"object","maxProperties":%d,"additionalProperties":{"type":"string","maxLength":%d},"description":"Palette token to colour, for example {\"--color-paper\":\"#fdf6e3\"}. Only the tokens settings_appearance lists in theme_tokens."}},`+
+			`"required":["name","base","tokens"],"additionalProperties":false}`, themes.MaxNameRunes, len(themes.Tokens), themes.MaxValue)),
+		Proposes: true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				ThemeID string            `json:"theme_id,omitempty"`
+				Name    string            `json:"name"`
+				Base    string            `json:"base"`
+				Tokens  map[string]string `json:"tokens"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			if a.Tokens == nil {
+				a.Tokens = map[string]string{}
+			}
+			theme := themes.Theme{Name: a.Name, Base: a.Base, Tokens: a.Tokens}
+			if err := themes.Validate(theme); err != nil {
+				return "", err
+			}
+			text, err := propose(ctx, c, ProposalAnywhere, TargetTheme, a)
+			if err != nil {
+				return "", err
+			}
+			var receipt proposed
+			if err := json.Unmarshal([]byte(text), &receipt); err != nil {
+				return "", err
+			}
+			warnings := themes.Contrast(theme)
+			if warnings == nil {
+				warnings = []themes.Warning{}
+			}
+			out, err := json.Marshal(themeAnswer{receipt, warnings})
+			return string(out), err
+		},
+	}
+}
+
+// themeChoiceAnswer is what propose_theme_choice answers: the receipt and
+// status, and which slot the theme goes in.
+type themeChoiceAnswer struct {
+	proposed
+	AppliesTo string `json:"applies_to,omitempty"`
+}
+
+func proposeThemeChoiceTool() Tool {
+	return Tool{
+		Name: "propose_theme_choice",
+		Description: "Proposes switching the baum app to an existing colour theme (a built-in or one of the person's own, by id from settings_appearance) and/or changing the theme mode (theme: system, light or dark). Works on any page. The theme goes in the slot in use right now (the light or the dark theme, whichever the app shows); omit slot unless the person names the other mode, for example \"change my dark theme while I'm in light mode\", and then pass slot dark or light. " +
+			"The app previews the switch at once when it changes what the app shows; nothing is saved until the person saves it, and the preview ends when they dismiss it. A newer theme proposal replaces this one. To make a new theme or change one use propose_theme. You get its id and which slot it is for, never the current values.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+			`"theme_id":{"type":"string","minLength":1,"maxLength":64,"description":"The id of an existing colour theme, from settings_appearance's themes (default-light and default-dark are the built-in defaults)."},` +
+			`"slot":{"type":"string","enum":["light","dark"],"description":"The slot to set. Omit for the slot in use."},` +
+			`"theme":{"type":"string","enum":["system","light","dark"],"description":"The theme mode."}},` +
+			`"additionalProperties":false}`),
+		Proposes: true,
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct {
+				ThemeID string `json:"theme_id,omitempty"`
+				Slot    string `json:"slot,omitempty"`
+				Theme   string `json:"theme,omitempty"`
+			}
+			if err := strictArgs(args, &a); err != nil {
+				return "", err
+			}
+			if a.ThemeID == "" && a.Theme == "" {
+				return "", errors.New("pass a theme_id, a theme mode, or both")
+			}
+			if a.ThemeID == "" && a.Slot != "" {
+				return "", errors.New("slot needs a theme_id")
+			}
+			// Recorded as the slot in use when omitted; the app resolves it.
+			// When the mode is light or dark the answer can name it.
+			applies := ""
+			if a.ThemeID != "" {
+				switch {
+				case a.Slot != "":
+					applies = "the " + a.Slot + " theme"
+				case a.Theme == "light" || a.Theme == "dark":
+					applies = "the " + a.Theme + " theme (the slot in use)"
+				default:
+					applies = "the slot in use"
+				}
+				if a.Slot == "" {
+					a.Slot = SlotInUse
+				}
+			}
+			text, err := propose(ctx, c, ProposalAnywhere, TargetThemeChoice, a)
+			if err != nil {
+				return "", err
+			}
+			var receipt proposed
+			if err := json.Unmarshal([]byte(text), &receipt); err != nil {
+				return "", err
+			}
+			out, err := json.Marshal(themeChoiceAnswer{receipt, applies})
+			return string(out), err
+		},
+	}
+}
+
 // strictArgs decodes a tool's arguments, which its schema already checked.
 func strictArgs(args json.RawMessage, v any) error {
 	d := json.NewDecoder(strings.NewReader(string(args)))
@@ -185,9 +317,8 @@ func proposeTools() []Tool {
 	effort := `{"type":"string","maxLength":32,"description":"The reasoning effort: low, medium, high, xhigh, max or ultra; empty for the harness's own."}`
 	return []Tool{{
 		Name:        "propose_appearance",
-		Description: "Proposes a change to the Settings page's General section appearance: the theme, whether key hints show, the modifier held with 1 to 8 for the sidebar's pages, and the review page (the full review or tiles). The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
+		Description: "Proposes a change to the Settings page's General section appearance: whether key hints show, the modifier held with 1 to 8 for the sidebar's pages, and the review page (the full review or tiles). The theme mode and colour themes are propose_theme_choice's. The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
-			`"theme":{"type":"string","maxLength":16,"description":"system, light or dark."},` +
 			`"key_hints":{"type":"boolean"},` +
 			`"page_modifier":{"type":"string","maxLength":16,"description":"meta, ctrl or alt; empty is the platform's command key."},` +
 			`"review_page":{"type":"string","maxLength":16,"description":"full or tiles: the page a review opens on."}},` +
@@ -195,7 +326,6 @@ func proposeTools() []Tool {
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct {
-				Theme        *string `json:"theme,omitempty"`
 				KeyHints     *bool   `json:"key_hints,omitempty"`
 				PageModifier *string `json:"page_modifier,omitempty"`
 				ReviewPage   *string `json:"review_page,omitempty"`
@@ -528,7 +658,7 @@ func proposeTools() []Tool {
 			}
 			return propose(ctx, c, PagePullRequest, PullRequestTarget(c.Page.Repository, c.Page.PullRequest), a)
 		},
-	}}
+	}, proposeThemeTool(), proposeThemeChoiceTool()}
 }
 
 // AgentEnvChange is the After of an agent environment proposal: a name to

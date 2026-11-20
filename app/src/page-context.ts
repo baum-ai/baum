@@ -67,6 +67,7 @@ const bytes = (text: string) => encoder.encode(text).length;
  *  `repositorySections`); another is left out. */
 const SETTINGS_SECTIONS = [
   "general",
+  "appearance",
   "reviews",
   "fixes",
   "connections",
@@ -212,6 +213,7 @@ function withFilters(context: PageContext, search: URLSearchParams): PageContext
 
 const SECTION_TITLES: Record<string, string> = {
   general: "General",
+  appearance: "Appearance",
   reviews: "Reviews",
   fixes: "Fixes",
   connections: "Connections",

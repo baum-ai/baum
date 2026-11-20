@@ -54,8 +54,8 @@ chunk.
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
-connecting and tray screens use the viewer palette that the local app uses,
-following the system's light or dark appearance.
+connecting and tray screens use the viewer palette that the local app uses and
+follow the active colour theme (`src/desktop/follow-theme.ts`, below).
 Setup has a decorative leaf banner just above its step label, using the
 transparent Discord artwork in both themes. Its width is capped so leaves stay
 visible on large screens, and it follows the form on tall windows. It is static,
@@ -73,13 +73,28 @@ and Tailwind color utilities outside the UI palette,
 `../viewer/src/themes/*.css` and those two artwork modules.
 The default UI palette has nineteen explicit base colors shared by light and dark mode;
 its neutral ramps, status backgrounds and interaction shades are derived mixes.
-Custom colors go in `../viewer/src/themes/custom.css`, loaded by every desktop
-screen after the default palette in a higher-priority cascade layer. Override
-bases to recalculate shades, or any semantic token to replace a derived color.
-Put overrides on `:root`, with optional `:root[data-theme="dark"]` exceptions;
-components consume those values without redefining them. See
-[custom color themes](../viewer/README.md#custom-color-themes) for examples and
-named theme selection separate from the light/dark appearance preference.
+A custom colour theme is a base (`light` or `dark`) and overrides of the
+palette tokens in the allowlist in `src/theme.ts` (the same list as
+`themes.Tokens` in `internal/themes`; seeds such as `--color-paper` recalculate
+the shades built on them, roles such as `--surface-page` replace one result).
+The light and dark slots each name a theme (the built-in default when none is
+chosen) and the `theme` setting picks the slot in use, System following the
+operating system. `src/theme.ts` applies the active theme to the document root:
+`data-theme` and `color-scheme` follow the theme's base (so a dark theme in the
+light slot gives `data-theme="dark"`), and its tokens are set inline, which beats
+the palette layers and `style.css`; tokens the previous theme set are removed.
+A theme the agent proposes is previewed the same way, and `tileThemeMessage`
+builds the tile protocol's `theme` message for a theme. `../viewer/src/themes/custom.css`
+stays empty for a build that wants fixed overrides; see
+[custom color themes](../viewer/README.md#custom-color-themes).
+The desktop app's native screens (setup, connecting, tray panel) cannot ask the
+daemon, so in the desktop app `PreferencesProvider` reports the saved theme (the
+mode and the theme in each slot, with its base and allowlisted tokens) to the
+app with `save_theme` whenever it changes, never for a preview. The screens call
+`followTheme()`, which reads it with `theme_state`, applies it through
+`applyTheme`, follows the system's appearance in system mode, and reads again
+when the window gets the focus or becomes visible (the tray panel is one window
+that stays open). Without the state it follows the system's light or dark.
 
 `pnpm lint:palette` runs the color rule by itself; `pnpm lint` and `pnpm check`
 include it, so the normal CI app check enforces it. It scans app sources, shared
@@ -1683,14 +1698,99 @@ shows one section at a time, listed on the left with a line on where each
 stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
-straight to Connections. **General**, the default, offers System, Light and Dark
-themes, the modifier
+straight to Connections. **General**, the default, offers the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
-elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
+elsewhere) shows keyboard shortcut hints; each names only the platform's key. **Appearance**
+(next, `src/settings-appearance.tsx`) has the **Theme mode** segmented control
+(System, Light or Dark, with a hint: System follows the operating system,
+otherwise the mode names which slot is used), then a row for each slot, **Light
+theme** and **Dark theme**. The row of the slot in use, by the mode and the
+operating system's mode and ignoring any proposal preview, says "· in use" after
+its heading. A row is a wrapping strip of thumbnails, one per theme (the
+six built-ins, then the person's own), each a small sketch of baum's own layout
+(the sidebar on the canvas, the page's panel with its header line and primary
+action, text bars and a diff with an added and a removed line) with the theme's
+name under it. The thumbnail is the choice: the row is a radio group labelled
+with the slot's title, each thumbnail a visually hidden native radio, so the
+arrow keys move within a row (Settings' own keys leave the arrows alone there),
+and the chosen one has a check mark and an outline in the page's text colour. The outline and the focus ring are drawn on a frame outside the thumbnail's theme scope, so they take the page's colours, not the theme's. A choice applies
+at once and saves like any preference, through the same update path. Each
+thumbnail is a `data-theme-scope` element with `data-theme` set to the theme's
+base and its allowlisted tokens inline (`themeScope` in `src/theme.ts`), so it
+shows its own theme whatever the page's mode is (see
+[custom color themes](../viewer/README.md#custom-color-themes)); it is drawn
+with palette roles only and hidden from assistive technology. A custom theme's
+thumbnail has a ⋯ menu in its corner, outside the radio's label, to rename it
+(typed in a row below the strips) or delete it (a delete asks first and resets a
+slot that used it). It follows the row-menu pattern: the option is a
+`data-list-row`, so the ⋯ shows on hover, focus within or an open menu and
+always on touch, as a chip in the page's colours; a right click on the thumbnail
+and ⌘. (Ctrl+.) with the radio focused open the same menu
+(`data-actions-target` makes `useActionsKey` count the radio's focus). Built-ins
+have no menu. The six built-ins fit one row at the usual desktop width.
+Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
 `full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
-and loopback port changes. **Plan usage** below them has a switch per plan
+and loopback port changes. The same document carries the custom colour themes:
+`light_theme` and `dark_theme` are the ids of the themes the Light and Dark
+slots use (`theme` still picks which slot is active; any theme may sit in
+either, and an empty or vanished id is `default-light` or `default-dark`), and
+`themes` lists the built-ins first (`builtin: true`, with their tokens) and then the
+person's own (`{id, name, base, tokens}`, at most 32; a token is one of the
+palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
+`light_theme` and `dark_theme` (set by the thumbnails) and refuses an unknown id.
+`POST api/settings/appearance/themes` (`{name, base, tokens, slot}`; `slot` is
+`light`, `dark` or empty) creates a theme under a new `c-` id and may put it in
+a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`, or `{base, tokens}` with or
+without a `name`, which replaces them in place and keeps the id and slots) changes it, and
+`DELETE` removes it and resets a slot that used it; all answer with the
+appearance document, and the built-ins can be neither changed nor deleted.
+The built-ins are, in order, **Default light** and **Default dark** (`default-light`
+and `default-dark`: the palette as it ships, no tokens), **Birch** (`birch`,
+light: cool blue-grey with teal), **Parchment** (`parchment`, light: warm cream
+with terracotta), **Pine** (`pine`, dark: green-black with a mint accent) and
+**Ember** (`ember`, dark: neutral charcoal with an orange accent). They are
+defined once, in `themes.Builtins` (`internal/themes`), with tokens that pass
+`themes.Validate` and raise no contrast warning (a test checks each); the daemon
+sends them with the list and the app keeps no copy of their tokens, only the two
+token-less defaults it shows before the daemon answers. Either slot takes any of
+them, and the desktop app's cached screens get a built-in's tokens from the app
+like any other theme's.
+The app sends a rename or delete in turn with its settings saves (after any
+`PUT` in flight), so an older answer never brings a deleted theme back.
+The agent's `propose_theme_choice` proposal (page `app` too: valid from any page,
+not only Appearance) switches to an existing theme and/or the theme mode. Its
+`after` is `{theme_id, slot, theme}` with `slot` `in_use` when the agent named
+none. The app resolves `in_use` with `activeSlot` (`choiceSlot` in `src/theme.ts`,
+using the proposal's mode when it has one, else the saved mode, and the desktop's
+dark mode for System), for the preview and on save, and always sends an explicit
+`{theme: {slot}}` (nothing for a mode alone). The preview (`choicePreview`) shows
+the chosen theme only when its slot is the one in use, or the saved theme of the slot
+a mode change brings; for the other slot nothing changes on screen, and the card says
+which slot it is for. The card reads "Use <theme> for the light/dark theme (in use)",
+shows the theme's thumbnail (`ThemeMiniature`, shared with Appearance) and has Save and
+Dismiss; a mode shows as "Switch the theme mode to ...". A newer theme or choice proposal
+replaces it (the daemon drops the older). The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
+is previewed on the whole app while it is open in the session panel (the
+daemon drops the conversation's earlier theme proposals when a new one is
+recorded, so there is one); the console proposals listing adds
+`contrast_warnings` to the proposal's `after` (the stored proposal is
+unchanged), and the card shows swatches of its colours, those warnings, a name
+field and a Light or Dark select (always sent on save, defaulting to the
+theme's base). A proposal that names a custom theme the person has (`theme_id`:
+the agent is tweaking it) shows **Update <name>** as its primary action and
+**Save as new theme** as the secondary one, with the name prefilled and the slot
+select, which is for Save as new (the note names the slots the theme is in;
+Update keeps them, and the copy goes in the slot picked, by default the slot the
+edited theme holds that is in use, else one it holds, else the base's). Update
+sets the theme's name to the name field, and reads **Update and rename to <new>**
+when the field differs from the stored name. They send `{theme: {name, mode: "update"}}`
+and `{theme: {name, slot, mode: "new"}}`; if the theme was deleted meanwhile
+the update's error shows and Save as new theme stays. The preview ends on dismiss, when the conversation closes
+or the panel goes away, and on save once the preferences hold the saved theme
+(a refresh asked during a settings save waits for the save, then fetches). A
+slot naming a theme the list lacks shows the slot's built-in. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
 reviews', the fixes' and decision capture's (Auto counts the first plan it can

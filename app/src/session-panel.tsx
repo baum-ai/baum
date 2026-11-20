@@ -39,6 +39,7 @@ import {
   type Progress,
   type Proposal,
   type SummaryField,
+  type ThemeSave,
 } from "./console-api";
 import { useContextMenu, type MenuItem } from "./context-menu";
 import { ConfirmDialog } from "./group-dialogs";
@@ -47,6 +48,16 @@ import { useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { hrefOf, onPull, pageLabel, pickedFocus, samePage, type PageContext } from "./page-context";
 import { pendingReviewState } from "./pending-review-model";
+import { usePreferences } from "./preferences";
+import {
+  activeSlot,
+  choicePreview,
+  choiceSlot,
+  type Theme,
+  type ThemeChoice,
+  type ThemePrefs,
+} from "./theme";
+import { ThemeMiniature, useSystemDark } from "./theme-thumbnail";
 import { Diff } from "./prompt-editor";
 import { AgentMark } from "./sessions";
 import { MESSAGE, POLL_RUNNING, TranscriptReader, useLiveTranscript } from "./session-transcript";
@@ -531,6 +542,43 @@ function SessionPanel({
   const available = panel.available !== false;
   const running = conversation?.state === "running";
   const closed = conversation?.state === "closed";
+  // The newest open theme proposal (a theme, or a choice of one) is previewed
+  // on the whole app until it is saved, dismissed or the conversation closes;
+  // unmounting restores too. A choice previews only when it changes what the
+  // app shows (its slot is the one in use, or it changes the mode).
+  const { setPreview, preferences } = usePreferences();
+  const systemDark = useSystemDark();
+  const previewed = closed ? undefined : newestTheme(proposals);
+  const previewTheme = previewed ? themePreview(previewed, preferences, systemDark) : null;
+  const previewKey = previewTheme
+    ? JSON.stringify([previewTheme.id, previewTheme.name, previewTheme.base, previewTheme.tokens])
+    : "";
+  // A save holds the preview until the preferences reflect it: the proposals
+  // change before the save answers, and the preview must not flicker back to
+  // the old theme meanwhile.
+  const [holding, setHolding] = useState(0);
+  const holdPreview = useCallback(async (until: Promise<unknown>) => {
+    setHolding((n) => n + 1);
+    try {
+      await until;
+    } finally {
+      setHolding((n) => n - 1);
+    }
+  }, []);
+  useEffect(() => {
+    if (!previewKey) {
+      if (holding === 0) setPreview(null);
+      return;
+    }
+    const [id, name, base, tokens] = JSON.parse(previewKey) as [
+      string,
+      string,
+      Theme["base"],
+      Theme["tokens"],
+    ];
+    setPreview({ id, name, base, tokens });
+  }, [previewKey, holding, setPreview]);
+  useEffect(() => () => setPreview(null), [setPreview]);
   // An id from an earlier window that the daemon no longer has opens a new
   // conversation instead.
   useEffect(() => {
@@ -963,6 +1011,7 @@ function SessionPanel({
             page={page}
             go={go}
             changed={readProposals}
+            holdPreview={holdPreview}
           />
         ) : null}
       </FollowingBody>
@@ -1389,12 +1438,14 @@ function ProposalList({
   page,
   go,
   changed,
+  holdPreview,
 }: {
   conversation: string;
   proposals: Proposal[];
   page: PageContext;
   go: (href: string) => void;
   changed: () => void;
+  holdPreview: (until: Promise<unknown>) => Promise<unknown>;
 }) {
   return (
     <section aria-label="Proposals" className="session-panel-proposals">
@@ -1406,6 +1457,7 @@ function ProposalList({
           page={page}
           go={go}
           changed={changed}
+          holdPreview={holdPreview}
         />
       ))}
     </section>
@@ -1443,6 +1495,201 @@ function textChange(value: unknown): { text: string | null } | null {
     : null;
 }
 
+/** A colour theme proposal: the one proposal that is for no page in
+ *  particular (the "app" sentinel), which the app previews as it is proposed. */
+const THEME_PAGE = "app";
+const isThemeProposal = (proposal: Proposal) =>
+  proposal.kind === "diff" && proposal.page === THEME_PAGE && proposal.target === "theme";
+
+type ThemeProposed = {
+  /** The custom theme this edits, when it does. */
+  theme_id?: string;
+  name: string;
+  base: "light" | "dark";
+  tokens: Record<string, string>;
+  contrast_warnings: { foreground: string; background: string; ratio: number }[];
+};
+
+/** The theme a proposal's After holds, or null when it is not one. */
+function proposedTheme(proposal: Proposal): ThemeProposed | null {
+  const after = proposal.after as Partial<ThemeProposed> | null | undefined;
+  if (!after || typeof after !== "object" || typeof after.name !== "string") return null;
+  if (after.base !== "light" && after.base !== "dark") return null;
+  const tokens: Record<string, string> = {};
+  if (after.tokens && typeof after.tokens === "object")
+    for (const [token, value] of Object.entries(after.tokens))
+      if (typeof value === "string") tokens[token] = value;
+  return {
+    ...(typeof after.theme_id === "string" && after.theme_id ? { theme_id: after.theme_id } : {}),
+    name: after.name,
+    base: after.base,
+    tokens,
+    contrast_warnings: Array.isArray(after.contrast_warnings) ? after.contrast_warnings : [],
+  };
+}
+
+/** A theme choice: the other proposal that is for no page in particular. */
+const isChoiceProposal = (proposal: Proposal) =>
+  proposal.kind === "diff" && proposal.page === THEME_PAGE && proposal.target === "theme_choice";
+
+/** The choice a proposal's After holds, or null when it names neither a theme
+ *  nor a mode. */
+function proposedChoice(proposal: Proposal): ThemeChoice | null {
+  const after = proposal.after as Partial<ThemeChoice> | null | undefined;
+  if (!after || typeof after !== "object") return null;
+  const choice: ThemeChoice = {};
+  if (typeof after.theme_id === "string" && after.theme_id) choice.theme_id = after.theme_id;
+  if (after.slot === "light" || after.slot === "dark" || after.slot === "in_use")
+    choice.slot = after.slot;
+  if (after.theme === "system" || after.theme === "light" || after.theme === "dark")
+    choice.theme = after.theme;
+  return choice.theme_id || choice.theme ? choice : null;
+}
+
+/** The newest open theme proposal or choice, which is the one previewed: a
+ *  newer one replaces the preview. The list holds them oldest first. */
+function newestTheme(proposals: Proposal[]): Proposal | undefined {
+  return proposals.findLast(
+    (proposal) =>
+      (isThemeProposal(proposal) && proposedTheme(proposal)) ||
+      (isChoiceProposal(proposal) && proposedChoice(proposal)),
+  );
+}
+
+/** What a theme proposal or choice shows on the app while it is open, or null
+ *  when it changes nothing on screen. */
+function themePreview(proposal: Proposal, prefs: ThemePrefs, systemDark: boolean): Theme | null {
+  const id = `proposal:${proposal.id}`;
+  if (isChoiceProposal(proposal)) {
+    const choice = proposedChoice(proposal);
+    const theme = choice ? choicePreview(prefs, choice, systemDark) : null;
+    return theme ? { id, name: theme.name, base: theme.base, tokens: theme.tokens } : null;
+  }
+  const theme = proposedTheme(proposal);
+  return theme ? { id, name: theme.name, base: theme.base, tokens: theme.tokens } : null;
+}
+
+/** A theme choice's card: what it switches to, for which slot, with the
+ *  theme's thumbnail. */
+function ChoiceView({ proposal }: { proposal: Proposal }) {
+  const { preferences } = usePreferences();
+  const systemDark = useSystemDark();
+  const choice = proposedChoice(proposal);
+  if (!choice) return <Diff before={shown(proposal.before)} after={shown(proposal.after)} />;
+  const slot = choiceSlot(preferences, choice, systemDark);
+  const active = activeSlot({ theme: choice.theme ?? preferences.theme }, systemDark);
+  const chosen = choice.theme_id
+    ? preferences.themes.find((theme) => theme.id === choice.theme_id)
+    : undefined;
+  return (
+    <div className="session-panel-choice">
+      {choice.theme_id ? (
+        <>
+          <p className="session-panel-action">
+            {chosen
+              ? `Use ${chosen.name} for the ${slot} theme${slot === active ? " (in use)" : ""}`
+              : "That theme is no longer there"}
+          </p>
+          {chosen ? (
+            <div className="session-panel-choice-thumb">
+              <ThemeMiniature theme={chosen} />
+            </div>
+          ) : null}
+          {chosen && slot !== active ? (
+            <p className="session-panel-note">
+              It is for your {slot} theme, which is not the one in use, so the app does not show it
+              yet.
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {choice.theme ? (
+        <p className={choice.theme_id ? "session-panel-note" : "session-panel-action"}>
+          Switch the theme mode to {choice.theme}.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** The slots a custom theme is in now, as words ("light", "light and dark"). */
+function slotsOf(prefs: { light_theme: string; dark_theme: string }, id: string): string[] {
+  return [
+    ...(prefs.light_theme === id ? ["light"] : []),
+    ...(prefs.dark_theme === id ? ["dark"] : []),
+  ];
+}
+
+/** A theme proposal's colours and warnings, and what the slots hold now. */
+function ThemeView({ proposal }: { proposal: Proposal }) {
+  const { preferences } = usePreferences();
+  const theme = proposedTheme(proposal);
+  const before = proposal.before as { light_theme?: string; dark_theme?: string } | undefined;
+  if (!theme) return <Diff before={shown(proposal.before)} after={shown(proposal.after)} />;
+  const entries = Object.entries(theme.tokens);
+  const edited = theme.theme_id
+    ? preferences.themes.find((t) => t.id === theme.theme_id && !t.builtin)
+    : undefined;
+  const inSlots = theme.theme_id ? slotsOf(preferences, theme.theme_id) : [];
+  return (
+    <div className="session-panel-theme">
+      <p className="session-panel-note">
+        {theme.theme_id ? (
+          edited ? (
+            <>
+              A {theme.base} theme, shown on the app now. Saving updates {edited.name}
+              {inSlots.length ? ` (your ${inSlots.join(" and ")} theme)` : ""} in place; Save as new
+              theme adds it as another theme.
+            </>
+          ) : (
+            <>
+              A {theme.base} theme, shown on the app now. The theme it edits is gone: Save as new
+              theme adds it to your themes.
+            </>
+          )
+        ) : (
+          <>
+            A {theme.base} theme, shown on the app now. Saving adds it to your themes and puts it in
+            the slot you choose.
+          </>
+        )}
+        {!theme.theme_id && before?.light_theme && before?.dark_theme
+          ? ` The slots hold ${before.light_theme} (light) and ${before.dark_theme} (dark).`
+          : ""}
+      </p>
+      {entries.length ? (
+        <ul className="session-panel-swatches" aria-label="Colours">
+          {entries.map(([token, value]) => (
+            <li key={token}>
+              <span
+                className="session-panel-swatch"
+                style={{ backgroundColor: value }}
+                aria-hidden="true"
+              />
+              <code>{token}</code> <span>{value}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="session-panel-note">It sets no colours.</p>
+      )}
+      {theme.contrast_warnings.length ? (
+        <div role="status" className="session-panel-warnings" aria-label="Contrast warnings">
+          <p className="session-panel-note">These pairs are hard to read (under 4.5:1):</p>
+          <ul>
+            {theme.contrast_warnings.map((warning) => (
+              <li key={`${warning.foreground}/${warning.background}`}>
+                <code>{warning.foreground}</code> on <code>{warning.background}</code>:{" "}
+                {warning.ratio.toFixed(1)}:1
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** What a change saves against what is saved now, as text. */
 function ChangeView({ before, after }: { before: unknown; after: unknown }) {
   const from = textChange(before);
@@ -1475,24 +1722,62 @@ export function ProposalCard({
   page,
   go,
   changed,
+  holdPreview,
 }: {
   conversation: string;
   proposal: Proposal;
   page: PageContext;
   go: (href: string) => void;
   changed: () => void;
+  /** Keeps the theme preview until the promise settles. */
+  holdPreview?: (until: Promise<unknown>) => Promise<unknown>;
 }) {
   // A confirm answered `operation_changed` replaces the summary shown.
   const [proposal, setProposal] = useState(given);
   useEffect(() => setProposal(given), [given]);
-  const [busy, setBusy] = useState<"save" | "dismiss" | null>(null);
+  const [busy, setBusy] = useState<"save" | "new" | "dismiss" | null>(null);
   const [error, setError] = useState<{ text: string; elsewhere?: boolean } | null>(null);
   const [changedNote, setChangedNote] = useState("");
   const [value, setValue] = useState("");
   const toast = useToast();
+  const { refresh: refreshPreferences, preferences } = usePreferences();
   const after = proposal.after as { needs_value?: boolean; name?: string } | undefined;
   const needsValue = proposal.kind === "diff" && after?.needs_value === true;
-  const elsewhere = !samePage(proposal.context, page);
+  // A colour theme is for no page: it is saved wherever the person is.
+  const themed = isThemeProposal(proposal);
+  const proposedColours = themed ? proposedTheme(proposal) : null;
+  const [themeName, setThemeName] = useState(proposedColours?.name ?? "");
+  // The person's own pick of slot; until then the default below stands.
+  const [pickedSlot, setSlot] = useState<"light" | "dark" | null>(null);
+  const systemDark = useSystemDark();
+  // A proposal that edits a custom theme updates it; Save as new theme adds a
+  // copy. The theme it names may be gone by now: Update then fails with the
+  // daemon's reason, and Save as new theme stays.
+  const editedId = proposedColours?.theme_id;
+  const edited = editedId
+    ? preferences.themes.find((t) => t.id === editedId && !t.builtin)
+    : undefined;
+  const editedSlots = editedId ? slotsOf(preferences, editedId) : [];
+  // Save as new defaults to the slot the edited theme holds that is in use,
+  // else any slot it holds, else the proposal's base.
+  const inUseSlot = activeSlot(preferences, systemDark);
+  const defaultSlot: "light" | "dark" = editedSlots.includes(inUseSlot)
+    ? inUseSlot
+    : editedSlots.length
+      ? (editedSlots[0] as "light" | "dark")
+      : (proposedColours?.base ?? "light");
+  const slot = pickedSlot ?? defaultSlot;
+  // The update sets the theme's name to the name field, prefilled from the
+  // proposal; it says so when that is a rename.
+  const trimmedName = themeName.trim();
+  const renaming = !!edited && !!trimmedName && trimmedName !== edited.name;
+  // A theme choice is for no page either; it saves the slot the app resolved.
+  const choiced = isChoiceProposal(proposal);
+  const choice = choiced ? proposedChoice(proposal) : null;
+  // The theme a choice names may be gone by now: the daemon would refuse it.
+  const choiceGone =
+    !!choice?.theme_id && !preferences.themes.some((theme) => theme.id === choice.theme_id);
+  const elsewhere = !themed && !choiced && !samePage(proposal.context, page);
   const refused = (e: unknown) => {
     if (e instanceof LocalRequestError && e.code === "not_current_page")
       setError({
@@ -1503,14 +1788,40 @@ export function ProposalCard({
       setError({ text: "What it changes was changed since: ask the agent to propose it again." });
     else setError({ text: e instanceof Error ? e.message : "The request failed." });
   };
-  const run = async (action: "save" | "dismiss") => {
-    setBusy(action);
+  const run = async (action: "save" | "dismiss", mode?: "update" | "new") => {
+    setBusy(action === "save" && mode === "new" ? "new" : action);
     setError(null);
     try {
       if (action === "dismiss") await dismissProposal(conversation, proposal.id);
-      else if (proposal.kind === "diff")
-        await saveProposal(conversation, proposal.id, needsValue ? value : undefined);
-      else {
+      else if (proposal.kind === "diff") {
+        // A new theme (a copy included) always sends its slot: the daemon
+        // reads an empty one differently. An update keeps the theme's slots
+        // and sends none.
+        const name = themeName.trim();
+        const themeSave: ThemeSave | undefined = !themed
+          ? undefined
+          : mode === "update"
+            ? { name, mode }
+            : editedId
+              ? { name, slot, mode: "new" }
+              : { name, slot };
+        // A choice always sends an explicit slot, the one the app resolved
+        // for "in use", which the daemon cannot see.
+        const slotInUse = choice ? choiceSlot(preferences, choice, systemDark) : null;
+        const saved = saveProposal(
+          conversation,
+          proposal.id,
+          needsValue ? value : undefined,
+          choiced ? (slotInUse ? { slot: slotInUse } : undefined) : themeSave,
+        );
+        // The saved theme is in the preferences before the preview ends: the
+        // proposals change as soon as the daemon records the save, before it
+        // answers.
+        const appearance = themed || choiced;
+        const done = appearance ? saved.then(() => refreshPreferences()) : saved;
+        if (appearance && holdPreview) await holdPreview(done.catch(() => undefined));
+        await done;
+      } else {
         const outcome = await confirmProposal(
           conversation,
           proposal.id,
@@ -1562,9 +1873,43 @@ export function ProposalCard({
       </header>
       {summary ? (
         <OperationView summary={summary} />
+      ) : themed ? (
+        <ThemeView proposal={proposal} />
+      ) : choiced ? (
+        <ChoiceView proposal={proposal} />
       ) : (
         <ChangeView before={proposal.before} after={proposal.after} />
       )}
+      {themed && proposedColours ? (
+        <div className="session-panel-value session-panel-theme-save">
+          <label htmlFor={`${valueId}-name`}>Name</label>
+          <input
+            id={`${valueId}-name`}
+            className="local-field"
+            type="text"
+            maxLength={60}
+            value={themeName}
+            onChange={(event) => setThemeName(event.target.value)}
+          />
+          {editedId && editedSlots.length ? (
+            <p className="session-panel-note">
+              Updating keeps it as your {editedSlots.join(" and ")} theme.
+            </p>
+          ) : null}
+          <label htmlFor={`${valueId}-slot`}>
+            {editedId ? "Save as new theme, use it as" : "Use it as"}
+          </label>
+          <select
+            id={`${valueId}-slot`}
+            className="local-field"
+            value={slot}
+            onChange={(event) => setSlot(event.target.value as "light" | "dark")}
+          >
+            <option value="light">Light theme</option>
+            <option value="dark">Dark theme</option>
+          </select>
+        </div>
+      ) : null}
       {needsValue ? (
         <div className="session-panel-value">
           <label htmlFor={valueId}>Value of {after?.name ?? "the variable"}</label>
@@ -1613,12 +1958,29 @@ export function ProposalCard({
       <div className="session-panel-actions">
         <Button
           size="compact"
-          disabled={!!busy || (needsValue && !value)}
-          onClick={() => void run("save")}
+          disabled={!!busy || (needsValue && !value) || (themed && !themeName.trim()) || choiceGone}
+          onClick={() => void run("save", editedId ? "update" : undefined)}
         >
           {busy === "save" ? <NineDots size={12} /> : null}
-          {proposal.kind === "operation" ? "Confirm" : "Save"}
+          {proposal.kind === "operation"
+            ? "Confirm"
+            : editedId
+              ? renaming
+                ? `Update and rename to ${trimmedName}`
+                : `Update ${edited?.name ?? proposedColours?.name ?? "theme"}`
+              : "Save"}
         </Button>
+        {editedId ? (
+          <Button
+            variant="secondary"
+            size="compact"
+            disabled={!!busy || !themeName.trim()}
+            onClick={() => void run("save", "new")}
+          >
+            {busy === "new" ? <NineDots size={12} /> : null}
+            Save as new theme
+          </Button>
+        ) : null}
         <Button
           variant="secondary"
           size="compact"
