@@ -378,6 +378,9 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, h 
 		o.setTile(t)
 		out = append(out, t)
 	}
+	if rev != nil {
+		out = o.keepTiles(out, rev.Tiles)
+	}
 	// The section's drops free their places before its proposal claims one.
 	o.claimProposal(&result)
 	o.setSection(s.ID, func(sec *reviewv2.Section) {
@@ -397,6 +400,38 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, h 
 	}
 	o.publish()
 	return out
+}
+
+// keepTiles keeps, of a revised section's tiles to fill (tiles, with the
+// briefs its agent answered), each that its previous section drew
+// (previous, its ready tiles) under the same ID and type, citing hunks the
+// pull request still has, with the same brief: the previous tile stands
+// without a call. A code tile follows its own rule. It returns the tiles
+// still to fill.
+func (o *orchestration) keepTiles(tiles, previous []reviewv2.Tile) []reviewv2.Tile {
+	var out []reviewv2.Tile
+	for _, t := range tiles {
+		i := slices.IndexFunc(previous, func(p reviewv2.Tile) bool { return p.ID == t.ID })
+		if t.Type == TypeCode || i < 0 || !o.unchangedTile(previous[i], t) {
+			out = append(out, t)
+			continue
+		}
+		kept := previous[i]
+		kept.Owner = t.Owner
+		o.setTile(kept)
+		o.record(LevelTiles, t.ID, StatusReused, "")
+		o.budget.expect(2, -1)
+	}
+	return out
+}
+
+// unchangedTile reports whether a previous tile still shows what a planned
+// one is to: the same type and brief, ready, and every hunk it cited (at
+// least one) still in the pull request.
+func (o *orchestration) unchangedTile(previous, t reviewv2.Tile) bool {
+	cited := hunkCites(previous.Cites)
+	return previous.Type == t.Type && previous.Shows == t.Shows && previous.State == reviewv2.TileReady && !previous.Added &&
+		len(cited) > 0 && !slices.ContainsFunc(cited, func(h string) bool { return !o.facts.refs.HasHunk(h) })
 }
 
 // tileIDs are the IDs of every tile the map planned or a section proposed.

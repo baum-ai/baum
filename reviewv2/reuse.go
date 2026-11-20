@@ -45,13 +45,19 @@ func ReusableSections(previous []byte, sections []Section) map[string]Reused {
 		reused := s
 		reused.Body, reused.Risks = writtenText(old)
 		reused.Details, reused.Derived = "", nil
-		var kept []Tile
-		for _, t := range prior.Tiles {
-			if t.Owner == s.ID && t.State == TileReady && !t.Added {
-				kept = append(kept, t)
-			}
+		out[s.ID] = Reused{Section: reused, Tiles: readyTiles(prior, s.ID)}
+	}
+	return out
+}
+
+// readyTiles are a previous version's ready tiles of a section, but those
+// the person added (never stored, but a served document marks them).
+func readyTiles(prior Document, owner string) []Tile {
+	var out []Tile
+	for _, t := range prior.Tiles {
+		if t.Owner == owner && t.State == TileReady && !t.Added {
+			out = append(out, t)
 		}
-		out[s.ID] = Reused{Section: reused, Tiles: kept}
 	}
 	return out
 }
@@ -69,9 +75,12 @@ func ReusableSections(previous []byte, sections []Section) map[string]Reused {
 // with JoinedRisks, the risks handed over with them (see Joined); Moved
 // were in the previous section and are in another section now; Gone were
 // in the previous section and are in no section now (the pull request no
-// longer has them), with where they were then.
+// longer has them), with where they were then. Tiles are the previous
+// section's ready tiles, which the new version may keep where their code
+// and brief did not change.
 type Revised struct {
 	Previous    Section
+	Tiles       []Tile
 	Unchanged   []string
 	New         []string
 	Joined      []JoinedHunk
@@ -263,6 +272,7 @@ func RevisableSections(previous []byte, sections []Section, current *Refs) map[s
 		}
 		r := Revised{Previous: Section{ID: old.ID, Title: old.Title, Kind: old.Kind, Hunks: slices.Clone(old.Hunks)}}
 		r.Previous.Body, r.Previous.Risks = writtenText(old)
+		r.Tiles = readyTiles(v.prior, old.ID)
 		j := v.joined(s)
 		r.Joined, r.JoinedRisks = j.Hunks, j.Risks
 		for _, h := range s.Hunks {

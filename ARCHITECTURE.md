@@ -2097,7 +2097,7 @@ active risks and their ready tiles, so the orchestration writes them
 without a call. `reviewv2.RevisableSections` gives the logical sections a
 new map keeps under the same ID over other hunks, with a complete body, of
 a previous `baum.review/2` version (a converted `baum.review/1` one gives
-none): their previous body and active risks, and each hunk unchanged, new,
+none): their previous body and active risks, their ready tiles, and each hunk unchanged, new,
 joined (in another previous section), moved (to another section now) or
 gone (with its path and range in the previous index). A section the new
 map gives an ID the previous version did not have is revised the same way
@@ -2823,7 +2823,11 @@ the levels of `agent/orchestrate` instead of the staged review:
    sections (replay's `v2_sections_kept`, `v2_sections_revised`).
    `Run.NoReuse` turns off reuse and revision alike.
 3. **Tiles.** Each planned tile is drawn by a call of its own as soon as
-   its owner is written. Native types share the tile prompt; a dedicated type
+   its owner is written. In a revised or kept section, a tile the map plans
+   again is kept from the previous version without a call (`reused`) when
+   the previous section drew it ready under the same ID and type, every
+   hunk it cited is still in the pull request and its brief, after the
+   section agent's answer, is the same; a changed brief draws it again. Native types share the tile prompt; a dedicated type
    goes through the library's fill (`agent.Generator.FillTile`); a code tile
    is filled by the host. The types the person added or pinned
    (`generate.Tiles.Always`) get a tile whatever the map plans.

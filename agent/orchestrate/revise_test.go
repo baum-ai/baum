@@ -307,6 +307,89 @@ func TestRiskFollowsItsMovedHunk(t *testing.T) {
 	}
 }
 
+// withTiles adds tiles to a stored previous version.
+func withTiles(t *testing.T, previous []byte, tiles ...reviewv2.Tile) []byte {
+	t.Helper()
+	var d reviewv2.Document
+	if err := json.Unmarshal(previous, &d); err != nil {
+		t.Fatal(err)
+	}
+	d.Tiles = append(d.Tiles, tiles...)
+	encoded, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+// drawnBackoff is the previous version's tl_backoff, drawn from shows over
+// cites.
+func drawnBackoff(shows string, cites ...string) reviewv2.Tile {
+	return reviewv2.Tile{ID: "tl_backoff", Type: "table", Owner: "sec_retry", Shows: shows, Title: "Waits before", Cites: hunkAnchors(cites),
+		Data: json.RawMessage(`{"columns":["Attempt","Wait"],"rows":[["1","Base"]]}`), State: reviewv2.TileReady}
+}
+
+// A revised or kept section's tile the map plans again is kept without a
+// call when its type, its brief after the section's answer and the hunks it
+// cited are unchanged; otherwise, and with NoReuse, it is filled again.
+func TestRevisedSectionKeepsUnchangedTiles(t *testing.T) {
+	const brief = "How long each attempt waits."
+	for _, c := range []struct {
+		name    string
+		tile    reviewv2.Tile
+		keep    bool
+		noReuse bool
+		renamed bool
+		kept    bool
+	}{
+		{name: "unchanged", tile: drawnBackoff(brief, hunkA), kept: true},
+		{name: "kept section", tile: drawnBackoff(brief, hunkA), keep: true, kept: true},
+		{name: "renamed section", tile: drawnBackoff(brief, hunkA), renamed: true, kept: true},
+		{name: "gone hunk", tile: drawnBackoff(brief, hunkA, hunkGone)},
+		{name: "changed brief", tile: drawnBackoff("How long a job waits.", hunkA)},
+		{name: "no reuse", tile: drawnBackoff(brief, hunkA), noReuse: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := fullFake()
+			hunks := []string{hunkA, hunkGone}
+			if c.keep {
+				f.reply("section-sec-retry", keepReplyJSON)
+				hunks = []string{hunkA}
+			}
+			previous := retrySection(hunks, hunkA)
+			if c.renamed {
+				previous.ID, c.tile.Owner = "sec_jobs", "sec_jobs"
+			}
+			run, _ := revisedRun(t, f, withTiles(t, previousDoc(t, previous), c.tile))
+			run.NoReuse = c.noReuse
+			out, doc, err := Generate(context.Background(), run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.keep && out.Generation.Sections["sec_retry"].Reason != ReasonKept {
+				t.Fatalf("the section was not kept: %+v", out.Generation.Sections["sec_retry"])
+			}
+			_, called := f.requests["tile-tl-backoff"]
+			record := out.Generation.Tiles["tl_backoff"]
+			var tile reviewv2.Tile
+			for _, x := range doc.Tiles {
+				if x.ID == "tl_backoff" {
+					tile = x
+				}
+			}
+			if c.kept {
+				if called || record.Status != StatusReused || tile.Title != "Waits before" || tile.State != reviewv2.TileReady || tile.Owner != "sec_retry" {
+					t.Errorf("called %v, record %+v, tile %+v", called, record, tile)
+				}
+				return
+			}
+			if !called || record.Status != StatusRan || tile.Title != "How long a job waits" {
+				t.Errorf("called %v, record %+v, tile %+v", called, record, tile)
+			}
+		})
+	}
+}
+
 // A section the map gives a new ID over a previous section's code is
 // revised from that section's text, told which section it continues; a keep
 // takes that text, and its risks keep their IDs and history.
