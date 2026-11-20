@@ -23,6 +23,7 @@ const { values, positionals } = parseArgs({
     runs: { type: "string", default: "5" },
     dist: { type: "string" },
     port: { type: "string", default: "4444" },
+    "run-timeout": { type: "string", default: "600" },
     env: { type: "string", multiple: true, default: [] },
   },
 });
@@ -39,6 +40,7 @@ if (!Number.isInteger(runs) || runs < 1) {
   console.error(`profile: --runs must be a whole number from 1: ${values.runs}`);
   process.exit(2);
 }
+const runTimeout = Number(values["run-timeout"]) * 1000;
 const out = values.out;
 mkdirSync(out, { recursive: true });
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -144,6 +146,8 @@ async function launch() {
     session = undefined;
   }
   const started = performance.now();
+  // The wall clock the page's performance.timeOrigin shares.
+  const startedAt = Date.now();
   session = await newSession(driverBase, values.app!);
   await session.setTimeouts({ script: 600_000 });
   const end = Date.now() + 120_000;
@@ -151,7 +155,7 @@ async function launch() {
     const url = await onDaemonPage();
     if (url) {
       base = url.match(/^https?:\/\/[^/]+\/s\/[^/]+\//)![0];
-      return performance.now() - started;
+      return { wall: performance.now() - started, startedAt };
     }
     if (Date.now() > end) {
       const at = await session.url().catch(() => "?");
@@ -201,6 +205,64 @@ async function press(key: string, modifiers: string[] = []) {
   await sleep(50);
 }
 
+/** What the app keeps between runs that a journey can change: the daemon's
+ *  records of the Inbox (what was seen today, snoozes) and of typed filters,
+ *  and the window's storage (the last inbox, the sidebar, the session
+ *  panel). Saved once before the warm-up and put back before every run, so
+ *  each starts from the same state; filters always go back to none. */
+type Saved = { inbox: unknown; local: Record<string, string> };
+let saved: Saved | undefined;
+
+const putRecord = (path: string, value: unknown): Promise<void> =>
+  execute<void>(
+    `const [path, value] = arguments;
+     for (let attempt = 0; attempt < 3; attempt++) {
+       const { revision } = await (await fetch(path)).json();
+       const written = await fetch(path, {
+         method: "PUT",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({ revision, mutation_id: crypto.randomUUID() + ":1", value }),
+       });
+       if (written.ok) return;
+       if (written.status !== 409) throw new Error("writing " + path + " answered " + written.status);
+     }
+     throw new Error(path + " could not be written after three revisions");`,
+    [`${base}${path}`, value],
+  );
+
+/** A page that holds none of those records, so none is written while they
+ *  are put back. */
+async function quietPage() {
+  await page().navigate(`${base}?page=settings`);
+  await waitFor("return !!window.__baumPerf;", "the settings page", 60_000);
+}
+
+async function saveState() {
+  await quietPage();
+  saved = await execute<Saved>(
+    `const record = await (await fetch(arguments[0])).json();
+     const local = {};
+     for (let i = 0; i < localStorage.length; i++) {
+       const key = localStorage.key(i);
+       local[key] = localStorage.getItem(key);
+     }
+     return { inbox: record.value, local };`,
+    [`${base}api/ui-state/inbox`],
+  );
+}
+
+async function restoreState() {
+  await quietPage();
+  await putRecord("api/ui-state/filters", { pages: {}, tabs: [] });
+  if (saved?.inbox) await putRecord("api/ui-state/inbox", saved.inbox);
+  await execute(
+    `localStorage.clear();
+     sessionStorage.clear();
+     for (const [key, value] of Object.entries(arguments[0])) localStorage.setItem(key, value);`,
+    [saved?.local ?? {}],
+  );
+}
+
 const notes: string[] = [];
 const context: Context = {
   launch,
@@ -209,6 +271,7 @@ const context: Context = {
   waitFor,
   settled,
   press,
+  clearFilters: () => putRecord("api/ui-state/filters", { pages: {}, tabs: [] }),
   reset: () => execute("window.__baumPerf.reset();"),
   mark: (mark) => execute("window.__baumPerf.mark(arguments[0]);", [mark]),
   sleep,
@@ -230,7 +293,11 @@ function environment(snapshot: Snapshot) {
     const at = item.indexOf("=");
     if (at > 0) entries[item.slice(0, at)] = item.slice(at + 1);
   }
-  entries.CPUs = read("/sys/fs/cgroup/cpuset.cpus.effective") || "unrestricted";
+  // cgroup v2, then v1's cpuset controller.
+  entries.CPUs =
+    read("/sys/fs/cgroup/cpuset.cpus.effective") ||
+    read("/sys/fs/cgroup/cpuset/cpuset.effective_cpus") ||
+    "unknown";
   // The user agent's WebKit version is frozen; the package's is not.
   let webkit = "";
   try {
@@ -248,38 +315,86 @@ function environment(snapshot: Snapshot) {
   return entries;
 }
 
-async function main() {
-  await waitForDriver(driverBase);
-  log(`launching the app for ${scenario!.name}`);
-  await launch();
-  const state = scenario!.prepare ? await scenario!.prepare(context) : undefined;
-  const collected: Run[] = [];
-  for (let index = 0; index <= runs; index++) {
-    log(index === 0 ? "warm-up" : `run ${index} of ${runs}`);
-    const started = performance.now();
-    const metrics = await scenario!.run(context, state as never);
-    const wall = performance.now() - started;
-    const snapshot = await execute<Snapshot>("return window.__baumPerf.snapshot();");
-    collected.push({
-      index,
-      wall,
-      metrics: { ...metrics, ...scenario!.after?.(snapshot), ...standardMetrics(snapshot) },
-      snapshot,
-    });
-  }
+/** `work`, or a clear failure when it hangs, as a stuck WebKitWebDriver does. */
+function limited<T>(work: Promise<T>, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `${what} did not finish within ${runTimeout / 1000} s; WebKitWebDriver or the app ` +
+              "may be hung (see driver.log)",
+          ),
+        ),
+      runTimeout,
+    );
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+const collected: Run[] = [];
+let environmentFrom: Snapshot | undefined;
+
+/** Writes metrics.json and summary.md with the runs so far: after every
+ *  run, so a failure keeps the runs before it. */
+function write(partial?: string) {
   const [warmup, ...measured] = collected;
+  if (!warmup) return;
   const profile: Profile = {
     scenario: scenario!.name,
     description: scenario!.description,
     started: new Date().toISOString(),
-    environment: environment(warmup!.snapshot),
+    environment: environment(environmentFrom ?? warmup.snapshot),
     notes,
-    warmup: warmup!,
+    ...(partial ? { partial } : {}),
+    warmup,
     runs: measured,
     chunks: values.dist && existsSync(values.dist) ? readChunks(values.dist) : [],
   };
   writeFileSync(join(out, "metrics.json"), `${JSON.stringify(profile, null, 2)}\n`);
   writeFileSync(join(out, "summary.md"), summarise(profile));
+}
+
+const done = () => `${Math.max(0, collected.length - 1)} of ${runs} runs`;
+
+async function main() {
+  await limited(waitForDriver(driverBase), "WebKitWebDriver's start");
+  log(`launching the app for ${scenario!.name}`);
+  await limited(launch(), "the app's launch");
+  const state = await limited(
+    (async () => {
+      await context.clearFilters();
+      const prepared = scenario!.prepare ? await scenario!.prepare(context) : undefined;
+      await saveState();
+      return prepared;
+    })(),
+    "preparing the scenario",
+  );
+  for (let index = 0; index <= runs; index++) {
+    log(index === 0 ? "warm-up" : `run ${index} of ${runs}`);
+    const what = index === 0 ? "the warm-up" : `run ${index}`;
+    await limited(
+      (async () => {
+        await restoreState();
+        const started = performance.now();
+        const metrics = await scenario!.run(context, state as never);
+        const wall = performance.now() - started;
+        const snapshot = await execute<Snapshot>("return window.__baumPerf.snapshot();");
+        // After the snapshot, so it is not measured.
+        await scenario!.teardown?.(context, state as never);
+        environmentFrom ??= snapshot;
+        collected.push({
+          index,
+          wall,
+          metrics: { ...metrics, ...scenario!.after?.(snapshot), ...standardMetrics(snapshot) },
+          snapshot,
+        });
+      })(),
+      what,
+    );
+    write(index < runs ? `${done()} so far` : undefined);
+  }
 }
 
 let code = 0;
@@ -297,6 +412,10 @@ try {
     const message =
       error instanceof WebDriverError || error instanceof Error ? error.message : String(error);
     console.error(`profile: ${scenario.name} failed: ${message}`);
+    if (collected.length) {
+      write(`${done()}; run ${collected.length} failed: ${message.split("\n")[0]}`);
+      console.error(`profile: summary.md keeps the ${done()} that finished`);
+    }
     if (session) {
       const shot = join(out, "failure.png");
       await session
@@ -310,7 +429,13 @@ try {
     code = 1;
   }
 } finally {
-  if (session) await session.close().catch(() => {});
+  if (session) await Promise.race([session.close().catch(() => {}), sleep(10_000)]);
   driver.kill();
+  // The driver's last words, before the process ends.
+  await Promise.race([
+    new Promise<void>((resolve) => driver.once("close", () => resolve())),
+    sleep(5_000),
+  ]);
+  await new Promise<void>((resolve) => driverLog.end(() => resolve()));
 }
 process.exit(code);

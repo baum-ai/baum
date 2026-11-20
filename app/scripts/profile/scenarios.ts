@@ -1,7 +1,10 @@
-// The journeys `just desktop::profile` runs against the real app. Each run
-// starts from a fresh page load of its start page (or, for cold-start, a
-// fresh launch of the app), then resets the collector, so a run's snapshot
-// holds the journey alone. The runner (run.ts) supplies the Context.
+// The journeys `just desktop::profile` runs against the real app. Before
+// each run the runner puts back the state the app keeps (run.ts,
+// restoreState); the run then loads its start page afresh (or, for
+// cold-start, launches the app), and resets the collector, so a run's
+// snapshot holds the journey alone. A journey that does not go as planned
+// fails rather than report numbers for something else. The runner supplies
+// the Context.
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
 import { percentile } from "./summary.ts";
 import { KEY } from "./webdriver.ts";
@@ -10,9 +13,12 @@ import { KEY } from "./webdriver.ts";
 export class Skip extends Error {}
 
 export type Context = {
-  /** Quits the app and launches it again; resolves with the wall-clock
-   *  milliseconds until the daemon's page runs the collector. */
-  launch(): Promise<number>;
+  /** Quits the app and launches it again; resolves with the milliseconds
+   *  until the daemon's page runs the collector, and the wall-clock time
+   *  (Date.now()) the launch started. */
+  launch(): Promise<{ wall: number; startedAt: number }>;
+  /** Clears every page's typed filter through the daemon. */
+  clearFilters(): Promise<void>;
   /** Loads the app's page at `search` (`?inbox=…`, or "" for the start)
    *  afresh and waits until it settled. */
   open(search: string): Promise<Navigation>;
@@ -46,6 +52,8 @@ export type Scenario<State = unknown> = {
   run(ctx: Context, state: State): Promise<Record<string, number>>;
   /** Further metrics from the run's snapshot. */
   after?(snapshot: Snapshot): Record<string, number>;
+  /** Undoes what the run left, after its snapshot, so it is not measured. */
+  teardown?(ctx: Context, state: State): Promise<void>;
 };
 
 const ROWS = ".upnext-list [data-row]";
@@ -106,9 +114,10 @@ function navigationMetrics(prefix: string, navigations: Navigation[]) {
 const coldStart: Scenario = {
   name: "cold-start",
   description:
-    "Quits and launches the app, then waits for the Inbox's content. The daemon keeps running " +
-    "between launches, as it does for a user, and WebKit's cache in the instance's home stays warm. " +
-    "Times are from the document's navigation start unless they say otherwise.",
+    "Quits and launches the app, then waits for the Inbox's content. launch_to_content runs from " +
+    "the launch to the Inbox's first content frame; the other times are from the document's " +
+    "navigation start unless they say otherwise. The daemon keeps running between launches, " +
+    "as it does for a user, and WebKit's cache in the instance's home stays warm.",
   async prepare(ctx) {
     await ctx.open("");
   },
@@ -120,6 +129,7 @@ const coldStart: Scenario = {
     await inboxShown(ctx);
     const timing = await ctx.execute<Record<string, number>>(`
       const n = performance.getEntriesByType("navigation")[0];
+      const origin = performance.timeOrigin;
       const scripts = performance.getEntriesByType("resource")
         .filter((r) => /\\.(js|css)$/.test(new URL(r.name).pathname));
       return {
@@ -128,9 +138,14 @@ const coldStart: Scenario = {
         load_event: n.loadEventEnd,
         assets_count: scripts.length,
         assets_end: Math.max(0, ...scripts.map((r) => r.responseEnd)),
+        origin,
       };`);
+    // The content frame on the wall clock (the page's time origin plus the
+    // page time), less when the launch started: not when polling saw it.
+    const contentAt = timing.origin! + navigation.start + navigation.content;
     const metrics: Record<string, number> = {
-      launch_to_page_wall: launch,
+      launch_to_content: contentAt - launch.startedAt,
+      launch_to_page_wall: launch.wall,
       response_end: timing.response_end!,
       assets_count: timing.assets_count!,
       assets_end: timing.assets_end!,
@@ -139,7 +154,10 @@ const coldStart: Scenario = {
       content: navigation.start + navigation.content,
       load_event: timing.load_event!,
     };
-    if (navigation.settled !== undefined) metrics.settled = navigation.start + navigation.settled;
+    if (navigation.settled !== undefined) {
+      metrics.settled = navigation.start + navigation.settled;
+      metrics.launch_to_settled = timing.origin! + metrics.settled - launch.startedAt;
+    }
     metrics.rows_count = await rowCount(ctx);
     return metrics;
   },
@@ -150,10 +168,11 @@ type List = { search: string; label: string; rows: string; selected: string; cou
 
 const listRows = (ctx: Context, list: List) =>
   ctx.execute<number>("return document.querySelectorAll(arguments[0]).length;", [list.rows]);
-const listSelected = (ctx: Context, list: List) =>
-  ctx.execute<string | null>(
-    "const row = document.querySelector(arguments[0]); return row ? row.dataset.row ?? row.dataset.rowId : null;",
-    [list.selected],
+/** Where the selection is among the rows shown, -1 for none. */
+const listPosition = (ctx: Context, list: List) =>
+  ctx.execute<number>(
+    "const selected = document.querySelector(arguments[1]); return [...document.querySelectorAll(arguments[0])].indexOf(selected);",
+    [list.rows, list.selected],
   );
 const listShown = (ctx: Context, list: List) =>
   ctx.waitFor(
@@ -211,29 +230,53 @@ const jk: Scenario<List> = {
     await listShown(ctx, list);
     const rows = await listRows(ctx, list);
     await ctx.press("g");
+    let position = await listPosition(ctx, list);
+    if (position < 0) throw new Error(`g selected no row of ${list.label}`);
     await ctx.reset();
     await ctx.mark("start");
-    let position = 0;
     let down = true;
-    let stuck = 0;
-    let previous = await listSelected(ctx, list);
     for (let i = 0; i < PRESSES; i++) {
       if (down && position === rows - 1) down = false;
       if (!down && position === 0) down = true;
-      await ctx.press(down ? "j" : "k");
-      position += down ? 1 : -1;
-      const now = await listSelected(ctx, list);
-      if (now === previous) stuck++;
-      previous = now;
+      const key = down ? "j" : "k";
+      await ctx.press(key);
+      const now = await listPosition(ctx, list);
+      if (now !== position + (down ? 1 : -1))
+        throw new Error(
+          `press ${i + 1} (${key}) moved the selection from row ${position} to ${now} of ${rows}`,
+        );
+      position = now;
     }
     await ctx.mark("end");
-    return { presses_count: PRESSES, rows_count: rows, unmoved_count: stuck };
+    return { presses_count: PRESSES, rows_count: rows };
   },
 };
 
-type ReviewState = { search: string };
+type ReviewState = { search: string; places: number };
 /** The review places (overview, sections) the review scenario reads at most. */
 const PLACES = 12;
+/** The most 400 px steps one place is scrolled. */
+const SCROLL_STEPS = 500;
+
+const reviewShown = (ctx: Context) =>
+  ctx.waitFor(
+    `return document.querySelector("[data-review-page]") && !document.querySelector(".local-main .loading-status");`,
+    "the review page to show",
+    60_000,
+  );
+
+/** Goes on to the review's next place (section) with Shift+J, as a person
+ *  does; false when there is none. */
+async function nextPlace(ctx: Context) {
+  const before = await ctx.execute<string>("return location.search;");
+  await ctx.press("J", [KEY.shift]);
+  const moved = await ctx
+    .waitFor("return location.search !== arguments[0];", "the next place", 3_000, [before])
+    .then(() => true)
+    .catch(() => false);
+  if (moved) await ctx.settled(30_000);
+  return moved;
+}
 
 const review: Scenario<ReviewState> = {
   name: "review",
@@ -300,7 +343,18 @@ const review: Scenario<ReviewState> = {
           `of ${reviewed.length} reviewed pull requests; the data has no line counts from GitHub.`,
       );
     }
-    return { search: where(largest) };
+    // How many places Shift+J reaches, which every run must read.
+    await ctx.open("");
+    await ctx.execute(
+      `history.pushState(null, "", arguments[0]); dispatchEvent(new PopStateEvent("popstate"));`,
+      [where(largest)],
+    );
+    await ctx.settled(60_000);
+    await reviewShown(ctx);
+    let places = 1;
+    while (places < PLACES && (await nextPlace(ctx))) places++;
+    if (places < PLACES) ctx.note(`The review has ${places} places; every run reads them all.`);
+    return { search: where(largest), places };
   },
   async run(ctx, state) {
     await ctx.open("");
@@ -313,11 +367,7 @@ const review: Scenario<ReviewState> = {
       [state.search],
     );
     const navigation = await ctx.settled(60_000);
-    await ctx.waitFor(
-      `return document.querySelector("[data-review-page]") && !document.querySelector(".local-main .loading-status");`,
-      "the review page to show",
-      60_000,
-    );
+    await reviewShown(ctx);
     await ctx.sleep(500);
     await ctx.mark("scroll");
     let places = 0;
@@ -336,7 +386,7 @@ const review: Scenario<ReviewState> = {
             const before = main.scrollTop;
             main.scrollTop += 400;
             steps++;
-            if (main.scrollTop === before || steps >= 500)
+            if (main.scrollTop === before || steps >= ${SCROLL_STEPS})
               return resolve({ steps, distance: main.scrollTop - top, time: performance.now() - start });
             requestAnimationFrame(tick);
           };
@@ -345,16 +395,13 @@ const review: Scenario<ReviewState> = {
       steps += scroll.steps;
       distance += scroll.distance;
       scrolling += scroll.time;
-      if (places >= PLACES) break;
-      // On to the review's next place (section), as Shift+J does.
-      const before = await ctx.execute<string>("return location.search;");
-      await ctx.press("J", [KEY.shift]);
-      const moved = await ctx
-        .waitFor("return location.search !== arguments[0];", "the next place", 3_000, [before])
-        .then(() => true)
-        .catch(() => false);
-      if (!moved) break;
-      await ctx.settled(30_000);
+      if (scroll.steps >= SCROLL_STEPS)
+        ctx.note(
+          `A place was taller than ${SCROLL_STEPS} steps of 400 px, so its scroll stopped there.`,
+        );
+      if (places >= state.places) break;
+      if (!(await nextPlace(ctx)))
+        throw new Error(`Shift+J did not move past place ${places} of ${state.places}`);
       await ctx.sleep(200);
     }
     await ctx.mark("end");
@@ -386,21 +433,6 @@ const review: Scenario<ReviewState> = {
 // filter's first suggestion for text that is not a field.
 const QUERY = "retry";
 
-/** Clears every page's typed filter through the daemon, as the browser tests do. */
-const clearFilters = (ctx: Context) =>
-  ctx.execute(`
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const { revision } = await (await fetch("api/ui-state/filters")).json();
-      const written = await fetch("api/ui-state/filters", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ revision, mutation_id: crypto.randomUUID() + ":1", value: { pages: {}, tabs: [] } }),
-      });
-      if (written.ok) return;
-      if (written.status !== 409) throw new Error("clearing the filters answered " + written.status);
-    }
-    throw new Error("the filters could not be cleared after three revisions");`);
-
 const filter: Scenario = {
   name: "filter",
   description:
@@ -415,7 +447,6 @@ const filter: Scenario = {
     if (!found) throw new Skip("the Inbox shows no filter button");
   },
   async run(ctx) {
-    await clearFilters(ctx);
     await ctx.open("");
     await inboxShown(ctx);
     const before = await inboxTotal(ctx);
@@ -433,8 +464,17 @@ const filter: Scenario = {
     await ctx.sleep(1_000);
     await ctx.mark("end");
     const after = await inboxTotal(ctx);
-    await ctx.press(KEY.escape);
+    if (after === 0 || after === before)
+      throw new Error(
+        `the filter left ${after} of the Inbox's ${before} rows; it should narrow them to some`,
+      );
     return { typed_count: QUERY.length, rows_before_count: before, rows_after_count: after };
+  },
+  async teardown(ctx) {
+    // The daemon keeps a typed filter: every later run and scenario would
+    // see a filtered Inbox.
+    await ctx.press(KEY.escape);
+    await ctx.clearFilters();
   },
   after(snapshot): Record<string, number> {
     const typing = snapshot.interactions
@@ -469,21 +509,21 @@ const switchInboxes: Scenario<SwitchState> = {
     await ctx.open(state.first);
     await inboxShown(ctx);
     await ctx.reset();
-    let unchanged = 0;
     const step = async (key: string) => {
       const before = await ctx.execute<string>("return location.search;");
       await ctx.press(key, [KEY.shift]);
-      const changed = await ctx
-        .waitFor(`return location.search !== arguments[0];`, "the inbox to change", 5_000, [before])
-        .then(() => true)
-        .catch(() => false);
-      if (!changed) unchanged++;
+      await ctx.waitFor(
+        "return location.search !== arguments[0];",
+        `Shift+${key} to switch the inbox`,
+        5_000,
+        [before],
+      );
       await ctx.settled(30_000);
       await inboxShown(ctx);
     };
     for (let i = 1; i < state.count; i++) await step("J");
     for (let i = 1; i < state.count; i++) await step("K");
-    return { switches_count: 2 * (state.count - 1), unchanged_count: unchanged };
+    return { switches_count: 2 * (state.count - 1) };
   },
   after(snapshot) {
     return navigationMetrics("switch", snapshot.navigations);
@@ -546,8 +586,10 @@ const sessionPanel: Scenario<PanelState> = {
     await ctx.mark("idle");
     await ctx.sleep(PANEL_SECONDS * 1_000);
     await ctx.mark("end");
-    await ctx.press("`", [KEY.control]);
     return { streaming_count: state.running ? 1 : 0 };
+  },
+  async teardown(ctx) {
+    await ctx.press("`", [KEY.control]);
   },
   after(snapshot) {
     const from = snapshot.marks.find((m) => m.name === "idle")?.at ?? 0;

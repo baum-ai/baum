@@ -1135,8 +1135,8 @@ frontend, the viewer and the sidecar (which stay the profiling build until
 another recipe builds them), starts a `--headless` isolated instance
 (`profile` unless `--name` says otherwise) and, inside its container, runs
 `../app/scripts/profile/run.ts` with Node. The runner starts
-`WebKitWebDriver` (Ubuntu's `webkit2gtk-driver`, the same WebKitGTK as the
-app's), which launches the app's debug build with
+`WebKitWebDriver` (Ubuntu's `webkit2gtk-driver`, pinned to the version of
+the app's WebKitGTK), which launches the app's debug build with
 `TAURI_WEBVIEW_AUTOMATION=true`, so WebDriver drives the real main webview
 from the connecting screen on to the daemon's page. Key presses are WebKit's
 own synthesized events, which reach the page without an input seat, and the
@@ -1163,27 +1163,50 @@ the app behaves on it, but differs between machines and changes over time.
 The summary's environment line says which data a profile ran on (the seed
 and the dataset's digest), the WebKitGTK package version and the CPUs.
 `--runs N` (5 by default) sets the measured runs,
-after one warm-up whose numbers are kept apart. The container runs on
+after one warm-up whose numbers are kept apart. The recipe checks the
+scenario and the options before it builds anything. `--run-timeout S`
+(600 by default) fails a run, the launch or the preparation that takes
+longer, as a hung WebKitWebDriver would, with a message saying so. The container runs on
 `BAUM_DEV_CPUSET`, like every development container, and the summary names
 the CPUs it had. The scenarios:
 
 | Scenario | Journey | Needs |
 | --- | --- | --- |
-| `cold-start` | Quit and launch the app, until the Inbox shows content and settles | |
-| `jk` | 50 presses of j and k down the list with the most rows (an inbox or Pull requests) and back | a list of two rows |
-| `review` | From the Inbox, open the largest reviewed pull request (lines changed, else review size), then scroll the review to its end, 400 px a frame | a review |
+| `cold-start` | Quit and launch the app, until the Inbox shows content and settles; `launch_to_content`, from the launch to the Inbox's first content frame, is the headline | |
+| `jk` | 50 presses of j and k down the list with the most rows (an inbox or Pull requests) and back; each must move the selection one row | a list of two rows |
+| `review` | From the Inbox, open the largest reviewed pull request (lines changed, else review size), then read up to 12 of its places: scroll each to its end, 400 px a frame (at most 500 steps), and Shift+J to the next | a review |
 | `filter` | `/` on the Inbox, type `retry` a key at a time, Enter to search titles; reports the Inbox's rows before and after | the Inbox's filter |
-| `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled | two inboxes |
+| `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled; each must switch | two inboxes |
 | `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
 
 A scenario the data cannot run exits with status 3 and a summary saying
-why. Every run but cold-start's loads its start page afresh in the same app,
+why. A journey that does not go as planned fails rather than report
+numbers for something else: a j or k that did not move the selection one
+row, an inbox switch or Shift+J that did not move, a filter that left the
+Inbox's rows as they were or none.
+
+Each run starts from the same state. After preparing, the runner saves the
+daemon's record of the Inbox (what was seen today, snoozes) and the
+window's storage (the last inbox shown, the sidebar, the session panel),
+and puts them back before every run, from the settings page, which holds
+neither; typed filters (which the daemon keeps) go back to none, and the
+filter scenario also clears its own after each run. What it cannot put
+back: the daemon's and WebKit's caches, which the warm-up fills, a new day
+starting (the Inbox's record of the day starts empty then), and anything a
+journey asks the daemon to do, which none of these does. Profiling clears
+an instance's typed filters.
+
+Every run but cold-start's loads its start page afresh in the same app,
 so its JavaScript heap and React state start clean, then resets the
 collector: relaunching would add some ten seconds a run and change nothing a
 page reload does not. Cold start must launch, so each run quits the app and
 starts it again; the daemon keeps running between launches, as it does for a
 user, and WebKit's cache in the instance's home stays warm. The runner waits
-for each key press's frame, then 50 ms, before the next.
+for each key press's frame, then 50 ms, before the next. Waiting, it polls
+the page and talks to WebKitWebDriver, which adds a roughly constant
+overhead to interaction durations: fine for comparing before and after a
+change, not for absolute numbers. Modifier keys pressed for the key after
+them (Shift for Shift+J) are left out of the interactions.
 
 Each profile goes to `target/profile/<scenario>-<time>/`, whose path the
 command prints at the end:
@@ -1194,7 +1217,12 @@ command prints at the end:
   slowest of them; render time and commits per `<Profiled>` region; the
   requests that took the most time; and the JavaScript and CSS chunks
   `index.html` loads, with their sizes and gzip sizes, and the largest of
-  the rest, since parsing them dominates cold start.
+  the rest, since parsing them dominates cold start. They are the profiling
+  build's, with React's profiling build and the collector; production's
+  are somewhat smaller. `render_total` and `commits_count` are the `app`
+  region's, which holds the others.
+- Both files are written after every run and marked partial until the
+  last, so a failure keeps the runs before it.
 - `metrics.json`: the same, with every run's metrics and the collector's raw
   snapshot (`__baumPerf.snapshot()`, [local app](../app/README.md)).
 - `driver.log`, WebKitWebDriver's output, and `failure.png`, the window
