@@ -83,7 +83,7 @@ import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./conte
 import { ListPagination, useListPage } from "./list-pagination";
 import { ListSection, type ListTone } from "./list";
 import { useDeadlineNow } from "./live";
-import { peekHref } from "./sessions";
+import { inPanel, peekHref } from "./sessions";
 import {
   canMerge,
   readyToMerge,
@@ -140,7 +140,8 @@ export type UpNextItem = {
   minutes: number | null;
   /** The agent sessions working on its branch now. */
   working: LiveSession[];
-  /** The open agent sessions on its branch that wait for the person. */
+  /** The open agent sessions on its branch that wait for the person; not a
+   *  session panel's, whose finished turn waits on the panel. */
   waitingSessions: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
@@ -399,7 +400,7 @@ export function upNext(
       why: why(kind, entry, working.length, now),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
-      waitingSessions: sessions.filter((s) => s.state === "idle"),
+      waitingSessions: sessions.filter((s) => s.state === "idle" && !inPanel(s)),
       ...(last && changedNothing(last)
         ? { unchangedFix: last }
         : last?.state === "failed"

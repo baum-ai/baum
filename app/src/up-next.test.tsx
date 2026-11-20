@@ -1770,7 +1770,7 @@ it("links the agent sessions working on the pull request to their cards on Sessi
   expect(node.querySelector(".local-feed-peek-row")).not.toBeNull();
 });
 
-it("links the agent sessions waiting for the person on the pull request apart from working ones", async () => {
+it("links the agent sessions waiting for the person on the pull request apart from working ones, not a panel's", async () => {
   const session = (session_id: string, state: "running" | "idle") => ({
     agent: "claude-code",
     session_id,
@@ -1781,7 +1781,13 @@ it("links the agent sessions waiting for the person on the pull request apart fr
     repository: "acme/demo",
     pr: 1,
   });
-  liveList = [session("s1", "running"), session("s2", "idle"), session("s3", "idle")];
+  liveList = [
+    session("s1", "running"),
+    session("s2", "idle"),
+    session("s3", "idle"),
+    // A session panel's finished turn waits on the panel, not on the person.
+    { ...session("s4", "idle"), origin: "panel" as const, conversation: "c4" },
+  ];
   await render();
   expect(shown()).toBe("Change 1");
   const lines = [...panel().querySelectorAll(".upnext-agents")].map((p) => p.textContent);
