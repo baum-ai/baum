@@ -79,7 +79,8 @@ body {
   z-index: calc(var(--z-sheet, 40) + 1);
 }
 .local-rail-lane[data-rail="folded"]:not(
-  :has(:focus-visible:not(.context-menu *), .local-rail-menu, .context-menu)
+  [data-keyboard-focus],
+  :has(.local-rail-menu, .context-menu)
 ) {
   z-index: 5;
 }
@@ -499,10 +500,12 @@ body {
   display: none;
 }
 /* Folded to its glyphs: unpinned, or in a narrow window, and neither under
-   the pointer (`data-rail="open"`) nor holding keyboard focus. A menu it
+   the pointer (`data-rail="open"`) nor holding keyboard focus
+   (`data-keyboard-focus`, set by the sidebar: see `useKeyboardFocusWithin`
+   in shell.tsx for why it is not a `:has()` here). A menu it
    shows does not open it: the menu hangs where its button was. The links
    keep their names. */
-.local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+.local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
   .local-rail {
     width: var(--rail-folded-width);
     box-shadow: none;
@@ -557,7 +560,7 @@ body {
 /* Without a pointer that hovers, the folded sidebar never opens to show
    Help, so it keeps Help under the mark. */
 @media (hover: none) {
-  .local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+  .local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
     .local-rail-head {
       flex-direction: column;
     }
