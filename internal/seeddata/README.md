@@ -9,13 +9,13 @@ developer tooling, not part of the `baum` binary.
 
 ## What it writes
 
-With the defaults (seed 1), in about 15 seconds:
+With the defaults (seed 1), in about 50 seconds:
 
 | Part | Where | Default |
 | --- | --- | --- |
-| Repositories | git clones under `~/src/<owner>/<name>`, origin `https://github.com/<owner>/<name>`, registered and picked in `app.sqlite` | 24, over 6 owners |
-| Open pull requests | a branch each, one commit per version, and a row in the discovery cache | 320: most under 40 changed lines, a tail up to about 2,200, and one of exactly 5,000 (4,000 lines in four new files and 500 lines of a file replaced) |
-| Saved reviews | each clone's `.git/baum/reviews/versions.sqlite`, finished by `review.Complete` as generated reviews are | about 75% of pull requests reviewed, about 430 versions; sections per directory, risks, CI evidence, decisions, and a GitHub conversation with a thread on reviewed ones |
+| Repositories | git clones under `~/src/<owner>/<name>`, origin `https://github.com/<owner>/<name>`, registered and picked in `app.sqlite` | 50, over 6 owners |
+| Open pull requests | a branch each, one commit per version, and a row in the discovery cache | 1,200: most under 40 changed lines, a tail up to about 2,200, and one of exactly 5,000 (4,000 lines in four new files and 500 lines of a file replaced) |
+| Saved reviews | each clone's `.git/baum/reviews/versions.sqlite`, finished by `review.Complete` as generated reviews are | about 75% of pull requests reviewed, about 1,650 versions; sections per directory, risks, CI evidence, decisions, and a GitHub conversation with a thread on reviewed ones |
 | Draft review comments | `ui/review` in `app.sqlite` | 12 pull requests |
 | Inboxes | `state/inboxes` in `app.sqlite`, with fixed ids | 20, the most the daemon keeps: the default, filters on what waits, drafts, checks, bots, one per owner and per repository |
 | Claude Code sessions | `~/.claude/projects/<cwd>/<id>.jsonl` | 8; the longest has 3,000 prompts, each with a tool call, its result and a reply |

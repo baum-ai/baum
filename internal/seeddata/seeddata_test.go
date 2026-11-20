@@ -191,7 +191,7 @@ func TestDefaultsMeetTheCriteria(t *testing.T) {
 	result := generate(t, o)
 	t.Logf("defaults: %+v in %s", result.Counts, time.Since(started))
 	c := result.Counts
-	if c.Repositories < 20 || c.PullRequests < 300 || c.ReviewVersions < 300 || c.LargeDiffLines != 5000 || c.Inboxes != 20 ||
+	if c.Repositories < 50 || c.PullRequests < 1200 || c.ReviewVersions < 1000 || c.LargeDiffLines != 5000 || c.Inboxes != 20 ||
 		c.LongestTranscript != 3000 || c.Sessions < 10 {
 		t.Fatalf("counts %+v", c)
 	}

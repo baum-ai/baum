@@ -1078,8 +1078,8 @@ which the daemon's environment comes from.
 
 `--seed-data[=SEED]`, instead, fills a home that has no data yet with the
 seeded profiling dataset ([`seeddata`](../internal/seeddata/README.md),
-seed 1 by default): 24 repositories with 320 open pull requests and about
-430 saved review versions, one pull request with a 5,000-line diff, Claude
+seed 1 by default): 50 repositories with 1,200 open pull requests and about
+1,650 saved review versions, one pull request with a 5,000-line diff, Claude
 Code and Codex sessions of up to 3,000 prompts and 20 inboxes. On every
 machine a seed gives the same lists, pull requests, commits (by SHA),
 reviews, inboxes and transcripts, so before and after numbers compare;

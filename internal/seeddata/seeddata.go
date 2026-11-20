@@ -67,7 +67,7 @@ type Options struct {
 
 // Defaults are the sizes the profiling recipe uses.
 func Defaults() Options {
-	return Options{Seed: 1, Epoch: DefaultEpoch, Repositories: 24, PullRequests: 320, LargeDiffLines: 5000, Inboxes: 20,
+	return Options{Seed: 1, Epoch: DefaultEpoch, Repositories: 50, PullRequests: 1200, LargeDiffLines: 5000, Inboxes: 20,
 		ClaudeSessions: 8, CodexSessions: 4, LongTranscriptTurns: 3000, DraftComments: 12}
 }
 
