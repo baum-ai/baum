@@ -22,7 +22,7 @@ const path = "api/settings/plan-usage";
  *  the backends change; "Use baum's default" gives the choice back. */
 export function PlanUsageSettings() {
   const [plans, setPlans] = useState<PlanChoice[] | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState("");
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -32,7 +32,8 @@ export function PlanUsageSettings() {
         setError("");
       }
     } catch (cause) {
-      if (!signal?.aborted) setError(String(cause));
+      if (!signal?.aborted)
+        setError(cause instanceof Error ? cause.message : "Local request failed.");
     }
   }, []);
   useEffect(() => {
@@ -41,17 +42,17 @@ export function PlanUsageSettings() {
     return () => controller.abort();
   }, [load]);
   const choose = async (provider: string, shown: boolean | null) => {
-    if (saving) return;
-    setSaving(true);
+    if (saving !== null) return;
+    setSaving(provider);
     setError("");
     try {
       const body = await request<{ plans: PlanChoice[] }>(path, { provider, shown }, "PUT");
       setPlans(body.plans);
       window.dispatchEvent(new Event(PLAN_USAGE_CHANGED));
     } catch (cause) {
-      setError(String(cause));
+      setError(cause instanceof Error ? cause.message : "Local request failed.");
     } finally {
-      setSaving(false);
+      setSaving(null);
     }
   };
   return (
@@ -77,7 +78,7 @@ export function PlanUsageSettings() {
                   <button
                     type="button"
                     className="underline"
-                    disabled={saving}
+                    disabled={saving === plan.provider}
                     onClick={() => void choose(plan.provider, null)}
                   >
                     Use baum's default ({plan.default ? "shown" : "hidden"})
@@ -95,7 +96,7 @@ export function PlanUsageSettings() {
               type="checkbox"
               role="switch"
               className="local-switch"
-              disabled={saving}
+              disabled={saving === plan.provider}
               checked={plan.shown}
               onChange={(event) => void choose(plan.provider, event.target.checked)}
             />

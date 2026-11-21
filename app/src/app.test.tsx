@@ -2259,6 +2259,27 @@ it("types a custom data extraction model", async () => {
     body: { enabled: true, backend: "", model: "gpt-6-custom", effort: "" },
   });
 });
+it("puts the saved data extraction model back when the custom field is left empty", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    decisions: { enabled: true, backend: "", model: "gpt-6-custom", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const custom = section.querySelector<HTMLInputElement>('input[aria-label="Custom model"]')!;
+  expect(custom.value).toBe("gpt-6-custom");
+  const count = puts.length;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(custom, " ");
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => custom.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(puts.length).toBe(count);
+  expect(custom.value).toBe("gpt-6-custom");
+});
 /** Opens a repository's page from its row and returns it. */
 async function openRepository(name = "acme/demo") {
   await act(async () =>

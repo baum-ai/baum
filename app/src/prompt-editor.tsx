@@ -335,6 +335,9 @@ export function PromptEditor({
           {entry.default_text}
         </pre>
       ) : null}
+      {empty ? (
+        <p className="settings-footnote">An empty prompt cannot be saved. Reset it instead.</p>
+      ) : null}
       <div id={rulesId} className="prompt-rules-block">
         {entry.safety_rules.length > 0 ? (
           <>
@@ -354,7 +357,7 @@ export function PromptEditor({
           </>
         ) : null}
         {missing.length > 0 ? (
-          <p role="status" className="settings-caution">
+          <p role="status" className="settings-caution text-xs">
             This prompt no longer contains: {missing.map((m) => m.label).join(", ")}.
           </p>
         ) : null}
@@ -364,9 +367,6 @@ export function PromptEditor({
         </p>
       </div>
       {error ? <Alert>{error}</Alert> : null}
-      {empty ? (
-        <p className="settings-footnote">An empty prompt cannot be saved. Reset it instead.</p>
-      ) : null}
       <div className="prompt-actions">
         <Button
           size="compact"

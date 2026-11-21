@@ -849,7 +849,8 @@ function ModelField({
   useEffect(() => setText(value), [value]);
   const commit = () => {
     const next = text.trim();
-    if (next && next !== value) onChange(next);
+    if (!next) setText(value);
+    else if (next !== value) onChange(next);
   };
   return (
     <div className="settings-model">
@@ -1091,6 +1092,7 @@ function ReviewsSection({
             />
           </div>
         </SettingRow>
+        <TileReviewsRow />
         <AccountAdvanced
           id={draft.backend === "codex" ? "review-codex-home" : "review-claude-config-dir"}
           backend={draft.backend}
@@ -1098,7 +1100,6 @@ function ReviewsSection({
           defaults={defaults}
           onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
         />
-        <TileReviewsRow />
       </div>
       <p className="settings-footnote">
         Changes save as you make them and apply to the next review in every repository.
@@ -2815,9 +2816,11 @@ function AgentEnvSection() {
           <p role="status" className="text-xs text-tertiary">
             {done
               ? "Saved. Applies to the next agent run."
-              : dirty
-                ? "You have unsaved changes."
-                : ""}
+              : dirty && Object.keys(problems).length > 0
+                ? "Name every variable, or remove the empty row, to save."
+                : dirty
+                  ? "You have unsaved changes."
+                  : ""}
           </p>
           <Button
             size="compact"
@@ -3451,7 +3454,11 @@ export function RepositoryPage({
       <PageBar
         title={repository.repository}
         detail={
-          clone.available ? homePath(clone.path) : `${clone.path} · unavailable; history retained`
+          clone.available
+            ? homePath(clone.path)
+            : repository.clones.length === 0
+              ? "Needs a local clone"
+              : `${clone.path} · unavailable; history retained`
         }
         back={back}
       />
