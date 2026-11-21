@@ -5,16 +5,34 @@
 // container; see the desktop README's Profiling section. With --engine
 // chromium, Chromium opens the daemon's pages instead and each run records a
 // CPU profile (chromium.ts).
+// With --side, it is one side of a comparison (profile.sh --baseline): two
+// runners, one per side in containers of their own, take turns through
+// files in --out (compare.ts's schedule), and head's writes the comparison.
 // usage: node run.ts <scenario> --app BINARY --out DIR [--runs N] [--dist DIR]
+//        [--side base|head] [--headline METRIC]
 //        node run.ts <scenario> --engine chromium --baum BINARY --out DIR ...
 import { execFileSync, spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { cpus, homedir, loadavg } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
 import { readChunks } from "./bundle.ts";
 import { CHROMEDRIVER, CHROMEDRIVER_ARGS, CpuRecorder, launchChromium } from "./chromium.ts";
+import {
+  comparisonJson,
+  daemonFailure,
+  schedule,
+  summariseComparison,
+  type Side,
+} from "./compare.ts";
 import { scenarios, Skip, type Context } from "./scenarios.ts";
 import { standardMetrics, summarise, type Profile, type Run } from "./summary.ts";
 import { newSession, waitForDriver, WebDriverError, type Session } from "./webdriver.ts";
@@ -31,6 +49,8 @@ const { values, positionals } = parseArgs({
     env: { type: "string", multiple: true, default: [] },
     engine: { type: "string", default: "webkit" },
     baum: { type: "string" },
+    side: { type: "string" },
+    headline: { type: "string" },
   },
 });
 const chromium = values.engine === "chromium";
@@ -53,7 +73,22 @@ if (!Number.isInteger(runs) || runs < 1) {
   process.exit(2);
 }
 const runTimeout = Number(values["run-timeout"]) * 1000;
-const out = values.out;
+if (values.side !== undefined && values.side !== "base" && values.side !== "head") {
+  console.error(`profile: --side is base or head: ${values.side}`);
+  process.exit(2);
+}
+const side = values.side as Side | undefined;
+const headline = values.headline ?? scenario.headline;
+if (side && !headline) {
+  console.error(
+    `profile: ${scenario.name} has no headline yet, so it cannot be compared; --headline names one`,
+  );
+  process.exit(2);
+}
+/** A comparison's directory, shared by both sides' containers. */
+const shared = values.out;
+/** This side's metrics.json and summary.md. */
+const out = side ? join(shared, side) : shared;
 mkdirSync(out, { recursive: true });
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const log = (text: string) => console.log(`profile: ${text}`);
@@ -194,8 +229,16 @@ async function launch() {
             "frontend that is not the profiling build. just desktop::profile builds it; a recipe " +
             "since (check, isolated, build) may have rebuilt it for production",
         );
+      let said: string | undefined;
+      try {
+        said = daemonFailure(
+          readFileSync(join(homedir(), ".local/state/baum/daemon/daemon.out"), "utf8"),
+          side,
+        );
+      } catch {}
       throw new Error(
-        `the app did not open the daemon's page within two minutes; it shows ${scrub(at.replace(/\/s\/[^/]+/, "/s/…"))}`,
+        `the app did not open the daemon's page within two minutes; it shows ${scrub(at.replace(/\/s\/[^/]+/, "/s/…"))}` +
+          (said ? `. ${said}` : ""),
       );
     }
     await sleep(50);
@@ -332,6 +375,7 @@ function environment(snapshot: Snapshot) {
     read("/sys/fs/cgroup/cpuset.cpus.effective") ||
     read("/sys/fs/cgroup/cpuset/cpuset.effective_cpus") ||
     "unknown";
+  entries["host CPUs"] = String(cpus().length);
   if (cpu) {
     entries.engine = "Chromium";
     entries.Chromium = cpu.version || snapshot.userAgent;
@@ -372,6 +416,128 @@ function limited<T>(work: Promise<T>, what: string): Promise<T> {
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
+// Taking turns with the other side of a comparison, through files in the
+// shared directory: `turn` holds the place in the order whose run may go,
+// `failed` why a side stopped, `<side>.ready` the data a side runs on.
+const other: Side = side === "head" ? "base" : "head";
+const order = schedule(runs);
+const sharedFile = (name: string) => join(shared, name);
+const readShared = (name: string) => {
+  try {
+    return readFileSync(sharedFile(name), "utf8");
+  } catch {
+    return undefined;
+  }
+};
+const writeShared = (name: string, text: string) => {
+  writeFileSync(sharedFile(`${name}.${side}.tmp`), text);
+  renameSync(sharedFile(`${name}.${side}.tmp`), sharedFile(name));
+};
+
+/** The other side stopped, so this one does too. */
+class OtherSideFailed extends Error {}
+
+/** Waits until `ready` returns something, or the other side fails. */
+async function waitOther<T>(ready: () => T | undefined, what: string): Promise<T> {
+  // The other side may be launching, or preparing, or running two runs.
+  const end = Date.now() + 3 * runTimeout;
+  for (;;) {
+    const failed = readShared("failed");
+    if (failed !== undefined) throw new OtherSideFailed(`the ${other} side failed: ${failed}`);
+    const value = ready();
+    if (value !== undefined) return value;
+    if (Date.now() > end)
+      throw new Error(`the ${other} side did not ${what} within ${(3 * runTimeout) / 1000} s`);
+    await sleep(50);
+  }
+}
+
+/** Both sides launched and prepared, on the same seeded dataset. */
+async function bothReady() {
+  const data = (path: string) => {
+    try {
+      return JSON.parse(readFileSync(path, "utf8")) as { seed?: number; digest?: string };
+    } catch {
+      return undefined;
+    }
+  };
+  const mine = data(join(homedir(), ".local/state/baum/seeddata.json"));
+  if (!mine?.digest)
+    throw new Error("a comparison runs on the seeded dataset, and this side's home has none");
+  writeShared(`${side}.ready`, JSON.stringify({ seed: mine.seed, digest: mine.digest }));
+  const theirs = await waitOther(() => {
+    const text = readShared(`${other}.ready`);
+    return text === undefined
+      ? undefined
+      : (JSON.parse(text) as { seed?: number; digest?: string });
+  }, "launch and prepare");
+  if (theirs.digest !== mine.digest)
+    throw new Error(
+      `the sides' seeded datasets differ (${side}: seed ${mine.seed}, digest ${mine.digest}; ` +
+        `${other}: seed ${theirs.seed}, digest ${theirs.digest}), so their numbers would not compare`,
+    );
+}
+
+const turn = () => Number(readShared("turn") ?? "0");
+/** Waits for the host (profile.sh) to say this side may run its place in
+ *  the order, which it does once the turn reached it and it has frozen the
+ *  other side's container (docker pause), so the waiting side's daemon, app
+ *  and compositor take no CPU from the side measured. */
+const myTurn = (at: number) =>
+  waitOther(() => (readShared("go") === String(at) ? true : undefined), "finish its run");
+
+/** Leaves the app on a page with no script while the other side runs, so
+ *  it does no work then: one of the daemon's JSON records, since the app
+ *  refuses to navigate off the daemon (about:blank too). */
+const idle = () => page().navigate(`${base}api/ui-state/tour`);
+
+/** Hands the turn on, the app idle. */
+async function passTurn(at: number) {
+  await idle();
+  writeShared("turn", String(at + 1));
+}
+
+/** Milliseconds of CPU this container has used, from its cgroup (v2, then
+ *  v1's cpuacct), or undefined where neither can be read. */
+function containerCpu(): number | undefined {
+  for (const [path, parse] of [
+    ["/sys/fs/cgroup/cpu.stat", (t: string) => Number(t.match(/^usage_usec (\d+)/m)?.[1]) / 1000],
+    ["/sys/fs/cgroup/cpuacct/cpuacct.usage", (t: string) => Number(t) / 1e6],
+  ] as const) {
+    try {
+      const value = parse(readFileSync(path, "utf8"));
+      if (Number.isFinite(value)) return value;
+    } catch {}
+  }
+  return undefined;
+}
+
+/** BAUM_PROFILE_SETTLE=0 turns settling off, to measure without it. */
+const settling = process.env.BAUM_PROFILE_SETTLE !== "0";
+/** A quarter second in which the container used under this share of one
+ *  CPU counts as quiet. */
+const QUIET_SHARE = 0.1;
+
+/** Waits, at most `cap` ms, until the container (the app, its daemon and
+ *  compositor) has been quiet for a second: four quarter seconds each under
+ *  QUIET_SHARE of a CPU. A new home's daemon works through its clones for a
+ *  while after it starts, and a side just thawed catches up on what came
+ *  due while it was frozen; either would land in the runs. Returns the
+ *  milliseconds it waited. */
+async function settle(cap: number): Promise<number> {
+  const start = Date.now();
+  if (!settling || containerCpu() === undefined) return 0;
+  let quiet = 0;
+  let last = containerCpu()!;
+  while (quiet < 4 && Date.now() - start < cap) {
+    await sleep(250);
+    const now = containerCpu()!;
+    quiet = now - last < 250 * QUIET_SHARE ? quiet + 1 : 0;
+    last = now;
+  }
+  return Date.now() - start;
+}
+
 const collected: Run[] = [];
 let environmentFrom: Snapshot | undefined;
 
@@ -391,6 +557,7 @@ function write(partial?: string) {
     runs: measured,
     chunks: values.dist && existsSync(values.dist) ? readChunks(values.dist) : [],
   };
+  if (side) profile.side = side;
   writeFileSync(join(out, "metrics.json"), `${JSON.stringify(profile, null, 2)}\n`);
   writeFileSync(join(out, "summary.md"), summarise(profile) + (cpu?.section() ?? ""));
 }
@@ -410,13 +577,29 @@ async function main() {
     })(),
     "preparing the scenario",
   );
-  for (let index = 0; index <= runs; index++) {
-    log(index === 0 ? "warm-up" : `run ${index} of ${runs}`);
+  const steps = side
+    ? order.flatMap((step, at) => (step.side === side ? [{ index: step.index, at }] : []))
+    : Array.from({ length: runs + 1 }, (_, index) => ({ index, at: undefined }));
+  if (side) {
+    await idle();
+    // Before the other side may run, so each side's daemon finishes its
+    // start on its own time.
+    const waited = await settle(300_000);
+    if (waited > 2_000) log(`waited ${Math.round(waited / 1000)} s for the instance to go quiet`);
+    await bothReady();
+  }
+  for (const { index, at } of steps) {
+    if (at !== undefined) await myTurn(at);
+    const label = side ? `${side} ` : "";
+    log(index === 0 ? `${label}warm-up` : `${label}run ${index} of ${runs}`);
     const what = index === 0 ? "the warm-up" : `run ${index}`;
     await limited(
       (async () => {
+        const settled = await settle(15_000);
+        const load = loadavg()[0]!;
         await restoreState();
         if (index > 0) await cpu?.start(page());
+        const cpuBefore = containerCpu();
         const started = performance.now();
         const metrics = await scenario!.run(context, state as never);
         const wall = performance.now() - started;
@@ -430,18 +613,80 @@ async function main() {
           wall,
           metrics: { ...metrics, ...scenario!.after?.(snapshot), ...standardMetrics(snapshot) },
           snapshot,
+          ...(side ? { side, order: at } : {}),
+          conditions: {
+            load,
+            settle: settled,
+            ...(cpuBefore === undefined ? {} : { cpu: containerCpu()! - cpuBefore }),
+          },
         });
       })(),
       what,
     );
     write(index < runs ? `${done()} so far` : undefined);
+    if (at !== undefined) await passTurn(at);
   }
+}
+
+/** The baseline as it was named, and its commit unless that is the name. */
+function baseLabel(ref = "", commit = "unknown") {
+  return !ref || commit.startsWith(ref) || ref.startsWith(commit) ? commit : `${ref} at ${commit}`;
+}
+
+/** Head's last step: once base has run all its runs, or stopped, the
+ *  comparison of the two. */
+async function compare(partial?: string) {
+  if (side !== "head") return;
+  if (!partial)
+    await waitOther(() => (turn() >= order.length ? true : undefined), "finish its runs").catch(
+      (error: Error) => {
+        partial = error.message;
+      },
+    );
+  const read = (which: Side) => {
+    try {
+      return JSON.parse(readFileSync(join(shared, which, "metrics.json"), "utf8")) as Profile;
+    } catch {
+      return undefined;
+    }
+  };
+  const base = read("base");
+  const head = read("head");
+  if (!base || !head) {
+    writeFileSync(
+      join(shared, "summary.md"),
+      `# Profile comparison: ${scenario!.name}\n\nNo comparison: ${partial ?? "a side wrote no runs"}.\n`,
+    );
+    return;
+  }
+  const reason = partial ?? base.partial ?? head.partial;
+  const comparison = {
+    scenario: scenario!.name,
+    description: scenario!.description,
+    headline: headline!,
+    baseLabel: baseLabel(base.environment.ref, base.environment.commit),
+    headLabel: head.environment.commit ?? "unknown",
+    base,
+    head,
+    ...(reason ? { partial: reason } : {}),
+  };
+  writeFileSync(join(shared, "summary.md"), summariseComparison(comparison));
+  writeFileSync(
+    join(shared, "metrics.json"),
+    `${JSON.stringify(comparisonJson(comparison), null, 2)}\n`,
+  );
 }
 
 let code = 0;
 try {
   await main();
+  await compare();
 } catch (error) {
+  if (side && !(error instanceof OtherSideFailed))
+    writeShared(
+      "failed",
+      `${side}: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}`,
+    );
   if (error instanceof Skip) {
     writeFileSync(
       join(out, "summary.md"),
@@ -473,6 +718,9 @@ try {
     }
     code = 1;
   }
+  await compare(error instanceof Error ? error.message.split("\n")[0] : String(error)).catch(
+    () => {},
+  );
 } finally {
   if (session) await Promise.race([session.close().catch(() => {}), sleep(10_000)]);
   driver.kill();
