@@ -4629,12 +4629,6 @@ a.local-session-pr:hover {
     transform: translate(-50%, 8px);
   }
 }
-@media (width < 48rem) {
-  .local-toast {
-    left: 50%;
-    width: calc(100vw - 2rem);
-  }
-}
 @keyframes local-feed-rise {
   from {
     opacity: 0;
