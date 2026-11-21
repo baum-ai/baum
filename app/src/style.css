@@ -2688,7 +2688,7 @@ dialog.local-dialog-wide {
 }
 .theme-option {
   position: relative;
-  width: 5.5rem;
+  width: 7rem;
 }
 /* Six built-ins fit one row at the usual desktop width. */
 .settings-content > .settings-section:has(.theme-strip) {
