@@ -162,10 +162,7 @@ export function FilterButton({
       setFocusOnOpen(false);
     }
     if (!open && wasOpen.current) {
-      // A pointer close drops the button's focus ring; a key close (Escape
-      // refocuses the button, which WebKit marks focus-visible) keeps focus there.
-      const summary = detailsProps.ref.current?.querySelector("summary");
-      if (summary && !summary.matches(":focus-visible")) summary.blur();
+      detailsProps.ref.current?.querySelector("summary")?.blur();
       onClosed?.();
     }
     wasOpen.current = open;
