@@ -19,7 +19,7 @@ usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout S
                   [--baseline REF [--metric NAME]]
 
   scenario         cold-start, jk, review, filter, switch-inboxes,
-                   session-panel or pages
+                   session-panel, transcript or pages
   --check          only check the arguments (just desktop::profile does,
                    before it builds anything)
   --runs N         measured runs after the warm-up (default 5; with

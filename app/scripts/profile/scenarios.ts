@@ -622,6 +622,106 @@ const sessionPanel: Scenario<PanelState> = {
   },
 };
 
+// The transcript's messages, as its j and k keys move through them
+// (oss/app/src/session-transcript.tsx's MESSAGE).
+const MESSAGE = '[data-message="human"], [data-agent-text]:not([data-agent-text="progress"])';
+
+// Presses of k, back up the transcript from its end, a message at a time.
+const TRANSCRIPT_PRESSES = 20;
+
+type TranscriptState = { search: string };
+
+const transcript: Scenario<TranscriptState> = {
+  name: "transcript",
+  headline: "open_content",
+  description:
+    "From the Sessions page, opens the largest session's transcript as the app's links do (a " +
+    "history entry), waits for its messages, then presses k " +
+    `${TRANSCRIPT_PRESSES} times to read back up it a message at a time. open_content runs from ` +
+    "the navigation to the first frame with no loader.",
+  async prepare(ctx) {
+    await ctx.open("");
+    const sessions = await ctx.execute<{ key: string; bytes: number }[]>(`
+      const body = await (await fetch("api/live-sessions")).json();
+      const list = Array.isArray(body?.sessions) ? body.sessions : [];
+      const sized = [];
+      for (const s of list) {
+        const r = await fetch("api/live-sessions/" + encodeURIComponent(s.agent) + "/" + encodeURIComponent(s.session_id) + "/transcript");
+        sized.push({ key: s.agent + ":" + s.session_id, bytes: r.ok ? (await r.arrayBuffer()).byteLength : 0 });
+      }
+      return sized;`);
+    const biggest = sessions.toSorted((a, b) => b.bytes - a.bytes)[0];
+    if (!biggest || biggest.bytes === 0) throw new Skip("no session in the data has a transcript");
+    ctx.note(
+      `Opens ${biggest.key}, the largest transcript of ${sessions.length} sessions ` +
+        `(${Math.round(biggest.bytes / 1024)} KiB read).`,
+    );
+    return { search: `?page=sessions&session=${encodeURIComponent(biggest.key)}` };
+  },
+  async run(ctx, state) {
+    await ctx.open("?page=sessions");
+    await ctx.reset();
+    await ctx.mark("open");
+    await ctx.execute(
+      `window.__opened = performance.now();
+       history.pushState(null, "", arguments[0]); dispatchEvent(new PopStateEvent("popstate"));`,
+      [state.search],
+    );
+    const navigation = await ctx.settled(120_000);
+    await ctx.waitFor<number>(
+      `return document.querySelectorAll(${JSON.stringify(MESSAGE)}).length;`,
+      "the transcript's messages",
+      120_000,
+    );
+    // The transcript renders its last turns first and adds earlier ones while
+    // its list is busy; the keys are read once it has them all.
+    const all = await ctx.execute<number>(`
+      const frame = () => new Promise((r) => requestAnimationFrame(r));
+      while (!document.querySelector(".local-transcript ol") || document.querySelector(".local-transcript ol[aria-busy]")) await frame();
+      return performance.now() - window.__opened;`);
+    const messages = await ctx.execute<number>(
+      `return document.querySelectorAll(${JSON.stringify(MESSAGE)}).length;`,
+    );
+    await ctx.sleep(500);
+    // Opened at its end, a reader should still be there once it has all its
+    // turns: how far above the end the page is then.
+    const gap = await ctx.execute<number>(`
+      const main = document.querySelector(".local-main") ?? document.scrollingElement;
+      return main.scrollHeight - main.clientHeight - main.scrollTop;`);
+    const dom = await ctx.execute<number>(`return document.getElementsByTagName("*").length;`);
+    await ctx.mark("keys");
+    const marked = () =>
+      ctx.execute<number>(
+        `return [...document.querySelectorAll(${JSON.stringify(MESSAGE)})].findIndex((m) => m.classList.contains("local-message-current"));`,
+      );
+    let last = -1;
+    for (let i = 0; i < TRANSCRIPT_PRESSES; i++) {
+      await ctx.press("k");
+      // k scrolls smoothly; a reader reads once it stops. A press during the
+      // scroll marks the same message again, its target not yet in view.
+      await ctx.execute(`
+        const main = document.querySelector(".local-main") ?? document.scrollingElement;
+        const frame = () => new Promise((r) => requestAnimationFrame(r));
+        let still = 0, top = main.scrollTop;
+        while (still < 3) { await frame(); still = main.scrollTop === top ? still + 1 : 0; top = main.scrollTop; }`);
+      const now = await marked();
+      if (now < 0 || (last >= 0 && now !== last - 1))
+        throw new Error(`press ${i + 1} of k marked message ${now}, after ${last}`);
+      last = now;
+    }
+    await ctx.mark("end");
+    const metrics: Record<string, number> = {
+      messages_count: messages,
+      dom_count: dom,
+      open_all: all,
+      end_gap_px: Math.max(0, Math.round(gap)),
+    };
+    if (navigation.content !== undefined) metrics.open_content = navigation.content;
+    if (navigation.settled !== undefined) metrics.open_settled = navigation.settled;
+    return metrics;
+  },
+};
+
 export const scenarios: Scenario<never>[] = [
   coldStart,
   jk,
@@ -629,5 +729,6 @@ export const scenarios: Scenario<never>[] = [
   filter,
   switchInboxes,
   sessionPanel,
+  transcript,
   pagesScenario,
 ] as Scenario<never>[];
