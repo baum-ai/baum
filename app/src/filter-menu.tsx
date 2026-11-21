@@ -127,7 +127,8 @@ export function FilterButton({
     onOpened?.();
   }, [openRequest]);
   // The panel sits on the window, not in the page, so no scrolling column
-  // clips it: under the icon, its right edge on the icon's, kept on screen.
+  // clips it: under the icon, its right edge on the icon's (its left edge when
+  // the icon is in the left half of the window), kept on screen.
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
   useLayoutEffect(() => {
     if (!open) return;
@@ -135,9 +136,10 @@ export function FilterButton({
       const icon = detailsProps.ref.current?.getBoundingClientRect();
       const width = panel.current?.offsetWidth ?? 0;
       if (!icon) return;
+      const preferred = icon.left < window.innerWidth / 2 ? icon.left : icon.right - width;
       setPlace({
         top: icon.bottom + 4,
-        left: Math.max(8, Math.min(icon.right - width, window.innerWidth - width - 8)),
+        left: Math.max(8, Math.min(preferred, window.innerWidth - width - 8)),
       });
     };
     measure();
@@ -160,7 +162,10 @@ export function FilterButton({
       setFocusOnOpen(false);
     }
     if (!open && wasOpen.current) {
-      detailsProps.ref.current?.querySelector("summary")?.blur();
+      // A pointer close drops the button's focus ring; a key close (Escape
+      // refocuses the button, which WebKit marks focus-visible) keeps focus there.
+      const summary = detailsProps.ref.current?.querySelector("summary");
+      if (summary && !summary.matches(":focus-visible")) summary.blur();
       onClosed?.();
     }
     wasOpen.current = open;

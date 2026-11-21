@@ -419,15 +419,19 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
-  // A ready pull request offers Merge after Peek in its row's menu, each with
-  // its key hint.
+  // A ready pull request offers Merge after Open and Peek in its row's menu,
+  // each with its key hint.
   await act(async () =>
     rows[0]!.querySelector<HTMLButtonElement>("button.row-menu-button")!.click(),
   );
   const menuItems = Array.from(
     node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'),
   );
-  expect(menuItems.slice(0, 2).map((item) => item.textContent)).toEqual(["PeekSpace", "Merge…m"]);
+  expect(menuItems.slice(0, 3).map((item) => item.textContent)).toEqual([
+    "Open↵",
+    "PeekSpace",
+    "Merge…m",
+  ]);
   await act(async () =>
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
   );

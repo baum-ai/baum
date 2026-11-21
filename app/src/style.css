@@ -28,6 +28,10 @@ body {
      browser's blue. */
   accent-color: var(--action-primary);
 }
+/* Search fields drop WebKit's blue clear glyph; Escape still clears them. */
+input[type="search"]::-webkit-search-cancel-button {
+  appearance: none;
+}
 /* The window holds the sidebar and the page's panel, which stay in place:
    the panel's notices and each page's bar stay at its top and only what is
    under them scrolls (`.local-main`). */

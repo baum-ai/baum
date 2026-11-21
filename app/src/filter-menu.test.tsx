@@ -72,7 +72,27 @@ it("opens with slash and focuses Add filter after positioning", async () => {
     );
   });
   expect(node.querySelector(".filter-menu-panel")).toBeNull();
-  expect(document.activeElement).not.toBe(node.querySelector("summary"));
+  // Closed from the keyboard, focus returns to the Filter button.
+  expect(document.activeElement).toBe(node.querySelector("summary"));
+  await act(async () => root.unmount());
+  node.remove();
+});
+
+it("returns focus to the Filter button when Escape closes it from the keyboard", async () => {
+  const node = document.createElement("div");
+  document.body.append(node);
+  const root = createRoot(node);
+  await act(async () => root.render(<FilterButton query="" onChange={vi.fn()} entries={[]} />));
+  const summary = node.querySelector("summary")!;
+  summary.focus();
+  await act(async () => summary.click());
+  await act(async () => {
+    document.activeElement?.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(node.querySelector(".filter-menu-panel")).toBeNull();
+  expect(document.activeElement).toBe(summary);
   await act(async () => root.unmount());
   node.remove();
 });
