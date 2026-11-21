@@ -640,6 +640,24 @@ it("opens a waiting session's Reply with its peek on a click on its card", async
   expect(document.activeElement).toBe(input);
 });
 
+it("scrolls the opened reply form into view", async () => {
+  const scroll = vi.fn();
+  Element.prototype.scrollIntoView = scroll;
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      messageable: true,
+    }),
+  ]);
+  const card = node.querySelector<HTMLElement>('[data-row-id="claude-code:s1"]')!;
+  await act(async () => card.querySelector<HTMLElement>(".local-feed-time")!.click());
+  const form = card.querySelector("input")!.closest("form")!;
+  expect(scroll.mock.contexts).toContain(form);
+  expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+});
+
 it("moves the peek and reply to another card on a click, and peeks alone where no reply goes", async () => {
   await render([
     session({ state: "running" }),

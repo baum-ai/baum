@@ -183,13 +183,8 @@
 .session-panel:not([data-position="bottom"]) .session-panel-head {
   padding-top: 0.375rem;
 }
-/* A side panel is narrow: its facts wrap rather than run off its edge. */
-.session-panel:is([data-position="left"], [data-position="right"]) .session-panel-facts {
-  flex-wrap: wrap;
-  row-gap: 0.25rem;
-}
-.session-panel:is([data-position="left"], [data-position="right"])
-  .session-panel-facts
+/* A side panel is narrow: the page and directory take a line each. */
+.session-panel:is([data-position="left"], [data-position="right"]) .session-panel-facts
   > :is(.session-panel-looking, .session-panel-directory) {
   flex: 1 1 100%;
   min-width: 0;
@@ -223,7 +218,8 @@
    directory give way, cut with an ellipsis (whole in their tooltips). */
 .session-panel-facts {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  row-gap: 0.25rem;
   align-items: center;
   gap: 1.25rem;
   min-width: 0;
@@ -389,7 +385,7 @@
   flex: 1;
   min-width: 0;
   min-height: 2rem;
-  max-height: 12rem;
+  max-height: min(12rem, 25vh);
   padding: 0.3125rem 0.625rem;
   font: inherit;
   font-size: var(--text-base);

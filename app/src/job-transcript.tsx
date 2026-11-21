@@ -306,7 +306,7 @@ function JobHeader({ job }: { job: Job }) {
     <section aria-label="Job" className="local-panel local-job-head">
       {active ? (
         <p role="status" className="local-job-phase">
-          <LiveDot /> {name}: {phaseText(job)}
+          <LiveDot className="text-status-positive" /> {name}: {phaseText(job)}
         </p>
       ) : (
         <p role="status" className="local-job-phase">
