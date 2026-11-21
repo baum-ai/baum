@@ -2442,7 +2442,9 @@ navigation elsewhere before the app is asked, but a page without that policy
 through; if a navigation could open the browser, such a frame could open it
 at an address carrying data it read, as often as it liked. Links to other web
 hosts open in your default browser only as requests for a new window
-(`target="_blank"` links and `window.open`); no window ever opens. A
+(`target="_blank"` links and `window.open`), or through the app's
+`open_link` command, which opens the same addresses and only from the page
+itself; no window ever opens. A
 sandboxed frame can make such a request only when its sandbox allows pop-ups.
 On Linux the webview allows a page one only while you interact with it; on
 macOS and Windows a page's script can make one at any time, so the app opens
@@ -2455,8 +2457,9 @@ The daemon's pages can call a few of the app's commands, granted to pages of
 folder picker, reading and changing the `baum` command and the user-wide agent
 hooks (as Settings does), the window's zoom, and reading, checking for,
 installing and dismissing app updates (only an update the app has already
-downloaded and verified installs), and opening and closing the tile check
-window. They can call no other command and no plugin. Only the page itself can call them: on macOS and Linux the app's
+downloaded and verified installs), opening and closing the tile check
+window, and opening a link to another web host in your browser (at most once
+a second). They can call no other command and no plugin. Only the page itself can call them: on macOS and Linux the app's
 command bridge is injected into the page's main frame only, so a frame
 embedded in it, even one served from the daemon's origin, cannot reach a
 command; on Linux this is checked with a sandboxed frame trying every way the

@@ -7,7 +7,13 @@ import { App } from "./app";
 import { ReviewSettingsForm } from "./desktop/reviews";
 import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone, type Job } from "./api";
+import { openExternal } from "./outside-links";
 import { forgetLastRows } from "./shortcuts";
+
+vi.mock("./outside-links", async (original) => ({
+  ...(await original<typeof import("./outside-links")>()),
+  openExternal: vi.fn(),
+}));
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -3372,8 +3378,8 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
       this.open = true;
     },
   });
-  const open = vi.fn();
-  vi.stubGlobal("open", open);
+  const open = vi.mocked(openExternal);
+  open.mockClear();
   await act(async () => root.render(<App />));
   const help = () => node.querySelector<HTMLButtonElement>('button[aria-label="Help"]')!;
   const choose = async (label: string) => {
@@ -3391,7 +3397,7 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   await choose("Open the docs");
-  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
+  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/");
   await choose("Report a problem");
   expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
 });

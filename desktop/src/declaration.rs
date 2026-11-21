@@ -11,12 +11,17 @@ pub struct Declaration {
     /// `checkWindow`: whether the page can open the tile check window
     /// (`CHECK_WINDOW`).
     pub check_window: bool,
+    /// `openLinks`: whether the page may open links to other sites with the
+    /// `open_link` command (see `links`). Every shell with the command says
+    /// so; an older one does not, and the page asks for a new window there.
+    pub open_links: bool,
 }
 
 /// What this build of the shell declares.
 pub const SHELL: Declaration = Declaration {
     tile_frames: TILE_FRAMES,
     check_window: CHECK_WINDOW,
+    open_links: true,
 };
 
 /// Whether the page may embed sandboxed frames of untrusted content served
@@ -72,10 +77,12 @@ pub fn script(declaration: Declaration) -> String {
     let Declaration {
         tile_frames,
         check_window,
+        open_links,
     } = declaration;
     format!(
         "if (window.top === window) Object.defineProperty(window, \"__BAUM_DESKTOP__\", \
-         {{ value: Object.freeze({{ tileFrames: {tile_frames}, checkWindow: {check_window} }}), \
+         {{ value: Object.freeze({{ tileFrames: {tile_frames}, checkWindow: {check_window}, \
+         openLinks: {open_links} }}), \
          writable: false, configurable: false, enumerable: false }});"
     )
 }
@@ -101,15 +108,17 @@ mod tests {
                 Declaration {
                     tile_frames: true,
                     check_window: true,
+                    open_links: true,
                 },
-                "tileFrames: true, checkWindow: true",
+                "tileFrames: true, checkWindow: true, openLinks: true",
             ),
             (
                 Declaration {
                     tile_frames: false,
                     check_window: false,
+                    open_links: false,
                 },
-                "tileFrames: false, checkWindow: false",
+                "tileFrames: false, checkWindow: false, openLinks: false",
             ),
         ] {
             let script = script(declaration);
@@ -132,5 +141,6 @@ mod tests {
             script(SHELL).contains("checkWindow: true"),
             cfg!(target_os = "linux")
         );
+        assert!(script(SHELL).contains("openLinks: true"));
     }
 }

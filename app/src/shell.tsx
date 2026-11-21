@@ -31,6 +31,7 @@ import {
   REFRESH_KEY_LABEL,
   REFRESH_KEY_SHORTCUT,
 } from "./shortcuts";
+import { openExternal } from "./outside-links";
 
 /** The inboxes nested under Inbox, with what changes them. Absent when the
  *  daemon is older and has none. */
@@ -481,7 +482,7 @@ function HelpButton({
     {
       label: "Open the docs",
       // The desktop app hands a new window to the browser.
-      onSelect: () => void window.open(DOCS_URL, "_blank", "noopener,noreferrer"),
+      onSelect: () => openExternal(DOCS_URL),
     },
   ];
   const show = (last = false, returnTo?: Element | null) => {
