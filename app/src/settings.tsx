@@ -1323,6 +1323,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
       {error ? <Alert>{error}</Alert> : null}
       <div className="local-panel settings-list">
         <SettingRow
+          pick
           label="Agent"
           htmlFor="panel-agent"
           detail={
@@ -1346,7 +1347,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
           />
         </SettingRow>
         {draft.agent ? (
-          <SettingRow label="Model" htmlFor="panel-model">
+          <SettingRow pick label="Model" htmlFor="panel-model">
             <ModelField
               key={draft.agent}
               id="panel-model"
