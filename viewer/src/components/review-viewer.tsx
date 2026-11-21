@@ -1813,10 +1813,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     </div>
   );
   const barPlaceholder = asidePlaceholder ?? (
-    <Empty title="No review yet">
-      Generate a review to see its details. Checks and comments show here once baum can read them
-      from GitHub.
-    </Empty>
+    <Empty title="Nothing here yet">This pane fills in once the pull request has a review.</Empty>
   );
   const historicalNote =
     barHistorical && barDocument ? (
