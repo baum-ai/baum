@@ -1958,7 +1958,9 @@ export function SettingsPage({
                     </span>
                   ) : null}
                 </span>
-                <span className="settings-nav-sub">{item.sub}</span>
+                <span className="settings-nav-sub" title={item.sub}>
+                  {item.sub}
+                </span>
               </span>
             </button>
           ))}
@@ -3481,7 +3483,11 @@ export function RepositoryPage({
                     </span>
                   ) : null}
                 </span>
-                {item.sub ? <span className="settings-nav-sub">{item.sub}</span> : null}
+                {item.sub ? (
+                  <span className="settings-nav-sub" title={item.sub}>
+                    {item.sub}
+                  </span>
+                ) : null}
               </span>
             </button>
           ))}

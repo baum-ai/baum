@@ -110,7 +110,7 @@ import {
   type ReviewDefaults,
 } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
-import { pageContextOf, withPicked } from "./page-context";
+import { pageContextOf, pageLabel, withPicked } from "./page-context";
 import {
   PANEL_KEY_LABEL,
   publishConsoleEvent,
@@ -1369,6 +1369,11 @@ function Workspace({ url }: { url: UrlState }) {
         : pageContext.page === "session"
           ? live.find((s) => `${s.agent}:${s.session_id}` === pageContext.session)?.title
           : undefined;
+  // The window title names the page, for the window switcher and screen readers.
+  const windowTitle = pageLabel(pageContext, pageTitle);
+  useEffect(() => {
+    document.title = `${windowTitle} · baum`;
+  }, [windowTitle]);
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
