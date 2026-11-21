@@ -567,7 +567,7 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
-// A right click on a row opens its menu, without picking the row.
+// A right click on a row picks it and opens its menu.
 const rightClick = (title: string) =>
   act(async () => {
     row(title).dispatchEvent(
@@ -592,9 +592,9 @@ it("offers a pull request's actions on a right click on its row", async () => {
     "Actions for acme/demo #3",
   );
   expect(choices()).toEqual(expect.arrayContaining(["Open", "Merge…", "Snooze…"]));
-  expect(choices()).not.toContain("Update the branch…");
-  // The panel stays on what it showed.
-  expect(shown()).toBe("Change 1");
+  expect(choices()).not.toContain("Update branch…");
+  // The panel follows the row, so the menu and the detail agree.
+  expect(shown()).toBe("Change 3");
   await choose("Merge…");
   expect(node.querySelector("dialog")).not.toBeNull();
 });

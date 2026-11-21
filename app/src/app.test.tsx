@@ -240,11 +240,11 @@ it("does not call a review group missing when the groups could not be read", asy
   history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Couldn't load the review group");
-  expect(node.textContent).not.toContain("does not exist any more");
+  expect(node.textContent).not.toContain("no longer exists");
   expect(retryButtons()).toHaveLength(1);
   heal();
   await act(async () => retryButtons()[0]!.click());
-  expect(node.textContent).toContain("does not exist any more");
+  expect(node.textContent).toContain("no longer exists");
 });
 
 it("reads again on Retry when a read under way never answers", async () => {
@@ -279,7 +279,7 @@ it("reads again on Retry when a read under way never answers", async () => {
   await act(async () => listeners.get("index")!());
   expect(node.textContent).toContain("Couldn't load the review group");
   await act(async () => retryButtons()[0]!.click());
-  expect(node.textContent).toContain("does not exist any more");
+  expect(node.textContent).toContain("no longer exists");
 });
 
 it("says the sessions could not be read instead of listing none", async () => {
