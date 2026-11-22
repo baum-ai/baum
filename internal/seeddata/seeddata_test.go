@@ -128,6 +128,7 @@ func TestTheDaemonReadsIt(t *testing.T) {
 	// The credential the daemon resolves from the dataset's config.toml
 	// reads the partition the dataset wrote.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "GITHUB_TOKEN", "GH_TOKEN", "GH_HOST"} {
 		t.Setenv(name, "")
 	}
