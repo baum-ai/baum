@@ -505,6 +505,7 @@ export function validColumns(data: unknown): data is ColumnsData {
     return (
       labelled &&
       Array.isArray(data.rows) &&
+      data.rows.length > 0 &&
       data.rows.every(
         (row) => Array.isArray(row) && row.every((item) => item === null || isItem(item)),
       )
@@ -737,12 +738,13 @@ export function wordDiff(was: string, now: string): { was: Piece[]; now: Piece[]
   return { was: mark(a, keptA, "removed"), now: mark(b, keptB, "added") };
 }
 
-/** A word or code span of a compared item: code as code, and bold or
- *  italic markers around a word dropped. */
+/** A word or code span of a compared item, code as code. The host has
+ *  already taken emphasis and links out of the text (tiles/view), so the
+ *  rest is plain and `__init__` or `*.go` stay as written. */
 function Token({ text }: { text: string }) {
   if (text.length > 1 && text.startsWith("`") && text.endsWith("`"))
     return <code className="rounded-sm bg-code-fill px-1 py-0.5">{text.slice(1, -1)}</code>;
-  return text.replace(/^(\*\*|__|\*|_)(?=\S)|(?<=\S)(\*\*|__|\*|_)$/g, "");
+  return text;
 }
 
 /** A compared item's pieces, the words it changed highlighted: `del` for
@@ -757,7 +759,9 @@ function Pieces({ pieces }: { pieces: Piece[] }) {
         key={at}
         data-mark={piece.mark}
         className={cn(
-          "rounded-sm px-0.5 no-underline",
+          "rounded-sm px-0.5",
+          // Removed words keep del's strike, so colour is not the only cue.
+          piece.mark === "added" && "no-underline",
           piece.mark === "added" ? "bg-status-positive-bg" : "bg-status-critical-bg",
         )}
       >
@@ -887,9 +891,11 @@ function ComparedColumns({ data, rows }: { data: ColumnsData; rows: (ColumnItem 
                   )}
                 >
                   {/* The column's name: shown while stacked, read out side by side. */}
-                  <span className={cn(BLOCK_LABEL, LABEL_INK[tones[at]!], WIDE[wide].srOnly)}>
-                    <InlineMarkdown>{data.columns[at]!.label}</InlineMarkdown>
-                  </span>
+                  {item ? (
+                    <span className={cn(BLOCK_LABEL, LABEL_INK[tones[at]!], WIDE[wide].srOnly)}>
+                      <InlineMarkdown>{data.columns[at]!.label}</InlineMarkdown>
+                    </span>
+                  ) : null}
                   {item ? (
                     <div
                       data-change={change ?? undefined}

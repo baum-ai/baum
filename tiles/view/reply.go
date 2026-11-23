@@ -129,7 +129,7 @@ func diagramSchema(kind string) string {
                 "items": {"type": ["array", "null"], "minItems": 1, "maxItems": %d, "items": %s, "description": "The column's list; null when rows compare the columns."}
               }
             }},
-            "rows": {"type": ["array", "null"], "description": "When the columns are states of one thing (before and after), the items compared one row at a time: one item per column, the same item in each state, null where a column has none; then every column's items is null. Null for lists of different things.", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"anyOf": [%s, {"type": "null"}]}}}`,
+            "rows": {"type": ["array", "null"], "description": "When the columns are states of one thing (before and after), the items compared one row at a time: one item per column, the same item in each state, null where a column has none; then every column's items are null. Null for lists of different things.", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"anyOf": [%s, {"type": "null"}]}}}`,
 			MinColumns, MaxColumns, text(MaxColumnLabel), tone, MaxColumnItems, item, MaxColumnItems, MinColumns, MaxColumns, item), `"columns", "rows"`)
 	case TypeSequence:
 		return diagram(fmt.Sprintf(`"actors": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},

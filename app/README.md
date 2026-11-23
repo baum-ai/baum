@@ -3017,8 +3017,9 @@ builds the rail's model (the sections and the file list) from it.
   item by item, as the model paired them: each row lines its items up with
   arrows between, an item that differs from the one before it has its words
   that differ highlighted (only where the two are mostly alike) and, when
-  some rows stayed the same, a Changed pill, one the column before lacks a New pill, and an item not otherwise
-  marked that the next column lacks a Removed pill. A row the same in every
+  some rows stayed the same, a Changed pill. An item the column before lacks
+  has a New pill. An item the next column lacks has a Removed pill, unless it
+  is already marked. A row the same in every
   column is drawn quieter, and arrows join only two items.
   Every row shows; "Show only changes" hides the unchanged ones. While a
   flow's lanes are rows, lines join its steps, a branch drops from the step
