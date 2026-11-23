@@ -977,7 +977,11 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
-member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+member of their stack, offer Snooze too. A stack's or group's row offers
+Snooze in its panel, on `s` and in its menu: it snoozes every member the row
+shows, together, with one **Undo**; each is then listed under Snoozed and
+brought back on its own (one snoozed until it changes comes back when it is
+pushed to). Snoozed waiting PRs keep their
 waiting classification, so the same inbox filters apply before and after
 snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
@@ -1262,7 +1266,7 @@ and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
 agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
 verdicts, **Snooze…** (which picks the row and opens its snooze choices), **Archive** and
-**Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
+**Open on GitHub**; on a group's row, **Open**, Show or Hide its pull requests and **Snooze…**; on a
 row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
