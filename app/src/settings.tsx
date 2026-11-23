@@ -12,14 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import {
-  Alert,
-  Badge,
-  Button,
-  CloseButton,
-  LiveDot,
-  SegmentedControl,
-} from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import {
   formatCount,
   formatDateTime,
@@ -117,6 +110,21 @@ export type ReviewDefaults = {
   fix_backend?: string;
   fix_model?: string;
   fix_effort?: string;
+  /** The Claude Code configuration directories reviews and fixes run with;
+   *  empty leaves it to the environment, which gives
+   *  `default_claude_config_dir`. `claude_config_dirs` are the ones baum
+   *  knows on this computer. */
+  claude_config_dir?: string;
+  fix_claude_config_dir?: string;
+  default_claude_config_dir?: string;
+  claude_config_dirs?: string[];
+  /** The same for Codex: the CODEX_HOME reviews and fixes run with. */
+  codex_home?: string;
+  fix_codex_home?: string;
+  default_codex_home?: string;
+  codex_homes?: string[];
+  /** The user's home directory, written as ~ in those paths. */
+  home?: string;
 };
 
 function errorText(error: unknown) {
@@ -165,13 +173,14 @@ const SECTION_CONTROLS = [
   "summary",
 ].join(", ");
 
-/** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`):
- *  the section list is the selection, as Up next's list is: j/↓ and k/↑ move
- *  it, 1 to 6 jump to a section, and Enter, l or → goes into the shown
- *  section. There j/↓ and k/↑ step through its controls, Enter or Space
- *  changes the focused one, and Esc, h or ← go back to the list. Esc in a text
- *  field or select gives it up first (`useEscapeBlurs`), leaving the place in
- *  the section, so j and k go on from it. */
+/** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
+ *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
+ *  previous section from anywhere, and 1 to 6 jump to one. j/↓ and k/↑ step
+ *  through the shown section's controls; from the section list j goes to its
+ *  first control and k to its last, as Enter, l or → go to the first. Enter or
+ *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
+ *  in a text field or select gives it up first (`useEscapeBlurs`), leaving the
+ *  place in the section, so j and k go on from it. */
 function useSettingsKeys<S extends string>(
   sections: readonly S[],
   section: S,
@@ -205,8 +214,15 @@ function useSettingsKeys<S extends string>(
     if (document.activeElement === document.body) navItem(section)?.focus({ preventScroll: true });
   }, [section]);
   useShortcuts((event) => {
-    const key = event.key;
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
     const step = key === "j" || key === "ArrowDown" ? 1 : key === "k" || key === "ArrowUp" ? -1 : 0;
+    if (step && event.shiftKey) {
+      event.preventDefault();
+      const index = sections.indexOf(section);
+      show(sections[Math.min(sections.length - 1, Math.max(0, index + step))]!);
+      return;
+    }
+    if (event.shiftKey && key.length === 1) return;
     const active = document.activeElement;
     const inSection =
       active instanceof HTMLElement &&
@@ -239,9 +255,11 @@ function useSettingsKeys<S extends string>(
       return;
     }
     if (step) {
+      const list = controls();
+      const target = step > 0 ? list[0] : list[list.length - 1];
+      if (!target) return;
       event.preventDefault();
-      const index = sections.indexOf(section);
-      show(sections[Math.min(sections.length - 1, Math.max(0, index + step))]!);
+      focus(target);
     } else if (/^[1-9]$/.test(key) && sections[Number(key) - 1]) {
       event.preventDefault();
       show(sections[Number(key) - 1]!);
@@ -316,14 +334,19 @@ export function SettingRow({
   htmlFor,
   detail,
   children,
+  pick = false,
 }: {
   label: ReactNode;
   htmlFor?: string;
   detail?: ReactNode;
   children?: ReactNode;
+  /** A row of choices (model, effort, which pull requests): its controls
+   *  sit on the right beside the name and its sentence, and drop below them
+   *  only when the panel is too narrow for both. */
+  pick?: boolean;
 }) {
   return (
-    <div className="settings-row">
+    <div className={pick ? "settings-row settings-row-pick" : "settings-row"}>
       <div className="settings-row-text">
         {htmlFor ? (
           <label htmlFor={htmlFor} className="settings-row-label">
@@ -523,6 +546,163 @@ export function RepositoryPrompts({
   );
 }
 
+/** Why `work` will fail while `backend` is signed out, and how to sign in. */
+function SignedOutCaution({ backend, work }: { backend: string; work: string }) {
+  return (
+    <span className="settings-caution">
+      {harnessName(backend)} isn't signed in, so {work} will fail. {signIn[backend]}.
+    </span>
+  );
+}
+
+const CUSTOM = "\u0000custom";
+
+const scopes: { value: PullRequests; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "both", label: "Mine and requested" },
+  { value: "authored", label: "Only mine" },
+  { value: "requested", label: "Only requested" },
+];
+
+const efforts: { value: string; label: string }[] = [
+  { value: "", label: "Default" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+/** What tells one account of an agent from another: its configuration
+ *  directory, as `GET api/settings` reports it per agent. */
+const accounts: Record<
+  string,
+  {
+    name: string;
+    folder: string;
+    placeholder: string;
+    known: (d: ReviewDefaults) => string[] | undefined;
+    fallback: (d: ReviewDefaults) => string | undefined;
+  }
+> = {
+  claude: {
+    name: "Claude Code account",
+    folder: ".claude",
+    placeholder: "~/.claude-work",
+    known: (d) => d.claude_config_dirs,
+    fallback: (d) => d.default_claude_config_dir,
+  },
+  codex: {
+    name: "Codex account",
+    folder: ".codex",
+    placeholder: "~/.codex-work",
+    known: (d) => d.codex_homes,
+    fallback: (d) => d.default_codex_home,
+  },
+};
+
+/** The draft field holding `backend`'s configuration directory. */
+const accountField = (backend: string) =>
+  backend === "codex" ? ("codex_home" as const) : ("claude_config_dir" as const);
+
+/** The configuration directory (CLAUDE_CONFIG_DIR, CODEX_HOME) a use case
+ *  runs its agent with, behind an Advanced disclosure that starts closed
+ *  unless one is chosen: "" leaves it to the environment. An agent without
+ *  one shows nothing. */
+function AccountAdvanced({
+  id,
+  backend,
+  value,
+  defaults,
+  onChange,
+}: {
+  id: string;
+  backend: string;
+  value: string;
+  defaults: ReviewDefaults;
+  onChange: (next: string) => void;
+}) {
+  const account = accounts[backend];
+  const known = [
+    ...new Set([...((account && account.known(defaults)) ?? []), ...(value ? [value] : [])]),
+  ];
+  const [custom, setCustom] = useState(false);
+  const [text, setText] = useState("");
+  // A saved choice ends the typing; a failed save keeps the field to correct.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `value` changing is the signal
+  useEffect(() => setCustom(false), [value]);
+  if (!account) return null;
+  const commit = () => {
+    const next = text.trim();
+    if (next && next !== value) onChange(next);
+  };
+  const fallback = account.fallback(defaults);
+  // A daemon older than this page, still finishing its jobs after an update,
+  // sends no home; the usual default directory then tells where it is.
+  const home =
+    defaults.home ||
+    (fallback?.endsWith(`/${account.folder}`) ? fallback.slice(0, -account.folder.length - 1) : "");
+  const display = (dir: string) => displayPath(dir, home);
+  // The default is in the list under its own name, not a second time by path.
+  const others = known.filter((dir) => dir !== fallback || dir === value);
+  return (
+    <details className="settings-advanced" open={value ? true : undefined}>
+      <summary>Advanced</summary>
+      <SettingRow
+        pick
+        label={account.name}
+        htmlFor={id}
+        detail={
+          <>
+            Pick another account's folder to run with its sign-in and plan
+            {fallback ? (
+              <>
+                {" "}
+                instead of <code>{display(fallback)}</code>
+              </>
+            ) : null}
+            .
+          </>
+        }
+      >
+        <div className="settings-model">
+          <select
+            id={id}
+            className="local-field settings-select"
+            value={custom ? CUSTOM : value}
+            onChange={(event) => {
+              const next = event.target.value;
+              setCustom(next === CUSTOM);
+              if (next === CUSTOM) setText("");
+              else if (next !== value) onChange(next);
+            }}
+          >
+            <option value="">Default</option>
+            {others.map((dir) => (
+              <option key={dir} value={dir}>
+                {display(dir)}
+              </option>
+            ))}
+            <option value={CUSTOM}>Another directory…</option>
+          </select>
+          {custom ? (
+            <input
+              className="local-field settings-select"
+              aria-label={`${account.name} folder`}
+              placeholder={account.placeholder}
+              value={text}
+              spellCheck={false}
+              onChange={(event) => setText(event.target.value)}
+              onBlur={commit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commit();
+              }}
+            />
+          ) : null}
+        </div>
+      </SettingRow>
+    </details>
+  );
+}
+
 /** The harness and model a desktop app or daemon page shows, as one select
  *  per row. `same` adds a first choice that follows another setting. */
 function AgentSelect({
@@ -569,17 +749,6 @@ function AgentSelect({
     </select>
   );
 }
-
-/** Why `work` will fail while `backend` is signed out, and how to sign in. */
-function SignedOutCaution({ backend, work }: { backend: string; work: string }) {
-  return (
-    <span className="settings-caution">
-      {harnessName(backend)} isn't signed in, so {work} will fail. {signIn[backend]}.
-    </span>
-  );
-}
-
-const CUSTOM = "\u0000custom";
 
 /** The harness's models, its default first, and a name typed in by hand,
  *  which is saved when the field is left or Enter is pressed. */
@@ -644,40 +813,40 @@ function ModelField({
   );
 }
 
-const scopes: { value: PullRequests; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "both", label: "Mine and requested" },
-  { value: "authored", label: "Only mine" },
-  { value: "requested", label: "Only requested" },
-];
-
-const efforts: { value: string; label: string }[] = [
-  { value: "", label: "Default" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-];
-
-/** A use case's reasoning effort: "" leaves it to the agent. */
-function EffortRow({
+/** A use case's reasoning effort, beside its model: "" leaves it to the
+ *  agent. A saved level the list doesn't have still shows as chosen. */
+function EffortSelect({
+  id,
   label,
   value,
+  disabled,
   onChange,
 }: {
+  id: string;
   label: string;
   value: string;
+  disabled?: boolean;
   onChange: (next: string) => void;
 }) {
   const items = efforts.some((item) => item.value === value)
     ? efforts
     : [...efforts, { value, label: effortLabels[value] ?? value }];
   return (
-    <SettingRow
-      label="Reasoning effort"
-      detail="Default leaves it to the agent. Higher thinks longer and costs more."
+    <select
+      id={id}
+      aria-label={label}
+      title="How hard the agent thinks. Default leaves it to the agent; higher thinks longer and costs more."
+      className="local-field settings-select settings-effort"
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
     >
-      <SegmentedControl label={label} value={value} items={items} onChange={onChange} />
-    </SettingRow>
+      {items.map((item) => (
+        <option key={item.value} value={item.value}>
+          {item.value ? `${item.label} effort` : "Default effort"}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -698,15 +867,18 @@ function ReviewsSection({
   /** Harnesses the desktop app found signed out. */
   signedOut?: readonly string[];
 }) {
-  const saved: ReviewSettings & { effort: string } = {
-    ...withModel({
-      backend: shownBackend(defaults.backend),
-      model: defaults.backend === "auto" ? "" : defaults.model,
-      automatic: automatic.enabled,
-      pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
-    }),
-    effort: defaults.effort ?? "",
-  };
+  const saved: ReviewSettings & { effort: string; claude_config_dir: string; codex_home: string } =
+    {
+      ...withModel({
+        backend: shownBackend(defaults.backend),
+        model: defaults.backend === "auto" ? "" : defaults.model,
+        automatic: automatic.enabled,
+        pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
+      }),
+      effort: defaults.effort ?? "",
+      claude_config_dir: defaults.claude_config_dir ?? "",
+      codex_home: defaults.codex_home ?? "",
+    };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
   const { save, error, status, failures } = useAutoSave(changed);
@@ -723,6 +895,11 @@ function ReviewsSection({
       model: next.model,
       effort: next.effort,
       pull_requests: next.pull_requests,
+      // Sent only when they change, so other saves never touch them.
+      ...(next.claude_config_dir !== saved.claude_config_dir
+        ? { claude_config_dir: next.claude_config_dir }
+        : {}),
+      ...(next.codex_home !== saved.codex_home ? { codex_home: next.codex_home } : {}),
     });
   };
   const harness = harnesses.find((h) => h.id === draft.backend);
@@ -758,7 +935,9 @@ function ReviewsSection({
         </SettingRow>
         {draft.automatic ? (
           <SettingRow
+            pick
             label="Which pull requests"
+            htmlFor="review-pull-requests"
             detail={
               draft.pull_requests === "all" ? (
                 <span id="review-all-note">
@@ -768,16 +947,23 @@ function ReviewsSection({
               ) : null
             }
           >
-            <SegmentedControl
-              label="Which pull requests"
+            <select
+              id="review-pull-requests"
+              className="local-field settings-select settings-model-pick"
               value={draft.pull_requests}
-              items={scopes}
-              onChange={(pull_requests) => change({ pull_requests })}
-            />
+              onChange={(event) => change({ pull_requests: event.target.value as PullRequests })}
+            >
+              {scopes.map((scope) => (
+                <option key={scope.value} value={scope.value}>
+                  {scope.label}
+                </option>
+              ))}
+            </select>
           </SettingRow>
         ) : null}
         <SettingRow
-          label="Agent that writes reviews"
+          pick
+          label="Agent"
           htmlFor="review-agent"
           detail={
             signedOut.includes(draft.backend) ? (
@@ -795,20 +981,30 @@ function ReviewsSection({
             onChange={(backend) => change({ backend, model: modelPresets[backend]?.[0] ?? "" })}
           />
         </SettingRow>
-        <SettingRow label="Model" htmlFor="review-model">
-          <ModelField
-            // A new harness lists other models, so the field starts over.
-            key={draft.backend}
-            id="review-model"
-            backend={draft.backend}
-            value={draft.model}
-            onChange={(model) => change({ model })}
-          />
+        <SettingRow pick label="Model" htmlFor="review-model">
+          <div className="settings-pick">
+            <ModelField
+              // A new harness lists other models, so the field starts over.
+              key={draft.backend}
+              id="review-model"
+              backend={draft.backend}
+              value={draft.model}
+              onChange={(model) => change({ model })}
+            />
+            <EffortSelect
+              id="review-effort"
+              label="Review reasoning effort"
+              value={draft.effort}
+              onChange={(effort) => change({ effort })}
+            />
+          </div>
         </SettingRow>
-        <EffortRow
-          label="Review reasoning effort"
-          value={draft.effort}
-          onChange={(effort) => change({ effort })}
+        <AccountAdvanced
+          id={draft.backend === "codex" ? "review-codex-home" : "review-claude-config-dir"}
+          backend={draft.backend}
+          value={draft[accountField(draft.backend)]}
+          defaults={defaults}
+          onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
         />
       </div>
       <p className="settings-footnote">
@@ -836,6 +1032,8 @@ function FixesSection({
     backend: savedBackend,
     model: savedBackend ? defaults.fix_model || (modelPresets[savedBackend]?.[0] ?? "") : "",
     effort: savedBackend ? (defaults.fix_effort ?? "") : "",
+    claude_config_dir: savedBackend ? (defaults.fix_claude_config_dir ?? "") : "",
+    codex_home: savedBackend ? (defaults.fix_codex_home ?? "") : "",
   };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
@@ -844,7 +1042,18 @@ function FixesSection({
   useEffect(() => setDraft(saved), [key, failures]);
   const change = (next: typeof saved) => {
     setDraft(next);
-    save({ fix_backend: next.backend, fix_model: next.model, fix_effort: next.effort });
+    save({
+      fix_backend: next.backend,
+      fix_model: next.model,
+      fix_effort: next.effort,
+      // Sent only when they change; following reviews again clears them anyway.
+      ...(next.backend && next.claude_config_dir !== saved.claude_config_dir
+        ? { fix_claude_config_dir: next.claude_config_dir }
+        : {}),
+      ...(next.backend && next.codex_home !== saved.codex_home
+        ? { fix_codex_home: next.codex_home }
+        : {}),
+    });
   };
   const reviewModel = defaults.backend === "auto" ? "" : defaults.model;
   const reviewAgent = [harnessName(review), reviewModel].filter(Boolean).join(" · ");
@@ -859,7 +1068,8 @@ function FixesSection({
       {error ? <Alert>{error}</Alert> : null}
       <div className="local-panel settings-list">
         <SettingRow
-          label="Agent that fixes"
+          pick
+          label="Agent"
           htmlFor="fix-agent"
           detail={
             !draft.backend && !fixHarnesses.includes(review) ? (
@@ -870,10 +1080,7 @@ function FixesSection({
             ) : signedOut.includes(draft.backend || review) ? (
               <SignedOutCaution backend={draft.backend || review} work="fixes" />
             ) : (
-              <>
-                {draft.backend ? "" : `Now ${reviewAgent}. `}It works with write access to a
-                temporary checkout. Only Claude Code and Codex can fix.
-              </>
+              "Fixes run in a temporary copy of the pull request's branch."
             )
           }
         >
@@ -881,35 +1088,45 @@ function FixesSection({
             id="fix-agent"
             value={draft.backend}
             options={fixHarnesses}
-            same="Same as reviews"
+            same={`Same as reviews (${reviewAgent})`}
             signedOut={signedOut}
             onChange={(backend) =>
               change({
                 backend,
                 model: backend ? (modelPresets[backend]?.[0] ?? "") : "",
                 effort: backend ? draft.effort : "",
+                claude_config_dir: backend === "claude" ? draft.claude_config_dir : "",
+                codex_home: backend === "codex" ? draft.codex_home : "",
               })
             }
           />
         </SettingRow>
         {draft.backend ? (
-          <SettingRow label="Model" htmlFor="fix-model">
-            <ModelField
-              key={draft.backend}
-              id="fix-model"
-              backend={draft.backend}
-              value={draft.model}
-              onChange={(model) => change({ ...draft, model })}
-            />
+          <SettingRow pick label="Model" htmlFor="fix-model">
+            <div className="settings-pick">
+              <ModelField
+                key={draft.backend}
+                id="fix-model"
+                backend={draft.backend}
+                value={draft.model}
+                onChange={(model) => change({ ...draft, model })}
+              />
+              <EffortSelect
+                id="fix-effort"
+                label="Fix reasoning effort"
+                value={draft.effort}
+                onChange={(effort) => change({ ...draft, effort })}
+              />
+            </div>
           </SettingRow>
         ) : null}
-        {draft.backend ? (
-          <EffortRow
-            label="Fix reasoning effort"
-            value={draft.effort}
-            onChange={(effort) => change({ ...draft, effort })}
-          />
-        ) : null}
+        <AccountAdvanced
+          id={draft.backend === "codex" ? "fix-codex-home" : "fix-claude-config-dir"}
+          backend={draft.backend}
+          value={draft[accountField(draft.backend)]}
+          defaults={defaults}
+          onChange={(dir) => change({ ...draft, [accountField(draft.backend)]: dir })}
+        />
       </div>
       <p className="settings-footnote">
         {draft.backend
@@ -1011,7 +1228,7 @@ function useDesktopSetup(onChanged?: () => Promise<void>) {
     <>
       {error ? <Alert>{display(error)}</Alert> : null}
       {output ? (
-        <p role="status" className="whitespace-pre-wrap text-xs text-(--text-secondary)">
+        <p role="status" className="whitespace-pre-wrap text-xs text-secondary">
           {display(output)}
         </p>
       ) : null}
@@ -1023,10 +1240,10 @@ type DesktopSetup = ReturnType<typeof useDesktopSetup>;
 
 function connectedState(label: string, connected: boolean, attention = false) {
   const tone = connected
-    ? "text-(--status-positive)"
+    ? "text-status-positive"
     : attention
-      ? "text-(--status-caution)"
-      : "text-(--text-tertiary)";
+      ? "text-status-caution"
+      : "text-tertiary";
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs ${tone}`}>
       {connected ? <CheckIcon size={14} /> : attention ? <Dot tone="caution" /> : null}
@@ -1049,8 +1266,8 @@ function agentBadge(agent: Agent) {
 function TerminalSetupRow({ text, command }: { text: string; command: string }) {
   const { copied, copy } = useCopy();
   return (
-    <div id="terminal-setup" className="border-t border-(--border-subtle) px-5 py-4">
-      <p className="text-xs text-(--text-secondary)">{text}</p>
+    <div id="terminal-setup" className="border-t border-subtle px-5 py-4">
+      <p className="text-xs text-secondary">{text}</p>
       <div className="terminal-command">
         <CommandText command={command} />
         <Button
@@ -1102,7 +1319,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
           : checkingAgents.map((agent) => (
               <div
                 key={agent.agent}
-                className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
+                className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4"
               >
                 <div className="flex min-w-0 flex-[1_1_16rem] items-center gap-3">
                   <BrandMark
@@ -1111,7 +1328,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                     className="shrink-0"
                   />
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  <div className="text-xs text-(--text-tertiary)">
+                  <div className="text-xs text-tertiary">
                     <LoadingStatus>Checking…</LoadingStatus>
                   </div>
                 </div>
@@ -1120,7 +1337,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
         {view?.hooks.agents.map((agent) => (
           <div
             key={agent.agent}
-            className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
+            className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4"
           >
             <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-3">
               <BrandMark
@@ -1132,7 +1349,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
                   {checking ? (
-                    <div className="text-xs text-(--text-tertiary)">
+                    <div className="text-xs text-tertiary">
                       <LoadingStatus>Checking…</LoadingStatus>
                     </div>
                   ) : (
@@ -1143,15 +1360,15 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                     )
                   )}
                   {agent.installed && agent.version ? (
-                    <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
+                    <span className="text-xs text-tertiary">Plugin {agent.version}</span>
                   ) : null}
                 </div>
                 {(agent.error || !agent.installed || agentUnsupported(agent)) &&
                 describeAgent(agent) ? (
-                  <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
+                  <p className="text-xs text-secondary">{display(describeAgent(agent))}</p>
                 ) : null}
                 {agent.installed ? (
-                  <p className="text-xs text-(--text-tertiary)">
+                  <p className="text-xs text-tertiary">
                     {withCode(agentHookNote(agent), ["/hooks"])}
                   </p>
                 ) : null}
@@ -1224,7 +1441,7 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
         title="Command line"
         detail="Use baum from your terminal. Updates come with the desktop app."
       />
-      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-3">
             <h3 className="text-base font-medium">baum CLI</h3>
@@ -1233,17 +1450,15 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
               : null}
           </div>
           {command ? (
-            <p className="break-all text-xs text-(--text-secondary)">
+            <p className="break-all text-xs text-secondary">
               {withCode(display(command.state), [command.path && display(command.path)])}
             </p>
           ) : (
-            <p role="status" className="text-xs text-(--text-secondary)">
+            <p role="status" className="text-xs text-secondary">
               Checking installation…
             </p>
           )}
-          {command?.note ? (
-            <p className="text-xs text-(--text-secondary)">{display(command.note)}</p>
-          ) : null}
+          {command?.note ? <p className="text-xs text-secondary">{display(command.note)}</p> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {command?.action ? (
@@ -1767,7 +1982,7 @@ function TimeLimitRows() {
         "review_time_limit_minutes",
         "review-time-limit",
         "Review time limit",
-        "How long a review may run before it stops. Reviews have no call or token limit.",
+        "How long a pull request review may run before it stops. A review group gets more time for each extra pull request. Reviews have no call or token limit.",
       )}
       {row(
         "run_time_limit_minutes",
@@ -1817,8 +2032,8 @@ function ZoomSection() {
         title="Zoom"
         detail="Make everything in this window larger or smaller."
       />
-      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
-        <p className="min-w-0 flex-1 text-xs text-(--text-secondary)">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4">
+        <p className="min-w-0 flex-1 text-xs text-secondary">
           {mod} + and {mod} − also change it, and {mod} 0 resets it to 100%.
         </p>
         <select
@@ -1872,6 +2087,8 @@ function DecisionSettingsSection({
     backend: saved.backend,
     model: saved.model,
     effort: saved.effort ?? "",
+    claude_config_dir: saved.claude_config_dir ?? "",
+    codex_home: saved.codex_home ?? "",
   };
   const key = JSON.stringify(choice);
   const [draft, setDraft] = useState(choice);
@@ -1889,7 +2106,19 @@ function DecisionSettingsSection({
     setDraft(next);
     // The default is saved as none, so it follows the agent.
     const model = next.model === decisionModelDefaults[resolve(next.backend)] ? "" : next.model;
-    save({ enabled: next.enabled, backend: next.backend, model, effort: next.effort });
+    save({
+      enabled: next.enabled,
+      backend: next.backend,
+      model,
+      effort: next.effort,
+      // Sent only when they change; following reviews again clears them anyway.
+      ...(next.backend && next.claude_config_dir !== (saved.claude_config_dir ?? "")
+        ? { claude_config_dir: next.claude_config_dir }
+        : {}),
+      ...(next.backend && next.codex_home !== (saved.codex_home ?? "")
+        ? { codex_home: next.codex_home }
+        : {}),
+    });
   };
   // A saved model the daemon reports extraction ignores is shown as such.
   const ignored =
@@ -1920,7 +2149,8 @@ function DecisionSettingsSection({
           />
         </SettingRow>
         <SettingRow
-          label="Agent that extracts"
+          pick
+          label="Agent"
           htmlFor="decisions-agent"
           detail={
             !fallback ? (
@@ -1939,24 +2169,30 @@ function DecisionSettingsSection({
               )
             ) : signedOut.includes(backend) && !off ? (
               <SignedOutCaution backend={backend} work="extraction" />
-            ) : draft.backend ? null : (
-              `Now ${harnessName(backend)}.`
-            )
+            ) : null
           }
         >
           <AgentSelect
             id="decisions-agent"
             value={draft.backend}
             options={extractionHarnesses}
-            same="Same as reviews"
+            same={`Same as reviews (${harnessName(resolve(""))})`}
             signedOut={signedOut}
             disabled={off}
             // A new harness lists other models, so the model starts over.
-            onChange={(next) => change({ backend: next, model: "" })}
+            onChange={(next) =>
+              change({
+                backend: next,
+                model: "",
+                claude_config_dir: next === "claude" ? draft.claude_config_dir : "",
+                codex_home: next === "codex" ? draft.codex_home : "",
+              })
+            }
           />
         </SettingRow>
         {fallback ? (
           <SettingRow
+            pick
             label="Model"
             htmlFor="decisions-model"
             detail={
@@ -1968,21 +2204,33 @@ function DecisionSettingsSection({
               ) : null
             }
           >
-            <ModelField
-              key={backend}
-              id="decisions-model"
-              backend={backend}
-              value={draft.model || fallback}
-              disabled={off}
-              onChange={(model) => change({ model })}
-            />
+            <div className="settings-pick">
+              <ModelField
+                key={backend}
+                id="decisions-model"
+                backend={backend}
+                value={draft.model || fallback}
+                disabled={off}
+                onChange={(model) => change({ model })}
+              />
+              <EffortSelect
+                id="decisions-effort"
+                label="Extraction reasoning effort"
+                value={draft.effort}
+                disabled={off}
+                onChange={(effort) => change({ effort })}
+              />
+            </div>
           </SettingRow>
         ) : null}
-        {fallback ? (
-          <EffortRow
-            label="Extraction reasoning effort"
-            value={draft.effort}
-            onChange={(effort) => change({ effort })}
+        {/* Only with an agent of its own: otherwise it follows the reviews'. */}
+        {draft.backend && !off ? (
+          <AccountAdvanced
+            id={draft.backend === "codex" ? "decisions-codex-home" : "decisions-claude-config-dir"}
+            backend={draft.backend}
+            value={draft[accountField(draft.backend)]}
+            defaults={defaults}
+            onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
           />
         ) : null}
       </div>
@@ -2143,7 +2391,7 @@ function AgentEnvSection() {
       />
       {loadError ? <Alert className="mx-5 mb-4">{loadError}</Alert> : null}
       {source === "file" ? (
-        <p className="px-5 pb-3 text-xs text-(--text-tertiary)">
+        <p className="px-5 pb-3 text-xs text-tertiary">
           These come from the <code>[agent_env]</code> section of the config file. Saving here
           replaces them.
         </p>
@@ -2154,9 +2402,7 @@ function AgentEnvSection() {
         )
       ) : (
         <div className="settings-env">
-          {rows.length === 0 ? (
-            <p className="text-xs text-(--text-tertiary)">No variables set.</p>
-          ) : null}
+          {rows.length === 0 ? <p className="text-xs text-tertiary">No variables set.</p> : null}
           {rows.map((row) => (
             <div key={row.id} className="settings-env-row">
               <input
@@ -2197,7 +2443,7 @@ function AgentEnvSection() {
           {tooMany ? <Alert>At most {ENV_MAX} variables.</Alert> : null}
         </div>
       )}
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle px-5 py-3">
         <Button
           variant="secondary"
           size="compact"
@@ -2213,7 +2459,7 @@ function AgentEnvSection() {
           Add variable
         </Button>
         <div className="flex flex-wrap items-center gap-2">
-          <p role="status" className="text-xs text-(--text-tertiary)">
+          <p role="status" className="text-xs text-tertiary">
             {done
               ? "Saved. Applies to the next agent run."
               : dirty
@@ -2615,7 +2861,7 @@ function RepositoryRow({
       <span className="local-repo-state">
         {activity.running ? (
           <>
-            <LiveDot className="text-(--status-positive)" />
+            <LiveDot className="text-status-positive" />
             {activity.running === 1 ? "Reviewing" : `Reviewing ${formatCount(activity.running)}`}
           </>
         ) : status?.pending ? (

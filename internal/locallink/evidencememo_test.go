@@ -93,15 +93,15 @@ func TestBuildSessionEvidenceReusesAnUnchangedAnswer(t *testing.T) {
 	}
 
 	// Other caps are another answer: the linked session's evidence is built
-	// again, which loads a second time to map it. (Its transcript is first
+	// again from the compact basis without a second load. (Its transcript is first
 	// settled and read, so that it has a digest to reuse.)
 	rebuild(t, req)
 	other := req
 	other.MaxPromptsPerSession = 1
 	loads = counter("sessions.load.calls")
 	buildEvidence(t, other)
-	if got := counter("sessions.load.calls") - loads; got != 2 {
-		t.Errorf("other caps: %d loads, want 2", got)
+	if got := counter("sessions.load.calls") - loads; got != 1 {
+		t.Errorf("other caps: %d loads, want 1", got)
 	}
 }
 

@@ -83,14 +83,62 @@ const label = (value: string) =>
 /** "Decisions (n)" for a session in the PR page's Sessions in progress panel:
  *  its captured decisions' titles behind a disclosure, and where its capture
  *  stands. */
-export function LiveSessionDecisions({ session }: { session: LiveSession }) {
-  const now = useNow();
+export function LiveSessionDecisions({
+  session,
+  read,
+}: {
+  session: LiveSession;
+  read?: PullRequestDecisionsRead | null;
+}) {
+  if (read !== undefined) {
+    const s = read?.sessions.find(
+      (s) => s.agent === session.agent && s.session_id === session.session_id,
+    );
+    return s ? <SessionDecisionDisclosure session={s} /> : null;
+  }
+  return <FullSessionDecisions session={session} />;
+}
+
+function FullSessionDecisions({ session }: { session: LiveSession }) {
   const s = useDecisions(
     `api/decisions?agent=${encodeURIComponent(session.agent)}&session=${encodeURIComponent(session.session_id)}`,
     parseSession,
   );
-  if (!s) return null;
-  const state = captureState(s, now);
+  return s ? <SessionDecisionDisclosure session={s} /> : null;
+}
+
+export function relevanceState(s: SessionDecisions): string {
+  const r = s.relevance;
+  if (!r) return "";
+  const parts: string[] = [];
+  if (r.pending) parts.push(`Checking ${r.pending} for relevance…`);
+  if (r.failed)
+    parts.push(
+      `Relevance check failed for ${r.failed} ${r.failed === 1 ? "decision" : "decisions"}.`,
+    );
+  if (r.unavailable)
+    parts.push(
+      `Relevance could not be checked for ${r.unavailable} ${r.unavailable === 1 ? "decision" : "decisions"}.`,
+    );
+  if (r.uncertain)
+    parts.push(
+      `${r.uncertain} ${r.uncertain === 1 ? "decision has" : "decisions have"} insufficient evidence of relevance.`,
+    );
+  if (
+    !s.decisions.length &&
+    !r.pending &&
+    !r.failed &&
+    !r.unavailable &&
+    !r.uncertain &&
+    r.unrelated
+  )
+    parts.push("No decisions relate to these changes.");
+  return parts.join(" ");
+}
+
+function SessionDecisionDisclosure({ session: s }: { session: SessionDecisions }) {
+  const now = useNow();
+  const state = [relevanceState(s), captureState(s, now)].filter(Boolean).join(" · ");
   if (s.decisions.length === 0)
     return (
       <p className="local-live-decisions">
@@ -230,9 +278,10 @@ export function usePullRequestDecisions(
   repository: string,
   number: number,
   revision: number | string,
+  head = "",
 ): PullRequestDecisionsRead | null {
   const answer = useDecisions(
-    `api/decisions?repository=${encodeURIComponent(repository)}&pr=${number}`,
+    `api/decisions?repository=${encodeURIComponent(repository)}&pr=${number}${head ? `&head=${encodeURIComponent(head)}` : ""}`,
     parsePullRequest,
     revision,
   );
@@ -256,9 +305,10 @@ export function useGroupDecisions(
   repository: string,
   numbers: number[],
   revision: number | string,
+  heads: Record<number, string> = {},
 ): PullRequestDecisionsRead | null {
   const events = useContext(DecisionsRevision);
-  const key = `${repository}\n${numbers.join(",")}`;
+  const key = `${repository}\n${numbers.map((n) => `${n}:${heads[n] ?? ""}`).join(",")}`;
   const [answer, setAnswer] = useState<{ key: string; reads: PullRequestDecisions[] } | null>(null);
   useEffect(() => {
     if (numbers.length === 0) return;
@@ -266,7 +316,7 @@ export function useGroupDecisions(
     void Promise.allSettled(
       numbers.map((number) =>
         request<unknown>(
-          `api/decisions?repository=${encodeURIComponent(repository)}&pr=${number}`,
+          `api/decisions?repository=${encodeURIComponent(repository)}&pr=${number}${heads[number] ? `&head=${encodeURIComponent(heads[number])}` : ""}`,
           undefined,
           "GET",
           abort.signal,
@@ -289,7 +339,11 @@ export function useGroupDecisions(
       const id = `${s.agent}:${s.session_id}`;
       const have = merged.get(id);
       if (!have) {
-        merged.set(id, { ...s, decisions: [...s.decisions] });
+        merged.set(id, {
+          ...s,
+          relevance: s.relevance ? { ...s.relevance } : undefined,
+          decisions: [...s.decisions],
+        });
         continue;
       }
       const known = new Set(have.decisions.map((d) => d.decision_id));
@@ -297,6 +351,11 @@ export function useGroupDecisions(
       have.live = have.live || s.live;
       have.capturing = have.capturing || s.capturing;
       have.title ||= s.title;
+      if (s.relevance) {
+        have.relevance ??= { pending: 0, unrelated: 0, uncertain: 0, unavailable: 0, failed: 0 };
+        for (const key of ["pending", "unrelated", "uncertain", "unavailable", "failed"] as const)
+          have.relevance[key] += s.relevance[key];
+      }
       if (!have.coverage && s.coverage) {
         have.coverage = s.coverage;
         have.skip_reason = s.skip_reason;
@@ -376,6 +435,11 @@ export function PullRequestDecisionsPane({
                 ) : null}
               </h3>
               <p className="local-decisions-state">{captureState(s, now)}</p>
+              {relevanceState(s) ? (
+                <p className="local-decisions-state" role="status">
+                  {relevanceState(s)}
+                </p>
+              ) : null}
               {decisionGroups(s.decisions).map((group) => (
                 <section key={group.key} className="local-decisions-group" aria-label={group.title}>
                   <h4>
@@ -404,6 +468,25 @@ export function PullRequestDecisionsList({
   number,
   live,
   revision,
+  read,
+}: {
+  repository: string;
+  number: number;
+  live: LiveSession[];
+  revision: number | string;
+  read?: PullRequestDecisionsRead | null;
+}) {
+  if (read !== undefined) return read ? <DecisionsList read={read} live={live} /> : null;
+  return (
+    <ReadDecisionsList repository={repository} number={number} live={live} revision={revision} />
+  );
+}
+
+function ReadDecisionsList({
+  repository,
+  number,
+  live,
+  revision,
 }: {
   repository: string;
   number: number;
@@ -411,7 +494,10 @@ export function PullRequestDecisionsList({
   revision: number | string;
 }) {
   const read = usePullRequestDecisions(repository, number, revision);
-  if (!read) return null;
+  return read ? <DecisionsList read={read} live={live} /> : null;
+}
+
+function DecisionsList({ read, live }: { read: PullRequestDecisionsRead; live: LiveSession[] }) {
   return (
     <section aria-labelledby="pr-decisions-heading" className="mb-3 local-panel">
       {/* Closed until asked for: a pull request's sessions can carry dozens of decisions. */}

@@ -2,6 +2,8 @@ import { uiState } from "./ui-state";
 import {
   RISK_SCORE_MEANING,
   hunkLine,
+  reviewRecommendation,
+  reviewRefs,
   sectionsInReviewOrder,
   type Anchor,
   type Block,
@@ -132,6 +134,27 @@ function sectionLevel(section: Section): RiskScoreLevel | null {
  *  chapter of the behaviours it changes. A section written without behaviour
  *  steps is one stop of its summary. The mechanical section, obsolete
  *  sections and sections without hunks are left out. */
+/** What the review asks to look at first: the recommendation's sentence when
+ *  it says to look first or to request changes, else the attention an older
+ *  document carries. `section` is the section the first ref leads to. */
+export function lookAt(document: ReviewDocument): { text: string; section: string | null } | null {
+  const recommendation = reviewRecommendation(document);
+  const text =
+    recommendation && recommendation.decision !== "approve" ? recommendation.text.trim() : "";
+  if (text && recommendation) {
+    const refs = reviewRefs(document);
+    for (const ref of recommendation.refs) {
+      const found = refs.get(ref);
+      if (found?.kind === "item") return { text, section: found.section };
+    }
+    return { text, section: null };
+  }
+  const attention = document.summary.attention?.text?.trim();
+  return attention
+    ? { text: attention, section: document.summary.attention?.refs?.[0] ?? null }
+    : null;
+}
+
 export function buildTour(document: ReviewDocument): Tour {
   const hunks = new Map(document.index.hunks.map((hunk) => [hunk.id, hunk]));
   const chapters: Chapter[] = [];
@@ -219,20 +242,15 @@ export function buildTour(document: ReviewDocument): Tour {
   const risks = (score?.reasons ?? [])
     .filter((reason) => text(reason.text))
     .map((reason) => ({ text: text(reason.text), stop: firstStop(reason.section) }));
-  const attention = text(document.summary.attention?.text);
+  const look = lookAt(document);
   const minutes = document.summary.review_minutes;
   return {
     intro: text(document.summary.text),
     releaseNote: text(document.summary.release_note) || null,
     risks: risks.length
       ? risks
-      : attention
-        ? [
-            {
-              text: attention,
-              stop: firstStop(document.summary.attention?.refs?.[0] ?? ""),
-            },
-          ]
+      : look
+        ? [{ text: look.text, stop: firstStop(look.section ?? "") }]
         : [],
     level: score?.score ?? null,
     chapters,

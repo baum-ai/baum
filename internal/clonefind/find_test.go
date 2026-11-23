@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,8 @@ func agentEvent(dir string, at time.Time) hookevents.Record {
 func options(h string, events ...hookevents.Record) Options {
 	o := Options{Home: h, GOOS: "linux"}
 	o.Stores.CursorStorePaths = []string{filepath.Join(h, "no-cursor")}
+	// The test's home is itself in a temporary directory.
+	o.TempDirs = []string{filepath.Join(h, "tmp")}
 	if events != nil {
 		o.Events = fakeEvents(events)
 	}
@@ -149,35 +152,39 @@ func TestDeletedHomeAndRootAreNeverCandidates(t *testing.T) {
 	}
 }
 
-func TestWalkFindsClonesToDepthFour(t *testing.T) {
+func TestHomeIsWalkedToDepthFive(t *testing.T) {
 	h := home(t)
-	shallow := repo(t, filepath.Join(h, "code", "a", "b", "c", "d"), "origin", gh("acme/depth4"))
-	repo(t, filepath.Join(h, "code", "a", "b", "c", "d", "e"), "origin", gh("acme/depth5"))
+	shallow := repo(t, filepath.Join(h, "code", "a", "b", "c", "d"), "origin", gh("acme/depth5"))
 	repo(t, filepath.Join(h, "code", "x", "y", "z", "w", "v"), "origin", gh("acme/deep"))
-	repo(t, filepath.Join(h, "code", "node_modules", "dep"), "origin", gh("acme/dep"))
-	repo(t, filepath.Join(h, "code", ".hidden", "app"), "origin", gh("acme/hidden"))
-	repo(t, filepath.Join(h, "code", "vendor", "lib"), "origin", gh("acme/vendored"))
+	work := repo(t, filepath.Join(h, "work", "app"), "origin", gh("acme/work"))
+	developer := repo(t, filepath.Join(h, "Developer", "org", "app"), "origin", gh("acme/developer"))
+	gopath := repo(t, filepath.Join(h, "go", "src", "github.com", "acme", "go"), "origin", gh("acme/go"))
+	for _, dead := range []string{"node_modules", "vendor", "venv", "Pods", "DerivedData", "build", "dist", "target", "__pycache__", ".venv", ".hidden"} {
+		repo(t, filepath.Join(h, "code", dead, "lib"), "origin", gh("acme/"+strings.ToLower(strings.Trim(dead, "._"))))
+	}
+	repo(t, filepath.Join(h, ".cache", "app"), "origin", gh("acme/cache"))
+	// A repository is not searched for others.
 	nested := repo(t, filepath.Join(h, "code", "outer"), "origin", gh("acme/outer"))
 	repo(t, filepath.Join(nested, "inner"), "origin", gh("acme/inner"))
+	repo(t, filepath.Join(nested, "pkg", "inner2"), "origin", gh("acme/inner2"))
 	result := find(t, options(h))
-	if got := result.Repositories["acme/depth4"]; len(got) != 1 || got[0].Path != shallow || got[0].Source != SourceScan || !got[0].LastActivity.IsZero() {
-		t.Fatalf("depth4 = %+v", got)
-	}
-	for _, name := range []string{"acme/depth5", "acme/deep", "acme/dep", "acme/hidden", "acme/vendored", "acme/inner"} {
-		if got := result.Repositories[name]; got != nil {
-			t.Errorf("%s found: %+v", name, got)
+	for name, path := range map[string]string{"acme/depth5": shallow, "acme/work": work, "acme/developer": developer, "acme/go": gopath, "acme/outer": nested} {
+		if got := result.Repositories[name]; len(got) != 1 || got[0].Path != path || got[0].Source != SourceScan || !got[0].LastActivity.IsZero() {
+			t.Errorf("%s = %+v", name, got)
 		}
 	}
-	if _, ok := result.Repositories["acme/outer"]; !ok {
-		t.Error("a clone that holds another was not found")
+	if len(result.Repositories) != 5 {
+		t.Fatalf("repositories = %+v", result.Repositories)
 	}
 }
 
 func TestWalkNeverReadsPersonalFolders(t *testing.T) {
 	h := home(t)
-	for _, name := range []string{"Documents", "Desktop", "Downloads", "Dropbox", "Google Drive"} {
+	personal := []string{"Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music", "Library", "Dropbox", "Google Drive"}
+	for _, name := range personal {
 		repo(t, filepath.Join(h, name, "app"), "origin", gh("acme/"+name))
 	}
+	repo(t, filepath.Join(h, "Library", "Mobile Documents", "app"), "origin", gh("acme/icloud"))
 	// Asked to walk them, or reached through a symlink, they stay unread.
 	o := options(h)
 	o.GOOS = "darwin"
@@ -194,32 +201,11 @@ func TestWalkNeverReadsPersonalFolders(t *testing.T) {
 	if result := find(t, o); len(result.Repositories) != 0 {
 		t.Fatalf("repositories = %+v", result.Repositories)
 	}
-}
-
-func TestSiblingsOfAgentClonesAreWalked(t *testing.T) {
-	h := home(t)
-	worked := repo(t, filepath.Join(h, "work", "a"), "origin", gh("acme/a"))
-	sibling := repo(t, filepath.Join(h, "work", "b"), "origin", gh("acme/b"))
-	// An agent worked in Documents: on macOS it is protected, so nothing there is read.
-	repo(t, filepath.Join(h, "Documents", "x"), "origin", gh("acme/x"))
-	repo(t, filepath.Join(h, "Documents", "y"), "origin", gh("acme/y"))
-	// Nor are the siblings of a clone directly in the home directory.
-	repo(t, filepath.Join(h, "home-clone"), "origin", gh("acme/home-clone"))
-	repo(t, filepath.Join(h, "home-sibling"), "origin", gh("acme/home-sibling"))
-	now := time.Now()
-	o := options(h, agentEvent(worked, now), agentEvent(filepath.Join(h, "Documents", "x"), now), agentEvent(filepath.Join(h, "home-clone"), now))
-	o.GOOS = "darwin"
+	// Elsewhere only Documents is walked: Downloads never is.
+	o.GOOS = "linux"
 	result := find(t, o)
-	if got := result.Repositories["acme/b"]; len(got) != 1 || got[0].Path != sibling || got[0].Source != SourceScan {
-		t.Fatalf("sibling = %+v", got)
-	}
-	if got := result.Repositories["acme/x"]; got != nil {
-		t.Fatalf("documents clone on macOS = %+v", got)
-	}
-	for _, name := range []string{"acme/y", "acme/home-sibling"} {
-		if result.Repositories[name] != nil {
-			t.Errorf("%s found", name)
-		}
+	if len(result.Repositories) != 1 || result.Repositories["acme/documents"] == nil {
+		t.Fatalf("linux repositories = %+v", result.Repositories)
 	}
 }
 
@@ -238,7 +224,7 @@ func TestBestCandidateIsTheMostRecentlyUsed(t *testing.T) {
 	// Without agent activity the order is by path, every time.
 	for range 3 {
 		got = find(t, options(h)).Repositories["acme/app"]
-		if fmt.Sprint(paths(got)) != fmt.Sprint([]string{scanA, scanZ}) {
+		if fmt.Sprint(paths(got)) != fmt.Sprint([]string{scanA, scanZ, old, recent}) {
 			t.Fatalf("scan-only order = %v", paths(got))
 		}
 	}
@@ -299,7 +285,8 @@ func TestSessionStoresPointToClones(t *testing.T) {
 	if got := result.Repositories["acme/codex-app"]; len(got) != 1 || got[0].Path != codex || got[0].Source != SourceAgent {
 		t.Fatalf("codex = %+v", got)
 	}
-	if got := result.Repositories["acme/child-app"]; got != nil {
+	// The walk of the home finds it, but no agent worked there.
+	if got := result.Repositories["acme/child-app"]; len(got) != 1 || got[0].Source != SourceScan {
 		t.Fatalf("a sub-agent session named %+v", got)
 	}
 }
@@ -345,6 +332,40 @@ func TestDocumentsAreWalkedOnLinuxButNeedOptInOnMacOS(t *testing.T) {
 		}
 		if result.Repositories["acme/desktop"] != nil || result.Repositories["acme/downloads"] != nil {
 			t.Errorf("%s include=%v walked Desktop or Downloads", tc.goos, tc.include)
+		}
+	}
+}
+
+// An agent's temporary work is nobody's clone: a folder below a temporary
+// directory, an agent's scratchpad or Downloads is never a candidate, nor is a
+// worktree whose repository lies in one.
+func TestTemporaryAgentFoldersAreNotCandidates(t *testing.T) {
+	h := home(t)
+	now := time.Now()
+	temp := repo(t, filepath.Join(h, "tmp", "x", "app"), "origin", gh("acme/temp"))
+	scratch := repo(t, filepath.Join(h, "agent", "scratchpad", "app"), "origin", gh("acme/scratch"))
+	downloads := repo(t, filepath.Join(h, "Downloads", "app"), "origin", gh("acme/downloads"))
+	git(t, temp, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "init")
+	linked := filepath.Join(h, "elsewhere", "temp-feature")
+	git(t, temp, "worktree", "add", "-q", "-b", "feature", linked)
+	kept := repo(t, filepath.Join(h, "agent", "work", "app"), "origin", gh("acme/kept"))
+	events := []hookevents.Record{agentEvent(filepath.Join(temp, "sub"), now), agentEvent(scratch, now), agentEvent(downloads, now), agentEvent(linked, now), agentEvent(kept, now)}
+	if err := os.MkdirAll(filepath.Join(temp, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		o := options(h, events...)
+		o.GOOS = goos
+		// The home walk is a separate question; only agent folders are read.
+		o.MaxWalked = 1
+		result := find(t, o)
+		if len(result.Repositories) != 1 || len(result.Repositories["acme/kept"]) != 1 {
+			t.Fatalf("%s: repositories = %+v", goos, result.Repositories)
+		}
+		for _, dir := range []string{temp, scratch, downloads, linked} {
+			if got := Locate(context.Background(), o, dir, now); got != nil {
+				t.Errorf("%s: Locate(%s) = %+v", goos, dir, got)
+			}
 		}
 	}
 }

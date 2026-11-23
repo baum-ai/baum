@@ -68,8 +68,11 @@ const (
 
 // Bounds, in characters unless named otherwise.
 const (
-	// MaxValue bounds a row's value, which may keep its newlines.
-	MaxValue = 4000
+	// MaxValue bounds a row's value, which may keep its newlines, and a
+	// suggestion's label. It is the control protocol's line, which carries
+	// the whole request, so a value is shown whole: approving applies to all
+	// of the input, and the app must show what it approves.
+	MaxValue = 64 << 10
 	// MaxMessage bounds a queued message.
 	MaxMessage   = 4000
 	maxLabel     = 300
@@ -194,6 +197,14 @@ type Request struct {
 	Input       []Row        `json:"input"`
 	Suggestions []Suggestion `json:"suggestions"`
 	Questions   []Question   `json:"questions"`
+	// Altered marks a request whose tool, input or questions are not shown
+	// exactly as the agent sent them: a question's text was cut at its bound
+	// (a permission request that would be cut is not shown at all), cleaned
+	// (control or format characters, invalid UTF-8, blanks folded or
+	// trimmed) or had a secret masked. The app still shows it; an agent
+	// helping the person cannot have it allowed (only the person, who can
+	// read it in the terminal, does).
+	Altered bool `json:"altered,omitempty"`
 }
 
 // Suggestion is a permission suggestion; its ID is its index.
@@ -262,7 +273,11 @@ type Store struct {
 	Now func() time.Time
 	Log *slog.Logger
 
-	once     sync.Once
+	once sync.Once
+	// saving makes each change of the settings, its write to the database
+	// and to memory, one step: SetSettingsIf's check and its write are not
+	// split by another save.
+	saving   sync.Mutex
 	mu       sync.Mutex
 	pending  map[string]*pending
 	messages map[key]Message
@@ -444,43 +459,58 @@ func (a Ask) check() error {
 // newPending is the request as the app is shown it: every string the agent
 // wrote cleaned, masked and bounded. It is refused (false), so the agent asks
 // in its terminal, when masking failed (it turned text into nothing: the app
-// must never show what it could not mask), or when a question's answers
+// must never show what it could not mask), when a permission request's tool,
+// rows or suggestions had to be cut (approving applies to the whole input, so
+// the app must show all of it; values and suggestions are bounded only by the
+// request's own size, so this guards the tool name and labels), or when a
+// question's answers
 // could not be told apart as the app gives them back: two questions, or two
 // options of one question, that read the same once cleaned and cut, or a
 // label containing ", " in a question that takes several.
 func (s *Store) newPending(ask Ask) (*pending, bool) {
-	masked := true
+	masked, whole := true, true
 	line := func(text string, limit int) string {
-		out, ok := s.line(text, limit)
-		masked = masked && ok
+		out, ok, cut := s.line(text, limit)
+		masked, whole = masked && ok, whole && !cut
 		return out
 	}
 	block := func(text string, limit int) string {
-		out, ok := s.block(text, limit)
-		masked = masked && ok
+		out, ok, cut := s.block(text, limit)
+		masked, whole = masked && ok, whole && !cut
 		return out
+	}
+	// exact keeps what is shown of what the request asks, and records when
+	// it is not what the agent sent (Request.Altered).
+	altered := false
+	exact := func(shown, sent string) string {
+		altered = altered || shown != sent
+		return shown
 	}
 	r := Request{
 		ID: newID(), Agent: ask.Agent, SessionID: ask.SessionID, Kind: ask.Kind,
-		Tool: line(ask.Tool, maxLabel), CreatedAt: s.now(),
+		Tool: exact(line(ask.Tool, maxLabel), ask.Tool), CreatedAt: s.now(),
 		Input: []Row{}, Suggestions: []Suggestion{}, Questions: []Question{},
 	}
 	for _, row := range ask.Input {
-		r.Input = append(r.Input, Row{Label: line(row.Label, maxLabel), Value: block(row.Value, MaxValue), Code: row.Code})
+		r.Input = append(r.Input, Row{Label: exact(line(row.Label, maxLabel), row.Label), Value: exact(block(row.Value, MaxValue), row.Value), Code: row.Code})
 	}
 	for i, label := range ask.Suggestions {
-		r.Suggestions = append(r.Suggestions, Suggestion{ID: strconv.Itoa(i), Label: line(label, maxLabel)})
+		r.Suggestions = append(r.Suggestions, Suggestion{ID: strconv.Itoa(i), Label: line(label, MaxValue)})
+	}
+	if !whole {
+		s.logger().Warn("an agent request was not shown: a label was too long to show in full")
+		return nil, false
 	}
 	questions := map[string]bool{}
 	for _, q := range ask.Questions {
-		shown := Question{Question: line(q.Question, maxText), Header: line(q.Header, maxLabel), MultiSelect: q.MultiSelect, Options: []Option{}}
+		shown := Question{Question: exact(line(q.Question, maxText), q.Question), Header: exact(line(q.Header, maxLabel), q.Header), MultiSelect: q.MultiSelect, Options: []Option{}}
 		if questions[shown.Question] {
 			return nil, false
 		}
 		questions[shown.Question] = true
 		labels := map[string]bool{}
 		for _, o := range q.Options {
-			option := Option{Label: line(o.Label, maxLabel), Description: line(o.Description, maxText)}
+			option := Option{Label: exact(line(o.Label, maxLabel), o.Label), Description: exact(line(o.Description, maxText), o.Description)}
 			if labels[option.Label] || (q.MultiSelect && strings.Contains(option.Label, ", ")) {
 				return nil, false
 			}
@@ -489,6 +519,7 @@ func (s *Store) newPending(ask Ask) (*pending, bool) {
 		}
 		r.Questions = append(r.Questions, shown)
 	}
+	r.Altered = altered
 	if !masked {
 		s.logger().Warn("an agent request was not shown: its text could not be masked")
 		return nil, false
@@ -816,7 +847,7 @@ func (s *Store) List() ([]Request, []Message) {
 		}
 		// A message whose text could not be masked is not shown.
 		var ok bool
-		if m.Text, ok = s.block(m.Text, MaxMessage); ok {
+		if m.Text, ok, _ = s.block(m.Text, MaxMessage); ok {
 			shown = append(shown, m)
 		}
 	}
@@ -834,7 +865,22 @@ func (s *Store) Settings() Settings {
 // SetSettings saves new settings. Turning Codex approvals off withdraws the
 // Codex requests waiting, which then fall back to Codex's own prompt.
 func (s *Store) SetSettings(settings Settings) (Settings, error) {
+	return s.SetSettingsIf(settings, nil)
+}
+
+// SetSettingsIf is SetSettings when check, if set, accepts the settings in
+// force: the check and the save are one step, so another save cannot land
+// between them. An error check returns saves nothing and is returned as it
+// is.
+func (s *Store) SetSettingsIf(settings Settings, check func(current Settings) error) (Settings, error) {
 	s.init()
+	s.saving.Lock()
+	defer s.saving.Unlock()
+	if check != nil {
+		if err := check(s.Settings()); err != nil {
+			return Settings{}, err
+		}
+	}
 	if s.Database != "" {
 		data, err := json.Marshal(settings)
 		if err != nil {
@@ -885,7 +931,7 @@ func (s *Store) loadSettings() Settings {
 // line is text an agent wrote as one line: format characters dropped,
 // control characters and runs of spaces made one space, masked before it is
 // cut, so a secret is never cut where the mask cannot see it.
-func (s *Store) line(text string, limit int) (string, bool) {
+func (s *Store) line(text string, limit int) (out string, masked, cut bool) {
 	text = strings.Map(func(r rune) rune {
 		switch {
 		case unicode.Is(unicode.Cf, r):
@@ -899,7 +945,7 @@ func (s *Store) line(text string, limit int) (string, bool) {
 }
 
 // block is line for a value that keeps its line breaks and tabs.
-func (s *Store) block(text string, limit int) (string, bool) {
+func (s *Store) block(text string, limit int) (out string, masked, cut bool) {
 	text = strings.ReplaceAll(strings.ToValidUTF8(text, "�"), "\r\n", "\n")
 	text = strings.Map(func(r rune) rune {
 		switch {
@@ -915,18 +961,19 @@ func (s *Store) block(text string, limit int) (string, bool) {
 	return s.finish(strings.TrimRight(text, " \t\n"), limit)
 }
 
-// finish masks text and cuts it. It reports false when the mask turned text
-// into nothing, which a mask does only when it failed.
-func (s *Store) finish(text string, limit int) (string, bool) {
+// finish masks text and cuts it. masked is false when the mask turned text
+// into nothing, which a mask does only when it failed; cut reports that the
+// text was longer than limit.
+func (s *Store) finish(text string, limit int) (out string, masked, cut bool) {
 	if text != "" && s.Mask != nil {
 		if text = s.Mask(text); text == "" {
-			return "", false
+			return "", false, false
 		}
 	}
 	if utf8.RuneCountInString(text) <= limit {
-		return text, true
+		return text, true, false
 	}
-	return string([]rune(text)[:limit-1]) + "…", true
+	return string([]rune(text)[:limit-1]) + "…", true, true
 }
 
 // Digest identifies a tool call by its tool's name and input, so a request

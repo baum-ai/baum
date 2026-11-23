@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,9 @@ func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 // fakeGitHub answers the REST calls of one pull request and records the
 // writes it receives.
+// fakeGetsMu guards every fake's gets, which concurrent reads append to.
+var fakeGetsMu sync.Mutex
+
 type fakeGitHub struct {
 	// head is the pull request's current head; mergeableState and mergeable
 	// are what GitHub reports of it.
@@ -45,6 +49,14 @@ type fakeGitHub struct {
 	// rerunStatus answers a re-run by run ID, 201 when absent.
 	rerunStatus map[int]int
 	rerunBody   map[int]string
+	// logs are the job logs by job ID; logStatus answers a log with a
+	// status other than 200.
+	logs      map[int]string
+	logStatus map[int]int
+	// mu guards gets, which concurrent reads append to.
+
+	// logHost, when set, is the signed download host the log redirects to.
+	logHost func(*http.Request) *http.Response
 	// graphql answers each GraphQL document.
 	graphql func(query string, variables map[string]any) string
 
@@ -59,9 +71,19 @@ func (f *fakeGitHub) client() *github.Client {
 		answer := func(status int, body string) (*http.Response, error) {
 			return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 		}
+		if r.URL.Host == "logs.example" {
+			response := f.logHost(r)
+			response.Request = r
+			if response.Header == nil {
+				response.Header = http.Header{}
+			}
+			return response, nil
+		}
 		path := r.URL.Path
 		if r.Method == "GET" {
+			fakeGetsMu.Lock()
 			f.gets = append(f.gets, path)
+			fakeGetsMu.Unlock()
 		}
 		switch {
 		case path == "/graphql":
@@ -113,6 +135,16 @@ func (f *fakeGitHub) client() *github.Client {
 				return answer(200, `{"workflow_runs":[]}`)
 			}
 			return answer(200, `{"workflow_runs":[`+strings.Join(pageOf(f.runs, r), ",")+`]}`)
+		case strings.Contains(path, "/actions/jobs/") && strings.HasSuffix(path, "/logs"):
+			var id int
+			_, _ = fmt.Sscanf(path[strings.Index(path, "/jobs/"):], "/jobs/%d/logs", &id)
+			if f.logHost != nil {
+				return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://logs.example/job"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+			}
+			if s, ok := f.logStatus[id]; ok {
+				return answer(s, `{"message":"gone"}`)
+			}
+			return answer(200, f.logs[id])
 		case strings.HasSuffix(path, "/check-runs"):
 			return answer(200, fmt.Sprintf(`{"total_count":%d,"check_runs":[%s]}`, len(f.checks), strings.Join(pageOf(f.checks, r), ",")))
 		case strings.HasSuffix(path, "/status"):
@@ -565,15 +597,15 @@ func TestAllChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := CheckList{HeadSHA: "abc", Total: 9, Checks: []CheckStatus{
-		{Name: "ci/circle", Status: "completed", Conclusion: "timed_out"},
+		{Name: "ci/circle", Status: "completed", Conclusion: "timed_out", ID: 25},
 		{Name: "ci/jenkins", Status: "completed", Conclusion: "error", Title: "Crashed"},
-		{Name: "test", Status: "completed", Conclusion: "failure", Title: "2 tests failed", URL: "https://github.com/acme/app/runs/21", JobID: 21},
-		{Name: "build", Status: "in_progress"},
+		{Name: "test", Status: "completed", Conclusion: "failure", Title: "2 tests failed", URL: "https://github.com/acme/app/runs/21", JobID: 21, ID: 21, HasLog: true},
+		{Name: "build", Status: "in_progress", ID: 23},
 		{Name: "ci/travis", Status: "in_progress", Title: "Waiting", URL: "https://travis.example/1"},
-		{Name: "deploy", Status: "queued"},
+		{Name: "deploy", Status: "queued", ID: 24},
 		{Name: "ci/ok", Status: "completed", Conclusion: "success"},
-		{Name: "docs", Status: "completed", Conclusion: "skipped"},
-		{Name: "lint", Status: "completed", Conclusion: "success"},
+		{Name: "docs", Status: "completed", Conclusion: "skipped", ID: 26},
+		{Name: "lint", Status: "completed", Conclusion: "success", ID: 22, HasLog: true},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("checks %+v, want %+v", got, want)

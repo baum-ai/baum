@@ -125,6 +125,25 @@ func TestAnswerDecidesOnceAndShowsMaskedInput(t *testing.T) {
 	}
 }
 
+// A value that fits exactly is shown whole, so only a cut refuses a request.
+// A long value or suggestion is shown whole, so what the person approves is
+// what they saw.
+func TestLongValuesAreShownWhole(t *testing.T) {
+	s, _ := newStore(t)
+	a := bash("make")
+	a.Input[0].Value = strings.Repeat("x\n", 20000)
+	a.Suggestions = []string{"Always allow Bash(" + strings.Repeat("y", 2000) + ") in this project"}
+	ch, id := ask(t, context.Background(), s, a)
+	requests, _ := s.List()
+	if len(requests) != 1 || requests[0].Input[0].Value != strings.TrimRight(a.Input[0].Value, "\n") || requests[0].Suggestions[0].Label != a.Suggestions[0] {
+		t.Fatalf("requests %+v", requests)
+	}
+	if err := s.Answer(id, Reply{Behavior: BehaviorDeny}); err != nil {
+		t.Fatal(err)
+	}
+	decision(t, ch)
+}
+
 func TestQuestionAnswersMapToOptions(t *testing.T) {
 	s, _ := newStore(t)
 	a := Ask{Agent: AgentClaudeCode, SessionID: "s1", Kind: KindQuestion, Tool: "AskUserQuestion", Questions: []Question{
@@ -475,6 +494,14 @@ func TestRequestsThatCannotBeShownSafelyAreRefused(t *testing.T) {
 		ask  Ask
 	}{
 		"the mask failed": {func(string) string { return "" }, bash("make")},
+		// Approving applies to the whole input, so a request the app would
+		// show cut is not shown at all. Values and suggestions are bounded
+		// only by the request's own size; a tool name is a label.
+		"a tool name too long to show": {nil, func() Ask {
+			a := bash("make")
+			a.Tool = strings.Repeat("t", maxLabel+1)
+			return a
+		}()},
 		"the same question twice": {nil, question(
 			Question{Question: "Which?", Options: []Option{{Label: "A"}}},
 			Question{Question: "Which?\n", Options: []Option{{Label: "B"}}})},

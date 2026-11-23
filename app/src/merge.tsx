@@ -155,7 +155,7 @@ export function MergeDialog({
       <h2 id="merge-title" className="text-lg font-semibold">
         Merge pull request #{pr.number}?
       </h2>
-      <p className="my-3 text-(--text-secondary)">
+      <p className="my-3 text-secondary">
         {pr.title} · {pr.repository}
       </p>
       {!options && !error ? <LoadingStatus>Checking what GitHub allows…</LoadingStatus> : null}

@@ -67,7 +67,8 @@ per transcript file, its decoded lines and the byte offset they end at
 (`claudetranscript.Reading`, `codextranscript.Reading`). When the file grows,
 only the bytes after that offset are decoded, and the mapper then runs again
 over all the lines, so the `ErrUnbalanced` accounting check is unchanged.
-Cursor sessions arrive as generated content and are always decoded whole.
+Cursor sessions arrive as generated content and are always decoded whole, and
+so is a compressed Codex rollout (see below).
 
 * **Per file:** a Claude Code subagent transcript and a Codex child or fork
   source rollout each keep their own offset. Claude Code's duplicate uuid and
@@ -88,17 +89,25 @@ Cursor sessions arrive as generated content and are always decoded whole.
   size and modification time did not change is taken as unchanged. A read
   stops at the size the file had when it was opened. A file that could not be
   decoded loses its kept lines.
-* **What is kept:** only files changed in the last hour, since older ones are
-  unlikely to grow, within `DefaultTailCacheBytes` (64 MiB) of estimated line
-  memory (`Reading.Bytes`). Files unread for 30 minutes are released on the
-  next read of any file, so a finished session's lines do not stay resident.
-  A file read for the first time that does not fit is not kept, rather than
-  pushing out files read recently: a session tree larger than the cache, read
-  file by file on every refresh, then keeps what fits instead of pushing out
-  each file before it is read again. A kept file that grew pushes out the
-  least recently read.
-  `SetTailCacheLimit` changes the limit; zero or less turns it off, and every
-  transcript is then decoded whole each time.
+* **Compressed rollouts:** a `.jsonl.zst` rollout cannot be continued from an
+  offset or checksummed by prefix: a Reading consumes decoded bytes, and a
+  zstd stream cannot be entered in the middle. Its entry keeps the lines and
+  the final unread line of the last whole decode. While the file's inode, size
+  and modification time are unchanged `Map` uses them without reading the file
+  (counted as `sessions.tail.reads.reused`); any change decodes the whole
+  stream again as a rewrite. Offsets, `pending` and the transcript-bytes gauge
+  are decoded bytes, and the decode budget counts such a rollout by its decoded
+  size (the frame's content size, or eight times the compressed size when the
+  frame has none), while the mapping-cache key uses its size and modification
+  time on disk.
+* **What is kept:** files of any age may keep their decoded lines. Age alone
+  does not force unchanged transcripts to decode again. The same byte budget
+  and idle eviction bound retention: `DefaultTailCacheBytes` (64 MiB) of
+  estimated line memory (`Reading.Bytes`). Files unread for 30 minutes are
+  released on the next read of any file. A new file that does not fit does
+  not evict recently read files, so trees larger than the budget keep what
+  fits instead of thrashing. A kept file that grows evicts the least recently
+  read. `SetTailCacheLimit` changes the limit; zero or less turns it off.
 * **Slim lines:** the kept lines leave out the copies of each record the
   mapper never reads: `Line.Raw` for Claude Code (only the shape survey reads
   it, and `Map` does not survey); for Codex `Line.Raw`, `Line.Payload` except
@@ -193,6 +202,29 @@ same sessions with or without it. Within a `Cache.BeginPass`/`EndPass` pair
 the store is scanned once however many clones look it up, and so does not see a
 rollout added during the pass. The parent and child lookups are built once per
 scan, not once per session.
+Codex compresses old rollouts to `.jsonl.zst` (a zstd stream, decoded while
+reading) and removes the plain file, keeping the modification time. baum reads
+them like plain rollouts: discovery, `FindStores` and the partial index list a
+compressed rollout unless a plain file of the same name is beside it, in which
+case the plain one wins and the compressed copy is ignored, so a rollout is
+never a duplicate thread. The session's file keeps its real `.zst` path but its
+plain name (`rollout-<ts>-<uuid>.jsonl`), so graph source refs and native
+session identity do not change when Codex compresses a rollout. The walk lists
+every rollout once and decides between the two copies from that listing, without
+a stat per file. If the plain file is gone by the time it is read, because
+Codex compressed it after the walk, the compressed copy is read instead. Discovery reads only a rollout's first record.
+A compressed rollout whose zstd data fails there (corrupt, truncated, or
+with a window above the decoder's 64 MiB bound; rollouts of any length decode,
+since a stream holds only its window) is skipped, like one without a complete
+first record but with its own reason ("compressed rollout is corrupt or
+truncated"; `ScanReport.UnreadablePaths`), and the rest of the store is indexed.
+A stream that fails later is read as a plain rollout cut off at that point: the
+records decoded before the failure are kept and the rest is a torn final line,
+without an error. An error reading the file itself is not a cut: it fails the
+read, as it does for a plain rollout, and is not cached. Decoders are pooled,
+since each holds a few MiB.
+If a scan does fail, discovery falls back to a partial index of `sessions/`,
+read through the same cache.
 Cursor is the exception to "never a transcript": it keeps every conversation
 in one database, so discovery reads the store's conversation index and builds
 the tree of each repository conversation for its payload. `Options.Since` bounds that: a conversation last updated

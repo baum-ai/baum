@@ -223,8 +223,8 @@ export function UpdatesSection({ updates }: { updates: AppUpdates }) {
         }
       />
       {view.enabled ? (
-        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
-          <div className="min-w-0 flex-1 text-xs text-(--text-secondary)">{status}</div>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4">
+          <div className="min-w-0 flex-1 text-xs text-secondary">{status}</div>
           {actions ? (
             <div className="flex flex-none flex-wrap items-center gap-2">{actions}</div>
           ) : null}

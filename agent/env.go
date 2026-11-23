@@ -105,3 +105,18 @@ func envKey(name string) string {
 func denied(name string) bool {
 	return slices.Contains(deniedNames, name) || slices.ContainsFunc(deniedPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
+
+// WithMCPToken is environ with the MCP token of server set last: any entry
+// of the same name, such as one from the user's agent_env, is dropped first, so
+// it can neither replace nor remove the token. A nil server leaves environ
+// as it is.
+func WithMCPToken(environ []string, server *MCPServer) []string {
+	if server == nil {
+		return environ
+	}
+	kept := slices.DeleteFunc(slices.Clone(environ), func(entry string) bool {
+		name, _, _ := strings.Cut(entry, "=")
+		return envKey(name) == envKey(MCPTokenEnv)
+	})
+	return append(kept, MCPTokenEnv+"="+server.Token)
+}

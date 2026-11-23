@@ -78,7 +78,7 @@ export function ChangesOverview({
           </>
         }
       />
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {visible.length === 0 ? (
           <None>
             {document.sections.length === 0
@@ -95,7 +95,7 @@ export function ChangesOverview({
                 <Item
                   key={section.id}
                   className={cn(
-                    "relative flex items-start gap-2.5 hover:border-(--border-strong) hover:bg-(--surface-hover)",
+                    "relative flex items-start gap-2.5 hover:border-strong hover:bg-surface-hover",
                     section.derived.state === "stale" && "opacity-60 grayscale",
                   )}
                 >
@@ -130,17 +130,17 @@ export function ChangesOverview({
                       ) : null}
                     </div>
                     {section.summary && (
-                      <Markdown className="text-(--text-primary)">{section.summary.text}</Markdown>
+                      <Markdown className="text-primary">{section.summary.text}</Markdown>
                     )}
                     {sectionDetails(section) !== "complete" && (
-                      <p className="text-base text-(--text-tertiary)">
+                      <p className="text-base text-tertiary">
                         {sectionDetails(section) === "pending"
                           ? "Writing details…"
                           : "Details unavailable"}
                       </p>
                     )}
                     {section.derived.review_reason && (
-                      <Markdown className="text-(--text-secondary)">
+                      <Markdown className="text-secondary">
                         {section.derived.review_reason.text}
                       </Markdown>
                     )}
@@ -175,7 +175,7 @@ export function ChangesOverview({
             aria-expanded={obsoleteShown}
             onClick={onToggleObsolete ?? (() => setLocalObsolete((shown) => !shown))}
             className={cn(
-              "mt-3 cursor-pointer rounded-sm py-1 text-xs text-(--text-tertiary) hover:text-(--text-primary)",
+              "mt-3 cursor-pointer rounded-sm py-1 text-xs text-tertiary hover:text-primary",
               FOCUS_RING,
             )}
           >
@@ -210,7 +210,7 @@ export function RisksOverview({
             : "Medium and low risks read with the section they belong to."
         }
       />
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {risks.length === 0 ? (
           <None>No critical or high risk was identified in this review.</None>
         ) : (
@@ -220,7 +220,7 @@ export function RisksOverview({
               return (
                 <Item
                   key={riskKey(risk.section, risk.id)}
-                  className="relative flex items-start gap-2.5 hover:border-(--border-strong) hover:bg-(--surface-hover)"
+                  className="relative flex items-start gap-2.5 hover:border-strong hover:bg-surface-hover"
                 >
                   {/* Above the risk's overlay, so the box is still a box. */}
                   {check ? <span className="relative z-10 flex-none">{check}</span> : null}
@@ -234,7 +234,7 @@ export function RisksOverview({
                     {/* All of the row opens the risk, the way the Changes rows
                      *  open a section: one destination, so one button, stretched
                      *  over the card it names. */}
-                    <Markdown className="pointer-events-none relative z-10 text-(--text-secondary) [&_a]:pointer-events-auto">
+                    <Markdown className="pointer-events-none relative z-10 text-secondary [&_a]:pointer-events-auto">
                       {risk.text}
                     </Markdown>
                     <JumpLink
@@ -244,7 +244,7 @@ export function RisksOverview({
                     >
                       <span className="sr-only">Open risk: {risk.text}</span>
                     </JumpLink>
-                    <span aria-hidden className="pointer-events-none text-(--text-secondary)">
+                    <span aria-hidden className="pointer-events-none text-secondary">
                       Open risk →
                     </span>
                     <ItemMeta>

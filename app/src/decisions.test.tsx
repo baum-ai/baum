@@ -7,6 +7,8 @@ import {
   LiveSessionDecisions,
   PullRequestDecisionsList,
   captureState,
+  usePullRequestDecisions,
+  useGroupDecisions,
 } from "./decisions";
 import type { CapturedDecision, LiveSession, SessionDecisions } from "./api";
 
@@ -225,4 +227,103 @@ it("puts where a capture stands in words", () => {
   expect(captureState(captured({ capture_off: "paused" }), now)).toBe(
     "Updated 3 minutes ago · Capture is paused with automatic reviews.",
   );
+});
+
+it("shares the PR-filtered result with live disclosures without reading the full session", async () => {
+  answers[sessionPath] = { session: captured() };
+  const fetch = vi.spyOn(globalThis, "fetch");
+  const s = { ...captured({ decisions: [decision()] }), live: true };
+  await act(async () =>
+    root.render(
+      <LiveSessionDecisions session={live} read={{ sessions: [s], total: 1, provisional: 0 }} />,
+    ),
+  );
+  expect(node.textContent).toContain("Decisions (1)");
+  expect(node.textContent).not.toContain("Keep the queue in memory");
+  expect(fetch).not.toHaveBeenCalled();
+  await act(async () => root.render(<LiveSessionDecisions session={live} read={null} />));
+  expect(node.innerHTML).toBe("");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  [
+    { pending: 2, unrelated: 0, uncertain: 0, unavailable: 0, failed: 0 },
+    "Checking 2 for relevance…",
+  ],
+  [
+    { pending: 0, unrelated: 3, uncertain: 0, unavailable: 0, failed: 0 },
+    "No decisions relate to these changes.",
+  ],
+  [
+    { pending: 0, unrelated: 0, uncertain: 1, unavailable: 0, failed: 0 },
+    "insufficient evidence of relevance",
+  ],
+  [
+    { pending: 0, unrelated: 0, uncertain: 0, unavailable: 1, failed: 0 },
+    "Relevance could not be checked",
+  ],
+  [{ pending: 0, unrelated: 0, uncertain: 0, unavailable: 0, failed: 1 }, "Relevance check failed"],
+] as const)(
+  "distinguishes a filtered empty result from pending and unavailable results: %s",
+  async (relevance, text) => {
+    answers[prPath] = {
+      sessions: [{ ...captured({ decisions: [], relevance }), live: true }],
+      review_generated_at: null,
+    };
+    await act(async () =>
+      root.render(
+        <PullRequestDecisionsList repository="acme/demo" number={7} live={[live]} revision={0} />,
+      ),
+    );
+    expect(node.textContent).toContain("Decisions from sessions (0)");
+    expect(node.textContent).toContain(text);
+    expect(node.querySelectorAll("li.local-decision")).toHaveLength(0);
+  },
+);
+
+it("does not keep another PR head's decisions visible while loading", async () => {
+  answers[`${prPath}&head=old`] = {
+    sessions: [{ ...captured(), live: true }],
+    review_generated_at: null,
+  };
+  function Probe({ head }: { head: string }) {
+    const read = usePullRequestDecisions("acme/demo", 7, 0, head);
+    return <span>{read?.total ?? "loading"}</span>;
+  }
+  await act(async () => root.render(<Probe head="old" />));
+  expect(node.textContent).toBe("2");
+  await act(async () => root.render(<Probe head="new" />));
+  expect(node.textContent).toBe("loading");
+});
+
+it("unions stack decisions by ID and preserves member relevance states", async () => {
+  const state = { pending: 0, unrelated: 0, uncertain: 0, unavailable: 0, failed: 0 };
+  answers[prPath] = {
+    sessions: [
+      {
+        ...captured({ decisions: [decision()], relevance: { ...state, pending: 2 } }),
+        live: false,
+      },
+    ],
+    review_generated_at: null,
+  };
+  answers["api/decisions?repository=acme%2Fdemo&pr=8"] = {
+    sessions: [
+      { ...captured({ decisions: [decision()], relevance: { ...state, failed: 1 } }), live: false },
+    ],
+    review_generated_at: null,
+  };
+  function Probe() {
+    const read = useGroupDecisions("acme/demo", [7, 8], 0);
+    return (
+      <span>
+        {read
+          ? `${read.total}:${read.sessions[0]?.relevance?.pending}:${read.sessions[0]?.relevance?.failed}`
+          : "loading"}
+      </span>
+    );
+  }
+  await act(async () => root.render(<Probe />));
+  expect(node.textContent).toBe("1:2:1");
 });
