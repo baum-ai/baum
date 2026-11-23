@@ -177,7 +177,7 @@ export function TileLibrarySection({
   );
   return (
     <section aria-labelledby="settings-tiles-heading" className="settings-section">
-      {head(importButton)}
+      {head(!type && library.types && library.types.length > 0 ? importButton : undefined)}
       {importing ? (
         <ImportDialog
           check={importing.check}
@@ -436,7 +436,7 @@ function TileTypePane({
             </span>
           )}
         </Row>
-        <details className="tile-type-fill">
+        <details className="tile-type-fill settings-advanced">
           <summary>Fill instructions</summary>
           <p className="settings-row-detail">Given to the review agent when this type is filled.</p>
           <pre>{detail.fill}</pre>
