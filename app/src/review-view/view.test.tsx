@@ -13,7 +13,7 @@ import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
 import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
-import { ColumnsDiagram, wordDiff } from "./native-tiles";
+import { ColumnsDiagram, comparedText, wordDiff } from "./native-tiles";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
@@ -801,20 +801,33 @@ describe("the native tiles", () => {
     expect(marked("A dialog shows the image larger", "The clip plays in its own box")).toEqual([]);
   });
 
-  it("draws compared text as markdown outside the highlighted words", async () => {
+  it("draws compared text plain, with code, keeping identifiers and operators", async () => {
     const container = await render(
       <ColumnsDiagram
         data={{
           source: [],
           columns: [{ label: "Off" }, { label: "On" }],
-          rows: [[{ title: "Reads *cached* rows" }, { title: "Reads *cached* rows `fast`" }]],
+          rows: [
+            [{ title: "Reads *cached rows* fast" }, { title: "Reads *cached data* `fast`" }],
+            [{ title: "limit 5 > max" }, { title: "limit 10 > max" }],
+          ],
         }}
       />,
     );
-    const title = container.querySelectorAll("ol > li")[0]!.textContent;
-    expect(title).toContain("Reads cached rows");
-    expect(container.querySelector("em")?.textContent).toBe("cached");
+    const cells = (row: number) =>
+      [
+        ...container
+          .querySelectorAll("ol > li")
+          [row]!.querySelectorAll("[data-change], [class*='rounded-md']"),
+      ].map((cell) => cell.querySelector(".font-medium")?.textContent);
+    expect(cells(0)).toEqual(["Reads cached rows fast", "Reads cached data fast"]);
     expect(container.querySelector("ins code")?.textContent).toBe("fast");
+    expect(cells(1)).toEqual(["limit 5 > max", "limit 10 > max"]);
+  });
+
+  it("takes italics out of compared text but not identifiers or globs", () => {
+    expect(comparedText("a *cached* _hot_ row")).toBe("a cached hot row");
+    expect(comparedText("__init__ snake_case *.go `*x*`")).toBe("__init__ snake_case *.go `*x*`");
   });
 
   it("leaves the Changed pill out when every compared row differs", async () => {

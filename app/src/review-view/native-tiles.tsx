@@ -738,34 +738,34 @@ export function wordDiff(was: string, now: string): { was: Piece[]; now: Piece[]
   return { was: mark(a, keptA, "removed"), now: mark(b, keptB, "added") };
 }
 
-/** A word or code span of a highlighted run, code as code. A run is drawn
- *  word by word, so emphasis around it is left as written. */
+/** A word or code span of a compared item, code as code. */
 function Token({ text }: { text: string }) {
   if (text.length > 1 && text.startsWith("`") && text.endsWith("`"))
     return <code className="rounded-sm bg-code-fill px-1 py-0.5">{text.slice(1, -1)}</code>;
   return text;
 }
 
-/** Unmarked text of a compared item, drawn as list items are (emphasis and
- *  code spans render), with the spaces at its ends kept outside the
- *  markdown, which would drop them. */
-function Plain({ text }: { text: string }) {
-  const [, lead = "", body = "", trail = ""] = /^(\s*)([\s\S]*?)(\s*)$/.exec(text) ?? [];
-  return (
-    <>
-      {lead}
-      {body ? <InlineMarkdown>{body}</InlineMarkdown> : null}
-      {trail}
-    </>
-  );
+/** A compared item's text as the page draws it: plain, with code spans.
+ *  The host has taken out links and bold; this takes out italics, a `*` or
+ *  `_` pair around words outside code, but not one inside a word, so
+ *  `__init__`, `snake_case` and `*.go` stay as written. */
+export function comparedText(text: string): string {
+  return text
+    .split(/(`[^`]*`)/)
+    .map((part, at) =>
+      at % 2
+        ? part
+        : part.replace(/(^|[^\w*])([*_])([^\s*_](?:[^*_]*[^\s*_])?)\2(?![\w*])/g, "$1$3"),
+    )
+    .join("");
 }
 
 /** A compared item's pieces, the words it changed highlighted: `del` for
  *  what the item before had, `ins` for what this one adds. */
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((piece, at) => {
-    if (!piece.mark) return <Plain key={at} text={piece.tokens.join("")} />;
     const body = piece.tokens.map((text, position) => <Token key={position} text={text} />);
+    if (!piece.mark) return <span key={at}>{body}</span>;
     const Mark = piece.mark === "added" ? "ins" : "del";
     return (
       <Mark
@@ -825,11 +825,15 @@ function ComparedColumns({ data, rows }: { data: ColumnsData; rows: (ColumnItem 
     field: (item: ColumnItem) => string | undefined,
   ): Piece[] => {
     const [before, item, after] = [cells[at - 1], cells[at], cells[at + 1]];
-    const text = item && field(item);
+    const read = (cell: ColumnItem | null | undefined) => {
+      const text = cell && field(cell);
+      return text ? comparedText(text) : "";
+    };
+    const text = read(item);
     if (!text) return [];
-    const was = before && field(before);
+    const was = read(before);
     if (was && marks[at] === "changed") return wordDiff(was, text).now;
-    const now = after && field(after);
+    const now = read(after);
     if (now && marks[at + 1] === "changed") return wordDiff(text, now).was;
     return plain(text);
   };
