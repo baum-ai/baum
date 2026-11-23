@@ -2089,8 +2089,11 @@ Code, Tests, Session and Docs views, risks); between the gist and the risks it
 draws the section's `body`, an ordered list of blocks the section agent
 composes (`reviewv2.Block`): `prose` (`text`, at most three sentences and 450
 characters), `points` (1 to 8 `items`, each a line of at most 180 characters
-with `cites` and an optional `more` of at most 450 characters shown when the
-line is opened), `note` (`text`, at most 240 characters) and `tile`, which
+with `cites`, an optional `more` of at most 450 characters shown when the
+line is opened and an optional `tone`, the native tiles' tones but plain,
+drawn as its marker), `note` (`text`, at most 240 characters, and an optional
+`kind`, `reviewv2.NoteKinds`: `caveat`, `decision`, `unchanged` or
+`follow_up`, drawn as its icon) and `tile`, which
 places one of the document's tiles that the section owns (`tile`, by ID).
 A body has at most 6 blocks (`MaxBlocks`) and a block an optional `title` of
 at most 60 characters; text is inline markdown, bold and code only. `reviewv2.EnsureBodies` gives every section a body, without a tile block that

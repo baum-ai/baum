@@ -2972,7 +2972,11 @@ builds the rail's model (the sections and the file list) from it.
   title, then a row of views, each with its count and disabled (never hidden)
   when the section has nothing for it: **Overview** (its gist, then its body block by
   block, then its risks: prose at reading width, points as hairline lines that
-  open to a detail and the files they cite, a note with a left rule, and tile
+  open to a detail and the files they cite (in a block where some point has a
+  `tone`, every line leads with a dot in its tone's colour: `new`, `good`,
+  `bad`, `muted`, `missing` dashed, plain a hollow ring), a note with a left
+  rule (a note's `kind` puts its icon and word before the text: a caveat in
+  the caution colour, a decision, unchanged or a follow-up), and tile
   blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
   label; a table cell `{text, was}` strikes the old value and marks its row
   Changed, and a flow whose

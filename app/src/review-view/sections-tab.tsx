@@ -2,7 +2,14 @@ import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 import pluralize from "pluralize";
 import { chipLinkClass } from "@baum/viewer/components/chip-classes";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
-import { ChevronRightIcon, ExternalLinkIcon } from "@baum/viewer/components/icons";
+import {
+  ChevronRightIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  ExternalLinkIcon,
+  LightbulbIcon,
+  WarningIcon,
+} from "@baum/viewer/components/icons";
 import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Cites } from "./cites";
@@ -22,7 +29,15 @@ import { draftsOn, type DraftCard } from "../tiles/drafts";
 import { useTileHost } from "../tiles/host";
 import { PendingCard } from "../tiles/pending-card";
 import type { TileContext } from "../tiles/types";
-import { pointId, type V2Block, type V2Context, type V2Point, type V2Risk } from "./document";
+import {
+  type NoteKind,
+  pointId,
+  type Tone,
+  type V2Block,
+  type V2Context,
+  type V2Point,
+  type V2Risk,
+} from "./document";
 import {
   CONTEXT_ID,
   detailsOf,
@@ -39,7 +54,7 @@ import {
   type ViewTile,
 } from "./model";
 import { SectionViewBody, SectionViewTabs } from "./section-views";
-import { BLOCK_LABEL } from "./native-tiles";
+import { BLOCK_LABEL, TONE_MEANS } from "./native-tiles";
 import { ViewTileCard } from "./view-tile";
 import { openExternal } from "../outside-links";
 
@@ -346,10 +361,13 @@ function BodyBlock({
               key={position}
               id={itemId(pointId(section, at, position, point))}
               point={point}
+              marked={block.items.some((item) => item.tone)}
               document={document}
             />
           ))}
         </ul>
+      ) : block.kind ? (
+        <KindNote kind={block.kind} text={block.text} />
       ) : (
         <p className="max-w-[72ch] border-l-2 border-default py-0.5 pl-3 text-base text-secondary">
           <InlineMarkdown>{block.text}</InlineMarkdown>
@@ -359,22 +377,112 @@ function BodyBlock({
   );
 }
 
+/** A note's kind: its icon, its word and their colour, and its rule. Only a
+ *  caveat takes a status colour; the others are told apart by icon and word
+ *  in the text's own greys. */
+const NOTE_KINDS: Record<
+  NoteKind,
+  { icon: typeof WarningIcon; label: string; ink: string; rule: string }
+> = {
+  caveat: {
+    icon: WarningIcon,
+    label: "Caveat",
+    ink: "text-status-caution",
+    rule: "border-status-caution",
+  },
+  decision: {
+    icon: LightbulbIcon,
+    label: "Decision",
+    ink: "text-primary",
+    rule: "border-strong",
+  },
+  unchanged: {
+    icon: CircleCheckIcon,
+    label: "Unchanged",
+    ink: "text-tertiary",
+    rule: "border-subtle",
+  },
+  follow_up: {
+    icon: CircleDashedIcon,
+    label: "Follow-up",
+    ink: "text-secondary",
+    rule: "border-default",
+  },
+};
+
+/** A note of a kind: its icon beside the text, which its word leads, on a
+ *  rule in the kind's colour. A note without a kind is the plain aside. */
+function KindNote({ kind, text }: { kind: NoteKind; text: string }) {
+  const { icon: Icon, label, ink, rule } = NOTE_KINDS[kind];
+  return (
+    <div data-kind={kind} className={cn("flex max-w-[72ch] gap-2 border-l-2 py-0.5 pl-3", rule)}>
+      <span aria-hidden className={cn("flex h-[1lh] flex-none items-center text-base", ink)}>
+        <Icon size={14} />
+      </span>
+      <p className="min-w-0 text-base text-secondary">
+        <span className={cn("font-medium", ink)}>{label}.</span>{" "}
+        <InlineMarkdown>{text}</InlineMarkdown>
+      </p>
+    </div>
+  );
+}
+
+/** A point's marker by its tone: a dot filled in the tone's colour, a hollow
+ *  ring for a plain point beside toned ones, dashed for a missing one. */
+const MARK: Record<Tone, string> = {
+  plain: "border border-strong",
+  new: "bg-status-info",
+  good: "bg-status-positive",
+  bad: "bg-status-critical",
+  muted: "bg-(--border-strong)",
+  missing: "border border-dashed border-status-critical",
+};
+
+/** What a point's marker says, read out before its text. */
+const MARK_MEANS: Partial<Record<Tone, string>> = { ...TONE_MEANS, new: "added by this change" };
+
 /** One line of a points block. With a detail or cited files it is a button:
- *  it opens (the caret turns) to show the detail and the files it rests on. */
+ *  it opens (the caret turns) to show the detail and the files it rests on.
+ *  In a block where some point has a tone (`marked`), each line leads with
+ *  its tone's marker. */
 function PointRow({
   id,
   point,
+  marked,
   document,
 }: {
   id: string;
   point: V2Point;
+  marked: boolean;
   document: ReviewDocument;
 }) {
   const [open, setOpen] = useState(false);
   const openable = Boolean(point.more) || point.cites.length > 0;
   const panel = `${id}-more`;
+  const tone = point.tone ?? "plain";
+  const means = MARK_MEANS[tone];
+  const text = marked ? (
+    <span className="flex min-w-0 items-baseline gap-2.5">
+      <span
+        aria-hidden
+        title={means}
+        className={cn("size-2 flex-none -translate-y-px rounded-full", MARK[tone])}
+      />
+      <span className={cn("min-w-0", tone === "muted" && "text-secondary")}>
+        {means ? <span className="sr-only">{means}: </span> : null}
+        <InlineMarkdown>{point.text}</InlineMarkdown>
+      </span>
+    </span>
+  ) : (
+    <InlineMarkdown>{point.text}</InlineMarkdown>
+  );
   return (
-    <li id={id} data-point="" className="scroll-mt-4 border-b border-subtle target:bg-surface-wash">
+    <li
+      id={id}
+      data-point=""
+      data-tone={point.tone}
+      className="scroll-mt-4 border-b border-subtle target:bg-surface-wash"
+    >
       {openable ? (
         <button
           type="button"
@@ -386,19 +494,23 @@ function PointRow({
             FOCUS_RING,
           )}
         >
-          <InlineMarkdown>{point.text}</InlineMarkdown>
+          {text}
           <ChevronRightIcon
             aria-hidden
             className={cn("size-3.5 flex-none self-center text-tertiary", open && "rotate-90")}
           />
         </button>
       ) : (
-        <p className="px-1 py-2.5 text-base text-primary">
-          <InlineMarkdown>{point.text}</InlineMarkdown>
-        </p>
+        <p className="px-1 py-2.5 text-base text-primary">{text}</p>
       )}
       {openable && open ? (
-        <div id={panel} className="max-w-[72ch] space-y-2 px-1 pb-3 text-base text-secondary">
+        <div
+          id={panel}
+          className={cn(
+            "max-w-[72ch] space-y-2 px-1 pb-3 text-base text-secondary",
+            marked && "pl-[1.375rem]",
+          )}
+        >
           {point.more ? (
             <p>
               <InlineMarkdown>{point.more}</InlineMarkdown>

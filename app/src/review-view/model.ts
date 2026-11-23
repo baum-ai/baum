@@ -17,10 +17,10 @@ import {
 import { isRecord, isString } from "../tiles/types";
 import { fromV1 } from "./from-v1";
 
+import type { Tone } from "./document";
 export type { ReviewV2, V2Block, V2Point, V2Section, V2Risk, ViewTile } from "./document";
 
-/** A native tile's colour of a step, column or message. */
-export type Tone = "plain" | "new" | "good" | "bad" | "muted" | "missing";
+export type { Tone } from "./document";
 
 type Captioned = { caption?: string; source: Anchor[] };
 

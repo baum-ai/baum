@@ -2,6 +2,7 @@ package reviewv2
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -70,6 +71,22 @@ func CleanInline(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// NoteKind is kind when it is one of NoteKinds, else empty (a plain note).
+func NoteKind(kind string) string {
+	if slices.Contains(NoteKinds, kind) {
+		return kind
+	}
+	return ""
+}
+
+// PointTone is tone when it is one of view.Tones but plain, else empty.
+func PointTone(tone string) string {
+	if tone != "plain" && slices.Contains(view.Tones, tone) {
+		return tone
+	}
+	return ""
+}
+
 // CheckBody checks a body as the text limits ask: texts cleaned (CleanInline)
 // and cut to their limits, blocks and points without text dropped (and
 // blocks of a type the body does not have), blocks capped at MaxBlocks and
@@ -104,10 +121,13 @@ func CheckBody(body []Block, refs *Refs) ([]Block, view.Report) {
 				continue
 			}
 			fixed.Title = cut(b.Title, MaxBlockTitle)
+			if b.Type == BlockNote {
+				fixed.Kind = NoteKind(b.Kind)
+			}
 		case BlockPoints:
 			fixed.Title = cut(b.Title, MaxBlockTitle)
 			for _, p := range b.Items {
-				point := Point{Text: cut(p.Text, MaxPoint), More: cut(p.More, MaxPointDetail), Cites: []Anchor{}}
+				point := Point{Text: cut(p.Text, MaxPoint), More: cut(p.More, MaxPointDetail), Tone: PointTone(p.Tone), Cites: []Anchor{}}
 				if point.Text == "" {
 					report.Fix(view.FixNativeItem, "a point has no text")
 					continue

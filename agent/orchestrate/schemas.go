@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/baum-ai/baum/reviewv2"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // The reply schemas of the levels. Every property is required and an absent
@@ -94,11 +95,11 @@ func MapSchema(types []string) []byte {
 // SectionSchema is a section agent's reply schema.
 func SectionSchema(types []string) []byte {
 	brief := object(obj{"id": text(80), "shows": text(600), "cites": cites(reviewv2.MaxCites), "drop": obj{"type": "boolean"}, "reason": nullable(text(400))})
-	point := object(obj{"text": text(450), "more": nullable(text(1200)), "cites": cites(reviewv2.MaxCites)})
+	point := object(obj{"text": text(450), "more": nullable(text(1200)), "tone": nullable(enum(view.Tones...)), "cites": cites(reviewv2.MaxCites)})
 	// A block uses the fields of its type; the others are null.
 	block := object(obj{
 		"type":  enum(reviewv2.BlockProse, reviewv2.BlockPoints, reviewv2.BlockNote, reviewv2.BlockTile),
-		"title": nullable(text(160)), "text": nullable(text(1200)), "items": nullable(array(point, 1, reviewv2.MaxPoints)),
+		"title": nullable(text(160)), "kind": nullable(enum(reviewv2.NoteKinds...)), "text": nullable(text(1200)), "items": nullable(array(point, 1, reviewv2.MaxPoints)),
 		"tile": nullable(text(80)),
 	})
 	return encode(object(obj{
