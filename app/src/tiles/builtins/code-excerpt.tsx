@@ -44,13 +44,26 @@ export function excerptLines(
 }
 
 /** The lines a folded excerpt shows: `EXCERPT_SHOWN` of them from the start,
- *  or from just above its first focused line when that lies further down.
- *  Folding one or two lines saves nothing, so a short excerpt never folds. */
+ *  or from just above its first focused line when that lies further down,
+ *  moved down to its last focused line when that fits. Folding one or two
+ *  lines saves nothing, so a short excerpt never folds. */
 export function foldedLines(lines: CodeDiffLine[]): CodeDiffLine[] | null {
   if (lines.length <= EXCERPT_SHOWN + 2) return null;
-  const focus = lines.findIndex((line) => line.focus);
-  const start = Math.max(0, Math.min(focus - 2, lines.length - EXCERPT_SHOWN));
+  const first = lines.findIndex((line) => line.focus);
+  const last = lines.findLastIndex((line) => line.focus);
+  let start = Math.max(0, Math.min(first - 2, lines.length - EXCERPT_SHOWN));
+  if (last >= start + EXCERPT_SHOWN) start = Math.min(first, last - EXCERPT_SHOWN + 1);
   return lines.slice(start, start + EXCERPT_SHOWN);
+}
+
+/** The `@@` header of the lines drawn, with the hunk's own context after it
+ *  (the function it is in), so its ranges agree with the numbers shown. */
+export function excerptHeader(hunkHeader: string | undefined, lines: CodeDiffLine[]): string {
+  const range = (sign: string, numbers: number[]) => `${sign}${numbers[0] ?? 0},${numbers.length}`;
+  const olds = lines.flatMap((line) => (line.oldLine === undefined ? [] : [line.oldLine]));
+  const news = lines.flatMap((line) => (line.newLine === undefined ? [] : [line.newLine]));
+  const context = hunkHeader?.replace(/^@@[^@]*@@/, "") ?? "";
+  return `@@ ${range("-", olds)} ${range("+", news)} @@${context}`;
 }
 
 /** A code tile's excerpt drawn as a diff: the file's path (opening it in
@@ -72,20 +85,18 @@ export function CodeExcerpt({
   const [open, setOpen] = useState(false);
   const all = excerptLines(hunk, text, lines, focus);
   const folded = foldedLines(all);
-  const shown = all.filter((line) => line.newLine !== undefined);
-  const header =
-    hunk.diff?.header ?? `@@ +${shown[0]?.newLine ?? hunk.new_range[0]},${shown.length} @@`;
+  const shown = folded && !open ? folded : all;
   const file: CodeDiffFile = {
     sourceIndex: 0,
     path: hunk.path,
     href: hunkUrl(review, hunk),
     additions: all.filter((line) => line.kind === "add").length,
     deletions: all.filter((line) => line.kind === "remove").length,
-    hunks: [{ header, lines: folded && !open ? folded : all }],
+    hunks: [{ header: excerptHeader(hunk.diff?.header, shown), lines: shown }],
   };
   return (
     <div className="space-y-2">
-      <CodeDiff bare files={[file]} className="mt-0" />
+      <CodeDiff bare foldable={false} files={[file]} className="mt-0" />
       {folded ? (
         <button
           type="button"

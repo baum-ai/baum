@@ -2149,9 +2149,10 @@ reading time (`ReviewMinutes`: the prose's words at 400 a minute,
 keeps the version it was introduced in, a previous risk a section no longer
 names is mitigated in this version unless the section's details are pending
 or failed); a code tile's `text` (the new side of its hunk between its
-lines) from the diff, its `focus` kept to lines of the excerpt; and every tile's state. A previous version of either
-schema is read through `reviewv2.Read`. A completed document always has a
-`generation` record; a converted one never does.
+lines) from the diff, its `focus` kept to lines of the excerpt; and every
+tile's state. A previous version of either schema is read through
+`reviewv2.Read`. A completed document always has a `generation` record; a
+converted one never does.
 
 **Conversion.** `reviewv2.FromV1` converts a stored `baum.review/1`
 version and its view composition: the header, stats, index, risk score and

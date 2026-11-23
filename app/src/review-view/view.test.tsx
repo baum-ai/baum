@@ -13,6 +13,7 @@ import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
 import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
+import { foldedLines } from "../tiles/builtins/code-excerpt";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
@@ -948,13 +949,29 @@ describe("the code tile", () => {
       "−",
       "+",
       "+",
-      "+",
+      "+Highlighted line",
       "+",
     ]);
+    // The header's ranges are the excerpt's.
+    expect(container.querySelector("tbody tr")?.textContent).toBe("@@ -993,1 +995,4 @@");
     expect(drawn[0]?.textContent).toContain("Shutdown:     queue.Shutdown,");
     expect(drawn[3]?.querySelectorAll("td")[1]?.textContent).toBe("997");
     expect(drawn.filter((row) => row.hasAttribute("data-focus"))).toEqual([drawn[3]]);
-    expect(drawn.filter((row) => row.classList.contains("opacity-45"))).toHaveLength(4);
+    expect(drawn.filter((row) => row.classList.contains("opacity-35"))).toHaveLength(4);
+  });
+
+  it("folds to show every focus line that fits", () => {
+    const lines = Array.from({ length: 33 }, (_, at) => ({
+      kind: "add" as const,
+      newLine: at + 1,
+      text: "",
+      focus: at === 19 || at === 30,
+    }));
+    const shown = foldedLines(lines)!;
+    expect(shown.map((line) => line.newLine)).toEqual(
+      Array.from({ length: 12 }, (_, at) => at + 20),
+    );
+    expect(foldedLines(lines.slice(0, 14))).toBeNull();
   });
 
   it("dims nothing when no line is named", async () => {
@@ -962,7 +979,7 @@ describe("the code tile", () => {
       code({ hunk: "h_routes", lines: [61, 64], text: newSide(61, 64) }),
     );
     expect(rows(container)).toHaveLength(4);
-    expect(container.querySelector("tbody tr.opacity-45")).toBeNull();
+    expect(container.querySelector("tbody tr.opacity-35")).toBeNull();
   });
 
   it("folds a long excerpt at the lines that matter, and opens it", async () => {

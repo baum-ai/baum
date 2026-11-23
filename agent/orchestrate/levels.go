@@ -330,7 +330,9 @@ func (o *orchestration) sectionLevel(ctx context.Context, s reviewv2.Section, pl
 			if len(hunkCites(brief.Cites)) > 0 {
 				t.Cites = brief.Cites
 			}
-			withFocus(&t, brief.Focus)
+			if t.Type == TypeCode {
+				o.setFocus(t.ID, brief.Focus)
+			}
 		}
 		o.setTile(t)
 		out = append(out, t)
@@ -393,6 +395,7 @@ func (o *orchestration) claimProposal(result *sectionResult) {
 	}
 	o.tiles = append(o.tiles, *extra)
 	o.mu.Unlock()
+	o.setFocus(extra.ID, result.ProposeFocus)
 	if extra.ID == id {
 		return
 	}
@@ -467,16 +470,19 @@ func codeData(cites []reviewv2.Anchor) (reviewv2.CodeData, bool) {
 	return reviewv2.CodeData{}, false
 }
 
-// withFocus keeps the lines a section highlights in a code tile's data
-// until codeTile writes it; the host keeps those within the excerpt.
-func withFocus(t *reviewv2.Tile, focus []int) {
-	if t.Type != TypeCode || len(focus) == 0 {
+// setFocus keeps the lines a section highlights in a code tile until
+// codeTile writes its data; the host keeps those within the excerpt. A
+// pending tile keeps no data, so a draft leaves it pending.
+func (o *orchestration) setFocus(tile string, focus []int) {
+	if len(focus) == 0 {
 		return
 	}
-	if data, ok := codeData(t.Cites); ok {
-		data.Focus = focus
-		t.Data, _ = json.Marshal(data)
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.focus == nil {
+		o.focus = map[string][]int{}
 	}
+	o.focus[tile] = focus
 }
 
 // codeTile is a code tile: its first hunk cite, with the lines the section
@@ -490,10 +496,9 @@ func (o *orchestration) codeTile(t reviewv2.Tile) {
 		o.record(LevelTiles, t.ID, StatusFailed, "a code tile needs a hunk")
 		return
 	}
-	var prior reviewv2.CodeData
-	if json.Unmarshal(t.Data, &prior) == nil {
-		data.Focus = prior.Focus
-	}
+	o.mu.Lock()
+	data.Focus = o.focus[t.ID]
+	o.mu.Unlock()
 	t.Data, _ = json.Marshal(data)
 	t.Title = cut(strings.TrimRight(clean(t.Shows), "."), reviewv2.MaxTileTitle)
 	t.State = reviewv2.TileReady

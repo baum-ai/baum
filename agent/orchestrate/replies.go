@@ -289,7 +289,9 @@ type sectionResult struct {
 	Risks   []reviewv2.Risk
 	Briefs  map[string]tileBrief
 	Propose *reviewv2.Tile
-	Dropped map[string]string
+	// ProposeFocus is a proposed code tile's focus lines.
+	ProposeFocus []int
+	Dropped      map[string]string
 }
 
 // checkSection checks a section agent's reply. taken are the IDs of the
@@ -383,7 +385,9 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 				placeable[p.ID] = final
 			}
 			out.Propose = &reviewv2.Tile{ID: final, Type: t.Name, Owner: section.ID, Shows: shows, Cites: kept, State: reviewv2.TilePending}
-			withFocus(out.Propose, p.Focus)
+			if t.Name == TypeCode {
+				out.ProposeFocus = p.Focus
+			}
 		}
 	}
 	placed := map[string]bool{}

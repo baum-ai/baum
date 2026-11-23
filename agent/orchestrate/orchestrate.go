@@ -240,10 +240,13 @@ type orchestration struct {
 	budget   *budgets
 
 	// mu guards everything below and the outcome.
-	mu         sync.Mutex
-	plan       plan
-	sections   map[string]*reviewv2.Section
-	tiles      []reviewv2.Tile
+	mu       sync.Mutex
+	plan     plan
+	sections map[string]*reviewv2.Section
+	tiles    []reviewv2.Tile
+	// focus are the lines a section highlights in each code tile, by tile
+	// ID, until codeTile writes its data.
+	focus      map[string][]int
 	context    *reviewv2.Context
 	overview   *overviewResult
 	mapSession string

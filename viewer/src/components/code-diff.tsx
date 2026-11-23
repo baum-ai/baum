@@ -80,7 +80,7 @@ function CodeDiffTable({
                   className={cn(
                     "align-top",
                     lineStyle[line.kind],
-                    focused && !line.focus && "opacity-45 transition-opacity",
+                    focused && !line.focus && "opacity-35",
                   )}
                 >
                   <td
@@ -113,6 +113,7 @@ function CodeDiffTable({
                     )}
                   >
                     {mark[line.kind]}
+                    {line.focus ? <span className="sr-only">Highlighted line</span> : null}
                   </td>
                   <td className="pr-3 whitespace-pre-wrap text-primary [overflow-wrap:anywhere]">
                     <HighlightedText text={line.text} tokens={highlighted?.[hunkIndex]?.[index]} />
@@ -152,6 +153,7 @@ function hunkNotes(
 export function CodeDiff({
   files,
   bare = false,
+  foldable = true,
   highlight = true,
   className,
   afterHunk,
@@ -159,6 +161,9 @@ export function CodeDiff({
 }: {
   files: readonly CodeDiffFile[];
   bare?: boolean;
+  /** False for a diff with no fold of its own, such as an excerpt that
+   *  folds its lines itself: its header has no chevron. */
+  foldable?: boolean;
   /** Drawn under a hunk, across the table: a host's notes on it. */
   afterHunk?: (file: CodeDiffFile, hunk: number) => ReactNode;
   /** Drawn in a file's header, on a line under its path: a host's word on
@@ -218,25 +223,27 @@ export function CodeDiff({
                 {/* The path stays a link to the file, so folding is its own
                     control beside it. */}
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    aria-label={`${file.path} code`}
-                    aria-expanded={expanded}
-                    aria-controls={body}
-                    onClick={toggle}
-                    className={cn(
-                      "flex-none cursor-pointer rounded-sm -m-1 p-1.5 text-tertiary hover:text-secondary",
-                      FOCUS_RING,
-                    )}
-                  >
-                    <ChevronDownIcon
-                      size={12}
+                  {foldable ? (
+                    <button
+                      type="button"
+                      aria-label={`${file.path} code`}
+                      aria-expanded={expanded}
+                      aria-controls={body}
+                      onClick={toggle}
                       className={cn(
-                        "transition-transform motion-reduce:transition-none",
-                        !expanded && "-rotate-90",
+                        "flex-none cursor-pointer rounded-sm -m-1 p-1.5 text-tertiary hover:text-secondary",
+                        FOCUS_RING,
                       )}
-                    />
-                  </button>
+                    >
+                      <ChevronDownIcon
+                        size={12}
+                        className={cn(
+                          "transition-transform motion-reduce:transition-none",
+                          !expanded && "-rotate-90",
+                        )}
+                      />
+                    </button>
+                  ) : null}
                   <CodeFileLink
                     path={file.path}
                     line={file.hunks[0]?.lines.find((line) => line.newLine)?.newLine}

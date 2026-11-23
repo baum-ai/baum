@@ -3038,7 +3038,8 @@ builds the rail's model (the sections and the file list) from it.
   changed, with old and new line numbers and the lines it removed among and
   just before its range. The one to three `focus` lines carry a bar and the
   rest are dimmed. An excerpt over 14 lines shows 12 (from just above its
-  first focus line) until "Show all N lines" opens it. When the index holds
+  first focus line, moved down to take in its last when they fit) until
+  "Show all N lines" opens it; the `@@` header gives the ranges drawn. When the index holds
   no diff for the hunk, the text the host filled stands as unchanged lines.
   Exhibits draw as the generic tiles do, and library and
   chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that
