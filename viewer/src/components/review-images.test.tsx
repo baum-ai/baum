@@ -242,3 +242,47 @@ it("retains local document selectors and fragments when retrying an image", () =
     "/attachments/att_aa?clone=one&pr=7&version=1&attempt=1#capture",
   );
 });
+
+it("plays a description video in place and says in its place when it fails", () => {
+  const review = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+  review.index.attachments = [
+    { ...attachment("att_vv", "", [1280, 720]), content_type: "video/mp4", heading: "Demo" },
+  ];
+  const block = {
+    kind: "images",
+    items: [{ attachment: "att_vv" }],
+    source: [{ type: "pr_body", section: null }],
+  } as Extract<Block, { kind: "images" }>;
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() =>
+    root!.render(
+      <AttachmentUrlProvider resolve={(id) => `/attachments/${id}`}>
+        <ReviewImages document={review} block={block} />
+      </AttachmentUrlProvider>,
+    ),
+  );
+  const video = container.querySelector("video")!;
+  expect(video.getAttribute("src")).toBe("/attachments/att_vv");
+  expect([video.controls, video.muted, video.autoplay, video.preload]).toEqual([
+    true,
+    true,
+    false,
+    "metadata",
+  ]);
+  expect(container.querySelector("img, button")).toBeNull();
+  expect(container.querySelector("figcaption")?.textContent).toBe("Demo");
+
+  act(() => {
+    video.dispatchEvent(new Event("error"));
+  });
+  expect(container.querySelector("video")).toBeNull();
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("Video unavailable");
+  act(() =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Retry loading Demo"]')!.click(),
+  );
+  expect(container.querySelector("video")?.getAttribute("src")).toBe(
+    "/attachments/att_vv?attempt=1",
+  );
+});

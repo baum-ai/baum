@@ -969,6 +969,13 @@ full-screen control fills the screen through the browser's Fullscreen API
 covers the window where the host does not grant it. Escape leaves full screen
 before it closes the viewer.
 
+An indexed attachment whose `content_type` is `video/…` (local desktop reviews
+only) draws as a muted `<video>` with native controls that loads only its
+metadata and plays when clicked, sized by its `width` and `height`, with no
+full-size dialog. A clip with neither a caption nor alt text is labelled by
+the description heading above it. A clip that fails to load is marked
+unavailable and can be retried like an image.
+
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and
 `local-transcript` parsers for the local server’s redacted answers.
