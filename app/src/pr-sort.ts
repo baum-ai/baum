@@ -100,7 +100,7 @@ export const sortInfo = (field: SortField) => INFO.get(field)!;
 
 /** A sort as written: its fields in turn, comma-separated, each reversed with
  *  `-` before it (`opened,-risk`). Unknown or repeated fields are skipped, so
- *  a sort from a newer app still reads. "" is none: Priority alone. */
+ *  a sort from a newer app still reads. "" is none: the list's own order. */
 export function parseSort(text: string | undefined | null): SortKey[] {
   const keys: SortKey[] = [];
   for (const part of (text ?? "").split(",")) {
@@ -141,10 +141,10 @@ export function sortWords(key: SortKey): string {
 }
 
 /** The sort in words, as the button's title says it: "Opened, oldest first,
- *  then Risk, highest first". */
+ *  then Risk, highest first"; "" for none. */
 export function describeSort(text: string): string {
   const keys = parseSort(text);
-  if (keys.length === 0) return "Priority";
+  if (keys.length === 0) return "";
   return (
     keys
       // "Oldest first" reads on as "oldest first"; "A to Z" stays.
@@ -176,7 +176,7 @@ export function compareEntries(keys: SortKey[], a: Entry, b: Entry): number {
   return 0;
 }
 
-/** The items sorted by the keys, keeping their order (Priority) where they
+/** The items sorted by the keys, keeping their own order where they
  *  tie; the same array when there are no keys. */
 export function sortBy<T>(items: T[], keys: SortKey[], entryOf: (item: T) => Entry): T[] {
   if (keys.length === 0) return items;

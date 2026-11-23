@@ -81,7 +81,7 @@ test("sorts an inbox from the keyboard, within its sections, and saves it with t
   await expect(button).toHaveAttribute("aria-label", "Sort, Repository, Z to A");
   await expect.poll(async () => byRepository(await sectionRows(page), true)).toBe(true);
 
-  // A second key follows the first; Backspace drops it, 0 goes back to Priority.
+  // A second key follows the first; Backspace drops it.
   await page.keyboard.press("3");
   await expect(button).toHaveAttribute(
     "aria-label",
@@ -107,7 +107,7 @@ test("sorts an inbox from the keyboard, within its sections, and saves it with t
   await expect.poll(async () => byRepository(await sectionRows(page), true)).toBe(true);
 
   await page.keyboard.press("Shift+S");
-  await page.keyboard.press("0");
+  await page.keyboard.press("Backspace");
   await expect(button).toHaveAttribute("aria-label", "Sort");
   await expect.poll(() => sectionRows(page)).toEqual(before);
   expect(errors).toEqual([]);

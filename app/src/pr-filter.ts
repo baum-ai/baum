@@ -941,13 +941,13 @@ export type SavedTab = {
   name: string;
   view: string;
   query: string;
-  /** The tab's sort (`pr-sort.ts`); absent or "" for Priority. */
+  /** The tab's sort (`pr-sort.ts`); absent or "" for none. */
   sort?: string;
 };
 type Filters = {
   pages: Record<FilterPage, string>;
   tabs: SavedTab[];
-  /** Each page's sort, where it is not Priority. */
+  /** Each page's sort, where it has one. */
   sorts?: Record<FilterPage, string>;
 };
 /** The daemon keeps at most 64 pages; the least recently changed go first. */

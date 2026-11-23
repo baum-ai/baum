@@ -18,13 +18,13 @@ export const SORT_KEY = "S";
 
 /** The sort icon and its menu, beside the filter's: the fields with a digit
  *  each, which adds the field as the next key or turns it round; Backspace
- *  drops the last key and 0 goes back to Priority, the page's own order,
- *  which also settles any tie. The icon is lit while a sort is in force. */
+ *  drops the last key. Without a key the list keeps its own order, which
+ *  also settles any tie. The icon is lit while a sort is in force. */
 export function SortButton({
   sort,
   onChange,
 }: {
-  /** The sort as written (`pr-sort.ts`); "" for Priority. */
+  /** The sort as written (`pr-sort.ts`); "" for none. */
   sort: string;
   onChange: (next: string) => void;
 }) {
@@ -88,8 +88,7 @@ export function SortButton({
         onChange(toggleSortField(sort, field.field));
         setActive(Number(key) - 1);
       }
-    } else if (key === "0") onChange("");
-    else if (key === "Backspace") onChange(dropLastSortKey(sort));
+    } else if (key === "Backspace") onChange(dropLastSortKey(sort));
     else if (key === "Delete") onChange(withoutSortField(sort, SORT_FIELDS[active]!.field));
     else if (key === "ArrowDown" || key === "j") setActive((at) => (at + 1) % SORT_FIELDS.length);
     else if (key === "ArrowUp" || key === "k")
@@ -110,7 +109,7 @@ export function SortButton({
     }
   };
 
-  const title = `Sort: ${describeSort(sort)} (⇧S)`;
+  const title = lit ? `Sort: ${describeSort(sort)} (⇧S)` : "Sort (⇧S)";
   return (
     <details
       {...detailsProps}
@@ -152,9 +151,11 @@ export function SortButton({
         >
           <div className="sort-menu-head">
             <span className="sort-menu-title">Sort by</span>
-            <span className="sort-menu-current">
-              {lit ? `${keys.length} of ${SORT_FIELDS.length}` : "Priority"}
-            </span>
+            {lit ? (
+              <span className="sort-menu-current">
+                {keys.length} of {SORT_FIELDS.length}
+              </span>
+            ) : null}
           </div>
           <div className="filter-menu-rows sort-menu-rows">
             {SORT_FIELDS.map((info, index) => {
@@ -206,9 +207,6 @@ export function SortButton({
             </span>
             <span>
               <span className="sort-menu-key">⌫</span> drop last
-            </span>
-            <span>
-              <span className="sort-menu-key">0</span> Priority
             </span>
           </div>
         </div>
