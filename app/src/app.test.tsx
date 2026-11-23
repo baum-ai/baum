@@ -3395,6 +3395,7 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
     expect(items.map((item) => item.textContent)).toEqual([
       "Show shortcuts",
       "Report a problem",
+      "Take the tour",
       "Open the docs",
     ]);
     await act(async () => items.find((item) => item.textContent?.startsWith(label))!.click());

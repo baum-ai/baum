@@ -1,7 +1,7 @@
 import { SavedStateNotice } from "./ui-state";
 import { checkWaitingJobs, onTileCheckEvent } from "./tiles/custom/check-host";
 import { TileCheckPage } from "./tiles/custom/check-runner";
-import { PreferencesProvider } from "./preferences";
+import { PreferencesProvider, usePreferences } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
@@ -91,6 +91,7 @@ import {
   useShortcuts,
   VIEW_KEYS,
   type ShortcutsPlace,
+  pageKeyLabel,
   useReadlineArrows,
 } from "./shortcuts";
 import { GoTo, type GoToItem } from "./go-to";
@@ -372,6 +373,7 @@ function Application() {
   );
 }
 function Workspace({ url }: { url: UrlState }) {
+  const { preferences } = usePreferences();
   const [clones, setClones] = useState<Clone[]>([]);
   const [picked, setPicked] = useState<Repository[]>([]);
   const [attached, setAttached] = useState<FoundClones["attached"]>([]);
@@ -1405,9 +1407,10 @@ function Workspace({ url }: { url: UrlState }) {
         id: `page:${item.page}`,
         kind: "Page" as const,
         label: item.label,
+        detail: pageKeyLabel(item.page, preferences.page_modifier),
         href: item.href(),
       })),
-      { id: "tour", kind: "Page" as const, label: "Take the tour", href: TOUR_HREF() },
+      { id: "tour", kind: "Action" as const, label: "Take the tour", href: TOUR_HREF() },
       {
         id: "session-panel",
         kind: "Action" as const,
@@ -1649,6 +1652,7 @@ function Workspace({ url }: { url: UrlState }) {
           help={{
             shortcuts: () => setShortcuts(true),
             report: () => setReporting(true),
+            tour: () => navigate(TOUR_HREF()),
             opener: openHelp,
           }}
           Link={LocalLink}

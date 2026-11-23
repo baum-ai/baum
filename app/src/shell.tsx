@@ -450,6 +450,8 @@ export type RailHelp = {
   shortcuts: () => void;
   /** Starts a report of a problem. */
   report: () => void;
+  /** Starts the tour again. */
+  tour?: () => void;
   /** Set while the button is mounted to what opens its menu, so the `?` key
    *  can open it with the keys on Show shortcuts: `?` then Enter shows the
    *  sheet. */
@@ -477,6 +479,7 @@ function HelpButton({
       ? [
           { label: "Show shortcuts", onSelect: help.shortcuts },
           { label: "Report a problem", onSelect: help.report },
+          ...(help.tour ? [{ label: "Take the tour", onSelect: help.tour }] : []),
         ]
       : []),
     {
