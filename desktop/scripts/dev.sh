@@ -40,6 +40,29 @@ command -v cargo >/dev/null 2>&1 || {
     echo "Install Rust on the host to run the native desktop app; see oss/desktop/README.md." >&2
     exit 1
 }
+if [ -z "${BAUM_DESKTOP_BAUM:-}" ]; then
+    target=$(rustc -vV | sed -n 's/^host: //p')
+    binary="$root/oss/desktop/binaries/baum-$target"
+    # The daemon embeds the Go module under oss/ (tool descriptions, tile guide,
+    # viewer assets). Rebuild it in Docker, as `just desktop::sidecar` does, when
+    # it is missing or its recorded input stamp differs from the checkout's.
+    reason=
+    if [ ! -f "$binary" ]; then
+        reason="$binary is missing"
+    elif [ ! -f "$binary.stamp" ]; then
+        reason="$binary has no build stamp"
+    elif [ "$(cat "$binary.stamp")" != "$(cd "$root/oss" && sh desktop/scripts/sidecar-stamp.sh)" ]; then
+        reason="oss/ changed since $binary was built"
+    fi
+    if [ -n "$reason" ]; then
+        echo "Rebuilding the baum daemon: $reason."
+        BAUM_DEV_HEAVY=1 "$compose" run --build --rm --no-deps oss-test sh desktop/scripts/sidecar.sh "$target"
+    fi
+    echo "Daemon built from oss/ at $(git -C "$root" rev-parse --short HEAD); after a git pull, restart desktop::dev to pick up daemon changes."
+fi
+if [ -n "${BAUM_DESKTOP_DEV_SIDECAR_ONLY:-}" ]; then
+    exit 0
+fi
 "$compose" build "$service"
 frontend="baum-desktop-vite-${shared##*.}"
 "$compose" run -d --no-deps --service-ports ${container_user:+--user "$container_user"} --name "$frontend" \
@@ -69,13 +92,12 @@ cd "$root/oss/desktop"
 export CARGO_TARGET_DIR="$root/oss/desktop/target/host-dev"
 export BAUM_DESKTOP_DEV_DIR="$shared"
 if [ -z "${BAUM_DESKTOP_BAUM:-}" ]; then
-    target=$(rustc -vV | sed -n 's/^host: //p')
     # Install records and privileged scripts require a target named baum.
     # Rename a fresh copy into place so an existing daemon can keep running.
     cli_dir="$CARGO_TARGET_DIR/bin"
     mkdir -p "$cli_dir"
     pending_cli=$(mktemp "$cli_dir/.baum.XXXXXX")
-    if ! cp "$root/oss/desktop/binaries/baum-$target" "$pending_cli" ||
+    if ! cp "$binary" "$pending_cli" ||
         ! chmod 755 "$pending_cli" || ! mv -f "$pending_cli" "$cli_dir/baum"; then
         rm -f -- "$pending_cli"
         echo "Could not prepare the development baum command." >&2

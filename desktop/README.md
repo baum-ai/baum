@@ -1347,8 +1347,17 @@ login environment, installed agent CLIs, repository paths, credential agents or
 native desktop services faithfully by mounting a display socket. The launcher
 uses your real home directory and the shared host daemon, so installation and
 repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
-when set; otherwise it atomically refreshes `target/host-dev/bin/baum` from the
-freshly built sidecar and runs that copy. This gives installation a stable target
+when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
+(written by `scripts/sidecar.sh`) holds a content hash of the Go module under
+`oss/` (`scripts/sidecar-stamp.sh`: sources, `go:embed` files and the built
+viewer and local app, not the frontend sources or the desktop crate). If the
+binary or stamp is missing or the hash differs, it says why and rebuilds the
+sidecar in `oss-test` before launching; an unchanged checkout skips the build.
+It then atomically refreshes `target/host-dev/bin/baum` from the sidecar and
+runs that copy. The check runs once at start: after a `git pull` while the app
+runs, stop and rerun `just desktop::dev` to pick up daemon changes (the launcher
+prints the commit its daemon was built from). Set `BAUM_DESKTOP_DEV_SIDECAR_ONLY=1`
+to run only this check and stop before Vite and the app. This gives installation a stable target
 named `baum`, as the install-record validation requires; the platform-suffixed
 sidecar filename is only the build artifact. Existing daemons can finish using
 the previous executable after the copy is replaced.
