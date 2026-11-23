@@ -147,7 +147,7 @@ export function ReviewImages({
               return (
                 <figure key={item.key} className="min-w-0 max-w-full space-y-1.5" style={{ width }}>
                   {failed.has(item.attachment.id) ? (
-                    <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-(--radius-md) border border-dashed border-(--border-default) bg-(--surface-sunken) p-3 text-center text-base text-(--text-tertiary)">
+                    <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-default bg-surface-sunken p-3 text-center text-base text-tertiary">
                       <span id={`${idPrefix}-${item.key}`} role="status">
                         Image unavailable
                       </span>
@@ -172,7 +172,7 @@ export function ReviewImages({
                       aria-label={`View full size: ${label}`}
                       onClick={() => setViewing(item)}
                       className={cn(
-                        "block w-full cursor-zoom-in overflow-hidden rounded-(--radius-md) border border-(--border-default) bg-(--surface-sunken)",
+                        "block w-full cursor-zoom-in overflow-hidden rounded-md border border-default bg-surface-sunken",
                         FOCUS_RING,
                       )}
                     >
@@ -203,9 +203,7 @@ export function ReviewImages({
                     </button>
                   )}
                   {item.text && (
-                    <figcaption className="text-base text-(--text-tertiary)">
-                      {item.text}
-                    </figcaption>
+                    <figcaption className="text-base text-tertiary">{item.text}</figcaption>
                   )}
                   <ImageProvenance document={document} attachment={item.attachment} />
                 </figure>
@@ -224,18 +222,18 @@ export function ReviewImages({
           if (key) triggers.current.get(key)?.focus();
         }}
         className={cn(
-          "m-auto max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-auto rounded-(--radius-lg) border border-(--border-default)",
-          "bg-(--surface-card) p-3 text-(--text-primary) shadow-(--shadow-card)",
-          "backdrop:bg-(--surface-scrim)",
+          "m-auto max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-default",
+          "bg-surface-card p-3 text-primary shadow-card",
+          "backdrop:bg-surface-scrim",
         )}
       >
         {viewing && (
           <figure className="space-y-2">
             <div
               ref={header}
-              className="sticky -top-3 z-10 -mx-3 -mt-3 flex items-start justify-between gap-3 bg-(--surface-card) px-3 pt-3 pb-2"
+              className="sticky -top-3 z-10 -mx-3 -mt-3 flex items-start justify-between gap-3 bg-surface-card px-3 pt-3 pb-2"
             >
-              <figcaption className="min-w-0 pt-1 text-base text-(--text-secondary)">
+              <figcaption className="min-w-0 pt-1 text-base text-secondary">
                 {viewing.text}
                 <ImageProvenance document={document} attachment={viewing.attachment} />
               </figcaption>
@@ -283,7 +281,7 @@ function ImageProvenance({
 }) {
   if (!attachment.origins?.length) return null;
   return (
-    <div className="space-y-1 text-base text-(--text-tertiary)" aria-label="Image provenance">
+    <div className="space-y-1 text-base text-tertiary" aria-label="Image provenance">
       {attachment.origins.map((origin, index) => (
         <div key={`${origin.session}-${origin.tool || origin.input}-${origin.position}-${index}`}>
           <span title={origin.tool}>

@@ -62,7 +62,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 2, name: "Summary" })).toBeVisible();
-    if (width >= 1280) {
+    if (width >= 1024) {
       await page.keyboard.press("]");
       await expect(
         page.getByRole("button", { name: "Expand side pane", exact: true }),

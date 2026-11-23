@@ -83,7 +83,7 @@ func newDocumentCache() *documentCache {
 		entries: map[string]*cachedDocument{}, revisions: map[string]*cachedDocument{},
 		idle: documentIdle, maxEntries: maxCachedDocuments, maxBytes: maxCachedBytes, now: time.Now,
 		requests: make(chan struct{}, maxLocalReads), reads: make(chan struct{}, maxLocalReads),
-		resolve: locallink.Resolve, patch: patcher.Patch, patcher: patcher,
+		resolve: locallink.ResolveSummary, patch: patcher.Patch, patcher: patcher,
 	}
 }
 func acquire(ctx context.Context, slots chan struct{}) bool {
@@ -339,7 +339,17 @@ func (c *documentCache) newServer(clone repos.Clone, document []byte) (*viewserv
 			return locallink.Result{}, ctx.Err()
 		}
 		defer func() { <-c.reads }()
-		return c.resolve(ctx, locallink.Request{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Sessions: c.sessions})
+		result, err := c.resolve(ctx, locallink.Request{Dir: clone.Path, Repository: v.Repository, Head: v.Head, Base: v.Base, MergeBase: v.MergeBase, Sessions: c.sessions})
+		if load := result.LoadGraph; load != nil {
+			result.LoadGraph = func(ctx context.Context, id string) (locallink.Result, error) {
+				if !acquire(ctx, c.reads) {
+					return locallink.Result{}, ctx.Err()
+				}
+				defer func() { <-c.reads }()
+				return load(ctx, id)
+			}
+		}
+		return result, err
 	}, Patch: func(ctx context.Context, v viewserver.Review, path string) (locallink.PatchResult, error) {
 		if !acquire(ctx, c.reads) {
 			return locallink.PatchResult{}, ctx.Err()

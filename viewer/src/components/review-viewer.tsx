@@ -44,10 +44,12 @@ import { cn, FOCUS_RING } from "./classnames";
 import {
   ReviewFilesProvider,
   ReviewHunksProvider,
+  ReviewRefsProvider,
   ReviewSourcesProvider,
   type ReviewSources,
 } from "./code-file-link";
 import { HunkPatchProvider, type HunkPatchSource } from "./hunk-evidence";
+import { ReviewJumpContext, type ReviewJump } from "./review-contexts";
 import {
   ChecksIcon,
   ChevronLeftIcon,
@@ -370,12 +372,12 @@ const noVersion: LoadReviewVersion = async () => ({ status: "missing" });
  *  would have to supply. Needs a `UrlStateProvider` above it. */
 export function ReviewViewer<F extends ReviewFile = ReviewFile>(props: ReviewViewerProps<F>) {
   return (
-    <div data-review-page className="flex flex-col">
+    <div data-review-page className="@container/review flex flex-col">
       <ReviewHeader document={props.document} slots={props.header} />
-      {/* No foot from xl: the rail and the side pane fill the window to its
+      {/* No foot once wide: the rail and the side pane fill the window to its
         bottom edge, and a margin under the workspace would push them up by
         its height at the end of the page. */}
-      <div className={cn(REVIEW_GUTTER, "flex flex-1 flex-col pt-3 pb-4 xl:pb-0")}>
+      <div className={cn(REVIEW_GUTTER, "flex flex-1 flex-col pt-3 pb-4 wide:pb-0")}>
         {props.history ? (
           <ReviewWorkspace {...props} view={props.history} />
         ) : (
@@ -389,6 +391,22 @@ export function ReviewViewer<F extends ReviewFile = ReviewFile>(props: ReviewVie
 function OwnHistory<F extends ReviewFile>(props: ReviewViewerProps<F>) {
   const view = useHistoryView(props.document?.review.version, props.loadVersion ?? noVersion);
   return <ReviewWorkspace {...props} view={view} />;
+}
+
+/** The review page's width (in rem) from which the rail, the review pane and
+ *  the side pane sit side by side: the `wide` variant's container query in
+ *  `viewer.css`, for the code that has to know which layout is showing. */
+const WIDE_REM = 64;
+
+/** Whether the review page holding `element` is wide enough for its columns.
+ *  Measured rather than read from the window, so it agrees with the `wide`
+ *  variant whatever a host puts beside the page. The threshold is in rem, as
+ *  the container query's is, so a reader's own font size moves both alike. */
+function isWide(element: Element | null | undefined) {
+  const page = element?.closest("[data-review-page]");
+  if (!page) return false;
+  const rem = parseFloat(getComputedStyle(page.ownerDocument.documentElement).fontSize) || 16;
+  return page.clientWidth >= WIDE_REM * rem;
 }
 
 /** How wide a pane's content may run, centred in the pane. The Summary set
@@ -450,7 +468,7 @@ function useVisibleHeight<T extends HTMLElement>() {
  *  finding out. */
 function RailNote({ children, busy = false }: { children: string; busy?: boolean }) {
   return (
-    <p className="flex items-center gap-2 px-2.5 py-1.5 text-base text-(--text-tertiary)">
+    <p className="flex items-center gap-2 px-2.5 py-1.5 text-base text-tertiary">
       {busy ? <Spinner size={11} /> : null}
       {children}
     </p>
@@ -555,7 +573,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const railPane = useRef<HTMLElement>(null);
   const navigator = useRef<HTMLDivElement>(null);
   const scrim = useRef<HTMLButtonElement>(null);
-  // Where the panes stack (below xl) the rail and the side pane are sheets
+  // Where the panes stack (below `wide`) the rail and the side pane are sheets
   // over the page, opened from the navigator bar: the rail rather than a
   // screen of rows above the pane, the side pane rather than a second page
   // under it, whose start a reader scrolling the review cannot see coming.
@@ -602,7 +620,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       )
         return;
       event.preventDefault();
-      if (window.matchMedia("(width >= 80rem)").matches) {
+      if (isWide(workspace.current)) {
         if (paneChoice.current.foldSidePane) return;
         if (paneChoice.current.chosenCollapsed) setAsideKeys((n) => n + 1);
         setChatCollapsed(!paneChoice.current.chosenCollapsed);
@@ -613,7 +631,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     };
     window.document.addEventListener("keydown", toggle);
     return () => window.document.removeEventListener("keydown", toggle);
-  }, [setChatCollapsed]);
+  }, [setChatCollapsed, workspace]);
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
@@ -773,10 +791,14 @@ function ReviewWorkspace<F extends ReviewFile>({
   useEffect(() => {
     versionsShown.current?.(shownKey ? shownKey.split(",").map(Number) : []);
   }, [shownKey]);
-  const [decisionFocus, setDecisionFocus] = useState<{ section: string; id: string } | null>(null);
+  const [decisionFocus, setDecisionFocus] = useState<{
+    section: string;
+    id: string;
+    version?: number;
+  } | null>(null);
   const highlightedDecision = useRef<{ key: string; click: typeof decisionFocus } | null>(null);
-  const selectSection = (id: string, decision?: string) => {
-    setDecisionFocus(decision ? { section: id, id: decision } : null);
+  const selectSection = (id: string, decision?: string, version?: number) => {
+    setDecisionFocus(decision ? { section: id, id: decision, version } : null);
     setSelection({ kind: "section", id, ...(decision ? { decision } : {}) });
   };
   const selectedDecision = selection.kind === "section" ? selection.decision : undefined;
@@ -787,7 +809,15 @@ function ReviewWorkspace<F extends ReviewFile>({
       return;
     }
     if (!navigationDocument) return;
-    const key = `${selectedDecisionSection}:${selectedDecision}`;
+    const focusedVersion = decisionFocus?.version;
+    const version =
+      focusedVersion !== undefined && shownKey.split(",").map(Number).includes(focusedVersion)
+        ? focusedVersion
+        : navigationDocument.review.version;
+    const prefix =
+      historicalOnly || version !== document?.review.version ? `history-v${version}-` : "";
+    const targetId = `${prefix}${selectedDecisionSection}-${selectedDecision}`;
+    const key = `${version}:${selectedDecisionSection}:${selectedDecision}`;
     if (
       highlightedDecision.current?.key === key &&
       highlightedDecision.current.click === decisionFocus
@@ -796,10 +826,17 @@ function ReviewWorkspace<F extends ReviewFile>({
     let cancelScroll: (() => void) | undefined;
     const frame = requestAnimationFrame(() => {
       const target = [...(reviewPane.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].find(
-        (element) => element.id.endsWith(`${selectedDecisionSection}-${selectedDecision}`),
+        (element) => element.id === targetId,
       );
       if (!target) return;
       highlightedDecision.current = { key, click: decisionFocus };
+      // An item can sit in a disclosure, such as a section's mitigated risks.
+      for (
+        let own = target.closest("details");
+        own;
+        own = own.parentElement?.closest("details") ?? null
+      )
+        own.open = true;
       const disclosure = target.querySelector("details");
       if (disclosure) disclosure.open = true;
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -810,7 +847,15 @@ function ReviewWorkspace<F extends ReviewFile>({
       cancelAnimationFrame(frame);
       cancelScroll?.();
     };
-  }, [decisionFocus, selectedDecision, selectedDecisionSection, navigationDocument]);
+  }, [
+    decisionFocus,
+    selectedDecision,
+    selectedDecisionSection,
+    navigationDocument,
+    document?.review.version,
+    historicalOnly,
+    shownKey,
+  ]);
   /** Opens one file in the Files pane, which otherwise lists every file
    *  folded, at a line when one is given. */
   const openFile = (id: string, line: FileLineFocus = null) => {
@@ -927,7 +972,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     if (!paneKey || !pane) return;
     const bar = navigator.current;
     const top = pane.getBoundingClientRect().top;
-    // No offset parent: the bar is not displayed, as from xl.
+    // No offset parent: the bar is not displayed, as once wide.
     if (bar?.offsetParent) {
       const below = bar.getBoundingClientRect().bottom;
       if (top < below) scrollerOf(pane).scrollBy({ top: top - below });
@@ -937,16 +982,22 @@ function ReviewWorkspace<F extends ReviewFile>({
   // a file already selected and picked again, or a link out of the side pane.
   useEffect(() => setSheet(null), [selectionKey, fileClick]);
   const closeSheet = () => setSheet(null);
-  // A sheet only exists below xl; one left open across a resize past it would
-  // leave the page behind it inert beside the column it has become.
+  // A sheet only exists while the panes stack; one left open as the page
+  // widens past it, by the window or by a host's sidebar folding, would leave
+  // the page behind it inert beside the column it has become. The page says
+  // which layout it has as `data-review-wide`, for a host's own CSS (its
+  // scroll padding, which counts the navigator bar only while it shows).
   useEffect(() => {
-    const wide = window.matchMedia("(width >= 80rem)");
-    const onChange = () => {
-      if (wide.matches) setSheet(null);
-    };
-    wide.addEventListener("change", onChange);
-    return () => wide.removeEventListener("change", onChange);
-  }, []);
+    const page = workspace.current?.closest("[data-review-page]");
+    if (!page) return;
+    const resized = new ResizeObserver(() => {
+      const wide = isWide(page);
+      page.toggleAttribute("data-review-wide", wide);
+      if (wide) setSheet(null);
+    });
+    resized.observe(page);
+    return () => resized.disconnect();
+  }, [workspace]);
   useEffect(() => {
     if (!sheet) return;
     const pane = sheet === "rail" ? railPane.current : conversationPane.current;
@@ -954,7 +1005,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     // A modal in all but name: everything but the sheet and its scrim is
     // inert while it is open, so neither a keyboard nor a screen reader can
     // reach the page it covers. The sheet stays where it is in the document
-    // (from xl the same element is a column), so rather than a dialog, each
+    // (once wide the same element is a column), so rather than a dialog, each
     // of its ancestors' other children is made inert, and only those this
     // sheet made inert are released.
     const keep = new Set<Element | null>([pane, scrim.current]);
@@ -1224,6 +1275,16 @@ function ReviewWorkspace<F extends ReviewFile>({
     },
     openRepositoryFile,
   };
+  // What a chip for an item or a session in the review's prose opens.
+  const reviewJump: ReviewJump = {
+    item: selectSection,
+    session: sessions
+      ? (id) => {
+          setFolded((current) => ({ ...current, sessions: false }));
+          setSelection({ kind: "session", id });
+        }
+      : undefined,
+  };
   // The document the Details and Activity tabs describe: the version being
   // read, or the current one while two are compared.
   const barHistorical = historicalOnly;
@@ -1299,7 +1360,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         ]
       : []),
   ];
-  // What the tabs' dots flag, in words for the bar's button below xl.
+  // What the tabs' dots flag, in words for the bar's button while the panes stack.
   const barAlert =
     [
       checksFailing ? "CI checks failing" : null,
@@ -1347,12 +1408,11 @@ function ReviewWorkspace<F extends ReviewFile>({
   }, []);
   const asideLabel = conversation ? "Conversation" : "Details";
   // The tabs and the fold share the pane's first line, the fold leading (at
-  // the end it read as a step to the next tab); folding only exists from xl
-  // up, where the panes sit side by side. Below xl the pane is a sheet, and
+  // the end it read as a step to the next tab); folding only exists once wide, where the panes sit side by side. While they stack the pane is a sheet, and
   // the line ends with the way to close it.
   const barHeader = (
     <div className="mb-4 flex flex-none items-end">
-      <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) pr-1 xl:flex">
+      <span className="box-content hidden h-9 flex-none items-center border-b border-subtle pr-1 wide:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
           title="Collapse side pane (])"
@@ -1371,7 +1431,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         items={barTabs}
         className="min-w-0 flex-1"
       />
-      <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) xl:hidden">
+      <span className="box-content flex h-9 flex-none items-center border-b border-subtle wide:hidden">
         <CloseButton
           label={`Close ${asideLabel.toLowerCase()}`}
           className="h-9 w-9"
@@ -1385,9 +1445,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   );
   const historicalNote =
     barHistorical && barDocument ? (
-      <p className="mb-4 text-xs text-(--text-tertiary)">
-        As of review v{barDocument.review.version}
-      </p>
+      <p className="mb-4 text-xs text-tertiary">As of review v{barDocument.review.version}</p>
     ) : null;
   const conversationContext: ReviewConversationContext = {
     document: navigationDocument,
@@ -1402,8 +1460,8 @@ function ReviewWorkspace<F extends ReviewFile>({
   // The panes' columns: the rail, the review pane, and the side pane or the
   // strip it folds to.
   const columns = chatCollapsed
-    ? "xl:grid-cols-[var(--rail-width)_minmax(0,1fr)_3rem]"
-    : "xl:grid-cols-[var(--rail-width)_minmax(0,1fr)_10px_var(--conversation-width)]";
+    ? "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_3rem]"
+    : "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_10px_var(--conversation-width)]";
   const columnStyle = {
     "--rail-width": `${rail.width}px`,
     "--conversation-width": `${split.width}px`,
@@ -1416,689 +1474,710 @@ function ReviewWorkspace<F extends ReviewFile>({
   return (
     <ReviewFilesProvider files={reviewFiles}>
       <ReviewSourcesProvider sources={reviewSources}>
-        <ReviewHunksProvider document={document} historical={historicalDocument}>
-          <div className="flex min-h-0 flex-1 flex-col gap-3">
-            {/* Version selection, generation status and evidence age share one row.
+        <ReviewHunksProvider document={navigationDocument} historical={historicalDocument}>
+          <ReviewJumpContext.Provider value={reviewJump}>
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              {/* Version selection, generation status and evidence age share one row.
           A review without history shows its version without a menu. */}
-            {document && (versions.length > 0 || historyView.selection || header?.beside) ? (
-              <HistoryToolbar
-                currentVersion={document.review.version}
-                currentLabel={`Review v${document.review.version} · ${reviewGeneration(document, header?.generation).state === "current" ? "Current" : "Latest"}`}
-                versions={versions}
-                view={historyView}
-                actions={header?.versionActions}
-                status={
+              {document && (versions.length > 0 || historyView.selection || header?.beside) ? (
+                <HistoryToolbar
+                  currentVersion={document.review.version}
+                  currentLabel={`Review v${document.review.version} · ${reviewGeneration(document, header?.generation).state === "current" ? "Current" : "Latest"}`}
+                  versions={versions}
+                  view={historyView}
+                  actions={header?.versionActions}
+                  status={
+                    <ReviewFreshness
+                      document={document}
+                      generation={header?.generation}
+                      facts={header?.heading ? undefined : header?.pullRequest}
+                    />
+                  }
+                >
+                  {changes && (
+                    <span className="text-base text-secondary">
+                      {pluralize("new section", changes.sections.size, true)} ·{" "}
+                      {pluralize("new risk", changes.risks.size, true)} since v
+                      {historyView.selection?.version}
+                    </span>
+                  )}
+                  {header?.beside ? (
+                    // It takes the rest of the row, so a host can set its actions
+                    // at the row's end, apart from the version and its status.
+                    <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
+                      {header.beside}
+                    </div>
+                  ) : null}
+                </HistoryToolbar>
+              ) : document ? (
+                <div className="flex items-center gap-3 text-base text-tertiary">
+                  <span>
+                    Review v{document.review.version}
+                    {reviewGeneration(document, header?.generation).state === "current"
+                      ? " · Current"
+                      : ""}
+                  </span>
                   <ReviewFreshness
                     document={document}
                     generation={header?.generation}
                     facts={header?.heading ? undefined : header?.pullRequest}
                   />
-                }
-              >
-                {changes && (
-                  <span className="text-base text-(--text-secondary)">
-                    {pluralize("new section", changes.sections.size, true)} ·{" "}
-                    {pluralize("new risk", changes.risks.size, true)} since v
-                    {historyView.selection?.version}
-                  </span>
-                )}
-                {header?.beside ? (
-                  // It takes the rest of the row, so a host can set its actions
-                  // at the row's end, apart from the version and its status.
-                  <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">{header.beside}</div>
-                ) : null}
-              </HistoryToolbar>
-            ) : document ? (
-              <div className="flex items-center gap-3 text-base text-(--text-tertiary)">
-                <span>
-                  Review v{document.review.version}
-                  {reviewGeneration(document, header?.generation).state === "current"
-                    ? " · Current"
-                    : ""}
-                </span>
-                <ReviewFreshness
-                  document={document}
-                  generation={header?.generation}
-                  facts={header?.heading ? undefined : header?.pullRequest}
-                />
-              </div>
-            ) : header?.beside ? (
-              <div className="min-w-0">{header.beside}</div>
-            ) : null}
-            {/* One ruled rectangle divided by hairlines rather than three floating
+                </div>
+              ) : header?.beside ? (
+                <div className="min-w-0">{header.beside}</div>
+              ) : null}
+              {/* One ruled rectangle divided by hairlines rather than three floating
           cards: the rail, the pane and the side pane are one workspace, and
           the lines between them are where the reader's eye already draws them. */}
-            {/* The pane scrolls with the page; the rail and the side pane stick
+              {/* The pane scrolls with the page; the rail and the side pane stick
           under the head's bar and keep their own scroll. The rail is as tall
           as the window under the bar whether or not the head still shows:
           sized to what is left below the head, it would overflow only until
           the head scrolled away, take the wheel for itself, and change its
           range under the gesture as the page moved. The side pane follows
           the visible height instead, so its composer stays on screen. */}
-            <div
-              ref={workspace}
-              style={columnStyle}
-              className={cn(
-                // Edge to edge on a phone: the gutter, this frame and each pane's
-                // own padding would otherwise stack up to a tenth of the width.
-                // Stacked, the one column is the window's width: an `auto` track
-                // would grow to the bar's untruncated title and widen the page.
-                "-mx-4 grid flex-1 grid-cols-[minmax(0,1fr)] items-start border-y border-(--border-default) bg-(--surface-card) sm:mx-0 sm:border-x xl:items-stretch",
-                columns,
-              )}
-            >
-              <ReviewNavigator
-                ref={navigator}
-                label={paneLabel}
-                icon={navigatorIcon}
-                position={
-                  sectionIndex >= 0 ? `${sectionIndex + 1} of ${visibleSections.length}` : undefined
-                }
-                check={
-                  selected && !selected.stale ? sectionCheck(selected.id, selected.label) : null
-                }
-                previous={previousStep}
-                next={nextStep}
-                expanded={sheetOpen}
-                onOpen={() => setSheet("rail")}
-                aside={{
-                  label: asideLabel,
-                  alert: barAlert,
-                  expanded: asideOpen,
-                  onOpen: () => setSheet("aside"),
-                }}
-              />
-              {/* A button rather than a div: dismissing a sheet by tapping beside
-            it is a real control, as the application drawer's is. */}
-              {sheet ? (
-                <button
-                  ref={scrim}
-                  type="button"
-                  aria-label={sheetOpen ? "Close sections" : `Close ${asideLabel.toLowerCase()}`}
-                  onClick={closeSheet}
-                  className="fixed inset-0 z-(--z-sheet) bg-(--surface-scrim) xl:hidden"
-                />
-              ) : null}
-              <nav
-                ref={railPane}
-                id="review-rail"
-                aria-label="Review sections"
-                // Below xl a sheet from the bottom of the window, `hidden` while
-                // closed so its rows leave the tab order with it; from xl the
-                // column beside the pane, under the head's bar.
+              <div
+                ref={workspace}
+                style={columnStyle}
                 className={cn(
-                  "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-(--border-default) bg-(--surface-card) px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay)",
-                  "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:block xl:h-[calc(100cqh-3rem)] xl:max-h-none xl:self-start xl:border-t-0 xl:bg-transparent xl:p-4 xl:shadow-none",
-                  sheetOpen ? "block" : "hidden",
+                  // Edge to edge on a phone: the gutter, this frame and each pane's
+                  // own padding would otherwise stack up to a tenth of the width.
+                  // Stacked, the one column is the window's width: an `auto` track
+                  // would grow to the bar's untruncated title and widen the page.
+                  "-mx-4 grid flex-1 grid-cols-[minmax(0,1fr)] items-start border-y border-default bg-surface-card sm:mx-0 sm:border-x wide:items-stretch",
+                  columns,
                 )}
               >
-                <div className="absolute top-1 right-2 xl:hidden">
-                  <CloseButton label="Close sections" className="h-10 w-10" onClick={closeSheet} />
-                </div>
-                <SideNavGroup label="Review">
-                  <SideNavButton
-                    label={conversation ? "Summary / General" : "Summary"}
-                    icon={SummaryIcon}
-                    tint="accent"
-                    active={selection.kind === "summary"}
-                    controls="review-section"
-                    onSelect={() => setSelection({ kind: "summary" })}
+                <ReviewNavigator
+                  ref={navigator}
+                  label={paneLabel}
+                  icon={navigatorIcon}
+                  position={
+                    sectionIndex >= 0
+                      ? `${sectionIndex + 1} of ${visibleSections.length}`
+                      : undefined
+                  }
+                  check={
+                    selected && !selected.stale ? sectionCheck(selected.id, selected.label) : null
+                  }
+                  previous={previousStep}
+                  next={nextStep}
+                  expanded={sheetOpen}
+                  onOpen={() => setSheet("rail")}
+                  aside={{
+                    label: asideLabel,
+                    alert: barAlert,
+                    expanded: asideOpen,
+                    onOpen: () => setSheet("aside"),
+                  }}
+                />
+                {/* A button rather than a div: dismissing a sheet by tapping beside
+            it is a real control, as the application drawer's is. */}
+                {sheet ? (
+                  <button
+                    ref={scrim}
+                    type="button"
+                    aria-label={sheetOpen ? "Close sections" : `Close ${asideLabel.toLowerCase()}`}
+                    onClick={closeSheet}
+                    className="fixed inset-0 z-(--z-sheet) bg-surface-scrim wide:hidden"
                   />
+                ) : null}
+                <nav
+                  ref={railPane}
+                  id="review-rail"
+                  aria-label="Review sections"
+                  // While the panes stack, a sheet from the bottom of the window, `hidden` while
+                  // closed so its rows leave the tab order with it; once wide the
+                  // column beside the pane, under the head's bar.
+                  className={cn(
+                    "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-default bg-surface-card px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-overlay",
+                    "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:block wide:h-[calc(100cqh-3rem)] wide:max-h-none wide:self-start wide:border-t-0 wide:bg-transparent wide:p-4 wide:shadow-none",
+                    sheetOpen ? "block" : "hidden",
+                  )}
+                >
+                  <div className="absolute top-1 right-2 wide:hidden">
+                    <CloseButton
+                      label="Close sections"
+                      className="h-10 w-10"
+                      onClick={closeSheet}
+                    />
+                  </div>
+                  <SideNavGroup label="Review">
+                    <SideNavButton
+                      label={conversation ? "Summary / General" : "Summary"}
+                      icon={SummaryIcon}
+                      tint="accent"
+                      active={selection.kind === "summary"}
+                      controls="review-section"
+                      onSelect={() => setSelection({ kind: "summary" })}
+                    />
 
-                  {checks?.notice && !historyView.selection ? checks.notice : null}
-                  <SideNavDisclosure
-                    label="Changes"
-                    icon={SectionIcon}
-                    tint="accent"
-                    expanded={open.changes}
-                    active={selection.kind === "changes"}
-                    count={currentSections.length}
-                    // The count is about the rows in front of the reader, whatever
-                    // supplied them: without a document those are the sections the
-                    // host knows, and reading one of those is progress through the
-                    // rail as it stands.
-                    progress={
-                      tracked && currentSections.length > 0 && !checks?.hideSectionProgress
-                        ? `${changesRead} of ${currentSections.length}`
-                        : undefined
-                    }
-                    read={
-                      tracked ? { done: changesRead, total: currentSections.length } : undefined
-                    }
-                    list="review-changes"
-                    controls="review-section"
-                    onSelect={(expanded) => selectGroup("changes", expanded)}
-                  />
-                  {open.changes && (
-                    <SideNavNest id="review-changes">
-                      {visibleSections.length === 0 ? (
-                        <RailNote>
-                          {obsoleteCount > 0 ? "No current changes." : "No sections yet."}
-                        </RailNote>
-                      ) : (
-                        visibleSections.map((section) => (
-                          <div
-                            key={section.id}
-                            className={cn(
-                              "flex min-w-0 items-center gap-1 rounded-(--radius-sm) transition-colors duration-300",
-                              section.stale && "opacity-60 grayscale",
-                              !section.stale &&
-                                sectionRead(section.id) &&
-                                "bg-(--status-positive-bg)/60",
-                            )}
-                          >
-                            <div className="min-w-0 flex-1">
-                              {/* Section titles are sentences: the row drops the
+                    {checks?.notice && !historyView.selection ? checks.notice : null}
+                    <SideNavDisclosure
+                      label="Changes"
+                      icon={SectionIcon}
+                      tint="accent"
+                      expanded={open.changes}
+                      active={selection.kind === "changes"}
+                      count={currentSections.length}
+                      // The count is about the rows in front of the reader, whatever
+                      // supplied them: without a document those are the sections the
+                      // host knows, and reading one of those is progress through the
+                      // rail as it stands.
+                      progress={
+                        tracked && currentSections.length > 0 && !checks?.hideSectionProgress
+                          ? `${changesRead} of ${currentSections.length}`
+                          : undefined
+                      }
+                      read={
+                        tracked ? { done: changesRead, total: currentSections.length } : undefined
+                      }
+                      list="review-changes"
+                      controls="review-section"
+                      onSelect={(expanded) => selectGroup("changes", expanded)}
+                    />
+                    {open.changes && (
+                      <SideNavNest id="review-changes">
+                        {visibleSections.length === 0 ? (
+                          <RailNote>
+                            {obsoleteCount > 0 ? "No current changes." : "No sections yet."}
+                          </RailNote>
+                        ) : (
+                          visibleSections.map((section) => (
+                            <div
+                              key={section.id}
+                              className={cn(
+                                "flex min-w-0 items-center gap-1 rounded-sm transition-colors duration-300",
+                                section.stale && "opacity-60 grayscale",
+                                !section.stale &&
+                                  sectionRead(section.id) &&
+                                  "bg-status-positive-bg/60",
+                              )}
+                            >
+                              <div className="min-w-0 flex-1">
+                                {/* Section titles are sentences: the row drops the
                               glyph its Changes parent already shows and takes
                               a second line, so the title reads rather than
                               stopping after two words. */}
-                              <SideNavButton
-                                label={section.label}
-                                wrap
-                                depth={1}
-                                active={
-                                  (selection.kind === "section" || selection.kind === "risk") &&
-                                  viewedId === section.id
-                                }
-                                controls="review-section"
-                                description={
-                                  section.score === undefined
-                                    ? undefined
-                                    : `Review score ${section.score} of 5: ${RISK_SCORE_MEANING[section.score]}`
-                                }
-                                aside={
-                                  <>
-                                    {risks.some((risk) => risk.section === section.id) && (
-                                      <span
-                                        role="img"
-                                        aria-label="High or critical risks"
-                                        title="High or critical risks"
-                                        className="mr-2 flex-none text-(--status-critical)"
-                                      >
-                                        <RiskIcon size={14} />
-                                      </span>
-                                    )}
-                                    {section.score !== undefined && (
-                                      <ReviewScoreBadge score={section.score} size="compact" />
-                                    )}
-                                    {changes?.sections.has(section.id) && (
-                                      <Badge size="compact" tone="info">
-                                        New
-                                      </Badge>
-                                    )}
-                                    {comparing &&
-                                      !document?.sections.some(
-                                        (item) => item.id === section.id,
-                                      ) && (
-                                        <Badge size="compact">
-                                          Only v{historyView.selection?.version}
+                                <SideNavButton
+                                  label={section.label}
+                                  wrap
+                                  depth={1}
+                                  active={
+                                    (selection.kind === "section" || selection.kind === "risk") &&
+                                    viewedId === section.id
+                                  }
+                                  controls="review-section"
+                                  description={
+                                    section.score === undefined
+                                      ? undefined
+                                      : `Review score ${section.score} of 5: ${RISK_SCORE_MEANING[section.score]}`
+                                  }
+                                  aside={
+                                    <>
+                                      {risks.some((risk) => risk.section === section.id) && (
+                                        <span
+                                          role="img"
+                                          aria-label="High or critical risks"
+                                          title="High or critical risks"
+                                          className="mr-2 flex-none text-status-critical"
+                                        >
+                                          <RiskIcon size={14} />
+                                        </span>
+                                      )}
+                                      {section.score !== undefined && (
+                                        <ReviewScoreBadge score={section.score} size="compact" />
+                                      )}
+                                      {changes?.sections.has(section.id) && (
+                                        <Badge size="compact" tone="info">
+                                          New
                                         </Badge>
                                       )}
-                                  </>
-                                }
-                                onSelect={() => selectSection(section.id)}
-                              />
+                                      {comparing &&
+                                        !document?.sections.some(
+                                          (item) => item.id === section.id,
+                                        ) && (
+                                          <Badge size="compact">
+                                            Only v{historyView.selection?.version}
+                                          </Badge>
+                                        )}
+                                    </>
+                                  }
+                                  onSelect={() => selectSection(section.id)}
+                                />
+                              </div>
+                              {!section.stale && sectionCheck(section.id, section.label)}
                             </div>
-                            {!section.stale && sectionCheck(section.id, section.label)}
-                          </div>
-                        ))
-                      )}
-                      {obsoleteCount > 0 && (
-                        <button
-                          type="button"
-                          aria-expanded={showObsolete}
-                          onClick={toggleObsolete}
-                          className={cn(
-                            "mx-2.5 mt-2 cursor-pointer rounded-sm py-1 text-left text-xs text-(--text-tertiary) hover:text-(--text-primary)",
-                            FOCUS_RING,
-                          )}
-                        >
-                          {showObsolete
-                            ? "Hide obsolete changes"
-                            : `View obsolete changes (${obsoleteCount})`}
-                        </button>
-                      )}
-                    </SideNavNest>
-                  )}
-
-                  {filesSlot ? (
-                    <>
-                      <SideNavDisclosure
-                        label="Files changed"
-                        icon={SectionIcon}
-                        busy={!comparing && filesSlot.loading && Boolean(fileList)}
-                        expanded={open.files}
-                        active={filesSelected}
-                        progress={
-                          fileProgress && fileProgress.total > 0
-                            ? `${fileProgress.done} of ${fileProgress.total}`
-                            : undefined
-                        }
-                        read={fileProgress}
-                        // Counted even when the host keeps no viewed marks.
-                        count={!comparing && fileList ? fileList.length : undefined}
-                        list="review-files"
-                        controls="review-section"
-                        onSelect={(expanded) => {
-                          setFolded((current) => ({ ...current, files: !expanded }));
-                          if (!comparing && expanded && !filesSelected)
-                            setSelection({ kind: "files" });
-                        }}
-                      />
-                      {open.files && (
-                        <SideNavNest id="review-files">
-                          {comparing ? (
-                            <RailNote>Files are unavailable while comparing versions.</RailNote>
-                          ) : filesSlot.loading && !fileList ? (
-                            <RailNote busy>Loading changed files…</RailNote>
-                          ) : filesSlot.failed && !fileList ? (
-                            <RailNote>Changed files could not be loaded.</RailNote>
-                          ) : fileList?.length ? (
-                            filesSlot.renderTree({
-                              files: fileList,
-                              selected: selection.kind === "file" ? selection.id : null,
-                              onSelect: selectFile,
-                            })
-                          ) : (
-                            <RailNote>No changed files.</RailNote>
-                          )}
-                        </SideNavNest>
-                      )}
-                    </>
-                  ) : null}
-
-                  {decisions ? (
-                    <SideNavButton
-                      label="Decisions"
-                      icon={LightbulbIcon}
-                      active={selection.kind === "decisions"}
-                      controls="review-section"
-                      aside={
-                        decisions.count === undefined ? undefined : (
-                          <span className="text-xs tabular-nums text-(--text-tertiary)">
-                            {decisions.count}
-                          </span>
-                        )
-                      }
-                      description={
-                        decisions.count === undefined ? undefined : `${decisions.count} decisions`
-                      }
-                      onSelect={() => setSelection({ kind: "decisions" })}
-                    />
-                  ) : null}
-
-                  {sessionState ? (
-                    <>
-                      <SideNavDisclosure
-                        label="Sessions"
-                        icon={SessionsIcon}
-                        tint="teal"
-                        busy={sessionState.status === "loading"}
-                        indicator={sessions?.indicator}
-                        expanded={open.sessions}
-                        active={selection.kind === "sessions"}
-                        count={
-                          sessionState.status === "ready" ? sessionState.items.length : undefined
-                        }
-                        list="review-sessions"
-                        controls="review-section"
-                        onSelect={(expanded) => {
-                          setFolded((current) => ({ ...current, sessions: !expanded }));
-                          setSelection({ kind: "sessions" });
-                        }}
-                      />
-                      {open.sessions && (
-                        <SideNavNest id="review-sessions">
-                          {sessionState.status === "loading" ? (
-                            <RailNote busy>Loading linked sessions…</RailNote>
-                          ) : sessionState.status === "failed" ? (
-                            <RailNote>Linked sessions could not be loaded.</RailNote>
-                          ) : sessionState.items.length === 0 ? (
-                            <RailNote>No sessions.</RailNote>
-                          ) : (
-                            sessionState.items.map((item) => (
-                              <SideNavButton
-                                key={item.id}
-                                label={item.label}
-                                icon={SessionsIcon}
-                                tint="teal"
-                                depth={1}
-                                active={selection.kind === "session" && selection.id === item.id}
-                                aside={
-                                  item.indicator ? (
-                                    <RowIndicator indicator={item.indicator} />
-                                  ) : undefined
-                                }
-                                controls="review-section"
-                                onSelect={() => setSelection({ kind: "session", id: item.id })}
-                              />
-                            ))
-                          )}
-                        </SideNavNest>
-                      )}
-                    </>
-                  ) : null}
-
-                  {commitState ? (
-                    <>
-                      <SideNavDisclosure
-                        label="Commits"
-                        icon={CommitIcon}
-                        busy={commitState.status === "loading"}
-                        expanded={open.commits}
-                        active={selection.kind === "commits"}
-                        count={
-                          commitState.status === "ready" ? commitState.items.length : undefined
-                        }
-                        list="review-commits"
-                        controls="review-section"
-                        onSelect={(expanded) => {
-                          setFolded((current) => ({ ...current, commits: !expanded }));
-                          setSelection({ kind: "commits" });
-                        }}
-                      />
-                      {open.commits && (
-                        <SideNavNest id="review-commits">
-                          {commitState.status === "loading" ? (
-                            <RailNote busy>Loading commits…</RailNote>
-                          ) : commitState.status === "failed" ? (
-                            <RailNote>Commits could not be loaded.</RailNote>
-                          ) : commitState.items.length === 0 ? (
-                            <RailNote>No commits synced.</RailNote>
-                          ) : (
-                            commitState.items.map((item) => (
-                              <SideNavButton
-                                key={item.id}
-                                label={item.label}
-                                icon={CommitIcon}
-                                depth={1}
-                                active={selection.kind === "commit" && selection.id === item.id}
-                                controls="review-section"
-                                onSelect={() => setSelection({ kind: "commit", id: item.id })}
-                              />
-                            ))
-                          )}
-                        </SideNavNest>
-                      )}
-                    </>
-                  ) : null}
-                </SideNavGroup>
-                {checks?.footer ?? null}
-              </nav>
-
-              <section
-                ref={reviewPane}
-                id="review-section"
-                aria-label={paneLabel}
-                className="relative flex min-h-[22rem] min-w-0 flex-col border-b border-(--border-subtle) p-4 sm:p-5 xl:min-h-0 xl:border-b-0 xl:border-l"
-              >
-                {/* Laid over the pane's left border rather than given a column, so
-              the rail and the pane keep their places and only gain a grip. */}
-                <PaneDivider
-                  width={rail.width}
-                  onWidth={rail.choose}
-                  onPreview={previewWidth("--rail-width")}
-                  reviewRef={reviewPane}
-                  paneRef={railPane}
-                  limits={RAIL_LIMITS}
-                  side="before"
-                  label="Resize the section rail"
-                  className="absolute inset-y-0 -left-[5px] z-10 w-[10px]"
-                />
-                <div className={cn("flex min-h-0 flex-1 flex-col", PANE_WIDTH)}>
-                  {sectionAside}
-                  {document && versionsFailed && (
-                    <Alert className="mb-3">
-                      <span className="mr-2">Review history could not be loaded.</span>
-                      <Button size="compact" variant="secondary" onClick={versionsFailed.retry}>
-                        Retry history
-                      </Button>
-                    </Alert>
-                  )}
-                  {notices}
-                  {(selection.kind === "sessions" || selection.kind === "session") && sessions ? (
-                    <PaneIn key={selectionKey}>
-                      {sessions.renderPane(
-                        selection.kind === "session" ? selection.id : null,
-                        actions,
-                        selection.kind === "session" && sessionFocus?.session === selection.id
-                          ? sessionFocus.turn
-                          : undefined,
-                      )}
-                    </PaneIn>
-                  ) : (selection.kind === "commits" || selection.kind === "commit") && commits ? (
-                    <PaneIn key={selectionKey}>
-                      {commits.renderPane(selectedCommit ? selectedCommit.id : null, actions)}
-                    </PaneIn>
-                  ) : selection.kind === "decisions" && decisions ? (
-                    <PaneIn key={selectionKey}>{decisions.renderPane(actions)}</PaneIn>
-                  ) : filesSelected && filesSlot ? (
-                    comparing ? (
-                      <Empty title="Files unavailable during comparison">
-                        Close Compare to inspect one review version's file diff.
-                      </Empty>
-                    ) : filesSlot.loading && !fileList ? (
-                      <Skeleton height={280} />
-                    ) : filesSlot.failed && !fileList ? (
-                      <div className="space-y-3">
-                        <Failed>The changed files could not be loaded.</Failed>
-                        <Button variant="secondary" onClick={filesSlot.retry}>
-                          Retry files
-                        </Button>
-                      </div>
-                    ) : fileList?.length === 0 ? (
-                      <Empty title="No changed files">
-                        This pull request revision changes no files.
-                      </Empty>
-                    ) : fileList && (selection.kind === "files" || selectedFile) ? (
-                      <PaneIn key="files">
-                        {filesSlot.renderFiles({
-                          files: fileList,
-                          open: fileOpen,
-                          focus: diffFocus,
-                        })}
-                      </PaneIn>
-                    ) : (
-                      <Skeleton height={280} />
-                    )
-                  ) : document ? (
-                    <ReviewHistory
-                      key={document.review.version}
-                      document={document}
-                      view={historyView}
-                    >
-                      {(snapshot, historical) => (
-                        <PaneIn key={selectionKey}>{renderPane(snapshot, historical)}</PaneIn>
-                      )}
-                    </ReviewHistory>
-                  ) : (
-                    <>
-                      <CardHeader size="pane" title={paneLabel} />
-                      <div className="min-h-0 flex-1 xl:overflow-y-auto">
-                        {placeholder ?? (
-                          <Empty title="No review document">There is no review to show yet.</Empty>
+                          ))
                         )}
-                      </div>
-                    </>
-                  )}
-                  {document ? <ReviewPaneFoot previous={previousStep} next={nextStep} /> : null}
-                </div>
-              </section>
+                        {obsoleteCount > 0 && (
+                          <button
+                            type="button"
+                            aria-expanded={showObsolete}
+                            onClick={toggleObsolete}
+                            className={cn(
+                              "mx-2.5 mt-2 cursor-pointer rounded-sm py-1 text-left text-xs text-tertiary hover:text-primary",
+                              FOCUS_RING,
+                            )}
+                          >
+                            {showObsolete
+                              ? "Hide obsolete changes"
+                              : `View obsolete changes (${obsoleteCount})`}
+                          </button>
+                        )}
+                      </SideNavNest>
+                    )}
 
-              {!chatCollapsed && (
-                <PaneDivider
-                  width={split.width}
-                  onWidth={split.choose}
-                  onPreview={previewWidth("--conversation-width")}
-                  onFit={split.fit}
-                  reviewRef={reviewPane}
-                  paneRef={conversationPane}
-                  label={conversation ? "Resize the conversation pane" : "Resize the side pane"}
-                />
-              )}
-
-              <section
-                ref={conversationPane}
-                id="review-aside"
-                tabIndex={-1}
-                aria-label={conversation ? "Conversation" : "Side pane"}
-                // Below xl a sheet from the bottom of the window, nearly its full
-                // height so the chat's feed and composer both have room; from xl
-                // the column beside the pane, under the head's bar.
-                className={cn(
-                  "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden outline-none border-t border-(--border-default) bg-(--surface-aside) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay) sm:p-5",
-                  "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:flex xl:h-(--review-visible) xl:self-start xl:border-t-0 xl:shadow-none",
-                  asideOpen ? "flex" : "hidden",
-                  chatCollapsed && "xl:items-center xl:px-0 xl:py-2",
-                )}
-              >
-                {/* The folded strip: a way back, then one glyph per tab, each still
-              carrying the state its tab reports. Only from xl up — below it
-              the panes stack, and there is nothing to fold away from. */}
-                <div
-                  className={cn(
-                    "hidden",
-                    chatCollapsed && "xl:flex xl:flex-none xl:flex-col xl:items-center xl:gap-1",
-                  )}
-                >
-                  <IconButton
-                    label={conversation ? "Expand conversation" : "Expand side pane"}
-                    title="Expand side pane (])"
-                    aria-keyshortcuts="]"
-                    className="h-9 w-9 text-(--text-secondary)"
-                    onClick={() => setChatCollapsed(false)}
-                  >
-                    <ChevronLeftIcon />
-                  </IconButton>
-                  <span aria-hidden className="my-1 h-px w-5 bg-(--border-subtle)" />
-                  {barTabs.map((tab) => (
-                    <IconButton
-                      key={tab.value}
-                      label={tab.label}
-                      className={cn(
-                        "relative h-9 w-9",
-                        tab.value === barTab ? "text-(--text-primary)" : "text-(--text-secondary)",
-                      )}
-                      onClick={() => openBarTab(tab.value)}
-                    >
-                      {tab.icon}
-                      {tab.tone ? (
-                        <span
-                          aria-hidden
-                          className={cn(
-                            "absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full",
-                            tab.tone === "caution"
-                              ? "bg-(--status-caution)"
-                              : "bg-(--status-critical)",
-                          )}
+                    {filesSlot ? (
+                      <>
+                        <SideNavDisclosure
+                          label="Files changed"
+                          icon={SectionIcon}
+                          busy={!comparing && filesSlot.loading && Boolean(fileList)}
+                          expanded={open.files}
+                          active={filesSelected}
+                          progress={
+                            fileProgress && fileProgress.total > 0
+                              ? `${fileProgress.done} of ${fileProgress.total}`
+                              : undefined
+                          }
+                          read={fileProgress}
+                          // Counted even when the host keeps no viewed marks.
+                          count={!comparing && fileList ? fileList.length : undefined}
+                          list="review-files"
+                          controls="review-section"
+                          onSelect={(expanded) => {
+                            setFolded((current) => ({ ...current, files: !expanded }));
+                            if (!comparing && expanded && !filesSelected)
+                              setSelection({ kind: "files" });
+                          }}
                         />
-                      ) : null}
-                    </IconButton>
-                  ))}
-                </div>
-                <div
+                        {open.files && (
+                          <SideNavNest id="review-files">
+                            {comparing ? (
+                              <RailNote>Files are unavailable while comparing versions.</RailNote>
+                            ) : filesSlot.loading && !fileList ? (
+                              <RailNote busy>Loading changed files…</RailNote>
+                            ) : filesSlot.failed && !fileList ? (
+                              <RailNote>Changed files could not be loaded.</RailNote>
+                            ) : fileList?.length ? (
+                              filesSlot.renderTree({
+                                files: fileList,
+                                selected: selection.kind === "file" ? selection.id : null,
+                                onSelect: selectFile,
+                              })
+                            ) : (
+                              <RailNote>No changed files.</RailNote>
+                            )}
+                          </SideNavNest>
+                        )}
+                      </>
+                    ) : null}
+
+                    {decisions ? (
+                      <SideNavButton
+                        label="Decisions"
+                        icon={LightbulbIcon}
+                        active={selection.kind === "decisions"}
+                        controls="review-section"
+                        aside={
+                          decisions.count === undefined ? undefined : (
+                            <span className="text-xs tabular-nums text-tertiary">
+                              {decisions.count}
+                            </span>
+                          )
+                        }
+                        description={
+                          decisions.count === undefined ? undefined : `${decisions.count} decisions`
+                        }
+                        onSelect={() => setSelection({ kind: "decisions" })}
+                      />
+                    ) : null}
+
+                    {sessionState ? (
+                      <>
+                        <SideNavDisclosure
+                          label="Sessions"
+                          icon={SessionsIcon}
+                          tint="teal"
+                          busy={sessionState.status === "loading"}
+                          indicator={sessions?.indicator}
+                          expanded={open.sessions}
+                          active={selection.kind === "sessions"}
+                          count={
+                            sessionState.status === "ready" ? sessionState.items.length : undefined
+                          }
+                          list="review-sessions"
+                          controls="review-section"
+                          onSelect={(expanded) => {
+                            setFolded((current) => ({ ...current, sessions: !expanded }));
+                            setSelection({ kind: "sessions" });
+                          }}
+                        />
+                        {open.sessions && (
+                          <SideNavNest id="review-sessions">
+                            {sessionState.status === "loading" ? (
+                              <RailNote busy>Loading linked sessions…</RailNote>
+                            ) : sessionState.status === "failed" ? (
+                              <RailNote>Linked sessions could not be loaded.</RailNote>
+                            ) : sessionState.items.length === 0 ? (
+                              <RailNote>No sessions.</RailNote>
+                            ) : (
+                              sessionState.items.map((item) => (
+                                <SideNavButton
+                                  key={item.id}
+                                  label={item.label}
+                                  icon={SessionsIcon}
+                                  tint="teal"
+                                  depth={1}
+                                  active={selection.kind === "session" && selection.id === item.id}
+                                  aside={
+                                    item.indicator ? (
+                                      <RowIndicator indicator={item.indicator} />
+                                    ) : undefined
+                                  }
+                                  controls="review-section"
+                                  onSelect={() => setSelection({ kind: "session", id: item.id })}
+                                />
+                              ))
+                            )}
+                          </SideNavNest>
+                        )}
+                      </>
+                    ) : null}
+
+                    {commitState ? (
+                      <>
+                        <SideNavDisclosure
+                          label="Commits"
+                          icon={CommitIcon}
+                          busy={commitState.status === "loading"}
+                          expanded={open.commits}
+                          active={selection.kind === "commits"}
+                          count={
+                            commitState.status === "ready" ? commitState.items.length : undefined
+                          }
+                          list="review-commits"
+                          controls="review-section"
+                          onSelect={(expanded) => {
+                            setFolded((current) => ({ ...current, commits: !expanded }));
+                            setSelection({ kind: "commits" });
+                          }}
+                        />
+                        {open.commits && (
+                          <SideNavNest id="review-commits">
+                            {commitState.status === "loading" ? (
+                              <RailNote busy>Loading commits…</RailNote>
+                            ) : commitState.status === "failed" ? (
+                              <RailNote>Commits could not be loaded.</RailNote>
+                            ) : commitState.items.length === 0 ? (
+                              <RailNote>No commits synced.</RailNote>
+                            ) : (
+                              commitState.items.map((item) => (
+                                <SideNavButton
+                                  key={item.id}
+                                  label={item.label}
+                                  icon={CommitIcon}
+                                  depth={1}
+                                  active={selection.kind === "commit" && selection.id === item.id}
+                                  controls="review-section"
+                                  onSelect={() => setSelection({ kind: "commit", id: item.id })}
+                                />
+                              ))
+                            )}
+                          </SideNavNest>
+                        )}
+                      </>
+                    ) : null}
+                  </SideNavGroup>
+                  {checks?.footer ?? null}
+                </nav>
+
+                <section
+                  ref={reviewPane}
+                  id="review-section"
+                  aria-label={paneLabel}
+                  className="relative flex min-h-[22rem] min-w-0 flex-col border-b border-subtle p-4 sm:p-5 wide:min-h-0 wide:border-b-0 wide:border-l"
+                >
+                  {/* Laid over the pane's left border rather than given a column, so
+              the rail and the pane keep their places and only gain a grip. */}
+                  <PaneDivider
+                    width={rail.width}
+                    onWidth={rail.choose}
+                    onPreview={previewWidth("--rail-width")}
+                    reviewRef={reviewPane}
+                    paneRef={railPane}
+                    limits={RAIL_LIMITS}
+                    side="before"
+                    label="Resize the section rail"
+                    className="absolute inset-y-0 -left-[5px] z-10 w-[10px]"
+                  />
+                  <div className={cn("flex min-h-0 flex-1 flex-col", PANE_WIDTH)}>
+                    {sectionAside}
+                    {document && versionsFailed && (
+                      <Alert className="mb-3">
+                        <span className="mr-2">Review history could not be loaded.</span>
+                        <Button size="compact" variant="secondary" onClick={versionsFailed.retry}>
+                          Retry history
+                        </Button>
+                      </Alert>
+                    )}
+                    {notices}
+                    {(selection.kind === "sessions" || selection.kind === "session") && sessions ? (
+                      <PaneIn key={selectionKey}>
+                        {sessions.renderPane(
+                          selection.kind === "session" ? selection.id : null,
+                          actions,
+                          selection.kind === "session" && sessionFocus?.session === selection.id
+                            ? sessionFocus.turn
+                            : undefined,
+                        )}
+                      </PaneIn>
+                    ) : (selection.kind === "commits" || selection.kind === "commit") && commits ? (
+                      <PaneIn key={selectionKey}>
+                        {commits.renderPane(selectedCommit ? selectedCommit.id : null, actions)}
+                      </PaneIn>
+                    ) : selection.kind === "decisions" && decisions ? (
+                      <PaneIn key={selectionKey}>{decisions.renderPane(actions)}</PaneIn>
+                    ) : filesSelected && filesSlot ? (
+                      comparing ? (
+                        <Empty title="Files unavailable during comparison">
+                          Close Compare to inspect one review version's file diff.
+                        </Empty>
+                      ) : filesSlot.loading && !fileList ? (
+                        <Skeleton height={280} />
+                      ) : filesSlot.failed && !fileList ? (
+                        <div className="space-y-3">
+                          <Failed>The changed files could not be loaded.</Failed>
+                          <Button variant="secondary" onClick={filesSlot.retry}>
+                            Retry files
+                          </Button>
+                        </div>
+                      ) : fileList?.length === 0 ? (
+                        <Empty title="No changed files">
+                          This pull request revision changes no files.
+                        </Empty>
+                      ) : fileList && (selection.kind === "files" || selectedFile) ? (
+                        <PaneIn key="files">
+                          {filesSlot.renderFiles({
+                            files: fileList,
+                            open: fileOpen,
+                            focus: diffFocus,
+                          })}
+                        </PaneIn>
+                      ) : (
+                        <Skeleton height={280} />
+                      )
+                    ) : document ? (
+                      <ReviewHistory
+                        key={document.review.version}
+                        document={document}
+                        view={historyView}
+                      >
+                        {(snapshot, historical) => (
+                          <ReviewRefsProvider document={snapshot}>
+                            <ReviewJumpContext.Provider
+                              value={{
+                                ...reviewJump,
+                                item: (id, item) =>
+                                  selectSection(id, item, snapshot.review.version),
+                              }}
+                            >
+                              <PaneIn key={selectionKey}>{renderPane(snapshot, historical)}</PaneIn>
+                            </ReviewJumpContext.Provider>
+                          </ReviewRefsProvider>
+                        )}
+                      </ReviewHistory>
+                    ) : (
+                      <>
+                        <CardHeader size="pane" title={paneLabel} />
+                        <div className="min-h-0 flex-1 wide:overflow-y-auto">
+                          {placeholder ?? (
+                            <Empty title="No review document">
+                              There is no review to show yet.
+                            </Empty>
+                          )}
+                        </div>
+                      </>
+                    )}
+                    {document ? <ReviewPaneFoot previous={previousStep} next={nextStep} /> : null}
+                  </div>
+                </section>
+
+                {!chatCollapsed && (
+                  <PaneDivider
+                    width={split.width}
+                    onWidth={split.choose}
+                    onPreview={previewWidth("--conversation-width")}
+                    onFit={split.fit}
+                    reviewRef={reviewPane}
+                    paneRef={conversationPane}
+                    label={conversation ? "Resize the conversation pane" : "Resize the side pane"}
+                  />
+                )}
+
+                <section
+                  ref={conversationPane}
+                  id="review-aside"
+                  tabIndex={-1}
+                  aria-label={conversation ? "Conversation" : "Side pane"}
+                  // While the panes stack, a sheet from the bottom of the window, nearly its full
+                  // height so the chat's feed and composer both have room; once wide
+                  // the column beside the pane, under the head's bar.
                   className={cn(
-                    chatCollapsed ? "flex min-h-0 flex-1 flex-col xl:hidden" : "contents",
+                    "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden outline-none border-t border-default bg-surface-aside p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-overlay sm:p-5",
+                    "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:flex wide:h-(--review-visible) wide:self-start wide:border-t-0 wide:shadow-none",
+                    asideOpen ? "flex" : "hidden",
+                    chatCollapsed && "wide:items-center wide:px-0 wide:py-2",
                   )}
                 >
-                  {barHeader}
-                  {conversation ? (
-                    <div
-                      {...tabPanelProps("conversation", "chat", barTab === "chat")}
-                      className="flex min-h-0 flex-1 flex-col"
-                    >
-                      {conversation(conversationContext)}
-                    </div>
-                  ) : null}
-                  {/* The other tabs scroll on their own under the strip, as the
-                chat's feed does; their parts query the pane's width. */}
+                  {/* The folded strip: a way back, then one glyph per tab, each still
+              carrying the state its tab reports. Only once wide — while stacked
+              the panes stack, and there is nothing to fold away from. */}
                   <div
-                    {...tabPanelProps("conversation", "details", barTab === "details")}
-                    className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
+                    className={cn(
+                      "hidden",
+                      chatCollapsed &&
+                        "wide:flex wide:flex-none wide:flex-col wide:items-center wide:gap-1",
+                    )}
                   >
-                    {barTab === "details" ? (
-                      barDocument ? (
-                        <>
-                          {historicalNote}
-                          <ReviewDetails
-                            document={barDocument}
-                            checks={
-                              hideActivity ? (barChecks ? barChecks.content : undefined) : null
-                            }
-                            footer={detailsFooter?.(barDocument)}
-                          />
-                        </>
-                      ) : barFacts ? (
-                        <FactsDetails facts={barFacts} checks={hideActivity ? undefined : null} />
-                      ) : (
-                        barPlaceholder
-                      )
-                    ) : null}
-                  </div>
-                  {hideActivity ? null : (
-                    <div
-                      {...tabPanelProps("conversation", "activity", barTab === "activity")}
-                      className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
+                    <IconButton
+                      label={conversation ? "Expand conversation" : "Expand side pane"}
+                      title="Expand side pane (])"
+                      aria-keyshortcuts="]"
+                      className="h-9 w-9 text-secondary"
+                      onClick={() => setChatCollapsed(false)}
                     >
-                      {barTab === "activity" ? (
+                      <ChevronLeftIcon />
+                    </IconButton>
+                    <span aria-hidden className="my-1 h-px w-5 bg-(--border-subtle)" />
+                    {barTabs.map((tab) => (
+                      <IconButton
+                        key={tab.value}
+                        label={tab.label}
+                        className={cn(
+                          "relative h-9 w-9",
+                          tab.value === barTab ? "text-primary" : "text-secondary",
+                        )}
+                        onClick={() => openBarTab(tab.value)}
+                      >
+                        {tab.icon}
+                        {tab.tone ? (
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full",
+                              tab.tone === "caution" ? "bg-status-caution" : "bg-status-critical",
+                            )}
+                          />
+                        ) : null}
+                      </IconButton>
+                    ))}
+                  </div>
+                  <div
+                    className={cn(
+                      chatCollapsed ? "flex min-h-0 flex-1 flex-col wide:hidden" : "contents",
+                    )}
+                  >
+                    {barHeader}
+                    {conversation ? (
+                      <div
+                        {...tabPanelProps("conversation", "chat", barTab === "chat")}
+                        className="flex min-h-0 flex-1 flex-col"
+                      >
+                        {conversation(conversationContext)}
+                      </div>
+                    ) : null}
+                    {/* The other tabs scroll on their own under the strip, as the
+                chat's feed does; their parts query the pane's width. */}
+                    <div
+                      {...tabPanelProps("conversation", "details", barTab === "details")}
+                      className="@container min-h-0 flex-1 overflow-y-auto wide:-mr-2 wide:pr-2"
+                    >
+                      {barTab === "details" ? (
                         barDocument ? (
                           <>
                             {historicalNote}
-                            <ReviewActivity
+                            <ReviewDetails
                               document={barDocument}
-                              checks={barChecks ? barChecks.content : undefined}
-                              members={barMembers}
-                              onSelectSection={selectSection}
-                              onSelectSession={
-                                barHistorical || !sessions
-                                  ? undefined
-                                  : (id) => {
-                                      setFolded((current) => ({ ...current, sessions: false }));
-                                      setSelection({ kind: "session", id });
-                                    }
+                              checks={
+                                hideActivity ? (barChecks ? barChecks.content : undefined) : null
                               }
-                              onViewSessions={
-                                barHistorical || !sessions
-                                  ? undefined
-                                  : () => navigateFromSummary("sessions")
-                              }
+                              footer={detailsFooter?.(barDocument)}
                             />
                           </>
                         ) : barFacts ? (
-                          <FactsActivity
-                            facts={barFacts}
-                            onSelectSession={
-                              sessions
-                                ? (id) => {
-                                    setFolded((current) => ({ ...current, sessions: false }));
-                                    setSelection({ kind: "session", id });
-                                  }
-                                : undefined
-                            }
-                            onViewSessions={
-                              sessions ? () => navigateFromSummary("sessions") : undefined
-                            }
-                          />
+                          <FactsDetails facts={barFacts} checks={hideActivity ? undefined : null} />
                         ) : (
                           barPlaceholder
                         )
                       ) : null}
                     </div>
-                  )}
-                  {comments ? (
-                    <div
-                      {...tabPanelProps("conversation", "comments", barTab === "comments")}
-                      className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
-                    >
-                      {/* Kept mounted while another tab shows, so a comment
+                    {hideActivity ? null : (
+                      <div
+                        {...tabPanelProps("conversation", "activity", barTab === "activity")}
+                        className="@container min-h-0 flex-1 overflow-y-auto wide:-mr-2 wide:pr-2"
+                      >
+                        {barTab === "activity" ? (
+                          barDocument ? (
+                            <>
+                              {historicalNote}
+                              <ReviewActivity
+                                document={barDocument}
+                                checks={barChecks ? barChecks.content : undefined}
+                                members={barMembers}
+                                onSelectSection={selectSection}
+                                onSelectSession={
+                                  barHistorical || !sessions
+                                    ? undefined
+                                    : (id) => {
+                                        setFolded((current) => ({ ...current, sessions: false }));
+                                        setSelection({ kind: "session", id });
+                                      }
+                                }
+                                onViewSessions={
+                                  barHistorical || !sessions
+                                    ? undefined
+                                    : () => navigateFromSummary("sessions")
+                                }
+                              />
+                            </>
+                          ) : barFacts ? (
+                            <FactsActivity
+                              facts={barFacts}
+                              onSelectSession={
+                                sessions
+                                  ? (id) => {
+                                      setFolded((current) => ({ ...current, sessions: false }));
+                                      setSelection({ kind: "session", id });
+                                    }
+                                  : undefined
+                              }
+                              onViewSessions={
+                                sessions ? () => navigateFromSummary("sessions") : undefined
+                              }
+                            />
+                          ) : (
+                            barPlaceholder
+                          )
+                        ) : null}
+                      </div>
+                    )}
+                    {comments ? (
+                      <div
+                        {...tabPanelProps("conversation", "comments", barTab === "comments")}
+                        className="@container min-h-0 flex-1 overflow-y-auto wide:-mr-2 wide:pr-2"
+                      >
+                        {/* Kept mounted while another tab shows, so a comment
                     being written survives a look at Details or Activity. */}
-                      {comments.render(conversationContext)}
-                    </div>
-                  ) : null}
-                </div>
-              </section>
+                        {comments.render(conversationContext)}
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              </div>
             </div>
-          </div>
+          </ReviewJumpContext.Provider>
         </ReviewHunksProvider>
       </ReviewSourcesProvider>
     </ReviewFilesProvider>
@@ -2107,13 +2186,15 @@ function ReviewWorkspace<F extends ReviewFile>({
   /** What the pane shows for the current selection in one snapshot of the
    *  review, current or historical. */
   function renderPane(snapshot: ReviewDocument, historical: boolean) {
+    const selectSnapshotSection = (id: string, item?: string) =>
+      selectSection(id, item, snapshot.review.version);
     if (selection.kind === "changes" || selection.kind === "risks")
       return (
         <ChangesOverview
           document={snapshot}
           showObsolete={showObsolete}
           onToggleObsolete={toggleObsolete}
-          onSelectSection={selectSection}
+          onSelectSection={selectSnapshotSection}
           renderLabels={
             renderSectionLabels ? (section) => renderSectionLabels(section, snapshot) : undefined
           }
@@ -2128,7 +2209,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       return (
         <ReviewSummary
           document={snapshot}
-          onSelectSection={selectSection}
+          onSelectSection={selectSnapshotSection}
           onNavigate={historical ? undefined : navigateFromSummary}
           contextPending={!historical && contextPending}
         />
@@ -2137,7 +2218,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     const section = snapshot.sections.find((item) => item.id === sectionId);
     if (!section) {
       return (
-        <p className="text-base text-(--text-secondary)">
+        <p className="text-base text-secondary">
           This section did not exist in review v{snapshot.review.version}.
         </p>
       );
@@ -2147,7 +2228,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         <ReviewSection
           document={snapshot}
           section={section}
-          onSelectSection={selectSection}
+          onSelectSection={selectSnapshotSection}
           loadVersion={loadVersion}
           activeVersions={sectionHistory?.active.get(section.id)}
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}

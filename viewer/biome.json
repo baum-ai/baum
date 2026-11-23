@@ -13,7 +13,8 @@
       "!!generated",
       "!!playwright-report",
       "!!test-results",
-      "!!src/precompiled"
+      "!!src/precompiled",
+      "!!src/palette-utilities.css"
     ]
   },
   "formatter": {

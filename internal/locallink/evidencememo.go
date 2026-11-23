@@ -194,6 +194,11 @@ func copyValue(dst, src reflect.Value, cloneStrings bool) {
 			return
 		}
 		s := reflect.MakeSlice(src.Type(), src.Len(), src.Len())
+		if src.Type().Elem().Kind() == reflect.Uint8 {
+			reflect.Copy(s, src)
+			dst.Set(s)
+			return
+		}
 		for i := range src.Len() {
 			copyValue(s.Index(i), src.Index(i), cloneStrings)
 		}

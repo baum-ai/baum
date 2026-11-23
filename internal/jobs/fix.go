@@ -121,7 +121,7 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 			// A fix of the checks alone leaves the conflicts and the
 			// review threads to another fix.
 			p.Fix.Conflicts = false
-		} else if threads, err = l.fixThreads(ctx, repository, item.PR); err != nil {
+		} else if threads, err = l.fixThreads(ctx, reader, repository, item.PR); err != nil {
 			return Prepared{}, "", err
 		}
 		p.Fix.Threads = fix.Digest(threads.Threads)
@@ -164,8 +164,9 @@ func (l *Local) prepareFix(ctx context.Context, item Item) (Prepared, string, er
 // fixThreads reads the unresolved review threads a fix of the pull request
 // addresses (fix.SelectThreads), but only on a pull request the signed-in
 // account opened: replying "Addressed in" on reviewers' threads and resolving
-// them is its author's to do. On another pull request there are none.
-func (l *Local) fixThreads(ctx context.Context, repository github.Repository, number int) (fix.Selection, error) {
+// them is its author's to do. On another pull request there are none. Their
+// authors' push access is read with reader, once per author.
+func (l *Local) fixThreads(ctx context.Context, reader fix.Reader, repository github.Repository, number int) (fix.Selection, error) {
 	list, err := l.Client.UnresolvedThreads(ctx, repository, number)
 	if err != nil {
 		return fix.Selection{}, err
@@ -173,7 +174,14 @@ func (l *Local) fixThreads(ctx context.Context, repository github.Repository, nu
 	if !list.ViewerDidAuthor {
 		return fix.Selection{}, nil
 	}
-	return fix.SelectThreads(list), nil
+	selection, err := fix.SelectThreads(ctx, list, fix.CollaboratorPushAccess(reader, repository))
+	if err != nil {
+		if ctx.Err() != nil {
+			return fix.Selection{}, ctx.Err()
+		}
+		return fix.Selection{}, errors.New("review comment authors' permission evidence unavailable")
+	}
+	return selection, nil
 }
 
 // executeFix rechecks a confirmed fix against GitHub, reads the failing
@@ -236,7 +244,7 @@ func (l *Local) executeFix(ctx context.Context, p Prepared, progress func(Progre
 	var threads []fix.Thread
 	if p.Fix.Threads != "" {
 		progress(Progress{Phase: "reading review comments"})
-		selection, err := l.fixThreads(ctx, repository, p.PR)
+		selection, err := l.fixThreads(ctx, reader, repository, p.PR)
 		if err != nil {
 			return nil, err
 		}

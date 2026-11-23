@@ -88,17 +88,21 @@ type codexUsageWindow struct {
 
 // readAPI asks Codex's usage endpoint, as the Codex CLI's status line does.
 // It never refreshes the token: that would rotate Codex's sign-in. Any
-// failure answers false, and Read falls back to the session files.
-func (c *Codex) readAPI(ctx context.Context, home string) (Plan, bool) {
+// failure answers false, and Read falls back to the session files. expired
+// reports a token past its exp or refused by the endpoint, which only Codex
+// itself can renew.
+func (c *Codex) readAPI(ctx context.Context, home string) (plan Plan, ok, expired bool) {
 	find := c.Credential
 	if find == nil {
 		find = func(context.Context) (CodexCredential, error) { return StoredCodexCredential(home) }
 	}
 	cred, err := find(ctx)
 	now := c.now()
-	if err != nil || cred.Token == "" || cred.AccountID == "" ||
-		!cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(now) {
-		return Plan{}, false
+	if err != nil || cred.Token == "" || cred.AccountID == "" {
+		return Plan{}, false, false
+	}
+	if !cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(now) {
+		return Plan{}, false, true
 	}
 	client := c.Client
 	if client == nil {
@@ -113,7 +117,7 @@ func (c *Codex) readAPI(ctx context.Context, home string) (Plan, bool) {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return Plan{}, false
+		return Plan{}, false, false
 	}
 	req.Header.Set("Authorization", "Bearer "+cred.Token)
 	req.Header.Set("ChatGPT-Account-Id", cred.AccountID)
@@ -122,19 +126,22 @@ func (c *Codex) readAPI(ctx context.Context, home string) (Plan, bool) {
 	resp, err := client.Do(req)
 	if err != nil {
 		// The error is dropped: nothing in it is safe or useful to show.
-		return Plan{}, false
+		return Plan{}, false, false
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return Plan{}, false, true
+	}
 	if resp.StatusCode != http.StatusOK {
-		return Plan{}, false
+		return Plan{}, false, false
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return Plan{}, false
+		return Plan{}, false, false
 	}
 	var usage codexUsage
 	if json.Unmarshal(body, &usage) != nil || usage.RateLimit == nil {
-		return Plan{}, false
+		return Plan{}, false, false
 	}
 	var windows []Window
 	for _, w := range []*codexUsageWindow{usage.RateLimit.Primary, usage.RateLimit.Secondary} {
@@ -158,7 +165,7 @@ func (c *Codex) readAPI(ctx context.Context, home string) (Plan, bool) {
 		windows = append(windows, out)
 	}
 	if len(windows) == 0 {
-		return Plan{}, false
+		return Plan{}, false, false
 	}
 	return Plan{
 		Provider:  "codex",
@@ -166,5 +173,5 @@ func (c *Codex) readAPI(ctx context.Context, home string) (Plan, bool) {
 		Plan:      codexPlanName(usage.PlanType),
 		Windows:   windows,
 		FetchedAt: now,
-	}, true
+	}, true, false
 }

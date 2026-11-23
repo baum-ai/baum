@@ -33,6 +33,10 @@ This package owns the group definitions, the group review versions and the
   member without a saved review is refused before any model call with
   `members_need_reviews`, naming them; the app offers to generate those
   reviews first.
+- A group's review runs under a longer time limit than a member's: the
+  review time limit plus half of it for each member after the first, at
+  most three times it (15 minutes for two members with the default 10). It
+  is written in one pass, and writing its document alone takes minutes.
 - A group review is **outdated** when its latest version covered a different
   set of members, or a member's head (from discovery) differs from the head
   the version reviewed. An unknown current head is not outdated.
@@ -142,7 +146,7 @@ started from.
    whose details are pending or failed has "Details for this section are
    unavailable." in place of its summary.
 4. Runs the agent loop with the public group prompt
-   (`agent/prompt` `GroupPrompts`, version `group-review-public-v4`).
+   (`agent/prompt` `GroupPrompts`, version `group-review-public-v6`).
    The model names the group: its schema asks for `stack` with only a
    `title` (`agent.Run.ModelSchema`). Before validation the host fills the
    rest of `stack` (`members` = number, head SHA and member review version)
@@ -192,3 +196,11 @@ version_count, latest, risk_score, reviewed, outdated}`: `latest` is the
 latest version's metadata (or null), `reviewed` the members it covered with
 their heads, and `outdated` as above. Every mutation publishes an `index`
 event.
+
+`PATCH` goes through `API.Update`, which a chat's proposal to rename a group
+or add and remove its pull requests also saves with (see "MCP server for
+agents" in `ARCHITECTURE.md`). It calls `Store.UpdateWith`, `Update` with the
+name and members chosen from the group as the writing transaction reads it:
+an error the choice returns (a proposal read at another state of the group)
+writes nothing. `CheckUpdate` refuses what `Update` would refuse of a name
+or members, without writing.

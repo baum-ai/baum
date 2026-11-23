@@ -63,10 +63,10 @@ export function BugFixTile({ change }: { change: BugFixChange }) {
     >
       <section
         aria-label="What this pull request fixes"
-        className="mt-4 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+        className="mt-4 overflow-hidden rounded-sm border border-default bg-surface-card"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--surface-wash) px-3 py-2">
-          <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
+          <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
             What this pull request fixes
           </h5>
           <Badge tone="positive" size="compact">
@@ -80,14 +80,14 @@ export function BugFixTile({ change }: { change: BugFixChange }) {
             when="Before this PR"
             text={change.bug}
             mark={
-              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-(--status-critical) bg-(--status-critical-bg) text-3xs font-bold text-(--status-critical)">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-status-critical bg-status-critical-bg text-3xs font-bold text-status-critical">
                 !
               </span>
             }
           />
           <span
             aria-hidden
-            className="flex items-center justify-center bg-(--surface-card) px-1 py-1 text-(--text-tertiary)"
+            className="flex items-center justify-center bg-surface-card px-1 py-1 text-tertiary"
           >
             <span className="hidden sm:inline">→</span>
             <span className="sm:hidden">↓</span>
@@ -97,7 +97,7 @@ export function BugFixTile({ change }: { change: BugFixChange }) {
             when="In this PR"
             text={change.fix}
             mark={
-              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-(--status-positive) bg-(--status-positive-bg) text-(--status-positive)">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-status-positive bg-status-positive-bg text-status-positive">
                 <CheckIcon size={11} />
               </span>
             }
@@ -120,17 +120,17 @@ function BugFixSide({
   mark: ReactNode;
 }) {
   return (
-    <article aria-label={label} className="min-w-0 bg-(--surface-card) px-4 py-3">
+    <article aria-label={label} className="min-w-0 bg-surface-card px-4 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <span aria-hidden className="flex">
           {mark}
         </span>
-        <span className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+        <span className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
           {label}
         </span>
-        <span className="text-xs text-(--text-tertiary)">· {when}</span>
+        <span className="text-xs text-tertiary">· {when}</span>
       </div>
-      <p className="mt-2 text-base font-medium leading-[1.45] tracking-[-0.01em] text-(--text-primary)">
+      <p className="mt-2 text-base font-medium leading-[1.45] tracking-[-0.01em] text-primary">
         {text}
       </p>
     </article>
@@ -147,23 +147,19 @@ export function RefactorTile({ change }: { change: RefactorChange }) {
         <div className="grid gap-2 sm:grid-cols-2">
           <article
             aria-label="Was"
-            className="min-w-0 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) px-4 py-3.5"
+            className="min-w-0 rounded-md border border-default bg-surface-card px-4 py-3.5"
           >
-            <p className="text-xs font-semibold tracking-[0.14em] uppercase text-(--text-tertiary)">
-              Was
-            </p>
-            <p className="mt-2 text-base font-medium leading-[1.4] tracking-[-0.015em] text-(--text-primary)">
+            <p className="text-xs font-semibold tracking-[0.14em] uppercase text-tertiary">Was</p>
+            <p className="mt-2 text-base font-medium leading-[1.4] tracking-[-0.015em] text-primary">
               {change.was}
             </p>
           </article>
           <article
             aria-label="Now"
-            className="min-w-0 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) px-4 py-3.5"
+            className="min-w-0 rounded-md border border-default bg-surface-card px-4 py-3.5"
           >
-            <p className="text-xs font-semibold tracking-[0.14em] uppercase text-(--text-tertiary)">
-              Now
-            </p>
-            <p className="mt-2 text-base font-medium leading-[1.4] tracking-[-0.015em] text-(--text-primary)">
+            <p className="text-xs font-semibold tracking-[0.14em] uppercase text-tertiary">Now</p>
+            <p className="mt-2 text-base font-medium leading-[1.4] tracking-[-0.015em] text-primary">
               {change.now}
             </p>
           </article>
@@ -206,7 +202,7 @@ export function AlternativeApproachTile({ change }: { change: AlternativeChange 
         <StateCard caption="Implemented" state={change.landed} />
         <StateCard caption="Proposed" state={change.proposed} />
       </div>
-      <p className="mt-3 text-base leading-[1.5] text-(--text-secondary)">{change.whyItMatters}</p>
+      <p className="mt-3 text-base leading-[1.5] text-secondary">{change.whyItMatters}</p>
     </TileShell>
   );
 }
@@ -215,7 +211,7 @@ function Compare({ before, after }: { before: ComparedState; after: ComparedStat
   return (
     <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-stretch">
       <StateCard caption="Before" state={before} />
-      <span aria-hidden className="hidden items-center text-(--text-tertiary) sm:flex">
+      <span aria-hidden className="hidden items-center text-tertiary sm:flex">
         →
       </span>
       <StateCard caption="After" state={after} />
@@ -225,12 +221,10 @@ function Compare({ before, after }: { before: ComparedState; after: ComparedStat
 
 function StateCard({ caption, state }: { caption: string; state: ComparedState }) {
   return (
-    <article className="min-w-0 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) px-3 py-2.5">
-      <p className="text-3xs font-semibold tracking-[0.1em] uppercase text-(--text-tertiary)">
-        {caption}
-      </p>
-      <h6 className="mt-1 text-base font-semibold text-(--text-primary)">{state.label}</h6>
-      <p className="mt-1 text-xs leading-[1.45] text-(--text-secondary)">{state.detail}</p>
+    <article className="min-w-0 rounded-sm border border-default bg-surface-card px-3 py-2.5">
+      <p className="text-3xs font-semibold tracking-[0.1em] uppercase text-tertiary">{caption}</p>
+      <h6 className="mt-1 text-base font-semibold text-primary">{state.label}</h6>
+      <p className="mt-1 text-xs leading-[1.45] text-secondary">{state.detail}</p>
     </article>
   );
 }

@@ -239,11 +239,9 @@ describe("images blocks", () => {
     const first = html.indexOf("attachments/att_0123456789abcdef");
     expect(second).toBeGreaterThan(-1);
     expect(first).toBeGreaterThan(second);
+    expect(html).toContain('<figcaption class="text-base text-tertiary">Second alt</figcaption>');
     expect(html).toContain(
-      '<figcaption class="text-base text-(--text-tertiary)">Second alt</figcaption>',
-    );
-    expect(html).toContain(
-      '<figcaption class="text-base text-(--text-tertiary)">The picker, open</figcaption>',
+      '<figcaption class="text-base text-tertiary">The picker, open</figcaption>',
     );
     expect(html).toContain('width="640" height="480"');
     expect(html).toContain("From the PR description § Screenshots");

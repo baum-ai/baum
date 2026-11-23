@@ -60,6 +60,8 @@ type App struct {
 	// Sample serves the API of the sample project the tour shows when there
 	// is no local data yet, under /s/<namespace>/sample/.
 	Sample http.Handler
+	// MCP serves /api/mcp, the MCP server agents reach with their own tokens.
+	MCP uiserver.MCP
 	// Run does background work until its context ends.
 	Run func(ctx context.Context)
 	// Shutdown stops work that must be recorded when it is cut short (the
@@ -191,7 +193,8 @@ func Run(ctx context.Context, opts Options) error {
 		}
 	}
 	var api, assets, sample swapHandler
-	server, err := uiserver.New(uiserver.Options{API: &api, App: &assets, Sample: &sample})
+	var mcp swapMCP
+	server, err := uiserver.New(uiserver.Options{API: &api, App: &assets, Sample: &sample, MCP: &mcp})
 	if err != nil {
 		return err
 	}
@@ -217,6 +220,7 @@ func Run(ctx context.Context, opts Options) error {
 	api.set(app.API)
 	assets.set(app.Assets)
 	sample.set(app.Sample)
+	mcp.set(app.MCP)
 	if _, err = server.Listen(opts.Port); err != nil {
 		shutdownApp()
 		return err
@@ -386,6 +390,27 @@ func (s *swapHandler) set(h http.Handler) {
 func (s *swapHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h := s.h.Load(); h != nil {
 		(*h).ServeHTTP(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// swapMCP serves the MCP server set before the server starts; until then
+// it authenticates no token.
+type swapMCP struct{ m atomic.Pointer[uiserver.MCP] }
+
+func (s *swapMCP) set(m uiserver.MCP) {
+	if m != nil {
+		s.m.Store(&m)
+	}
+}
+func (s *swapMCP) Authenticate(token string) bool {
+	m := s.m.Load()
+	return m != nil && (*m).Authenticate(token)
+}
+func (s *swapMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if m := s.m.Load(); m != nil {
+		(*m).ServeHTTP(w, r)
 		return
 	}
 	http.NotFound(w, r)

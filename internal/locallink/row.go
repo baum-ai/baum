@@ -32,21 +32,37 @@ func RowOf(engine *redact.Engine, s sessions.Session) (Row, error) {
 }
 
 func rowOf(engine *redact.Engine, s sessions.Session, correlated sessioncorrelate.Result) (Row, error) {
-	row := Row{
-		Source: s.Source.String(), Vendor: s.Vendor, ID: s.ID,
-		Outcome: session.OutcomeUnknown,
-	}
+	facts := sessionFacts{correlated: correlated}
 	if root := s.Root(); root != nil {
-		row.StartedAt, row.EndedAt, row.Outcome = root.StartedAt, root.EndedAt, root.Outcome
-		if root.Title != nil {
-			title, _, err := engine.Redact(*root.Title)
+		facts.root = true
+		facts.startedAt, facts.endedAt, facts.gitBranch = root.StartedAt, root.EndedAt, root.GitBranch
+		facts.title, facts.outcome = root.Title, root.Outcome
+	}
+	return rowOfFacts(engine, s, facts)
+}
+
+func rowOfFacts(engine *redact.Engine, s sessions.Session, facts sessionFacts) (Row, error) {
+	correlated := facts.correlated
+	row := Row{Source: s.Source.String(), Vendor: s.Vendor, ID: s.ID, Outcome: session.OutcomeUnknown}
+	if facts.root {
+		row.Outcome = facts.outcome
+		if facts.startedAt != nil {
+			at := *facts.startedAt
+			row.StartedAt = &at
+		}
+		if facts.endedAt != nil {
+			at := *facts.endedAt
+			row.EndedAt = &at
+		}
+		if facts.title != nil {
+			title, _, err := engine.Redact(*facts.title)
 			if err != nil {
 				return Row{}, err
 			}
 			row.Title = title
 		}
-		if root.GitBranch != nil {
-			row.Branch = *root.GitBranch
+		if facts.gitBranch != nil {
+			row.Branch = *facts.gitBranch
 		}
 	}
 	if row.Branch == "" && len(correlated.Branches) > 0 {

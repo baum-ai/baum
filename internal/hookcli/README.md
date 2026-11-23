@@ -7,6 +7,22 @@ The JSON status shape is the desktop onboarding contract. Agent definitions
 live in [agenthookdefs](../agenthookdefs); native operations and trust checks
 live in [agentplugins](../agentplugins/README.md).
 
+Claude Code keeps its plugins per configuration directory. The four `--user`
+commands take `--claude-config-dir DIR` (`~` expanded, absolute), which they
+set as `CLAUDE_CONFIG_DIR` for the `claude` they run and the settings they
+read; without it they follow the inherited `CLAUDE_CONFIG_DIR`, else
+`~/.claude`. For a directory other than `~/.claude`, messages and the text
+status name it, the JSON status carries it as `config_dir`, and a successful
+install records it ([agentdirs](../agentdirs/README.md)) so baum reads its
+sessions. Uninstall keeps the record: the sessions are still there.
+
+Codex keeps its plugins in its home, so the same commands take `--codex-home
+DIR`, set as `CODEX_HOME` for the `codex` they run, for the app-server the
+trust check starts and for the terminal-title setup (`codexconfig`), else
+`CODEX_HOME`, else `~/.codex`. A home other than `~/.codex` is named, reported
+as the codex entry's `config_dir` and recorded on install the same way. Hook
+trust is per home: approve baum's hooks with `/hooks` in a Codex run with it.
+
 Plugin callbacks keep their existing command strings:
 `hooks agent --check --user AGENT EVENT`, then `hooks agent --user AGENT EVENT`.
 The check succeeds only in a Git worktree after the local daemon has run.
@@ -16,6 +32,12 @@ daemon installs chain the hook a clone already had.
 Legacy repository agent checks without `--user` and the legacy Git
 `--check` always decline, leaving the repository dispatcher free to run its own
 independent hook fallback.
+
+A Claude Code callback that locates the terminal (session start and prompts)
+also records its session's `CLAUDE_CONFIG_DIR`, when that is not `~/.claude`,
+in the same record: a directory the plugin was installed into by hand is then
+read too. A Codex callback does the same with the `CODEX_HOME` it inherits from
+its session, when that is not `~/.codex`. It never fails the hook.
 
 Agent callbacks record bounded session identifiers, terminal location and
 notification metadata locally. The daemon event sender retains its bounded
@@ -50,14 +72,16 @@ false there (one `git config` call, bounded to a second), which silences a
 dispatcher the daemon could not take out. The older `hooks git --check HOOK` always declines, so
 dispatchers of earlier versions keep running their own fallback, until the
 daemon repairs those it recognises as baum's (the repaired dispatcher no longer
-falls back to `entire`). A hook Entire manages is left as it is. In a repository
-that uses Entire (its `.entire/settings.json` is in the default branch's tree (origin's, `main`, `master`, `init.defaultBranch`)
-or in a checked-out branch's, or
-checked out in a working tree, or git cannot say) legacy dispatchers that run
-Entire's hooks are all left in place. Elsewhere the daemon also retires the
-legacy `commit-msg` and `prepare-commit-msg` dispatchers, restoring the hook
-they replaced or removing them. Dispatchers it does not recognise can be removed
-by their owner; preserve independent hooks and checkpoint refs.
+falls back to `entire`). Whether a repository uses Entire does not change what
+is installed: an existing hook, Entire's included, is chained like any other.
+A legacy dispatcher that ran Entire's hook itself is replaced, and that call is
+kept as the `<hook>.pre-baum` backup the new dispatcher runs; restored by an
+opt-out, that backup also runs the hook the earlier dispatcher replaced. The legacy
+`commit-msg` and `prepare-commit-msg` dispatchers, which baum no longer
+installs, are retired (the hook they replaced comes back, or they go) unless
+they run Entire's hook; those are left, as are legacy dispatchers that run
+Entire's hook in a clone that opted out. Dispatchers it does not recognise can
+be removed by their owner; preserve independent hooks and checkpoint refs.
 
 The dispatchers guard against loops: one that finds its own hook already running
 (`BAUM_GIT_HOOK_ACTIVE`) does nothing, and none runs a backup that is itself a

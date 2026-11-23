@@ -72,8 +72,9 @@ type FeatureWorker struct {
 	windowLinked, retryAt map[string]time.Time
 	// linkMu guards linked, what each repository's last links were made
 	// from, and is held across their write, so it describes the last writer.
-	linkMu sync.Mutex
-	linked map[string]string
+	linkMu       sync.Mutex
+	linked       map[string]string
+	commitRanges featureCommitCache
 }
 
 func (w *FeatureWorker) init() {
@@ -500,7 +501,7 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 				return report, err
 			}
 			for _, p := range pulls {
-				read, err := pullCommits(ctx, clone, p)
+				read, err := w.commitRanges.read(ctx, clone, dir, p, full)
 				if err != nil {
 					if ctx.Err() != nil {
 						_ = clone.Close()
@@ -529,12 +530,9 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	}
 	slices.SortFunc(list, func(a, b gitlocal.Commit) int { return strings.Compare(a.OID, b.OID) })
 	// The daily re-link always reads, so what the inputs miss lasts a day.
-	inputs := ""
-	if len(fresh) == 0 && !full {
-		inputs = linkInputs(ctx, dir, list, w.Sessions)
-	}
+	inputs := linkInputs(ctx, dir, list, w.Sessions)
 	w.linkMu.Lock()
-	report.Unchanged = inputs != "" && inputs == w.linked[repository]
+	report.Unchanged = !full && inputs != "" && inputs == w.linked[repository]
 	w.linkMu.Unlock()
 	if report.Unchanged {
 		w.linkedWindow(repository, now)

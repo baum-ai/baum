@@ -172,8 +172,8 @@ func TestEvidenceMapsOnlyTheSessionsThatChanged(t *testing.T) {
 
 // A linked session whose evidence depends on something outside its
 // transcript that changed, here a path its command names appearing in the
-// checkout, is mapped again, and only it.
-func TestEvidenceRemapsALinkedSessionWhoseSurroundingsChanged(t *testing.T) {
+// checkout, is reprojected from its basis without mapping it again.
+func TestEvidenceReprojectsALinkedSessionWhoseSurroundingsChanged(t *testing.T) {
 	useEvidenceMemo(t)
 	useSessionDigests(t)
 	f := linktest.New(t)
@@ -192,11 +192,11 @@ func TestEvidenceRemapsALinkedSessionWhoseSurroundingsChanged(t *testing.T) {
 	}
 	loads, decoded := counter("sessions.load.calls"), decodes()
 	after := rebuild(t, req)
-	if got := counter("sessions.load.calls") - loads; got != 2 {
-		t.Errorf("loads = %d, want 2: one reusing every session, one mapping the linked one", got)
+	if got := counter("sessions.load.calls") - loads; got != 1 {
+		t.Errorf("loads = %d, want 1: the new context projects from the basis", got)
 	}
-	if got := decodes() - decoded; got != 1 {
-		t.Errorf("%d transcripts decoded, want 1", got)
+	if got := decodes() - decoded; got != 0 {
+		t.Errorf("%d transcripts decoded, want 0", got)
 	}
 	sameEvidence(t, "a named path appeared", after, fullBuild(t, req))
 	if reflect.DeepEqual(before, after) {
@@ -227,7 +227,7 @@ func TestEvidenceSurvivesAnUnrelatedWorktree(t *testing.T) {
 
 // A worktree added where a linked session touched a file places that file
 // in the clone: the session's evidence is built again.
-func TestEvidenceRemapsWhenAWorktreePlacesATouchedPath(t *testing.T) {
+func TestEvidenceReprojectsWhenAWorktreePlacesATouchedPath(t *testing.T) {
 	useEvidenceMemo(t)
 	useSessionDigests(t)
 	f := linktest.New(t)
@@ -243,8 +243,8 @@ func TestEvidenceRemapsWhenAWorktreePlacesATouchedPath(t *testing.T) {
 	linktest.Git(t, f.Repo, "worktree", "add", "-q", "--detach", filepath.Join(filepath.Dir(f.Repo), "wt"))
 	decoded := decodes()
 	after := rebuild(t, req)
-	if n := decodes() - decoded; n != 1 {
-		t.Errorf("%d transcripts decoded, want 1", n)
+	if n := decodes() - decoded; n != 0 {
+		t.Errorf("%d transcripts decoded, want 0", n)
 	}
 	sameEvidence(t, "a worktree placed a touched path", after, fullBuild(t, req))
 	encoded, _ := json.Marshal(after)
@@ -395,5 +395,168 @@ func TestDigestCacheEvictsPastItsLimit(t *testing.T) {
 	c.addProjection(d, &projection{item: bundle.Session{Title: strings.Repeat("x", 100)}})
 	if _, ok := c.get("b"); ok || c.held != 0 {
 		t.Errorf("a digest grown past the limit was kept (held %d)", c.held)
+	}
+}
+
+// Resolve needs full graphs only for linked sessions. An unchanged unrelated
+// candidate must not be decoded after its graph has been evicted.
+func TestResolveMapsOnlyLinkedOrChangedSessions(t *testing.T) {
+	useSessionDigests(t)
+	sessions.SetTailCacheLimit(0)
+	t.Cleanup(func() { sessions.SetTailCacheLimit(sessions.DefaultTailCacheBytes) })
+	f := linktest.New(t)
+	const promoted = "bbbbbbbb-0000-4000-8000-000000000001"
+	const other = "bbbbbbbb-0000-4000-8000-000000000002"
+	f.AddEditor(t, promoted, "08", "unrelated.txt")
+	f.AddEditor(t, other, "08", "other.txt")
+	req := request(f)
+	settleRequest := EvidenceRequest{Sessions: f.Store}
+	cold := func() Result {
+		t.Helper()
+		kept := sessionDigests
+		sessionDigests = newDigestCache(DefaultDigestBytes)
+		defer func() { sessionDigests = kept }()
+		return resolve(t, req)
+	}
+	same := func(got, want Result) {
+		t.Helper()
+		a, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(a) != string(b) || !reflect.DeepEqual(got.Graphs, want.Graphs) {
+			t.Fatal("reused Resolve differs from full result or linked graphs")
+		}
+	}
+	run := func(want int64) Result {
+		t.Helper()
+		settle(t, settleRequest)
+		before := decodes()
+		got := resolve(t, req)
+		if n := decodes() - before; n != want {
+			t.Fatalf("decoded %d sessions, want %d", n, want)
+		}
+		same(got, cold())
+		return got
+	}
+	first := run(3)
+	warm := run(1)
+	same(first, warm)
+	if len(warm.Graphs) != 1 || warm.Graphs[linktest.SessionID] == nil {
+		t.Fatal("linked graph missing")
+	}
+	// A previously unrelated candidate gains actual commit creation evidence;
+	// the old creator now only edits an unrelated file. Both changed sessions
+	// must be reconsidered, and the newly linked graph must be returned.
+	f.AddEditor(t, linktest.SessionID, "08", "unrelated-original.txt")
+	f.AddSession(t, promoted, f.Repo, "new creator")
+	changed := run(2)
+	if len(changed.Sessions) != 1 || changed.Sessions[0].ID != promoted || changed.Graphs[promoted] == nil || changed.Graphs[linktest.SessionID] != nil {
+		t.Fatalf("contribution change not reflected: %+v", changed.Sessions)
+	}
+	retitle(t, transcriptOf(f, promoted), promoted, "updated linked transcript")
+	titled := run(1)
+	if titled.Sessions[0].Title != "updated linked transcript" {
+		t.Fatal("linked graph/row title stale")
+	}
+	run(1)
+}
+
+func TestResolveRecoversWhenCompactFactsGoMissing(t *testing.T) {
+	useSessionDigests(t)
+	sessions.SetTailCacheLimit(0)
+	t.Cleanup(func() { sessions.SetTailCacheLimit(sessions.DefaultTailCacheBytes) })
+	f := linktest.New(t)
+	f.AddEditor(t, "bbbbbbbb-0000-4000-8000-000000000001", "08", "unrelated.txt")
+	settle(t, EvidenceRequest{Sessions: f.Store})
+	want := resolve(t, request(f))
+	previous := newBuildBook
+	t.Cleanup(func() { newBuildBook = previous })
+	newBuildBook = func(cache *digestCache) *digestBook {
+		b := newDigestBook(cache)
+		b.afterReuse = func(key string) { delete(b.held, key); forget(cache, key) }
+		return b
+	}
+	before := decodes()
+	got := resolve(t, request(f))
+	if decodes()-before != 2 {
+		t.Fatal("missing facts did not trigger full read")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("full fallback changed results")
+	}
+}
+
+func TestResolveSummaryReusesLinkedRowsWithoutFullGraphs(t *testing.T) {
+	useSessionDigests(t)
+	sessions.SetTailCacheLimit(0)
+	t.Cleanup(func() { sessions.SetTailCacheLimit(sessions.DefaultTailCacheBytes) })
+	f := linktest.New(t)
+	const promoted = "bbbbbbbb-0000-4000-8000-000000000001"
+	f.AddEditor(t, promoted, "08", "unrelated.txt")
+	req := request(f)
+	summary := func(want int64) Result {
+		t.Helper()
+		settle(t, EvidenceRequest{Sessions: f.Store})
+		before := decodes()
+		got, err := ResolveSummary(context.Background(), req)
+		if err != nil || !got.Available {
+			t.Fatalf("summary %+v %v", got, err)
+		}
+		if n := decodes() - before; n != want {
+			t.Fatalf("summary decoded %d sessions want %d", n, want)
+		}
+		if len(got.Graphs) != 0 || got.LoadGraph == nil {
+			t.Fatal("summary retained full graphs or lacks on-demand reader")
+		}
+		full := resolve(t, req)
+		a, _ := json.Marshal(got)
+		b, _ := json.Marshal(full)
+		if string(a) != string(b) {
+			t.Fatal("summary JSON differs from full Resolve")
+		}
+		return got
+	}
+	cold := summary(2)
+	warm := summary(0)
+	if warm.Sessions[0].StartedAt != nil {
+		at := *warm.Sessions[0].StartedAt
+		*warm.Sessions[0].StartedAt = at.Add(time.Hour)
+		if again := summary(0); again.Sessions[0].StartedAt == nil || !again.Sessions[0].StartedAt.Equal(at) {
+			t.Fatal("caller mutation changed cached summary facts")
+		}
+	}
+	before := decodes()
+	loaded, err := warm.LoadGraph(context.Background(), linktest.SessionID)
+	graph := loaded.Graphs[linktest.SessionID]
+	if err != nil || graph == nil || decodes()-before != 1 {
+		t.Fatalf("explicit graph read: %v", err)
+	}
+	full := resolve(t, req)
+	if !reflect.DeepEqual(graph, full.Graphs[linktest.SessionID]) {
+		t.Fatal("lazy graph differs from full Resolve")
+	}
+	// Actual contribution changes alter metadata without retaining a graph.
+	f.AddEditor(t, linktest.SessionID, "08", "unrelated-original.txt")
+	f.AddSession(t, promoted, f.Repo, "new creator")
+	changed := summary(2)
+	if len(changed.Sessions) != 1 || changed.Sessions[0].ID != promoted {
+		t.Fatal("summary missed changed contributor")
+	}
+	if loaded, err := cold.LoadGraph(context.Background(), linktest.SessionID); err != nil || loaded.Graphs[linktest.SessionID] != nil {
+		t.Fatal("stale summary exposed a session no longer linked")
+	}
+	retitle(t, transcriptOf(f, promoted), promoted, "latest linked title")
+	titled := summary(1)
+	if titled.Sessions[0].Title != "latest linked title" {
+		t.Fatal("summary row title stale")
+	}
+	summary(0)
+	if sessionDigests.held > sessionDigests.limit {
+		t.Fatal("compact summary memory exceeds existing budget")
 	}
 }

@@ -139,6 +139,56 @@ edits no raw hook settings and keeps no settings backups or migration markers.
 Native plugin operations can download from GitHub. Codex hook trust belongs
 to Codex and must be reviewed with `/hooks`; installation grants no trust.
 
+### Claude Code configuration directories
+
+Claude Code keeps its settings, plugins, sign-in and session transcripts in one
+configuration directory: `~/.claude`, or the one `CLAUDE_CONFIG_DIR` names, so a
+person with two accounts has two. baum reads Claude Code's sessions, and the
+registry of its running sessions, from `~/.claude`, from the directory of the
+daemon's own `CLAUDE_CONFIG_DIR`, and from the directories listed in
+`claude-dirs.json` beside `config.toml` (at most 16, absolute paths).
+
+Only your own baum processes write that file, each from its own environment or
+your explicit choice: `baum hooks install --user` adds the directory it
+installed into (`--claude-config-dir`, else `CLAUDE_CONFIG_DIR`); a Claude Code
+hook adds the `CLAUDE_CONFIG_DIR` its session runs with, when the session
+starts or takes a prompt; and Settings adds a directory you choose for reviews,
+fixes or data extraction, which must exist. Nothing a request to the daemon or a hook event
+carries is added: a transcript path a hook reports is still read only inside
+one of these directories' `projects` folders, under the same checks as before.
+Knowing a directory lets baum read the sessions in it, find and signal the
+sessions running from it as it does for `~/.claude`, and delete the sessions of
+its own review runs there. Remove a directory from the file to stop that.
+
+A directory chosen in Settings for reviews, fixes or data extraction is passed
+to Claude Code as `CLAUDE_CONFIG_DIR` for those runs, so they use that directory's sign-in,
+settings, plugins and hooks. It wins over a `CLAUDE_CONFIG_DIR` in the
+environment for agents. Before it is saved, the daemon runs `claude auth
+status --json` with that directory and refuses one Claude Code is signed out
+with; nothing of the answer but signed in or not is kept. While a directory is
+chosen for runs that use Claude Code, plan usage also reads that directory's
+stored credential (its `.credentials.json`, on macOS first the Keychain item
+Claude Code names after the directory) and asks Anthropic for its plan's
+usage, under the same rules as the daemon's own: the token is held only for
+the request and never stored, logged, returned or refreshed. The plan is
+served with the directory's path, your home written as `~`.
+
+### Codex homes
+
+Codex keeps the same in its home: `~/.codex`, or the one `CODEX_HOME` names.
+baum treats homes as it treats Claude Code's directories, with a record of its
+own, `codex-dirs.json` beside `config.toml` (at most 16, absolute paths). It
+reads Codex's sessions (`sessions` and `archived_sessions`) from `~/.codex`,
+from the daemon's own `CODEX_HOME` and from the recorded homes. The record is
+written by `baum hooks install --user` (`--codex-home`, else `CODEX_HOME`), by
+a Codex hook with the `CODEX_HOME` its session runs with, and by Settings. A
+rollout path a hook reports is read only inside one of these homes' `sessions`
+folders. A home chosen in Settings reaches Codex alone, as `CODEX_HOME`, over
+one in the environment for agents; before it is saved the daemon runs `codex
+login status` with it and refuses one Codex says is signed out. Plan usage
+then reads that home's `auth.json` and session files under the rules of the
+daemon's own Codex plan.
+
 Plugin callbacks check only that they run in a Git worktree and that baum's
 local daemon has run. They read no hosted credentials, Entire settings or
 third-party hook configuration. baum does not install, configure or invoke
@@ -278,7 +328,12 @@ as far as the tool allows:
 - `--setting-sources ""` skips the user, project and local settings files, so
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
-  (`--strict-mcp-config` with an empty list), and no session is written
+  (`--strict-mcp-config` with an empty list) for reviews, fixes and Ask. A
+  run the chat or a quick action starts may get exactly one: baum's own,
+  named by `--mcp-config` under `--strict-mcp-config` (so the user's, a
+  project's and plugins' stay out) and allowed as `mcp__baum`, with the token
+  in the environment only, never in the configuration or the arguments (see
+  [MCP server for agents](#mcp-server-for-agents)). No session is written
   (`--no-session-persistence`), unless the caller asks the local run to keep,
   resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
   never does. `--restricted` and the tool allowlist apply on every launch,
@@ -331,6 +386,14 @@ Codex's own read-only sandbox:
   `CODEX_HOME` when you set it. `CODEX_API_KEY`, `OPENAI_*` and the other
   provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
   are set only when you configure an endpoint for baum.
+- A run with an MCP server (none does yet; the chat and quick actions will) gets
+  `-c mcp_servers.baum.url` (the daemon's loopback `/api/mcp`) and
+  `.bearer_token_env_var="BAUM_MCP_TOKEN"`, so Codex reads the token from its
+  own environment and it is never an argument. Codex itself makes those
+  requests, outside its sandbox (`read-only` or `workspace-write` with
+  `network_access=false`), which confines the commands the model runs and not
+  Codex's own MCP client; the model gets no network access from it. See
+  [MCP server for agents](#mcp-server-for-agents).
 - It uses your own login (`codex login`, kept in `CODEX_HOME` or `~/.codex`).
   The output schema is written to a private temporary file that is removed
   after the run; baum never writes into `CODEX_HOME`.
@@ -362,8 +425,9 @@ model was given: the unpacked head and merge-base checkouts, the description
 images, `bundle.json` (already redacted) and `schema.json`. The raw model output
 of a repair (`rejected-N.json`, unredacted) is deleted before the directory is
 kept. The CLI also keeps its transcript of the kept session in its usual store
-(`$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, `$CODEX_HOME` or
-`~/.codex` for Codex), which holds the prompt, the bundle and the model's
+(for Claude Code the configuration directory Settings chose for the run, else
+`$CLAUDE_CONFIG_DIR` or `~/.claude`; for Codex the home Settings chose, else
+`$CODEX_HOME` or `~/.codex`), which holds the prompt, the bundle and the model's
 answers. Only the session that produced the saved review stays: the sessions of
 retries and repairs are deleted when the run ends, and all of them when the run
 fails, is rejected or interrupted. The directory lives under baum's user cache
@@ -607,9 +671,19 @@ Review comments are other people's text, and on a public repository anyone
 with a GitHub account can write one. baum reads them only on a pull request
 you opened, and only from threads that are unresolved and that your account
 can reply to and resolve. A thread is left out unless its first comment comes
-from an owner, member or collaborator of the repository (GitHub's author
-association) or from an app's bot account, which someone with admin access
-installed; within a kept thread, other authors' comments are dropped. At most
+from an account that can push to the repository: baum reads each author's
+collaborator permission (`GET /repos/{owner}/{repo}/collaborators/{login}/permission`,
+once per author per read of the threads) and trusts `write`, `maintain` and
+`admin`. GitHub's author association is not used: `MEMBER` is any member of
+the owning organisation, whatever their access to this repository, and
+`COLLABORATOR` includes read and triage access. Comments by apps' bot accounts
+(review bots such as Copilot or CodeRabbit) are kept: an app is installed by
+someone who administers the repository. What a bot writes can follow from
+what it read, so its comments reach the agent like everyone's, as untrusted
+data under the rules below, and the workflow and credential checks apply to
+what the fix pushes. A permission GitHub does not answer
+stops the fix rather than trusting the author. Within a kept thread, other
+authors' comments are dropped. At most
 20 threads and the first 10 comments of each are read, each comment bounded
 to 2 KiB, and the job lists the threads it addressed.
 Each thread goes into the prompt as untrusted data under the same random-tag
@@ -673,11 +747,30 @@ What baum does after the agent:
   conflict marker, and fails when nothing changed.
 - It refuses a result that does not descend from the head it started from: a fix
   only adds commits, it never rewrites the branch.
-- A fix of review comments alone (no conflict, no failing check) refuses a
+- It checks what the fix itself changed: the paths and lines the result has
+  that the pull request's head did not, and, after a merge of the base branch,
+  that the merge did not bring (for a merge that stopped at conflicts, a line
+  counts only when neither side had it). Submodules are included whatever
+  your git configuration says.
+- It refuses a result that adds a credential: a line the fix added on which
+  the redactor reviews use finds a secret (e-mail addresses aside; the whole
+  file is searched, so a private key whose first line the file already had
+  is still found), a new or changed file at a well-known credential path
+  (`id_rsa`, `id_ed25519` and the other OpenSSH private key names,
+  `.git-credentials`, `.netrc`, `.aws/credentials`, `gh/hosts.yml`), or a text
+  file over 8 MiB, too large to check. The refusal names the files, with
+  secrets in their names masked, never the secret. Binary files are not read.
+- It refuses a result that adds or changes a gitlink (mode `160000`): `git add`
+  records a repository the agent made in the checkout as a commit of another
+  repository, which the push would carry without its content.
+- A fix whose prompt held review comments or a conversation refuses a
   result that changes anything under `.github/workflows/` or
-  `.github/actions/`: a workflow runs with the repository's secrets as soon
-  as it is pushed, and no review comment, being other people's words, may
-  bring one about.
+  `.github/actions/`, whether or not it also fixes conflicts or checks: a
+  workflow runs with the repository's secrets as soon as it is pushed, and no
+  review comment or conversation, being other people's or an agent's words,
+  may bring one about. A workflow change the merge of the base branch brought
+  is not the fix's. A fix of conflicts or failing checks alone may change a
+  workflow.
 - It pushes with a plain `git push --no-verify <remote> <commit>:refs/heads/<branch>`
   from your clone to the remote whose URL names the repository: never forced,
   so GitHub refuses it if the branch moved on, and nothing else (no tags, no
@@ -691,14 +784,17 @@ What remains:
 - The agent's changes are pushed without anyone reviewing them first. Look at
   the commit before you merge the pull request.
 - A `codex` agent can read files outside the checkout, such as credentials
-  under your home directory, and copy them into the checkout, and baum would
-  commit and push them to the pull request's branch, which may be public. A
-  pull request or check log could try to make it do so. The `claude` backend's
-  file tools cannot read outside the checkout.
+  under your home directory, and copy them into the checkout. A pull request
+  or check log could try to make it do so. baum refuses to push what the
+  redactor recognises as a secret or what sits at a well-known credential
+  path, but a credential in a format it does not know, encoded, renamed, split
+  so no line holds it whole, or inside a binary file would still be committed
+  and pushed to the pull request's branch, which may be public. The `claude`
+  backend's file tools cannot read outside the checkout.
 - The commit is yours: your identity, and your signature if you sign commits.
   Clean and smudge filters your git configuration defines (Git LFS, for
   example) run on the checkout as they do in your clone.
-- A review comment from a trusted author (or a compromised bot) can still try
+- A review comment from a trusted author can still try
   to steer the agent, as a pull request or a log can, and the agent decides
   which threads it addressed: it could claim threads it did not address, and
   baum would resolve them, hiding that feedback until someone reopens it. The
@@ -711,8 +807,10 @@ What remains:
 ## Writes to GitHub
 
 The local application writes to GitHub only when you click and confirm, one
-pull request at a time, with the credential you saved for baum. There are seven
-writes and no others:
+pull request at a time, with the credential you saved for baum. An agent may
+propose a merge, a branch update, a re-run, resolving a thread or a fix, but it
+runs only when you confirm it in the app, through the same route the button
+calls (see "MCP server for agents"). There are seven writes and no others:
 
 - **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
   `expectedHeadOid` set to the head you saw.
@@ -857,7 +955,10 @@ The Analytics page (`GET /api/analytics`) is built from what is already on the
 computer, plus one GitHub search per picked repository:
 
 - **Agent sessions.** The daemon reads the Claude Code, Codex and Cursor session
-  stores (`~/.claude/projects`, `~/.codex/sessions`, Cursor's `state.vscdb`),
+  stores (`~/.claude/projects` and the `projects` folder of the other
+  [Claude Code configuration directories](#claude-code-configuration-directories)
+  it knows, `~/.codex/sessions` and the same folder of the other
+  [Codex homes](#codex-homes) it knows, Cursor's `state.vscdb`),
   the same files the PR page reads, but only sessions whose working directory is
   inside a registered clone and that were written in the last 90 days. It keeps
   aggregates only, in the `analytics_sessions` table of its private application database: per
@@ -925,29 +1026,50 @@ is refused.
 The daemon looks for local clones of the repositories you pick, so you are not
 asked for their folders. It makes no network request for this and sends nothing
 about your folders anywhere. It reads: the working directories recorded in the
-hook event record and in the Claude Code (`~/.claude/projects`), Codex
-(`~/.codex/sessions`, `~/.codex/archived_sessions`) and Cursor (`state.vscdb`)
-session stores, without parsing the transcripts; the folders `~/code`, `~/src`,
-`~/dev`, `~/projects`, `~/workspace`, `~/repos`, `~/git` and
-`~/go/src/github.com`, to four levels deep, without following symlinks; the
-folders that contain the clones agents worked in, when they are below your home
-directory; and, in each candidate clone, the remote URLs of its git
-configuration, through `git rev-parse` and `git config`. A directory an agent
-worked in is stat'ed, with its parents up to your home directory, and git runs
-in the clone containing it, wherever it is (git may also follow an
-`include.path` in that clone's configuration). To register what it found it
-runs the registry's local checks, which may resolve an SSH alias with
-`ssh -G`; that contacts nothing. On macOS it reads none of `~/Documents`,
-`~/Desktop`, `~/Downloads`, `~/Library/Mobile Documents` or
-`~/Library/CloudStorage`, not even a directory an agent worked in, because
-macOS would ask you for permission; `~/Documents` is read only in the single
-scan you ask for. On Linux and Windows it also walks `~/Documents` like those folders. It never walks `Desktop`,
-`Downloads`, `Pictures`, `Movies`, `Music`, `Public`, `iCloud Drive`, Google
-Drive, Dropbox or OneDrive folders, hidden folders, dependency or build
-folders, your home directory itself, or the filesystem root. The paths it
-finds are served only by `GET /api/clones/found`, behind the daemon's
-authenticated Host/Origin boundary, and registered only for repositories you
-picked.
+hook event record and in the Claude Code (`~/.claude/projects`, and the same
+folder of the other configuration directories baum knows), Codex
+(`~/.codex/sessions`, `~/.codex/archived_sessions`, and the same folders of the
+other homes baum knows) and Cursor (`state.vscdb`) session stores, without parsing the transcripts; your home directory, walked
+breadth first to five levels deep without following symlinks, stopping at
+each repository it finds and never entering hidden entries, dependency,
+virtual environment or build folders (`node_modules`, `vendor`, `venv`,
+`target`, `build`, `dist`, `Pods`, `DerivedData` and the like), or the folders
+`Desktop`, `Downloads`, `Pictures`, `Movies`, `Music`, `Public`, `Library`,
+`Applications`, `iCloud Drive`, Google Drive, Dropbox or OneDrive (on macOS
+nor `Documents`, unless you ask for one scan that includes it; on Windows nor
+`AppData`); and, in each candidate clone, the
+remote URLs of its git configuration, through `git rev-parse` and `git config`.
+A directory an agent worked in is stat'ed, with its parents up to your home
+directory, and git runs in the clone containing it, wherever it is (git may
+also follow an `include.path` in that clone's configuration). To register what
+it found it runs the registry's local checks, which may resolve an SSH alias
+with `ssh -G`; that contacts nothing. On macOS it reads no path whose first
+read makes macOS ask you for permission (`~/Desktop`, `~/Downloads`,
+`~/Pictures`, `~/Movies`, `~/Music`, anything in `~/Library`, including
+`Containers` and `Group Containers`, iCloud Drive and cloud-drive folders,
+anything under `/Volumes`, and `~/Documents` except in the single scan you ask
+for), not even a directory an agent worked in there. The paths it finds are served
+only by `GET /api/clones/found`, behind the daemon's authenticated Host/Origin
+boundary, and registered only for repositories you picked.
+
+A clone it finds is registered without asking, and from then on the daemon
+runs git there (fetches for reviews, the inbox and fixes) with your
+credentials and SSH agent, outside any agent's sandbox. Git runs commands the
+clone's own configuration names (`core.sshCommand`, `core.fsmonitor`, URL
+rewrites, filters). A sandboxed agent decides where it works, so it could
+create a repository whose remote names a repository you picked and whose
+configuration runs a program, and its working directory would lead the
+daemon there. The common case is mitigated: agent sandboxes let an agent
+write in its project and in temporary directories, and a directory an agent
+worked in is never registered when it, or its clone's repository, lies in a
+temporary directory (`/tmp`, `/var/tmp`, `$TMPDIR` and the system's temporary
+directory, macOS's `/private/var/folders`), below an agent `scratchpad`
+folder, or in `~/Downloads`. The remaining risk is accepted: an agent that can
+write a folder that is not temporary can still plant a repository there that
+is registered and later fetched. Asking you to confirm every clone found
+would close it, but would make ordinary use worse to protect against an
+unusual case. Finding a candidate runs only `git rev-parse` and
+`git config --get-regexp` in it, which run nothing its configuration names.
 
 ## Reporting a vulnerability
 
@@ -1124,7 +1246,9 @@ credential available; an unknown host key fails it with git's error. An ssh comm
 
 The daemon's application server accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
 local data; every API requires the random private launch capability or an
-HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
+HttpOnly SameSite=Strict cookie obtained by exchanging that capability, except
+`POST /api/mcp`, which takes only an agent's MCP token (see
+[MCP server for agents](#mcp-server-for-agents)). The
 browser receives the capability in a URL fragment, removes it from history,
 and sends it in the same-origin JSON exchange body. Browsers send cookies to
 every port of a host, so the cookie is scoped to a second random secret path,
@@ -1132,7 +1256,9 @@ every port of a host, so the cookie is scoped to a second random secret path,
 loopback port never receives it, and the cookie authorizes nothing outside
 that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
-authentication. No route enables CORS. The capability is the daemon's app
+authentication; `POST /api/mcp` requires the JSON content type but no Origin,
+and refuses a foreign one (see [MCP server for agents](#mcp-server-for-agents)).
+No route enables CORS. The capability is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
@@ -1221,12 +1347,14 @@ only the transcript of a session it is tracking from its hook events: the
 request names the session, never a file. The file is the transcript path the
 session's own hooks reported (Claude Code and Codex send one), and it is read
 only when, with its symbolic links resolved, it is a regular file inside that
-agent's own session folder in your home directory, the one baum already reads
-sessions from: `~/.claude/projects` for Claude Code and `~/.codex/sessions`
-for Codex. A path elsewhere, a link out of the folder, a directory or a file of
+agent's own session folder, the one baum already reads sessions from:
+`~/.claude/projects` for Claude Code, or the `projects` folder of another
+[Claude Code configuration directory](#claude-code-configuration-directories)
+baum knows, and `~/.codex/sessions` for Codex, or the `sessions` folder of
+another [Codex home](#codex-homes) baum knows. A path elsewhere, a link out of the folder, a directory or a file of
 another kind is not read, and the app is told only that the transcript is not
 available. A Codex session whose hooks named no path is looked up by id in
-that folder; a Cursor session is read from Cursor's own conversation database
+those folders; a Cursor session is read from Cursor's own conversation database
 by its id. The transcript is redacted exactly as the PR page's linked sessions
 (the same code): secrets and e-mail addresses masked, your home directory
 written as `~`, nothing else removed. The path itself never reaches the app.
@@ -1281,11 +1409,15 @@ Origin and Host checks as every application route. How it works:
   Claude Code's own suggestions for "always allow" are listed, and only the
   one you pick is applied; a question shows its options. Every string is
   cleaned and masked as transcripts are (secrets and e-mail addresses
-  masked, your home directory as `~`) and cut (4000 characters for a value),
-  so what you approve can differ from the real input only where a secret
-  was masked or a long value cut. When masking fails, or a question's
-  answers could not be told apart, the request is not shown and the agent
-  asks in its terminal. The hook keeps the agent's own payload and builds
+  masked, your home directory as `~`), so what you approve can differ from
+  the real input only where a secret was masked. Values and suggestions are
+  shown whole, however long (a long one scrolls in place), because approving
+  applies to the whole input. A request too large to reach the app whole
+  (over the 56 KiB a request may take once encoded) is not shown, and the
+  agent asks in its terminal; so is one whose tool name would be cut. A
+  question's text may be cut, since an answer is only the option's label.
+  When masking fails, or a question's answers could not be told apart, the
+  request is not shown either. The hook keeps the agent's own payload and builds
   the answer from it; the daemon never hands tool input back to an agent.
 - To notice an answer given in the terminal, the `post-tool-use` and
   `post-tool-use-failure` hook events carry a SHA-256 digest of the tool's
@@ -1347,6 +1479,314 @@ only GitHub writes are the ones listed under "Writes to GitHub": a merge, a
 branch update and a re-run you confirm and a fix you start, with that fix's
 replies on the review threads it addressed, and resolving a review thread you
 chose; it supplies no approvals or other discussion controls.
+
+### MCP server for agents
+
+An agent CLI reaches the server over HTTP at the daemon's loopback
+`/api/mcp`; no other process sits between them. The CLI gets its token only
+in the `BAUM_MCP_TOKEN` environment variable and sends it as
+`Authorization: Bearer`. Its MCP configuration names the variable, never the
+token: Claude Code's header is `Bearer ${BAUM_MCP_TOKEN}`, which it expands
+from its environment, and Codex's `bearer_token_env_var` is
+`BAUM_MCP_TOKEN`. So the token is in no argument, which the process list
+would show, and in no configuration file. baum sets the variable after the
+user's `agent_env`, so that cannot replace or remove it, and accepts only an
+`http` URL on a loopback address, so the token goes nowhere else. Only the
+local profiles run an MCP server; the hosted and container profiles refuse a
+request that asks for one. Claude Code runs with `--strict-mcp-config` and
+Codex with `--ignore-user-config`, so baum's server is the only one. No job
+sets it yet: the chat and quick actions will, and no other run has it.
+
+The application server also serves `POST /api/mcp`, an MCP server that lets
+an agent read what the app shows. It takes only an MCP token, sent as
+`Authorization: Bearer`. The launch capability and the session cookie are
+refused there, and `/s/<namespace>/api/mcp` is not served, so the cookie a
+browser holds cannot reach it. An MCP token opens no other route: every
+other `/api/` route still requires the launch capability or the cookie. The
+route keeps the exact Host check and the security headers, takes only
+`POST` with a JSON content type, a body of at most 1 MiB and no
+`MCP-Protocol-Version` other than `2025-06-18`, and needs no Origin, because
+its client is an agent CLI rather than a browser; a request that
+carries a foreign Origin is refused.
+
+Each token is 32 random bytes, minted by the daemon for one agent: the app's
+chat, or an action working on one pull request of one `owner/name`
+repository. Tokens live only in the daemon's memory. They are never written
+to `app.sqlite`, `config.toml`, `credential.json` or any other file, never
+logged, and die with the daemon or when revoked; a revoked token is refused.
+Lookups compare a hash of the token in constant time.
+
+Tools read through the same routes the app calls, only through `GET` routes
+on an allowlist and without refresh flags: the reader has no way to send
+another method, and refuses the `refresh` and `more` parameters, which make
+some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
+the route prefixes it declares, and no tool can read settings, GitHub
+authentication, GitHub listings, diagnostics, debugging, plan usage, the
+event stream or `/api/mcp`, with one narrow exception below. No reader reads a pasted image of a session's
+transcript (`/transcript/images/`), which is served unmasked, and the
+transcript tools drop the image fields, the session's working directory and
+the person's address. The agents' requests are read without the person's
+settings for answering them. The Timeline's detail routes name their
+repository only in the response, which an action's reader checks (an archived
+feature names none and is never read); a session's Timeline transcript names
+none, so only a chat reads it. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
+
+The exception is a fixed list of tool and exact route pairs in the daemon's
+source, which a test pins: `diagnostics_summary` with `/api/diagnostics`, and
+the Settings tools with the Settings routes their sections show
+(`/api/settings`, `/api/settings/appearance`, `/api/settings/prompts`,
+`/api/github-auth` and, for This computer's agent setup, `/api/diagnostics`).
+These routes stay unreadable to every other tool, and every other route under
+`/api/settings` and `/api/github` (the sign-in's start, the plan usage choice,
+decision capture's settings) stays unreadable to all. The tools are global,
+so an action neither lists nor calls them, and the reader refuses an action the
+routes whatever a tool declares. Each returns a typed projection filled only
+with what the app shows in that section. The diagnostics give a check's id,
+label, status, version and where it was found, scrubbed as the public issue
+summary is (home folder and account names, secrets and addresses removed; a
+GitHub Enterprise host is `other host`; token and backend checks name no
+source), never the home folder, a check's path, detail or suggested fix, the
+environment or the issue the Report a problem dialog drafts.
+
+What the Settings tools expose: the theme, key hints and page shortcut
+modifier; which plans show their usage; whether automatic reviews are on and
+for which pull requests; the review, fix and decision capture harness, model
+and effort; the GitHub connection's state, login, `github.com` or `other host`,
+the kind of place its token comes from (the app's sign-in, an environment
+variable or the config file, never which variable or file), whether workflow
+access was granted, an error code and fixed message (scrubbed), and the
+organizations it cannot reach; the Codex hooks state the app last saw; job
+concurrency and time limits; the names of the agent environment variables and
+whether the app or the config file sets them; whether the app answers Codex's
+permission requests; the agent checks' labels, statuses and versions; and the
+prompts with their texts (built-in, custom and inherited), as the Prompts
+section shows them. What they never expose: an agent environment variable's
+value (the values are not copied out of the route's answer), the GitHub
+token, a waiting sign-in's user code or verification address (the waiting
+sign-in is decoded only for whether there is one), the budgets and caps, a
+check's folder, detail or fix, the configuration file's folder, an enterprise
+host, or the home folder. The route's raw answer is in the daemon's memory for
+the length of the call, as any read's is, and is never kept, logged or quoted
+in an error.
+
+A repository's page tools (its review choices and automatic status, its
+prompts, its registration) are repository-scoped: an action reads its own
+repository's, through routes bound to it (the repositories and automatic
+lists are rebuilt from its row alone, without clone folders or the global
+switches, and the prompts route is bound by its path), and never a clone's
+folder. From a repository's prompts an action gets what is the repository's
+own: each prompt's title, group, built-in text and version, the repository's
+custom text, whether it is outdated or invalid, its safety rules, and which
+text runs (`source`: built-in, global or the repository's). It does not get
+the text the repository inherits, which is the person's global custom prompt
+from Settings, nor, for a prompt that runs the global text, the safety rules
+that text dropped; the answer says these were withheld. A chat gets them, as
+the app shows them. Listing the repositories, which the review and
+registration tools read, probes each registered clone with git on this
+computer, as the Repositories page does; an action's call does that work too,
+and reaches nothing outside.
+
+Four routes that look like candidates are not exceptions, because they reach
+outside or start programs: the plan usage route fetches from Claude or Codex
+when its cache is stale, and so does the plan usage choice
+(`/api/settings/plan-usage`), which reads the plans to work out the default;
+the Codex hooks route starts Codex when its cache is stale or holds a warning;
+and the picker's list contacts GitHub (a new query starts a search that spends
+the account's rate limit). Their tools read what the daemon already holds,
+through accessors that cannot fetch or start anything (a call never waits for
+a fetch in progress, the picker's list says when none is loaded, and the Codex
+hooks state is the newest the app's own check returned, or says none was).
+Decision capture's settings route resolves an auto backend by running the
+harnesses' version checks on this computer on every read, as opening the
+section in the app does; its tool reads an accessor instead that shares one
+resolution between concurrent calls and reuses it for 45 seconds while the
+settings are unchanged, so an agent calling it repeatedly starts those checks
+at most that often. Reading the GitHub connection may start, as
+the section does when it opens, the background check of the organizations the
+sign-in cannot reach: at most every 30 seconds, answered from a five-minute
+cache. A job's failure
+text, which can quote git's output and so the home folder, is scrubbed the same
+way in every job tool. The repositories tools never return a folder: a
+clone is a count, an availability and an id, and the suggested clone folder is
+written from the home folder (`~/...`).
+
+An action's token is bound to its repository. Its tools default to its own
+pull request and may read other pull requests of that repository, never
+another repository. Tools are either global or scoped to one repository; an
+action neither lists nor calls a global tool. The repository-scoped tools
+read the repository the server resolves for them, which for an action is
+always its own. As a backstop, an action's reader reads only the routes in
+a fixed table, each bound to the repository the way its handler finds what
+it serves: by the `repository` or `clone` parameter that handler reads, by
+an `owner/name` path, or, for a route that finds a record by id, by checking
+the record's repository and returning nothing on a mismatch. A route that
+names no repository (a job's transcript or draft, a group's document or
+versions) is read only
+after the record its id names has been checked the same way, and a route that
+answers for every repository (the review index, the inbox, the running
+sessions) is filtered to the action's repository inside the reader, which also drops other clones'
+problems, the user's saved inbox queries and each inbox item's saved-inbox
+ids, and recounts the inbox total over what is kept. Any other route, and any query
+parameter its entry does not list, is refused. An
+action never proposes changes. An action reads a review only in parts, one per
+tool call, and through the same bindings: its pull request's saved review, a
+running draft of a job of its repository, conversations of its clones, and a
+group of its repository. An action may also read, for its own repository, a
+file the review cites at the review's head (text cut at 512 KiB), the commits
+and commit patches its pull request's commits link, the decisions captured
+from the sessions of its pull requests, the group patches and files its groups'
+reviews cite, and what the app offers about a branch and the failed checks.
+It may also read the last lines of a failing check's log for any check of its
+repository's pull requests (`check_log`; see below).
+It may read the person's own draft review comments and walkthrough place only
+for its own pull request: those are kept by a key that names the repository
+and pull request, the handler cannot tell whose a key is, so the reader refuses
+any key but the action's own pull request's (and any other kind of saved state),
+whatever the repository. A chat reads them for any pull request, as it reads
+the page the person has open.
+
+A failing check's log tail is the one place the pull request page reads a
+check's own output from GitHub beyond its title. It is fetched only when a
+person opens **Show log** or an agent calls `check_log`, never in the
+background and never to fill a list. The daemon reads it with your GitHub
+credentials (`GET /repos/{owner}/{repo}/actions/jobs/{id}/logs`, which answers
+with a redirect to a signed download address: the redirect is followed once,
+only to https, and the token is sent to the API host alone). It first checks
+that the check run is one of the pull request's current checks, so a request
+cannot name another run. It asks the download host for the last 8 MiB of the
+log only (a range request) and streams it, keeping only the last 200 lines and
+64 KiB (timestamps, terminal escapes, control and invisible format characters
+dropped) rather than holding the log; a log too long to read the end of, from a
+host that ignores the range, is answered as too long, never from its middle.
+GitHub masks the secrets it knows in a job log; baum runs the same redactor it
+uses for all text it shows on the tail as well, over each whole line before it
+is cut, and refuses the log if that fails. The tail is held in the daemon's memory only, per
+check run (at most 64, the least recently used going first), is emptied when
+the GitHub account changes or a check is re-run, and is never written to disk.
+A log is the check's own output and so untrusted text, like any CI output: the
+app shows it as plain text, and a tool's answer carries it inside the usual
+untrusted-data fence. An action reads it through `/api/prs/check-log`, a route
+bound to its repository by the `repository` parameter; it can read the tail of
+any check run of its repository's pull requests, not only its own pull
+request's, as it can read their other checks.
+
+A chat's token may also propose a change to the page the user has open, and
+only to something that page shows (on a pull request's page, only that pull
+request's items). A proposal changes nothing until the user saves it in the
+app. The value and revision it is compared against are read by the daemon
+when the proposal is recorded, never taken from the agent; a value the agent
+says it read must match the current one, and a mismatch is refused with an
+error that says nothing more. The current value is shown to you, never
+returned to the agent: a proposal tool answers only the proposal's id, page,
+target and kind. Saving checks that you still have the page open, showing the
+same repository, pull request or group, that the target still belongs to the
+section you see and that the agent's token is still live, and the page
+compares the revision and writes in one step, so a target changed by anyone
+since the proposal was made is refused and nothing is saved. A token revoked
+while a save is writing takes effect once the write ends.
+
+What an agent can cause is a proposal for you to look at: a setting of the
+Settings page (appearance, plan usage, automatic reviews, decision capture,
+the harnesses for reviews and fixes, time limits, job concurrency, whether
+the app answers Codex's permission requests), a custom prompt or its reset, a
+repository's review and decision capture choices, a saved inbox, a review
+group's name and members, or a comment added to your pending review (never
+sent to GitHub: you send the review). Nothing is saved without your save, and
+your save is the page's own, with the page's checks, so a proposal cannot
+save what the page itself would refuse. A proposed prompt, or a reset, that
+would leave out the text of a safety rule the prompt in use has is refused,
+when proposed and again when saved. That check only finds each rule's text;
+it cannot tell whether the rest of a text undercuts a rule, so read a
+prompt's diff before you save it. An agent never proposes an agent
+environment variable's value and never learns one: it may propose a
+variable's name to add or remove, the proposal holds only the name, and you
+type the value when you save it; the value goes from the app's save to the
+setting and is never stored in the proposal, returned to the agent, printed
+or logged. Nothing outside that list can be changed through a saved
+proposal: not your GitHub connection, a repository's registration or clones,
+nor any GitHub write.
+
+A chat may also propose an operation: one of the buttons of the page you
+have open, for something that page shows. The agent never runs anything.
+Nothing runs until you confirm it in the app, and then the daemon runs the
+same route the button calls, with that route's own checks, once: the
+proposal is taken out before it runs, so a second confirm, or two at once,
+runs nothing more. Confirming checks that you still have the page the
+proposal was made on open, showing the same thing, that its target is still
+on it (a request still pending, a job still queued or running) and that the
+agent's token is still live; a token revoked before your confirm took the
+proposal runs nothing. Each operation sends one fixed method to one fixed
+route: the values an agent's arguments put in the path must each be one
+plain segment, and the request is checked to be that route before it is
+sent, so no argument can reach another route. The agent's answer is the
+proposal's id, page, target and kind, never what will run or what the route
+answered. You read what will happen and on what before you confirm: the
+pull request's number and title and the head, the job, the session's agent,
+id, title and repository, or for an agent's request the requesting agent, its
+session and exactly what it asked (the tool and every input value, or every
+question, in full). The app stores a request as it shows it: a value cut at
+its bound (4,000 characters for an input value, 1,000 for a question),
+cleaned of control or formatting characters, or with a secret masked is not
+exactly what the agent will run, so such a request can be denied from a
+proposal but never allowed or answered: you answer it in the app or the
+terminal. The summary's sentence is baum's own and names things only by
+identifiers that pass their own check (a repository spelled as GitHub spells
+one, an id that is one plain path segment); anything else, and any text that
+is not baum's (a title, a thread, what a tool asked, what the agent wrote),
+is a separate quoted field, never part of the sentence or a field's label.
+Text read from the daemon is shown plain: control characters, invalid UTF-8
+and invisible characters (bidirectional overrides and isolates, zero-width
+characters, the soft hyphen, tags, variation selectors, Hangul fillers and
+the other default-ignorable characters) are removed, and line breaks are kept
+only in fields that are meant to be multi-line. What the agent wrote (a
+message, an answer, a group's name) is shown in full, exactly as it will be
+sent: it is never cut, text longer than the operation takes is refused, and
+text with control, invisible or line-separator characters is refused rather
+than cleaned. A repository is sent and named as baum's registry spells it.
+The app confirms with the revision of the summary it showed you: confirming
+reads the summary again, and when it reads differently from the one you saw
+(another title, harness, model or effort), or the app sends the revision of
+an older summary (a second click after the summary changed), nothing runs
+and the proposal shows the new summary for you to confirm again. A fix or a
+review whose harness, model and effort cannot be read from your settings is
+not proposed or confirmed at all.
+
+What you can be asked to confirm: on a pull request's page, a merge (with a
+method GitHub allows, at the head the page showed), a branch update, a re-run
+of the failed checks or of one failed job, resolving one review thread, a fix
+and a new review; on the Inbox and Pull requests, a review, a refresh from
+GitHub and (Pull requests) a new review group; on the sessions pages,
+answering an agent's pending request, a message to a session, ending a
+session and bringing it forward; on the jobs pages, cancelling a job the
+page lists as queued or running (on a job's page, that job); on a
+group's page, deleting it; on the Repositories page, registering a
+repository, removing one or a clone's registration, and cloning a registered
+repository into the folder the app would choose by default, which the summary
+names (an agent cannot choose the folder). A fix and a review start a paid
+agent run: the summary says so and names the harness, model and effort from
+your settings. A merge, ending a session, deleting a group and removing a
+repository or a clone are marked as not undoable. An agent's request is
+answered only from a page that lists it (the Sessions page, or that
+session's page for its own), only with allow, deny or answers to its
+questions: a permission's suggestions (always allow, a permission mode), which
+can change the agent's permissions for good, are yours to apply in the app
+and cannot be proposed. A chat's token names the agent session the chat runs
+in (Claude Code or Codex), set when the token is minted or once afterwards
+(it cannot be changed); a chat never answers a request of its own session,
+so it cannot approve its own tool calls, and never messages, ends or brings
+forward its own session. While its session is not known, it can propose
+none of these for any session: no answer, message, end or focus at all. A
+review of a pull request from a fork or an
+untrusted author is refused by the route without your isolation
+confirmation, which an agent cannot give; you start it from the app.
+
+Every tool result is masked with the same redaction as prompts, cut to at
+most 64 KiB, and placed between `BEGIN UNTRUSTED DATA` and
+`END UNTRUSTED DATA` lines that carry a fresh random tag, which is removed
+from the data first. The rest of a long result is kept masked in memory, for
+at most 15 minutes and eight results per agent, under a random cursor that
+gives it once and only to the agent it was cut for. Revoking a token drops
+its cursors and proposals, including any a call still running would leave.
 
 ## Desktop app
 

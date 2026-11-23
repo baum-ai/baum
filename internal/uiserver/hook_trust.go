@@ -80,3 +80,37 @@ func (c *hookTrustCache) finish(seq int, v agentplugins.HookTrust) {
 		c.expires = time.Time{}
 	}
 }
+
+// LastHookTrust remembers the newest Codex hook answer a read returned, for a
+// reader that must never start Codex itself: the MCP server's Settings tools
+// report what the app last saw instead of asking again (a read of
+// /api/agent-hooks/codex runs Codex whenever the route's cache is stale or
+// holds a warning). The zero value has seen none.
+type LastHookTrust struct {
+	mu    sync.Mutex
+	state string
+	at    time.Time
+}
+
+// Wrap returns read with every answer it gives remembered; nil stays nil, so
+// the route still reports the check unavailable.
+func (l *LastHookTrust) Wrap(read func(context.Context) agentplugins.HookTrust) func(context.Context) agentplugins.HookTrust {
+	if read == nil {
+		return nil
+	}
+	return func(ctx context.Context) agentplugins.HookTrust {
+		v := read(ctx)
+		l.mu.Lock()
+		l.state, l.at = v.State, time.Now()
+		l.mu.Unlock()
+		return v
+	}
+}
+
+// Get returns the last answer's state and when it was read; ok is false until
+// a read answered. It never reads.
+func (l *LastHookTrust) Get() (state string, at time.Time, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.state, l.at, !l.at.IsZero()
+}

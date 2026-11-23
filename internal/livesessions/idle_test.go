@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/baum-ai/baum/internal/discovery"
@@ -70,5 +71,77 @@ func TestWatchSlowsDownWithoutRunningSessions(t *testing.T) {
 	transcripts := &Transcripts{Tracker: tracker}
 	if got := transcripts.recheckEvery(); got != QuietRecheckEvery {
 		t.Errorf("no sessions: %v, want %v", got, QuietRecheckEvery)
+	}
+}
+
+func TestWatchWakesWhenAWaitingSessionResumes(t *testing.T) {
+	for _, resume := range []string{"prompt", "answered", "queued-message"} {
+		t.Run(resume, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				tracker := &Tracker{Now: time.Now, Linker: newLinker()}
+				home := t.TempDir()
+				path := filepath.Join(home, ".claude", "projects", "demo", "s1.jsonl")
+				write(t, path, claudeTurn("s1", 1, "First prompt", "First reply"))
+				start := event("s1", "session-start", time.Now(), "/work/demo")
+				start.Session.TranscriptPath = path
+				apply(tracker, start)
+				waiting := "stop"
+				if resume == "answered" {
+					waiting = "permission-request"
+				}
+				stop := event("s1", waiting, time.Now(), "/work/demo")
+				stop.Session.TranscriptPath = path
+				apply(tracker, stop)
+				transcripts := &Transcripts{Tracker: tracker, Home: home, Now: time.Now}
+				if got := transcripts.recheckEvery(); got != QuietRecheckEvery {
+					t.Fatalf("waiting: %v, want %v", got, QuietRecheckEvery)
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				done := make(chan struct{})
+				notified := make(chan struct{}, 8)
+				go func() {
+					defer close(done)
+					transcripts.Watch(ctx, func() { notified <- struct{}{} })
+				}()
+				synctest.Wait()
+				time.Sleep(2 * time.Second)
+				switch resume {
+				case "prompt":
+					e := event("s1", "user-prompt-submit", time.Now(), "/work/demo")
+					e.Session.TranscriptPath = path
+					apply(tracker, e)
+				case "answered":
+					if !tracker.Answered(AgentClaudeCode, "s1", time.Now()) {
+						t.Fatal("permission answer did not resume session")
+					}
+				case "queued-message":
+					if !tracker.Resumed(AgentClaudeCode, "s1", time.Now()) {
+						t.Fatal("queued message did not resume session")
+					}
+				}
+				synctest.Wait()
+				// Frequent hooks must not postpone the next transcript read.
+				for range 4 {
+					time.Sleep(250 * time.Millisecond)
+					tool := event("s1", "post-tool-use", time.Now(), "/work/demo")
+					tool.Session.TranscriptPath = path
+					tracker.Apply(ctx, tool)
+					synctest.Wait()
+				}
+				select {
+				case <-notified:
+				default:
+					t.Fatal("resume was not published within WorkingRecheckEvery")
+				}
+				cancel()
+				synctest.Wait()
+				select {
+				case <-done:
+				default:
+					t.Fatal("watch did not stop on cancellation")
+				}
+			})
+		})
 	}
 }
