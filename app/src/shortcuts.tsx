@@ -50,6 +50,14 @@ export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
 ];
 /** Pull requests' views (For you, Requested, Mine…), one either way. */
 export const VIEW_KEYS = { previous: ["h", "ArrowLeft"], next: ["l", "ArrowRight"] };
+/** The sort's keys (`sort-menu.tsx`): ⇧S opens it, and in it a digit adds
+ *  a field or turns it round. */
+const SORT_SHORTCUTS: Shortcut[] = [
+  { keys: ["S"], label: "Open the sort (Shift+S)", short: "sort" },
+  { keys: ["1–8"], label: "In the sort: add a field, or turn it round" },
+  { keys: ["Backspace"], label: "In the sort: drop the last field" },
+  { keys: ["0"], label: "In the sort: back to Priority" },
+];
 /** The Up next inbox's keys, which `UpNextPage` handles itself. */
 const UP_NEXT_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next pull request", short: "move" },
@@ -911,6 +919,7 @@ function shortcutGroups(
         ...UP_NEXT_SHORTCUTS,
         { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
+        ...SORT_SHORTCUTS,
         {
           keys: MAC ? ["⇧J", "⇧K", "⌃↓", "⌃↑"] : ["Shift+J", "Shift+K", "Ctrl+↓", "Ctrl+↑"],
           label: "Next, previous inbox",
@@ -924,6 +933,7 @@ function shortcutGroups(
         ...INBOX_SHORTCUTS,
         { keys: [GITHUB_KEY_LABEL], label: "Open the focused pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
+        ...SORT_SHORTCUTS,
         { keys: ["Escape"], label: "Clear the row focus" },
         { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
         { keys: VIEW_KEYS.next, label: "Next view", short: "views" },

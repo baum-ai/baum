@@ -587,6 +587,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "u",
     "Ctrl+Shift+G",
     "/",
+    "S",
+    "1–8",
+    "Backspace",
+    "0",
     "Shift+J",
     "Shift+K",
     "Ctrl+↓",
@@ -611,6 +615,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "r",
     "Ctrl+Shift+G",
     "/",
+    "S",
+    "1–8",
+    "Backspace",
+    "0",
     "Esc",
     "h",
     "←",
@@ -1201,6 +1209,7 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "s snooze",
     "e archive",
     "u undo",
+    "S sort",
   ]);
   expect(await bar("settings")).not.toContain(`${command}. actions`);
   // It shows only while Alt is held, and is for the eye alone.

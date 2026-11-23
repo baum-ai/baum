@@ -70,6 +70,7 @@ import {
 } from "./shortcuts";
 import { MergeReadyDialog, useSavedReview, type SavedReviews } from "./up-next";
 import { SMALL } from "./action-classes";
+import { sortBy, sortGroupsBy, type SortKey } from "./pr-sort";
 
 /** One row the keyboard can reach: a pull request or a review group. */
 type Item = { id: string; entry?: Entry; group?: ReviewGroup };
@@ -87,8 +88,14 @@ type Group = {
 /** Groups by who acts next. Discovery flags place requested, authored and
  *  other pull requests; the person's own split by GitHub's state into what
  *  needs their changes, what GitHub would merge now and the rest. A review group with a shown member is one row in the bucket of its
- *  highest-priority shown member, and its shown members leave the loose rows. */
-export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Group[] {
+ *  highest-priority shown member, and its shown members leave the loose rows.
+ *  A sort (`sort`) orders each bucket's rows, and its groups by their
+ *  first-ranked member, the bucket's own order settling any tie. */
+export function inboxGroups(
+  rows: Entry[],
+  reviewGroups: ReviewGroup[] = [],
+  sort: SortKey[] = [],
+): Group[] {
   const groups: Group[] = [
     {
       id: "requested",
@@ -171,7 +178,13 @@ export function inboxGroups(rows: Entry[], reviewGroups: ReviewGroup[] = []): Gr
   // generation time goes last.
   const reviewed = (row: Entry) => Date.parse(row.latest?.generated_at ?? "") || 0;
   groups[5]!.rows.sort((a, b) => reviewed(b) - reviewed(a));
-  return groups.filter((group) => group.rows.length + group.groups.length > 0);
+  return groups
+    .filter((group) => group.rows.length + group.groups.length > 0)
+    .map((group) => ({
+      ...group,
+      rows: sortBy(group.rows, sort, (entry) => entry),
+      groups: sortGroupsBy(group.groups, sort, ({ members }) => members),
+    }));
 }
 export function Inbox({
   rows,
@@ -189,8 +202,11 @@ export function Inbox({
   generate,
   refresh,
   bulk,
+  sort = [],
 }: {
   rows: Entry[];
+  /** The order within each bucket (`pr-sort.ts`); none keeps the buckets' own. */
+  sort?: SortKey[];
   pageScope?: string;
   cloneFor: (entry: Entry) => string;
   selection: Set<string>;
@@ -229,7 +245,7 @@ export function Inbox({
   const [expanded, setExpanded] = useState(new Set<string>());
   // Kept for when the list is drawn again, back from a row's review.
   const [focusedId, setFocusedId] = useLastRow("pulls", section);
-  const allGroups = inboxGroups(rows, reviewGroups);
+  const allGroups = inboxGroups(rows, reviewGroups, sort);
   const rowIDs = allGroups.flatMap((group) => [
     ...group.groups.map(({ group }) => `group:${group.id}`),
     ...group.rows.map((entry) => `pr:${rowKey(entry)}`),

@@ -326,6 +326,8 @@ func pullRequest(o Options, pr *prPlan, head string, s diffStat) discovery.PullR
 		State: "OPEN", Draft: pr.draft, AuthoredByMe: pr.author == viewer, ReviewRequestedFromMe: pr.requested, ReviewRequested: pr.requested,
 		AssignedToMe: pr.assigned, Assigned: pr.assigned, AuthorHasWrite: &yes, ViewerCanPush: &yes, TeamMembershipKnown: true,
 		Review: pr.review, Checks: pr.checks, Merge: pr.merge, Unresolved: &unresolved,
+		// Seed pull requests have no opened time of their own: derive a stable one before the last update.
+		CreatedAt: o.Epoch.Add(-time.Duration(pr.updated+60*(pr.number%48+1)) * time.Minute),
 		UpdatedAt: o.Epoch.Add(-time.Duration(pr.updated) * time.Minute)}
 }
 

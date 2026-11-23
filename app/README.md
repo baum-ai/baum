@@ -1241,6 +1241,32 @@ goes, and what the removal does not touch keeps its text. The box lies
 under the tokens: a click anywhere but a × focuses it with the caret at the
 end, and the text shows until the focus leaves.
 
+**The sort** (`SortButton`, `src/sort-menu.tsx`; `src/pr-sort.ts`) sits
+right of the filter icon in an inbox's head and on Pull requests' tab bar,
+lit with a dot while a sort is in force. ⇧S opens or closes its menu from
+anywhere on the page. The menu lists the fields with a digit each: 1 Opened,
+2 Last activity, 3 Risk, 4 Review time, 5 Size (lines added and deleted),
+6 Repository, 7 Author and 8 Reviewed (when the latest review was written).
+A digit or a click adds the field as the next key, or turns it round if the
+sort has it already. Backspace drops the last key, Delete or the row's ×
+drops that field, 0 goes back to **Priority**, j/k or the arrows with Enter
+or Space pick a field, and Esc or ⇧S closes the menu. A field is added in the
+direction most often wanted: Opened oldest first, Last activity and Reviewed
+newest first, Risk highest first, Review time and Size smallest first, and
+Repository and Author A to Z. A pull request without a value for a key (no
+score, no estimate, or an older daemon that sends no `created_at`) goes last
+whichever way the key runs. The sort orders rows **within** each section,
+and the sections stay: an inbox's Needs your eyes, Ready to merge, Hand to
+an agent, Waiting and Not waiting on you, and Pull requests' buckets.
+Priority, each section's own order, is the default and settles every tie. A
+review group or stack follows its first-ranked member. Snoozed and Done today
+keep their own order. The sort is written `opened,-risk` (`-` turns a key
+round; unknown keys are skipped). An inbox's sort is saved with the inbox
+(`sort`, see the [inboxes README](../internal/inboxes/README.md)) as it
+changes, with no draft. Pull requests' Open and Closed share one sort, and a
+saved tab has its own (`sort`), both in `ui/filters`. A tab saved from the
+page takes the page's sort.
+
 There is no whole-queue filter: the filter is always an inbox's own. **Create
 inbox** (below, and Command+Enter) is not offered at 20 inboxes or with an
 older daemon. In a saved inbox the menu starts from the

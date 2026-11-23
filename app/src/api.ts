@@ -90,6 +90,10 @@ export type PR = GitHubState & {
   /** GitHub says the branch is out of date with its base and not conflicting,
    *  which Update branch fixes; absent in data from an older daemon. */
   behind?: boolean;
+  /** When it was opened and last updated on GitHub (RFC 3339); absent in
+   *  data from an older daemon. */
+  created_at?: string;
+  updated_at?: string;
   /** GitHub still waits for a required approving review. False when none is
    *  required or the one required is given; null or absent when unknown. */
   review_required?: boolean | null;
