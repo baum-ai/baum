@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import "./flow.css";
+import "./table.css";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { type Column, Table } from "@baum/viewer/components/table";
@@ -1022,7 +1023,7 @@ const isQuantity = (text: string) => text.length <= 24 && QUANTITY.test(text.tri
 type ColumnKind = { kind: "label" | "quantity" | "text" } | { kind: "chips"; values: string[] };
 
 /** The colours of the chips' dots, in order of each value's first row. */
-const CHIP_DOTS = ["bg-(--data-1)", "bg-(--data-2)", "bg-(--data-3)", "bg-(--data-4)"];
+const CHIP_TINTS = 4;
 
 function kindOf(data: TableData, position: number): ColumnKind {
   if (position === 0 && data.columns.length > 1) return { kind: "label" };
@@ -1032,7 +1033,7 @@ function kindOf(data: TableData, position: number): ColumnKind {
   const values = [...new Set(texts)];
   if (
     data.rows.length >= 4 &&
-    values.length <= CHIP_DOTS.length &&
+    values.length <= CHIP_TINTS &&
     values.length < texts.length &&
     values.every((value) => value.length <= 32)
   )
@@ -1040,13 +1041,15 @@ function kindOf(data: TableData, position: number): ColumnKind {
   return { kind: "text" };
 }
 
-/** A repeated value: a chip whose dot tells it apart from the column's
- *  other values. */
-function Chip({ text, dot }: { text: string; dot: string }) {
+/** A repeated value, tinted so it reads apart from the column's other
+ *  values. */
+function Chip({ text, tint }: { text: string; tint: number }) {
   return (
-    <span className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-subtle bg-surface-wash px-2 py-0.5 text-sm leading-tight">
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dot)} />
-      <InlineMarkdown className="min-w-0">{text}</InlineMarkdown>
+    <span
+      className="table-tint rounded-sm px-1 py-px box-decoration-clone text-primary"
+      data-tint={tint}
+    >
+      <InlineMarkdown>{text}</InlineMarkdown>
     </span>
   );
 }
@@ -1065,7 +1068,7 @@ export function TableDiagram({ data }: { data: TableData }) {
     const kind = kinds[position] ?? { kind: "text" };
     return {
       key: `${position}-${column}`,
-      header: <InlineMarkdown>{column}</InlineMarkdown>,
+      header: <InlineMarkdown className="font-bold text-primary">{column}</InlineMarkdown>,
       align: kind.kind === "quantity" ? "right" : undefined,
       className: cn(
         kind.kind === "label" && "font-medium text-primary",
@@ -1076,7 +1079,7 @@ export function TableDiagram({ data }: { data: TableData }) {
         const text = cellText(cell).trim();
         const body =
           kind.kind === "chips" && typeof cell === "string" && text ? (
-            <Chip text={text} dot={CHIP_DOTS[kind.values.indexOf(text)] ?? CHIP_DOTS[0]!} />
+            <Chip text={text} tint={Math.max(0, kind.values.indexOf(text))} />
           ) : (
             <Cell cell={cell} />
           );

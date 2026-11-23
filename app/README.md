@@ -2820,7 +2820,8 @@ sections.
   block, then its risks: prose at reading width, points as hairline lines that
   open to a detail and the files they cite, a note with a left rule, and tile
   blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
-  label; a table cell `{text, was}` strikes the old value, and a flow whose
+  label; a table cell `{text, was}` strikes the old value and marks its row
+  Changed, and a flow whose
   steps have `more` shows a step's detail below while the mouse is over it
   and makes them buttons that keep it open; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
@@ -2869,7 +2870,13 @@ sections.
   changed message's earlier text (`was`) struck through. A legend under the
   sequence explains only the marks it uses, apart from the pills, which say
   what they mean, and when some messages changed
-  and some did not, a "Show only changes" switch fades the rest. A code
+  and some did not, a "Show only changes" switch fades the rest. A table
+  sets its bold uppercase headers over its first column as row labels;
+  a column whose every cell is a number (`65,535 bytes`, `$2.00`) is
+  right-aligned in tabular figures, and a column of at most four short
+  values that repeat tints each value with its own colour (the brand's
+  earthier tones on dark paper). A row with a changed cell has the Changed
+  pill and bar, with the same "Show only changes" switch. A code
   tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
   in that range. Exhibits draw as the generic tiles do, and library and
   chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that

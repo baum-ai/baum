@@ -1092,6 +1092,50 @@ describe("a section's body", () => {
     expect(container.querySelectorAll("tbody td")[2]?.querySelector("del")).toBeNull();
   });
 
+  it("marks a table's changed rows with a pill and can show only them", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: {
+        ...(table.data as object),
+        rows: [
+          ["run 1", { text: "5 minutes", was: "10 minutes" }, "ok"],
+          ["run 2", "1 minute", "ok"],
+          ["run 3", "2 minutes", "ok"],
+        ],
+      },
+    });
+    const rows = [...container.querySelectorAll<HTMLElement>("tbody tr")];
+    expect(rows[0]?.textContent).toContain("Changed");
+    expect(rows[1]?.textContent).not.toContain("Changed");
+    const only = container.querySelector<HTMLInputElement>('input[role="switch"]');
+    expect(only?.checked).toBe(false);
+    await click(only as HTMLElement);
+    expect(only?.checked).toBe(true);
+    expect(container.querySelectorAll("tbody tr.opacity-35")).toHaveLength(2);
+  });
+
+  it("right-aligns a table's number columns and tints its repeated values", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: {
+        ...(table.data as object),
+        rows: [
+          ["phone", "65,535 bytes", "Closed"],
+          ["daemon", "4 KiB", "Closed"],
+          ["hello", "10 seconds", "Rejected"],
+          ["budget", "$2.00", "Closed"],
+        ],
+      },
+    });
+    const cells = [...container.querySelectorAll<HTMLElement>("tbody tr")[0]!.children];
+    expect(cells[1]?.className).toContain("text-right");
+    expect(cells[1]?.querySelector(".tabular-nums")).not.toBeNull();
+    const tints = [...container.querySelectorAll<HTMLElement>(".table-tint")];
+    expect(tints.map((each) => each.dataset.tint)).toEqual(["0", "0", "1", "0"]);
+  });
+
   it("makes a flow's steps with a detail clickable and shows the clicked step's detail", async () => {
     const flow = tileOf("dg_pairing");
     const container = await card({
