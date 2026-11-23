@@ -738,21 +738,34 @@ export function wordDiff(was: string, now: string): { was: Piece[]; now: Piece[]
   return { was: mark(a, keptA, "removed"), now: mark(b, keptB, "added") };
 }
 
-/** A word or code span of a compared item, code as code. The host has
- *  already taken emphasis and links out of the text (tiles/view), so the
- *  rest is plain and `__init__` or `*.go` stay as written. */
+/** A word or code span of a highlighted run, code as code. A run is drawn
+ *  word by word, so emphasis around it is left as written. */
 function Token({ text }: { text: string }) {
   if (text.length > 1 && text.startsWith("`") && text.endsWith("`"))
     return <code className="rounded-sm bg-code-fill px-1 py-0.5">{text.slice(1, -1)}</code>;
   return text;
 }
 
+/** Unmarked text of a compared item, drawn as list items are (emphasis and
+ *  code spans render), with the spaces at its ends kept outside the
+ *  markdown, which would drop them. */
+function Plain({ text }: { text: string }) {
+  const [, lead = "", body = "", trail = ""] = /^(\s*)([\s\S]*?)(\s*)$/.exec(text) ?? [];
+  return (
+    <>
+      {lead}
+      {body ? <InlineMarkdown>{body}</InlineMarkdown> : null}
+      {trail}
+    </>
+  );
+}
+
 /** A compared item's pieces, the words it changed highlighted: `del` for
  *  what the item before had, `ins` for what this one adds. */
 function Pieces({ pieces }: { pieces: Piece[] }) {
   return pieces.map((piece, at) => {
+    if (!piece.mark) return <Plain key={at} text={piece.tokens.join("")} />;
     const body = piece.tokens.map((text, position) => <Token key={position} text={text} />);
-    if (!piece.mark) return <span key={at}>{body}</span>;
     const Mark = piece.mark === "added" ? "ins" : "del";
     return (
       <Mark

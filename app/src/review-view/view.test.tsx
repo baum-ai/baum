@@ -801,6 +801,22 @@ describe("the native tiles", () => {
     expect(marked("A dialog shows the image larger", "The clip plays in its own box")).toEqual([]);
   });
 
+  it("draws compared text as markdown outside the highlighted words", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [{ label: "Off" }, { label: "On" }],
+          rows: [[{ title: "Reads *cached* rows" }, { title: "Reads *cached* rows `fast`" }]],
+        }}
+      />,
+    );
+    const title = container.querySelectorAll("ol > li")[0]!.textContent;
+    expect(title).toContain("Reads cached rows");
+    expect(container.querySelector("em")?.textContent).toBe("cached");
+    expect(container.querySelector("ins code")?.textContent).toBe("fast");
+  });
+
   it("leaves the Changed pill out when every compared row differs", async () => {
     const container = await render(
       <ColumnsDiagram
