@@ -55,6 +55,10 @@
   }
   /* On a phone the columns share what there is and wrap, and the glance
      lists its rows in one column so a name keeps its room. */
+  /* With "Show only changes" on, the last row left shown ends the table. */
+  .kit-table tbody tr:not([hidden]):not(:has(~ tr:not([hidden]))) > td {
+    border-bottom: 0;
+  }
   @media (max-width: 480px) {
     .glance-rows.across {
       grid-template-columns: minmax(0, 1fr);
@@ -90,9 +94,14 @@
   const ENGINE = { postgres: "Postgres", sqlite: "SQLite", mysql: "MySQL", other: null, unknown: null };
 
   const plural = (count, one, many) => `${count} ${count === 1 ? one : many || `${one}s`}`;
-  const destructiveColumns = (table) => table.columns.filter((column) => column.destructive);
   /** Columns the table changes, without those listed only beside them. */
   const changedColumns = (table) => table.columns.filter((column) => column.change !== "unchanged");
+  const destructiveColumns = (table) => changedColumns(table).filter((column) => column.destructive);
+  /** Whether a before and an after are written the same, spacing aside:
+   *  case counts, as it does in names, values and quoted defaults. */
+  const written = (text) => (text ?? "").trim().replace(/\s+/g, " ");
+  const alike = (before, after) => before !== null && after !== null && written(before) === written(after);
+
   const destructive = (table) => table.change === "dropped" || destructiveColumns(table).length > 0;
   const blocking = (table) => table.indexes.filter((index) => index.online === false && index.change !== "removed");
 
@@ -254,10 +263,15 @@
       </tr>`;
     }
     const words = baum.compare(column.before ?? "", column.after ?? "");
-    const same = column.change === "unchanged" || (column.change === "altered" && !column.destructive && column.before !== null && column.after !== null && words.same);
+    // A column listed as unchanged whose definition differs is drawn as the
+    // change it is.
+    const listed = column.change === "unchanged";
+    const same = alike(column.before, column.after) && (listed || (column.change === "altered" && !column.destructive));
+    const change = listed ? "altered" : column.change;
+    const lost = column.destructive && !listed;
     return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>
       <td class="ident">
-        ${same ? null : baum.html`<span class="pills">${pill(PILL[column.change])}${column.destructive ? pill(DESTRUCTIVE) : null}</span>`}
+        ${same ? null : baum.html`<span class="pills">${pill(PILL[change])}${lost ? pill(DESTRUCTIVE) : null}</span>`}
         <span class="kit-mono">${column.name}</span>
       </td>
       <td class="kit-mono code">${column.before === null ? "—" : words.was}</td>

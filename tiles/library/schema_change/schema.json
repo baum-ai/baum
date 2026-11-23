@@ -110,7 +110,7 @@
         "columns": {
           "type": "array",
           "maxItems": 60,
-          "description": "Every column of a created table; the added, removed, altered and renamed columns of any other, and at most as many unchanged ones beside them as help read the change.",
+          "description": "Every column of a created table; the added, removed, altered and renamed columns of any other, and a few unchanged ones beside them, never more than the changed ones.",
           "items": { "$ref": "#/$defs/column" }
         },
         "indexes": {

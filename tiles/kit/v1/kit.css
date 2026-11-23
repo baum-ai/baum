@@ -953,6 +953,9 @@ baum-md del {
   white-space: nowrap;
   vertical-align: middle;
 }
+.kit-pill:not([data-tone]) {
+  --kit-tone: var(--status-neutral);
+}
 /* The words a before-and-after pair takes away and adds (baum.compare).
    A removed word keeps its strike, so colour is not the only cue. */
 .kit-del,

@@ -91,13 +91,13 @@
         "request": {
           "type": "array",
           "maxItems": 40,
-          "description": "Request fields, parameters, flags or arguments: every one of an added entry point; the changed ones of another, and at most as many unchanged ones beside them as help read the change.",
+          "description": "Request fields, parameters, flags or arguments: every one of an added entry point; the changed ones of another, and a few unchanged ones beside them, never more than the changed ones.",
           "items": { "$ref": "#/$defs/field" }
         },
         "response": {
           "type": "array",
           "maxItems": 40,
-          "description": "Response or result fields: every one of an added entry point; the changed ones of another, and at most as many unchanged ones beside them as help read the change.",
+          "description": "Response or result fields: every one of an added entry point; the changed ones of another, and a few unchanged ones beside them, never more than the changed ones.",
           "items": { "$ref": "#/$defs/field" }
         },
         "errors": {
