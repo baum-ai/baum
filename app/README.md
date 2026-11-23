@@ -3079,10 +3079,11 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),
   never by fetching. Frames follow the app's theme. Until its frame draws,
   a tile's box shows three faint lines with a passing light band (still
-  under reduced motion) at the height the tile last drew at in this
-  browser, else 240px; the last heights of the latest 200 tiles are kept
-  (`baum.tileFrame.heights` in local storage), so a review opened again
-  starts at the right height. A frame that doesn't
+  under reduced motion) at the height the tile last drew at on that pull
+  request in this browser, else 240px (a tile's first show still moves to
+  its own height once it draws). The last heights of the latest 200 tiles
+  are kept (`baum.tileFrame.heights` in local storage), so a review opened
+  again starts at the right height. A frame that doesn't
   start, draw or behave says "This tile couldn't load" with Retry; a tile
   made with a newer kit says so; a desktop shell that has not declared
   `window.__BAUM_DESKTOP__ = { tileFrames: true }` shows custom tiles as not

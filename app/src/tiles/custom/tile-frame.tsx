@@ -151,10 +151,15 @@ const GLANCE_MIN: Record<TileSize, string> = {
 export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; face: Face }) {
   const digest = frameDigest(tile.definition);
   const instance = `${ctx.idPrefix}${tile.id}:${digest}:${face}`;
+  // Tile IDs repeat across pull requests: a height is kept for this one's.
+  const subject = ctx.review?.review;
+  const heightKey = subject
+    ? `${subject.repository}#${subject.pull_request}:${instance}`
+    : instance;
   const [attempt, setAttempt] = useState(0);
   const [failure, setFailure] = useState<FrameFailure | null>(() => failures.get(instance) ?? null);
   const [ready, setReady] = useState(false);
-  const [height, setHeight] = useState(() => lastHeight(instance));
+  const [height, setHeight] = useState(() => lastHeight(heightKey));
   const box = useRef<HTMLDivElement>(null);
   const allowed = useMemo(() => framesAllowedHere(), []);
   const kit = definitionKit(tile.definition);
@@ -231,7 +236,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
       </div>
     ) : (
       <div data-frame-failure={failure.why}>
-        <Note alert>
+        <Note alert className="space-y-1">
           <p>This tile couldn't load.</p>
           <p className="text-xs text-tertiary">{FAILURE_WORDS[failure.why]}</p>
           {failure.why === "error" && failure.message ? (
@@ -291,7 +296,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
           data={images.data}
           onReady={() => setReady(true)}
           onHeight={(next) => {
-            keepHeight(instance, next);
+            keepHeight(heightKey, next);
             setHeight(next);
           }}
           onFail={fail}
@@ -381,7 +386,7 @@ export function PreviewFrame({
   if (failure)
     return (
       <div data-frame-failure={failure.why}>
-        <Note alert>
+        <Note alert className="space-y-1">
           <p>This tile couldn't load.</p>
           <p className="text-xs text-tertiary">{FAILURE_WORDS[failure.why]}</p>
           <Button
