@@ -24,6 +24,7 @@ import { citedHunks, MAX_EXCERPTS, resolveRefs, type CitationTarget } from "./re
 import { isBuiltinType } from "./library";
 import { listenToFrame } from "./router";
 import { HUNG_WORDS, usePreflight } from "./preflight";
+import { useInlinedImages } from "./images";
 
 /** A custom tile's frame, as its card's glance or its detail draws it. */
 
@@ -133,6 +134,8 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   );
   // The glance's size: what the preflight draws it at.
   const preflight = usePreflight(tile, ctx, sizeOf(tile, "glance"), digest);
+  // The images the host stored for the tile, as the frame can show them.
+  const images = useInlinedImages(tile.data);
 
   const go = (target: CitationTarget) => {
     switch (target.kind) {
@@ -234,7 +237,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
       )}
       style={face === "detail" ? { height } : undefined}
     >
-      {slot && preflight === "show" ? (
+      {slot && preflight === "show" && !images.pending ? (
         <FrameView
           key={attempt}
           src={`/tile-frames/${digest}`}
@@ -248,13 +251,13 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
               size,
               theme,
               lang: document.documentElement.lang || "en",
-              data: tile.data,
+              data: images.data,
               refs: resolved.refs,
             })
           }
           theme={theme}
           update={resolved.refs}
-          data={tile.data}
+          data={images.data}
           onReady={() => setReady(true)}
           onHeight={(next) => {
             heights.set(instance, next);

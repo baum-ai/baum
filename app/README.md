@@ -977,7 +977,11 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
-member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+member of their stack, offer Snooze too. A stack's or group's row offers
+Snooze in its panel, on `s` and in its menu: it snoozes every member the row
+shows, together, with one **Undo**; each is then listed under Snoozed and
+brought back on its own (one snoozed until it changes comes back when it is
+pushed to). Snoozed waiting PRs keep their
 waiting classification, so the same inbox filters apply before and after
 snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
@@ -1237,6 +1241,32 @@ goes, and what the removal does not touch keeps its text. The box lies
 under the tokens: a click anywhere but a × focuses it with the caret at the
 end, and the text shows until the focus leaves.
 
+**The sort** (`SortButton`, `src/sort-menu.tsx`; `src/pr-sort.ts`) sits
+right of the filter icon in an inbox's head and on Pull requests' tab bar,
+lit with a dot while a sort is in force. ⇧S opens or closes its menu from
+anywhere on the page. The menu lists the fields with a digit each: 1 Opened,
+2 Last activity, 3 Risk, 4 Review time, 5 Size (lines added and deleted),
+6 Repository, 7 Author and 8 Reviewed (when the latest review was written).
+A digit or a click adds the field as the next key, or turns it round if the
+sort has it already. Backspace drops the last key, Delete or the row's ×
+drops that field, j/k or the arrows with Enter
+or Space pick a field, and Esc or ⇧S closes the menu. A field is added in the
+direction most often wanted: Opened oldest first, Last activity and Reviewed
+newest first, Risk highest first, Review time and Size smallest first, and
+Repository and Author A to Z. A pull request without a value for a key (no
+score, no estimate, or an older daemon that sends no `created_at`) goes last
+whichever way the key runs. The sort orders rows **within** each section,
+and the sections stay: an inbox's Needs your eyes, Ready to merge, Hand to
+an agent, Waiting and Not waiting on you, and Pull requests' buckets.
+With no key each section keeps its own order, which also settles every tie. A
+review group or stack follows its first-ranked member. Snoozed and Done today
+keep their own order. The sort is written `opened,-risk` (`-` turns a key
+round; unknown keys are skipped). An inbox's sort is saved with the inbox
+(`sort`, see the [inboxes README](../internal/inboxes/README.md)) as it
+changes, with no draft. Pull requests' Open and Closed share one sort, and a
+saved tab has its own (`sort`), both in `ui/filters`. A tab saved from the
+page takes the page's sort.
+
 There is no whole-queue filter: the filter is always an inbox's own. **Create
 inbox** (below, and Command+Enter) is not offered at 20 inboxes or with an
 older daemon. In a saved inbox the menu starts from the
@@ -1262,7 +1292,7 @@ and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
 agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
 verdicts, **Snooze…** (which picks the row and opens its snooze choices), **Archive** and
-**Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
+**Open on GitHub**; on a group's row, **Open**, Show or Hide its pull requests and **Snooze…**; on a
 row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
@@ -3068,6 +3098,14 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   once in that window, unless it already has. A tile that hung there says
   "This tile stopped responding when it was checked." instead of mounting;
   every other answer mounts it.
+- **Stored images** (`src/tiles/custom/images.ts`). A tile made in chat
+  holds each image the host stored for it as `baum-image:att_<id>` in its
+  data. Before the frame's `init`, the page reads each from `api/attachments/{id}`
+  (the review page's attachment address) and gives the frame the data with
+  the image as a `data:` URL in its place, the only image a frame's policy
+  admits; the box reads `loading` meanwhile, and an image that cannot be read
+  becomes an empty string. The render check's runner gets its job's data
+  with the images already inlined by the daemon.
 - **A tile's menu** (⋯, or a right click) offers Comment, Ask about this tile,
   **Save to library…** on a custom tile that is not baum's own (it opens the
   panel on the pull request about that tile with "Save this tile to my

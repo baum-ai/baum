@@ -1128,7 +1128,9 @@ function Reply({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
-    if (!docked) input.current?.focus();
+    if (docked) return;
+    input.current?.focus();
+    input.current?.closest("form")?.scrollIntoView?.({ block: "nearest" });
   }, [docked]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -1383,7 +1385,9 @@ function SendWhenFinished({
   useEffect(() => setLocal(undefined), [queued?.text]);
   const shown = local !== undefined ? local : (queued?.text ?? null);
   useEffect(() => {
-    if (replying && !docked) input.current?.focus();
+    if (!replying || docked) return;
+    input.current?.focus();
+    input.current?.closest("form")?.scrollIntoView?.({ block: "nearest" });
   }, [replying, docked]);
   const run = async (task: () => Promise<unknown>, after: () => void) => {
     setBusy(true);

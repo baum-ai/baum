@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -128,6 +129,7 @@ func TestTheDaemonReadsIt(t *testing.T) {
 	// The credential the daemon resolves from the dataset's config.toml
 	// reads the partition the dataset wrote.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	for _, name := range []string{"XDG_CONFIG_HOME", "XDG_STATE_HOME", "GITHUB_TOKEN", "GH_TOKEN", "GH_HOST"} {
 		t.Setenv(name, "")
 	}
@@ -183,6 +185,13 @@ func TestTheDaemonReadsIt(t *testing.T) {
 func TestDefaultsMeetTheCriteria(t *testing.T) {
 	if testing.Short() {
 		t.Skip("writes the full dataset")
+	}
+	// The profiling scripts that use the full dataset run on Linux and
+	// macOS only, and writing it spawns thousands of git processes, which
+	// takes over 8 minutes on the Windows runner. The small datasets above
+	// cover the same code there.
+	if runtime.GOOS == "windows" {
+		t.Skip("the full dataset is only used on Linux and macOS")
 	}
 	requireGit(t)
 	o := Defaults()

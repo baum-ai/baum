@@ -41,6 +41,7 @@ import {
 import { SectionViewBody, SectionViewTabs } from "./section-views";
 import { BLOCK_LABEL } from "./native-tiles";
 import { ViewTileCard } from "./view-tile";
+import { openExternal } from "../outside-links";
 
 /** How it works: the section read (the rail lists the sections, "Where this
  *  fits" first), which shows its views (its Overview: its summary, the tiles
@@ -604,8 +605,7 @@ function ContextChip({
         className={cn(chipLinkClass, "cursor-pointer text-left", FOCUS_RING)}
         onClick={() => {
           if (changed && files?.open(path)) return;
-          if (!openFile?.({ path, symbol: reference.symbol }))
-            window.open(href, "_blank", "noreferrer");
+          if (!openFile?.({ path, symbol: reference.symbol })) openExternal(href);
         }}
       >
         {label}

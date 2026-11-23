@@ -3,7 +3,9 @@
 # instance (isolated.sh --headless): a warm-up, then N runs, and writes
 # summary.md and metrics.json under target/profile/<scenario>-<time>/.
 # `just desktop::profile` builds the profiling frontend, viewer and sidecar
-# first. The runner is ../app/scripts/profile/run.ts.
+# first. The runner is ../app/scripts/profile/run.ts. With --engine chromium
+# the same scenarios run in Chromium against the instance's daemon, which
+# also records a CPU profile per run.
 # With --baseline REF it also builds REF's app (cached by commit) and runs
 # both, interleaved, in two instances on the same seeded dataset, and writes
 # a comparison under target/profile/<scenario>-vs-<commit>-<time>/.
@@ -13,7 +15,7 @@ usage() {
   cat <<'EOF'
 usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout SECONDS]
                   [--seed-data[=SEED] | --copy-data] [--workspace DIR]...
-                  [--baseline REF [--metric NAME]]
+                  [--baseline REF [--metric NAME]] [--engine webkit|chromium]
 
   scenario         cold-start, jk, review, filter, switch-inboxes,
                    session-panel or pages
@@ -38,6 +40,10 @@ usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout S
                    says which metrics changed beyond noise
   --metric NAME    the metric the comparison judges first (default: the
                    scenario's headline)
+  --engine E       webkit (default): the desktop app's WebKitGTK window;
+                   chromium: Playwright's Chromium on the same daemon's
+                   pages, with a CPU profile per run and its hot functions
+                   and stacks in the summary (not with --baseline)
 EOF
 }
 
@@ -51,6 +57,7 @@ timeout=600
 runs_given=
 baseline=
 metric=
+engine=webkit
 pass=
 nl='
 '
@@ -66,6 +73,8 @@ while [ "$#" -gt 0 ]; do
     --name=*) name=${1#--name=} ;;
     --run-timeout) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; timeout=$2; shift ;;
     --run-timeout=*) timeout=${1#--run-timeout=} ;;
+    --engine) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; engine=$2; shift ;;
+    --engine=*) engine=${1#--engine=} ;;
     --check) check=1 ;;
     --copy-data|--seed-data|--seed-data=*) pass="$pass$nl$1" ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pass="$pass$nl--workspace$nl$2"; shift ;;
@@ -88,9 +97,20 @@ if ! printf '%s\n' "$known" | grep -qx -- "$scenario"; then
 fi
 case $runs in ''|0|*[!0-9]*) echo "profile: --runs takes a number from 1: $runs" >&2; exit 2 ;; esac
 case $timeout in ''|0|*[!0-9]*) echo "profile: --run-timeout takes a number of seconds: $timeout" >&2; exit 2 ;; esac
+case $engine in webkit|chromium) ;; *) echo "profile: --engine is webkit or chromium: $engine" >&2; exit 2 ;; esac
+# The image's Chromium comes with Chrome for Testing's chromedriver, which
+# exists for x86-64 Linux only (isolated.Dockerfile).
+if [ "$engine" = chromium ] && [ "$(docker info --format '{{.Architecture}}' 2>/dev/null || uname -m)" != x86_64 ]; then
+  echo "profile: --engine chromium needs an x86-64 Docker engine: Chrome for Testing has no chromedriver for this one" >&2
+  exit 2
+fi
 case $name in ''|*[!a-z0-9-]*) echo "profile: the name may only hold lowercase letters, digits and dashes: $name" >&2; exit 2 ;; esac
 if [ -n "$metric" ] && [ -z "$baseline" ]; then
   echo "profile: --metric names what a comparison judges first; it needs --baseline" >&2
+  exit 2
+fi
+if [ -n "$baseline" ] && [ "$engine" != webkit ]; then
+  echo "profile: a comparison runs the desktop app on both sides; --engine chromium does not apply" >&2
   exit 2
 fi
 case $metric in *[!a-z0-9_]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
@@ -379,6 +399,11 @@ out=target/profile/$scenario-$stamp
 BAUM_ISOLATED_RUN="cargo build --locked --quiet && BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
 --app /oss/desktop/target/debug/baum-desktop --out /oss/desktop/$out --runs $runs \
 --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
+# Chromium needs no app: the sidecar the app bundles starts the daemon.
+# shellcheck disable=SC2089,SC2090
+[ "$engine" = chromium ] && BAUM_ISOLATED_RUN="BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
+--engine chromium --baum /oss/desktop/binaries/baum-\$(uname -m)-unknown-linux-gnu --out /oss/desktop/$out \
+--runs $runs --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
 # shellcheck disable=SC2090
 export BAUM_ISOLATED_RUN
 

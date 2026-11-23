@@ -1107,7 +1107,9 @@ an images tile names image files on this computer by absolute path (at most
 as a session image is (`assemble.Downscale`), and kept per pull request in
 `added_images(pr, id, content_type, bytes, at)` under an attachment ID
 (`att_` and 32 hex of its SHA-256, at most 10 MiB), while the pull request
-has an added tile, removed ones included. The tile is then
+has an added tile, removed ones included, and for an hour after it was last
+stored (`addedtiles.ImageGrace`), so the images a custom tile's check
+stored wait for its add. The tile is then
 `reviewv2.CheckTile`ed against the version's index, masked, and stored
 (`Service.PutNative`) in `tile_fills` as `tileview.NativeAdded` (type,
 title, caption, citations, data) with digest `native`. `AddedFor` shows it
@@ -1151,7 +1153,8 @@ added one at once, and the page's Remove takes one away (`DELETE
 /api/tiles/drafts/{tile}?clone=&pr=`, 404 for none). The tile route serves
 the latest version's cards as `drafts` beside the document, and its cache
 key includes them; each change publishes the `added_tiles` event `{pr}`.
-`check_tile` masks the data (`agent.RedactTaskOutput`)
+`check_tile` stores the image files the data names (see "Images in a custom
+tile" below), masks the data (`agent.RedactTaskOutput`)
 first, refuses a built-in library type's name as a `fail`, checks with the
 validator that every citation of the data resolves to the version shown
 and that it cites at least one hunk, file, prompt or session event
@@ -1167,6 +1170,35 @@ or when the pull request already has 8 added tiles; otherwise it stores the
 fill, adds the tile on the section it names, else the pending card's, else
 the one whose hunks the data cites most, takes the card away and answers the
 tile and its section.
+
+**Images in a custom tile.** A frame's policy admits images only as
+`data:` URLs, and an agent writing one as base64 spends minutes of output
+on it and must crop to fit the 64 KiB data limit. So where a custom tile's
+schema has a string for an image, `check_tile`'s data may hold
+`{"image_file": "/absolute/path"}` instead (an object with that one key;
+`uiserver.customImages`): the host reads the file exactly as an images tile's
+(`readImage`: an absolute path, at most 40 MiB, sniffed as PNG, JPEG, GIF or
+WebP, downscaled), stores it in `added_images` for the pull request, and puts
+`baum-image:att_<32 hex>` (`addedtiles.ImageRef`) in the object's place,
+before the data is masked, checked against the schema and kept. A tile's
+data names at most 6 distinct images, 16 MiB together after downscaling,
+counting an image each time the data names it (each becomes a whole `data:`
+URL); the references count against its 64 KiB, the images do not. Inlining
+stops at 24 MiB of `data:` URLs a tile (`addedtiles.MaxInlined`, and the
+page's `MAX_INLINED`), past which a reference becomes an empty string, so
+references repeated or written by hand cannot grow the data without bound. A file that cannot
+be read, is not an image or is over a limit is a `fail` with `data_invalid`,
+and nothing is checked. Whatever hands the data to a frame puts each stored
+image there as a `data:` URL in its reference's place, so the tile draws it
+with `baum.html` as it draws any `data:image` string: the render check's
+runner gets its job's data inlined by the daemon (`tilechecks.Options.Inline`,
+`addedtiles.Service.InlineImages`, which reads an image by its id), and the
+review page reads each image from `GET /api/attachments/{id}` and inlines it
+before the frame's `init` (`useInlinedImages`, in
+`app/src/tiles/custom/images.ts`); a reference to an image no longer stored
+becomes an empty string. The tile route, its cache, the preflight and the
+check's kept verdict all hold the short reference, so the preflight of an
+added tile finds the verdict its check kept. Samples cannot name files.
 
 A fill comes from one of three places. The session panel's agent writes the
 data itself (`add_tile` with `data`, after `tile_type`), which is checked
@@ -2512,7 +2544,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v5`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v6`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and
@@ -4058,7 +4090,11 @@ A desktop generation job uses `internal/generate` to:
 4. reads the pull request's rendered body with the user's token, which carries
    image URLs GitHub has already signed, and downloads the description images
    from them without credentials; `bundle` caches nothing, and writes the
-   images only to the attachments archive `generate` reads. After session
+   images only to the attachments archive `generate` reads. MP4 and WebM
+   clips the description uploads are captured the same way, under their own
+   limits (`bundle.MaxVideos`, 3, of at most `bundle.MaxVideoBytes`, 100 MiB,
+   each; over them a clip is `over_limit` or `too_large`); the agent does not
+   open them and places one by its alt text and heading. After session
    linkage and count caps, native Claude Code and Codex transcripts also supply
    retained inline pasted and tool-result images through `sessions/sessionimages`.
    Only readable linked roots and reachable subagents contribute; Entire
@@ -4231,6 +4267,7 @@ Native images retain human-input or tool-result origins, their root prompt,
 optional child input and tool ID. The host deduplicates content across both
 image sources, retaining all origins and additional description URLs. The
 20-image/10-MiB-per-image defaults are shared; description images come first.
+Description clips do not count against them.
 Session images are content-sniffed and limited to 40 million pixels. A
 session image longer than 1568 px on either side is resized to fit
 (`assemble.MaxSessionImageEdge`; a JPEG stays a JPEG, PNG and WebP become PNG)
@@ -4693,9 +4730,13 @@ each distinct image, keyed by the SHA-256 of its bytes, and
 `version_attachments` maps each repository, PR, immutable version and
 attachment ID to a copy; `Store.Put` commits both with the version, and
 regenerating a review with the same images stores no new bytes. Reads check
-the copy against its hash. `generate` returns copies from the original,
+the copy against its hash. A video clip is the exception: its bytes are a
+file, `attachments/<sha256>` under the store root, written once when a version
+is saved, and its `attachment_blobs` row holds no bytes; a read returns the
+file's path, which `GET /api/attachments/{id}` serves with range requests.
+Versions are never deleted, so neither are the files. `generate` returns copies from the original,
 hash-checked assembly archive, not agent-visible files. Reads expose only
-raster images listed in that version's document. Existing stores without the
+raster images and clips listed in that version's document. Existing stores without the
 tables remain readable. A writable open moves an earlier store's per-version
 `attachments` rows into the shared copies in `BEGIN IMMEDIATE` batches of at
 most 32 MiB, deleting each batch's rows as it commits and dropping the table

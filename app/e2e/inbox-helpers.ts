@@ -36,7 +36,13 @@ export async function resetInboxes(page: Page): Promise<void> {
         inboxes: Record<string, unknown>[];
       };
       const first = inboxes[0];
-      if (inboxes.length === 1 && first?.name === "Default" && first.query === query && first.badge)
+      if (
+        inboxes.length === 1 &&
+        first?.name === "Default" &&
+        first.query === query &&
+        first.badge &&
+        !first.sort
+      )
         return;
       const base = first ?? {
         id: "00000000000000000000000000000001",
@@ -57,6 +63,7 @@ export async function resetInboxes(page: Page): Promise<void> {
               repositories: [],
               no_bots: false,
               query,
+              sort: "",
               badge: true,
             },
           ],

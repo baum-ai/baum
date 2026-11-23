@@ -234,14 +234,30 @@ func (a LocalAPI) storeImages(ctx context.Context, pr string, raw json.RawMessag
 		if err != nil {
 			return nil, err
 		}
-		sum := sha256.Sum256(image.bytes)
-		id := "att_" + hex.EncodeToString(sum[:16])
-		if err := a.Added.PutImage(ctx, pr, id, addedtiles.Image{ContentType: image.contentType, Bytes: image.bytes}); err != nil {
+		id, err := a.putImage(ctx, pr, image)
+		if err != nil {
 			return nil, err
 		}
 		out.Items = append(out.Items, reviewv2.ImageItem{Attachment: id, Caption: reviewv2.CleanInline(item.Caption), ContentType: image.contentType, Width: image.width, Height: image.height})
 	}
 	return json.Marshal(out)
+}
+
+// putImage stores an image read by readImage for the pull request's added
+// tiles, under an id that is a digest of its bytes, and returns that id.
+func (a LocalAPI) putImage(ctx context.Context, pr string, image readImageResult) (string, error) {
+	id := imageID(image.bytes)
+	if err := a.Added.PutImage(ctx, pr, id, addedtiles.Image{ContentType: image.contentType, Bytes: image.bytes}); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// imageID is the id a stored image's bytes are kept under: an attachment
+// id that is a digest of them.
+func imageID(bytes []byte) string {
+	sum := sha256.Sum256(bytes)
+	return "att_" + hex.EncodeToString(sum[:16])
 }
 
 // readImageResult is an image file as it is stored.

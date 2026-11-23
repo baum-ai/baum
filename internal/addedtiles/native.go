@@ -43,6 +43,11 @@ const imagesSchema = `CREATE TABLE IF NOT EXISTS added_images(
 // MaxImageBytes bounds one stored image, as a saved version's attachment.
 const MaxImageBytes = 10 << 20
 
+// ImageGrace is how long an image stays stored for a pull request without
+// an added tile: an image a custom tile's check stored waits for the add of
+// that check, which may come up to an hour later.
+const ImageGrace = time.Hour
+
 // imageID is an added image's id: an attachment id, so the page and the
 // attachment route treat it as one.
 var imageID = regexp.MustCompile(`^att_[0-9a-f]{32}$`)
@@ -81,7 +86,8 @@ ON CONFLICT(pr, tile, version) DO UPDATE SET digest = excluded.digest, data = ex
 
 // PutImage stores an image for a pull request's added tiles under id. The
 // caller has sniffed its type. An image is kept while the pull request has
-// an added tile, removed ones included (their Undo shows it again).
+// an added tile, removed ones included (their Undo shows it again), and for
+// ImageGrace after it was last stored.
 func (s *Service) PutImage(ctx context.Context, pr, id string, image Image) error {
 	if !ValidKey(pr) || !ValidImageID(id) || !strings.HasPrefix(image.ContentType, "image/") || len(image.Bytes) == 0 {
 		return errors.New("invalid image")

@@ -574,7 +574,7 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if n != 1 {
 		return ErrConflict
 	}
-	if err := saveAttachments(ctx, tx, k, v); err != nil {
+	if err := saveAttachments(ctx, tx, s.root, k, v); err != nil {
 		return err
 	}
 	return tx.Commit()

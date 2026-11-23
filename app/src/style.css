@@ -28,6 +28,10 @@ body {
      browser's blue. */
   accent-color: var(--action-primary);
 }
+/* Search fields drop WebKit's blue clear glyph; Escape still clears them. */
+input[type="search"]::-webkit-search-cancel-button {
+  appearance: none;
+}
 /* The window holds the sidebar and the page's panel, which stay in place:
    the panel's notices and each page's bar stay at its top and only what is
    under them scrolls (`.local-main`). */
@@ -313,8 +317,8 @@ body {
   color: var(--text-tertiary);
 }
 .local-rail-more {
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
   margin-left: 0.125rem;
   opacity: 0;
 }
@@ -2498,9 +2502,9 @@ dialog.local-dialog-wide {
 .settings-nav-item:active {
   transform: translateY(1px);
 }
-/* The selection follows the keyboard's focus, so it is the focus mark. */
 .settings-nav-item:focus-visible {
   outline: none;
+  box-shadow: inset var(--focus-ring);
 }
 .settings-nav-item[aria-current="page"] {
   background: var(--nav-selected);
@@ -2893,7 +2897,6 @@ dialog.local-dialog-wide {
 }
 .settings-row-pick .settings-row-label {
   grid-area: label;
-  white-space: nowrap;
 }
 .settings-row-pick .settings-row-detail {
   grid-area: detail;
@@ -3232,12 +3235,12 @@ dialog.local-dialog-wide {
   .settings-nav-sub {
     display: none;
   }
-  .settings-row-control,
+  .settings-row-control:has(.settings-select, .settings-model),
   .settings-select,
   .settings-model {
     width: 100%;
   }
-  .settings-row-control {
+  .settings-row-control:has(.settings-select, .settings-model) {
     justify-content: flex-start;
   }
 }
@@ -3794,6 +3797,10 @@ a.local-session-pr:hover {
   min-width: 0;
   color: inherit;
   text-decoration: none;
+}
+/* The agent mark keeps its size and gap when the title truncates. */
+.local-feed-head > .local-feed-open {
+  flex: none;
 }
 /* A card led by the agent's mark opens by it: the mark sits centred on the
    head's line. */
@@ -4609,8 +4616,8 @@ a.local-session-pr:hover {
   display: grid;
   flex: none;
   place-items: center;
-  width: 1.375rem;
-  height: 1.375rem;
+  width: 1.75rem;
+  height: 1.75rem;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -4627,12 +4634,6 @@ a.local-session-pr:hover {
   from {
     opacity: 0;
     transform: translate(-50%, 8px);
-  }
-}
-@media (width < 48rem) {
-  .local-toast {
-    left: 50%;
-    width: calc(100vw - 2rem);
   }
 }
 @keyframes local-feed-rise {
@@ -4984,6 +4985,13 @@ dialog.local-message-reader[open] {
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--text-primary);
+}
+.local-job-facts dd a {
+  color: var(--text-link);
+}
+.local-job-facts dd a:hover {
+  color: var(--text-link-hover);
+  text-decoration: underline;
 }
 .local-job-facts dd > code {
   display: block;
@@ -6949,10 +6957,15 @@ a.upnext-done-text:hover {
   .upnext-failed,
   .upnext-unchanged,
   .upnext-menu,
-  .upnext-toast {
+  .upnext-toast,
+  .upnext-noreview,
+  .local-rail-menu,
+  .inbox-selection-bar {
     animation: none;
   }
-  .upnext-bar div {
+  .upnext-bar div,
+  .local-rail-lane,
+  .local-rail {
     transition: none;
   }
 }

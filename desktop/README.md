@@ -793,18 +793,31 @@ does when the window loses focus.
   embedded webview) and WKWebView (where wry leaves
   `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
   any time, so the app opens the browser at most once a second
-  (`navigation::OpenLimit`) and drops the rest. The app's pages open every
-  outside link with `target="_blank" rel="noreferrer"` (Markdown links
-  included) or `window.open`, and the app (`app/src/outside-links.ts`) turns a
-  person's click on a same-window link to another site into such a request,
-  so no link is dead. Setup
+  (`navigation::OpenLimit`) and drops the rest.
+- WKWebView asks the navigation handler about a `target="_blank"` click
+  before it asks for a new window, and wry passes the handler only the URL,
+  so the shell refuses the click as it would a frame's navigation and WebKit
+  never asks for the window. So the app opens links through the `open_link`
+  command instead (`src/links.rs`), which the daemon's pages and the setup
+  screen may call. It opens the same URLs as a new-window request, under the
+  same once-a-second limit, and Tauri's command bridge is in the page's main
+  frame only on macOS and Linux, so a frame cannot call it there. The shell
+  declares it as `openLinks: true` (below); the app
+  (`app/src/outside-links.ts`) then turns a person's click on any link to
+  another site, `target="_blank"` or not, into the command, and its own
+  `openExternal` calls it too. With an older shell, which does not declare
+  it, the app opens outside links as new-window requests and turns a click on
+  a same-window link into one, so no link is dead. Setup
   opens GitHub's device page a few seconds after a sign-in starts, when it can
   no longer ask for a window, through the `open` action of
   `github_connection`, which opens that fixed address whatever the page
   passes.
 - Before the page's own scripts run, the main window (and the check window,
   below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
-  replaced (`src/declaration.rs`), with two fields. `checkWindow` says whether
+  replaced (`src/declaration.rs`), with three fields. `openLinks` says
+  whether the page opens links to other sites with `open_link`; it is `true`
+  in the main window and `false` in the check window, which may call no
+  command. `checkWindow` says whether
   the page can open the tile check window; it is `true` on Linux only (see
   Tile check window). `tileFrames` says whether the page may embed
   sandboxed frames of untrusted content served from the daemon's origin. It
@@ -835,7 +848,8 @@ does when the window loses focus.
   opens the native save dialog for `<name>.baumtile.json` and writes the
   exported file only where the person chose, refusing a name that is not a
   tile type's or a file over 3 MiB, and `open_check_window` and
-  `close_check_window` (see Tile check window). They can call no other Tauri
+  `close_check_window` (see Tile check window), and `open_link` (see above).
+  They can call no other Tauri
   command or
   plugin.
   `withGlobalTauri` is off.
@@ -844,7 +858,7 @@ does when the window loses focus.
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
+  `save_review_settings` and `finish_setup`) and `open_link`. Both also allow `step_zoom`
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
@@ -971,7 +985,7 @@ macOS, Ctrl+Shift+I on Windows) and, in its console:
 5. Click links to other sites as a person does: "Open on GitHub" in a pull
    request's menu, a link in a review's Markdown, the docs in the `?` menu, the
    release notes link of an update notice. Each opens the default browser,
-   once.
+   once, and a debug build logs no refused navigation for it.
 6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
    browser opens once at most.
 7. In setup's GitHub step (first run, with a fresh configuration directory),
@@ -1431,6 +1445,99 @@ its timers due, which fire before its run's page loads; and a change
 smaller than the floor, or than the runs' spread, shows as within noise
 rather than as no change.
 
+#### CPU profiles in Chromium
+
+The WebKit runs say what is slow (interactions, frames, renders) but not
+why. `--engine chromium` runs the same scenarios in Chromium and records a
+CPU profile of every measured run, which says which functions the time went
+to:
+
+```sh
+just desktop::profile review --engine chromium --runs 3
+just desktop::profile jk --engine chromium --runs 3
+```
+
+The instance starts as usual, with its daemon, its data and the profiling
+frontend in the sidecar, but no app: the runner starts the daemon with the
+bundled `baum daemon ensure`, as the app does, and Playwright's Chromium
+(Chrome for Testing, headless, in the `desktop-isolated` image) opens the
+launch URL from its `credential.json` (the capability in it is never
+logged: chromedriver logs only severe messages, and the runner scrubs
+`#token=` from `driver.log`; see
+[Attaching to the daemon](#attaching-to-the-daemon)). chromedriver of the
+same version drives it with the same WebDriver commands as WebKitWebDriver,
+so the scenarios are the same code. The image takes both at the Playwright
+version `../app`'s lockfile pins (`chromium.test.ts` checks), from Chrome for
+Testing, which has chromedriver for x86-64 Linux only, so on another Docker
+engine `--engine chromium` stops before building anything. Each measured run
+(not the warm-up) samples the page's main thread every 250 µs through
+chromedriver's DevTools Protocol endpoint (`Profiler.start` and `stop`):
+enough samples to tell a 16 ms frame's stacks apart at a few percent of
+overhead, where 100 µs costs more on long journeys and makes long profiles
+large.
+
+The summary then ends with a CPU section:
+
+- the time a run spent in JavaScript, outside it (`(program)`: style,
+  layout, paint and the browser's own work), in garbage collection and idle,
+  from the collector's reset to its snapshot, the window the rest of the
+  summary measures (cold start relaunches the browser each run and counts
+  from the page's start, sampling from before it loads, which adds the
+  profiler's start to its launch times);
+- the 20 functions with the most self time per run, with their total time
+  (callees included, a recursive function counted once). Each is named by
+  the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
+  at the line its function starts, `oss/app/src/up-next.tsx:1396`, not the
+  hot line inside it: V8's line ticks give a bundle line without a column,
+  and the minified bundles are a few lines long, so they map to nothing. A
+  package's functions show as the package (`react-dom`) but are told apart
+  by their own source line; `browser` marks the DOM's and V8's own
+  functions, whose time includes the style and layout they force
+  (`getBoundingClientRect`, `scrollIntoView`). A minified name the map
+  cannot resolve keeps its bundle place beside it. `(program)` and
+  `(garbage collector)` are rows too, and often the top one: time outside
+  JavaScript;
+- for the five slowest interactions and the three longest frames, that
+  breakdown within the interaction (from the input to the frame after it)
+  or frame, its functions with the most self time, and its three heaviest
+  JavaScript stacks, innermost first, at most eight frames, a package's
+  consecutive frames as one (`[react-dom ×56]`: 56 more frames of
+  react-dom, mostly React walking its tree of components). Idle time within an
+  interaction or frame was spent off the main thread: raster, compositing
+  or the driver, which the profile does not see.
+
+To place interactions and frames on the profile, the runner lines up the
+page's `performance.now()` with the profile's clock: after the snapshot it
+runs a function, `__baumProfileClock`, that spins 30 ms and returns the
+page times it started and ended. Its first sample is no earlier than the
+start and its last no later than the end, so the clocks' offset is the mean
+of the two differences, to within half a sampling interval. A run whose
+spin got fewer than ten samples, or samples spanning less than 80% of it (a
+sampler starved on shared CPUs), is left unaligned rather than
+misattributed: the summary says so and leaves its interactions and frames
+out. The offset is kept in
+each profile as `baumClockOffset` (microseconds, profile time less page
+time).
+
+`run-N.cpuprofile` beside the summary holds each run's whole profile: open
+it in Chrome DevTools (Performance, Load profile) or
+[speedscope](https://www.speedscope.app) for the flame chart. The bundles
+are minified, so their names there are the minified ones unless DevTools
+can load the source maps.
+
+Chromium's numbers are not WebKit's. V8 and JavaScriptCore compile and
+collect garbage differently, Blink's style and layout differ from WebKit's,
+and headless Chromium paints with its own software renderer, so a frame or
+an interaction may be much faster or slower in one than the other, and a
+problem only one engine has (a slow path in its layout or its regular
+expressions) shows only there. Use Chromium's profile to find which code is
+hot, and WebKit's runs to judge how slow the app is for its users. The rest
+of the summary (metrics, interactions, components) is measured the same way
+in both. The driver's own polling shows in the profile as anonymous
+functions with no source, a little in every interaction. A comparison
+(`--baseline`) runs the desktop app only, so `--engine chromium` does not
+combine with it.
+
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
 release runs them, without a Developer ID, so the app is signed ad hoc and not
@@ -1463,8 +1570,17 @@ login environment, installed agent CLIs, repository paths, credential agents or
 native desktop services faithfully by mounting a display socket. The launcher
 uses your real home directory and the shared host daemon, so installation and
 repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
-when set; otherwise it atomically refreshes `target/host-dev/bin/baum` from the
-freshly built sidecar and runs that copy. This gives installation a stable target
+when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
+(written by `scripts/sidecar.sh`) holds a content hash of the Go module under
+`oss/` (`scripts/sidecar-stamp.sh`: sources, `go:embed` files and the built
+viewer and local app, not the frontend sources or the desktop crate). If the
+binary or stamp is missing or the hash differs, it says why and rebuilds the
+sidecar in `oss-test` before launching; an unchanged checkout skips the build.
+It then atomically refreshes `target/host-dev/bin/baum` from the sidecar and
+runs that copy. The check runs once at start: after a `git pull` while the app
+runs, stop and rerun `just desktop::dev` to pick up daemon changes (the launcher
+prints the commit its daemon was built from). Set `BAUM_DESKTOP_DEV_SIDECAR_ONLY=1`
+to run only this check and stop before Vite and the app. This gives installation a stable target
 named `baum`, as the install-record validation requires; the platform-suffixed
 sidecar filename is only the build artifact. Existing daemons can finish using
 the previous executable after the copy is replaced.

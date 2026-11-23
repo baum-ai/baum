@@ -168,6 +168,14 @@ func TestUnpackAttachmentsRejectsAnythingButTheListedImages(t *testing.T) {
 	if err := UnpackAttachments(context.Background(), "", t.TempDir(), nil, 1024); err != nil {
 		t.Fatalf("a run without images failed: %v", err)
 	}
+	// A listed clip may exceed the image byte limit.
+	clip, clipListed := attachmentArchive(t, map[string][]byte{strings.TrimSuffix(testAttachmentA, ".png") + ".mp4": []byte("a clip over the image limit")})
+	clipListed[0].ContentType = "video/mp4"
+	clipDir := t.TempDir()
+	t.Cleanup(func() { removeTree(clipDir) })
+	if err := UnpackAttachments(context.Background(), write(t, clip), clipDir, clipListed, 4); err != nil {
+		t.Fatalf("listed clip refused: %v", err)
+	}
 	// entry archives one header per content, in order.
 	entry := func(header tar.Header, contents ...string) []byte {
 		var out bytes.Buffer
@@ -207,5 +215,57 @@ func TestUnpackAttachmentsRejectsAnythingButTheListedImages(t *testing.T) {
 				t.Fatal("accepted an archive that does not hold exactly the listed images")
 			}
 		})
+	}
+}
+
+// The fixtures are tiny ffmpeg clips; the MP4's movie box follows its data.
+func TestSniffMediaReadsClipSizes(t *testing.T) {
+	read := func(name string) []byte {
+		content, err := os.ReadFile(filepath.Join("testdata", "video", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return content
+	}
+	for name, tc := range map[string]struct {
+		content       []byte
+		video         bool
+		contentType   string
+		width, height int
+	}{
+		"mp4":              {read("clip.mp4"), true, "video/mp4", 32, 18},
+		"webm":             {read("clip.webm"), true, "video/webm", 40, 24},
+		"mp4 as image":     {read("clip.mp4"), false, "", 0, 0},
+		"mp4 with no moov": {read("clip.mp4")[:32], true, "video/mp4", 0, 0},
+	} {
+		contentType, width, height, ok := SniffMedia(tc.content, tc.video)
+		if contentType != tc.contentType || width != tc.width || height != tc.height || ok != (tc.width > 0) {
+			t.Errorf("%s: sniffed %q %dx%d %v, want %q %dx%d", name, contentType, width, height, ok, tc.contentType, tc.width, tc.height)
+		}
+	}
+}
+
+// GitHub renders an uploaded clip as a video element; only RenderedMedia
+// lists it.
+func TestRenderedMediaListsUploadedClips(t *testing.T) {
+	uploads := MarkdownUploads(markdownAsset(uploadBefore))
+	body := `<video src="` + signedSource(uploadBefore) + `" data-canonical-src="` + signedSource(uploadBefore) + `" controls></video>`
+	if images := RenderedImages(body, uploads); len(images) != 0 {
+		t.Fatalf("RenderedImages listed clips: %+v", images)
+	}
+	clips := RenderedMedia(body, uploads)
+	if len(clips) != 1 || !clips[0].Video || clips[0].SourceURL != markdownAsset(uploadBefore) || clips[0].FetchURL != signedSource(uploadBefore) || clips[0].State != "" {
+		t.Fatalf("clips = %+v", clips)
+	}
+}
+
+// Sniffing walks a clip's elements without collecting them, so a clip made
+// of many empty track entries costs no memory in proportion.
+func TestSniffMediaDoesNotCollectElements(t *testing.T) {
+	webm := append([]byte{0x1a, 0x45, 0xdf, 0xa3, 0x87, 0x42, 0x82, 0x84}, "webm"...)
+	webm = append(webm, 0x18, 0x53, 0x80, 0x67, 0xff, 0x16, 0x54, 0xae, 0x6b, 0xff)
+	webm = append(webm, bytes.Repeat([]byte{0xae, 0x80}, 1<<20)...)
+	if allocs := testing.AllocsPerRun(1, func() { SniffMedia(webm, true) }); allocs > 20 {
+		t.Fatalf("%v allocations sniffing empty track entries", allocs)
 	}
 }
