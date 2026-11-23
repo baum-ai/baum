@@ -401,6 +401,7 @@ func fillCode(t *Tile, hunks map[string]bundle.Hunk) {
 	if len(code.Lines) != 2 {
 		code.Lines = []int{first, last}
 	}
+	code.Focus = FocusWithin(code.Focus, first, last)
 	code.Text = strings.Join(text, "\n")
 	encoded, err := json.Marshal(code)
 	if err != nil {

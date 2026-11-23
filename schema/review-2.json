@@ -31,7 +31,7 @@
   },
   "$defs": {
     "v2SchemaRevision": {
-      "const": "2026-11-17.1",
+      "const": "2026-11-23.2",
       "description": "Date-based revision of this schema file, bumped on every additive edit. A document records it in review.generator.schema_revision."
     },
     "v2Summary": {
@@ -392,12 +392,13 @@
     },
     "v2TileData_code": {
       "type": "object",
-      "description": "An excerpt of a hunk: the model names the hunk and, optionally, the first and last lines on the new side; the host fills the text from the diff, and the lines when the model gave none.",
+      "description": "An excerpt of a hunk: the model names the hunk and, optionally, the first and last lines on the new side and the few of them that matter; the host fills the text from the diff, and the lines when the model gave none.",
       "additionalProperties": false,
       "required": ["hunk"],
       "properties": {
         "hunk": { "$ref": "#/$defs/hunkId" },
         "lines": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 1 } },
+        "focus": { "type": "array", "minItems": 1, "maxItems": 3, "description": "The new-side lines within lines that carry the point, which the page highlights while it dims the rest.", "items": { "type": "integer", "minimum": 1 } },
         "text": { "type": "string", "description": "The new side's lines, filled by the host from the diff." }
       }
     },

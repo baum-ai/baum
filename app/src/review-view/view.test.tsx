@@ -7,7 +7,7 @@ import type { ReviewDocument } from "@baum/viewer/review-document";
 import { fixtureTile } from "../tiles/fixture-test-helper";
 import { TileHostContext, type TileHost } from "../tiles/host";
 import type { TileContext } from "../tiles/types";
-import type { ReviewV2 } from "./document";
+import { parseReviewV2, type ReviewV2 } from "./document";
 import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
@@ -320,7 +320,12 @@ describe("How it works", () => {
     expect(parts).toContain("Risks");
     expect(parts).not.toContain("What it does");
     expect(parts).not.toContain("Code");
-    expect(body.querySelector('[aria-label="Code changes"]')).toBeNull();
+    // The only diff is the code tile's excerpt.
+    expect(
+      [...body.querySelectorAll('[aria-label="Code changes"]')].map(
+        (diff) => diff.closest<HTMLElement>("[data-tile]")?.dataset.tile,
+      ),
+    ).toEqual(["code_remote_routes"]);
     expect(body.querySelector('[data-block="points"]')?.textContent).toContain("Deny by default");
     expect(body.querySelector('[aria-label="Risks"]')?.textContent).toContain("High");
     expect(body.textContent).not.toContain("Decide");
@@ -907,6 +912,80 @@ describe("the native tiles", () => {
 });
 
 // ---------- tiles the person added, and those being made ----------
+
+describe("the code tile", () => {
+  const code = (data: Record<string, unknown>): ViewTile =>
+    parseReviewV2({
+      ...REVIEW_1303,
+      tiles: [
+        { id: "code_x", type: "code", owner: "sec_allowlist", title: "X", state: "ready", data },
+      ],
+    })!.tiles[0]!;
+  const newSide = (first: number, last: number) =>
+    CHROME.index.hunks
+      .find((hunk) => hunk.id === "h_routes")!
+      .diff!.lines.flatMap((line) =>
+        line.kind !== "remove" && line.new_line >= first && line.new_line <= last
+          ? [line.text]
+          : [],
+      )
+      .join("\n");
+  const rows = (container: HTMLElement) => [...container.querySelectorAll("tbody tr")].slice(1);
+
+  it("draws its excerpt as the hunk's diff, with the old side, numbers and the lines that matter", async () => {
+    const container = await card(
+      code({
+        hunk: "h_shutdown",
+        lines: [995, 998],
+        focus: [997],
+        text: "\t\t\t// The phone…\n\t\t\t// providers…\n\t\t\tShutdown: func…\n\t\t\t\tphones.Close()",
+      }),
+    );
+    expect(container.querySelector("header")?.textContent).toContain("oss/internal/cli/daemon.go");
+    const drawn = rows(container);
+    // The removed line the new ones replace, then the four lines.
+    expect(drawn.map((row) => row.querySelectorAll("td")[2]?.textContent)).toEqual([
+      "−",
+      "+",
+      "+",
+      "+",
+      "+",
+    ]);
+    expect(drawn[0]?.textContent).toContain("Shutdown:     queue.Shutdown,");
+    expect(drawn[3]?.querySelectorAll("td")[1]?.textContent).toBe("997");
+    expect(drawn.filter((row) => row.hasAttribute("data-focus"))).toEqual([drawn[3]]);
+    expect(drawn.filter((row) => row.classList.contains("opacity-45"))).toHaveLength(4);
+  });
+
+  it("dims nothing when no line is named", async () => {
+    const container = await card(
+      code({ hunk: "h_routes", lines: [61, 64], text: newSide(61, 64) }),
+    );
+    expect(rows(container)).toHaveLength(4);
+    expect(container.querySelector("tbody tr.opacity-45")).toBeNull();
+  });
+
+  it("folds a long excerpt at the lines that matter, and opens it", async () => {
+    const container = await card(
+      code({ hunk: "h_routes", lines: [17, 49], focus: [45], text: newSide(17, 49) }),
+    );
+    expect(rows(container)).toHaveLength(12);
+    expect(rows(container)[0]?.querySelectorAll("td")[1]?.textContent).toBe("38");
+    const more = button(container, "Show all 33 lines");
+    await click(more);
+    expect(rows(container)).toHaveLength(33);
+    await click(button(container, "Show fewer lines"));
+    expect(rows(container)).toHaveLength(12);
+  });
+
+  it("opens its file in Files changed from the path", async () => {
+    const container = await page("pane=section&section=sec_allowlist");
+    const tile = container.querySelector<HTMLElement>('[data-tile="code_remote_routes"]')!;
+    await click(button(tile, "oss/internal/uiserver/remote.go"));
+    expect(search.get("tile")).toBe("code");
+    expect(search.get("tile_item")).toBe("oss/internal/uiserver/remote.go");
+  });
+});
 
 describe("a tile the person added", () => {
   const added: ViewTile = {

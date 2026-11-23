@@ -74,10 +74,13 @@ type riskReply struct {
 	Cites    []json.RawMessage `json:"cites"`
 }
 
+// tileBrief is a section's word on a planned tile. Focus is a code tile's
+// one to three new-side lines that matter most, which the page highlights.
 type tileBrief struct {
 	ID     string            `json:"id"`
 	Shows  string            `json:"shows"`
 	Cites  []json.RawMessage `json:"cites"`
+	Focus  []int             `json:"focus"`
 	Drop   bool              `json:"drop"`
 	Reason *string           `json:"reason"`
 }
@@ -87,6 +90,7 @@ type proposal struct {
 	Type  string            `json:"type"`
 	Shows string            `json:"shows"`
 	Cites []json.RawMessage `json:"cites"`
+	Focus []int             `json:"focus"`
 }
 
 type contextReply struct {
@@ -379,6 +383,7 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 				placeable[p.ID] = final
 			}
 			out.Propose = &reviewv2.Tile{ID: final, Type: t.Name, Owner: section.ID, Shows: shows, Cites: kept, State: reviewv2.TilePending}
+			withFocus(out.Propose, p.Focus)
 		}
 	}
 	placed := map[string]bool{}

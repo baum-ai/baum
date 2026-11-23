@@ -108,7 +108,10 @@ all phrases, ending the same way.
   characters; `cites` are the hunks, with `lines`, that it rests on. For a
   `code` tile, `shows` is its title (two to five plain words) and its first
   hunk cite, with `lines` around the few lines the reader must see (at most
-  30), is the excerpt the host shows. Set `drop` with a `reason` (one plain
+  30), is the excerpt the host shows; `focus` names the one to three lines
+  of it (new-side line numbers) that carry the point, which the page
+  highlights while it dims the rest. Leave `focus` null for other tiles, or
+  when no line stands out. Set `drop` with a `reason` (one plain
   sentence) when the tile would only restate your text, or the code does
   not bear it out, and do not place it in the body. The page never shows
   `shows`; the tile agent reads it.

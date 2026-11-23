@@ -496,3 +496,12 @@ func TestFromV1CarriesNoLibraryTiles(t *testing.T) {
 		}
 	}
 }
+
+func TestFocusWithin(t *testing.T) {
+	if got := FocusWithin([]int{9, 4, 4, 30, 5, 6}, 4, 10); !slices.Equal(got, []int{4, 5, 6}) {
+		t.Errorf("focus %v", got)
+	}
+	if got := FocusWithin([]int{1, 2}, 4, 10); got != nil {
+		t.Errorf("focus outside the lines kept: %v", got)
+	}
+}

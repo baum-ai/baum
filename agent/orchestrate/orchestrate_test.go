@@ -153,7 +153,7 @@ func fullFake() *fake {
 	f := newFake()
 	f.reply("map", mapReplyJSON)
 	f.reply("section-sec-retry", sectionReplyJSON(`[{"id":"tl_backoff","shows":"How long each attempt waits.","cites":[{"type":"hunk","id":"`+hunkA+`","lines":null}],"drop":false,"reason":null}]`))
-	f.reply("section-sec-api", sectionReplyJSON(`[{"id":"tl_check","shows":"The role check","cites":[{"type":"hunk","id":"`+hunkC+`","lines":[6,9]}],"drop":false,"reason":null}]`))
+	f.reply("section-sec-api", sectionReplyJSON(`[{"id":"tl_check","shows":"The role check","cites":[{"type":"hunk","id":"`+hunkC+`","lines":[6,9]}],"focus":[12,7],"drop":false,"reason":null}]`))
 	f.reply("context", contextReplyJSON)
 	f.reply("tile-tl-path", flowReply)
 	f.reply("tile-tl-backoff", tableReply)
@@ -220,7 +220,7 @@ func TestGenerateWritesEveryLevel(t *testing.T) {
 		}
 	}
 	var code reviewv2.CodeData
-	if err := json.Unmarshal(byID["tl_check"].Data, &code); err != nil || code.Hunk != hunkC || !slices.Equal(code.Lines, []int{6, 9}) || byID["tl_check"].Title != "The role check" {
+	if err := json.Unmarshal(byID["tl_check"].Data, &code); err != nil || code.Hunk != hunkC || !slices.Equal(code.Lines, []int{6, 9}) || !slices.Equal(code.Focus, []int{7}) || byID["tl_check"].Title != "The role check" {
 		t.Errorf("code tile: %s %q", byID["tl_check"].Data, byID["tl_check"].Title)
 	}
 	if byID["tl_backoff"].Shows != "How long each attempt waits." {

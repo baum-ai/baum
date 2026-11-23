@@ -93,7 +93,9 @@ func MapSchema(types []string) []byte {
 
 // SectionSchema is a section agent's reply schema.
 func SectionSchema(types []string) []byte {
-	brief := object(obj{"id": text(80), "shows": text(600), "cites": cites(reviewv2.MaxCites), "drop": obj{"type": "boolean"}, "reason": nullable(text(400))})
+	// A code tile's focus: the new-side lines the page highlights.
+	focus := nullable(array(obj{"type": "integer", "minimum": 1}, 1, reviewv2.MaxCodeFocus))
+	brief := object(obj{"id": text(80), "shows": text(600), "cites": cites(reviewv2.MaxCites), "focus": focus, "drop": obj{"type": "boolean"}, "reason": nullable(text(400))})
 	point := object(obj{"text": text(450), "more": nullable(text(1200)), "cites": cites(reviewv2.MaxCites)})
 	// A block uses the fields of its type; the others are null.
 	block := object(obj{
@@ -108,7 +110,7 @@ func SectionSchema(types []string) []byte {
 			"category": obj{"type": "string", "pattern": "^[a-z0-9_]{1,40}$"}, "text": text(1200), "cites": array(citeSchema(), 1, reviewv2.MaxCites),
 		}), 0, 8),
 		"tiles":   array(brief, 0, 0),
-		"propose": nullable(object(obj{"id": obj{"type": "string", "pattern": "^tl_[a-z0-9_]{1,60}$"}, "type": enum(types...), "shows": text(600), "cites": cites(reviewv2.MaxCites)})),
+		"propose": nullable(object(obj{"id": obj{"type": "string", "pattern": "^tl_[a-z0-9_]{1,60}$"}, "type": enum(types...), "shows": text(600), "cites": cites(reviewv2.MaxCites), "focus": focus})),
 	}))
 }
 

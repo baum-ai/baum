@@ -826,7 +826,10 @@ comment's own markup cannot create these links.
 A host can put its own row under a hunk of a `CodeDiff` file with `afterHunk`
 (the app's overview tabs pin the notes that cite each hunk there): a row
 across the table, in the page's own font, drawn only for a hunk it returns
-something for.
+something for. A line marked `focus` carries a bar at its edge and bold line
+numbers, and the hunk's other lines are dimmed (the app's code tile marks
+the lines its model highlights). `codeDiffHunk` (`patch.ts`) turns an indexed
+hunk's diff into a `CodeDiff` hunk.
 
 ## Schema
 

@@ -11,6 +11,9 @@ export type CodeDiffLine = {
   oldLine?: number;
   newLine?: number;
   text: string;
+  /** A line that carries the point: marked, with the hunk's other lines
+   *  dimmed. */
+  focus?: boolean;
 };
 
 export type CodeDiffHunk = {
@@ -62,39 +65,63 @@ function CodeDiffTable({
           <col />
         </colgroup>
         <tbody>
-          {file.hunks.flatMap((hunk, hunkIndex) => [
-            <tr key={`${file.path}:${hunk.header}:${hunkIndex}`} className="bg-accent-50">
-              <td colSpan={4} className="px-3 py-1 text-accent-700">
-                {hunk.header}
-              </td>
-            </tr>,
-            ...hunk.lines.map((line, index) => (
-              <tr
-                key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
-                className={cn("align-top", lineStyle[line.kind])}
-              >
-                <td className="w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
-                  {line.oldLine ?? ""}
+          {file.hunks.flatMap((hunk, hunkIndex) => {
+            const focused = hunk.lines.some((line) => line.focus);
+            return [
+              <tr key={`${file.path}:${hunk.header}:${hunkIndex}`} className="bg-accent-50">
+                <td colSpan={4} className="px-3 py-1 text-accent-700">
+                  {hunk.header}
                 </td>
-                <td className="w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
-                  {line.newLine ?? ""}
-                </td>
-                <td
+              </tr>,
+              ...hunk.lines.map((line, index) => (
+                <tr
+                  key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
+                  data-focus={line.focus ? "" : undefined}
                   className={cn(
-                    "w-5 px-1 text-center select-none sm:w-6",
-                    line.kind === "add" && "text-status-positive",
-                    line.kind === "remove" && "text-status-critical",
+                    "align-top",
+                    lineStyle[line.kind],
+                    focused && !line.focus && "opacity-45 transition-opacity",
                   )}
                 >
-                  {mark[line.kind]}
-                </td>
-                <td className="pr-3 whitespace-pre-wrap text-primary [overflow-wrap:anywhere]">
-                  <HighlightedText text={line.text} tokens={highlighted?.[hunkIndex]?.[index]} />
-                </td>
-              </tr>
-            )),
-            ...hunkNotes(file, hunkIndex, afterHunk),
-          ])}
+                  <td
+                    className={cn(
+                      "relative w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none",
+                      line.focus && "font-semibold text-primary",
+                    )}
+                  >
+                    {line.focus ? (
+                      <span
+                        aria-hidden
+                        className="absolute inset-y-0.5 left-0 w-1 rounded-full bg-status-info"
+                      />
+                    ) : null}
+                    {line.oldLine ?? ""}
+                  </td>
+                  <td
+                    className={cn(
+                      "w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none",
+                      line.focus && "font-semibold text-primary",
+                    )}
+                  >
+                    {line.newLine ?? ""}
+                  </td>
+                  <td
+                    className={cn(
+                      "w-5 px-1 text-center select-none sm:w-6",
+                      line.kind === "add" && "text-status-positive",
+                      line.kind === "remove" && "text-status-critical",
+                    )}
+                  >
+                    {mark[line.kind]}
+                  </td>
+                  <td className="pr-3 whitespace-pre-wrap text-primary [overflow-wrap:anywhere]">
+                    <HighlightedText text={line.text} tokens={highlighted?.[hunkIndex]?.[index]} />
+                  </td>
+                </tr>
+              )),
+              ...hunkNotes(file, hunkIndex, afterHunk),
+            ];
+          })}
         </tbody>
       </table>
     </div>
