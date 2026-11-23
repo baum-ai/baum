@@ -241,6 +241,12 @@ it.each([
   },
 );
 
+it("names the page in the window title", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  await act(async () => root.render(<App />));
+  expect(document.title).toBe("Jobs · baum");
+});
+
 it("does not call a review group missing when the groups could not be read", async () => {
   const heal = refuse("api/groups");
   history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");

@@ -313,8 +313,8 @@ body {
   color: var(--text-tertiary);
 }
 .local-rail-more {
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
   margin-left: 0.125rem;
   opacity: 0;
 }
@@ -4609,8 +4609,8 @@ a.local-session-pr:hover {
   display: grid;
   flex: none;
   place-items: center;
-  width: 1.375rem;
-  height: 1.375rem;
+  width: 1.75rem;
+  height: 1.75rem;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -6949,10 +6949,15 @@ a.upnext-done-text:hover {
   .upnext-failed,
   .upnext-unchanged,
   .upnext-menu,
-  .upnext-toast {
+  .upnext-toast,
+  .upnext-noreview,
+  .local-rail-menu,
+  .inbox-selection-bar {
     animation: none;
   }
-  .upnext-bar div {
+  .upnext-bar div,
+  .local-rail-lane,
+  .local-rail {
     transition: none;
   }
 }
