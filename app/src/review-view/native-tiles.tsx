@@ -746,16 +746,18 @@ function Token({ text }: { text: string }) {
 }
 
 /** A compared item's text as the page draws it: plain, with code spans.
- *  The host has taken out links and bold; this takes out italics, a `*` or
- *  `_` pair around words outside code, but not one inside a word, so
- *  `__init__`, `snake_case` and `*.go` stay as written. */
+ *  The host has taken out links and bold; this takes out italics: a `*` or
+ *  `_` pair around words outside code that opens after a space or the start
+ *  and closes before a space, punctuation or the end, around text that starts
+ *  and ends with a letter or digit. Identifiers, paths and
+ *  globs (`__init__`, `snake_case`, `*.go,*.ts`) stay as written. */
 export function comparedText(text: string): string {
   return text
     .split(/(`[^`]*`)/)
     .map((part, at) =>
       at % 2
         ? part
-        : part.replace(/(^|[^\w*])([*_])([^\s*_](?:[^*_]*[^\s*_])?)\2(?![\w*])/g, "$1$3"),
+        : part.replace(/(^|[\s("'])([*_])([^\W_](?:[^*_]*[^\W_])?)\2(?=$|[\s.,;:!?)"'])/g, "$1$3"),
     )
     .join("");
 }
@@ -792,7 +794,8 @@ type Compared = "same" | Change | null;
  *  `changed` where the words differ, `same` where they don't. */
 function compareRow(row: (ColumnItem | null)[]): Compared[] {
   const out: Compared[] = row.map(() => null);
-  const text = (item: ColumnItem) => `${sameKey(item.title)}\n${sameKey(item.note ?? "")}`;
+  const text = (item: ColumnItem) =>
+    `${sameKey(comparedText(item.title))}\n${sameKey(comparedText(item.note ?? ""))}`;
   for (let at = 1; at < row.length; at++) {
     const [before, item] = [row[at - 1], row[at]];
     if (before && item) {

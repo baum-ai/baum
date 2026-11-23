@@ -823,11 +823,23 @@ describe("the native tiles", () => {
     expect(cells(0)).toEqual(["Reads cached rows fast", "Reads cached data fast"]);
     expect(container.querySelector("ins code")?.textContent).toBe("fast");
     expect(cells(1)).toEqual(["limit 5 > max", "limit 10 > max"]);
+    expect(container.querySelector("em")).toBeNull();
   });
 
   it("takes italics out of compared text but not identifiers or globs", () => {
     expect(comparedText("a *cached* _hot_ row")).toBe("a cached hot row");
     expect(comparedText("__init__ snake_case *.go `*x*`")).toBe("__init__ snake_case *.go `*x*`");
+    expect(comparedText("*a*, *b*. (_c_)")).toBe("a, b. (c)");
+    for (const kept of [
+      "src/*/foo/*.ts",
+      "*.go,*.ts",
+      "(*.go|*.ts)",
+      "https://x.com/_next_/static",
+      "a*b*c",
+      "_x_y",
+      "2 * 3 * 4",
+    ])
+      expect(comparedText(kept)).toBe(kept);
   });
 
   it("leaves the Changed pill out when every compared row differs", async () => {
