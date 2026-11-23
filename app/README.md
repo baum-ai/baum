@@ -3065,6 +3065,10 @@ the document's native diagrams and tables, exhibits (code, prose, table and
 diagram source, `src/tiles/builtins/generic.tsx`), library tiles and tiles
 made in chat. Each stands on a section of How it works (or on Where this
 fits), or is the Overview's main diagram, and is as wide as its section.
+A prose exhibit's text stands on a faint wash behind a left rule, in a card
+or bare in a section's body, so it reads as an exhibit set apart from the
+section's own text (a note block has the rule but no wash); its lists keep
+their bullets and numbers.
 
 - **Custom tiles** (`src/tiles/custom/`) draw in sandboxed frames from the
   daemon's frame route: the title is the page's, the body is the tile's. A
