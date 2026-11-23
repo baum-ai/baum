@@ -1110,11 +1110,13 @@ export function TableDiagram({ data }: { data: TableData }) {
         const body =
           kind.kind === "chips" && text && (typeof cell === "string" || !cell.was) ? (
             <Chip text={text} tint={Math.max(0, kind.values.indexOf(text))} />
+          ) : kind.kind === "quantity" ? (
+            <span className="font-medium text-primary">
+              <Cell cell={cell} />
+            </span>
           ) : (
             <Cell cell={cell} />
           );
-        if (kind.kind === "quantity")
-          return <span className="font-medium text-primary">{body}</span>;
         if (position !== 0) return body;
         // A changed row has the sequence's Changed pill and a bar at its
         // left edge; while any row has, every label leaves room for the bar.
@@ -1173,7 +1175,7 @@ export function TableDiagram({ data }: { data: TableData }) {
                 // A changed row may sit below the fold.
                 if (on) setAll(true);
               }}
-              className="ml-auto text-sm"
+              className="ml-auto"
             >
               Show only changes
             </Toggle>

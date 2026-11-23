@@ -1203,6 +1203,11 @@ describe("a section's body", () => {
       data: { columns: ["Step"], rows: [[{ text: "Pair", was: "Scan" }], ["Offer"]], source: [] },
     });
     expect(container.querySelectorAll("tbody tr")[0]?.textContent).toContain("Changed");
+    const numbers = await card({
+      ...table,
+      data: { columns: ["Limit"], rows: [[{ text: "10", was: "5" }], ["20"]], source: [] },
+    });
+    expect(numbers.querySelectorAll("tbody tr")[0]?.textContent).toContain("Changed");
   });
 
   it("keeps a number column right-aligned when a cell holds a dash", async () => {
