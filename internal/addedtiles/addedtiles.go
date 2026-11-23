@@ -246,9 +246,11 @@ func (s *Service) write(ctx context.Context, change func(conn *sql.Conn) error) 
 }
 
 // prune keeps the Keep most recently changed pull requests, drops removed
-// tiles older than KeepRemoved, and the fills of tiles no longer added.
+// tiles older than KeepRemoved, the fills of tiles no longer added, and the
+// images of pull requests without added tiles once they are ImageGrace old.
 func prune(ctx context.Context, conn *sql.Conn, now time.Time) error {
 	cutoff := now.Add(-KeepRemoved).UTC().Format(time.RFC3339Nano)
+	images := now.Add(-ImageGrace).UTC().Format(time.RFC3339Nano)
 	for _, statement := range []struct {
 		query string
 		args  []any
@@ -256,7 +258,7 @@ func prune(ctx context.Context, conn *sql.Conn, now time.Time) error {
 		{`DELETE FROM added_tiles WHERE removed IS NOT NULL AND removed < ?`, []any{cutoff}},
 		{`DELETE FROM added_tiles WHERE pr NOT IN (SELECT pr FROM added_tiles GROUP BY pr ORDER BY MAX(COALESCE(removed, added)) DESC, pr LIMIT ?)`, []any{Keep}},
 		{`DELETE FROM tile_fills WHERE NOT EXISTS (SELECT 1 FROM added_tiles a WHERE a.pr = tile_fills.pr AND a.tile = tile_fills.tile)`, nil},
-		{`DELETE FROM added_images WHERE NOT EXISTS (SELECT 1 FROM added_tiles a WHERE a.pr = added_images.pr)`, nil},
+		{`DELETE FROM added_images WHERE at < ? AND NOT EXISTS (SELECT 1 FROM added_tiles a WHERE a.pr = added_images.pr)`, []any{images}},
 	} {
 		if _, err := conn.ExecContext(ctx, statement.query, statement.args...); err != nil {
 			return err

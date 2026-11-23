@@ -25,6 +25,7 @@ import {
   BranchIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CircleDashedIcon,
   GitHubIcon,
   MergeIcon,
   StackIcon,
@@ -82,7 +83,7 @@ import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./conte
 import { ListPagination, useListPage } from "./list-pagination";
 import { ListSection, type ListTone } from "./list";
 import { useDeadlineNow } from "./live";
-import { peekHref } from "./sessions";
+import { inPanel, peekHref } from "./sessions";
 import {
   canMerge,
   readyToMerge,
@@ -139,6 +140,9 @@ export type UpNextItem = {
   minutes: number | null;
   /** The agent sessions working on its branch now. */
   working: LiveSession[];
+  /** The open agent sessions on its branch that wait for the person; not a
+   *  session panel's, whose finished turn waits on the panel. */
+  waitingSessions: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
   /** The latest fix, when it ended without changing anything: not a failure,
@@ -387,7 +391,8 @@ export function upNext(
       continue;
     }
     const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
-    const working = liveFor(live, entry.pull_request).filter((s) => s.state === "running");
+    const sessions = liveFor(live, entry.pull_request);
+    const working = sessions.filter((s) => s.state === "running");
     items.push({
       key,
       kind,
@@ -395,6 +400,7 @@ export function upNext(
       why: why(kind, entry, working.length, now),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
+      waitingSessions: sessions.filter((s) => s.state === "idle" && !inPanel(s)),
       ...(last && changedNothing(last)
         ? { unchangedFix: last }
         : last?.state === "failed"
@@ -2669,28 +2675,57 @@ function Panel({
           {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
         </section>
       ))}
-      {item && item.working.length > 0 ? (
-        <p className="upnext-agents">
-          <LiveDot className="text-status-positive" />
-          {/* Each opens on Sessions with that session selected. */}
-          {item.working.length === 1 ? (
-            <Link href={peekHref(item.working[0]!)}>
-              1 agent session working on its branch right now
-            </Link>
-          ) : (
-            <span>
-              {plural(item.working.length, "agent session")} working on its branch right now:{" "}
-              {item.working.map((session, index) => (
-                <Fragment key={peekHref(session)}>
-                  {index > 0 ? " · " : ""}
-                  <Link href={peekHref(session)}>{agentName(session.agent)}</Link>
-                </Fragment>
-              ))}
-            </span>
-          )}
-        </p>
+      {item ? (
+        <AgentSessions
+          sessions={item.working}
+          Link={Link}
+          what="working on its branch right now"
+          mark={<LiveDot className="text-status-positive" />}
+        />
+      ) : null}
+      {item ? (
+        <AgentSessions
+          sessions={item.waitingSessions}
+          Link={Link}
+          what="waiting for you on its branch"
+          mark={<CircleDashedIcon size={12} className="flex-none text-status-caution" />}
+        />
       ) : null}
     </article>
+  );
+}
+
+/** A line under the review naming the agent sessions on its branch in one
+ *  state; each opens on Sessions with that session selected. */
+function AgentSessions({
+  sessions,
+  what,
+  mark,
+  Link,
+}: {
+  sessions: LiveSession[];
+  what: string;
+  mark: ReactNode;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  if (sessions.length === 0) return null;
+  return (
+    <p className="upnext-agents">
+      {mark}
+      {sessions.length === 1 ? (
+        <Link href={peekHref(sessions[0]!)}>1 agent session {what}</Link>
+      ) : (
+        <span>
+          {plural(sessions.length, "agent session")} {what}:{" "}
+          {sessions.map((session, index) => (
+            <Fragment key={peekHref(session)}>
+              {index > 0 ? " · " : ""}
+              <Link href={peekHref(session)}>{agentName(session.agent)}</Link>
+            </Fragment>
+          ))}
+        </span>
+      )}
+    </p>
   );
 }
 
