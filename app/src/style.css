@@ -2502,9 +2502,9 @@ dialog.local-dialog-wide {
 .settings-nav-item:active {
   transform: translateY(1px);
 }
-/* The selection follows the keyboard's focus, so it is the focus mark. */
 .settings-nav-item:focus-visible {
   outline: none;
+  box-shadow: inset var(--focus-ring);
 }
 .settings-nav-item[aria-current="page"] {
   background: var(--nav-selected);
@@ -2897,7 +2897,6 @@ dialog.local-dialog-wide {
 }
 .settings-row-pick .settings-row-label {
   grid-area: label;
-  white-space: nowrap;
 }
 .settings-row-pick .settings-row-detail {
   grid-area: detail;
@@ -3236,12 +3235,12 @@ dialog.local-dialog-wide {
   .settings-nav-sub {
     display: none;
   }
-  .settings-row-control,
+  .settings-row-control:has(.settings-select, .settings-model),
   .settings-select,
   .settings-model {
     width: 100%;
   }
-  .settings-row-control {
+  .settings-row-control:has(.settings-select, .settings-model) {
     justify-content: flex-start;
   }
 }
