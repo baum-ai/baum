@@ -596,10 +596,6 @@ function diff(citation, options) {
 // ---------------------------------------------------------------------------
 // Before and after, word by word, as the review's columns compare them.
 
-/** Text as compare reads it: the same words, whatever their spacing, are
- *  the same. Case counts, as it does in code, values and names. */
-const sameKey = (text) => text.trim().replace(/\s+/g, " ");
-
 /** Which words of `a` and `b` (arrays of words and spaces) are in their
  *  longest run in common, as two sets of positions. */
 function keptWords(a, b) {
@@ -658,7 +654,9 @@ function compare(was, now) {
   // fast; past it, the two are drawn unmarked.
   const { common, keptA, keptB } =
     a.length * b.length <= 40000 ? keptWords(a, b) : { common: false, keptA: new Set(), keptB: new Set() };
-  const same = sameKey(before) === sameKey(after);
+  // The same only as written: case and spacing count, as they do in code,
+  // values and quoted literals.
+  const same = before === after;
   const marking = common && !same && before !== "" && after !== "";
   return {
     was: markedText(a, keptA, marking, "del", "kit-del"),

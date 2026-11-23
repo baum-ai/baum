@@ -342,17 +342,18 @@ describe("baum.compare", () => {
     expect(out.ins).toEqual([]);
   });
 
-  it("leaves a rewrite unmarked, reads spacing as the same and case as a change", () => {
+  it("leaves a rewrite unmarked and calls only identical texts the same", () => {
     expect(compare("int64", "string, a user login")).toMatchObject({
       del: [],
       ins: [],
       same: false,
     });
-    expect(compare("TEXT  NOT\nNULL", "TEXT NOT NULL")).toMatchObject({
+    expect(compare("TEXT NOT NULL", "TEXT NOT NULL")).toMatchObject({
       del: [],
       ins: [],
       same: true,
     });
+    expect(compare("DEFAULT 'a  b'", "DEFAULT 'a b'")).toMatchObject({ same: false });
   });
 
   it("marks a word whose case changed", () => {

@@ -515,7 +515,6 @@ box.append(more);
 }
 return node;
 }
-const sameKey = (text) => text.trim().replace(/\s+/g, " ");
 function keptWords(a,b){
 const words = (pieces) => pieces.flatMap((piece, at) => (/^\s+$/.test(piece) ? [] : [at]));
 const[wa,wb]=[words(a),words(b)];
@@ -564,7 +563,7 @@ const split = (text) => text.match(/\s+|\S+/g) ?? [];
 const[a,b]=[split(before),split(after)];
 const{common,keptA,keptB}=
 a.length*b.length<=40000?keptWords(a,b):{common:false,keptA:new Set(),keptB:new Set()};
-const same=sameKey(before)===sameKey(after);
+const same=before===after;
 const marking=common&&!same&&before!==""&&after!=="";
 return{
 was:markedText(a,keptA,marking,"del","kit-del"),

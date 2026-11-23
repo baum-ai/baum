@@ -256,8 +256,8 @@
 
   /** A column's row: what changed on a pill over its name, its definition
    *  before and after with the words that differ marked, and its note. A
-   *  column listed only beside the changes, or whose definition reads the
-   *  same, is drawn quieter and marked so "Show only changes" can hide it. */
+   *  column listed only beside the changes, with its definition as it was,
+   *  is drawn quieter and marked so "Show only changes" can hide it. */
   function columnRow(column, created) {
     const note = column.note ? baum.html`<span class="kit-small kit-muted note">${column.note}</span>` : null;
     if (created) {
@@ -270,7 +270,7 @@
     // A column listed as unchanged whose definition differs is drawn as the
     // change it is.
     const listed = column.change === "unchanged";
-    const same = column.before !== null && column.after !== null && words.same && (listed || (column.change === "altered" && !column.destructive));
+    const same = listed && column.before !== null && column.after !== null && words.same;
     const change = listed ? "altered" : column.change;
     const lost = column.destructive && !listed;
     return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>

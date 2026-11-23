@@ -233,7 +233,7 @@
 
   /** A field's row: what changed on a pill over its name, its type before
    *  and after with the words that differ marked. A field listed only
-   *  beside the changes, or whose type reads the same, is drawn quieter and
+   *  beside the changes, with its type as it was, is drawn quieter and
    *  marked so "Show only changes" can hide it. */
   function fieldRow(row, added) {
     const required = REQUIRED[row.required] ? baum.html`<span class="kit-small kit-subtle required">${REQUIRED[row.required]}</span>` : null;
@@ -244,9 +244,11 @@
       </tr>`;
     }
     const words = baum.compare(row.before ?? "", row.after ?? "");
-    // A field listed as unchanged whose type differs is drawn as the change
-    // it is.
-    const same = row.before !== null && row.after !== null && words.same && (row.change === "unchanged" || row.change === "changed");
+    // Only a field listed as unchanged is drawn quieter, and only when its
+    // type is: one marked changed may have changed what the type does not
+    // show (whether it is required). One listed as unchanged whose type
+    // differs is drawn as the change it is.
+    const same = row.change === "unchanged" && row.before !== null && row.after !== null && words.same;
     const change = row.change === "unchanged" ? "changed" : row.change;
     return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>
       <td class="ident">
