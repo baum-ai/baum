@@ -143,9 +143,25 @@ it("sorts Pull requests within each bucket, groups by their first-ranked member"
     ["requested", [2, 1]],
     ["other", [4, 3]],
   ]);
-  expect(groups[1]!.groups.map((one) => one.group.id)).toEqual(["g"]);
-  // Without a sort, the buckets keep the order they were given.
-  expect(numbers(inboxGroups(rows, [group])[0]!.rows)).toEqual([1, 2]);
+  // The group falls among the rows by its riskiest member (8, risk 5).
+  const line = (one: { group?: { group: ReviewGroup }; entry?: Entry }) =>
+    one.group ? one.group.group.id : one.entry!.pull_request.number;
+  expect(groups[1]!.lines.map(line)).toEqual(["g", 4, 3]);
+  // Without a sort, the buckets keep the order they were given, groups first.
+  const plain = inboxGroups(rows, [group]);
+  expect(numbers(plain[0]!.rows)).toEqual([1, 2]);
+  expect(plain[1]!.lines.map(line)).toEqual(["g", 3, 4]);
+});
+
+it("puts a group after a lone pull request that ranks higher", () => {
+  // The group's riskiest member scores 1; the lone pull request scores 5,
+  // and the one with no score goes last.
+  const group = { id: "g", repository: "acme/demo", name: "Pair", members: [7, 8] } as ReviewGroup;
+  const rows = [entry(3), entry(4, { risk: 5 }), entry(7, { risk: 1 }), entry(8)];
+  const [other] = inboxGroups(rows, [group], parseSort("risk"));
+  expect(
+    other!.lines.map((one) => (one.group ? one.group.group.id : one.entry.pull_request.number)),
+  ).toEqual([4, "g", 3]);
 });
 
 it("places a sorted stack at its first-ranked member, not its base", () => {

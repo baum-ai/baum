@@ -182,18 +182,3 @@ export function sortBy<T>(items: T[], keys: SortKey[], entryOf: (item: T) => Ent
   if (keys.length === 0) return items;
   return [...items].sort((a, b) => compareEntries(keys, entryOf(a), entryOf(b)));
 }
-
-/** Groups of pull requests sorted by their first-ranked member, keeping
- *  their order where they tie. */
-export function sortGroupsBy<T>(groups: T[], keys: SortKey[], membersOf: (group: T) => Entry[]) {
-  if (keys.length === 0) return groups;
-  const first = new Map(
-    groups.map((group) => [group, sortBy(membersOf(group), keys, (entry) => entry)[0]]),
-  );
-  return [...groups].sort((a, b) => {
-    const x = first.get(a);
-    const y = first.get(b);
-    if (!x || !y) return x ? -1 : y ? 1 : 0;
-    return compareEntries(keys, x, y);
-  });
-}
