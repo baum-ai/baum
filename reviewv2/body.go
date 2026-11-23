@@ -79,9 +79,13 @@ func NoteKind(kind string) string {
 	return ""
 }
 
-// PointTone is tone when it is one of view.Tones but plain, else empty.
+// PointTones are the tones a point can carry: view.Tones but plain, which
+// is a point without one.
+var PointTones = slices.DeleteFunc(slices.Clone(view.Tones), func(t string) bool { return t == "plain" })
+
+// PointTone is tone when it is one of PointTones, else empty.
 func PointTone(tone string) string {
-	if tone != "plain" && slices.Contains(view.Tones, tone) {
+	if slices.Contains(PointTones, tone) {
 		return tone
 	}
 	return ""

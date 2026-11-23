@@ -1137,7 +1137,7 @@ describe("a section's body", () => {
 
   it("leaves the points of a block without tones unmarked, and a note without a kind plain", async () => {
     const body = await bodyOf();
-    expect(body.querySelectorAll("[data-point] [aria-hidden].rounded-full")).toHaveLength(0);
+    expect(body.querySelectorAll("[data-point] [data-mark]")).toHaveLength(0);
     expect(body.querySelector("[data-point][data-tone]")).toBeNull();
     expect(body.querySelector("[data-kind]")).toBeNull();
   });
@@ -1148,8 +1148,7 @@ describe("a section's body", () => {
     const rows = [...body.querySelectorAll<HTMLElement>("[data-point]")];
     expect(rows.map((row) => row.dataset.tone ?? "plain")).toEqual(["good", "bad", "muted"]);
     // Every line leads with a marker, and a toned one says what it means.
-    for (const row of rows)
-      expect(row.querySelectorAll("[aria-hidden].rounded-full")).toHaveLength(1);
+    for (const row of rows) expect(row.querySelectorAll("[data-mark]")).toHaveLength(1);
     expect(rows[1]!.querySelector(".sr-only")?.textContent).toBe("fails or is refused: ");
     const notes = [...body.querySelectorAll<HTMLElement>('[data-block="note"] [data-kind]')];
     expect(notes.map((note) => note.dataset.kind)).toEqual(["decision", "caveat", "follow_up"]);

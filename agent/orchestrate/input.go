@@ -154,6 +154,9 @@ func bodyText(body []reviewv2.Block) []string {
 	out := []string{}
 	for _, b := range body {
 		line := b.Type + ": "
+		if b.Kind != "" {
+			line = b.Type + " (" + b.Kind + "): "
+		}
 		if b.Title != "" {
 			line += b.Title + ". "
 		}
@@ -162,6 +165,9 @@ func bodyText(body []reviewv2.Block) []string {
 			var points []string
 			for _, p := range b.Items {
 				point := p.Text
+				if p.Tone != "" {
+					point = "[" + p.Tone + "] " + point
+				}
 				if p.More != "" {
 					point += " (" + p.More + ")"
 				}

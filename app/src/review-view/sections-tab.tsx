@@ -355,17 +355,7 @@ function BodyBlock({
           <InlineMarkdown>{block.text}</InlineMarkdown>
         </p>
       ) : block.type === "points" ? (
-        <ul className="border-t border-subtle">
-          {block.items.map((point, position) => (
-            <PointRow
-              key={position}
-              id={itemId(pointId(section, at, position, point))}
-              point={point}
-              marked={block.items.some((item) => item.tone)}
-              document={document}
-            />
-          ))}
-        </ul>
+        <PointList block={block} at={at} section={section} document={document} itemId={itemId} />
       ) : block.kind ? (
         <KindNote kind={block.kind} text={block.text} />
       ) : (
@@ -374,6 +364,37 @@ function BodyBlock({
         </p>
       )}
     </div>
+  );
+}
+
+/** A points block's lines; when some point has a tone, each line leads with
+ *  its marker. */
+function PointList({
+  block,
+  at,
+  section,
+  document,
+  itemId,
+}: {
+  block: Extract<V2Block, { type: "points" }>;
+  at: number;
+  section: string;
+  document: ReviewDocument;
+  itemId: (ref: string) => string;
+}) {
+  const marked = block.items.some((item) => item.tone);
+  return (
+    <ul className="border-t border-subtle">
+      {block.items.map((point, position) => (
+        <PointRow
+          key={position}
+          id={itemId(pointId(section, at, position, point))}
+          point={point}
+          marked={marked}
+          document={document}
+        />
+      ))}
+    </ul>
   );
 }
 
@@ -427,15 +448,17 @@ function KindNote({ kind, text }: { kind: NoteKind; text: string }) {
   );
 }
 
-/** A point's marker by its tone: a dot filled in the tone's colour, a hollow
- *  ring for a plain point beside toned ones, dashed for a missing one. */
+/** A point's marker by its tone: a dot filled in the tone's colour, a square
+ *  for a bad one (so it differs from a good one by shape, not only colour), a
+ *  hollow ring for a plain point beside toned ones and for a missing one,
+ *  which is red. */
 const MARK: Record<Tone, string> = {
-  plain: "border border-strong",
-  new: "bg-status-info",
-  good: "bg-status-positive",
-  bad: "bg-status-critical",
-  muted: "bg-(--border-strong)",
-  missing: "border border-dashed border-status-critical",
+  plain: "rounded-full border border-strong",
+  new: "rounded-full bg-status-info",
+  good: "rounded-full bg-status-positive",
+  bad: "rounded-[1px] bg-status-critical",
+  muted: "rounded-full bg-(--border-strong)",
+  missing: "rounded-full border-[1.5px] border-status-critical",
 };
 
 /** What a point's marker says, read out before its text. */
@@ -466,7 +489,8 @@ function PointRow({
       <span
         aria-hidden
         title={means}
-        className={cn("size-2 flex-none -translate-y-px rounded-full", MARK[tone])}
+        data-mark=""
+        className={cn("size-2 flex-none -translate-y-px", MARK[tone])}
       />
       <span className={cn("min-w-0", tone === "muted" && "text-secondary")}>
         {means ? <span className="sr-only">{means}: </span> : null}
