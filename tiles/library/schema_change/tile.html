@@ -99,7 +99,11 @@
   /** Columns listed as unchanged whose definition differs: drawn, and
    *  counted, as altered. */
   const misListed = (table) =>
-    table.columns.filter((column) => column.change === "unchanged" && column.before !== column.after);
+    table.columns.filter(
+      (column) =>
+        column.change === "unchanged" &&
+        (column.before === null || column.after === null || !baum.compare(column.before, column.after).same),
+    );
   const destructiveColumns = (table) => changedColumns(table).filter((column) => column.destructive);
 
   const destructive = (table) => table.change === "dropped" || destructiveColumns(table).length > 0;
