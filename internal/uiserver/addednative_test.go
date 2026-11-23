@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/reviewv2"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // add_tile's built-in types are the ones the host adds, by the same names.
@@ -28,6 +30,30 @@ func TestTheBuiltinTypesAreTheNativeAddTypes(t *testing.T) {
 	}
 	if !slices.Equal(names, NativeAddTypes) {
 		t.Fatalf("agentcontext lists %v, uiserver adds %v", names, NativeAddTypes)
+	}
+}
+
+// The tile guide names the types add_tile takes: the native ones and the
+// library's, all of them.
+func TestGuideNamesTheTypesAddTileTakes(t *testing.T) {
+	guide, err := os.ReadFile("../../tiles/kit/GUIDE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for _, line := range strings.Split(string(guide), "\n") {
+		if !strings.HasPrefix(line, "Types you can add") {
+			continue
+		}
+		for _, m := range regexp.MustCompile("`([a-z][a-z0-9_]*)`").FindAllStringSubmatch(line, -1) {
+			listed = append(listed, m[1])
+		}
+	}
+	want := append(slices.Clone(NativeAddTypes), library.Names...)
+	slices.Sort(want)
+	slices.Sort(listed)
+	if !slices.Equal(want, listed) {
+		t.Errorf("add_tile takes %v; GUIDE.md lists %v", want, listed)
 	}
 }
 

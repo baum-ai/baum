@@ -430,6 +430,11 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan struct{}, 1)
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
+	// The checks to skip are the ones published before it subscribed: one
+	// published once it has, even before the loop first reads, is sent.
+	if fresh {
+		skipChecksUpTo = s.sequence
+	}
 	s.mu.Unlock()
 	select {
 	case s.joined <- struct{}{}:
@@ -452,9 +457,6 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		if after > latest || (len(events) > 0 && after+1 < events[0].ID) {
 			_, _ = fmt.Fprintf(w, "id: %d\nevent: reset\ndata: {}\n\n", latest)
 			after = latest
-		}
-		if fresh {
-			skipChecksUpTo, fresh = latest, false
 		}
 		for _, e := range events {
 			if e.ID > after {

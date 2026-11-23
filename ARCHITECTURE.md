@@ -642,7 +642,11 @@ has two parts.
   `overview`, `change`, `risks`, `evidence`, `intent`, `decisions`,
   `context`, `media`, `everything_else`, `prose`, `table`, `diagram` and
   `code` (`tiles.Builtins` gives each a title, a use-when line and whether a
-  document has at most one). A single tile's ID is its
+  document has at most one). These are the v1 composition types; the types
+  the review page draws and chat's `add_tile` takes are `flow`, `columns`,
+  `sequence`, `table`, `code` and `images`. A custom type may have none of
+  these names, nor a library type's, nor `custom` (`tilelibrary.ReservedNames`, which the tile
+  guide lists, kept equal by a test). A single tile's ID is its
   type, and a change tile's ID is its change's, which is its section's, so
   comments, chat tools, recommendation and risk score references, agent
   findings and details retries that name a section name its tile. A

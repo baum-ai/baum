@@ -36,7 +36,7 @@ var BuiltinTypes = []BuiltinType{
 	{Name: "code", Title: "Code", UseWhen: "the few lines of one hunk the reader must see; the host reads them from the clone", Schema: json.RawMessage(codeAddSchema),
 		Note: "Name a hunk of the version shown and, optionally, the first and last line of its new side. The host reads the code at the version's head: never write the code yourself."},
 	{Name: "images", Title: "Images", UseWhen: "screenshots or other images of what the change looks like: UI states, charts, recordings' frames", Schema: json.RawMessage(imagesAddSchema),
-		Note: "Save each image to a file first (a screenshot you took, or an image downloaded from the pull request's description), then pass its absolute path. The host reads, downscales and stores it with this pull request's added tiles; never pass image bytes. Pass title for the tile's heading."},
+		Note: "Save each image to a file first (a screenshot you took, or an image downloaded from the pull request's description), then pass its absolute path. To screenshot the repository's app, use the way its agent instructions (CLAUDE.md, AGENTS.md, their guides) describe, if they do, rather than writing your own capture. The host reads, downscales and stores it with this pull request's added tiles; never pass image bytes. Pass title for the tile's heading."},
 }
 
 // builtinType returns the built-in type named.
