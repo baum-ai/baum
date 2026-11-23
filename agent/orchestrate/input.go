@@ -148,7 +148,7 @@ func sectionBrief(s reviewv2.Section, tiles []reviewv2.Tile, hunks map[string][]
 }
 
 // bodyText is a section's body as plain lines for another agent to read: a
-// text block's text (a note's kind in brackets after its type), a points
+// text block's text (a note's kind in parentheses after its type), a points
 // block's points (each led by its tone in square brackets, with its detail)
 // and a tile block's tile ID.
 func bodyText(body []reviewv2.Block) []string {
