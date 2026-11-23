@@ -448,17 +448,17 @@ function KindNote({ kind, text }: { kind: NoteKind; text: string }) {
   );
 }
 
-/** A point's marker by its tone: a dot filled in the tone's colour, a square
- *  for a bad one (so it differs from a good one by shape, not only colour), a
- *  hollow ring for a plain point beside toned ones and for a missing one,
- *  which is red. */
+/** A point's marker by its tone: a dot filled in the tone's colour, a
+ *  square for what is wrong (filled when bad, hollow when missing), so they
+ *  differ from the others by shape as well as colour, and a grey ring for a
+ *  plain point beside toned ones. */
 const MARK: Record<Tone, string> = {
   plain: "rounded-full border border-strong",
   new: "rounded-full bg-status-info",
   good: "rounded-full bg-status-positive",
   bad: "rounded-[1px] bg-status-critical",
   muted: "rounded-full bg-(--border-strong)",
-  missing: "rounded-full border-[1.5px] border-status-critical",
+  missing: "rounded-[1px] border-[1.5px] border-status-critical",
 };
 
 /** What a point's marker says, read out before its text. */

@@ -2,6 +2,8 @@ package reviewv2
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -176,6 +178,37 @@ func TestCheckBodyKeepsToneAndKind(t *testing.T) {
 	}
 	if got[1].Kind != "caveat" || got[2].Kind != "" || got[3].Kind != "" {
 		t.Errorf("kinds = %q %q %q", got[1].Kind, got[2].Kind, got[3].Kind)
+	}
+}
+
+// review-2.json lists the same point tones and note kinds as the host keeps.
+func TestSchemaListsToneAndKind(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "schema", "review-2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Defs struct {
+			Block struct {
+				Properties struct {
+					Kind  struct{ Enum []string } `json:"kind"`
+					Items struct {
+						Items struct {
+							Properties struct {
+								Tone struct{ Enum []string } `json:"tone"`
+							} `json:"properties"`
+						} `json:"items"`
+					} `json:"items"`
+				} `json:"properties"`
+			} `json:"v2Block"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	props := schema.Defs.Block.Properties
+	if !slices.Equal(props.Kind.Enum, NoteKinds) || !slices.Equal(props.Items.Items.Properties.Tone.Enum, PointTones) {
+		t.Errorf("kinds %v, tones %v", props.Kind.Enum, props.Items.Items.Properties.Tone.Enum)
 	}
 }
 

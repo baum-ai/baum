@@ -2974,8 +2974,8 @@ builds the rail's model (the sections and the file list) from it.
   block, then its risks: prose at reading width, points as hairline lines that
   open to a detail and the files they cite (in a block where some point has a
   `tone`, every line leads with a mark in its tone's colour: a dot for `new`,
-  `good` and `muted`, a square for `bad`, a red ring for `missing` and a grey
-  ring for plain), a note with a left
+  `good` and `muted`, a filled square for `bad`, a hollow one for `missing`
+  and a grey ring for plain), a note with a left
   rule (a note's `kind` puts its icon and word before the text: a caveat in
   the caution colour, a decision, unchanged or a follow-up), and tile
   blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase

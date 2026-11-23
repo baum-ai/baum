@@ -201,7 +201,7 @@ type Block struct {
 
 // Point is one line of a points block: Text on the page, More (optional)
 // behind a click with the files it cites. Tone (optional, one of
-// view.Tones but plain) marks the line as new, good, bad, muted or missing.
+// PointTones) marks the line as new, good, bad, muted or missing.
 type Point struct {
 	Text  string   `json:"text"`
 	More  string   `json:"more,omitempty"`
