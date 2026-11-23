@@ -66,6 +66,21 @@ func TestFiltersArePerPageQueriesAndSavedTabs(t *testing.T) {
 	if got, err := (&Store{Path: s.Path}).Read("filters", ""); err != nil || string(got.Value) != value {
 		t.Fatalf("reopen: %+v %v", got, err)
 	}
+	sorted := `{"pages":{},"sorts":{"pulls":"opened,-risk","inbox:0123456789abcdef0123456789abcdef":"-updated","tab:0123456789abcdef0123456789abcdef":"risk"},"tabs":[{"id":"0123456789abcdef0123456789abcdef","name":"Failing","view":"open","query":"checks:failing","sort":"-opened"}]}`
+	save(t, s, "filters", "", 1, "mutation-00000004", sorted)
+	if got, err := (&Store{Path: s.Path}).Read("filters", ""); err != nil || string(got.Value) != sorted {
+		t.Fatalf("sorted reopen: %+v %v", got, err)
+	}
+	for name, bad := range map[string]string{
+		"long sort":     `{"pages":{},"sorts":{"pulls":"` + strings.Repeat("a", 201) + `"}}`,
+		"sort page":     `{"pages":{},"sorts":{"timeline":"risk"}}`,
+		"null sort":     `{"pages":{},"sorts":{"pulls":null}}`,
+		"long tab sort": `{"pages":{},"tabs":[` + strings.Replace(tab, `"query"`, `"sort":"`+strings.Repeat("a", 201)+`","query"`, 1) + `]}`,
+	} {
+		if _, err := s.Replace("filters", "", 2, "mutation-00000005:1", json.RawMessage(bad)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 	for name, bad := range map[string]string{
 		"no pages":   `{}`,
 		"page key":   `{"pages":{"timeline":"org:acme"}}`,

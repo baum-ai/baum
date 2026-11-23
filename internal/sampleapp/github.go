@@ -23,7 +23,7 @@ func pullRequests(p project, now time.Time) []discovery.PullRequest {
 			Title: pl.title, URL: "https://github.com/" + repository + "/pull/" + strconv.Itoa(pl.number), Author: pl.author.login,
 			State: "OPEN", AuthoredByMe: pl.author.login == me, ReviewRequestedFromMe: pl.author.login != me,
 			AuthorHasWrite: &yes, ViewerCanPush: &yes, TeamMembershipKnown: true, Review: review, Checks: checks, Merge: merge,
-			Unresolved: &zero, UpdatedAt: now.Add(-pl.updated)}
+			Unresolved: &zero, CreatedAt: now.Add(-pl.opened), UpdatedAt: now.Add(-pl.updated)}
 	}
 	prs := []discovery.PullRequest{
 		pr(tags, "commented", "passing", "ready"),

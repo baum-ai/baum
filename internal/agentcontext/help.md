@@ -4,11 +4,11 @@ baum is a desktop app and local daemon that helps a person review pull requests 
 
 ## inbox
 
-The Inbox is the first page. It shows the saved inboxes, each a query over pull requests, and for the open inbox its Up next queue: the pull requests that wait on the person, with what each waits for (a review, a fix, a merge). Rows can be reviewed, fixed, merged, snoozed or archived from the keys. Inboxes are made, edited and managed from the page.
+The Inbox is the first page. It shows the saved inboxes, each a query over pull requests, and for the open inbox its Up next queue: the pull requests that wait on the person, with what each waits for (a review, a fix, a merge). Rows can be reviewed, fixed, merged, snoozed or archived from the keys. Inboxes are made, edited and managed from the page. Each inbox has a sort, saved with it, that orders the rows within each section by up to eight keys in turn (Opened, Last activity, Risk, Review time, Size, Repository, Author, Reviewed); without one the queue is in its own order, Priority.
 
 ## pulls
 
-Pull requests lists every pull request of the picked repositories in tabs: Open, any saved tabs the person made (each a saved filter), and Closed. A filter narrows the list. Opening a row opens the pull request page.
+Pull requests lists every pull request of the picked repositories in tabs: Open, any saved tabs the person made (each a saved filter), and Closed. A filter narrows the list, and a sort orders each bucket by the same keys as an inbox's (each saved tab has its own). Opening a row opens the pull request page.
 
 ## timeline
 
@@ -106,6 +106,7 @@ Pull requests (and, for `m`, `f` and `t`, the Inbox):
 - `x`: select or deselect. `Space`: peek at the review below the row, or show or hide a group's pull requests.
 - `m`: merge, where offered. `f`: fix, where offered. `t`: watch the fix agent or read its transcript. `r`: refresh from GitHub (Pull requests only).
 - `/`: open the filter (Inbox and Pull requests).
+- `S` (Shift+S, `⇧S` on a Mac): open the sort (Inbox and Pull requests). In it, `1–8` add a field or turn it round, `Backspace` drops the last field and `0` goes back to Priority.
 - `h`, `←` and `l`, `→`: previous and next tab on Pull requests.
 - `Mod+Shift+G`: open the focused pull request on GitHub (Inbox, Pull requests and a pull request page).
 

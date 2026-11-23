@@ -8,6 +8,8 @@ import {
   type SaveOption,
 } from "./filter-menu";
 import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
+import { parseSort, sortBy } from "./pr-sort";
+import { SortButton } from "./sort-menu";
 import {
   Fragment,
   useEffect,
@@ -885,11 +887,14 @@ const isGroup = (line: Line | undefined): line is GroupRow => !!line && "group" 
 export const groupKey = (group: ReviewGroup) => `group:${group.id}`;
 
 /** A stack follows its first shown open member in base-to-tip order. Other
- *  groups follow their first member in the action list. Each appears once,
- *  with its members nested under it and retaining their own states. */
+ *  groups follow their first member in the action list, as every group does
+ *  in a sorted list (`sorted`), where that is its first-ranked member. Each
+ *  appears once, with its members nested under it and retaining their own
+ *  states. */
 export function withGroups<S extends { rows: Row[] }>(
   sections: S[],
   groups: ReviewGroup[],
+  sorted = false,
 ): (Omit<S, "rows"> & { lines: Line[] })[] {
   const owner = new Map<Row, GroupRow>();
   for (const group of groups) {
@@ -916,7 +921,7 @@ export function withGroups<S extends { rows: Row[] }>(
     for (const row of rows) {
       const group = owner.get(row);
       if (!group) lines.push(row);
-      else if (!placed.has(group) && (!group.group.stack || group.members[0] === row)) {
+      else if (!placed.has(group) && (sorted || !group.group.stack || group.members[0] === row)) {
         placed.add(group);
         lines.push(group);
       }
@@ -1228,6 +1233,17 @@ export function UpNextPage({
   const quick = useFilterDraft(`inbox:${scope.id}`, saved, inboxSaves);
   const { query, set: setQuery } = quick;
   const filtering = quick.dirty;
+  // The inbox's sort, saved with it at once; kept on the page alone while
+  // the inboxes cannot be saved.
+  const [ownSort, setOwnSort] = useState<{ id: string; sort: string } | null>(null);
+  const sort = ownSort?.id === scope.id ? ownSort.sort : (scope.sort ?? "");
+  const setSort = (next: string) => {
+    if (next === sort) return;
+    if (updateInbox) {
+      setOwnSort(null);
+      updateInbox({ sort: next });
+    } else setOwnSort({ id: scope.id, sort: next });
+  };
   useEffect(() => {
     const create = (event: KeyboardEvent) => {
       if (
@@ -1315,11 +1331,21 @@ export function UpNextPage({
       ),
     },
   ];
-  const allGroups = withGroups(sections, reviewGroups);
+  // The sort orders each section's rows, its own order settling any tie; a
+  // group follows its first-ranked member.
+  const sortKeys = parseSort(sort);
+  const allGroups = withGroups(
+    sections.map((section) => ({
+      ...section,
+      rows: sortBy(section.rows, sortKeys, (row) => row.entry),
+    })),
+    reviewGroups,
+    sortKeys.length > 0,
+  );
   const allLines = allGroups.flatMap((group) => group.lines);
   const activeCount = allLines.length;
   const snoozedCount = snoozedOpen ? snoozed.length : 0;
-  const pageScope = JSON.stringify([scope.id, query]);
+  const pageScope = JSON.stringify([scope.id, query, sort]);
   const indexOfLine = (key: string | null) =>
     allLines.findIndex(
       (line) => line.key === key || (isGroup(line) && line.members.some((row) => row.key === key)),
@@ -1783,6 +1809,7 @@ export function UpNextPage({
                 </>
               )}
               {filterButton}
+              <SortButton sort={sort} onChange={setSort} />
               {refreshButton}
             </div>
             <p className="upnext-list-summary">{summary}</p>

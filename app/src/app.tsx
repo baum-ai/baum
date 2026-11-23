@@ -67,12 +67,15 @@ import {
   SaveButton,
   type SaveOption,
 } from "./filter-menu";
+import { parseSort } from "./pr-sort";
+import { SortButton } from "./sort-menu";
 import {
   matchesQuery,
   MAX_TABS,
   queryProblem,
   quote,
   usePageFilter,
+  usePageSort,
   useFilterDraft,
   useSavedTabs,
   type SavedTab,
@@ -782,6 +785,12 @@ function Workspace({ url }: { url: UrlState }) {
     savedTab ? savedTab.query : null,
   );
   const viewFilter = usePageFilter("pulls");
+  // Open and Closed share Pull requests' sort; a saved tab has its own,
+  // saved with it at once.
+  const pageSort = usePageSort("pulls");
+  const pullsSort = savedTab ? (savedTab.sort ?? "") : pageSort.sort;
+  const setPullsSort = (next: string) =>
+    savedTab ? savedTabs.setSort(savedTab.id, next) : pageSort.set(next);
   const pullsQuery = pullsFilter.query;
   const setPullsQuery = (query: string) => {
     if (query === pullsQuery || queryProblem(query, false)) return;
@@ -2203,7 +2212,13 @@ function Workspace({ url }: { url: UrlState }) {
                                   const id = newInboxId();
                                   // From a saved tab, the new one holds its query and the filter.
                                   savedTabs.add(
-                                    { id, name, view: savedTab?.view ?? view, query: pullsQuery },
+                                    {
+                                      id,
+                                      name,
+                                      view: savedTab?.view ?? view,
+                                      query: pullsQuery,
+                                      ...(pullsSort ? { sort: pullsSort } : {}),
+                                    },
                                     savedTab ? `tab:${savedTab.id}` : "pulls",
                                   );
                                   setNamingTab(null);
@@ -2220,6 +2235,7 @@ function Workspace({ url }: { url: UrlState }) {
                     }
                   />
                 )}
+                {tabsPending ? null : <SortButton sort={pullsSort} onChange={setPullsSort} />}
               </div>
               <div className="local-page-body">
                 {/* A cache older than the poll interval is normal; only a failed refresh
@@ -2265,7 +2281,8 @@ function Workspace({ url }: { url: UrlState }) {
               {!loading && rows.length > 0 ? (
                 <Inbox
                   rows={rows}
-                  pageScope={JSON.stringify([activeTab, pullsQuery])}
+                  pageScope={JSON.stringify([activeTab, pullsQuery, pullsSort])}
+                  sort={parseSort(pullsSort)}
                   cloneFor={cloneFor}
                   selection={selection}
                   setSelection={setSelection}
