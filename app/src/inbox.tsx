@@ -390,6 +390,7 @@ export function Inbox({
     const pr = entry.pull_request;
     const clone = cloneFor(entry);
     const items: MenuItem[] = [
+      { label: "Open", hint: "↵", onSelect: () => rowLink(`pr:${key}`)?.click() },
       { label: peeked.has(key) ? "Close peek" : "Peek", hint: "Space", onSelect: () => peek(key) },
     ];
     const label = fixLabel(entry);
