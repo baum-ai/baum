@@ -105,3 +105,32 @@ it("disables only the switch being saved", async () => {
   await flush();
   expect(input("codex").disabled).toBe(false);
 });
+
+it("lets the other provider save while one is pending", async () => {
+  const releases: (() => void)[] = [];
+  const puts: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        puts.push(String(init.body));
+        await new Promise<void>((r) => releases.push(r));
+      }
+      return new Response(JSON.stringify(plans()), { status: 200 });
+    }),
+  );
+  act(() => root.render(<PlanUsageSettings />));
+  await flush();
+  act(() => input("codex").click());
+  act(() => input("claude").click());
+  expect(puts).toEqual([
+    JSON.stringify({ provider: "codex", shown: true }),
+    JSON.stringify({ provider: "claude", shown: false }),
+  ]);
+  expect(input("codex").disabled).toBe(true);
+  expect(input("claude").disabled).toBe(true);
+  releases.forEach((release) => release());
+  await flush();
+  expect(input("codex").disabled).toBe(false);
+  expect(input("claude").disabled).toBe(false);
+});

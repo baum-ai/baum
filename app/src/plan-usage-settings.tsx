@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import { request } from "./api";
 import { PLAN_USAGE_CHANGED } from "./plan-usage";
@@ -22,7 +22,8 @@ const path = "api/settings/plan-usage";
  *  the backends change; "Use baum's default" gives the choice back. */
 export function PlanUsageSettings() {
   const [plans, setPlans] = useState<PlanChoice[] | null>(null);
-  const [saving, setSaving] = useState<string | null>(null);
+  const [saving, setSaving] = useState<ReadonlySet<string>>(new Set());
+  const savingRef = useRef(new Set<string>());
   const [error, setError] = useState("");
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -42,8 +43,9 @@ export function PlanUsageSettings() {
     return () => controller.abort();
   }, [load]);
   const choose = async (provider: string, shown: boolean | null) => {
-    if (saving !== null) return;
-    setSaving(provider);
+    if (savingRef.current.has(provider)) return;
+    savingRef.current.add(provider);
+    setSaving(new Set(savingRef.current));
     setError("");
     try {
       const body = await request<{ plans: PlanChoice[] }>(path, { provider, shown }, "PUT");
@@ -52,7 +54,8 @@ export function PlanUsageSettings() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Local request failed.");
     } finally {
-      setSaving(null);
+      savingRef.current.delete(provider);
+      setSaving(new Set(savingRef.current));
     }
   };
   return (
@@ -78,7 +81,7 @@ export function PlanUsageSettings() {
                   <button
                     type="button"
                     className="underline"
-                    disabled={saving === plan.provider}
+                    disabled={saving.has(plan.provider)}
                     onClick={() => void choose(plan.provider, null)}
                   >
                     Use baum's default ({plan.default ? "shown" : "hidden"})
@@ -96,7 +99,7 @@ export function PlanUsageSettings() {
               type="checkbox"
               role="switch"
               className="local-switch"
-              disabled={saving === plan.provider}
+              disabled={saving.has(plan.provider)}
               checked={plan.shown}
               onChange={(event) => void choose(plan.provider, event.target.checked)}
             />
