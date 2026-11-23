@@ -4,7 +4,6 @@ import { ChevronRightIcon } from "@baum/viewer/components/icons";
 import { centerJump, flashJump } from "@baum/viewer/components/jump-focus";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { Item } from "@baum/viewer/components/review-parts";
-import { SideNavEntry } from "@baum/viewer/components/side-nav";
 import { Badge, CardHeader } from "@baum/viewer/components/ui";
 import {
   agentName,
@@ -109,7 +108,7 @@ function FullSessionDecisions({ session }: { session: LiveSession }) {
   return s ? <SessionDecisionDisclosure session={s} /> : null;
 }
 
-export function relevanceState(s: SessionDecisions): string {
+function relevanceState(s: SessionDecisions): string {
   const r = s.relevance;
   if (!r) return "";
   const parts: string[] = [];
@@ -491,66 +490,5 @@ function sessionTitle(s: SessionDecisions & { title?: string }, live: LiveSessio
     s.title ||
     live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
     s.session_id
-  );
-}
-
-/** Markdown's marks left out of a title shown as plain text. */
-const plain = (text: string) => text.replace(/[`*_]/g, "");
-
-/** A pull request's decisions as a compact list, for the side pane of the
- *  overview tabs: a row each, under its session's name when there are
- *  several, that opens the Decisions pane on it (`{ kind: "decisions", id }`). */
-export function PullRequestDecisionsList({
-  read,
-  live,
-  selected,
-  onOpen,
-}: {
-  read: PullRequestDecisionsRead;
-  live: LiveSession[];
-  selected?: string;
-  onOpen: (id: string) => void;
-}) {
-  const sessions = read.sessions.filter((s) => s.decisions.length > 0);
-  if (sessions.length === 0)
-    return (
-      <p className="px-2.5 py-1.5 text-base text-secondary">
-        {read.sessions.map((s) => captureState(s, Date.now())).find(Boolean) ||
-          "No decisions were captured for this pull request."}
-      </p>
-    );
-  return (
-    <div className="flex flex-col gap-3">
-      {sessions.map((s) => (
-        <section
-          key={`${s.agent}:${s.session_id}`}
-          aria-label={sessionTitle(s, live)}
-          className="flex flex-col gap-0.5"
-        >
-          {sessions.length > 1 ? (
-            <p className="truncate px-2.5 pb-1 text-xs text-tertiary">
-              {agentName(s.agent)} · {sessionTitle(s, live)}
-            </p>
-          ) : null}
-          {s.decisions.map((d) => (
-            <SideNavEntry
-              key={d.decision_id}
-              title={plain(d.title || d.summary)}
-              meta={[
-                label(d.category),
-                d.who === "agent" ? "By the agent" : "By you",
-                formatTime(d.decided_at),
-                d.provisional ? "Provisional" : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-              active={d.decision_id === selected}
-              controls="review-section"
-              onSelect={() => onOpen(d.decision_id)}
-            />
-          ))}
-        </section>
-      ))}
-    </div>
   );
 }

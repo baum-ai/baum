@@ -246,13 +246,14 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 		Model: r.Selected.Model, BundleDigest: c.Digest, BundleBytes: len(c.BundleJSON), BundleFitted: c.Fitted, BundleNotes: c.FitNotes}
 	// The progress log is written as the run goes, so a long case can be watched.
 	progress := &syncWriter{}
+	var progressFile *os.File
 	if s.OutputDir != "" {
 		file, err := os.Create(filepath.Join(s.OutputDir, "progress.log"))
 		if err != nil {
 			return out, err
 		}
 		defer func() { _ = file.Close() }()
-		progress.w = file
+		progress.w, progressFile = file, file
 	}
 	tracked := &trackedBackend{CheckedBackend: r.Selected.Backend, keep: !s.NoTranscript && s.OutputDir != ""}
 	diagnostics := ""
@@ -316,6 +317,9 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 	}
 	if s.OutputDir != "" {
 		if out.Status == "interrupted" {
+			// Windows cannot remove a file that is still open.
+			progress.close()
+			_ = progressFile.Close()
 			for _, name := range caseFiles {
 				_ = os.Remove(filepath.Join(s.OutputDir, name))
 			}
@@ -445,30 +449,6 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 	return result, err
 }
 
-// CanComplete reports whether the backend can make a single structured call
-// (generate.CompleteChecker).
-func (b *trackedBackend) CanComplete() bool { return generate.CompleterOf(b.CheckedBackend) != nil }
-
-// Complete forwards a single structured call (agent.Completer), logging it
-// as a call of the "compose" stage.
-func (b *trackedBackend) Complete(ctx context.Context, r agent.CompleteRequest) (agent.Completion, error) {
-	completer := generate.CompleterOf(b.CheckedBackend)
-	if completer == nil {
-		return agent.Completion{}, generate.ErrCannotComplete
-	}
-	id := b.n.Add(1)
-	started := time.Now()
-	completion, err := completer.Complete(ctx, r)
-	call := Call{Name: fmt.Sprintf("call-%d compose", id), Seconds: time.Since(started).Seconds()}
-	if err != nil {
-		call.Error = truncate(err.Error(), 300)
-	}
-	b.mu.Lock()
-	b.log = append(b.log, call)
-	b.mu.Unlock()
-	return completion, err
-}
-
 func (b *trackedBackend) calls() []Call {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -502,4 +482,11 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	return s.w.Write(p)
+}
+
+// close drops the writer: later writes are discarded.
+func (s *syncWriter) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.w = nil
 }

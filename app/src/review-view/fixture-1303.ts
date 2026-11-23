@@ -1,14 +1,8 @@
 import type { Anchor, ReviewDocument, Section } from "@baum/viewer/review-document";
 import example from "../../../schema/review-example.json" with { type: "json" };
 import { chromeOf } from "./chrome";
-import {
-  parseReviewV2,
-  REVIEW_V2,
-  type ReviewV2,
-  type V2Risk,
-  type V2Section,
-  sectionBody,
-} from "./document";
+import { parseReviewV2, REVIEW_V2, type ReviewV2, type V2Risk, type V2Section } from "./document";
+import { bodyOfSteps } from "./from-v1";
 import { HUNKS } from "./fixture-1303-hunks";
 import { withReview } from "./model";
 
@@ -55,7 +49,7 @@ function section(
     gist,
     level: extra.review_score ?? null,
     level_reasons: [],
-    body: sectionBody({ summary, steps }, []),
+    body: bodyOfSteps(summary, steps),
     risks,
     derived: {
       risk_tier: risks[0]?.tier ?? "unrated",
@@ -601,33 +595,4 @@ export const REVIEW_1303: ReviewV2 = {
 export function review1303(review: ReviewV2 = REVIEW_1303): ReviewDocument {
   const parsed = parseReviewV2(JSON.parse(JSON.stringify(review)), review.drafts)!;
   return withReview(chromeOf(parsed), parsed);
-}
-
-/** TEMPORARY, with from-v1.ts: #1303 as the daemon answers the tile route
- *  until it converts every version, a baum.review/1 document with its
- *  `baum.view/1` view beside it (a native tile's caption and citations in
- *  its data, a code tile as its excerpt). */
-export function legacyAnswer1303(): { document: ReviewDocument; view: unknown } {
-  const review = parseReviewV2(JSON.parse(JSON.stringify(REVIEW_1303)))!;
-  const owners = ["context", ...review.sections.map((section) => section.id)];
-  return JSON.parse(
-    JSON.stringify({
-      document: { ...chromeOf(review), schema: "baum.review/1" },
-      view: {
-        schema: "baum.view/1",
-        overview: {
-          risk_summary: review.summary.risk_why,
-          verdict: review.summary.verdict,
-          screenshots: review.overview.screenshots,
-          diagram: review.overview.diagram,
-          intent: review.overview.intent,
-        },
-        sections: owners.map((id) => ({
-          id,
-          tiles: review.tiles.filter((tile) => tile.owner === id).map((tile) => tile.id),
-        })),
-        tiles: review.tiles.map(({ owner: _o, caption: _c, cites: _s, ...tile }) => tile),
-      },
-    }),
-  );
 }

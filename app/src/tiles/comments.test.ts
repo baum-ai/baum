@@ -79,27 +79,25 @@ describe("the review page", () => {
   it("is reported to the chat with the tab and the section read", () => {
     const of = (query: string) => pageContextOf(new URLSearchParams(query), () => undefined, "");
     const pr = "repository=acme%2Fdemo&pr=7";
-    expect(of(pr).focus).toEqual({ view: "tiles", tab: "overview" });
-    expect(of(`${pr}&view=tiles&pane=section&section=sec_retry`).focus).toEqual({
-      view: "tiles",
+    expect(of(pr).focus).toEqual({ tab: "overview" });
+    expect(of(`${pr}&pane=section&section=sec_retry`).focus).toEqual({
       tab: "sections",
       section: "sec_retry",
     });
-    expect(of(`${pr}&view=tiles&pane=section&section=context`).focus).toEqual({
-      view: "tiles",
+    expect(of(`${pr}&pane=section&section=context`).focus).toEqual({
       tab: "sections",
       section: "context",
     });
-    expect(of(`${pr}&view=tiles&pane=risk&risk_section=sec_retry&risk_id=rsk_storm`).focus).toEqual(
-      { view: "tiles", tab: "sections", section: "sec_retry", item: "rsk_storm" },
-    );
-    expect(of(`${pr}&view=tiles&pane=tile&tile=code&tile_item=a%2Fb.go`).focus).toEqual({
-      view: "tiles",
+    expect(of(`${pr}&pane=risk&risk_section=sec_retry&risk_id=rsk_storm`).focus).toEqual({
+      tab: "sections",
+      section: "sec_retry",
+      item: "rsk_storm",
+    });
+    expect(of(`${pr}&pane=tile&tile=code&tile_item=a%2Fb.go`).focus).toEqual({
       tab: "code",
       file: "a/b.go",
     });
-    expect(of(`${pr}&view=tiles&pane=tile&tile=dg_flow`).focus).toEqual({
-      view: "tiles",
+    expect(of(`${pr}&pane=tile&tile=dg_flow`).focus).toEqual({
       tab: "sections",
       tile: "dg_flow",
     });

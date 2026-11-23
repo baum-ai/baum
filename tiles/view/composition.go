@@ -1,8 +1,10 @@
 // Package view is a review's page view: the stored review view composition
-// (baum.composition/2, schema/composition-2.json) that says how a generated
-// review is presented on its review page, the native tiles the view call
-// writes, the checks a host runs on both, and the view the daemon serves
-// (baum.view/1) beside the review.
+// (baum.composition/2, schema/composition-2.json) that says how an older
+// baum.review/1 version is presented on its review page, the native tiles
+// (which baum.review/2 tile agents write too), the checks a host runs on
+// both, and the view the daemon serves (baum.view/1) beside the review.
+// Generation no longer writes a composition: a baum.review/2 document holds
+// its own tiles and overview.
 //
 // The page has three tabs. The overview is a fixed layout of the review's
 // summary with the composition's model-written parts (a risk summary, a
@@ -11,7 +13,8 @@
 // composition places on it; "Code" is the diff. Tiles are the
 // model-customisable parts: native tiles (flow, columns, sequence, table)
 // the app draws with its own components, and the library and authored tiles
-// of the tile analysis, which keep drawing as custom and generic tiles.
+// an older review's analysis wrote, which keep drawing as custom and generic
+// tiles.
 package view
 
 import (
@@ -35,8 +38,8 @@ const Name = "baum.view/1"
 const ContextSection = "context"
 
 // Composition is a stored review view composition. The overview, the
-// sections' placements and the diagrams are the view call's; the library
-// and authored tiles are the tile analysis's, as in baum.composition/1.
+// sections' placements and the diagrams were written by the view call of
+// older tile reviews; the library and authored tiles by their analysis.
 // Only the host writes the generator.
 type Composition struct {
 	Schema    string           `json:"schema"`

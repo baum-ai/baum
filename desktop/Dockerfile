@@ -4,6 +4,9 @@
 # carries this system's WebKitGTK, GTK and Pango but uses the host's HarfBuzz,
 # glibc and other libraries linuxdeploy leaves out. The release workflow
 # builds the Linux bundles in this image.
+# The AppImage bundles the GStreamer base and good plugins WebKitGTK pulls in
+# (WebM video); linuxdeploy's GStreamer plugin needs patchelf. No libav: the
+# AppImage must not carry ffmpeg's GPL and patent-encumbered codecs.
 # jq and minisign run the updater signing and manifest tests
 # (scripts/updater-manifest-test.sh); the image installs the release's pinned
 # minisign binary. Image index digests pin every architecture's image.
@@ -26,6 +29,7 @@ RUN apt-get update \
         libssl-dev \
         libwebkit2gtk-4.1-dev \
         libxdo-dev \
+        patchelf \
         pkg-config \
         xdg-utils \
     && pkg-config --atleast-version=2.50.5 webkit2gtk-4.1 \

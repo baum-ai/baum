@@ -125,6 +125,7 @@ import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
+import { AppearanceSection } from "./settings-appearance";
 import { TileLibrarySection } from "./settings-tiles";
 import { tileLibrary } from "./tile-library";
 
@@ -181,6 +182,7 @@ const extractionHarnesses = Object.keys(decisionModelDefaults);
 
 export const settingsSections = [
   "general",
+  "appearance",
   "reviews",
   "fixes",
   "connections",
@@ -191,6 +193,7 @@ export const settingsSections = [
 export type SettingsSection = (typeof settingsSections)[number];
 const sectionTitles: Record<SettingsSection, string> = {
   general: "General",
+  appearance: "Appearance",
   reviews: "Reviews",
   fixes: "Fixes",
   connections: "Connections",
@@ -212,7 +215,7 @@ const SECTION_CONTROLS = [
 
 /** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
  *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
- *  previous section from anywhere, and 1 to 7 jump to one. j/↓ and k/↑ step
+ *  previous section from anywhere, and 1 to 8 jump to one. j/↓ and k/↑ step
  *  through the shown section's controls; from the section list j goes to its
  *  first control and k to its last, as Enter, l or → go to the first. Enter or
  *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
@@ -271,6 +274,14 @@ function useSettingsKeys<S extends string>(
         ? at.current
         : null;
     if (current) {
+      // The arrow keys move within a group of radios, as a browser does.
+      if (
+        key.startsWith("Arrow") &&
+        current instanceof HTMLInputElement &&
+        current.type === "radio" &&
+        current.closest('[role="radiogroup"]')
+      )
+        return;
       if (step) {
         event.preventDefault();
         const list = controls();
@@ -400,7 +411,7 @@ export function SettingRow({
 }
 
 /** A section's title and what it holds, with the outcome of its last save. */
-function SectionHead({
+export function SectionHead({
   id,
   title,
   detail,
@@ -628,6 +639,7 @@ const scopes: { value: PullRequests; label: string }[] = [
   { value: "both", label: "Mine and requested" },
   { value: "authored", label: "Only mine" },
   { value: "requested", label: "Only requested" },
+  { value: "inboxes", label: "In my inboxes" },
 ];
 
 const efforts: { value: string; label: string }[] = [
@@ -1019,6 +1031,11 @@ function ReviewsSection({
                   Every pull request in your repositories gets reviewed, including your team's, so
                   reviews, notifications and cost grow with their activity.
                 </span>
+              ) : draft.pull_requests === "inboxes" ? (
+                <span id="review-inboxes-note">
+                  Pull requests in any inbox with Review automatically on get reviewed. Each inbox
+                  has the switch on its edit page; it is on unless you turn it off.
+                </span>
               ) : null
             }
           >
@@ -1306,6 +1323,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
       {error ? <Alert>{error}</Alert> : null}
       <div className="local-panel settings-list">
         <SettingRow
+          pick
           label="Agent"
           htmlFor="panel-agent"
           detail={
@@ -1329,7 +1347,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
           />
         </SettingRow>
         {draft.agent ? (
-          <SettingRow label="Model" htmlFor="panel-model">
+          <SettingRow pick label="Model" htmlFor="panel-model">
             <ModelField
               key={draft.agent}
               id="panel-model"
@@ -1816,7 +1834,11 @@ export function SettingsPage({
   const nav: { id: SettingsSection; sub: string; tone?: Tone; count?: number }[] = [
     {
       id: "general",
-      sub: "Appearance and keyboard",
+      sub: "Keyboard and plan usage",
+    },
+    {
+      id: "appearance",
+      sub: "Theme and colours",
     },
     {
       id: "reviews",
@@ -1937,7 +1959,9 @@ export function SettingsPage({
                     </span>
                   ) : null}
                 </span>
-                <span className="settings-nav-sub">{item.sub}</span>
+                <span className="settings-nav-sub" title={item.sub}>
+                  {item.sub}
+                </span>
               </span>
             </button>
           ))}
@@ -1990,6 +2014,8 @@ export function SettingsPage({
           ) : null}
           {section === "general" ? (
             <GeneralSection />
+          ) : section === "appearance" ? (
+            <AppearanceSection />
           ) : section === "reviews" ? (
             automatic && defaults ? (
               <>
@@ -2116,8 +2142,6 @@ const MAX_JOB_CONCURRENCY = 4;
 /** The labs switch that arranges new reviews as tiles: one more model call
  *  after a review is written chooses which tiles lead. Off by default. */
 function TileReviewsRow() {
-  // Which page an arranged version opens on follows the switch.
-  const { refresh } = usePreferences();
   const [on, setOn] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -2140,7 +2164,6 @@ function TileReviewsRow() {
         "PUT",
       );
       setOn(answer.tile_reviews);
-      refresh();
     } catch (e) {
       setOn(before);
       setError(errorText(e));
@@ -2156,7 +2179,7 @@ function TileReviewsRow() {
         error ? (
           <Alert>{error}</Alert>
         ) : (
-          "After a review is written, one more short call arranges its tile page: which tiles lead and how large they are."
+          "After a review is written, one more short call arranges its tile page: which tiles it shows and in what order."
         )
       }
     >
@@ -3461,7 +3484,11 @@ export function RepositoryPage({
                     </span>
                   ) : null}
                 </span>
-                {item.sub ? <span className="settings-nav-sub">{item.sub}</span> : null}
+                {item.sub ? (
+                  <span className="settings-nav-sub" title={item.sub}>
+                    {item.sub}
+                  </span>
+                ) : null}
               </span>
             </button>
           ))}
@@ -3528,7 +3555,7 @@ function GeneralSection() {
       <SectionHead
         id="settings-general-heading"
         title="General"
-        detail="Appearance, keyboard and plan usage preferences on this device."
+        detail="Keyboard and plan usage preferences on this device."
       />
       {error ? (
         <Alert>
@@ -3539,19 +3566,6 @@ function GeneralSection() {
         </Alert>
       ) : null}
       <div className="local-panel settings-list">
-        <SettingRow label="Preferred theme" htmlFor="preferred-theme">
-          <select
-            id="preferred-theme"
-            disabled={!ready}
-            className={cn(SELECT_FIELD, "settings-select")}
-            value={preferences.theme}
-            onChange={(event) => update({ theme: event.target.value as typeof preferences.theme })}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </select>
-        </SettingRow>
         <SettingRow
           label="Page shortcut modifier"
           htmlFor="page-modifier"

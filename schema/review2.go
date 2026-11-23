@@ -1,7 +1,6 @@
 package schema
 
 import (
-	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -14,13 +13,10 @@ import (
 // Review2URL is the baum.review/2 schema's $id.
 const Review2URL = "https://static.usebaum.com/schemas/review/2.json"
 
-// Review2Name is the value of a baum.review/2 document's "schema" field.
-const Review2Name = "baum.review/2"
-
 // Review2 is the baum.review/2 schema as written: the desktop app's review
 // document (oss/reviewv2). A $ref it does not define names a definition of
-// Document, or one of the parts of Document that MergedReview2 copies into
-// $defs (review2Parts); use MergedReview2 or CompileReview2 rather than
+// Document, or one of the parts of Document that mergedReview2 copies into
+// $defs (review2Parts); use CompileReview2 or ValidateReview2 rather than
 // resolving it alone.
 //
 //go:embed review-2.json
@@ -40,15 +36,9 @@ var review2Parts = []struct {
 	{name: "reviewDerived", path: []string{"$defs", "section", "properties", "derived"}},
 }
 
-// MergedReview2 returns the baum.review/2 schema with baum.review/1's
-// definitions, and the parts of it review-2.json reuses, merged into its
-// $defs, so every reference resolves within one document. A name defined by
-// both is an error.
-func MergedReview2() ([]byte, error) {
-	merged, err := mergedReview2()
-	return bytes.Clone(merged), err
-}
-
+// mergedReview2 is the baum.review/2 schema with baum.review/1's definitions,
+// and the parts of it review-2.json reuses, merged into its $defs, so every
+// reference resolves within one document. A name defined by both is an error.
 var mergedReview2 = sync.OnceValues(func() ([]byte, error) {
 	return mergeReview2(Review2, Document)
 })
@@ -95,7 +85,7 @@ func mergeReview2(review2, review1 []byte) ([]byte, error) {
 	return json.Marshal(root)
 }
 
-// CompileReview2 returns the merged baum.review/2 schema (MergedReview2)
+// CompileReview2 returns the merged baum.review/2 schema (mergedReview2)
 // resolved as JSON Schema draft 2020-12. The result is safe for concurrent
 // use.
 func CompileReview2() (*jsonschema.Resolved, error) {

@@ -35,7 +35,6 @@ import (
 	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/reviewv2"
-	"github.com/baum-ai/baum/tiles/library"
 )
 
 type Local struct {
@@ -473,12 +472,12 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	}
 	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: limit, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
 		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), limit)}
-	// With tile reviews on, a new review of one pull request is arranged as
-	// tiles once it is written; a details retry keeps its version's layout.
+	// With tile reviews on, a new review of one pull request is written in
+	// tiles; a details retry keeps its version's layout.
 	if group == nil && p.Kind != KindDetails && prefs.Labs.TileReviewsOn() {
 		// The library types the person added to the pull request's review
-		// are filled, or their last data reused, in the new version.
-		options.Tiles = l.tilesFor(ctx, versions, key)
+		// are filled in the new version.
+		options.Tiles = &generate.Tiles{Always: l.alwaysTiles(ctx, key)}
 		// It is written as a baum.review/2 document, in levels, in a git
 		// worktree of the clone at the head.
 		options.V2 = &generate.V2{Clone: c.Path, MCP: l.ReviewMCP, Step: backend.step}
@@ -494,7 +493,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
 	}
-	l.offerSaved(ctx, options.Tiles, versions, key, p.Repository)
+	l.offerSaved(ctx, options.Tiles, p.Repository)
 	if group == nil {
 		options.OnDraft = backend.draft
 		options.Stored = func(ctx context.Context, key store.Key, m store.Metadata) error {
@@ -721,17 +720,9 @@ func callName(r agent.Request) string {
 		name = "Details"
 	case agent.StageContext:
 		name = "Codebase context"
-	case agent.StageExhibits:
-		name = "Exhibits"
 	case "":
 	default:
 		name = r.Stage
-		if kind, ok := strings.CutPrefix(r.Stage, "fill-"); ok {
-			name = "Library tile · " + strings.ReplaceAll(kind, "-", "_")
-			if entry, found := library.Get(strings.ReplaceAll(kind, "-", "_")); found {
-				name = "Library tile · " + entry.Definition.Title
-			}
-		}
 	}
 	if r.Pass > 1 {
 		name += fmt.Sprintf(" · repair %d", r.Pass-1)
@@ -762,60 +753,6 @@ func (b *trackedBackend) draft(d generate.Draft) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.reportDraft(b.phase, d)
-}
-
-// CanComplete reports whether the backend can make a single structured call
-// (generate.CompleteChecker).
-func (b *trackedBackend) CanComplete() bool { return generate.CompleterOf(b.Backend) != nil }
-
-// Complete forwards a single structured call (agent.Completer), such as the
-// one that arranges a review's tiles, and reports it as the other calls are:
-// its calls, tokens and usage, and a "Composition" call in the transcript.
-// The job's phase is "arranging" while it runs.
-func (b *trackedBackend) Complete(ctx context.Context, r agent.CompleteRequest) (agent.Completion, error) {
-	completer := generate.CompleterOf(b.Backend)
-	if completer == nil {
-		return agent.Completion{}, generate.ErrCannotComplete
-	}
-	b.mu.Lock()
-	b.report("arranging", nil)
-	id, keep := "", b.transcript
-	if keep != nil {
-		b.marked++
-		id = fmt.Sprintf("call-%d", b.marked)
-	}
-	b.mu.Unlock()
-	if id != "" {
-		keep(agent.TranscriptEntry{Time: time.Now().UTC(), Kind: "call", ID: id, Title: "Composition", Status: "running"})
-	}
-	completion, e := completer.Complete(ctx, r)
-	if id != "" {
-		status := "completed"
-		if e != nil {
-			status = "failed"
-		}
-		keep(agent.TranscriptEntry{Time: time.Now().UTC(), Kind: "call", ID: id, Status: status})
-	}
-	usage := completion.Usage
-	if usage.IsZero() {
-		usage.Unreported = true
-	}
-	tokens := agent.ChargedTokens(int(usage.Input), int(usage.Output), int(usage.CacheCreate))
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.calls++
-	b.tokens += tokens
-	next := &agent.Accounting{}
-	if b.accounting != nil {
-		*next = *b.accounting
-		next.Attempts = append([]agent.UsageAttempt(nil), b.accounting.Attempts...)
-	}
-	next.Usage.Add(usage)
-	next.ChargedTokens += tokens
-	next.Attempts = append(next.Attempts, agent.UsageAttempt{Model: completion.Model, Usage: usage, Calls: 1, ChargedTokens: tokens, Failed: e != nil})
-	b.accounting = next
-	b.report("arranging", nil)
-	return completion, e
 }
 
 // finish reports the run's redacted outcome, and what a staged review was
@@ -1004,10 +941,6 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 		o.Prompts = prompt.GroupPrompts{Overrides: overrides}
 	}
 	ids := prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil)
-	if o.Tiles != nil {
-		o.Tiles.Prompts = prompt.TilesPrompts{Overrides: overrides}
-		ids = append(ids, prompt.IDReviewView)
-	}
 	if o.V2 != nil {
 		o.V2.Prompts = prompt.V2Prompts{Overrides: overrides}
 		ids = prompt.V2ReviewIDs()
@@ -1023,10 +956,4 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 func groupReviewTimeout(review time.Duration, members int) time.Duration {
 	extra := min(max(members-1, 0), 4)
 	return review + time.Duration(extra)*review/2
-}
-
-// tilesFor is what a new review of the pull request adds to its page: the
-// library types the person added to it are always filled.
-func (l *Local) tilesFor(ctx context.Context, versions *store.Store, key store.Key) *generate.Tiles {
-	return &generate.Tiles{Always: l.alwaysTiles(ctx, versions, key)}
 }

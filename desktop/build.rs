@@ -25,12 +25,15 @@ fn main() {
         "zoom_state",
         "set_zoom",
         "step_zoom",
+        "theme_state",
+        "save_theme",
         "update_state",
         "check_for_updates",
         "install_update",
         "cancel_update",
         "dismiss_update_notice",
         "save_tile_type",
+        "open_link",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri build script");

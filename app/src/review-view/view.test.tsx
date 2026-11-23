@@ -7,13 +7,14 @@ import type { ReviewDocument } from "@baum/viewer/review-document";
 import { fixtureTile } from "../tiles/fixture-test-helper";
 import { TileHostContext, type TileHost } from "../tiles/host";
 import type { TileContext } from "../tiles/types";
-import { tiledDocument } from "../api";
 import type { ReviewV2 } from "./document";
-import { legacyAnswer1303, REVIEW_1303, review1303 } from "./fixture-1303";
+import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
-import { drawnAs, ViewTileCard } from "./view-tile";
+import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
+import { AttachmentUrlProvider } from "@baum/viewer/host";
+import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -662,8 +663,8 @@ describe("the native tiles", () => {
     });
     const flow = container.querySelector<HTMLElement>(".flow")!;
     expect(flow.style.getPropertyValue("--flow-columns")).toBe("5");
-    // 5 columns of 8.5rem, then of 9rem beside the labels (6rem).
-    expect([flow.dataset.wide, flow.dataset.wider]).toEqual(["44", "52"]);
+    // Without a measured width the flow is the list going down.
+    expect([flow.dataset.across, flow.dataset.labels]).toEqual([undefined, undefined]);
     const columns = (lane: Element) =>
       [...lane.querySelectorAll<HTMLElement>("li")].map((li) =>
         li.style.getPropertyValue("--flow-column"),
@@ -859,6 +860,50 @@ describe("the native tiles", () => {
     expect(container.querySelector("h3")?.textContent).toBe("Why a relay");
     expect(container.textContent).toContain("Phones can't reach a laptop behind NAT.");
   });
+
+  it("draws an added images tile from the images the index lists", async () => {
+    const id = "att_0123456789abcdef0123456789abcdef";
+    const review = {
+      ...CHROME,
+      index: {
+        ...CHROME.index,
+        attachments: [
+          ...(CHROME.index.attachments ?? []),
+          {
+            id,
+            position: 99,
+            content_type: "image/png",
+            width: 40,
+            height: 20,
+            alt: "The switch, on",
+          },
+        ],
+      },
+    } as ReviewDocument;
+    const tile: ViewTile = {
+      ...tileOf("dg_shape"),
+      id: "added_images_0a1b2c3d4e",
+      type: "images",
+      title: "Review automatically",
+      state: "ready",
+      added: true,
+      data: { items: [{ attachment: id, caption: "The switch, on" }] },
+    };
+    const container = await render(
+      <Host>
+        <AttachmentUrlProvider resolve={(each) => `api/attachments/${each}`}>
+          <ViewTileCard tile={tile} review={review} ctx={ctx} />
+        </AttachmentUrlProvider>
+      </Host>,
+    );
+    expect(container.querySelector("h3")?.textContent).toBe("Review automatically");
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("src")).toBe(`api/attachments/${id}`);
+    expect(container.querySelector("figcaption")?.textContent).toBe("The switch, on");
+    // The tile's own title heads it: the images add no heading of their own.
+    expect(container.querySelectorAll("h3")).toHaveLength(1);
+    expect(imageItems({ items: [{ attachment: 3 }] })).toBeNull();
+  });
 });
 
 // ---------- tiles the person added, and those being made ----------
@@ -946,22 +991,47 @@ describe("pending cards", () => {
   });
 });
 
-// TEMPORARY, with from-v1.ts: until the daemon answers baum.review/2.
-describe("a baum.review/1 answer with its view", () => {
-  it("draws the same page as the baum.review/2 document", async () => {
-    const legacy = tiledDocument(legacyAnswer1303() as Parameters<typeof tiledDocument>[0]);
-    expect(legacy.schema).toBe("baum.review/1");
-    const overview = await page("", legacy);
-    const drawn = panel(overview).textContent;
-    act(() => root?.unmount());
-    expect(panel(await page()).textContent).toBe(drawn);
-    act(() => root?.unmount());
-    const section = await page("pane=section&section=sec_allowlist", legacy);
-    expect(
-      [...panel(section).querySelectorAll<HTMLElement>("[data-tile]")].map(
-        (each) => each.dataset.tile,
-      ),
-    ).toEqual(["dg_allowlist", "dg_always_allow", "lib_api_change", "code_remote_routes"]);
+// ---------- a baum.review/1 version ----------
+
+const v1 = () => structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+
+describe("a baum.review/1 version in the review shell", () => {
+  it("keeps the rail, drawing the Summary and each section with the viewer's own pages", async () => {
+    const document = v1();
+    const container = await page("", document);
+    const labels = railRows(container).map(rowLabel);
+    expect(labels[0]).toBe("Overview");
+    expect(labels).toContain("How it works");
+    expect(labels).toContain("Files changed");
+    // No "Where this fits" place: a v1 context is part of its Summary.
+    expect(labels).not.toContain("Where this fits");
+    // The v1 Summary.
+    const summary = pane(container).textContent ?? "";
+    expect(summary).toContain(document.summary.text.slice(0, 20));
+    // A section's evidence, in the viewer's own section page.
+    const section = document.sections[0]!;
+    await click(
+      railRows(container).find(
+        (row) => rowLabel(row) === section.title && row !== railRows(container)[0],
+      )!,
+    );
+    expect(search.get("section")).toBe(section.id);
+    expect(pane(container).textContent).toContain(section.evidence[0]!.claim);
+    // A section the agent review has a finding on shows it.
+    const behavior = document.sections.find((each) => each.id === "behavior")!;
+    await click(railRows(container).find((row) => rowLabel(row) === behavior.title)!);
+    expect(search.get("section")).toBe("behavior");
+    expect(pane(container).textContent).toContain("Guard the repository read");
+    // Files changed is the app's own list and diffs.
+    await click(railRows(container).find((row) => rowLabel(row) === "Files changed")!);
+    expect(pane(container).querySelector('nav[aria-label="Changed files"]')).not.toBeNull();
+    expect(pane(container).querySelector("#review-view-file")).not.toBeNull();
+  });
+
+  it("shows a baum.review/2 version's section body, not the viewer's section page", async () => {
+    const container = await page("pane=section&section=sec_pairing", review1303());
+    expect(pane(container).querySelector('[role="tablist"]')).not.toBeNull();
+    expect(railRows(container).map(rowLabel)).toContain("Where this fits");
   });
 });
 
@@ -1065,7 +1135,7 @@ describe("a section's body", () => {
     expect(rows[1]!.querySelector("button")).toBeNull();
   });
 
-  it("reads an older document's summary and steps as the same blocks", async () => {
+  it("draws a section's prose and points blocks", async () => {
     const container = await page("pane=section&section=sec_allowlist");
     const body = panel(container).querySelector<HTMLElement>("[data-section-body]")!;
     expect(

@@ -407,6 +407,9 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("PUT /api/settings/panel", a.putPanel)
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
+	mux.HandleFunc("POST /api/settings/appearance/themes", a.postTheme)
+	mux.HandleFunc("PATCH /api/settings/appearance/themes/{id}", a.patchTheme)
+	mux.HandleFunc("DELETE /api/settings/appearance/themes/{id}", a.deleteTheme)
 	mux.HandleFunc("GET /api/settings/plan-usage", a.getPlanUsageSettings)
 	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
@@ -595,7 +598,6 @@ func (a LocalAPI) Handler() *LocalHandler {
 	}
 	mux.HandleFunc("GET /api/document", document)
 	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
-	mux.HandleFunc("GET /api/tile-library", tileLibrary)
 	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
 	a.tileLibraryRoutes(mux)
 	a.addedRoutes(mux)
@@ -620,6 +622,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		image, err := s.Attachment(r.Context(), key, n, r.PathValue("id"))
+		if errors.Is(err, store.ErrNotFound) && a.Added != nil {
+			// An image of a tile the person added (an images tile) is the
+			// pull request's, on every version.
+			if added, aerr := a.Added.Image(r.Context(), addedtiles.Key(key.Repository, key.Number), r.PathValue("id")); aerr == nil {
+				image, err = store.Attachment{ID: r.PathValue("id"), ContentType: added.ContentType, Bytes: added.Bytes}, nil
+			}
+		}
 		if err != nil {
 			apiError(w, err)
 			return
@@ -682,6 +691,12 @@ func apiError(w http.ResponseWriter, err error) {
 func defaultAgentDir(cfg config.Config, agent agentdirs.Agent) string {
 	for _, entry := range cfg.AgentEnviron() {
 		if value, ok := strings.CutPrefix(entry, agent.Env+"="); ok && value != "" {
+			// Cleaned as the known directories are: "~/.claude.personal"
+			// expands to home + "/.claude.personal", which on Windows is not
+			// the same string as the recorded directory.
+			if dir, err := agentdirs.Normalize(value); err == nil {
+				return dir
+			}
 			return value
 		}
 	}

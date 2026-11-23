@@ -496,6 +496,47 @@
   font-size: var(--text-xs);
   font-weight: 500;
 }
+.session-panel-theme {
+  display: grid;
+  gap: 0.5rem;
+}
+.session-panel-swatches,
+.session-panel-warnings ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+}
+.session-panel-swatches li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.session-panel-swatch {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm, 0.25rem);
+}
+.session-panel-warnings {
+  color: var(--status-caution);
+}
+.session-panel-choice {
+  display: grid;
+  gap: 0.5rem;
+}
+.session-panel-choice-thumb {
+  width: min(12rem, 100%);
+}
+.session-panel-theme-save {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.375rem 0.75rem;
+}
 .session-panel-actions {
   display: flex;
   gap: 0.5rem;

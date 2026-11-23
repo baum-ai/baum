@@ -34,7 +34,7 @@ func TestRegistry(t *testing.T) {
 	if !strings.Contains(offer, "- `flow` (Flow, inline): ") || !strings.Contains(offer, "(dedicated)") && !strings.Contains(offer, ", dedicated)") {
 		t.Errorf("offer: %s", offer)
 	}
-	for _, kind := range r.Types() {
+	for _, kind := range r.types {
 		var s jsonschema.Schema
 		if err := json.Unmarshal(kind.Schema, &s); err != nil {
 			t.Errorf("%s schema: %v", kind.Name, err)

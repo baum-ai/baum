@@ -24,9 +24,16 @@ func ProtectDirectory(path string) error {
 	return nil
 }
 
-// ProtectFile does nothing on Unix: a file created with mode 0600 is private,
-// as the umask only removes permissions.
-func ProtectFile(string) error { return nil }
+// CreateFile creates the file at path, which must not exist, with mode 0600:
+// the umask only removes permissions, so it is private from the start. An
+// existing file is an os.ErrExist error.
+func CreateFile(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
 
 // PrivateFile reports whether info describes a regular file owned by the
 // current user with no group or other permissions.

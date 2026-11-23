@@ -6,7 +6,6 @@ package generatetest
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,9 +26,6 @@ type Backend struct {
 	CheckErr    error
 	Version     string
 	RunFunc     func(ctx context.Context, request agent.Request, n int) (agent.Result, error)
-	// CompleteFunc answers single structured calls (agent.Completer); nil
-	// makes a backend that cannot complete (CanComplete is false).
-	CompleteFunc func(ctx context.Context, request agent.CompleteRequest, n int) (agent.Completion, error)
 
 	mu sync.Mutex
 	// Requests are the requests received, in order. Directories are the run
@@ -37,35 +33,6 @@ type Backend struct {
 	// checkout when the backend ran.
 	Requests []agent.Request
 	Existed  []bool
-	// Completions are the completion requests received, in order.
-	Completions []agent.CompleteRequest
-}
-
-// ErrCannotComplete is what Complete returns without a CompleteFunc.
-var ErrCannotComplete = errors.New("generatetest: this backend cannot complete")
-
-// Complete implements agent.Completer through CompleteFunc.
-func (b *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (agent.Completion, error) {
-	b.mu.Lock()
-	n := len(b.Completions)
-	b.Completions = append(b.Completions, request)
-	complete := b.CompleteFunc
-	b.mu.Unlock()
-	if complete == nil {
-		return agent.Completion{}, ErrCannotComplete
-	}
-	return complete(ctx, request, n)
-}
-
-// CanComplete reports whether the backend has a CompleteFunc
-// (generate.CompleteChecker).
-func (b *Backend) CanComplete() bool { return b.CompleteFunc != nil }
-
-// CompletionCount is how many completions were asked for.
-func (b *Backend) CompletionCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.Completions)
 }
 
 // Name implements agent.Backend.

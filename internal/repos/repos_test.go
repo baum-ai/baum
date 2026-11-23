@@ -96,7 +96,7 @@ func TestClonesAndSettings(t *testing.T) {
 	if e = r.Remove(ctx, other.Path); e != nil {
 		t.Fatal(e)
 	}
-	if e = r.Update(ctx, c.ID, Settings{}); e != nil {
+	if e = r.UpdateRepository(ctx, c.Repository, Settings{}); e != nil {
 		t.Fatal(e)
 	}
 	if e = r.Remove(ctx, w.ID); e != nil {
@@ -303,6 +303,8 @@ func TestPreferencesCoverTheChosenPullRequests(t *testing.T) {
 		{PullRequestsAuthored, true, false, false},
 		{PullRequestsRequested, false, true, false},
 		{PullRequestsAll, true, true, true},
+		// The saved inboxes decide, not Covers.
+		{PullRequestsInboxes, false, false, false},
 	} {
 		p := Preferences{PullRequests: tc.choice}
 		if p.Validate() != nil {

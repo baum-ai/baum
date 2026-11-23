@@ -65,10 +65,12 @@
       "level_reasons": [
         {"text": "Only errors marked retryable change their path.", "cites": [{"type": "hunk", "id": "h_a00000000002"}]}
       ],
-      "summary": "A retryable error now schedules a retry. Any other error is returned as before.",
-      "steps": [
-        {"id": "st_schedule", "title": "Retryable errors wait", "text": "A retryable error schedules the delivery again under the policy.", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [40, 42]}]},
-        {"id": "st_return", "title": "Other errors return", "text": "Any other error is returned to the caller at once.", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [43, 44]}, {"type": "session_event", "session": "11111111-2222-3333-4444-555555555555", "event": "ev_tests"}]}
+      "body": [
+        {"type": "prose", "text": "A retryable error now schedules a retry. Any other error is returned as before."},
+        {"type": "points", "items": [
+          {"text": "**Retryable errors wait.** A retryable error schedules the delivery again under the policy.", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [40, 42]}]},
+          {"text": "**Other errors return.** Any other error is returned to the caller at once.", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [43, 44]}, {"type": "session_event", "session": "11111111-2222-3333-4444-555555555555", "event": "ev_tests"}]}
+        ]}
       ],
       "risks": []
     },

@@ -26,7 +26,6 @@ import (
 	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
-	"github.com/baum-ai/baum/tiles/view"
 )
 
 // The tiles a person added to a pull request's review page
@@ -101,11 +100,12 @@ func (a LocalAPI) addedFor(ctx context.Context, c repos.Clone, number int, versi
 }
 
 // shownVersion is a pull request's latest saved version as its page shows
-// it: its number, the review (for its sections) and the tile document
-// converted from it, which an added tile's data is checked against.
+// it: its number, the review as a baum.review/2 document (for its sections,
+// one placement rule for both schemas) and the tile document converted from
+// it, which an added tile's data is checked against.
 type shownVersion struct {
 	Version  int
-	Review   *view.Review
+	Review   reviewv2.Document
 	Document *tiles.Document
 	// owners maps each tile of a baum.review/2 version to its section, so
 	// an add asked for on a tile goes on the section that shows it.
@@ -135,21 +135,17 @@ func (a LocalAPI) latestShown(ctx context.Context, c repos.Clone, number int) (s
 		if err := json.Unmarshal(version.Document, &d); err != nil {
 			return shownVersion{}, errNoTiles
 		}
-		r, err := view.ParseReview(version.Document)
-		if err != nil {
-			return shownVersion{}, errNoTiles
-		}
 		owners := map[string]string{}
 		for _, t := range d.Tiles {
 			owners[t.ID] = t.Owner
 		}
-		return shownVersion{Version: version.Metadata.Version, Review: r, Document: reviewv2.Substrate(d), owners: owners}, nil
+		return shownVersion{Version: version.Metadata.Version, Review: d, Document: reviewv2.Substrate(d), owners: owners}, nil
 	}
 	normalized, err := review.NormalizeStored(version.Document)
 	if err != nil {
 		return shownVersion{}, errNoTiles
 	}
-	r, err := view.ParseReview(normalized)
+	r, err := reviewv2.FromV1(normalized)
 	if err != nil {
 		return shownVersion{}, errNoTiles
 	}
@@ -181,15 +177,17 @@ func (s shownVersion) section(asked string, data json.RawMessage) string {
 	if asked == "" && len(hunks) == 0 {
 		return ""
 	}
-	return view.SectionFor(s.Review, asked, hunks)
+	return reviewv2.OwnerFor(s.Review, asked, hunks)
 }
 
-// AddTile is an add_tile request: the library type, the section it goes on
-// and the data the agent wrote for it, if any.
+// AddTile is an add_tile request: the library or native type, the section
+// it goes on, the data the agent wrote for it, if any, and a native tile's
+// title.
 type AddTile struct {
 	Type    string
 	Section string
 	Data    json.RawMessage
+	Title   string
 }
 
 // AddedTile is what an add did: the tile's ID, whether it shows its data
@@ -227,6 +225,9 @@ func (a LocalAPI) roomFor(ctx context.Context, pr, id string) error {
 func (a LocalAPI) addTile(ctx context.Context, c repos.Clone, number int, by string, add AddTile) (AddedTile, error) {
 	if a.Added == nil {
 		return AddedTile{}, errors.New("adding tiles is not available in this baum")
+	}
+	if IsNativeAddType(add.Type) {
+		return a.addNative(ctx, c, number, by, add)
 	}
 	entry, ok := library.Find(add.Type)
 	if !ok {
@@ -339,26 +340,6 @@ func (a LocalAPI) addedRoutes(mux *http.ServeMux) {
 		}
 		writeJSON(w, map[string]string{"tile": request.Tile, "action": request.Action})
 	})
-}
-
-// cloneByID resolves a registered clone, answering 400 or 404.
-func (a LocalAPI) cloneByID(w http.ResponseWriter, r *http.Request, id string) (repos.Clone, bool) {
-	if id == "" {
-		http.Error(w, "clone required", http.StatusBadRequest)
-		return repos.Clone{}, false
-	}
-	clones, err := a.Registry.List(r.Context())
-	if err != nil {
-		apiError(w, err)
-		return repos.Clone{}, false
-	}
-	for _, c := range clones {
-		if c.ID == id {
-			return c, true
-		}
-	}
-	http.NotFound(w, r)
-	return repos.Clone{}, false
 }
 
 // AddedTilesAPI is the session panel's way to add library tiles

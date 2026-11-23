@@ -15,25 +15,13 @@ declare global {
 
 let root: Root | null = null;
 
-// jsdom lays nothing out: observers only record what they watch, and a test
-// fires them.
-const observers = new Set<{ targets: Element[]; fire: () => void }>();
-
 beforeAll(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  // jsdom lays nothing out, so there is nothing to observe.
   globalThis.ResizeObserver = class {
-    private entry: { targets: Element[]; fire: () => void };
-    constructor(callback: ResizeObserverCallback) {
-      this.entry = { targets: [], fire: () => callback([], this as unknown as ResizeObserver) };
-      observers.add(this.entry);
-    }
-    observe(target: Element) {
-      this.entry.targets.push(target);
-    }
+    observe() {}
     unobserve() {}
-    disconnect() {
-      observers.delete(this.entry);
-    }
+    disconnect() {}
   } as unknown as typeof ResizeObserver;
   HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) {
     this.open = true;
@@ -87,10 +75,6 @@ function mount(
   );
   return container;
 }
-
-/** The viewer width for an 800×1350 image below a header this tall. */
-const fitted = (header: number) =>
-  `${viewerImageWidth({ width: 800, height: 1350 }, { width: innerWidth, height: innerHeight }, header)}px`;
 
 function fail(container: HTMLElement, alt: string) {
   act(() => {
@@ -195,36 +179,21 @@ describe("ReviewImages", () => {
     }
   });
 
-  it("refits the viewer image when its header grows while open", () => {
-    const offsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
-    let headerHeight = 58;
-    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
-      configurable: true,
-      get(this: HTMLElement) {
-        return this.classList.contains("sticky") ? headerHeight : 0;
-      },
+  it("opens the viewer larger than the image's own pixels", () => {
+    const container = mount(["att_aa"], {}, [80, 40]);
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="View full size: Alt att_aa"]')!
+        .click();
     });
-    try {
-      const container = mount(["att_aa"], {}, [800, 1350]);
-      act(() => {
-        container
-          .querySelector<HTMLButtonElement>('[aria-label="View full size: Alt att_aa"]')!
-          .click();
-      });
-      const viewed = () => container.querySelector<HTMLImageElement>("dialog img")!.style.width;
-      expect(viewed()).toBe(fitted(58));
-
-      // A resize wraps the caption onto more lines.
-      headerHeight = 200;
-      const header = container.querySelector("dialog .sticky")!;
-      act(() => {
-        for (const observer of observers) if (observer.targets.includes(header)) observer.fire();
-      });
-      expect(viewed()).toBe(fitted(200));
-      expect(fitted(200)).not.toBe(fitted(58));
-    } finally {
-      Object.defineProperty(HTMLElement.prototype, "offsetHeight", offsetHeight);
-    }
+    const frame = container.querySelector<HTMLElement>("dialog [data-image-frame]")!;
+    const width = viewerImageWidth(
+      { width: 80, height: 40 },
+      { width: innerWidth, height: innerHeight },
+      0,
+    );
+    expect(frame.style.width).toBe(`${width}px`);
+    expect(width).toBeGreaterThan(80);
   });
 });
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/agentcontext"
+	"github.com/baum-ai/baum/internal/themes"
 )
 
 // maxBody bounds a request body: a message and its page.
@@ -175,7 +176,7 @@ func (s *Service) Handler() http.Handler {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"proposals": list})
+		writeJSON(w, http.StatusOK, map[string]any{"proposals": withContrastWarnings(list)})
 	})
 	mux.HandleFunc("POST /api/console/conversations/{id}/proposals/{proposal}/save", func(w http.ResponseWriter, r *http.Request) {
 		var input agentcontext.SaveInput
@@ -309,4 +310,41 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// withContrastWarnings adds contrast_warnings (the pairs of colours under
+// themes.MinContrast) to the After of each colour theme proposal, so the app
+// can show the person what propose_theme told the agent. Only the listing
+// carries them; the recorded proposal, and what a save applies, do not.
+func withContrastWarnings(list []agentcontext.Proposal) []agentcontext.Proposal {
+	out := make([]agentcontext.Proposal, len(list))
+	copy(out, list)
+	for i, p := range out {
+		if p.Page != agentcontext.ProposalAnywhere || p.Target != agentcontext.TargetTheme {
+			continue
+		}
+		// Every field the proposal holds (theme_id too) is kept as it is.
+		var fields map[string]json.RawMessage
+		var in struct {
+			Name   string            `json:"name"`
+			Base   string            `json:"base"`
+			Tokens map[string]string `json:"tokens"`
+		}
+		if json.Unmarshal(p.After, &fields) != nil || fields == nil || json.Unmarshal(p.After, &in) != nil {
+			continue
+		}
+		warnings := themes.Contrast(themes.Theme{Name: in.Name, Base: in.Base, Tokens: in.Tokens})
+		if warnings == nil {
+			warnings = []themes.Warning{}
+		}
+		raw, err := json.Marshal(warnings)
+		if err != nil {
+			continue
+		}
+		fields["contrast_warnings"] = raw
+		if raw, err := json.Marshal(fields); err == nil {
+			out[i].After = raw
+		}
+	}
+	return out
 }

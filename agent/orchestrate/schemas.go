@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/baum-ai/baum/reviewv2"
 )
@@ -11,15 +12,6 @@ import (
 // value is an explicit null, so one schema serves providers' strict
 // structured outputs; the host checks the limits the schemas cannot
 // (checker), so their lengths are generous.
-
-// ChangeKinds are the values of summary.change_kind, as baum.review/1's.
-var ChangeKinds = []string{"feature", "bugfix", "refactor", "dependency", "cherry_pick", "upstream_sync", "mechanical", "docs", "ci", "translation", "release", "export"}
-
-// Tiers are a risk's tiers a section agent writes.
-var Tiers = []string{"critical", "high", "medium", "low"}
-
-// Decisions are a verdict's decisions.
-var Decisions = []string{"approve", "look_first", "request_changes"}
 
 type obj = map[string]any
 
@@ -50,7 +42,7 @@ func object(props obj) obj {
 	for key := range props {
 		required = append(required, key)
 	}
-	sortStrings(required)
+	slices.Sort(required)
 	return obj{"type": "object", "additionalProperties": false, "required": required, "properties": props}
 }
 
@@ -83,7 +75,7 @@ func MapSchema(types []string) []byte {
 		"gist":          text(300),
 		"scope":         nullable(text(400)),
 		"level":         nullable(obj{"type": "integer", "minimum": 1, "maximum": 5}),
-		"level_reasons": array(object(obj{"text": text(500), "cites": cites(MaxCites)}), 0, 3),
+		"level_reasons": array(object(obj{"text": text(500), "cites": cites(reviewv2.MaxCites)}), 0, 3),
 	})
 	tile := object(obj{
 		"id":    obj{"type": "string", "pattern": "^tl_[a-z0-9_]{1,60}$"},
@@ -93,7 +85,7 @@ func MapSchema(types []string) []byte {
 		"hunks": array(obj{"type": "string", "pattern": hunkPattern}, 0, 0),
 	})
 	return encode(object(obj{
-		"change_kind": enum(ChangeKinds...),
+		"change_kind": enum(reviewv2.ChangeKinds...),
 		"sections":    array(section, 1, 0),
 		"tiles":       array(tile, 0, 12),
 	}))
@@ -101,8 +93,8 @@ func MapSchema(types []string) []byte {
 
 // SectionSchema is a section agent's reply schema.
 func SectionSchema(types []string) []byte {
-	brief := object(obj{"id": text(80), "shows": text(600), "cites": cites(MaxCites), "drop": obj{"type": "boolean"}, "reason": nullable(text(400))})
-	point := object(obj{"text": text(450), "more": nullable(text(1200)), "cites": cites(MaxCites)})
+	brief := object(obj{"id": text(80), "shows": text(600), "cites": cites(reviewv2.MaxCites), "drop": obj{"type": "boolean"}, "reason": nullable(text(400))})
+	point := object(obj{"text": text(450), "more": nullable(text(1200)), "cites": cites(reviewv2.MaxCites)})
 	// A block uses the fields of its type; the others are null.
 	block := object(obj{
 		"type":  enum(reviewv2.BlockProse, reviewv2.BlockPoints, reviewv2.BlockNote, reviewv2.BlockTile),
@@ -112,11 +104,11 @@ func SectionSchema(types []string) []byte {
 	return encode(object(obj{
 		"body": array(block, 1, reviewv2.MaxBlocks),
 		"risks": array(object(obj{
-			"id": obj{"type": "string", "pattern": "^rsk_[a-z0-9_]{1,60}$"}, "tier": enum(Tiers...),
-			"category": obj{"type": "string", "pattern": "^[a-z0-9_]{1,40}$"}, "text": text(1200), "cites": array(citeSchema(), 1, MaxCites),
+			"id": obj{"type": "string", "pattern": "^rsk_[a-z0-9_]{1,60}$"}, "tier": enum(reviewv2.RiskTiers...),
+			"category": obj{"type": "string", "pattern": "^[a-z0-9_]{1,40}$"}, "text": text(1200), "cites": array(citeSchema(), 1, reviewv2.MaxCites),
 		}), 0, 8),
 		"tiles":   array(brief, 0, 0),
-		"propose": nullable(object(obj{"id": obj{"type": "string", "pattern": "^tl_[a-z0-9_]{1,60}$"}, "type": enum(types...), "shows": text(600), "cites": cites(MaxCites)})),
+		"propose": nullable(object(obj{"id": obj{"type": "string", "pattern": "^tl_[a-z0-9_]{1,60}$"}, "type": enum(types...), "shows": text(600), "cites": cites(reviewv2.MaxCites)})),
 	}))
 }
 
@@ -131,7 +123,7 @@ func OverviewSchema() []byte {
 	return encode(object(obj{
 		"summary": text(1500),
 		"verdict": object(obj{
-			"decision": enum(Decisions...), "text": text(300),
+			"decision": enum(reviewv2.Decisions...), "text": text(300),
 			"points": array(object(obj{"text": text(500), "section": nullable(text(80))}), 0, 3),
 		}),
 		"risk_why":    str(600),
@@ -149,12 +141,4 @@ func encode(o obj) []byte {
 		panic(fmt.Sprintf("orchestrate: a reply schema does not encode: %v", err))
 	}
 	return encoded
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }

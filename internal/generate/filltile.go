@@ -64,12 +64,6 @@ func FillTile(ctx context.Context, o Options, entry library.Entry) (agent.FillRe
 	if o.PassTimeout > 0 {
 		backend = passBounded{Backend: backend, timeout: o.PassTimeout}
 	}
-	var prompts agent.TileAnalysisPrompts = prompt.TilesPrompts{}
-	if o.Tiles != nil {
-		if p, ok := o.Tiles.Prompts.(agent.TileAnalysisPrompts); ok {
-			prompts = p
-		}
-	}
 	generator := agent.Generator{Backend: backend, Redactor: redactor, Logger: slog.New(&progressHandler{w: o.Progress, repairs: o.OnRepairs, stages: map[string]int{}})}
-	return generator.FillTile(runCtx, agent.FillTileRun{Bundle: &b, Directory: runDir, Entry: entry, Prompts: prompts, Budgets: o.Budgets, Redactor: redactor}), nil
+	return generator.FillTile(runCtx, agent.FillTileRun{Bundle: &b, Directory: runDir, Entry: entry, Prompts: prompt.TilesPrompts{}, Budgets: o.Budgets, Redactor: redactor}), nil
 }

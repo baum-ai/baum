@@ -209,7 +209,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-view", "review-v2-shared", "review-map", "review-section", "review-context-v2", "review-tile", "review-overview", "review-triage", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-v2-shared", "review-map", "review-section", "review-context-v2", "review-tile", "review-overview", "review-triage", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -255,7 +255,6 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
-		prompt.IDReviewView:          {"review-view.untrusted-input"},
 		prompt.IDReviewV2Shared:      {"review-v2-shared.untrusted-data", "review-v2-shared.no-secrets", "review-v2-shared.restricted-sessions"},
 		prompt.IDReviewMap:           {"review-map.no-injected-instructions"},
 		prompt.IDReviewSection:       {"review-section.no-injected-instructions"},
@@ -375,33 +374,5 @@ func TestNewExtractorWith(t *testing.T) {
 	}
 	if other := decisions.NewExtractorWith("Another."); other.PromptVersion() == custom.PromptVersion() {
 		t.Error("different texts, same version")
-	}
-}
-
-// The view prompt is listed, since a review job with tile reviews on uses
-// it, with its built-in text as the default; a text for it is validated and
-// checked for its safety rule.
-func TestViewIsListed(t *testing.T) {
-	e, ok := prompt.Lookup(prompt.IDReviewView)
-	builtin := readFile(t, "review-view-public-v1.md")
-	if !ok || e.Group != prompt.GroupReviews || e.Default != builtin || e.DefaultVersion != prompt.ViewVersion {
-		t.Errorf("the view prompt's entry %v %+v", ok, e.Title)
-	}
-	if err := prompt.Validate(prompt.IDReviewView, builtin); err != nil {
-		t.Errorf("its own default is invalid: %v", err)
-	}
-	if got := prompt.MissingSafetyRules(prompt.IDReviewView, builtin); len(got) != 0 {
-		t.Errorf("the default misses %v", got)
-	}
-	if got := prompt.MissingSafetyRules(prompt.IDReviewView, "Present."); len(got) != 1 || got[0] != "review-view.untrusted-input" {
-		t.Errorf("missing %v", got)
-	}
-	p, err := prompt.TilesPrompts{}.ViewInstructions(context.Background(), agent.BackendCodex)
-	if err != nil || p.Body != builtin || p.Version != prompt.ViewVersion || p.Digest != sha(p.Body) {
-		t.Errorf("built in: %v %q", err, p.Version)
-	}
-	p, err = prompt.TilesPrompts{Overrides: prompt.Overrides{prompt.IDReviewView: "Present my way."}}.ViewInstructions(context.Background(), agent.BackendCodex)
-	if err != nil || p.Body != "Present my way.\n" || p.Version != prompt.ViewVersion+"+custom" {
-		t.Errorf("override: %v %q %q", err, p.Version, p.Body)
 	}
 }

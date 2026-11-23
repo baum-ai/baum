@@ -1,8 +1,11 @@
 /* Default UI palette. Import theme.css so custom overrides take precedence.
    Only the seeds below contain literal colors. Text, surfaces, borders,
    interaction states and dark mode derive from them. Override seeds or any
-   derived token in themes/custom.css; declarations must share the root. */
-:root {
+   derived token in themes/custom.css; declarations must share the root.
+   An element marked data-theme-scope gets the same recipes, so a preview can
+   show a theme (data-theme="light" or "dark" on it) whatever the page's mode. */
+:root,
+[data-theme-scope] {
   /* Core UI seeds. The historical --brand-* names are theme inputs too;
      immutable logo and illustration colors live with their components. */
   --color-ink: #1f1b17;
@@ -183,7 +186,8 @@
 }
 
 /* Dark mode changes the mixing recipes, retaining the same nineteen seeds. */
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+[data-theme-scope][data-theme="dark"] {
   color-scheme: dark;
   --ink-900: color-mix(in srgb, var(--color-paper) 94%, var(--color-shadow));
   --ink-800: color-mix(in srgb, var(--color-paper) 88%, var(--color-shadow));

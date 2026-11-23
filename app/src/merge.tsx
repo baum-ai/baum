@@ -46,14 +46,22 @@ export function defaultMergeMethod(options: MergeOptions) {
   return options.methods.includes(options.default) ? options.default : (options.methods[0] ?? "");
 }
 
-/** Whether to offer Merge: an open pull request GitHub reports as ready. */
+/** Whether to offer Merge: an open pull request GitHub can merge, that is one
+ *  without a conflict. Failing checks, missing reviews or a branch behind its
+ *  base are the person's call; GitHub refuses the merge if its rules forbid it. */
 export function canMerge(entry: Entry) {
   return (
     !entry.historical &&
-    entry.merge === "ready" &&
+    (entry.merge === "ready" || entry.merge === "blocked") &&
     entry.pull_request.state.toUpperCase() === "OPEN" &&
     !entry.pull_request.draft
   );
+}
+
+/** Whether GitHub reports the pull request as ready to merge with nothing in
+ *  its way: what puts it in Up next's "Ready to merge". */
+export function readyToMerge(entry: Entry) {
+  return canMerge(entry) && entry.merge === "ready";
 }
 
 /** Confirms and performs one merge on GitHub. The merge uses the head commit

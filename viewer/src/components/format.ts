@@ -282,7 +282,7 @@ const shortDateTimeLabel = new Intl.DateTimeFormat("en-GB", {
 /** An instant as a day and a time without the year, for a run of events close
  *  together; `formatDateTime` gives the whole of it, for a tooltip. */
 export function formatShortDateTime(iso: string): string {
-  return shortDateTimeLabel.format(new Date(iso));
+  return `${shortDateTimeLabel.format(new Date(iso))} UTC`;
 }
 
 /** GitHub's picture for a login, from the public redirect every profile has.

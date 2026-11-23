@@ -1086,6 +1086,29 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 	return s.save(path, cache)
 }
 
+// Seed replaces a repository's cache under the client's credential with
+// snapshot, saved as a cache of the format before 3: Cached serves its pull
+// requests, stale until a poll succeeds, and the first full sweep replaces
+// them. It is for development data written while no daemon runs (the
+// seeded profiling dataset, internal/seeddata); the daemon never calls it.
+func (s *Service) Seed(ctx context.Context, snapshot Snapshot) error {
+	repository, err := github.ParseRepository(snapshot.Repository)
+	if err != nil {
+		return err
+	}
+	defer s.lock(repository)()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return err
+	}
+	snapshot.Repository, snapshot.Epoch, snapshot.Stale, snapshot.Error = repository.String(), 0, false, ""
+	return s.save(path, diskCache{Snapshot: snapshot})
+}
+
 // Merged records that the app just merged the pull request at head: GitHub
 // accepted the merge, so it leaves the open pull requests and is observed
 // merged without another read. Its title and draft state are the cached ones.

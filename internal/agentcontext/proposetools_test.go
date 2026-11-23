@@ -45,7 +45,7 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 		target string
 		after  string
 	}{
-		{settings("general"), "propose_appearance", map[string]any{"theme": "dark"}, TargetAppearance, `{"theme":"dark"}`},
+		{settings("general"), "propose_appearance", map[string]any{"key_hints": false}, TargetAppearance, `{"key_hints":false}`},
 		{settings("general"), "propose_plan_usage", map[string]any{"provider": "codex", "shown": nil}, TargetPlanUsage + "codex", `{"shown":null}`},
 		{settings("reviews"), "propose_reviews", map[string]any{"enabled": false, "model": "m"}, TargetReviews, `{"enabled":false,"model":"m"}`},
 		{settings("reviews"), "propose_decision_capture", map[string]any{"effort": "low"}, TargetDecisions, `{"effort":"low"}`},
@@ -63,6 +63,7 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 		{repository, "propose_repository_settings", map[string]any{"automatic": nil}, "acme/web:settings", `{"automatic":null}`},
 		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"name": "N"}, TargetNewInbox, `{"name":"N"}`},
 		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"id": strings.Repeat("a", 32), "badge": false}, TargetInbox + strings.Repeat("a", 32), `{"badge":false}`},
+		{PageContext{Page: PageInbox}, "propose_inbox", map[string]any{"id": strings.Repeat("a", 32), "auto_review": false}, TargetInbox + strings.Repeat("a", 32), `{"auto_review":false}`},
 		{PageContext{Page: PageGroup, Group: "g1"}, "propose_group", map[string]any{"add": []int{3}}, TargetGroup + "g1", `{"add":[3]}`},
 		{PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12}, "propose_review_comment", map[string]any{"body": "b"}, "acme/web#12:review_comment", `{"body":"b"}`},
 	} {
@@ -97,7 +98,7 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 	before := len(s.Proposals.List(id))
 	setPage(t, s, id, PageContext{Page: PageInbox})
 	for tool, args := range map[string]map[string]any{
-		"propose_appearance": {"theme": "dark"}, "propose_prompt": {"id": "fix", "text": "t"}, "propose_group": {"name": "x"},
+		"propose_appearance": {"key_hints": false}, "propose_prompt": {"id": "fix", "text": "t"}, "propose_group": {"name": "x"},
 		"propose_repository_settings": {"automatic": true}, "propose_review_comment": {"body": "b"},
 	} {
 		if text, failed := data(t, s, token, tool, args); !failed {

@@ -268,8 +268,8 @@ func TestFromV1Example(t *testing.T) {
 		if s.Gist == "" || len([]rune(s.Gist)) > MaxGist {
 			t.Errorf("section %s gist = %q", s.ID, s.Gist)
 		}
-		if len(s.Body) == 0 || s.Summary != "" || len(s.Steps) != 0 {
-			t.Errorf("section %s has no body, or still its older summary and steps: %+v", s.ID, s)
+		if len(s.Body) == 0 {
+			t.Errorf("section %s has no body: %+v", s.ID, s)
 		}
 	}
 
@@ -294,7 +294,7 @@ func TestReusableSections(t *testing.T) {
 		t.Fatalf("reused = %v", reused)
 	}
 	r, ok := reused["sec_dependencies"]
-	if !ok || r.Section.Title != "Lock file" || len(r.Section.Body) == 0 || r.Section.Summary != "" || r.Section.Derived != nil {
+	if !ok || r.Section.Title != "Lock file" || len(r.Section.Body) == 0 || r.Section.Derived != nil {
 		t.Fatalf("reused = %+v", r)
 	}
 	all := ReusableSections(first, authored(t).Sections)
@@ -374,19 +374,6 @@ func TestChecks(t *testing.T) {
 			d.Overview.Intent[0].Prompt = 9
 			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
 		}, "prompt 9"},
-		{"one step", func(d Document) []string {
-			// Section 1 is written as before bodies were: a summary and steps.
-			d.Sections[1].Steps = d.Sections[1].Steps[:1]
-			return CheckSection(d.Sections[1], refs)
-		}, "write 2 to 5"},
-		{"step two sentences", func(d Document) []string {
-			d.Sections[1].Steps[0].Text = "One. Two."
-			return CheckSection(d.Sections[1], refs)
-		}, "2 sentences"},
-		{"summary four sentences", func(d Document) []string {
-			d.Sections[1].Summary = "A. B. C. D."
-			return CheckSection(d.Sections[1], refs)
-		}, "4 sentences"},
 		{"prose four sentences", func(d Document) []string {
 			d.Sections[0].Body[0].Text = "A. B. C. D."
 			return CheckSection(d.Sections[0], refs)

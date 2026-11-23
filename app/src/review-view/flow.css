@@ -1,10 +1,10 @@
 /* A flow tile (native-tiles.tsx). Narrow, each lane is a list of its steps
-   going down. Once the tile has room for every column (data-wide, the width
-   each flow asks for), the lanes become rows of one grid, each under its
-   label: every step is a column of the same width, so a lane's steps line
+   going down. Once the tile has room for every column (data-across, which
+   FlowDiagram sets from the width it measures), the lanes become rows of one
+   grid, each under its label: every step is a column of the same width, so a lane's steps line
    up with the steps above them, and a branch sits under the steps that
    follow the one it leaves after. With room for the labels too
-   (data-wider), they move to a column of their own. In the grid, the
+   (data-labels), they move to a column of their own. In the grid, the
    arrows are lines drawn over it (.flow-wires). Colours are the boxes' own
    (Tailwind tokens). */
 .flow {
@@ -64,633 +64,62 @@
 .flow-across {
   display: none;
 }
-@container (min-width: 28rem) {
-  .flow[data-wide="28"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="28"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="28"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="28"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="28"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="28"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="28"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="28"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="28"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="28"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] {
+  grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
+  column-gap: 1.5rem;
+  row-gap: 0.375rem;
 }
-@container (min-width: 32rem) {
-  .flow[data-wide="32"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="32"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="32"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="32"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="32"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="32"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="32"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="32"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="32"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="32"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] :is(.flow-lane, .flow-steps) {
+  display: contents;
 }
-@container (min-width: 36rem) {
-  .flow[data-wide="36"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="36"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="36"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="36"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="36"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="36"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="36"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="36"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="36"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="36"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] .flow-label {
+  grid-row: calc(var(--flow-row) * 2 - 1);
+  grid-column: var(--flow-start, 1) / -1;
 }
-@container (min-width: 40rem) {
-  .flow[data-wide="40"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="40"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="40"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="40"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="40"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="40"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="40"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="40"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="40"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="40"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] [data-lane]:not(:first-child) .flow-label {
+  margin-top: 0.5rem;
 }
-@container (min-width: 44rem) {
-  .flow[data-wide="44"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="44"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="44"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="44"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="44"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="44"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="44"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="44"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="44"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="44"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] :is(.flow-after, .flow-down) {
+  display: none;
 }
-@container (min-width: 48rem) {
-  .flow[data-wide="48"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="48"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="48"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="48"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="48"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="48"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="48"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="48"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="48"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="48"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] .flow-step {
+  position: relative;
+  grid-row: calc(var(--flow-row) * 2);
+  grid-column: var(--flow-column);
 }
-@container (min-width: 52rem) {
-  .flow[data-wide="52"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="52"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="52"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="52"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="52"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="52"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="52"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="52"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="52"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="52"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] .flow-step > :last-child {
+  flex: 1;
 }
-@container (min-width: 56rem) {
-  .flow[data-wide="56"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="56"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="56"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="56"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="56"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="56"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="56"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="56"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="56"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="56"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] .flow-join {
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: 1.5rem;
+  height: auto;
+  padding: 0;
 }
-@container (min-width: 64rem) {
-  .flow[data-wide="64"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="64"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="64"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="64"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="64"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="64"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="64"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="64"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="64"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="64"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] .flow-join[data-join="branch"] {
+  display: flex;
+  align-items: flex-start;
+  padding-top: 0.5rem;
 }
-@container (min-width: 72rem) {
-  .flow[data-wide="72"] {
-    grid-template-columns: repeat(var(--flow-columns), minmax(0, 1fr));
-    column-gap: 1.5rem;
-    row-gap: 0.375rem;
-  }
-  .flow[data-wide="72"] :is(.flow-lane, .flow-steps) {
-    display: contents;
-  }
-  .flow[data-wide="72"] .flow-label {
-    grid-row: calc(var(--flow-row) * 2 - 1);
-    grid-column: var(--flow-start, 1) / -1;
-  }
-  .flow[data-wide="72"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0.5rem;
-  }
-  .flow[data-wide="72"] :is(.flow-after, .flow-down) {
-    display: none;
-  }
-  .flow[data-wide="72"] .flow-step {
-    position: relative;
-    grid-row: calc(var(--flow-row) * 2);
-    grid-column: var(--flow-column);
-  }
-  .flow[data-wide="72"] .flow-step > :last-child {
-    flex: 1;
-  }
-  .flow[data-wide="72"] .flow-join {
-    position: absolute;
-    top: 0;
-    right: 100%;
-    bottom: 0;
-    width: 1.5rem;
-    height: auto;
-    padding: 0;
-  }
-  .flow[data-wide="72"] .flow-join[data-join="branch"] {
-    display: flex;
-    align-items: flex-start;
-    padding-top: 0.5rem;
-  }
-  .flow[data-wide="72"] .flow-across {
-    display: inline;
-  }
+.flow[data-across] .flow-across {
+  display: inline;
 }
-@container (min-width: 28rem) {
-  .flow[data-wider="28"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="28"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="28"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="28"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
+.flow[data-labels] {
+  grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
+  row-gap: 0.75rem;
 }
-@container (min-width: 32rem) {
-  .flow[data-wider="32"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="32"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="32"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="32"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
+.flow[data-labels] .flow-label {
+  grid-row: var(--flow-row);
+  grid-column: 1;
+  align-self: center;
 }
-@container (min-width: 36rem) {
-  .flow[data-wider="36"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="36"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="36"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="36"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
+.flow[data-labels] [data-lane]:not(:first-child) .flow-label {
+  margin-top: 0;
 }
-@container (min-width: 40rem) {
-  .flow[data-wider="40"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="40"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="40"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="40"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
-}
-@container (min-width: 44rem) {
-  .flow[data-wider="44"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="44"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="44"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="44"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
-}
-@container (min-width: 48rem) {
-  .flow[data-wider="48"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="48"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="48"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="48"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
-}
-@container (min-width: 52rem) {
-  .flow[data-wider="52"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="52"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="52"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="52"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
-}
-@container (min-width: 56rem) {
-  .flow[data-wider="56"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="56"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="56"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="56"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
-}
-@container (min-width: 64rem) {
-  .flow[data-wider="64"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="64"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="64"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="64"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
-}
-@container (min-width: 72rem) {
-  .flow[data-wider="72"] {
-    grid-template-columns: 6rem repeat(var(--flow-columns), minmax(0, 1fr));
-    row-gap: 0.75rem;
-  }
-  .flow[data-wider="72"] .flow-label {
-    grid-row: var(--flow-row);
-    grid-column: 1;
-    align-self: center;
-  }
-  .flow[data-wider="72"] [data-lane]:not(:first-child) .flow-label {
-    margin-top: 0;
-  }
-  .flow[data-wider="72"] .flow-step {
-    grid-row: var(--flow-row);
-    grid-column: calc(var(--flow-column) + 1);
-  }
+.flow[data-labels] .flow-step {
+  grid-row: var(--flow-row);
+  grid-column: calc(var(--flow-column) + 1);
 }

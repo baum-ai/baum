@@ -92,6 +92,7 @@ export function StackOverview({
   memberHref,
   Link,
   titled = true,
+  actions,
 }: {
   group: ReviewGroup;
   /** Every member in the stack's order, the landed ones first. */
@@ -105,6 +106,8 @@ export function StackOverview({
   Link: ComponentType<ViewerLinkProps>;
   /** False on the stack's page, whose bar already names it. */
   titled?: boolean;
+  /** More actions beside Open the stack, as the Inbox's Snooze. */
+  actions?: ReactNode;
 }) {
   const [listOpen, setListOpen] = useState(true);
   const listId = useId();
@@ -198,6 +201,7 @@ export function StackOverview({
               ↵
             </kbd>
           </Link>
+          {actions}
         </div>
       ) : null}
       {score != null && overview?.riskiest ? (

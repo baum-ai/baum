@@ -87,6 +87,25 @@ export const railRow = (page: Page, name: string) =>
 /** A custom tile's frame box, as the page draws it. */
 export const frameBox = (page: Page, tile: string) => page.locator(`[data-custom-tile="${tile}"]`);
 
+/** Waits for a custom tile's frame box to stop moving. Opening a tile
+ *  scrolls the page to it smoothly, and a click on something in the frame
+ *  lands where it was before the scroll moved it: the click's own wait for a
+ *  still target looks inside the frame, where nothing moves. */
+export async function frameStill(page: Page, tile: string) {
+  let last = Number.NaN;
+  await expect
+    .poll(
+      async () => {
+        const y = (await frameBox(page, tile).boundingBox())?.y ?? Number.NaN;
+        const still = y === last;
+        last = y;
+        return still;
+      },
+      { timeout: 10000, intervals: [100] },
+    )
+    .toBe(true);
+}
+
 /** Waits for a custom tile's frame to have drawn. */
 export async function frameReady(page: Page, tile: string) {
   // A frame that failed says why, rather than the wait running out.

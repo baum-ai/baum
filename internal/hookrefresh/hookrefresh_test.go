@@ -464,6 +464,23 @@ func TestMovedHeadOfAnotherAuthorQueuesAJobForAllPullRequests(t *testing.T) {
 	h.wantJobs("acme/app#7@b:new_head")
 }
 
+// With automatic reviews following the saved inboxes, a push to any pull
+// request may be one they hold, so the scheduler is triggered; it decides.
+func TestMovedHeadOfAnyPullRequestTriggersTheSchedulerForInboxes(t *testing.T) {
+	h := newHarness(t)
+	h.registry.edit(func(r *registry) { r.prefs.PullRequests = repos.PullRequestsInboxes })
+	h.scheduler.InAutoReviewInbox = func(context.Context) (func(discovery.PullRequest) bool, error) {
+		return func(discovery.PullRequest) bool { return true }, nil
+	}
+	h.gh.set(7, func(pr *discovery.PullRequest) { pr.AuthoredByMe = false })
+	h.cache = h.gh.snapshot(h.now)
+	h.gh.set(7, func(pr *discovery.PullRequest) { pr.HeadSHA = newHead })
+	h.prePush("origin", pushLine("feature", newHead, oldHead))
+	h.advance(PushDelay)
+	h.wantRefreshes(7, 1)
+	h.wantJobs("acme/app#7@b:new_head")
+}
+
 func TestNoJobWhenAutomaticGenerationDoesNotApply(t *testing.T) {
 	for _, tc := range []struct {
 		name    string

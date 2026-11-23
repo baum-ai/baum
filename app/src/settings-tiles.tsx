@@ -286,7 +286,9 @@ function TileTypeList({
                 <Badge size="compact">Custom</Badge>
                 {t.checked ? null : <NotChecked />}
               </h3>
-              <p className="tile-type-use">{t.use_when}</p>
+              <p className="tile-type-use" title={t.use_when}>
+                {t.use_when}
+              </p>
               <p className="tile-type-meta">
                 {originLabel(t.origin)} · {pinnedLabel(t.pinned)}
               </p>

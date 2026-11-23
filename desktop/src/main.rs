@@ -18,14 +18,17 @@ mod development;
 mod events;
 mod install;
 mod lifecycle;
+mod links;
 #[cfg(target_os = "linux")]
 mod menu_entry;
 mod navigation;
 mod notifications;
 mod onboarding;
 mod panel;
+mod pointer;
 mod settings;
 mod status;
+mod theme;
 mod tile_files;
 mod tray;
 mod updater;
@@ -39,7 +42,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
-use navigation::{Decision, NewWindow};
+use navigation::Decision;
 
 pub const MAIN: &str = "main";
 /// How often the attached daemon is checked, and how many failed checks in a
@@ -370,6 +373,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state.clone())
         .manage(onboarding::Setup::default())
+        .manage(links::Limit::default())
         .invoke_handler(tauri::generate_handler![
             connection,
             reconnect,
@@ -394,21 +398,24 @@ fn main() {
             zoom::zoom_state,
             zoom::set_zoom,
             zoom::step_zoom,
+            theme::theme_state,
+            theme::save_theme,
             updater::update_state,
             updater::check_for_updates,
             updater::install_update,
             updater::cancel_update,
             updater::dismiss_update_notice,
             tile_files::save_tile_type,
+            links::open_link,
         ])
         .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
             let handle = app.handle().clone();
             let opener = app.handle().clone();
-            let limit = Mutex::new(navigation::OpenLimit::default());
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
             zoom::install(app.handle())?;
+            theme::install(app.handle())?;
             // Before the window, whose Settings page reads its state.
             updater::start(app.handle());
             tray::setup(app.handle());
@@ -432,9 +439,16 @@ fn main() {
                 // What this shell can host, for the page to read (see `declaration`).
                 .initialization_script(declaration::script(declaration::SHELL))
                 .initialization_script(zoom::SCRIPT)
+                .initialization_script(theme::script(&app.state::<theme::Store>().get()))
                 .on_page_load(|webview, payload| {
                     if payload.event() == tauri::webview::PageLoadEvent::Started {
                         zoom::apply(webview.as_ref());
+                        // Best effort: the init script holds the theme saved
+                        // at startup, so push the current one.
+                        let script = theme::script(&webview.state::<theme::Store>().get());
+                        if let Err(e) = webview.eval(&script) {
+                            eprintln!("baum desktop: cannot refresh the theme: {e}");
+                        }
                         // The page that opened the check window is gone.
                         check_window::close_soon(webview.app_handle());
                     }
@@ -457,20 +471,7 @@ fn main() {
                     allowed
                 })
                 .on_new_window(move |url, _| {
-                    if navigation::decide_new_window(&url) == NewWindow::OpenInBrowser {
-                        let allowed = limit
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .allow(std::time::Instant::now());
-                        if allowed {
-                            open_externally(&opener, &url);
-                        } else if cfg!(debug_assertions) {
-                            eprintln!(
-                                "baum desktop: dropped a second link to {} within a second",
-                                navigation::scheme_and_host(&url)
-                            );
-                        }
-                    }
+                    links::open(&opener, &url);
                     tauri::webview::NewWindowResponse::Deny
                 })
                 .build()?;
@@ -479,6 +480,7 @@ fn main() {
                 eprintln!("baum desktop: no tray panel: {e}");
             }
             zoom::apply(window.as_ref());
+            pointer::watch(&window);
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
@@ -500,7 +502,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     /// The daemon's pages are remote to Tauri. They get only the folder
-    /// picker, CLI/hook management and the tile type save dialog, on loopback; the bundled screens get
+    /// picker, CLI/hook management, the tile type save dialog and opening links
+    /// to other sites, on loopback; the bundled screens get
     /// exactly their commands and no remote URL, and the tray panel's page
     /// only its own, in its own window. The check window's daemon page gets
     /// no command at all. Every page in the main window gets the zoom
@@ -508,8 +511,8 @@ mod tests {
     #[test]
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
-            "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom"],
-            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom", "allow-update-state", "allow-check-for-updates", "allow-install-update", "allow-cancel-update", "allow-dismiss-update-notice", "allow-save-tile-type", "allow-open-check-window", "allow-close-check-window"],
+            "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom", "allow-theme-state"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom", "allow-save-theme", "allow-update-state", "allow-check-for-updates", "allow-install-update", "allow-cancel-update", "allow-dismiss-update-notice", "allow-save-tile-type", "allow-open-check-window", "allow-close-check-window", "allow-open-link"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",
@@ -524,9 +527,11 @@ mod tests {
                 "allow-github-connection",
                 "allow-repositories",
                 "allow-finish-setup",
-                "allow-step-zoom"
+                "allow-step-zoom",
+                "allow-theme-state",
+                "allow-open-link"
             ],
-            "tray-panel": ["allow-tray-panel", "allow-tray-panel-height", "allow-tray-action"],
+            "tray-panel": ["allow-tray-panel", "allow-tray-panel-height", "allow-tray-action", "allow-theme-state"],
             "tile-check": [],
         });
         let mut found = serde_json::Map::new();

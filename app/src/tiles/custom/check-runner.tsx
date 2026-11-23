@@ -382,7 +382,7 @@ async function dataRefs(
     const response = await fetch(appURL(`api/tiles?${query}`), { cache: "no-store" });
     if (!response.ok) return null;
     const { chrome, review } = tilesAnswer((await response.json()) as TilesAnswer);
-    const source = tileSourceOf(chrome, review.tiles);
+    const source = tileSourceOf(chrome, review?.tiles ?? []);
     const labels = new Map<string, string>();
     return {
       glance: resolveRefs(data, source, "glance", labels).refs,

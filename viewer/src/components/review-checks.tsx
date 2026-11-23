@@ -2,6 +2,7 @@ import pluralize from "pluralize";
 
 import {
   CHECK_CONCLUSION_TONES,
+  CHECK_CONCLUSION_WORDS,
   type CheckStatus,
   checksHead,
   checkStatus,
@@ -106,7 +107,7 @@ export function FailingChecks({ status }: { status: CheckStatus }) {
         {status.failed.map((check) => (
           <li key={check.id} className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <Badge tone="critical" size="compact">
-              {humanize(check.conclusion)}
+              {CHECK_CONCLUSION_WORDS[check.conclusion] ?? humanize(check.conclusion)}
             </Badge>
             <CheckLink check={check} />
             {check.required && <Badge size="compact">Required</Badge>}
@@ -164,7 +165,7 @@ export function ChecksPart({ document: supplied }: { document: ReviewEvidence })
                     tone={CHECK_CONCLUSION_TONES[check.conclusion] ?? "neutral"}
                     size="compact"
                   >
-                    {humanize(check.conclusion)}
+                    {CHECK_CONCLUSION_WORDS[check.conclusion] ?? humanize(check.conclusion)}
                   </Badge>
                   <CheckLink check={check} />
                   {check.required && <Badge size="compact">Required</Badge>}

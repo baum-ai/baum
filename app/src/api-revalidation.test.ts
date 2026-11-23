@@ -110,3 +110,12 @@ it("evicts the oldest entry beyond the cap and refreshes recency on a hit", asyn
   await request(doc(1));
   expect(sent(1)).toBeNull();
 });
+
+it("says the daemon error sentence, not the raw JSON body", async () => {
+  fetchMock.mockResolvedValueOnce(
+    new Response(JSON.stringify({ error: "The session did not stop within 5 seconds." }), {
+      status: 500,
+    }),
+  );
+  await expect(request(path)).rejects.toThrow(/^The session did not stop within 5 seconds\.$/);
+});
