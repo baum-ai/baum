@@ -1012,27 +1012,31 @@ const cellText = (cell: TableCell | undefined) =>
   cell === undefined ? "" : typeof cell === "string" ? cell : cell.text;
 
 /** A short value read as a quantity: a number, with an optional unit
- *  ("65,535 bytes", "10 seconds", "$2.00", "≤ 5%"). */
-const QUANTITY = /^[~≈<>≤≥±+-]?\s?[$€£]?\d[\d,._]*(\s?[%A-Za-z]{1,8})?$/;
-const isQuantity = (text: string) => text.length <= 24 && QUANTITY.test(text.trim());
+ *  ("65,535 bytes", "250 milliseconds", "1,000 req/s", "$2.00", "≤ 5%"). */
+const QUANTITY = /^[~≈<>≤≥±+\-−]?\s?[$€£]?\d[\d,._]*(\s?[%A-Za-z/]{1,16})?$/;
+const isQuantity = (text: string) => text.length <= 28 && QUANTITY.test(text);
+/** A cell that stands for no value, which a number column may hold. */
+const PLACEHOLDER = /^(?:[-–—−]|n\/?a|tbd|none)$/i;
 
 /** How a column draws its cells: `label` (the first column, naming each
  *  row), `quantity` (every cell a number, right-aligned in tabular figures),
- *  `chips` (a few short values repeated down the column, each a chip with
- *  its own dot) or plain text. */
+ *  `chips` (a few short values repeated down the column, each tinted with
+ *  its own colour) or plain text. */
 type ColumnKind = { kind: "label" | "quantity" | "text" } | { kind: "chips"; values: string[] };
 
-/** The colours of the chips' dots, in order of each value's first row. */
+/** How many tints a column has, given in order of each value's first row. */
 const CHIP_TINTS = 4;
 
 function kindOf(data: TableData, position: number): ColumnKind {
   if (position === 0 && data.columns.length > 1) return { kind: "label" };
   const texts = data.rows.map((row) => cellText(row[position]).trim()).filter(Boolean);
   if (texts.length === 0) return { kind: "text" };
-  if (texts.every(isQuantity)) return { kind: "quantity" };
+  const numbers = texts.filter((text) => !PLACEHOLDER.test(text));
+  if (numbers.length > 0 && numbers.every(isQuantity)) return { kind: "quantity" };
   const values = [...new Set(texts)];
   if (
-    data.rows.length >= 4 &&
+    texts.length >= 4 &&
+    values.length >= 2 &&
     values.length <= CHIP_TINTS &&
     values.length < texts.length &&
     values.every((value) => value.length <= 32)
@@ -1078,14 +1082,14 @@ export function TableDiagram({ data }: { data: TableData }) {
         const cell = row.cells[position] ?? "";
         const text = cellText(cell).trim();
         const body =
-          kind.kind === "chips" && typeof cell === "string" && text ? (
+          kind.kind === "chips" && text && (typeof cell === "string" || !cell.was) ? (
             <Chip text={text} tint={Math.max(0, kind.values.indexOf(text))} />
           ) : (
             <Cell cell={cell} />
           );
         if (kind.kind === "quantity")
-          return <span className="font-medium text-primary tabular-nums">{body}</span>;
-        if (kind.kind !== "label") return body;
+          return <span className="font-medium text-primary">{body}</span>;
+        if (position !== 0) return body;
         // A changed row has the sequence's Changed pill and a bar at its
         // left edge; while any row has, every label leaves room for the bar.
         return (
@@ -1136,7 +1140,15 @@ export function TableDiagram({ data }: { data: TableData }) {
             </button>
           ) : null}
           {toggle ? (
-            <Toggle checked={focused} onChange={setFocused} className="ml-auto text-sm">
+            <Toggle
+              checked={focused}
+              onChange={(on) => {
+                setFocused(on);
+                // A changed row may sit below the fold.
+                if (on) setAll(true);
+              }}
+              className="ml-auto text-sm"
+            >
               Show only changes
             </Toggle>
           ) : null}

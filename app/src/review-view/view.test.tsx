@@ -1115,6 +1115,43 @@ describe("a section's body", () => {
     expect(container.querySelectorAll("tbody tr.opacity-35")).toHaveLength(2);
   });
 
+  it("unfolds a long table when it shows only changes, so a changed row below the fold shows", async () => {
+    const table = tileOf("dg_relay_runs");
+    const rows: unknown[][] = Array.from({ length: 12 }, (_, at) => [`run ${at}`, "relay", "ok"]);
+    rows[10] = ["run 10", { text: "moved", was: "relay" }, "ok"];
+    const container = await card({ ...table, data: { ...(table.data as object), rows } });
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
+    await click(container.querySelector<HTMLElement>('input[role="switch"]')!);
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(12);
+    expect(container.querySelectorAll("tbody tr:not(.opacity-35)")).toHaveLength(1);
+  });
+
+  it("marks a changed row in a one-column table", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: { columns: ["Step"], rows: [[{ text: "Pair", was: "Scan" }], ["Offer"]], source: [] },
+    });
+    expect(container.querySelectorAll("tbody tr")[0]?.textContent).toContain("Changed");
+  });
+
+  it("keeps a number column right-aligned when a cell holds a dash", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: {
+        ...(table.data as object),
+        rows: [
+          ["a", "250 milliseconds", "x"],
+          ["b", "—", "y"],
+          ["c", "1,000 req/s", "z"],
+        ],
+      },
+    });
+    const cells = [...container.querySelectorAll<HTMLElement>("tbody tr")[0]!.children];
+    expect(cells[1]?.className).toContain("text-right");
+  });
+
   it("right-aligns a table's number columns and tints its repeated values", async () => {
     const table = tileOf("dg_relay_runs");
     const container = await card({
@@ -1131,7 +1168,7 @@ describe("a section's body", () => {
     });
     const cells = [...container.querySelectorAll<HTMLElement>("tbody tr")[0]!.children];
     expect(cells[1]?.className).toContain("text-right");
-    expect(cells[1]?.querySelector(".tabular-nums")).not.toBeNull();
+    expect(cells[1]?.className).toContain("tabular-nums");
     const tints = [...container.querySelectorAll<HTMLElement>(".table-tint")];
     expect(tints.map((each) => each.dataset.tint)).toEqual(["0", "0", "1", "0"]);
   });
