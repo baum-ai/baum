@@ -7,7 +7,13 @@ import { App } from "./app";
 import { ReviewSettingsForm } from "./desktop/reviews";
 import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone, type Job } from "./api";
+import { openExternal } from "./outside-links";
 import { forgetLastRows } from "./shortcuts";
+
+vi.mock("./outside-links", async (original) => ({
+  ...(await original<typeof import("./outside-links")>()),
+  openExternal: vi.fn(),
+}));
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -235,16 +241,57 @@ it.each([
   },
 );
 
+it("names the page in the window title", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  await act(async () => root.render(<App />));
+  expect(document.title).toBe("Jobs · baum");
+});
+
 it("does not call a review group missing when the groups could not be read", async () => {
   const heal = refuse("api/groups");
   history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Couldn't load the review group");
-  expect(node.textContent).not.toContain("does not exist any more");
+  expect(node.textContent).not.toContain("no longer exists");
   expect(retryButtons()).toHaveLength(1);
   heal();
   await act(async () => retryButtons()[0]!.click());
-  expect(node.textContent).toContain("does not exist any more");
+  expect(node.textContent).toContain("no longer exists");
+});
+
+it("reads again on Retry when a read under way never answers", async () => {
+  const listeners = new Map<string, () => void>();
+  vi.stubGlobal(
+    "EventSource",
+    class {
+      addEventListener(name: string, listener: () => void) {
+        listeners.set(name, listener);
+      }
+      close() {}
+    },
+  );
+  const heal = refuse("api/groups");
+  history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("Couldn't load the review group");
+  heal();
+  // The next read of the inbox hangs, and the read it is part of with it.
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  let hang = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string, init?: RequestInit) => {
+      if (hang && path.endsWith("api/inbox")) {
+        hang = false;
+        return new Promise<Response>(() => {});
+      }
+      return original(path, init);
+    }),
+  );
+  await act(async () => listeners.get("index")!());
+  expect(node.textContent).toContain("Couldn't load the review group");
+  await act(async () => retryButtons()[0]!.click());
+  expect(node.textContent).toContain("no longer exists");
 });
 
 it("says the sessions could not be read instead of listing none", async () => {
@@ -384,15 +431,19 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
-  // A ready pull request offers Merge after Peek in its row's menu, each with
-  // its key hint.
+  // A ready pull request offers Merge after Open and Peek in its row's menu,
+  // each with its key hint.
   await act(async () =>
     rows[0]!.querySelector<HTMLButtonElement>("button.row-menu-button")!.click(),
   );
   const menuItems = Array.from(
     node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'),
   );
-  expect(menuItems.slice(0, 2).map((item) => item.textContent)).toEqual(["PeekSpace", "Merge…m"]);
+  expect(menuItems.slice(0, 3).map((item) => item.textContent)).toEqual([
+    "Open↵",
+    "PeekSpace",
+    "Merge…m",
+  ]);
   await act(async () =>
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
   );
@@ -994,6 +1045,10 @@ function stubAutomatic(
   vi.mocked(fetch).mockImplementation((...args) => {
     const path = String(args[0]);
     const init = args[1] as RequestInit | undefined;
+    // The session panel reports the open page 250ms after each navigation on
+    // real timers, so recording it would race the settings saves tests check.
+    if (init?.method === "PUT" && path.endsWith("api/console/page"))
+      return Promise.resolve(Response.json({}));
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
       if (
@@ -1068,6 +1123,14 @@ it("saves each review setting as it changes", async () => {
     },
   });
   expect(section().textContent).toContain("Saved");
+  // Reviews can follow the inboxes, each with its own switch.
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "inboxes");
+  expect(puts.at(-1)!.body).toMatchObject({ pull_requests: "inboxes" });
+  expect(node.querySelector("#review-all-note")).toBeNull();
+  expect(node.querySelector("#review-inboxes-note")!.textContent).toContain(
+    "Pull requests in any inbox with Review automatically on get reviewed.",
+  );
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "all");
   await choose(global, "on_change");
   expect(puts.at(-1)!.body).toMatchObject({ enabled: true, updates: "on_change" });
   expect(section().textContent).toContain("only when the change would alter it");
@@ -1323,6 +1386,7 @@ it("saves one change at a time and only the newest of those made meanwhile", asy
   vi.mocked(fetch).mockImplementation((...args) => {
     const response = stubbed(...args);
     if ((args[1] as RequestInit | undefined)?.method !== "PUT") return response;
+    if (String(args[0]).endsWith("api/console/page")) return response;
     return new Promise((resolve) => held.push(() => resolve(response)));
   });
   await act(async () => root.render(<App />));
@@ -1370,7 +1434,7 @@ it("opens on General and marks sections needing attention", async () => {
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
   stubAutomatic(demoClone, automaticOverview, { backend: "anthropic", model: "claude-opus-5-5" });
   await act(async () => root.render(<App />));
-  expect(node.querySelector("#preferred-theme")).not.toBeNull();
+  expect(node.querySelector("#page-modifier")).not.toBeNull();
   const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("General");
   const fixes = nav.querySelector<HTMLButtonElement>('[data-section="fixes"]')!;
@@ -1379,6 +1443,302 @@ it("opens on General and marks sections needing attention", async () => {
   expect(location.search).toBe("?page=settings&section=fixes");
   expect(node.querySelector("#fix-agent")).not.toBeNull();
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
+});
+const appearanceThemes = [
+  { id: "default-light", name: "Default light", base: "light", builtin: true, tokens: {} },
+  { id: "default-dark", name: "Default dark", base: "dark", builtin: true, tokens: {} },
+  { id: "c-1", name: "Dusk", base: "dark", tokens: { "--color-paper": "#e8eef4" } },
+];
+const appearanceHarness = (over: Record<string, unknown> = {}) => {
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  let appearance = {
+    theme: "light",
+    key_hints: true,
+    sidebar: "pinned",
+    light_theme: "default-light",
+    dark_theme: "default-dark",
+    themes: appearanceThemes,
+    ...over,
+  };
+  const sent: { method: string; path: string; body: unknown }[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const init = args[1] as RequestInit | undefined;
+    const path = String(args[0]);
+    if (path.includes("api/settings/appearance")) {
+      const method = init?.method ?? "GET";
+      if (method !== "GET") {
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        sent.push({ method, path: path.slice(path.indexOf("api/")), body });
+        if (method === "PUT") appearance = { ...appearance, ...body };
+        if (method === "PATCH")
+          appearance = {
+            ...appearance,
+            themes: appearance.themes.map((t) => (t.id === "c-1" ? { ...t, name: body.name } : t)),
+          };
+        if (method === "DELETE")
+          appearance = {
+            ...appearance,
+            dark_theme: "default-dark",
+            themes: appearance.themes.filter((t) => t.id !== "c-1"),
+          };
+      }
+      return Promise.resolve(Response.json(appearance));
+    }
+    return stubbed(...args);
+  });
+  return sent;
+};
+const radios = (group: string) => [
+  ...node.querySelectorAll<HTMLInputElement>(
+    `[role="radiogroup"][aria-label="${group}"] input[type="radio"]`,
+  ),
+];
+const radio = (group: string, name: string) =>
+  radios(group).find((input) => input.getAttribute("aria-label") === name)!;
+const row = (slot: string) => node.querySelector<HTMLElement>(`.theme-row[data-slot="${slot}"]`)!;
+const modeButton = (name: string) =>
+  [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Theme mode"] button')].find(
+    (button) => button.textContent === name,
+  )!;
+
+it("has an Appearance section after General, and General holds no theme controls", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  appearanceHarness();
+  await act(async () => root.render(<App />));
+  const sections = [
+    ...node.querySelectorAll<HTMLElement>('nav[aria-label="Settings sections"] [data-section]'),
+  ].map((item) => item.dataset.section);
+  expect(sections.slice(0, 2)).toEqual(["general", "appearance"]);
+  expect(node.querySelector("#preferred-theme, #light-theme, #dark-theme")).toBeNull();
+  expect(node.querySelector(".theme-row, [aria-label='Theme mode']")).toBeNull();
+  const nav = node.querySelector('nav[aria-label="Settings sections"]')!;
+  await act(async () =>
+    nav.querySelector<HTMLButtonElement>('[data-section="appearance"]')!.click(),
+  );
+  expect(location.search).toBe("?page=settings&section=appearance");
+  expect(node.querySelector("[aria-label='Theme mode']")).not.toBeNull();
+  expect(node.querySelector("#page-modifier")).toBeNull();
+  expect(row("light")).not.toBeNull();
+});
+
+it("chooses a theme for each slot with swatches, any base in either, and renames and deletes custom ones", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  const sent = appearanceHarness();
+  await act(async () => root.render(<App />));
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toEqual([
+    "Default light",
+    "Default dark",
+    "Dusk",
+  ]);
+  expect(radio("Light theme", "Default light").checked).toBe(true);
+  // A dark theme in the light slot gives a dark page while the light slot is in use.
+  await act(async () => radio("Light theme", "Dusk").click());
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { light_theme: "c-1" },
+  });
+  expect(radio("Light theme", "Dusk").checked).toBe(true);
+  expect(document.documentElement.dataset.theme).toBe("dark");
+  expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
+  await act(async () => radio("Light theme", "Default light").click());
+  expect(document.documentElement.dataset.theme).toBe("light");
+  expect(document.documentElement.style.getPropertyValue("--color-paper")).toBe("");
+  await act(async () => radio("Dark theme", "Dusk").click());
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { dark_theme: "c-1" },
+  });
+  await act(async () => modeButton("Dark").click());
+  expect(sent).toContainEqual({
+    method: "PUT",
+    path: "api/settings/appearance",
+    body: { theme: "dark" },
+  });
+  // The custom theme's thumbnail has a menu to rename and delete it, outside its radio's label.
+  const menuButton = node.querySelector<HTMLButtonElement>(
+    '[aria-label="Actions for Dusk in light theme"]',
+  )!;
+  expect(menuButton.closest("label")).toBeNull();
+  expect(row("light").querySelectorAll('[aria-label^="Actions for"]')).toHaveLength(1);
+  expect(row("dark").querySelectorAll('[aria-label^="Actions for"]')).toHaveLength(1);
+  expect(
+    row("light").querySelector('[aria-label="Actions for Default light in light theme"]'),
+  ).toBeNull();
+  await act(async () => menuButton.click());
+  const item = (name: string) =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((i) =>
+      i.textContent?.startsWith(name),
+    )!;
+  await act(async () => item("Rename").click());
+  const field = node.querySelector<HTMLInputElement>('input[aria-label="Name of Dusk"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      field,
+      "Midnight",
+    );
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => field.form!.requestSubmit());
+  expect(sent).toContainEqual({
+    method: "PATCH",
+    path: "api/settings/appearance/themes/c-1",
+    body: { name: "Midnight" },
+  });
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toContain("Midnight");
+  await act(async () =>
+    node
+      .querySelector<HTMLButtonElement>('[aria-label="Actions for Midnight in light theme"]')!
+      .click(),
+  );
+  await act(async () => item("Delete").click());
+  await act(async () =>
+    [...document.querySelectorAll<HTMLButtonElement>("dialog button")]
+      .find((b) => b.textContent === "Delete")!
+      .click(),
+  );
+  expect(sent).toContainEqual({
+    method: "DELETE",
+    path: "api/settings/appearance/themes/c-1",
+    body: {},
+  });
+  expect(radios("Light theme").map((r) => r.getAttribute("aria-label"))).toEqual([
+    "Default light",
+    "Default dark",
+  ]);
+});
+
+it("disables the theme mode and the thumbnails until the preferences are ready", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness();
+  const answer = vi.mocked(fetch).getMockImplementation()!;
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    if (String(args[0]).includes("api/settings/appearance")) await gate;
+    return answer(...args);
+  });
+  await act(async () => root.render(<App />));
+  expect(modeButton("Light").disabled).toBe(true);
+  expect(modeButton("Dark").disabled).toBe(true);
+  expect(radios("Light theme").every((r) => r.disabled)).toBe(true);
+  await act(async () => release());
+  expect(modeButton("Light").disabled).toBe(false);
+  expect(radios("Light theme").every((r) => !r.disabled)).toBe(true);
+});
+
+it("opens a custom theme's menu with a right click and with Ctrl+. on its radio, and a built-in's with neither", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  const sent = appearanceHarness();
+  await act(async () => root.render(<App />));
+  const option = (group: string, name: string) =>
+    radio(group, name).closest<HTMLElement>(".theme-option")!;
+  const menuItems = () =>
+    [...document.querySelectorAll('[role="menu"] [role="menuitem"]')].map((i) => i.textContent);
+  const closeMenu = () =>
+    act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+
+  // A right click on a built-in keeps the browser's menu.
+  const builtin = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => {
+    option("Light theme", "Default dark").querySelector(".theme-mini")!.dispatchEvent(builtin);
+  });
+  expect(builtin.defaultPrevented).toBe(false);
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+
+  // On a custom one it opens the ⋯ menu's choices.
+  const custom = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(async () => {
+    option("Light theme", "Dusk").querySelector(".theme-mini")!.dispatchEvent(custom);
+  });
+  expect(custom.defaultPrevented).toBe(true);
+  expect(menuItems()).toEqual(["Rename", "Delete"]);
+  expect(document.querySelector('[role="menu"]')!.getAttribute("aria-label")).toBe(
+    "Actions for Dusk in light theme",
+  );
+  await closeMenu();
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+
+  // Ctrl+. with the focus on the radio inside the label.
+  const ctrlDot = () =>
+    act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: ".", ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+  radio("Dark theme", "Default light").focus();
+  await ctrlDot();
+  expect(document.querySelector('[role="menu"]')).toBeNull();
+  radio("Dark theme", "Dusk").focus();
+  await ctrlDot();
+  expect(menuItems()).toEqual(["Rename", "Delete"]);
+  // Choosing Delete from it asks first.
+  const choose = (name: string) =>
+    act(async () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((i) => i.textContent === name)!
+        .click(),
+    );
+  await choose("Delete");
+  expect(document.querySelector("dialog")?.textContent).toContain("Delete Dusk?");
+  expect(sent.some((request) => request.method === "DELETE")).toBe(false);
+});
+
+it("shows the ⋯ chip's own rules, and rings the thumbnail outside its theme scope", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness();
+  await act(async () => root.render(<App />));
+  const option = radio("Light theme", "Dusk").closest<HTMLElement>(".theme-option")!;
+  // The option is a row the shared ⋯ rule keys on, and the ⋯ is not in the label.
+  expect(option.hasAttribute("data-list-row")).toBe(true);
+  expect(option.querySelector(".row-menu-button")).not.toBeNull();
+  // The ring's frame is outside the thumbnail's data-theme-scope.
+  const frame = option.querySelector(".theme-mini-frame")!;
+  expect(frame.closest("[data-theme-scope]")).toBeNull();
+  expect(frame.querySelector("[data-theme-scope]")).not.toBeNull();
+});
+
+it("marks the slot in use by the theme mode and the system's mode", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("dark"),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+  const inUse = () => ["light", "dark"].filter((slot) => row(slot).textContent?.includes("in use"));
+  appearanceHarness({ theme: "system" });
+  await act(async () => root.render(<App />));
+  expect(inUse()).toEqual(["dark"]);
+  expect(row("dark").hasAttribute("data-in-use")).toBe(true);
+  await act(async () => modeButton("Light").click());
+  expect(inUse()).toEqual(["light"]);
+  expect(row("light").querySelector("h3")!.textContent).toBe("Light theme · in use");
+  expect(row("dark").querySelector("h3")!.textContent).toBe("Dark theme");
+});
+
+it("draws each theme's miniature on a scoped element with its own base and tokens", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=appearance");
+  appearanceHarness({ theme: "light", light_theme: "c-1" });
+  await act(async () => root.render(<App />));
+  const mini = (group: string, name: string) =>
+    radio(group, name).closest("label")!.querySelector<HTMLElement>(".theme-mini")!;
+  // Every thumbnail is aria-hidden and scoped to its theme, the chosen one too.
+  const dusk = mini("Light theme", "Dusk");
+  expect(dusk.hasAttribute("data-theme-scope")).toBe(true);
+  expect(dusk.dataset.theme).toBe("dark");
+  expect(dusk.style.getPropertyValue("--color-paper")).toBe("#e8eef4");
+  expect(dusk.getAttribute("aria-hidden")).toBe("true");
+  expect(radio("Light theme", "Dusk").checked).toBe(true);
+  const builtin = mini("Light theme", "Default light");
+  expect(builtin.dataset.theme).toBe("light");
+  expect(builtin.style.getPropertyValue("--color-paper")).toBe("");
+  expect(mini("Dark theme", "Default dark").dataset.theme).toBe("dark");
+  expect(radio("Dark theme", "Dusk").closest("label")!.title).toBe("Dusk");
 });
 it("summarises the prompts in the section list and marks outdated ones", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=prompts");
@@ -1435,9 +1795,11 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
     });
   // Shift+J and Shift+K move through the sections.
   await key("J", true);
+  expect(location.search).toBe("?page=settings&section=appearance");
+  await key("J", true);
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
-  await key("4");
+  await key("5");
   expect(location.search).toBe("?page=settings&section=connections");
   await key("K", true);
   await key("ArrowUp", true);
@@ -1912,6 +2274,27 @@ it("types a custom data extraction model", async () => {
     path: "/s/test-ns/api/settings/decisions",
     body: { enabled: true, backend: "", model: "gpt-6-custom", effort: "" },
   });
+});
+it("puts the saved data extraction model back when the custom field is left empty", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    decisions: { enabled: true, backend: "", model: "gpt-6-custom", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  const custom = section.querySelector<HTMLInputElement>('input[aria-label="Custom model"]')!;
+  expect(custom.value).toBe("gpt-6-custom");
+  const count = puts.length;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(custom, " ");
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => custom.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(puts.length).toBe(count);
+  expect(custom.value).toBe("gpt-6-custom");
 });
 /** Opens a repository's page from its row and returns it. */
 async function openRepository(name = "acme/demo") {
@@ -3009,6 +3392,11 @@ it("folds the sidebar opened under the mouse when the pointer or focus leaves th
     expect(rail()).toBe("open");
     await act(async () => window.dispatchEvent(new FocusEvent("blur")));
     expect(rail()).toBe("folded");
+    // The desktop app's word that the pointer left, where WebKitGTK sends none.
+    await hover();
+    expect(rail()).toBe("open");
+    await act(async () => window.dispatchEvent(new Event("baum:pointer-left")));
+    expect(rail()).toBe("folded");
   } finally {
     vi.useRealTimers();
   }
@@ -3021,8 +3409,8 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
       this.open = true;
     },
   });
-  const open = vi.fn();
-  vi.stubGlobal("open", open);
+  const open = vi.mocked(openExternal);
+  open.mockClear();
   await act(async () => root.render(<App />));
   const help = () => node.querySelector<HTMLButtonElement>('button[aria-label="Help"]')!;
   const choose = async (label: string) => {
@@ -3032,6 +3420,7 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
     expect(items.map((item) => item.textContent)).toEqual([
       "Show shortcuts",
       "Report a problem",
+      "Take the tour",
       "Open the docs",
     ]);
     await act(async () => items.find((item) => item.textContent?.startsWith(label))!.click());
@@ -3040,7 +3429,7 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   await choose("Open the docs");
-  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
+  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/");
   await choose("Report a problem");
   expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
 });

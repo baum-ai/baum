@@ -2,7 +2,6 @@ package tileview
 
 import (
 	"encoding/json"
-	"slices"
 
 	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/tiledrafts"
@@ -69,6 +68,13 @@ func Serve(document, composition []byte, added []AddedTile, opts tiles.Options) 
 		d.Tiles = reviewv2.TilesOfView(*built.View)
 		d.Overview = reviewv2.OverviewOfView(*built.View)
 		d.Summary.RiskWhy = built.View.Overview.RiskSummary
+	}
+	if d.Tiles == nil {
+		d.Tiles = []reviewv2.Tile{}
+	}
+	natives := nativeTiles(&d, added)
+	d.Tiles = append(d.Tiles, natives...)
+	if built.View != nil || len(natives) > 0 {
 		reviewv2.EnsureBodies(&d)
 	}
 	return encodeServed(&d, built.Frames, built.Problem)
@@ -96,6 +102,7 @@ func serveV2(document []byte, added []AddedTile) Served {
 		d.Tiles = []reviewv2.Tile{}
 	}
 	d.Tiles = append(d.Tiles, addedTiles(d, added)...)
+	d.Tiles = append(d.Tiles, nativeTiles(&d, added)...)
 	// A document written before sections had a body is served with one, and
 	// every tile a section owns, an added one too, is placed in its body.
 	reviewv2.EnsureBodies(&d)
@@ -140,22 +147,9 @@ func addedTiles(d reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {
 		workstats.Inc("tileview.views_ignored")
 		return nil
 	}
-	current := map[string][]string{}
-	var order []string
-	for _, s := range d.Sections {
-		var derived struct {
-			State string `json:"state"`
-		}
-		// A stale section, whose code is gone, places nothing (view.SectionFor).
-		if json.Unmarshal(s.Derived, &derived) == nil && derived.State == "stale" {
-			continue
-		}
-		current[s.ID] = s.Hunks
-		order = append(order, s.ID)
-	}
 	for _, t := range checked {
 		note := notes[t.ID]
-		tile := reviewv2.Tile{ID: t.ID, Type: definitionName(t.Definition), Owner: ownerFor(note.Section, t.Covers, current, order), Title: t.Title, Data: t.Data,
+		tile := reviewv2.Tile{ID: t.ID, Type: definitionName(t.Definition), Owner: reviewv2.OwnerFor(d, note.Section, t.Covers), Title: t.Title, Data: t.Data,
 			State: t.State, Definition: t.Definition, Problems: t.Problems, Cites: []reviewv2.Anchor{}, Added: true, From: note.From, Filling: note.Filling}
 		if tile.Type == "" {
 			tile.Type = tiles.TypeCustom
@@ -168,29 +162,98 @@ func addedTiles(d reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {
 	return out
 }
 
-// ownerFor is where an added tile stands: the section it was added on when
-// the document has it (or context), else the section whose hunks it covers
-// most, the first on a tie, else context.
-func ownerFor(section string, covers []string, current map[string][]string, order []string) string {
-	if section == reviewv2.OwnerContext {
-		return section
+// nativeTiles are the person's native added tiles (flow, columns,
+// sequence, table, code and images) as tiles of the document: each checked
+// against it (reviewv2.CheckTile), served unavailable with its problems
+// when it fails, and owned by the section it was added on when the document
+// has it, else by the section whose hunks it cites most, else by context.
+// The images of an images tile join the document's index of attachments,
+// so the page draws them as it draws the description's.
+func nativeTiles(d *reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {
+	if len(added) == 0 {
+		return nil
 	}
-	if _, ok := current[section]; ok {
-		return section
+	defer func() {
+		if recover() != nil {
+			workstats.Inc("tileview.views_ignored")
+			out = nil
+		}
+	}()
+	have := map[string]bool{}
+	for _, t := range d.Tiles {
+		have[t.ID] = true
 	}
-	best, most := reviewv2.OwnerContext, 0
-	for _, id := range order {
-		n := 0
-		for _, h := range covers {
-			if slices.Contains(current[id], h) {
-				n++
+	refs := reviewv2.RefsOfIndex(d.Index)
+	var images []reviewv2.ImageItem
+	for _, a := range added {
+		n := a.Native
+		if n == nil || n.ID == "" || have[n.ID] {
+			continue
+		}
+		have[n.ID] = true
+		tile := reviewv2.Tile{ID: n.ID, Type: n.Type, Title: n.Title, Caption: n.Caption, Cites: n.Cites, Data: n.Data,
+			State: reviewv2.TileReady, Added: true, From: a.From}
+		if tile.Cites == nil {
+			tile.Cites = []reviewv2.Anchor{}
+		}
+		tile.Owner = reviewv2.OwnerFor(*d, a.Section, reviewv2.HunkIDs(tile.Cites))
+		if problems := reviewv2.CheckTile(tile, refs); len(problems) > 0 {
+			tile.State, tile.Problems = reviewv2.TileUnavailable, problems
+		} else if tile.Type == reviewv2.TypeImages {
+			var data reviewv2.ImagesData
+			if json.Unmarshal(tile.Data, &data) == nil {
+				images = append(images, data.Items...)
 			}
 		}
-		if n > most {
-			best, most = id, n
+		out = append(out, tile)
+	}
+	if len(images) > 0 {
+		d.Index = withImages(d.Index, images)
+	}
+	return out
+}
+
+// withImages adds the added tiles' images to an index's attachments, after
+// the description's, each once.
+func withImages(index json.RawMessage, images []reviewv2.ImageItem) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(index, &fields) != nil || fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	var listed []map[string]any
+	_ = json.Unmarshal(fields["attachments"], &listed)
+	seen := map[string]bool{}
+	position := 0
+	for _, a := range listed {
+		if id, ok := a["id"].(string); ok {
+			seen[id] = true
+		}
+		if p, ok := a["position"].(float64); ok && int(p) > position {
+			position = int(p)
 		}
 	}
-	return best
+	for _, image := range images {
+		if seen[image.Attachment] {
+			continue
+		}
+		seen[image.Attachment] = true
+		position++
+		entry := map[string]any{"id": image.Attachment, "position": position, "content_type": image.ContentType, "width": image.Width, "height": image.Height}
+		if image.Caption != "" {
+			entry["alt"] = image.Caption
+		}
+		listed = append(listed, entry)
+	}
+	encoded, err := json.Marshal(listed)
+	if err != nil {
+		return index
+	}
+	fields["attachments"] = encoded
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return index
+	}
+	return out
 }
 
 // registerTileFrames registers the frame document of each ready tile with
@@ -227,15 +290,8 @@ func registerTileFrames(ts []reviewv2.Tile) Frames {
 	return registered
 }
 
-// Encodable is an answer Encode takes: the tile routes' Served, or the
-// review page's view (Response) that replay and tests read.
-type Encodable interface{ frames() Frames }
-
-func (s Served) frames() Frames   { return s.Frames }
-func (r Response) frames() Frames { return r.Frames }
-
 // Encode returns the encoded answer with its ETag.
-func Encode(r Encodable) (Answer, error) {
-	body, err := etagjson.Encode(r)
-	return Answer{Body: body, Frames: r.frames()}, err
+func Encode(s Served) (Answer, error) {
+	body, err := etagjson.Encode(s)
+	return Answer{Body: body, Frames: s.Frames}, err
 }

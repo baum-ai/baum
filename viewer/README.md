@@ -77,37 +77,48 @@ so a host that sets the variable never fetches them.
 
 ### Custom color themes
 
-Edit `src/themes/custom.css` to customize the desktop app. It is loaded by the
-main app, setup, connecting and tray screens. Outside this repository, import
-`@baum/viewer/theme.css` for the same theme entry point without Tailwind.
+A custom theme is a base, `light` or `dark`, and overrides of palette tokens.
+The desktop app keeps the person's themes and puts the active one on the
+document root: `data-theme` and `color-scheme` follow the theme's base, and its
+tokens are set as inline custom properties, which win over both cascade layers
+and the app's stylesheet. The app has a light slot and a dark slot, each holding
+any theme, and the `theme` setting (system, light or dark) picks the slot in
+use; a dark-base theme in the light slot gives `data-theme="dark"`. Outside the
+app, import `@baum/viewer/theme.css` for the same palette without Tailwind and
+set the same properties on the root yourself. Host CSS scoped by
+`:root[data-color-theme="…"]` in `custom.css` still works: the app never
+touches that attribute.
 
-There are two levels of customization. Set a base color to recalculate its
-dependent shades, or set any derived token to replace just that result:
+Each theme has one base, so it overrides one mode: a theme meant for both modes
+is two themes, one in each slot. Set a seed to recalculate its dependent shades,
+or set a role token to replace just that result. The tokens a theme may set are
+the seeds below and the roles listed after them; the app refuses any other name
+and any value that is not a plain colour (`#rrggbb`, `rgb()`, `hsl()` or
+`oklch()`):
 
 ```css
-/* In src/themes/custom.css; this file is already in the baum-theme layer. */
+/* What the app sets for a light theme, as inline declarations on :root. */
 :root {
   --brand-green-600: #2574a9;
   --brand-sand-100: #dbe8f4;
-
-  /* Direct exceptions to the default recipes. */
-  --surface-selected: color-mix(in srgb, var(--brand-green-600) 12%, var(--surface-page));
-  --border-focus: var(--brand-green-600);
-}
-
-:root[data-theme="dark"] {
-  --surface-page: #14202a;
-  --surface-card: var(--surface-page);
-  --text-secondary: #bdd0dd;
+  --border-focus: #2574a9;
 }
 ```
 
-`theme.css` orders the layers as `baum-palette`, then `baum-theme`. A custom
-declaration therefore wins over the defaults even when the default selector is
-more specific, such as the dark-mode selector. No `!important` is needed.
-Unlayered host styles intentionally take precedence over both layers. Keep
-component CSS from redeclaring palette tokens locally; consume the appropriate
-role, such as `--nav-hover`, instead.
+`theme.css` orders the layers as `baum-palette`, then `baum-theme`, and inline
+declarations beat both. Unlayered host styles beat the layers but not inline
+declarations. Keep component CSS from redeclaring palette tokens locally;
+consume the appropriate role, such as `--nav-hover`, instead.
+
+The recipes also apply to any element marked `data-theme-scope`: the light
+recipes to `:root, [data-theme-scope]` and the dark ones to
+`:root[data-theme="dark"], [data-theme-scope][data-theme="dark"]`, in the same
+layer. Such an element recomputes the whole palette from the seeds and tokens
+set on it, so a preview can show a theme whatever the page's mode is: set
+`data-theme="light"` or `"dark"` on it and the theme's tokens inline (the
+local app's Settings › Appearance does, for its theme thumbnails). A light
+scope inside a dark page gets the light recipes because it matches only the
+first block. The hosted UI and the viewer have no such elements.
 
 Put overrides on the document root. CSS variables resolve where they are
 defined: changing only a base on a child element does not recalculate recipes
@@ -116,11 +127,12 @@ direct role overrides affect that role and aliases depending on it. For example,
 `--surface-page` and `--surface-card` are independent roles, so set both when
 they should share a custom fill. Changing `--paper-0` changes both defaults.
 
-Common roles are `--surface-page`, `--surface-card`, `--surface-canvas`,
-`--surface-popup`, `--text-primary`, `--text-secondary`, `--border-default`,
-`--border-focus`, `--action-primary`, `--action-primary-hover`, `--nav-hover`,
-`--nav-selected`, `--status-positive`, `--status-caution` and `--status-critical`.
-The full default file is the reference for derived roles and base dependencies.
+Roles a theme may set are `--surface-page`, `--surface-card`, `--surface-canvas`,
+`--surface-popup`, `--text-primary`, `--text-secondary`, `--text-inverse`,
+`--border-default`, `--border-focus`, `--action-primary`, `--action-primary-hover`,
+`--nav-hover`, `--nav-selected`, `--status-positive`, `--status-caution` and
+`--status-critical`. The full default file is the reference for derived roles
+and base dependencies.
 
 | Base tokens | What they control |
 | --- | --- |
@@ -131,17 +143,14 @@ The full default file is the reference for derived roles and base dependencies.
 | `--series-caramel`, `--series-sage`, `--series-espresso` | The local Analytics charts' warm series |
 
 Dark mode uses different mixing recipes, so a seed can affect the two modes
-differently. Use mode-specific role overrides when the default recipe is not
-suitable for a custom theme.
+differently: on a dark base the text comes from `--color-paper` and the surfaces
+from `--color-shadow`. Use role overrides when the default recipe is not
+suitable for a theme.
 
-For multiple named themes, scope declarations to
-`:root[data-color-theme="ocean"]` and mode-specific exceptions to
-`:root[data-color-theme="ocean"][data-theme="dark"]`. Select the theme with
-`document.documentElement.dataset.colorTheme = "ocean"`. `data-theme` remains
-the light/dark mode managed by appearance preferences; it does not overwrite
-the separate theme identity. This CSS interface does not add a theme picker or
-persist custom theme selection. Stumpy, native artwork and vendor identities retain their fixed
-colors independently of the UI theme.
+`src/themes/custom.css` is a build-time hook, empty by default, for overrides a
+build wants to ship in the `baum-theme` layer; the person's themes override it.
+Stumpy, native artwork and vendor identities retain their fixed colors
+independently of the UI theme.
 
 ## Host seams
 
@@ -226,8 +235,8 @@ left out rather than shown empty or failed:
 | `renderSectionLabels` | labels at the end of a section's badges, in its pane and in the Changes overview, on whichever version is read, such as the pull requests a stack review's section covers |
 | `notices` | alerts at the top of the pane, such as a generation in progress |
 | `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
-| `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below). Where the host's places draw no rail (`noRail`), each is a tab of the side pane instead, drawn by the slot's `renderList` (else its items by label) |
-| `decisions` | one rail row above Sessions, **Decisions** with an optional `count`, opening the host's pane (`ReviewPaneSlot`, `?pane=decisions`, with `&decision=<id>` handing `renderPane` the decision to open); absent, the row is not drawn and a link to it reads as the Summary. Without a rail it is the side pane's last tab, drawn by `renderList` (else the pane itself) |
+| `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below). |
+| `decisions` | one rail row above Sessions, **Decisions** with an optional `count`, opening the host's pane (`ReviewPaneSlot`, `?pane=decisions`, with `&decision=<id>` handing `renderPane` the decision to open); absent, the row is not drawn and a link to it reads as the Summary. |
 | `comments` | the side pane's last tab, **Comments**, dotted (caution) while `count` is above 0: the reader's own review comments, which the host draws (given the same context as `conversation`) and keeps. It stays mounted while another tab shows, so a comment being written survives switching tabs. Each change of `reveal` opens the tab, unfolding the side pane, and focuses what in it carries `data-autofocus` |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `detailsChecks` | the Checks part for the document the side pane describes, in place of the document's own checks, and whether it shows a failure (which flags the tab that holds it); null content leaves the part out. The part leads the Activity tab, or the Details tab when `hideActivity` is set. For checks gathered from elsewhere, such as a stack review's members |
@@ -252,29 +261,25 @@ a `tile` selection in the URL reads as the Summary. The host supplies:
 
 | Member | What it does |
 | --- | --- |
-| `renderRail(context)` | (not with `noRail`) the rail's rows that stand in for the Summary row, the Changes group and its obsolete toggle; `checks.notice` follows them. Each row is a button with `aria-pressed` on the row of the current place and `aria-controls` containing `review-section`: where the panes stack the rail is a sheet, and its focus lands on the pressed row that controls the pane. The viewer calls it as a function, so put hooks in a component element it returns |
-| `railRows(context)` | the same rows as keyed steps (`ReviewRailRow`), in the order the rail shows them, so the host's keys step through the rail with the viewer's own rows after them. With `noRail`, the host's places the keys step through, with none of the viewer's after them |
+| `renderRail(context)` | the rail's rows that stand in for the Summary row, the Changes group and its obsolete toggle; `checks.notice` follows them. Each row is a button with `aria-pressed` on the row of the current place and `aria-controls` containing `review-section`: where the panes stack the rail is a sheet, and its focus lands on the pressed row that controls the pane. The viewer calls it as a function, so put hooks in a component element it returns |
+| `railRows(context)` | the same rows as keyed steps (`ReviewRailRow`), in the order the rail shows them, so the host's keys step through the rail with the viewer's own rows after them. |
 | `steps(selection, context)` | for the summary, changes, risks, section, risk and tile selections: the label and icon the navigator bar and the pane use, the position ("2 of 6"), the previous and next place, the key of the rail row it sits on, optionally the section it is about and its read mark, a group toggle, and `item`: the previous and next step of the item keys (j and k, ↓ and ↑), which replace marking the next block of the pane (`[data-review-block]`) for a place whose items are the host's own list; a null side does nothing, so the keys stop at the ends. The host answers for every kind it owns: null leaves the navigator bar, the pane's foot and the stepping keys without a previous or next for that selection |
 | `renderPane(snapshot, historical, context)` | the pane for those selections. The viewer calls it inside the version history, once for the current version and again for an earlier version read alone or compared, so both keep working for the host's panes. Return a component element, not content that calls hooks: the viewer calls this function during its own render. `context.builtInPane(snapshot, historical, { kind: "summary" } or { kind: "section", id }, files?)` returns the viewer's own Summary or section page for a snapshot, for a version the host's places do not draw (`files` is the selection the Summary's Files link opens) |
 | `jump(section, item)` | where a reference chip in prose to a section, or to a risk, evidence or decision of one, goes; a selection redirects it, null leaves it to the viewer |
 | `railFolded(selection)` | whether the rail starts folded to a strip beside the pane for that selection, once the page is wide. The answer applies whenever it changes, as the reader moves between places. The reader can unfold the rail, or fold it again, with the button on it (focus moves to the other button), and that choice holds until the answer changes. Where the panes stack the rail is a sheet and does not fold. Without `places` the rail has no fold |
 | `sidePaneFolded(selection)` | whether the side pane starts folded to its strip for that selection, once the page is wide, as `railFolded` does for the rail: the answer applies whenever it changes, and the reader's unfold or fold (the strip's button, `]`, a tab opened from elsewhere) holds until then. Where it answers false, or is absent, the side pane is as the reader last chose it. Without `places` nothing changes |
 | `quietHistory` | when true, an earlier version read alone opens without the viewer's "Historical · Review vN" line, which stays for assistive technology, for a host whose version bar already says which version is read. Two compared versions keep their labels |
-| `noRail` | when true, the host's own places (its tabs, say) are the way through the page: the viewer draws no rail, and no navigator bar where the panes stack. The side pane's tabs are Details, Activity and Comments, then **Sessions**, **Commits** and **Decisions** for the groups the host supplies, each listing its items (the slots' `renderList`, as `SessionEntries`, `CommitEntries`), which open in the review pane; Files is left out. The keys step through `railRows` alone, and Space toggles no group. The host draws `ReviewSidePaneButton` (`components/review-navigator`) in its own head: where the panes stack it opens the side pane's sheet, flagged as the navigator bar's button is, and once wide it is hidden |
-| `paneHead(context)` | with `noRail`, drawn at the top of the review pane on the viewer's own places (a session, a commit, the decisions) under the `notices`: the host's way back to its places, such as its tabs with none current |
 | `flatRail` | when true, the rail's **Sessions** and **Commits** rows are plain rows, as Decisions is: no disclosure (no `aria-expanded`) and no items nested under them, each with its count, a busy spinner and its live or waiting dot, opening its pane, which lists the items (`renderPane(null, …)`). A session or commit opened from there leaves its group's row current, the keys step over the group's row alone, and Space toggles no group. Absent, they fold open as the full review's do |
 | `ownFiles` | when true, the host draws the **Files changed** row itself, in `renderRail` and `railRows` (its files are a place of its own, as the app's Code place), so the viewer leaves out its own Files row, its file tree and the file rows in the keys |
 
 `ReviewPlaceContext` is passed to each of them, and keeps its identity across
 renders that change nothing it carries: the `selection` and a `select`
 function that writes the URL; `openFile(id, line?)`, which opens a changed
-file in the Files pane; `openSidePane(tab?)` (on the tab it shows, without
-one) and `revealComments()`, which unfold the side pane, or open its sheet
-where the panes stack; the `document` being read, the `historicalDocument` and
+file in the Files pane; the `document` being read, the `historicalDocument` and
 whether the reader is `historical` or `comparing`; `version`, the earlier
 version read alone (absent on the current version and while comparing, when
-`historicalDocument` is the other one); `compareWith(version)`, `versions` and
-`loadVersion`; `sectionHistory`; `hunkPatches` (null while comparing, for a
+`historicalDocument` is the other one); `versions` and
+`loadVersion`; `hunkPatches` (null while comparing, for a
 `HunkPatchProvider` around cited code); `onRetryDetails`; `contextPending`;
 `generation`, the document's generation state as the head shows it; and
 `files`, the viewer's `files` slot with how many files it lists (`count`,
@@ -429,10 +434,7 @@ the method and confidence of each. Both open each other through
 `actions.select`. `sessionsSlot` and `commitsSlot`
 (`@baum/viewer/components/list-slots`) turn a state into the
 `ReviewListSlot` the `sessions` and `commits` props take, with the rail's
-labels, and a `renderList` for the side pane without a rail: `SessionEntries`
-and `CommitEntries`, a compact row each (a session's title over its agent,
-start and duration; a commit's subject over its short id, author and time)
-that opens it, the open one marked. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
+labels. `SessionList`'s `renderSession` (also an option of `sessionsSlot`)
 puts the host's own content under a session opened alone, such as its
 transcript. The pane is then headed by the session's title, with its agent,
 branch, start, duration and files edited on one line (the rail leads back to
@@ -535,7 +537,7 @@ helpers the card uses) and what the host adds:
   page uses it.
 
 A prompt can carry `images`, each a `src` the host serves and an `alt`: they
-show under its text as thumbnails that open full size in a dialog. Agent
+show under its text as thumbnails that open in the image viewer. Agent
 messages are marked `data-agent-text` (`progress` for the folded ones), for a
 host's keys that move a message at a time.
 
@@ -956,6 +958,23 @@ the full-size dialog. Session-only images have no `source_url`; their image
 blocks cite an attachment ID. Old description-image records remain valid.
 Identical image bytes can retain both PR-description URLs and several session
 origins while sharing one stored image.
+
+Description images and prompt images open in one viewer
+(`components/image-viewer`). It opens as large as the screen allows, enlarging
+an image past its own pixels, and keeps the image's proportions. Its corner
+drags to scale the image; until then it refits when the window changes size.
+A click on the backdrop, the close control or Escape closes it. Its
+full-screen control fills the screen through the browser's Fullscreen API
+(on the dialog's content, since a dialog itself cannot go full screen), or
+covers the window where the host does not grant it. Escape leaves full screen
+before it closes the viewer.
+
+An indexed attachment whose `content_type` is `video/…` (local desktop reviews
+only) draws as a muted `<video>` with native controls that loads only its
+metadata and plays when clicked, sized by its `width` and `height`, with no
+full-size dialog. A clip with neither a caption nor alt text is labelled by
+the description heading above it. A clip that fails to load is marked
+unavailable and can be retried like an image.
 
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and

@@ -188,8 +188,7 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 	if p.Out == nil {
 		p.Out = io.Discard
 	}
-	// A generator that holds resources (the compose generator's copies of
-	// the review stores) releases them when the run ends.
+	// A generator that holds resources releases them when the run ends.
 	if closer, ok := p.Settings.Generator.(io.Closer); ok {
 		defer func() { _ = closer.Close() }()
 	}

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { openOutsideLinksInBrowser } from "./outside-links";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { openExternal, openOutsideLinksInBrowser } from "./outside-links";
 
 const people = new WeakSet<Event>();
 let opened: { href: string; target: string; rel: string }[];
@@ -84,4 +84,58 @@ it("does nothing in a browser", () => {
   const event = personClicks(link('<a href="https://github.com/">pr</a>'));
   expect(event.defaultPrevented).toBe(false);
   expect(opened).toEqual([]);
+});
+
+describe("in a shell that opens links itself", () => {
+  let invoked: [string, Record<string, unknown> | undefined][];
+  beforeEach(() => {
+    invoked = [];
+    vi.stubGlobal("__TAURI_INTERNALS__", {
+      invoke: (command: string, args?: Record<string, unknown>) => {
+        invoked.push([command, args]);
+        return Promise.resolve();
+      },
+    });
+    vi.stubGlobal("__BAUM_DESKTOP__", Object.freeze({ tileFrames: true, openLinks: true }));
+  });
+
+  it("opens new-window and same-window links to other sites through the shell", () => {
+    for (const html of [
+      '<a href="https://github.com/acme/widgets/pull/7" target="_blank" rel="noreferrer">pr</a>',
+      '<a href="https://github.com/acme/widgets/pull/7">pr</a>',
+    ]) {
+      invoked = [];
+      const event = personClicks(link(html));
+      expect(event.defaultPrevented, html).toBe(true);
+      expect(invoked, html).toEqual([
+        ["open_link", { url: "https://github.com/acme/widgets/pull/7" }],
+      ]);
+    }
+    expect(opened).toEqual([]);
+  });
+
+  it("leaves the app's own links and scripted clicks alone", () => {
+    for (const [html, trusted] of [
+      [`<a href="${location.origin}/s/x/?page=jobs" target="_blank">app</a>`, true],
+      ['<a href="mailto:someone@example.com" target="_blank">mail</a>', true],
+      ['<a href="https://github.com/" target="_blank">script</a>', false],
+    ] as const) {
+      const event = personClicks(link(html), {}, trusted);
+      expect(event.defaultPrevented, html).toBe(false);
+    }
+    expect(invoked).toEqual([]);
+  });
+
+  it("opens a page from the app through the shell", () => {
+    openExternal("https://github.com/acme/widgets");
+    expect(invoked).toEqual([["open_link", { url: "https://github.com/acme/widgets" }]]);
+    expect(opened).toEqual([]);
+  });
+});
+
+it("opens a page from the app as a new window in a shell without the command", () => {
+  openExternal("https://github.com/acme/widgets");
+  expect(opened).toEqual([
+    { href: "https://github.com/acme/widgets", target: "_blank", rel: "noreferrer" },
+  ]);
 });

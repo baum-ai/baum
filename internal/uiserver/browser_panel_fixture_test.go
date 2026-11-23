@@ -37,6 +37,8 @@ type panelAgent struct {
 	turns map[string][]string
 	// answers are each session's answers so far, by turn.
 	answers map[string][]string
+	// tweaks counts the theme edits proposed, so each has its own colour.
+	tweaks int
 }
 
 // panelStep is how long each of a turn's steps takes: long enough for the
@@ -87,6 +89,9 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	}
 	if strings.Contains(strings.ToLower(r.Prompt), "comment") {
 		a.proposeComment(ctx, r)
+	}
+	if strings.Contains(strings.ToLower(r.Prompt), "theme") {
+		a.proposeTheme(ctx, r)
 	}
 	answer := panelAnswer(r.Prompt)
 	// A request to add a tile runs through the add tools.
@@ -155,6 +160,87 @@ func (a *panelAgent) proposeComment(ctx context.Context, r agent.Request) {
 	}
 	if r.Transcript != nil {
 		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_comment", Tool: "mcp__baum__propose_review_comment", Title: "propose_review_comment", Status: status, Text: text})
+	}
+}
+
+// panelTheme is the colour theme the panel agent proposes: a dark theme, so a
+// browser test can see a dark base in the light slot. The proposal's name is
+// the prompt's last word after "theme named", when it has one, so a later
+// proposal replaces the preview with a different one.
+const panelTheme = `{"name":"Dusk","base":"dark","tokens":{"--color-paper":"#e8eef4","--color-shadow":"#10202e","--brand-green-600":"#5aa9e6"}}`
+
+// proposeTheme proposes a colour theme from whatever page is open, as the
+// agent's propose_theme tool call would; the app previews it. A prompt with
+// "tweak theme <id>" edits that custom theme (theme_id), with a new text colour
+// each time it is asked; "as <name>" names it, else the name stays "Mine".
+func (a *panelAgent) proposeTheme(ctx context.Context, r agent.Request) {
+	// "switch theme to <id>" switches to an existing theme for the slot in
+	// use (propose_theme_choice) instead.
+	if i := strings.Index(strings.ToLower(r.Prompt), "switch theme to "); i >= 0 {
+		a.proposeThemeChoice(ctx, r, strings.Fields(r.Prompt[i+len("switch theme to "):])[0])
+		return
+	}
+	status, text := "completed", "Proposed the theme; the person saves it in the panel."
+	err := errors.New("the turn has no MCP server")
+	if a.mcp != nil && r.MCP != nil {
+		consumer, ok := a.mcp.Registry.Authenticate(r.MCP.Token)
+		if !ok {
+			err = errors.New("the turn's MCP token is not known")
+		} else {
+			after := json.RawMessage(panelTheme)
+			if i := strings.Index(strings.ToLower(r.Prompt), "theme named "); i >= 0 {
+				name := strings.TrimSpace(r.Prompt[i+len("theme named "):])
+				after, _ = json.Marshal(map[string]any{"name": name, "base": "light", "tokens": map[string]string{"--color-paper": "#fdf6e3"}})
+			}
+			if fields := strings.Fields(r.Prompt); strings.Contains(strings.ToLower(r.Prompt), "tweak theme ") {
+				for i, word := range fields {
+					if strings.EqualFold(word, "tweak") && i+2 < len(fields) {
+						a.mu.Lock()
+						a.tweaks++
+						n := a.tweaks
+						a.mu.Unlock()
+						name := "Mine"
+						if as := strings.Index(r.Prompt, " as "); as >= 0 {
+							name = strings.TrimSpace(r.Prompt[as+len(" as "):])
+						}
+						after, _ = json.Marshal(map[string]any{"theme_id": fields[i+2], "name": name, "base": "dark",
+							"tokens": map[string]string{"--color-paper": fmt.Sprintf("#e8ee%02x", n)}})
+						break
+					}
+				}
+			}
+			_, err = a.mcp.Proposals.Propose(ctx, consumer.ID, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere,
+				Target: agentcontext.TargetTheme, After: after})
+		}
+	}
+	if err != nil {
+		status, text = "failed", err.Error()
+	}
+	if r.Transcript != nil {
+		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_theme", Tool: "mcp__baum__propose_theme", Title: "propose_theme", Status: status, Text: text})
+	}
+}
+
+// proposeThemeChoice proposes the existing theme id for the slot in use from
+// whatever page is open, as the agent's propose_theme_choice call would.
+func (a *panelAgent) proposeThemeChoice(ctx context.Context, r agent.Request, id string) {
+	status, text := "completed", "Proposed the theme for the slot in use; the person saves it in the panel."
+	err := errors.New("the turn has no MCP server")
+	if a.mcp != nil && r.MCP != nil {
+		consumer, ok := a.mcp.Registry.Authenticate(r.MCP.Token)
+		if !ok {
+			err = errors.New("the turn's MCP token is not known")
+		} else {
+			after, _ := json.Marshal(map[string]string{"theme_id": id, "slot": agentcontext.SlotInUse})
+			_, err = a.mcp.Proposals.Propose(ctx, consumer.ID, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere,
+				Target: agentcontext.TargetThemeChoice, After: after})
+		}
+	}
+	if err != nil {
+		status, text = "failed", err.Error()
+	}
+	if r.Transcript != nil {
+		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_theme_choice", Tool: "mcp__baum__propose_theme_choice", Title: "propose_theme_choice", Status: status, Text: text})
 	}
 }
 

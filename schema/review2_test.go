@@ -50,7 +50,7 @@ func TestValidateReview2(t *testing.T) {
 	if err := ValidateReview2(encoded); err != nil {
 		t.Fatalf("the example does not validate: %v", err)
 	}
-	if doc["schema"] != Review2Name {
+	if doc["schema"] != "baum.review/2" {
 		t.Errorf("schema = %v", doc["schema"])
 	}
 	tile := func(doc map[string]any, i int) map[string]any { return doc["tiles"].([]any)[i].(map[string]any) }
@@ -71,9 +71,6 @@ func TestValidateReview2(t *testing.T) {
 		"tile block without tile": func(doc map[string]any) { delete(block(doc, 0, 2), "tile") },
 		"tile block id":           func(doc map[string]any) { block(doc, 0, 2)["tile"] = "Wait Code" },
 		"unknown block field":     func(doc map[string]any) { block(doc, 0, 0)["html"] = "<b>x</b>" },
-		"step id in an older section": func(doc map[string]any) {
-			section(doc, 0)["steps"] = []any{map[string]any{"id": "beh_x", "title": "t", "text": "x", "cites": []any{}}}
-		},
 		"flow step more too long": func(doc map[string]any) {
 			tile(doc, 0)["data"].(map[string]any)["lanes"].([]any)[0].(map[string]any)["steps"].([]any)[0].(map[string]any)["more"] = string(make([]byte, 301))
 		},
@@ -120,14 +117,6 @@ func TestValidateReview2(t *testing.T) {
 	encoded, _ = json.Marshal(doc)
 	if ValidateReview2(encoded) == nil {
 		t.Error("a cell object without text validated")
-	}
-	// A document written before bodies still validates when it has one too;
-	// summary and steps are optional.
-	doc = review2Example(t)
-	section(doc, 0)["summary"], section(doc, 0)["steps"] = "Older text.", []any{}
-	encoded, _ = json.Marshal(doc)
-	if err := ValidateReview2(encoded); err != nil {
-		t.Fatalf("an older section's summary and steps must still be allowed: %v", err)
 	}
 	// A frame tile's data is its own type's: any object.
 	doc = review2Example(t)

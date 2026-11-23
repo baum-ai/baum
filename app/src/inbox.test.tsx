@@ -169,6 +169,18 @@ it("peeks at the saved review under its row and closes it again", async () => {
   expect(requests.filter((path) => path.includes("api/document"))).toHaveLength(1);
 });
 
+it("leads a row's menu with Open, which follows the row's link", async () => {
+  await act(async () => root.render(<List rows={[entry(1)]} />));
+  const link = node.querySelector<HTMLElement>(".inbox-pr-title")!;
+  const clicked = vi.fn((event: Event) => event.preventDefault());
+  link.addEventListener("click", clicked);
+  await act(async () => button("Actions for acme/demo #1")!.click());
+  const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
+  expect(choices[0]?.querySelector(".context-menu-label")?.textContent).toBe("Open");
+  await act(async () => choices[0]!.click());
+  expect(clicked).toHaveBeenCalledTimes(1);
+});
+
 it("opens the focused row's peek with Space", async () => {
   await act(async () => root.render(<List rows={[entry(1), entry(2)]} />));
   await press("j");

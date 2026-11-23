@@ -16,7 +16,6 @@ import { CommitIcon } from "./icons";
 import { Item, JumpLink } from "./review-parts";
 import { commitLabel, sessionLabel } from "./list-labels";
 import type { ReviewViewerActions } from "./review-viewer";
-import { SideNavEntry } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { Badge, CardHeader } from "./ui";
 
@@ -120,81 +119,6 @@ function SessionCard({
         </div>
       ) : null}
     </Item>
-  );
-}
-
-/** What a session's compact row says under its title: its agent, when it
- *  started and how long it ran. */
-function sessionMeta(session: SessionView) {
-  const seconds = durationSeconds(session.startedAt, session.endedAt);
-  return [
-    harnessName(session.vendor),
-    session.startedAt ? `${formatDate(session.startedAt)} ${formatTime(session.startedAt)}` : null,
-    seconds === null ? null : formatDuration(seconds),
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
-/** The sessions as a compact list, for the side pane: a row each, by title,
- *  that opens the session in the review pane. The host's own sessions come
- *  first, as in `SessionList`. */
-export function SessionEntries({
-  state,
-  selected,
-  actions,
-  hosted = [],
-  empty = "No agent session on this machine matches a commit of this pull request.",
-}: {
-  state: SessionListState;
-  selected: string | null;
-  actions: ReviewViewerActions;
-  hosted?: HostSessionView[];
-  empty?: ReactNode;
-}) {
-  const hostedIds = new Set(hosted.map((session) => session.id));
-  const sessions =
-    state.status === "ready" ? state.sessions.filter((session) => !hostedIds.has(session.id)) : [];
-  const open = (id: string) => actions.select({ kind: "session", id });
-  return (
-    <div className="flex flex-col gap-0.5">
-      {hosted.map((session) => (
-        <SideNavEntry
-          key={session.id}
-          title={session.label}
-          meta={
-            session.indicator === "attention"
-              ? "Waiting for you"
-              : session.indicator
-                ? "Working now"
-                : undefined
-          }
-          indicator={session.indicator}
-          active={selected === session.id}
-          controls="review-section"
-          onSelect={() => open(session.id)}
-        />
-      ))}
-      {sessions.map((session) => (
-        <SideNavEntry
-          key={session.id}
-          title={sessionLabel(session)}
-          meta={sessionMeta(session)}
-          active={selected === session.id}
-          controls="review-section"
-          onSelect={() => open(session.id)}
-        />
-      ))}
-      {state.status === "loading" ? (
-        <p role="status" className="px-2.5 py-1.5 text-base text-tertiary">
-          Reading the sessions on this machine…
-        </p>
-      ) : state.status === "failed" ? (
-        <Failed>The sessions could not be loaded.</Failed>
-      ) : hosted.length + sessions.length === 0 ? (
-        <p className="px-2.5 py-1.5 text-base text-secondary">{empty}</p>
-      ) : null}
-    </div>
   );
 }
 

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // Review is what the view reads of a baum.review/1 document: the parts the
@@ -206,121 +205,9 @@ type rawBehavior struct {
 	} `json:"steps"`
 }
 
-// rawReviewV2 is what Review reads of a baum.review/2 document.
-type rawReviewV2 struct {
-	Summary struct {
-		Title     string          `json:"title"`
-		Text      string          `json:"text"`
-		Verdict   *Recommendation `json:"verdict"`
-		RiskScore *RiskScore      `json:"risk_score"`
-	} `json:"summary"`
-	Context *struct {
-		Area      *rawContextPart `json:"area"`
-		ReachedBy *rawContextPart `json:"reached_by"`
-		Contracts *rawContextPart `json:"contracts"`
-		Related   *rawContextPart `json:"related"`
-	} `json:"context"`
-	Sections []struct {
-		ID      string   `json:"id"`
-		Title   string   `json:"title"`
-		Hunks   []string `json:"hunks"`
-		Summary string   `json:"summary"`
-		Derived struct {
-			State string `json:"state"`
-		} `json:"derived"`
-		// Body is what a section carries now; Summary and Steps are what a
-		// document written before bodies carries.
-		Body []struct {
-			Type  string `json:"type"`
-			Text  string `json:"text"`
-			Items []struct {
-				Text  string      `json:"text"`
-				More  string      `json:"more"`
-				Cites []rawAnchor `json:"cites"`
-			} `json:"items"`
-		} `json:"body"`
-		Steps []struct {
-			Step
-			Cites []rawAnchor `json:"cites"`
-		} `json:"steps"`
-		Risks []struct {
-			Risk
-			Cites []rawAnchor `json:"cites"`
-		} `json:"risks"`
-	} `json:"sections"`
-	Index json.RawMessage `json:"index"`
-}
-
-// parseReviewV2 reads a baum.review/2 document as Review: its verdict is the
-// recommendation, its context and sections are read as baum.review/1's, and
-// its index is the same object.
-func parseReviewV2(document []byte) (*Review, error) {
-	var raw rawReviewV2
-	if err := json.Unmarshal(document, &raw); err != nil {
-		return nil, fmt.Errorf("view: decoding the review: %w", err)
-	}
-	encoded, err := json.Marshal(map[string]any{"schema": "baum.review/1", "index": raw.Index})
-	if err != nil {
-		return nil, err
-	}
-	r, err := ParseReview(encoded)
-	if err != nil {
-		return nil, err
-	}
-	r.Title, r.Text, r.Recommendation, r.Risk = raw.Summary.Title, raw.Summary.Text, raw.Summary.Verdict, raw.Summary.RiskScore
-	if c := raw.Context; c != nil {
-		for _, part := range []struct {
-			name string
-			part *rawContextPart
-		}{{"area", c.Area}, {"reached_by", c.ReachedBy}, {"contracts", c.Contracts}, {"related", c.Related}} {
-			if part.part != nil && part.part.Text != "" {
-				r.Context = append(r.Context, ContextPart{Name: part.name, Text: part.part.Text})
-			}
-		}
-	}
-	for _, s := range raw.Sections {
-		section := Section{ID: s.ID, Title: s.Title, Summary: s.Summary, Hunks: s.Hunks, Stale: s.Derived.State == "stale"}
-		for _, step := range s.Steps {
-			step.Hunks = hunksOf(step.Cites)
-			section.Steps = append(section.Steps, step.Step)
-		}
-		// A body is read as a summary (its first prose) and steps (its points).
-		for _, block := range s.Body {
-			switch block.Type {
-			case "prose":
-				if section.Summary == "" {
-					section.Summary = block.Text
-				}
-			case "points":
-				for _, p := range block.Items {
-					step := Step{Title: p.Text, Text: p.More, Hunks: hunksOf(p.Cites)}
-					if lead, rest, ok := strings.Cut(strings.TrimPrefix(p.Text, "**"), "**"); ok && strings.HasPrefix(p.Text, "**") {
-						step.Title, step.Text = strings.TrimRight(lead, "."), strings.TrimSpace(rest)
-					}
-					step.Title = strings.NewReplacer("**", "").Replace(step.Title)
-					section.Steps = append(section.Steps, step)
-				}
-			}
-		}
-		for _, risk := range s.Risks {
-			risk.Hunks = hunksOf(risk.Cites)
-			section.Risks = append(section.Risks, risk.Risk)
-		}
-		r.Sections = append(r.Sections, section)
-	}
-	return r, nil
-}
-
-// ParseReview reads a baum.review/1 document, normalised as stored, or a
-// baum.review/2 document.
+// ParseReview reads a baum.review/1 document, normalised as stored.
 func ParseReview(document []byte) (*Review, error) {
 	var raw rawReview
-	var head struct {
-		Schema string `json:"schema"`
-	}
-	if json.Unmarshal(document, &head) == nil && head.Schema == "baum.review/2" {
-		return parseReviewV2(document)
-	}
 	if err := json.Unmarshal(document, &raw); err != nil {
 		return nil, fmt.Errorf("view: decoding the review: %w", err)
 	}

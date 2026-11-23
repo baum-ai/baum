@@ -309,15 +309,22 @@ func validate(kind string, raw []byte) error {
 	case "filters":
 		var value struct {
 			Pages *map[string]*string `json:"pages"`
+			Sorts map[string]*string  `json:"sorts"`
 			Tabs  []struct {
 				ID    string `json:"id"`
 				Name  string `json:"name"`
 				View  string `json:"view"`
 				Query string `json:"query"`
+				Sort  string `json:"sort"`
 			} `json:"tabs"`
 		}
-		if json.Unmarshal(raw, &value) != nil || value.Pages == nil || len(*value.Pages) > 64 || len(value.Tabs) > MaxTabs {
+		if json.Unmarshal(raw, &value) != nil || value.Pages == nil || len(*value.Pages) > 64 || len(value.Sorts) > 64 || len(value.Tabs) > MaxTabs {
 			return ErrInvalid
+		}
+		for page, sort := range value.Sorts {
+			if !filterPage.MatchString(page) || sort == nil || !inboxes.ValidSort(*sort) {
+				return ErrInvalid
+			}
 		}
 		for page, query := range *value.Pages {
 			if !filterPage.MatchString(page) || query == nil || !inboxes.ValidQuery(*query) {
@@ -327,7 +334,7 @@ func validate(kind string, raw []byte) error {
 		ids := map[string]bool{}
 		for _, tab := range value.Tabs {
 			name := strings.TrimSpace(tab.Name)
-			if !tabID.MatchString(tab.ID) || ids[tab.ID] || name == "" || name != tab.Name || utf8.RuneCountInString(name) > 40 || !tabView.MatchString(tab.View) || !inboxes.ValidQuery(tab.Query) {
+			if !tabID.MatchString(tab.ID) || ids[tab.ID] || name == "" || name != tab.Name || utf8.RuneCountInString(name) > 40 || !tabView.MatchString(tab.View) || !inboxes.ValidQuery(tab.Query) || !inboxes.ValidSort(tab.Sort) {
 				return ErrInvalid
 			}
 			ids[tab.ID] = true

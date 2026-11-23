@@ -2,7 +2,13 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IssueParts } from "./api";
+import { openExternal } from "./outside-links";
 import { issueLink, ReportProblemDialog } from "./report-problem";
+
+vi.mock("./outside-links", async (original) => ({
+  ...(await original<typeof import("./outside-links")>()),
+  openExternal: vi.fn(),
+}));
 
 const parts: IssueParts = {
   version: "1.2.3",
@@ -51,7 +57,7 @@ describe("issueLink", () => {
 
 let node: HTMLDivElement;
 let root: Root;
-let open: ReturnType<typeof vi.fn>;
+const open = vi.mocked(openExternal);
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
@@ -64,8 +70,7 @@ beforeEach(() => {
       this.open = true;
     },
   });
-  open = vi.fn();
-  vi.stubGlobal("open", open);
+  open.mockClear();
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -105,7 +110,6 @@ describe("ReportProblemDialog", () => {
       template: "bug_report.yml",
       description: "The inbox is empty",
     });
-    expect(open.mock.calls[0]!.slice(1)).toEqual(["_blank", "noopener,noreferrer"]);
     expect(close).toHaveBeenCalled();
   });
   it("asks the daemon for the parts, and can still send nothing when it cannot answer", async () => {

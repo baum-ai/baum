@@ -12,8 +12,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/library"
+	"github.com/baum-ai/baum/tiles/view"
 )
 
 // The limits of the library.
@@ -65,19 +67,50 @@ type RefusedError struct{ Err error }
 func (e *RefusedError) Error() string { return e.Err.Error() }
 func (e *RefusedError) Unwrap() error { return e.Err }
 
-// CheckName refuses a name a library type may not have: not the format, a
-// built-in tile type's or custom, a built-in library type's, nor a prefix
-// that changes a tile's ID. Whether it is taken is the store's to say.
+// ValidName reports whether name has a type's name format: a lowercase
+// letter, then lowercase letters, digits and underscores, 64 at most.
+func ValidName(name string) bool { return namePattern.MatchString(name) }
+
+// ReservedNames are the names a library type may not have, apart from the
+// prefixes: custom, the older composition types (tiles.Builtins), the types
+// the review page draws itself and add_tile takes (flow, columns, sequence,
+// table, code, images) and baum's own library types. The tile guide lists
+// them (a test keeps it so).
+func ReservedNames() []string {
+	var names []string
+	add := func(n string) {
+		if !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+	}
+	add(tiles.TypeCustom)
+	for _, b := range tiles.Builtins {
+		add(b.Name)
+	}
+	for _, n := range view.NativeTypes {
+		add(n)
+	}
+	add(tiles.TypeCode)
+	add(reviewv2.TypeImages)
+	for _, n := range library.Names {
+		add(n)
+	}
+	return names
+}
+
+// CheckName refuses a name a library type may not have: not the format, one
+// of ReservedNames, nor a prefix that changes a tile's ID. Whether it is
+// taken is the store's to say.
 func CheckName(name string) error {
 	switch {
-	case !namePattern.MatchString(name):
+	case !ValidName(name):
 		return errors.New("A tile type's name is 1 to 64 characters: a lowercase letter, then lowercase letters, digits and underscores")
 	case name == tiles.TypeCustom:
 		return errors.New("A tile type cannot be named custom")
-	case isBuiltinTileType(name):
-		return fmt.Errorf("%s is a built-in tile type of the review page; choose another name", name)
 	case slices.Contains(library.Names, name):
 		return fmt.Errorf("%s is one of baum's own library types; choose another name", name)
+	case slices.Contains(ReservedNames(), name):
+		return fmt.Errorf("%s is a built-in tile type of the review page; choose another name", name)
 	}
 	for _, prefix := range reservedPrefixes {
 		if strings.HasPrefix(name, prefix) {
@@ -85,10 +118,6 @@ func CheckName(name string) error {
 		}
 	}
 	return nil
-}
-
-func isBuiltinTileType(name string) bool {
-	return slices.ContainsFunc(tiles.Builtins, func(b tiles.BuiltinType) bool { return b.Name == name })
 }
 
 // Change is what a save takes: a type's definition, sealed, with its texts

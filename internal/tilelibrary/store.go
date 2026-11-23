@@ -568,21 +568,9 @@ func (s *Store) setDeleted(ctx context.Context, name string, deleted bool) error
 	})
 }
 
-// Purge removes the types deleted longer ago than UndoWindow, their
+// purge removes the types deleted longer ago than UndoWindow, their
 // versions, and the definitions nothing names any more. Every write does the
-// same first; the daemon may also call it.
-func (s *Store) Purge(ctx context.Context) error {
-	_, release, err := appdb.Acquire(s.Path, true)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	release()
-	return s.write(ctx, func(conn querierExec) error { return purge(ctx, conn, s.now()) })
-}
-
+// same first.
 func purge(ctx context.Context, conn querierExec, now time.Time) error {
 	cutoff := now.Add(-UndoWindow).Format(time.RFC3339Nano)
 	if _, err := conn.ExecContext(ctx, `DELETE FROM tile_type_versions WHERE name IN (SELECT name FROM tile_types WHERE deleted IS NOT NULL AND deleted <= ?)`, cutoff); err != nil {

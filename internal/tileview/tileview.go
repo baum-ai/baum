@@ -16,43 +16,39 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/internal/etagjson"
-	"github.com/baum-ai/baum/internal/tiledrafts"
 	"github.com/baum-ai/baum/internal/tileframes"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/reviewv2"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/kit"
 	"github.com/baum-ai/baum/tiles/library"
 	"github.com/baum-ai/baum/tiles/view"
 )
 
-// Response is the body of a tile route. Document is the baum.review/1
-// document the other routes serve, with the stored-document rules applied and
-// the derived hunk URLs added; View is the review page's view of exactly
-// those bytes, or nil with Problem naming why it could not be built. The
-// problem never quotes the document.
+// Response is the review page's view of a baum.review/1 document (Build),
+// which Serve converts to the tile routes' answer. Document is the document
+// with the stored-document rules applied and the derived hunk URLs added;
+// View is the review page's view of exactly those bytes, or nil with Problem
+// naming why it could not be built. The problem never quotes the document.
 //
 // A custom tile's definition is served without its HTML (ServedDefinition):
 // the page loads the tile's frame document by its digest, which Frames
-// registers. The served definition no longer matches its digest, so nothing
+// registers, and that definition no longer matches its digest, so nothing
 // may check a served tile again.
 type Response struct {
-	Document json.RawMessage `json:"document"`
+	Document json.RawMessage
 	// View is the review page's view (baum.view/1, view.Build): the
 	// overview's model-written parts, every section with the tiles placed on
 	// it, and the tiles. It is built from the review and its review view
 	// composition (baum.composition/2); a version without one, or with an
 	// older composition, gets the empty view (view.Empty) with only the
 	// tiles the person added.
-	View    *view.View `json:"view,omitempty"`
-	Problem string     `json:"problem,omitempty"`
-	// Drafts are the pending cards of tiles being made in the session panel
-	// for the pull request, which the page shows on the section each will
-	// stand on; the tile route sets them on the latest version.
-	Drafts []tiledrafts.Draft `json:"drafts,omitempty"`
+	View    *view.View
+	Problem string
 	// Frames are the definitions of the ready custom tiles, kept to register
 	// them again when the answer is served from a cache.
-	Frames Frames `json:"-"`
+	Frames Frames
 	// checked are the view's library, authored and added tiles as checked,
 	// before their custom definitions were replaced by their served form;
 	// tests check them.
@@ -144,6 +140,23 @@ type AddedTile struct {
 	Section string
 	From    int
 	Filling bool
+	// Native is a native added tile (a type the page draws itself, or an
+	// images tile), served beside the document's own tiles; Tile is then
+	// empty.
+	Native *NativeAdded `json:",omitempty"`
+}
+
+// NativeAdded is a native added tile as the agent wrote it and the host
+// checked and stored it: a tile of a baum.review/2 document in the shape a
+// generated one has (its caption and citations lifted out of its data, a
+// code tile's text filled), keyed by the added tile's ID.
+type NativeAdded struct {
+	ID      string            `json:"id,omitempty"`
+	Type    string            `json:"type"`
+	Title   string            `json:"title"`
+	Caption string            `json:"caption,omitempty"`
+	Cites   []reviewv2.Anchor `json:"cites"`
+	Data    json.RawMessage   `json:"data"`
 }
 
 // AddedKey names a version's added tiles for a cache key, empty for none,

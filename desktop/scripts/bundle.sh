@@ -122,6 +122,12 @@ case "$platform" in
     cp "$(one "$bundle"/deb/baum_"$version"_*.deb)" "$out/$name.deb"
     cp "$(one "$bundle"/appimage/baum_"$version"_*.AppImage)" "$out/$name.AppImage"
     check_appimage_magic "$out/$name.AppImage"
+    # The AppImage bundles only GStreamer's base and good plugins: no GPL
+    # ffmpeg (libav) decoders (see "Linux" in the README).
+    if [ -n "$(find "$bundle"/appimage/*.AppDir \( -name 'libgstlibav*' -o -name 'libavcodec*' \) -print -quit)" ]; then
+      echo "bundle: the AppImage carries ffmpeg (libav) libraries" >&2
+      exit 1
+    fi
     ;;
   darwin-universal)
     # One architecture per call: Xcode 27's lipo takes no more.

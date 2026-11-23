@@ -138,6 +138,7 @@ func mergeImages(descriptions []bundle.DescriptionImage, contents map[string][]b
 	var images []bundle.DescriptionImage
 	var notes []string
 	byHash := map[string]int{}
+	videos := 0 // description clips have their own limit
 	add := func(image bundle.DescriptionImage, data []byte) {
 		if at, ok := byHash[image.SHA256]; ok {
 			previous := &images[at]
@@ -149,7 +150,9 @@ func mergeImages(descriptions []bundle.DescriptionImage, contents map[string][]b
 			}
 			return
 		}
-		if len(images) >= limits.MaxImages {
+		if bundle.IsVideo(image.ContentType) {
+			videos++
+		} else if len(images)-videos >= limits.MaxImages {
 			notes = append(notes, "image omitted beyond the shared description/session image-count limit")
 			return
 		}
@@ -181,7 +184,7 @@ func mergeImages(descriptions []bundle.DescriptionImage, contents map[string][]b
 		// decoded again and merges with the copy already kept.
 		if at, seen := byHash[original]; seen {
 			hash = images[at].SHA256
-		} else if len(images) >= limits.MaxImages {
+		} else if len(images)-videos >= limits.MaxImages {
 			// A new image would be dropped; do not decode it first.
 			notes = append(notes, "image omitted beyond the shared description/session image-count limit")
 			continue

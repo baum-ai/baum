@@ -61,22 +61,6 @@ func Place(r *Review, c *Composition, ids []string, covers map[string][]string) 
 	return n
 }
 
-// SectionFor is where a tile is placed by the hunks it covers: the current
-// section of r whose hunks they meet most, the first on a tie, else
-// context. A section that is not one of r's current sections, or empty,
-// gives way to it; a current section or context is kept.
-func SectionFor(r *Review, section string, covered []string) string {
-	if section == ContextSection {
-		return section
-	}
-	for _, s := range r.Sections {
-		if s.ID == section && !s.Stale {
-			return section
-		}
-	}
-	return bestSection(r, covered)
-}
-
 // bestSection is the current section whose hunks the covered hunks meet
 // most, the first on a tie, else context.
 func bestSection(r *Review, covered []string) string {

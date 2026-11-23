@@ -16,6 +16,13 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 )
 
+// jsonText is s as it reads inside a JSON string: a Windows path's
+// backslashes are doubled there.
+func jsonText(s string) string {
+	b, _ := json.Marshal(s)
+	return strings.Trim(string(b), `"`)
+}
+
 // GET /api/settings reports the Claude Code configuration directories chosen
 // for reviews and fixes, the one a run gets without a choice, and every one
 // baum knows.
@@ -145,7 +152,7 @@ func TestDecisionSettingsChooseAClaudeConfigDirectory(t *testing.T) {
 	if saved() != "" {
 		t.Fatalf("a refused directory was saved: %q", saved())
 	}
-	if code, out := put(`{"enabled":true,"backend":"claude","claude_config_dir":"~/.claude.personal"}`); code != 200 || !strings.Contains(out, `"claude_config_dir":"`+filepath.ToSlash(personal)+`"`) {
+	if code, out := put(`{"enabled":true,"backend":"claude","claude_config_dir":"~/.claude.personal"}`); code != 200 || !strings.Contains(out, `"claude_config_dir":"`+jsonText(personal)+`"`) {
 		t.Fatalf("choose = %d %s", code, out)
 	}
 	if saved() != personal || !slices.Contains(agentdirs.Claude.Recorded(), personal) {

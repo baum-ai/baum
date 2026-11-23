@@ -10,7 +10,7 @@ reviews are outside this store.
 | Document | Contents |
 | --- | --- |
 | `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes; archives (`archived`, optional) |
-| `ui/filters` | each page's filter query and the saved Pull requests tabs (`{pages: {<page>: query}, tabs: [{id, name, view, query}]}`) |
+| `ui/filters` | each page's filter query and the saved Pull requests tabs and sort (`{pages: {<page>: query}, sorts?: {<page>: sort}, tabs: [{id, name, view, query, sort?}]}`) |
 | `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
 | `ui/review` | per repository/PR, the comments and summary of the reader's own review until it is sent, and the reviews sent from the app |
 
@@ -18,7 +18,12 @@ A filter page is `inbox`, `inbox:<inbox id>` or `pulls`, at most 64 of them,
 and a page without a filter is left out (the app drops the least recently
 changed beyond 60). A query is one line of at most 500 characters; the daemon
 never parses it. A tab has a 32-hex `id` (unique), a trimmed `name` of 1 to 40
-characters, a `view` (`open` or `history`, Closed) and a query; at most 20 tabs. A stored filters document in another shape
+characters, a `view` (`open` or `history`, Closed), a query and an optional
+`sort`; at most 20 tabs. The optional `sorts` map holds the app's sort of each
+page (the same page keys as `pages`, plus `tab:<tab id>`; at most 64); a sort
+is one line of at most 200 characters, a comma-separated list of keys each
+optionally prefixed with `-` (`opened,-risk`), which the daemon never parses.
+A document without `sorts` or tab sorts is still valid. A stored filters document in another shape
 reads as none (at its revision), and the next save replaces it.
 
 A review key is `owner/repository#number` (optionally prefixed with an

@@ -22,6 +22,7 @@ const (
 	MaxOwners       = 50
 	MaxRepositories = 50
 	MaxQueryLength  = 500
+	MaxSortLength   = 200
 )
 
 var (
@@ -58,8 +59,29 @@ type Inbox struct {
 	Risk         string   `json:"risk"`
 	Repositories []string `json:"repositories"`
 	Query        string   `json:"query"`
-	NoBots       bool     `json:"no_bots"`
-	Badge        bool     `json:"badge"`
+	// Sort is the app's sort of the inbox's queue: comma-separated keys, each
+	// optionally prefixed with "-". The daemon never parses it. A missing key
+	// reads as "".
+	Sort   string `json:"sort"`
+	NoBots bool   `json:"no_bots"`
+	Badge  bool   `json:"badge"`
+	// AutoReview has the automatic scheduler review the pull requests the
+	// inbox holds, when automatic reviews follow the inboxes
+	// (repos.PullRequestsInboxes). A missing value is true.
+	AutoReview bool `json:"auto_review"`
+}
+
+// UnmarshalJSON reads an inbox, with AutoReview true when the key is missing:
+// inboxes stored before it, and clients that do not send it, keep automatic
+// reviews on.
+func (i *Inbox) UnmarshalJSON(data []byte) error {
+	type plain Inbox
+	p := plain{AutoReview: true}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*i = Inbox(p)
+	return nil
 }
 
 // State is the stored list and the revision it is at.
@@ -191,7 +213,7 @@ func initialize(raw []byte) ([]byte, State, error) {
 	if len(items) == 0 {
 		def, err := json.Marshal(Inbox{
 			ID: newID(), Name: DefaultName, Color: "blue", What: "any",
-			Owners: []string{}, Risk: "any", Repositories: []string{}, Query: DefaultQuery, Badge: true,
+			Owners: []string{}, Risk: "any", Repositories: []string{}, Query: DefaultQuery, Badge: true, AutoReview: true,
 		})
 		if err != nil {
 			return nil, State{}, err
@@ -380,6 +402,10 @@ func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
 		if !ValidQuery(inbox.Query) {
 			return nil, invalid(CodeInvalidInbox, "Inbox %q: the query must be one line of at most %d characters.", inbox.Name, MaxQueryLength)
 		}
+		inbox.Sort = strings.TrimSpace(inbox.Sort)
+		if !ValidSort(inbox.Sort) {
+			return nil, invalid(CodeInvalidInbox, "Inbox %q: the sort must be one line of at most %d characters.", inbox.Name, MaxSortLength)
+		}
 		// An id the list no longer holds is kept when it has the daemon's
 		// shape: it is an inbox deleted and brought back by Undo, whose links
 		// should still lead to it.
@@ -406,6 +432,15 @@ func ValidQuery(query string) bool {
 		return false
 	}
 	return strings.IndexFunc(query, unicode.IsControl) < 0
+}
+
+// ValidSort reports whether a sort is one line of valid UTF-8 text of at most
+// MaxSortLength characters. The daemon never parses it: the app does.
+func ValidSort(sort string) bool {
+	if !utf8.ValidString(sort) || utf8.RuneCountInString(sort) > MaxSortLength {
+		return false
+	}
+	return strings.IndexFunc(sort, unicode.IsControl) < 0
 }
 
 func oneOf(v string, allowed []string) bool {

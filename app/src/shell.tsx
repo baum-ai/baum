@@ -31,6 +31,7 @@ import {
   REFRESH_KEY_LABEL,
   REFRESH_KEY_SHORTCUT,
 } from "./shortcuts";
+import { openExternal } from "./outside-links";
 
 /** The inboxes nested under Inbox, with what changes them. Absent when the
  *  daemon is older and has none. */
@@ -110,7 +111,9 @@ function usePeek(folded: boolean) {
   // window's left edge), or an app that loses focus to another window, may
   // never send the sidebar a leave event, so it would stay open over the page.
   // Leaving the document or the window counts as leaving the sidebar, which
-  // also drops an open still waiting on its delay.
+  // also drops an open still waiting on its delay. On Linux under Wayland,
+  // WebKitGTK may not tell the page the pointer left at all, so the desktop
+  // app announces it with `baum:pointer-left` (oss/desktop/src/pointer.rs).
   useEffect(() => {
     const away = () => {
       inside.current = false;
@@ -123,10 +126,12 @@ function usePeek(folded: boolean) {
       if (event.relatedTarget === null) away();
     };
     window.addEventListener("blur", away);
+    window.addEventListener("baum:pointer-left", away);
     document.addEventListener("mouseout", onMouseOut);
     document.addEventListener("visibilitychange", away);
     return () => {
       window.removeEventListener("blur", away);
+      window.removeEventListener("baum:pointer-left", away);
       document.removeEventListener("mouseout", onMouseOut);
       document.removeEventListener("visibilitychange", away);
     };
@@ -156,6 +161,58 @@ function usePeek(folded: boolean) {
     held.current = inside.current;
   };
   return { peeking, over, leave, fold };
+}
+
+/** Keyboard focus in the sidebar, outside the menus it shows. */
+const KEYBOARD_FOCUS = ":focus-visible:not(.context-menu *)";
+
+/** Marks the element `data-keyboard-focus` while it holds keyboard focus
+ *  (`KEYBOARD_FOCUS`), which opens the folded sidebar. The page's CSS read
+ *  this with `:has()` before, but WebKitGTK re-checked that selector on every
+ *  element added anywhere in the page, so a large diff took seconds to show.
+ *  The attribute is set on the element itself, not through React state, so it
+ *  changes within the event, at the same moments the selector did: on focus
+ *  and key events in the element, after every render of its owner (which may
+ *  have removed the focused element without a blur), on any change to the
+ *  element's children (WebKit sends no blur for a focused element removed),
+ *  and when the window gains or loses focus, since `:focus-visible` does not
+ *  match in a window in the background and WebKit tells the element only with
+ *  `focus` and `blur`, which do not bubble. */
+function useKeyboardFocusWithin<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const sync = useCallback(() => {
+    const element = ref.current;
+    element?.toggleAttribute("data-keyboard-focus", !!element.querySelector(KEYBOARD_FOCUS));
+  }, []);
+  useLayoutEffect(sync);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    let frame = 0;
+    // The window's activation may land after its `focus` or `blur` event.
+    const later = () => {
+      sync();
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(sync);
+    };
+    for (const type of ["focusin", "focusout", "keydown", "keyup"])
+      element.addEventListener(type, sync);
+    window.addEventListener("focus", later);
+    window.addEventListener("blur", later);
+    document.addEventListener("visibilitychange", later);
+    const changed = new MutationObserver(sync);
+    changed.observe(element, { childList: true, subtree: true });
+    return () => {
+      changed.disconnect();
+      cancelAnimationFrame(frame);
+      for (const type of ["focusin", "focusout", "keydown", "keyup"])
+        element.removeEventListener(type, sync);
+      window.removeEventListener("focus", later);
+      window.removeEventListener("blur", later);
+      document.removeEventListener("visibilitychange", later);
+    };
+  }, [sync]);
+  return ref;
 }
 
 /** The application chrome, after the hosted sidebar: the mark, the sections
@@ -215,6 +272,7 @@ export function Sidebar({
   }, [ready, preferences.sidebar]);
   const pinned = choice === "pinned" && !narrow;
   const peek = usePeek(!pinned);
+  const keyboardFocus = useKeyboardFocusWithin<HTMLDivElement>();
   const nested = inboxes && inboxes.list.length > 0;
   // A right click on Inbox makes or manages inboxes.
   const inboxMenu = useContextMenu();
@@ -299,6 +357,7 @@ export function Sidebar({
   };
   return (
     <div
+      ref={keyboardFocus}
       className="local-rail-lane"
       data-rail={pinned ? "pinned" : peek.peeking ? "open" : "folded"}
       onPointerEnter={peek.over}
@@ -391,6 +450,8 @@ export type RailHelp = {
   shortcuts: () => void;
   /** Starts a report of a problem. */
   report: () => void;
+  /** Starts the tour again. */
+  tour?: () => void;
   /** Set while the button is mounted to what opens its menu, so the `?` key
    *  can open it with the keys on Show shortcuts: `?` then Enter shows the
    *  sheet. */
@@ -418,12 +479,13 @@ function HelpButton({
       ? [
           { label: "Show shortcuts", onSelect: help.shortcuts },
           { label: "Report a problem", onSelect: help.report },
+          ...(help.tour ? [{ label: "Take the tour", onSelect: help.tour }] : []),
         ]
       : []),
     {
       label: "Open the docs",
       // The desktop app hands a new window to the browser.
-      onSelect: () => void window.open(DOCS_URL, "_blank", "noopener,noreferrer"),
+      onSelect: () => openExternal(DOCS_URL),
     },
   ];
   const show = (last = false, returnTo?: Element | null) => {
@@ -569,7 +631,9 @@ function InboxRows({
               className="local-rail-sub"
             >
               <span aria-hidden="true" className="inbox-dot" />
-              <span className="local-rail-label">{inbox.name}</span>
+              <span className="local-rail-label" title={inbox.name}>
+                {inbox.name}
+              </span>
               {count > 0 && inbox.badge ? (
                 <span className="local-rail-sub-count">{count}</span>
               ) : null}

@@ -200,6 +200,8 @@ func (f *proposalFixture) propose(tool string, args any) (agentcontext.Proposal,
 	if err := json.Unmarshal([]byte(text), &receipt); err != nil {
 		f.t.Fatalf("%s: %v %s", tool, err, text)
 	}
+	// A theme choice also says which slot it is for.
+	delete(receipt, "applies_to")
 	keys := slices.Sorted(func(yield func(string) bool) {
 		for k := range receipt {
 			if !yield(k) {
@@ -367,9 +369,9 @@ func inboxPut(edit func([]map[string]any) []map[string]any) func(*proposalFixtur
 func proposalCases() []proposalCase {
 	value := "value typed by the person"
 	return []proposalCase{{
-		name: "appearance", page: settingsAt("general"), tool: "propose_appearance", args: map[string]any{"theme": "light", "page_modifier": "alt"},
-		route:  fixed("PUT", "/api/settings/appearance", `{"theme":"light","page_modifier":"alt"}`),
-		change: fixed("PUT", "/api/settings/appearance", `{"key_hints":false}`),
+		name: "appearance", page: settingsAt("general"), tool: "propose_appearance", args: map[string]any{"key_hints": false, "page_modifier": "alt"},
+		route:  fixed("PUT", "/api/settings/appearance", `{"key_hints":false,"page_modifier":"alt"}`),
+		change: fixed("PUT", "/api/settings/appearance", `{"key_hints":true}`),
 	}, {
 		name: "review page", page: settingsAt("general"), tool: "propose_appearance", args: map[string]any{"review_page": "tiles"},
 		route:  fixed("PUT", "/api/settings/appearance", `{"review_page":"tiles"}`),
@@ -377,7 +379,7 @@ func proposalCases() []proposalCase {
 	}, {
 		name: "appearance without a section", page: settingsAt(""), tool: "propose_appearance", args: map[string]any{"key_hints": false},
 		route:  fixed("PUT", "/api/settings/appearance", `{"key_hints":false}`),
-		change: fixed("PUT", "/api/settings/appearance", `{"theme":"dark"}`),
+		change: fixed("PUT", "/api/settings/appearance", `{"key_hints":true}`),
 	}, {
 		name: "plan usage", page: settingsAt("general"), tool: "propose_plan_usage", args: map[string]any{"provider": "codex", "shown": false},
 		route:  fixed("PUT", "/api/settings/plan-usage", `{"provider":"codex","shown":false}`),
@@ -453,7 +455,7 @@ func proposalCases() []proposalCase {
 		},
 		tool: "propose_inbox", args: map[string]any{"name": "Platform", "query": "repo=owner/repo", "color": "green"},
 		route: inboxPut(func(list []map[string]any) []map[string]any {
-			return append(list, map[string]any{"name": "Platform", "color": "green", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "repo=owner/repo", "no_bots": false, "badge": true})
+			return append(list, map[string]any{"name": "Platform", "color": "green", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "repo=owner/repo", "no_bots": false, "badge": true, "auto_review": true})
 		}),
 		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["badge"] = false; return list }),
 	}, {
@@ -466,6 +468,25 @@ func proposalCases() []proposalCase {
 			return list
 		}),
 		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["color"] = "red"; return list }),
+	}, {
+		name: "turn off automatic reviews of an inbox", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PageInbox}
+		},
+		tool: "propose_inbox", inbox: 1, args: map[string]any{"auto_review": false},
+		route: inboxPut(func(list []map[string]any) []map[string]any {
+			list[0]["auto_review"] = false
+			return list
+		}),
+		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["color"] = "red"; return list }),
+	}, {
+		name: "new inbox without automatic reviews", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PageInbox}
+		},
+		tool: "propose_inbox", args: map[string]any{"name": "Quiet", "auto_review": false},
+		route: inboxPut(func(list []map[string]any) []map[string]any {
+			return append(list, map[string]any{"name": "Quiet", "color": "blue", "what": "any", "owners": []string{}, "risk": "any", "repositories": []string{}, "query": "", "no_bots": false, "badge": true, "auto_review": false})
+		}),
+		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["badge"] = false; return list }),
 	}, {
 		name: "query of an inbox with the older fields", page: func(*proposalFixture) agentcontext.PageContext {
 			return agentcontext.PageContext{Page: agentcontext.PageInbox}
@@ -633,7 +654,6 @@ func TestInvalidProposalsAreRefusedWithThePagesReason(t *testing.T) {
 		path   string
 		body   string
 	}{
-		{"theme", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"theme": "neon"}, "PUT", "/api/settings/appearance", `{"theme":"neon"}`},
 		{"page modifier", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"page_modifier": "shift"}, "PUT", "/api/settings/appearance", `{"page_modifier":"shift"}`},
 		{"review page", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"review_page": "grid"}, "PUT", "/api/settings/appearance", `{"review_page":"grid"}`},
 		{"plan", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_plan_usage", map[string]any{"provider": "gemini", "shown": true}, "PUT", "/api/settings/plan-usage", `{"provider":"gemini","shown":true}`},
@@ -844,7 +864,7 @@ func TestAgentEnvironmentValuesNeverPassThroughTheAgent(t *testing.T) {
 	noValue("removal")
 	// Only the agent environment takes a value.
 	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "general"})
-	theme, err := f.propose("propose_appearance", map[string]any{"theme": "dark"})
+	theme, err := f.propose("propose_appearance", map[string]any{"key_hints": false})
 	if err != nil {
 		t.Fatal(err)
 	}

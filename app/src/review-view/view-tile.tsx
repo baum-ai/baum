@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import { cn } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
+import { ReviewImages } from "@baum/viewer/components/review-images";
 import { Cites } from "./cites";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
@@ -10,15 +11,11 @@ import { isBuiltinType } from "../tiles/custom/library";
 import { useTileHost } from "../tiles/host";
 import { tileFace } from "../tiles/registry";
 import type { TileContext } from "../tiles/types";
-import { NATIVE } from "./native-tiles";
+import { BLOCK_LABEL, NATIVE } from "./native-tiles";
 import { addedNote, type ViewTile } from "./model";
 
-/** The small uppercase label above a block of a section's body (a tile's
- *  title in the bare variant too). */
-export const BLOCK_LABEL = "text-xs font-medium tracking-[0.08em] text-tertiary uppercase";
-
 /** The tile's place on the page, which links and the keys reach. */
-export const tileElementId = (prefix: string, tile: string) => `${prefix}tile-${tile}`;
+const tileElementId = (prefix: string, tile: string) => `${prefix}tile-${tile}`;
 
 /** The tile the keys (j and k) are on, if any. */
 export function activeTile(): string | null {
@@ -31,6 +28,19 @@ export function activeTile(): string | null {
 const anchorsOf = (data: unknown): Anchor[] => {
   const source = (data as { source?: unknown } | null)?.source;
   return Array.isArray(source) ? (source as Anchor[]) : [];
+};
+/** An images tile's images (a tile the person added): each by the id the
+ *  daemon stored it under, which the document's index lists. */
+export const imageItems = (data: unknown): { attachment: string; caption?: string }[] | null => {
+  const items = (data as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const out: { attachment: string; caption?: string }[] = [];
+  for (const item of items) {
+    const { attachment, caption } = (item ?? {}) as { attachment?: unknown; caption?: unknown };
+    if (typeof attachment !== "string") return null;
+    out.push(typeof caption === "string" && caption ? { attachment, caption } : { attachment });
+  }
+  return out;
 };
 const captionOf = (data: unknown): string => {
   const caption = (data as { caption?: unknown } | null)?.caption;
@@ -127,6 +137,17 @@ export function ViewTileCard({
             ? face.why
             : (tile.problems?.[0] ?? "This tile isn't available.")}
         </Note>
+      );
+    }
+    if (tile.type === "images") {
+      const items = imageItems(tile.data);
+      if (!items) return <Note>This tile's content couldn't be read.</Note>;
+      return (
+        <ReviewImages
+          document={review}
+          heading={null}
+          block={{ kind: "images", items, source: [] }}
+        />
       );
     }
     if (native) {

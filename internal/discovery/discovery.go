@@ -92,6 +92,9 @@ type PullRequest struct {
 	// a review or a comment. The background refresh re-reads a saved review's
 	// evidence when it is newer than the last read.
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	// CreatedAt is when the pull request was opened. Zero in a snapshot cached
+	// before it was kept, until the row is next read.
+	CreatedAt time.Time `json:"created_at,omitzero"`
 }
 
 // Observation contains only safe current GitHub metadata, never description
@@ -953,6 +956,7 @@ func (p *poll) build(ctx context.Context, repository github.Repository, fresh bo
 			item.Merge, item.Behind = old.Merge, old.Behind
 		}
 		item.UpdatedAt = row.UpdatedAt
+		item.CreatedAt = row.CreatedAt
 		items[number] = item
 	}
 	for _, number := range slices.Sorted(maps.Keys(items)) {
@@ -1084,6 +1088,29 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 	}
 	cache.Snapshot.Observations = append(cache.Snapshot.Observations, value)
 	return s.save(path, cache)
+}
+
+// Seed replaces a repository's cache under the client's credential with
+// snapshot, saved as a cache of the format before 3: Cached serves its pull
+// requests, stale until a poll succeeds, and the first full sweep replaces
+// them. It is for development data written while no daemon runs (the
+// seeded profiling dataset, internal/seeddata); the daemon never calls it.
+func (s *Service) Seed(ctx context.Context, snapshot Snapshot) error {
+	repository, err := github.ParseRepository(snapshot.Repository)
+	if err != nil {
+		return err
+	}
+	defer s.lock(repository)()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return err
+	}
+	snapshot.Repository, snapshot.Epoch, snapshot.Stale, snapshot.Error = repository.String(), 0, false, ""
+	return s.save(path, diskCache{Snapshot: snapshot})
 }
 
 // Merged records that the app just merged the pull request at head: GitHub

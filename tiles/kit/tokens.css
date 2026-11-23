@@ -6,7 +6,8 @@
    sets from the app's theme. */
 @layer baum-palette, baum-theme;
 @layer baum-palette {
-:root {
+:root,
+[data-theme-scope] {
   --color-ink: #1f1b17;
   --color-paper: #ffffff;
   --color-shadow: #000000;
@@ -155,7 +156,8 @@
   --z-sticky: 30;
   --z-sheet: 40;
 }
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+[data-theme-scope][data-theme="dark"] {
   color-scheme: dark;
   --ink-900: color-mix(in srgb, var(--color-paper) 94%, var(--color-shadow));
   --ink-800: color-mix(in srgb, var(--color-paper) 88%, var(--color-shadow));

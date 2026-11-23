@@ -732,6 +732,16 @@ export function evidenceTone(status: EvidenceStatus): Tone {
   }
 }
 
+/** The word for each conclusion, matching the summary line's passed/running/failed. */
+export const CHECK_CONCLUSION_WORDS: Record<string, string> = {
+  success: "Passed",
+  failure: "Failed",
+  cancelled: "Cancelled",
+  pending: "Running",
+  skipped: "Skipped",
+  neutral: "Neutral",
+};
+
 /** How a check's conclusion reads where it is listed or named in prose. */
 export const CHECK_CONCLUSION_TONES: Record<string, Tone> = {
   success: "positive",

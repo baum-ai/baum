@@ -126,9 +126,6 @@ func TestPutChecksAndStoresAReviewViewComposition(t *testing.T) {
 	if len(c.Sections) != 1 || c.Sections[0].ID != "context" || len(c.Diagrams) != 1 || strings.Contains(string(c.Diagrams[0].Data), "h_0000000000ff") {
 		t.Fatalf("stored %s", got.Composition)
 	}
-	if parsed := ParseComposition(got.Composition); parsed == nil || parsed.Overview.RiskSummary == "" {
-		t.Fatalf("parsed %+v", parsed)
-	}
 
 	s = opened(t)
 	v = reviewVersion(t, 1)
@@ -213,8 +210,8 @@ func TestACompositionProblemNeverCostsTheVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := ParseComposition(got.Composition)
-	if c == nil || c.Generator != nil || c.Overview.RiskSummary == "" {
+	c, err := view.Parse(got.Composition)
+	if err != nil || c.Generator != nil || c.Overview.RiskSummary == "" {
 		t.Fatalf("composition %s", got.Composition)
 	}
 	if count("store.composition_generators_dropped") != before+1 || count("store.compositions_dropped") != dropped {
@@ -512,17 +509,4 @@ func mustLatest(t *testing.T, s *Store) Version {
 		t.Fatal(err)
 	}
 	return v
-}
-
-func TestParseCompositionIsNilForNoneAndUnusable(t *testing.T) {
-	raw := tileviewtest.ViewComposition(t)
-	if ParseComposition(raw) == nil {
-		t.Error("a stored composition did not parse")
-	}
-	huge := `{"schema":"baum.composition/2","x":"` + strings.Repeat("a", tiles.MaxStoredComposition) + `"}`
-	for _, bad := range []string{"", "null", "not json", `{"schema":"baum.composition/9"}`, `{"schema":"baum.composition/1","layout":{"entries":[]}}`, huge} {
-		if ParseComposition([]byte(bad)) != nil {
-			t.Errorf("%q parsed", bad)
-		}
-	}
 }

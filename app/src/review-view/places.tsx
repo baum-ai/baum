@@ -29,7 +29,7 @@ import {
 import { readFileGrouping } from "./file-grouping";
 import { ViewPane } from "./view-pane";
 
-export const TAB_LABEL = {
+const TAB_LABEL = {
   overview: "Overview",
   sections: "How it works",
   code: "Files changed",
@@ -153,7 +153,13 @@ function ViewRail({ context }: { context: ReviewPlaceContext }) {
           />
           <SideNavNest id="review-sections">
             {list.map((section) => (
-              <div key={section.id} className={cn(section.obsolete && "opacity-60 grayscale")}>
+              <div
+                key={section.id}
+                title={
+                  section.obsolete ? "No longer in the pull request's latest commits" : undefined
+                }
+                className={cn(section.obsolete && "opacity-60 grayscale")}
+              >
                 <SideNavButton
                   label={section.title}
                   wrap
@@ -297,7 +303,7 @@ function stepsOf(
       place.tab === "sections"
         ? (list.find((section) => section.id === place.section)?.title ?? TAB_LABEL.sections)
         : place.tab === "code"
-          ? "Files"
+          ? TAB_LABEL.code
           : TAB_LABEL[place.tab],
     icon: place.tab === "code" ? FilesIcon : place.tab === "sections" ? SectionIcon : SummaryIcon,
     position:
@@ -314,11 +320,7 @@ function stepsOf(
 }
 
 /** The changed files in the order the file list shows them, each once. */
-export function listedFiles(
-  files: ViewFile[],
-  grouping: FileGrouping,
-  list: ListedSection[],
-): ViewFile[] {
+function listedFiles(files: ViewFile[], grouping: FileGrouping, list: ListedSection[]): ViewFile[] {
   const seen = new Set<string>();
   return groupFiles(files, grouping, list)
     .flatMap((group) => group.files)

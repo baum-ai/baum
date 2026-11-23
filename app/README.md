@@ -46,6 +46,10 @@ JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
 - the scenario's own `__baumPerf.mark(name)` markers, the DOM's element count
   and, where the engine has it, the JS heap size.
 
+`__baumPerf.progress()` returns just the latest navigation and how many
+interactions were recorded, without copying the rest, for a scenario to
+wait on (`just desktop::profile`, [desktop](../desktop/README.md#profiling)).
+
 It measures by hand rather than with the Event Timing or Long Tasks APIs,
 which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
 things. Every other build leaves it out, and fails if `__baumPerf` reaches a
@@ -54,8 +58,8 @@ chunk.
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
-connecting and tray screens use the viewer palette that the local app uses,
-following the system's light or dark appearance.
+connecting and tray screens use the viewer palette that the local app uses and
+follow the active colour theme (`src/desktop/follow-theme.ts`, below).
 Setup has a decorative leaf banner just above its step label, using the
 transparent Discord artwork in both themes. Its width is capped so leaves stay
 visible on large screens, and it follows the form on tall windows. It is static,
@@ -73,13 +77,28 @@ and Tailwind color utilities outside the UI palette,
 `../viewer/src/themes/*.css` and those two artwork modules.
 The default UI palette has nineteen explicit base colors shared by light and dark mode;
 its neutral ramps, status backgrounds and interaction shades are derived mixes.
-Custom colors go in `../viewer/src/themes/custom.css`, loaded by every desktop
-screen after the default palette in a higher-priority cascade layer. Override
-bases to recalculate shades, or any semantic token to replace a derived color.
-Put overrides on `:root`, with optional `:root[data-theme="dark"]` exceptions;
-components consume those values without redefining them. See
-[custom color themes](../viewer/README.md#custom-color-themes) for examples and
-named theme selection separate from the light/dark appearance preference.
+A custom colour theme is a base (`light` or `dark`) and overrides of the
+palette tokens in the allowlist in `src/theme.ts` (the same list as
+`themes.Tokens` in `internal/themes`; seeds such as `--color-paper` recalculate
+the shades built on them, roles such as `--surface-page` replace one result).
+The light and dark slots each name a theme (the built-in default when none is
+chosen) and the `theme` setting picks the slot in use, System following the
+operating system. `src/theme.ts` applies the active theme to the document root:
+`data-theme` and `color-scheme` follow the theme's base (so a dark theme in the
+light slot gives `data-theme="dark"`), and its tokens are set inline, which beats
+the palette layers and `style.css`; tokens the previous theme set are removed.
+A theme the agent proposes is previewed the same way, and `tileThemeMessage`
+builds the tile protocol's `theme` message for a theme. `../viewer/src/themes/custom.css`
+stays empty for a build that wants fixed overrides; see
+[custom color themes](../viewer/README.md#custom-color-themes).
+The desktop app's native screens (setup, connecting, tray panel) cannot ask the
+daemon, so in the desktop app `PreferencesProvider` reports the saved theme (the
+mode and the theme in each slot, with its base and allowlisted tokens) to the
+app with `save_theme` whenever it changes, never for a preview. The screens call
+`followTheme()`, which reads it with `theme_state`, applies it through
+`applyTheme`, follows the system's appearance in system mode, and reads again
+when the window gets the focus or becomes visible (the tray panel is one window
+that stays open). Without the state it follows the system's light or dark.
 
 `pnpm lint:palette` runs the color rule by itself; `pnpm lint` and `pnpm check`
 include it, so the normal CI app check enforces it. It scans app sources, shared
@@ -101,7 +120,8 @@ one component, `NineDots` or `LoadingStatus` in `src/nine-dots.tsx`, whose look
 lives only in `src/nine-dots.css`. A page that reads something says which of four things it is
 (`src/page-state.tsx`): waiting for its first read, that read failed (`Couldn't load jobs`,
 with the daemon's message and one Retry, never an empty page or an endless wait), empty, or its
-content. A failed later read keeps the content shown and says so in a banner. Native dialogs
+content. Retry starts a new read rather than waiting on one still under way, which
+may never answer. A failed later read keeps the content shown and says so in a banner. Native dialogs
 open through `useModal` (`src/modal.ts`), which gives the focus back to what opened them.
 Dialog and panel dismissals use the viewer's `CloseButton`; confirmation actions
 keep their Cancel buttons until finished. The keyboard shortcuts dialog keeps
@@ -615,7 +635,8 @@ beside its Transcript): the notice goes and the run joins the fix runs below,
 remembered in this browser (`useDismissedFixes`, the 50 latest). A running
 fix's notice cannot be dismissed.
 
-Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
+Merging: an open pull request, not a draft, that GitHub can merge (Merge state
+Ready or Blocked, that is without a conflict) shows a
 Merge button in the PR page header, **Merge…** in its Pull requests row's
 menu, and the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
@@ -727,8 +748,7 @@ opened on the page itself goes to its list.
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `g`/`Home` and `G`/`End` move it to the first and last row, `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
-where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
+its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them, `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
 and `Esc` clears the focus. On a pull request's or group's page, `Shift+K`
 (`Shift+↑`, `←`) and `Shift+J` (`Shift+↓`, `→`) move to the previous and next
@@ -867,9 +887,11 @@ an agent** (Fix, Update, then the person's pull requests a fix agent is working
 on, each with the loader and the fix's phase). Within Review a saved review
 ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
-clones hold it. Every row, a review group's too (a stack's has none), starts
-with the dot for how baum's review stands, as Pull requests draws it
-(`src/review-dot.tsx`), its label read after the title. Here, unlike Pull
+clones hold it. Every row, a review group's too (a stack's has none), has
+the dot for how baum's review stands, as Pull requests draws it
+(`src/review-dot.tsx`) but smaller, at the start of the line under the title;
+a row without a review has no dot and no empty slot. Its label is read after
+the title. Here, unlike Pull
 requests, a current review over pull request data too old to trust
 (`metadataStale`) reads outdated, as a review row's panel says. After the groups, their own pull requests with nothing to do
 (drafts, and those waiting on reviewers, checks or another GitHub blocker) are
@@ -889,7 +911,9 @@ GitHub** without guessing the cause. Older snapshots without the review
 requirement keep that neutral explanation. An otherwise unexplained GitHub
 merge blocker adds **Merge blocked by GitHub** under **On GitHub**, saying when
 GitHub has not supplied the reason. Known blockers keep their existing rows and
-chips. **Open on GitHub** is offered beside Open for waiting pull requests.
+chips. **Merge** is offered beside Open, and `m` opens it, for any pull request
+GitHub can merge, failing checks or missing reviews
+included; only a Ready one joins Ready to merge.
 
 The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
@@ -953,7 +977,11 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
-member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+member of their stack, offer Snooze too. A stack's or group's row offers
+Snooze in its panel, on `s` and in its menu: it snoozes every member the row
+shows, together, with one **Undo**; each is then listed under Snoozed and
+brought back on its own (one snoozed until it changes comes back when it is
+pushed to). Snoozed waiting PRs keep their
 waiting classification, so the same inbox filters apply before and after
 snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
@@ -1065,7 +1093,9 @@ over the page, which does not move, and it folds again shortly after the
 pointer leaves or when a link in it is chosen. It folds at once when the
 pointer leaves the window or the window loses focus, since a pointer that
 leaves straight off the rail at the window's edge may never send the rail
-its own leave event; keyboard focus in the rail
+its own leave event. On Linux under Wayland, WebKitGTK may send the page no
+leave at all, so the desktop app announces it with a `baum:pointer-left`
+event; keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
@@ -1211,6 +1241,32 @@ goes, and what the removal does not touch keeps its text. The box lies
 under the tokens: a click anywhere but a × focuses it with the caret at the
 end, and the text shows until the focus leaves.
 
+**The sort** (`SortButton`, `src/sort-menu.tsx`; `src/pr-sort.ts`) sits
+right of the filter icon in an inbox's head and on Pull requests' tab bar,
+lit with a dot while a sort is in force. ⇧S opens or closes its menu from
+anywhere on the page. The menu lists the fields with a digit each: 1 Opened,
+2 Last activity, 3 Risk, 4 Review time, 5 Size (lines added and deleted),
+6 Repository, 7 Author and 8 Reviewed (when the latest review was written).
+A digit or a click adds the field as the next key, or turns it round if the
+sort has it already. Backspace drops the last key, Delete or the row's ×
+drops that field, j/k or the arrows with Enter
+or Space pick a field, and Esc or ⇧S closes the menu. A field is added in the
+direction most often wanted: Opened oldest first, Last activity and Reviewed
+newest first, Risk highest first, Review time and Size smallest first, and
+Repository and Author A to Z. A pull request without a value for a key (no
+score, no estimate, or an older daemon that sends no `created_at`) goes last
+whichever way the key runs. The sort orders rows **within** each section,
+and the sections stay: an inbox's Needs your eyes, Ready to merge, Hand to
+an agent, Waiting and Not waiting on you, and Pull requests' buckets.
+With no key each section keeps its own order, which also settles every tie. A
+review group or stack follows its first-ranked member. Snoozed and Done today
+keep their own order. The sort is written `opened,-risk` (`-` turns a key
+round; unknown keys are skipped). An inbox's sort is saved with the inbox
+(`sort`, see the [inboxes README](../internal/inboxes/README.md)) as it
+changes, with no draft. Pull requests' Open and Closed share one sort, and a
+saved tab has its own (`sort`), both in `ui/filters`. A tab saved from the
+page takes the page's sort.
+
 There is no whole-queue filter: the filter is always an inbox's own. **Create
 inbox** (below, and Command+Enter) is not offered at 20 inboxes or with an
 older daemon. In a saved inbox the menu starts from the
@@ -1236,7 +1292,7 @@ and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
 agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
 verdicts, **Snooze…** (which picks the row and opens its snooze choices), **Archive** and
-**Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
+**Open on GitHub**; on a group's row, **Open**, Show or Hide its pull requests and **Snooze…**; on a
 row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
@@ -1289,7 +1345,10 @@ They are pressed while every part of their query must already hold as written
 syntax** link beside the "What it catches" heading opens the docs' Inbox page
 at "Filter what you see" (`DOCS_URL` + `inbox/#filter-what-you-see`). A
 switch shows or hides the inbox's count in the sidebar; its pull requests still
-count in the Inbox total. **Delete inbox** asks, then
+count in the Inbox total. **Review automatically** (`auto_review`, on by
+default and for inboxes saved before it) has baum review the inbox's pull
+requests on its own while Settings › Reviews follows the inboxes; while it
+does not, the switch's sentence says so and links there. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the
 sidebar; with only one inbox it is disabled and the page says "Keep at least one
 inbox".
@@ -1680,14 +1739,99 @@ shows one section at a time, listed on the left with a line on where each
 stands and a dot when it needs attention; at narrow widths the list becomes
 a scrolling strip above the section. The section is in the address, so a
 reload or Back keeps it, and the GitHub notice's **Open settings** goes
-straight to Connections. **General**, the default, offers System, Light and Dark
-themes, the modifier
+straight to Connections. **General**, the default, offers the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
-elsewhere) shows keyboard shortcut hints; each names only the platform's key. Preferences
+elsewhere) shows keyboard shortcut hints; each names only the platform's key. **Appearance**
+(next, `src/settings-appearance.tsx`) has the **Theme mode** segmented control
+(System, Light or Dark, with a hint: System follows the operating system,
+otherwise the mode names which slot is used), then a row for each slot, **Light
+theme** and **Dark theme**. The row of the slot in use, by the mode and the
+operating system's mode and ignoring any proposal preview, says "· in use" after
+its heading. A row is a wrapping strip of thumbnails, one per theme (the
+six built-ins, then the person's own), each a small sketch of baum's own layout
+(the sidebar on the canvas, the page's panel with its header line and primary
+action, text bars and a diff with an added and a removed line) with the theme's
+name under it. The thumbnail is the choice: the row is a radio group labelled
+with the slot's title, each thumbnail a visually hidden native radio, so the
+arrow keys move within a row (Settings' own keys leave the arrows alone there),
+and the chosen one has a check mark and an outline in the page's text colour. The outline and the focus ring are drawn on a frame outside the thumbnail's theme scope, so they take the page's colours, not the theme's. A choice applies
+at once and saves like any preference, through the same update path. Each
+thumbnail is a `data-theme-scope` element with `data-theme` set to the theme's
+base and its allowlisted tokens inline (`themeScope` in `src/theme.ts`), so it
+shows its own theme whatever the page's mode is (see
+[custom color themes](../viewer/README.md#custom-color-themes)); it is drawn
+with palette roles only and hidden from assistive technology. A custom theme's
+thumbnail has a ⋯ menu in its corner, outside the radio's label, to rename it
+(typed in a row below the strips) or delete it (a delete asks first and resets a
+slot that used it). It follows the row-menu pattern: the option is a
+`data-list-row`, so the ⋯ shows on hover, focus within or an open menu and
+always on touch, as a chip in the page's colours; a right click on the thumbnail
+and ⌘. (Ctrl+.) with the radio focused open the same menu
+(`data-actions-target` makes `useActionsKey` count the radio's focus). Built-ins
+have no menu. The six built-ins fit one row at the usual desktop width.
+Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
 `key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
 `full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
-and loopback port changes. **Plan usage** below them has a switch per plan
+and loopback port changes. The same document carries the custom colour themes:
+`light_theme` and `dark_theme` are the ids of the themes the Light and Dark
+slots use (`theme` still picks which slot is active; any theme may sit in
+either, and an empty or vanished id is `default-light` or `default-dark`), and
+`themes` lists the built-ins first (`builtin: true`, with their tokens) and then the
+person's own (`{id, name, base, tokens}`, at most 32; a token is one of the
+palette tokens `internal/themes` allows, set to a plain colour). `PUT` takes
+`light_theme` and `dark_theme` (set by the thumbnails) and refuses an unknown id.
+`POST api/settings/appearance/themes` (`{name, base, tokens, slot}`; `slot` is
+`light`, `dark` or empty) creates a theme under a new `c-` id and may put it in
+a slot, `PATCH api/settings/appearance/themes/{id}` (`{name}`, or `{base, tokens}` with or
+without a `name`, which replaces them in place and keeps the id and slots) changes it, and
+`DELETE` removes it and resets a slot that used it; all answer with the
+appearance document, and the built-ins can be neither changed nor deleted.
+The built-ins are, in order, **Default light** and **Default dark** (`default-light`
+and `default-dark`: the palette as it ships, no tokens), **Birch** (`birch`,
+light: cool blue-grey with teal), **Parchment** (`parchment`, light: warm cream
+with terracotta), **Pine** (`pine`, dark: green-black with a mint accent) and
+**Ember** (`ember`, dark: neutral charcoal with an orange accent). They are
+defined once, in `themes.Builtins` (`internal/themes`), with tokens that pass
+`themes.Validate` and raise no contrast warning (a test checks each); the daemon
+sends them with the list and the app keeps no copy of their tokens, only the two
+token-less defaults it shows before the daemon answers. Either slot takes any of
+them, and the desktop app's cached screens get a built-in's tokens from the app
+like any other theme's.
+The app sends a rename or delete in turn with its settings saves (after any
+`PUT` in flight), so an older answer never brings a deleted theme back.
+The agent's `propose_theme_choice` proposal (page `app` too: valid from any page,
+not only Appearance) switches to an existing theme and/or the theme mode. Its
+`after` is `{theme_id, slot, theme}` with `slot` `in_use` when the agent named
+none. The app resolves `in_use` with `activeSlot` (`choiceSlot` in `src/theme.ts`,
+using the proposal's mode when it has one, else the saved mode, and the desktop's
+dark mode for System), for the preview and on save, and always sends an explicit
+`{theme: {slot}}` (nothing for a mode alone). The preview (`choicePreview`) shows
+the chosen theme only when its slot is the one in use, or the saved theme of the slot
+a mode change brings; for the other slot nothing changes on screen, and the card says
+which slot it is for. The card reads "Use <theme> for the light/dark theme (in use)",
+shows the theme's thumbnail (`ThemeMiniature`, shared with Appearance) and has Save and
+Dismiss; a mode shows as "Switch the theme mode to ...". A newer theme or choice proposal
+replaces it (the daemon drops the older). The agent's `propose_theme` proposal (page `app`, so it is never "elsewhere")
+is previewed on the whole app while it is open in the session panel (the
+daemon drops the conversation's earlier theme proposals when a new one is
+recorded, so there is one); the console proposals listing adds
+`contrast_warnings` to the proposal's `after` (the stored proposal is
+unchanged), and the card shows swatches of its colours, those warnings, a name
+field and a Light or Dark select (always sent on save, defaulting to the
+theme's base). A proposal that names a custom theme the person has (`theme_id`:
+the agent is tweaking it) shows **Update <name>** as its primary action and
+**Save as new theme** as the secondary one, with the name prefilled and the slot
+select, which is for Save as new (the note names the slots the theme is in;
+Update keeps them, and the copy goes in the slot picked, by default the slot the
+edited theme holds that is in use, else one it holds, else the base's). Update
+sets the theme's name to the name field, and reads **Update and rename to <new>**
+when the field differs from the stored name. They send `{theme: {name, mode: "update"}}`
+and `{theme: {name, slot, mode: "new"}}`; if the theme was deleted meanwhile
+the update's error shows and Save as new theme stays. The preview ends on dismiss, when the conversation closes
+or the panel goes away, and on save once the preferences hold the saved theme
+(a refresh asked during a settings save waits for the save, then fetches). A
+slot naming a theme the list lacks shows the slot's built-in. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
 reviews', the fixes' and decision capture's (Auto counts the first plan it can
@@ -1702,8 +1846,9 @@ returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
-for which pull requests (a select of authored, requested, both, or all open
-pull requests in the repository), the **Agent** (Claude Code or Codex) and the
+for which pull requests (a select of authored, requested, both, all open
+pull requests in the repository, or "In my inboxes": those held by an inbox
+whose own **Review automatically** switch is on), the **Agent** (Claude Code or Codex) and the
 **Model**, a select of the agent's models with a custom name (saved when its
 field is left or Enter is pressed) beside the reasoning effort ("Default
 effort", which leaves it to the agent, then Low, Medium or High; a higher level
@@ -1737,8 +1882,7 @@ extraction** has the same Agent and Model rows, its agent "Same as reviews
 Reviews ends with **Generate reviews as tiles (experimental)** (`TileReviewsRow`),
 off by default: read with `GET api/settings/labs` and saved with `PUT
 api/settings/labs` as `{"tile_reviews": true}`; a refusal puts the switch back
-and says why. It applies to reviews that start after the change. While it is
-on, a running review's `arranging` phase reads "Arranging the page…". A pull
+and says why. It applies to reviews that start after the change. A pull
 request's page is the same whether it is on or off.
 
 While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
@@ -2354,6 +2498,18 @@ fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 `e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
 only with `INBOX_SCREENSHOTS=1`.
 
+Screenshots for a pull request: `just local_app::shot '<route>' ['<selector>']
+['<name>']` builds the app, rebuilds the fixture (it embeds the build) and runs
+`e2e/shot.spec.ts` against the browser fixture, which writes
+`oss/app/screenshots/<name>-light.png` and `-dark.png` (default name `shot`).
+The route is the part after the launch URL, such as
+`'?page=settings&section=reviews'`; a selector narrows the picture to that
+element. `SHOT_WAIT` (a selector to wait for), `SHOT_WIDTH` and `SHOT_HEIGHT`
+pass through. `screenshots/` is ignored by git and, unlike `test-results/`,
+not emptied by the next Playwright run. The spec skips without `SHOT_ROUTE`, so
+the e2e suites never take these pictures. The fixture holds demo data, not the
+person's own.
+
 Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
 `../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
 `pnpm test:unit` runs them again against the compacted script the daemon inlines
@@ -2364,10 +2520,10 @@ checks the rail, the address, the file grouping and that no place scrolls
 sideways at 390, 900 and
 1440px; `REVIEW_VIEW_SHOTS=<dir>` also writes a picture of each place, light and
 dark. It also removes an added tile and undoes it, shows pending cards on
-their sections (both against routes it answers itself), checks the review
-page setting and an arranged version with tile reviews on, and, until the
-daemon answers `baum.review/2`, that a `baum.review/1` answer with its view
-draws the same page.
+their sections (both against routes it answers itself), checks that every
+pull request, arranged or not, opens on the rail with no setting to choose a
+page, and that a `baum.review/1` version draws the viewer's own Summary and
+sections.
 Custom tiles on the review page: `pnpm test:custom-tiles`
 (`playwright.custom-tiles.config.ts`, part of `just local_app::e2e`) starts
 the fixture with `BAUM_APP_CUSTOM_TILES=1` and runs `custom-tile-tests/`,
@@ -2782,21 +2938,19 @@ has its types): the summary with its `verdict` and `risk_why`, the
 with their `gist`, `body` (blocks: `prose`, `points`, `note`, or a `tile` naming a tile the section owns), `risks` and `details`, and every tile
 placed by its `owner` (`overview`, `context` or a section). `parseReviewV2`
 reads it, dropping a malformed item (a section, step, risk, tile or intent row)
-rather than the page. A section without a `body` (a document written before
-bodies, with a `summary` and `steps`) reads as one, as the daemon's `BodyOf`
-does: a prose block, a points block, then its tiles; tiles the body does not
-place (a person's own among them) follow it, and a tile block naming a missing
-or another section's tile is ignored. The page reads only this document. The review viewer
+rather than the page. Tiles a section's body does not place (a person's own
+among them) follow it, and a tile block naming a missing or another section's
+tile is ignored. The daemon completes every served document (the stats, each
+section's `derived`, a code tile's `text`), so the page reads them as served;
+a `baum.review/1` version's summary and steps become a prose and a points
+block in `review-view/from-v1.ts`. The page reads only this document. The review viewer
 around them (the head, history, side pane, comments, selection and keys) and
 the viewer's parts they draw (citation chips, images, diffs) read a
 `baum.review/1` review, which `chromeOf` makes from the document: what
 `baum.review/2` has no field for (the author, agent reviews, evidence) is
-empty there. Until the daemon converts every version, it may answer with a
-`baum.review/1` document and its `view` (`baum.view/1`) instead; the page
-converts that answer (`review-view/from-v1.ts`, to be removed once the daemon
-answers `baum.review/2`) and keeps the served review for the chrome. A
-`baum.review/1` version has no tiles: it shows the viewer's Summary and
-sections.
+empty there. A `baum.review/1` version is read as stored. It has no tiles:
+it shows the viewer's Summary and sections, and `review-view/from-v1.ts` only
+builds the rail's model (the sections and the file list) from it.
 
 - **Where the reader is** stays in the address, so a reload, Back and a link
   land there: the Overview is the Summary (no `pane`), How it works is
@@ -2897,7 +3051,7 @@ sections.
   shared choice (`useFileGrouping`, `readFileGrouping` in `file-grouping.ts`).
   Elsewhere they mark blocks as above. `]`
   opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request. The session
-  panel's focus names `view: tiles` and the tab: on the
+  panel's focus names the tab: on the
   Overview `tab: overview`; on How it works `tab: sections` and the `section`
   read (`context` for Where this fits; a risk adds its `item`; a link to a
   tile names the `tile`), so a tile made or added from chat stands there; on
@@ -2953,6 +3107,14 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   once in that window, unless it already has. A tile that hung there says
   "This tile stopped responding when it was checked." instead of mounting;
   every other answer mounts it.
+- **Stored images** (`src/tiles/custom/images.ts`). A tile made in chat
+  holds each image the host stored for it as `baum-image:att_<id>` in its
+  data. Before the frame's `init`, the page reads each from `api/attachments/{id}`
+  (the review page's attachment address) and gives the frame the data with
+  the image as a `data:` URL in its place, the only image a frame's policy
+  admits; the box reads `loading` meanwhile, and an image that cannot be read
+  becomes an empty string. The render check's runner gets its job's data
+  with the images already inlined by the daemon.
 - **A tile's menu** (⋯, or a right click) offers Comment, Ask about this tile,
   **Save to library…** on a custom tile that is not baum's own (it opens the
   panel on the pull request about that tile with "Save this tile to my

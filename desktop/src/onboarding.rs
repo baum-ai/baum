@@ -46,6 +46,8 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-repositories",
     "allow-finish-setup",
     "allow-step-zoom",
+    "allow-theme-state",
+    "allow-open-link",
 ];
 /// The bundled connecting screen.
 const CONNECTING_PAGE: &str = "index.html";

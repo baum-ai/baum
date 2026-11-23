@@ -86,7 +86,10 @@ type gqlPR struct {
 	// UpdatedAt orders the incremental reads and feeds the cursor, the
 	// probe's fingerprint and the snapshot; it is left out of the unchanged
 	// comparison so the backoff is unaffected.
-	UpdatedAt      time.Time `json:",omitzero"`
+	UpdatedAt time.Time `json:",omitzero"`
+	// CreatedAt is when the pull request was opened; zero in a row cached
+	// before it was kept, until the row is next read.
+	CreatedAt      time.Time `json:",omitzero"`
 	Author         actor
 	HeadRepository *gqlRepository
 	BaseRepository gqlRepository
@@ -238,7 +241,7 @@ func (pr gqlPR) states() (review, checks, merge string, unresolved *int, capped 
 
 // inboxFields are what discovery reads of each pull request.
 const inboxFields = `fragment Inbox on PullRequest {
- number state title headRefOid headRefName baseRefName isDraft additions deletions changedFiles updatedAt author { __typename login }
+ number state title headRefOid headRefName baseRefName isDraft additions deletions changedFiles createdAt updatedAt author { __typename login }
  headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
  assignees(first: 20) { nodes { login } }
  reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }

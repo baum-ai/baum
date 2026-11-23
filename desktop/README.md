@@ -63,6 +63,7 @@ connecting to the daemon:
 | `setup` | first-run completion and installed CLI command records |
 | `notifications` | notification-kind toggles and the OS permission answer |
 | `window` | the page zoom level |
+| `theme` | the colour theme the native screens apply: the mode and the theme in each slot |
 | `updates` | versions whose automatic installation failed |
 
 Every change reads the latest document and replaces only its section, under
@@ -87,9 +88,21 @@ Its rail uses the app sidebar's canvas and Stumpy mark. UI colors come from
 `../viewer/src/palette.css`; Stumpy's fixed colors live with the illustration in
 `../viewer/src/components/stumpy-artwork.ts`. Native SVG icon templates reuse
 both sources, resolved by `scripts/prepare-icons.mjs` before rasterization.
-Setup, connecting and tray screens follow the system's appearance, including
-changes while they are open; the app's saved theme preference applies to its
-daemon-served pages.
+Setup, connecting and tray screens follow the active colour theme, including
+changes while they are open. They cannot ask the daemon (their CSP allows only
+`ipc:`, and `localStorage` is not shared with the daemon's changing loopback
+origin), so the app caches what the saved theme resolves to (`src/theme.rs`):
+the daemon pages report it with `save_theme` and the screens read it with
+`theme_state`. The app checks only its shape (token names `--[a-z0-9-]{1,40}`, at
+most 40 tokens per theme, values of at most 64 bytes, at most 32 KiB, mode
+`system`, `light` or `dark`, base `light` or `dark`) and refuses anything else
+without changing what is stored. An initialization script on the main window and
+the tray panel applies the saved theme before the first paint; it is built
+when the window is created, so each page load on the main window also pushes the
+current theme with a best-effort `eval` as the load starts (logged if it fails),
+and the page applies the live one right after. The tray panel keeps the theme
+saved at startup until its page applies the current one. Without a saved theme the
+screens follow the system's light or dark.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
@@ -168,7 +181,7 @@ happen only when the user selects an install or add action. Displayed paths abbr
    choosing Claude Code or Codex for them adds their own model and effort row.
    A model can be a preset or a custom name. Choose whether reviews run
    automatically and, if so, for which pull requests (authored, requested,
-   both, or all open pull requests). The screen reads them with `baum internal reviews show` and saves changes
+   both, all open pull requests, or those in an inbox with automatic reviews on). The screen reads them with `baum internal reviews show` and saves changes
    with `baum internal reviews set` when the user opens baum at the end of
    setup. They are stored as app preferences in the repository registry, which
    the daemon rereads for every job. The native bridge forwards the review,
@@ -740,6 +753,19 @@ doing anything (`src/zoom.rs`).
   app's config directory and applied when the window opens and whenever a
   page starts loading. A missing, damaged or unknown level is 100%.
 
+## Pointer leaving the window
+
+On Wayland a pointer leave event carries no position, so GTK3 reports the last
+one it saw, still inside the window after a quick move. WebKitGTK releases
+without the fix for [WebKit bug 326201](https://bugs.webkit.org/show_bug.cgi?id=326201)
+pass that to the page as a move inside it, so the page never learns the pointer
+left: the folded sidebar opened under it stayed open over the page when the
+pointer moved to the bar, an empty workspace or another screen. On Linux the
+main window therefore listens for its web view's own leave events, skipping
+grabs and moves into child widgets, and announces each one to the page as a
+`baum:pointer-left` event (`src/pointer.rs`). The sidebar folds on it as it
+does when the window loses focus.
+
 ## What pages may do
 
 - The window loads only the bundled screens and the attached daemon's origin.
@@ -767,18 +793,31 @@ doing anything (`src/zoom.rs`).
   embedded webview) and WKWebView (where wry leaves
   `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
   any time, so the app opens the browser at most once a second
-  (`navigation::OpenLimit`) and drops the rest. The app's pages open every
-  outside link with `target="_blank" rel="noreferrer"` (Markdown links
-  included) or `window.open`, and the app (`app/src/outside-links.ts`) turns a
-  person's click on a same-window link to another site into such a request,
-  so no link is dead. Setup
+  (`navigation::OpenLimit`) and drops the rest.
+- WKWebView asks the navigation handler about a `target="_blank"` click
+  before it asks for a new window, and wry passes the handler only the URL,
+  so the shell refuses the click as it would a frame's navigation and WebKit
+  never asks for the window. So the app opens links through the `open_link`
+  command instead (`src/links.rs`), which the daemon's pages and the setup
+  screen may call. It opens the same URLs as a new-window request, under the
+  same once-a-second limit, and Tauri's command bridge is in the page's main
+  frame only on macOS and Linux, so a frame cannot call it there. The shell
+  declares it as `openLinks: true` (below); the app
+  (`app/src/outside-links.ts`) then turns a person's click on any link to
+  another site, `target="_blank"` or not, into the command, and its own
+  `openExternal` calls it too. With an older shell, which does not declare
+  it, the app opens outside links as new-window requests and turns a click on
+  a same-window link into one, so no link is dead. Setup
   opens GitHub's device page a few seconds after a sign-in starts, when it can
   no longer ask for a window, through the `open` action of
   `github_connection`, which opens that fixed address whatever the page
   passes.
 - Before the page's own scripts run, the main window (and the check window,
   below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
-  replaced (`src/declaration.rs`), with two fields. `checkWindow` says whether
+  replaced (`src/declaration.rs`), with three fields. `openLinks` says
+  whether the page opens links to other sites with `open_link`; it is `true`
+  in the main window and `false` in the check window, which may call no
+  command. `checkWindow` says whether
   the page can open the tile check window; it is `true` on Linux only (see
   Tile check window). `tileFrames` says whether the page may embed
   sandboxed frames of untrusted content served from the daemon's origin. It
@@ -801,15 +840,16 @@ doing anything (`src/zoom.rs`).
   button opens, which changes nothing and returns only the chosen folder. The
   page registers it through the daemon's own API. It also allows the zoom
   commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
-  offered levels, and the updater's (`update_state`, `check_for_updates`,
-  `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
-  read the state, start a check, install only an update the app has already
+  offered levels, `save_theme` (shape-checked, see First run), and the updater's
+  (`update_state`, `check_for_updates`, `install_update`, `cancel_update` and
+  `dismiss_update_notice`): a page can read the state, start a check, install only an update the app has already
   downloaded and verified, and record that a notice was closed. It also
   allows `save_tile_type`, which Settings › Tile library's Export calls: it
   opens the native save dialog for `<name>.baumtile.json` and writes the
   exported file only where the person chose, refusing a name that is not a
   tile type's or a file over 3 MiB, and `open_check_window` and
-  `close_check_window` (see Tile check window). They can call no other Tauri
+  `close_check_window` (see Tile check window), and `open_link` (see above).
+  They can call no other Tauri
   command or
   plugin.
   `withGlobalTauri` is off.
@@ -818,7 +858,7 @@ doing anything (`src/zoom.rs`).
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
+  `save_review_settings` and `finish_setup`) and `open_link`. Both also allow `step_zoom`
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
@@ -945,7 +985,7 @@ macOS, Ctrl+Shift+I on Windows) and, in its console:
 5. Click links to other sites as a person does: "Open on GitHub" in a pull
    request's menu, a link in a review's Markdown, the docs in the `?` menu, the
    release notes link of an update notice. Each opens the default browser,
-   once.
+   once, and a debug build logs no refused navigation for it.
 6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
    browser opens once at most.
 7. In setup's GitHub step (first run, with a fresh configuration directory),
@@ -1028,6 +1068,7 @@ just desktop::dmg-layout    # regenerate the DMG window layout and background in
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
+just desktop::profile       # time a scripted journey in the headless app (see Profiling)
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
@@ -1063,6 +1104,37 @@ copies with a snapshot of the repository's reviews, and without it they start
 empty. `BAUM_RELAY_URL` is written to the home's `.profile`,
 which the daemon's environment comes from.
 
+`--seed-data[=SEED]`, instead, fills a home that has no data yet with the
+seeded profiling dataset ([`seeddata`](../internal/seeddata/README.md),
+seed 1 by default): 50 repositories with 1,200 open pull requests and about
+1,650 saved review versions, one pull request with a 5,000-line diff, Claude
+Code and Codex sessions of up to 3,000 prompts and 20 inboxes. On every
+machine a seed gives the same lists, pull requests, commits (by SHA),
+reviews, inboxes and transcripts, so before and after numbers compare;
+`--copy-data` copies this machine's data, which differs between machines and
+changes over time. Clone paths and the transcripts' working directories
+follow the home's path, so the dataset's digest is the same only for the
+same seed and the same home path. It is generated in `oss-test` (about 15
+seconds) and counted in `~/.local/state/baum/seeddata.json` in the
+instance's home, written last: a failed generation removes what it wrote. A
+home with other baum data and no `seeddata.json` is refused rather than run
+online. The daemon serves it with no GitHub and no model: the dataset names
+a fake GitHub token whose discovery cache it seeds, automatic reviews are
+off, and an instance whose home holds the dataset runs with an unreachable
+proxy for everything but loopback, so a refresh fails at once and the cache
+stays. The first start of a new home still downloads Claude Code into it,
+before the proxy is set, as every isolated home does; after that nothing
+leaves the machine. Its
+pull requests show as not refreshed from GitHub, and GitHub's panels on a
+pull request (checks, comment text) as unavailable. The sessions are recorded
+as ended when the dataset is written, and the Sessions page lists an ended
+session for a day; delete the home to write it again.
+
+```sh
+just desktop::isolated perf --seed-data --headless
+just desktop::isolated perf2 --seed-data=7 --headless
+```
+
 `--headless` runs the instance without a display of yours: the container
 starts its own headless Weston (`BAUM_ISOLATED_WIDTH` × `BAUM_ISOLATED_HEIGHT`,
 1440 × 900 by default) and the app draws there, so agents can run the real
@@ -1081,6 +1153,258 @@ daemon's pages expose `window.__baumPerf`:
 ```sh
 BAUM_FRONTEND_MODE=profile just desktop::isolated perf --copy-data --headless
 ```
+
+### Profiling
+
+`just desktop::profile <scenario>` measures how fast the app's JavaScript
+renders and reacts, for people and agents tuning it. It builds the profiling
+frontend, the viewer and the sidecar (which stay the profiling build until
+another recipe builds them), starts a `--headless` isolated instance
+(`profile` unless `--name` says otherwise) and, inside its container, runs
+`../app/scripts/profile/run.ts` with Node. The runner starts
+`WebKitWebDriver` (Ubuntu's `webkit2gtk-driver`, pinned to the version of
+the app's WebKitGTK), which launches the app's debug build with
+`TAURI_WEBVIEW_AUTOMATION=true`, so WebDriver drives the real main webview
+from the connecting screen on to the daemon's page. Key presses are WebKit's
+own synthesized events, which reach the page without an input seat, and the
+collector records them as interactions. The runner marks the instance set up
+(`desktop.json`), so it opens on the Inbox rather than first-run setup, and
+closes the first-run tour if it shows.
+
+```sh
+just desktop::profile jk --runs 10                  # seeded dataset, seed 1
+just desktop::profile review --seed-data=7 --name profile-7
+just desktop::profile cold-start --name mine --copy-data --workspace ~/workspace
+```
+
+Profile on the seeded dataset (`--seed-data[=SEED]`, above): a seed gives
+the same pull requests, reviews, inboxes and sessions on every machine and
+every run, and the instance runs offline, so numbers before and after a
+change, or from two machines, compare. An instance that has no data yet
+and is given neither flag is seeded with seed 1, so the plain command does
+this. An instance that already has data keeps it, so `--copy-data` users
+get what they had; a seeded home is never mixed with copied data
+(`isolated.sh` refuses). `--copy-data` and `--workspace DIR` work as for
+`isolated`, the copy made once per instance: this machine's data shows how
+the app behaves on it, but differs between machines and changes over time.
+The summary's environment line says which data a profile ran on (the seed
+and the dataset's digest), the WebKitGTK package version and the CPUs.
+`--runs N` (5 by default) sets the measured runs,
+after one warm-up whose numbers are kept apart. The recipe checks the
+scenario and the options before it builds anything. `--run-timeout S`
+(600 by default) fails a run, the launch or the preparation that takes
+longer, as a hung WebKitWebDriver would, with a message saying so. The container runs on
+`BAUM_DEV_CPUSET`, like every development container, and the summary names
+the CPUs it had. The scenarios:
+
+| Scenario | Journey | Needs |
+| --- | --- | --- |
+| `cold-start` | Quit and launch the app, until the Inbox shows content and settles; `launch_to_content`, from the launch to the Inbox's first content frame, is the headline | |
+| `jk` | 50 presses of j and k down the list with the most rows (an inbox or Pull requests) and back; each must move the selection one row | a list of two rows |
+| `review` | From the Inbox, open the largest reviewed pull request (lines changed, else review size), then read up to 12 of its places: scroll each to its end, 400 px a frame (at most 500 steps), and Shift+J to the next | a review |
+| `filter` | `/` on the Inbox, type `retry` a key at a time, Enter to search titles; reports the Inbox's rows before and after | the Inbox's filter |
+| `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled; each must switch | two inboxes |
+| `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
+| `pages` | Every page and its main sub-views, rendered two ways and ranked slowest first (below) | |
+
+`pages` is the scenario for making every page render fast: it ranks the
+pages, so the slowest is the one to work on, and a change shows as that
+row's numbers going down. It covers the sidebar's pages (Inbox, Sessions,
+Timeline, Pull requests, Analytics, Repositories, Jobs, Settings) and the
+sub-views of a pull request's review (the largest reviewed pull request
+the Pull requests page links to), a session's transcript (the largest),
+New inbox and Edit inbox (opened, never saved); the summary lists the app's
+routes it does not measure. The pages are read from the sidebar and checked
+against the app's own page list (`src/pages.ts`): the run fails if the two
+differ, or if the app has a page the scenario does not know (add it to
+`KNOWN` in `app/scripts/profile/pages.ts`), so a new page is not left out
+unseen.
+
+Each page is measured two ways. `nav` moves to it as a person does, from the
+page before: Ctrl+1 to Ctrl+8 where they work, else a click on the sidebar's
+link (WebDriver's synthesized keys leave the key's place, `code`, which the
+app reads, empty; the summary says so, and each run probes it once before
+its first mark); a sub-view clicks its link on the page, else uses the
+history entry the app's own links make. Its times run from the start of that
+navigation, with the app's code and in-memory caches loaded, so a `nav` row
+depends on the pages before it. `direct` reloads the page's address and its
+times run from the document's own start, so the bundle's fetch and parse are
+in them. Which of the two goes first alternates from run to run.
+
+A page must show its own content (a row, a field, a message: never a wrapper
+around a loader) or its own empty state, and a failure panel, a "not
+available" or "not found" panel, or a loader that stays fails the run. A
+page the data should fill (the Inbox, Pull requests, Repositories, a review,
+a transcript, and Sessions when a session runs) fails the run if empty. Pages
+that seeded data leaves empty (Timeline, Jobs, and Sessions: its sessions
+all ended and "Ended recently" starts folded) report `empty` in the table and
+are not timed; a page empty in some runs only, or empty one way and not the
+other, is flagged. Analytics' Delivery card reads GitHub, which an offline
+instance never answers promptly, so its content and settled times can be
+missing: the table says in how many runs (`n/N`).
+
+The `## Pages` table has a row per page and way, slowest `content` first,
+then the empty ones: `content` and `settled` are the collector's navigation
+times (first frame with no loader on screen, then with no request in flight
+as well), `commits` and `render ms` the root `app` region's in the page's own
+window (between marks around it), `long frames`, `requests` and `request ms`
+those that began in it (a request begun in the window counts whole), and
+`DOM` the element count once it settled. Numbers are medians over the runs.
+The summary's other sections (metrics, interactions, components, requests)
+describe a last load of the Inbox, the same every run, and are not the
+scenario's result.
+
+A scenario the data cannot run exits with status 3 and a summary saying
+why. A journey that does not go as planned fails rather than report
+numbers for something else: a j or k that did not move the selection one
+row, an inbox switch or Shift+J that did not move, a filter that left the
+Inbox's rows as they were or none.
+
+Each run starts from the same state. After preparing, the runner saves the
+daemon's record of the Inbox (what was seen today, snoozes) and the
+window's storage (the last inbox shown, the sidebar, the session panel),
+and puts them back before every run, from the settings page, which holds
+neither; typed filters (which the daemon keeps) go back to none, and the
+filter scenario also clears its own after each run. What it cannot put
+back: the daemon's and WebKit's caches, which the warm-up fills, a new day
+starting (the Inbox's record of the day starts empty then), and anything a
+journey asks the daemon to do, which none of these does. Profiling clears
+an instance's typed filters.
+
+Every run but cold-start's loads its start page afresh in the same app,
+so its JavaScript heap and React state start clean, then resets the
+collector: relaunching would add some ten seconds a run and change nothing a
+page reload does not. Cold start must launch, so each run quits the app and
+starts it again; the daemon keeps running between launches, as it does for a
+user, and WebKit's cache in the instance's home stays warm. The runner waits
+for each key press's frame, then 50 ms, before the next. Waiting, it polls
+the page and talks to WebKitWebDriver, which adds a roughly constant
+overhead to interaction durations: fine for comparing before and after a
+change, not for absolute numbers. Modifier keys pressed for the key after
+them (Shift for Shift+J) are left out of the interactions.
+
+Each profile goes to `target/profile/<scenario>-<time>/`, whose path the
+command prints at the end:
+
+- `summary.md`, short enough to read whole: the metrics' median, p95 (which
+  interpolates between the slowest runs, so with few runs it is near the
+  maximum), minimum and maximum over the runs; interactions by key and the
+  slowest of them; render time and commits per `<Profiled>` region; the
+  requests that took the most time; and the JavaScript and CSS chunks
+  `index.html` loads, with their sizes and gzip sizes, and the largest of
+  the rest, since parsing them dominates cold start. They are the profiling
+  build's, with React's profiling build and the collector; production's
+  are somewhat smaller. `render_total` and `commits_count` are the `app`
+  region's, which holds the others.
+- Both files are written after every run and marked partial until the
+  last, so a failure keeps the runs before it.
+- `metrics.json`: the same, with every run's metrics and the collector's raw
+  snapshot (`__baumPerf.snapshot()`, [local app](../app/README.md)).
+- `driver.log`, WebKitWebDriver's output, and `failure.png`, the window
+  when a run failed.
+
+The numbers come with the headless instance's limits. Weston renders with
+Pixman, in software, so script, style, layout and React times are
+realistic and paint and compositing times are not; frame gaps include
+software painting. The app's Rust shell is a debug build, as `isolated`
+runs it; the measured pages come from the daemon and run in the system's
+WebKitGTK, so that only slows the shell's own commands. Data copied with
+`--copy-data` holds no GitHub sign-in, so the daemon finds no open pull
+requests and the inboxes and Pull requests stay empty: `jk` skips, and
+`filter` types into an empty list. The seeded dataset has them. Its
+sessions are recorded as ended, so in `session-panel` nothing streams: it
+measures the panel open on an ended conversation, and the summary says so.
+
+#### CPU profiles in Chromium
+
+The WebKit runs say what is slow (interactions, frames, renders) but not
+why. `--engine chromium` runs the same scenarios in Chromium and records a
+CPU profile of every measured run, which says which functions the time went
+to:
+
+```sh
+just desktop::profile review --engine chromium --runs 3
+just desktop::profile jk --engine chromium --runs 3
+```
+
+The instance starts as usual, with its daemon, its data and the profiling
+frontend in the sidecar, but no app: the runner starts the daemon with the
+bundled `baum daemon ensure`, as the app does, and Playwright's Chromium
+(Chrome for Testing, headless, in the `desktop-isolated` image) opens the
+launch URL from its `credential.json` (the capability in it is never
+logged: chromedriver logs only severe messages, and the runner scrubs
+`#token=` from `driver.log`; see
+[Attaching to the daemon](#attaching-to-the-daemon)). chromedriver of the
+same version drives it with the same WebDriver commands as WebKitWebDriver,
+so the scenarios are the same code. The image takes both at the Playwright
+version `../app`'s lockfile pins (`chromium.test.ts` checks), from Chrome for
+Testing, which has chromedriver for x86-64 Linux only, so on another Docker
+engine `--engine chromium` stops before building anything. Each measured run
+(not the warm-up) samples the page's main thread every 250 µs through
+chromedriver's DevTools Protocol endpoint (`Profiler.start` and `stop`):
+enough samples to tell a 16 ms frame's stacks apart at a few percent of
+overhead, where 100 µs costs more on long journeys and makes long profiles
+large.
+
+The summary then ends with a CPU section:
+
+- the time a run spent in JavaScript, outside it (`(program)`: style,
+  layout, paint and the browser's own work), in garbage collection and idle,
+  from the collector's reset to its snapshot, the window the rest of the
+  summary measures (cold start relaunches the browser each run and counts
+  from the page's start, sampling from before it loads, which adds the
+  profiler's start to its launch times);
+- the 20 functions with the most self time per run, with their total time
+  (callees included, a recursive function counted once). Each is named by
+  the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
+  at the line its function starts, `oss/app/src/up-next.tsx:1396`, not the
+  hot line inside it: V8's line ticks give a bundle line without a column,
+  and the minified bundles are a few lines long, so they map to nothing. A
+  package's functions show as the package (`react-dom`) but are told apart
+  by their own source line; `browser` marks the DOM's and V8's own
+  functions, whose time includes the style and layout they force
+  (`getBoundingClientRect`, `scrollIntoView`). A minified name the map
+  cannot resolve keeps its bundle place beside it. `(program)` and
+  `(garbage collector)` are rows too, and often the top one: time outside
+  JavaScript;
+- for the five slowest interactions and the three longest frames, that
+  breakdown within the interaction (from the input to the frame after it)
+  or frame, its functions with the most self time, and its three heaviest
+  JavaScript stacks, innermost first, at most eight frames, a package's
+  consecutive frames as one (`[react-dom ×56]`: 56 more frames of
+  react-dom, mostly React walking its tree of components). Idle time within an
+  interaction or frame was spent off the main thread: raster, compositing
+  or the driver, which the profile does not see.
+
+To place interactions and frames on the profile, the runner lines up the
+page's `performance.now()` with the profile's clock: after the snapshot it
+runs a function, `__baumProfileClock`, that spins 30 ms and returns the
+page times it started and ended. Its first sample is no earlier than the
+start and its last no later than the end, so the clocks' offset is the mean
+of the two differences, to within half a sampling interval. A run whose
+spin got fewer than ten samples, or samples spanning less than 80% of it (a
+sampler starved on shared CPUs), is left unaligned rather than
+misattributed: the summary says so and leaves its interactions and frames
+out. The offset is kept in
+each profile as `baumClockOffset` (microseconds, profile time less page
+time).
+
+`run-N.cpuprofile` beside the summary holds each run's whole profile: open
+it in Chrome DevTools (Performance, Load profile) or
+[speedscope](https://www.speedscope.app) for the flame chart. The bundles
+are minified, so their names there are the minified ones unless DevTools
+can load the source maps.
+
+Chromium's numbers are not WebKit's. V8 and JavaScriptCore compile and
+collect garbage differently, Blink's style and layout differ from WebKit's,
+and headless Chromium paints with its own software renderer, so a frame or
+an interaction may be much faster or slower in one than the other, and a
+problem only one engine has (a slow path in its layout or its regular
+expressions) shows only there. Use Chromium's profile to find which code is
+hot, and WebKit's runs to judge how slow the app is for its users. The rest
+of the summary (metrics, interactions, components) is measured the same way
+in both. The driver's own polling shows in the profile as anonymous
+functions with no source, a little in every interaction.
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
@@ -1114,8 +1438,17 @@ login environment, installed agent CLIs, repository paths, credential agents or
 native desktop services faithfully by mounting a display socket. The launcher
 uses your real home directory and the shared host daemon, so installation and
 repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
-when set; otherwise it atomically refreshes `target/host-dev/bin/baum` from the
-freshly built sidecar and runs that copy. This gives installation a stable target
+when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
+(written by `scripts/sidecar.sh`) holds a content hash of the Go module under
+`oss/` (`scripts/sidecar-stamp.sh`: sources, `go:embed` files and the built
+viewer and local app, not the frontend sources or the desktop crate). If the
+binary or stamp is missing or the hash differs, it says why and rebuilds the
+sidecar in `oss-test` before launching; an unchanged checkout skips the build.
+It then atomically refreshes `target/host-dev/bin/baum` from the sidecar and
+runs that copy. The check runs once at start: after a `git pull` while the app
+runs, stop and rerun `just desktop::dev` to pick up daemon changes (the launcher
+prints the commit its daemon was built from). Set `BAUM_DESKTOP_DEV_SIDECAR_ONLY=1`
+to run only this check and stop before Vite and the app. This gives installation a stable target
 named `baum`, as the install-record validation requires; the platform-suffixed
 sidecar filename is only the build artifact. Existing daemons can finish using
 the previous executable after the copy is replaced.
@@ -1373,10 +1706,18 @@ Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
 the 4.1 API (`libwebkit2gtk-4.1-0`), 2.40 or newer: the first release that
 sends the Fetch Metadata request headers (`Sec-Fetch-*`), without which no
 custom tile's frame loads. It declares its package dependencies and
-installs `baum-desktop` and `baum` in `/usr/bin`.
+installs `baum-desktop` and `baum` in `/usr/bin`. Video in reviews plays
+through the system's GStreamer: WebKitGTK depends on the base and good
+plugins (WebM: VP8, VP9, Opus), and the deb also depends on
+`gstreamer1.0-libav` for MP4 (H.264, AAC).
 
 The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
-glibc, HarfBuzz and the other libraries linuxdeploy leaves out. The image
+glibc, HarfBuzz and the other libraries linuxdeploy leaves out. It also
+carries the image's GStreamer with its base and good plugins
+(`bundleMediaFramework` in `tauri.conf.json`) and uses those instead of the
+system's, so WebM videos play without any GStreamer on the system. It
+carries no H.264 or AAC decoder (libav), so MP4 videos show as unavailable
+there. The image
 requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
 This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
 for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,

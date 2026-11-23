@@ -17,7 +17,6 @@ func TestV2GeneratorOptions(t *testing.T) {
 		{Options: map[string]string{"library": "off"}},
 		{Options: map[string]string{"concurrency": "0"}},
 		{PromptOverrides: map[string]string{"review-staged-outline": "x"}},
-		{LibraryDir: "/x"},
 	} {
 		if _, err := replay.NewGenerator("v2", c); err == nil {
 			t.Errorf("accepted %+v", c)

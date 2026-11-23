@@ -158,30 +158,6 @@ func (e explicitPath) Complete(ctx context.Context, request agent.CompleteReques
 	return completer.Complete(ctx, request)
 }
 
-// CanComplete reports whether the wrapped backend can make a completion.
-func (e explicitPath) CanComplete() bool { return CompleterOf(e.CheckedBackend) != nil }
-
-// CompleteChecker is implemented by a wrapper of a backend that forwards
-// Complete (agent.Completer) whatever it wraps, to say whether the backend
-// it wraps can make one. A host's wrapper forwards both.
-type CompleteChecker interface {
-	CanComplete() bool
-}
-
-// CompleterOf returns backend as an agent.Completer, or nil when it cannot
-// make a single structured call: it does not implement Complete, or it is a
-// wrapper whose CanComplete says the backend it wraps does not.
-func CompleterOf(backend agent.Backend) agent.Completer {
-	completer, ok := backend.(agent.Completer)
-	if !ok {
-		return nil
-	}
-	if checker, ok := backend.(CompleteChecker); ok && !checker.CanComplete() {
-		return nil
-	}
-	return completer
-}
-
 // Selected is the backend a run uses.
 type Selected struct {
 	Backend CheckedBackend

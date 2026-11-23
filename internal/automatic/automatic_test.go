@@ -1534,3 +1534,120 @@ func TestOverviewDoesNotWaitForPersistenceAndSavesStayOrdered(t *testing.T) {
 		t.Fatalf("restart lost the newer snapshot: %+v", got)
 	}
 }
+
+// With the saved inboxes chosen, a pull request gets a job only when the
+// inboxes' test holds it, still not as a draft, fork or author without write
+// access. An unset test holds nothing.
+func TestInboxesPreferenceFollowsTheAutoReviewInboxes(t *testing.T) {
+	open := func() []pr {
+		return []pr{
+			{number: 1, head: "a1"},
+			{number: 2, head: "b1", requested: true},
+			{number: 3, head: "c1", authored: true},
+			{number: 4, head: "d1", fork: true},
+			{number: 5, head: "e1", draft: true},
+			{number: 6, head: "f1", write: "no"},
+		}
+	}
+	// Holds pull requests 1, 4, 5 and 6, but not the requested or authored ones.
+	holds := func(context.Context) (func(discovery.PullRequest) bool, error) {
+		return func(p discovery.PullRequest) bool { return !p.ReviewRequestedFromMe && !p.AuthoredByMe }, nil
+	}
+	for _, tc := range []struct {
+		name string
+		test func(context.Context) (func(discovery.PullRequest) bool, error)
+		want []string
+	}{
+		{"held", holds, []string{"org/repo#1@a2:new_head"}},
+		{"unset", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.registry.prefs.PullRequests = repos.PullRequestsInboxes
+			h.scheduler.InAutoReviewInbox = tc.test
+			prs := open()
+			h.observe(prs...)
+			for i := range prs {
+				prs[i].head = prs[i].head[:1] + "2"
+			}
+			h.observe(prs...)
+			h.pass()
+			h.want(tc.want...)
+		})
+	}
+}
+
+// The inboxes are read on each pass, so an inbox switched on counts from the
+// next snapshot.
+func TestInboxesPreferenceReadsTheInboxesEachSnapshot(t *testing.T) {
+	h := newHarness(t)
+	h.registry.prefs.PullRequests = repos.PullRequestsInboxes
+	on := false
+	h.scheduler.InAutoReviewInbox = func(context.Context) (func(discovery.PullRequest) bool, error) {
+		return func(discovery.PullRequest) bool { return on }, nil
+	}
+	h.observe(pr{number: 1, head: "a1"})
+	h.observe(pr{number: 1, head: "a2"})
+	h.pass()
+	h.want()
+	on = true
+	h.observe(pr{number: 1, head: "a3"})
+	h.pass()
+	h.want("org/repo#1@a3:new_head")
+}
+
+// Observe cannot tell what the inboxes hold when they do not read, so it
+// leaves the snapshot unseen: no baseline, no state change.
+func TestUnreadableInboxesSkipTheSnapshot(t *testing.T) {
+	h := newHarness(t)
+	h.registry.prefs.PullRequests = repos.PullRequestsInboxes
+	var failure error
+	h.scheduler.InAutoReviewInbox = func(context.Context) (func(discovery.PullRequest) bool, error) {
+		if failure != nil {
+			return nil, failure
+		}
+		return func(discovery.PullRequest) bool { return true }, nil
+	}
+	h.observe(pr{number: 1, head: "a1"})
+	failure = errors.New("unreadable")
+	before, _ := os.ReadFile(filepath.Join(h.dir, "automatic.json"))
+	h.observe(pr{number: 1, head: "a2"})
+	h.pass()
+	h.want()
+	if after, _ := os.ReadFile(filepath.Join(h.dir, "automatic.json")); string(after) != string(before) {
+		t.Fatalf("state changed:\nbefore %s\nafter  %s", before, after)
+	}
+	// Once readable again, the head that moved while unreadable counts as new.
+	failure = nil
+	h.observe(pr{number: 1, head: "a2"})
+	h.pass()
+	h.want("org/repo#1@a2:new_head")
+}
+
+func TestCatchUpFollowsTheInboxesAndFailsWhenTheyDoNotRead(t *testing.T) {
+	h := newHarness(t)
+	h.registry.prefs.PullRequests = repos.PullRequestsInboxes
+	open := []pr{{number: 1, head: "a1"}, {number: 2, head: "b1", requested: true}, {number: 3, head: "c1", draft: true}}
+	h.scheduler.Discover = func(context.Context, github.Repository) (discovery.Snapshot, error) {
+		return h.snapshot(open...), nil
+	}
+	var failure error
+	h.scheduler.InAutoReviewInbox = func(context.Context) (func(discovery.PullRequest) bool, error) {
+		if failure != nil {
+			return nil, failure
+		}
+		return func(p discovery.PullRequest) bool { return !p.ReviewRequestedFromMe }, nil
+	}
+	failure = errors.New("unreadable")
+	if err := h.scheduler.CatchUp(context.Background(), SetupCatchUp); err == nil {
+		t.Fatal("catch-up with unreadable inboxes succeeded")
+	}
+	h.pass()
+	h.want()
+	failure = nil
+	if err := h.scheduler.CatchUp(context.Background(), SetupCatchUp); err != nil {
+		t.Fatal(err)
+	}
+	h.pass()
+	h.want("org/repo#1@a1:setup")
+}

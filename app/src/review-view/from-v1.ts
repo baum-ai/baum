@@ -1,9 +1,6 @@
-// TEMPORARY. Delete this file (and its tests and callers' v1 branches) once
-// the daemon answers the tile route and the draft route with a
-// baum.review/2 `{document}` for every version (reviewv2.FromV1 on the
-// daemon). Until then the daemon answers with a baum.review/1 document and a
-// separate `view` (`baum.view/1`), which this converts, as the daemon's
-// FromV1 will, so the page reads one shape.
+// A baum.review/1 document as the baum.review/2 model the rail and the file
+// list read (`reviewOf`). The version's Summary and sections are drawn from the
+// baum.review/1 document itself, so only what the rail needs is built here.
 
 import type {
   Anchor,
@@ -12,36 +9,44 @@ import type {
   ReviewDocument,
   Section,
 } from "@baum/viewer/review-document";
-import { parseDrafts } from "../tiles/drafts";
 import {
-  NATIVE_TYPES,
+  firstSentence,
   REVIEW_V2,
-  sectionBody,
   type ReviewV2,
+  type V2Block,
   type V2Context,
   type V2ContextPart,
+  type V2Point,
   type V2Section,
-  type ViewTile,
-  type ViewTileState,
 } from "./document";
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-const isString = (value: unknown): value is string => typeof value === "string";
-const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter(isString) : []);
-const TILE_STATES = new Set<string>(["ready", "pending", "failed", "unavailable"]);
-
-/** The first sentence of a text: a converted section's gist. */
-function firstSentence(text: string): string {
-  const plain = text.replace(/\s+/g, " ").trim();
-  const end = plain.search(/[.!?](\s|$)/);
-  return end >= 0 ? plain.slice(0, end + 1) : plain;
-}
 
 function behaviourSteps(section: Section): BehaviorStep[] {
   return section.blocks.flatMap((block) =>
     block.kind === "behavior" ? ((block as Extract<Block, { kind: "behavior" }>).steps ?? []) : [],
   );
+}
+
+/** A section's body from baum.review/1's text: its summary as a prose block
+ *  and its steps as a points block, each point "**Title.** text". */
+export function bodyOfSteps(
+  summary: string,
+  steps: { id: string; title: string; text: string; cites: Anchor[] }[],
+): V2Block[] {
+  const body: V2Block[] = [];
+  if (summary.trim()) body.push({ type: "prose", text: summary.trim() });
+  const items = steps.flatMap((step): V2Point[] => {
+    if (!step.text.trim()) return [];
+    const title = step.title.trim();
+    return [
+      {
+        id: step.id,
+        text: title ? `**${/[.!?]$/.test(title) ? title : `${title}.`}** ${step.text}` : step.text,
+        cites: step.cites,
+      },
+    ];
+  });
+  if (items.length > 0) body.push({ type: "points", items });
+  return body;
 }
 
 function contextPart(
@@ -52,7 +57,7 @@ function contextPart(
     : null;
 }
 
-function sectionOf(section: Section, owned: ViewTile[]): V2Section {
+function sectionOf(section: Section): V2Section {
   const details = section.details ?? (section.summary ? undefined : ("failed" as const));
   return {
     id: section.id,
@@ -65,19 +70,15 @@ function sectionOf(section: Section, owned: ViewTile[]): V2Section {
       text: reason.text,
       cites: reason.anchors ?? [],
     })),
-    // The section's summary and behaviour steps read as its body, as a
-    // document written before bodies does.
-    body: sectionBody(
-      {
-        summary: section.summary?.text ?? "",
-        steps: behaviourSteps(section).map((step) => ({
-          id: step.id,
-          title: step.title ?? "",
-          text: step.after?.trim() || step.text,
-          cites: step.anchors ?? [],
-        })),
-      },
-      owned,
+    // The section's summary and behaviour steps read as its body.
+    body: bodyOfSteps(
+      section.summary?.text ?? "",
+      behaviourSteps(section).map((step) => ({
+        id: step.id,
+        title: step.title ?? "",
+        text: step.after?.trim() || step.text,
+        cites: step.anchors ?? [],
+      })),
     ),
     risks: section.risks.map((risk) => ({
       id: risk.id,
@@ -94,32 +95,10 @@ function sectionOf(section: Section, owned: ViewTile[]): V2Section {
   };
 }
 
-/** A baum.review/1 document and its `baum.view/1` view (null or absent for a
- *  version without one) as one baum.review/2 document. The view's tiles take
- *  their owner from where it placed them, the main diagram "overview", in
- *  the order the page drew them; a tile placed nowhere has no owner. */
-export function fromV1(document: ReviewDocument, view?: unknown, drafts?: unknown): ReviewV2 {
-  const shown = isRecord(view) && view.schema === "baum.view/1" ? view : null;
-  const overview = shown && isRecord(shown.overview) ? shown.overview : {};
+/** A baum.review/1 document as a baum.review/2 one: no tiles, no overview
+ *  parts and no verdict beyond the review's recommendation. */
+export function fromV1(document: ReviewDocument): ReviewV2 {
   const recommendation = document.summary.recommendation ?? null;
-  const viewVerdict = isRecord(overview.verdict) ? overview.verdict : null;
-  const points = viewVerdict
-    ? (Array.isArray(viewVerdict.points) ? viewVerdict.points : []).flatMap((point) =>
-        isRecord(point) && isString(point.text)
-          ? [{ text: point.text, ...(isString(point.section) ? { section: point.section } : {}) }]
-          : [],
-      )
-    : [];
-  const verdictText = viewVerdict && isString(viewVerdict.text) ? viewVerdict.text : "";
-  const verdict =
-    recommendation || verdictText || points.length > 0
-      ? {
-          decision: recommendation?.decision ?? "look_first",
-          text: verdictText || recommendation?.text || "",
-          points,
-        }
-      : null;
-  const diagram = isString(overview.diagram) && overview.diagram ? overview.diagram : null;
   const context = document.summary.context;
   const v2Context: V2Context | null = context
     ? {
@@ -129,8 +108,6 @@ export function fromV1(document: ReviewDocument, view?: unknown, drafts?: unknow
         related: contextPart(context.related),
       }
     : null;
-  const pending = parseDrafts(drafts);
-  const tiles = shown ? viewTiles(shown, diagram) : [];
   return {
     schema: REVIEW_V2,
     review: document.review,
@@ -138,91 +115,18 @@ export function fromV1(document: ReviewDocument, view?: unknown, drafts?: unknow
       title: document.summary.title,
       text: document.summary.text,
       change_kind: document.summary.change_kind,
-      verdict,
-      risk_why:
-        isString(overview.risk_summary) && overview.risk_summary.trim()
-          ? overview.risk_summary.trim()
-          : "",
+      verdict: recommendation
+        ? { decision: recommendation.decision, text: recommendation.text ?? "", points: [] }
+        : null,
+      risk_why: "",
       ...(document.summary.risk_score ? { risk_score: document.summary.risk_score } : {}),
       review_minutes: document.summary.review_minutes ?? null,
     },
-    overview: {
-      screenshots: strings(overview.screenshots),
-      diagram,
-      intent: (Array.isArray(overview.intent) ? overview.intent : []).flatMap((row) =>
-        isRecord(row) &&
-        isString(row.asked) &&
-        isString(row.session) &&
-        typeof row.prompt === "number"
-          ? [
-              {
-                session: row.session,
-                prompt: row.prompt,
-                asked: row.asked,
-                got: isString(row.got) ? row.got : "",
-              },
-            ]
-          : [],
-      ),
-    },
+    overview: { screenshots: [], diagram: null, intent: [] },
     context: v2Context && Object.values(v2Context).some(Boolean) ? v2Context : null,
-    sections: document.sections.map((section) =>
-      sectionOf(
-        section,
-        tiles.filter((tile) => tile.owner === section.id),
-      ),
-    ),
-    tiles,
+    sections: document.sections.map(sectionOf),
+    tiles: [],
     stats: document.stats,
     index: document.index,
-    ...(pending.length > 0 ? { drafts: pending } : {}),
   };
-}
-
-function viewTiles(view: Record<string, unknown>, diagram: string | null): ViewTile[] {
-  const placed: [string, string][] = [];
-  if (diagram) placed.push([diagram, "overview"]);
-  for (const entry of Array.isArray(view.sections) ? view.sections : [])
-    if (isRecord(entry) && isString(entry.id))
-      for (const tile of strings(entry.tiles))
-        if (!placed.some(([id]) => id === tile)) placed.push([tile, entry.id]);
-  const tiles = (Array.isArray(view.tiles) ? view.tiles : []).flatMap((tile): ViewTile[] => {
-    if (!isRecord(tile) || !isString(tile.id) || !isString(tile.type)) return [];
-    const data = tile.data ?? null;
-    const caption =
-      isRecord(data) && isString(data.caption) && data.caption.trim() ? data.caption : undefined;
-    const cites =
-      isRecord(data) && Array.isArray(data.source)
-        ? (data.source as Anchor[])
-        : isRecord(data) && Array.isArray(data.anchors)
-          ? (data.anchors as Anchor[])
-          : [];
-    return [
-      {
-        id: tile.id,
-        type: tile.type,
-        title: isString(tile.title) ? tile.title : "",
-        owner: placed.find(([id]) => id === tile.id)?.[1] ?? "",
-        ...(caption && NATIVE_TYPES.has(tile.type) ? { caption } : {}),
-        cites,
-        data,
-        state:
-          isString(tile.state) && TILE_STATES.has(tile.state)
-            ? (tile.state as ViewTileState)
-            : "unavailable",
-        ...(Array.isArray(tile.covers) ? { covers: strings(tile.covers) } : {}),
-        ...(tile.definition !== undefined ? { definition: tile.definition } : {}),
-        ...(Array.isArray(tile.problems) ? { problems: strings(tile.problems) } : {}),
-        ...(tile.added === true ? { added: true as const } : {}),
-        ...(typeof tile.from === "number" && tile.from > 0 ? { from: tile.from } : {}),
-        ...(tile.filling === true ? { filling: true as const } : {}),
-      },
-    ];
-  });
-  // In the order the page placed them: the diagram, then each section's.
-  const at = (id: string) => {
-    const position = placed.findIndex(([each]) => each === id);
-    return position < 0 ? placed.length : position;
-  };
-  return tiles.toSorted((a, b) => at(a.id) - at(b.id));
 }

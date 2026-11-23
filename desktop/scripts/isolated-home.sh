@@ -82,6 +82,13 @@ app() {
       sleep 0.1
     done
   fi
+  if [ "${BAUM_ISOLATED_OFFLINE:-}" = 1 ]; then
+    # The seeded dataset's home: every request off this machine goes to a
+    # proxy that is not there, so the app and its daemon reach no GitHub
+    # and no model; loopback, where the daemon serves the app, stays direct.
+    export HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9
+    export NO_PROXY=127.0.0.1,localhost,::1 no_proxy=127.0.0.1,localhost,::1
+  fi
   # shellcheck disable=SC2016 # expanded by the inner shell
   exec dbus-run-session -- sh -c '
     printf baum-dev | gnome-keyring-daemon --unlock --components=secrets >/dev/null

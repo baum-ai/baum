@@ -12,6 +12,18 @@ e2e:
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
     {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:custom-tiles && pnpm test:development && pnpm test:desktop'
 
+# Screenshot one page of the app against the browser fixture, light and dark,
+# without writing a spec (e2e/shot.spec.ts): build, rebuild the fixture
+# (it embeds the build), then take the pictures. route is the app route after
+# the launch URL, such as "?page=settings&section=reviews"; selector, when
+# given, narrows the picture to that element. Pictures land in
+# oss/app/screenshots/<name>-light.png and -dark.png, which test runs leave
+# alone and git ignores.
+shot route selector="" name="shot":
+    {{ heavy }} pnpm build
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps --workdir /oss/app -e SHOT_ROUTE={{ quote(route) }} -e SHOT_SELECTOR={{ quote(selector) }} -e SHOT_NAME={{ quote(name) }} -e SHOT_WAIT -e SHOT_WIDTH -e SHOT_HEIGHT ui-test pnpm exec playwright test e2e/shot.spec.ts
+
 # The custom tile frame isolation suite (custom-tile-tests/tile-frames.spec.ts)
 # and the render check (e2e/tile-check.spec.ts) in WebKit, which approximates
 # the desktop app's engine. Opt-in: not part of e2e or per-PR CI.

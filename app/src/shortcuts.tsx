@@ -50,6 +50,13 @@ export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
 ];
 /** Pull requests' views (For you, Requested, Mine…), one either way. */
 export const VIEW_KEYS = { previous: ["h", "ArrowLeft"], next: ["l", "ArrowRight"] };
+/** The sort's keys (`sort-menu.tsx`): ⇧S opens it, and in it a digit adds
+ *  a field or turns it round. */
+const SORT_SHORTCUTS: Shortcut[] = [
+  { keys: ["S"], label: "Open the sort (Shift+S)", short: "sort" },
+  { keys: ["1–8"], label: "In the sort: add a field, or turn it round" },
+  { keys: ["Backspace"], label: "In the sort: drop the last field" },
+];
 /** The Up next inbox's keys, which `UpNextPage` handles itself. */
 const UP_NEXT_SHORTCUTS: Shortcut[] = [
   { keys: ["j", "ArrowDown"], label: "Next pull request", short: "move" },
@@ -99,7 +106,7 @@ const SETTINGS_SHORTCUTS: Shortcut[] = [
     label: "Previous section",
     short: "sections",
   },
-  { keys: ["1–7"], label: "Go to a section", short: "section" },
+  { keys: ["1–8"], label: "Go to a section", short: "section" },
   { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section", short: "go in" },
   { keys: ["Space", "Enter"], label: "Change or press the focused control" },
   { keys: ["Escape", "h", "ArrowLeft"], label: "Back to the sections", short: "back" },
@@ -742,7 +749,8 @@ const TABBABLE = [
 function tabbables(root: ParentNode, all = false) {
   return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((element) => {
     if ((!all && element.tabIndex < 0) || element.closest("[inert]")) return false;
-    if (element.getClientRects().length === 0) return false;
+    if (element.getClientRects().length === 0 || getComputedStyle(element).visibility === "hidden")
+      return false;
     if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
       const group = Array.from(
         (element.form ?? document).querySelectorAll<HTMLInputElement>(
@@ -910,6 +918,7 @@ function shortcutGroups(
         ...UP_NEXT_SHORTCUTS,
         { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
+        ...SORT_SHORTCUTS,
         {
           keys: MAC ? ["⇧J", "⇧K", "⌃↓", "⌃↑"] : ["Shift+J", "Shift+K", "Ctrl+↓", "Ctrl+↑"],
           label: "Next, previous inbox",
@@ -923,6 +932,7 @@ function shortcutGroups(
         ...INBOX_SHORTCUTS,
         { keys: [GITHUB_KEY_LABEL], label: "Open the focused pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
+        ...SORT_SHORTCUTS,
         { keys: ["Escape"], label: "Clear the row focus" },
         { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
         { keys: VIEW_KEYS.next, label: "Next view", short: "views" },

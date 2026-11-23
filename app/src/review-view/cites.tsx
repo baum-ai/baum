@@ -32,7 +32,7 @@ export function Cites({
 
 /** "2 files", "2 files and a prompt": the files the anchors name, each
  *  counted once, then whatever else they cite. */
-export function citesLabel(document: ReviewDocument, anchors: Anchor[]): string {
+function citesLabel(document: ReviewDocument, anchors: Anchor[]): string {
   const paths = new Set<string>();
   let others = 0;
   for (const anchor of anchors) {

@@ -26,6 +26,7 @@ type hubPR struct {
 	title, author         string
 	head, base            string
 	updated               time.Time
+	created               time.Time
 	checks                string
 	mergeable, mergeState string
 	// threads is how many review threads are unresolved.
@@ -113,7 +114,7 @@ func (h *hub) node(repo string, pr *hubPR) map[string]any {
 	owner := map[string]any{"databaseId": 1, "nameWithOwner": repo}
 	return map[string]any{
 		"number": pr.number, "state": pr.state, "title": pr.title, "headRefOid": pr.head, "headRefName": "branch" + strconv.Itoa(pr.number), "baseRefName": pr.base,
-		"updatedAt": pr.updated.Format(time.RFC3339), "author": map[string]any{"__typename": "User", "login": pr.author},
+		"createdAt": pr.created.Format(time.RFC3339), "updatedAt": pr.updated.Format(time.RFC3339), "author": map[string]any{"__typename": "User", "login": pr.author},
 		"headRepository": owner, "baseRepository": owner,
 		"reviewRequests": map[string]any{"nodes": []any{}, "pageInfo": map[string]any{"hasNextPage": false}},
 		"commits":        map[string]any{"nodes": []any{map[string]any{"commit": map[string]any{"statusCheckRollup": rollup}}}},
@@ -377,6 +378,34 @@ func TestIncrementalPollReadsOnlyWhatChanged(t *testing.T) {
 	}
 	if asked := names(h.asked()[before:]); !slices.Contains(asked, "LocalInbox") {
 		t.Fatalf("due sweep asked %v", asked)
+	}
+}
+
+// A pull request carries when it was opened and last updated, and both
+// survive the snapshot's JSON.
+func TestPullRequestCarriesOpenedAndUpdatedTimes(t *testing.T) {
+	h := newHub()
+	h.add("acme/app", &hubPR{number: 1, created: minutes(-300), updated: minutes(-10)})
+	s, _ := hubService(t, h)
+	snapshot, err := s.PollNow(context.Background(), appRepo)
+	got := snapshot.PullRequests
+	if err != nil || len(got) != 1 {
+		t.Fatalf("poll %v %v", got, err)
+	}
+	if !got[0].CreatedAt.Equal(minutes(-300)) || !got[0].UpdatedAt.Equal(minutes(-10)) {
+		t.Fatalf("created %v updated %v", got[0].CreatedAt, got[0].UpdatedAt)
+	}
+	raw, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil || fields["created_at"] != minutes(-300).UTC().Format(time.RFC3339) || fields["updated_at"] == nil {
+		t.Fatalf("serialized %s %v", raw, err)
+	}
+	var back PullRequest
+	if err := json.Unmarshal(raw, &back); err != nil || !back.CreatedAt.Equal(got[0].CreatedAt) {
+		t.Fatalf("round trip %+v %v", back, err)
 	}
 }
 

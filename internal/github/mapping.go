@@ -22,7 +22,7 @@ func mapEvidence(raw rawEvidence, sources bundle.Sources, opts FetchOptions) Evi
 
 	var images []bundle.RenderedImage
 	if raw.header.BodyHTML != "" {
-		images = bundle.RenderedImages(raw.header.BodyHTML, bundle.MarkdownUploads(raw.header.Body))
+		images = bundle.RenderedMedia(raw.header.BodyHTML, bundle.MarkdownUploads(raw.header.Body))
 	}
 	return Evidence{
 		Repository: b.Repository, PullRequest: b.PullRequest, Checks: b.Checks,
