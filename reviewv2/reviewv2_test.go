@@ -678,6 +678,44 @@ func TestRiskHeir(t *testing.T) {
 	}
 }
 
+// A risk handed over to a section that had a mitigated risk of the same ID
+// takes a new ID: the mitigated one keeps its history, and the handed-over
+// one the version it was introduced in.
+func TestHandedOverRiskAvoidsAHistoricalID(t *testing.T) {
+	// Version 1: the delivery section raises rsk_timeout on h2.
+	v1 := authored(t)
+	v1.Sections[1].Risks = []Risk{{ID: "rsk_timeout", Tier: "low", Category: "correctness", Text: "A slow remote holds a worker.", Cites: []Anchor{HunkAnchor("h_a00000000002", nil)}}}
+	first := encode(t, completeFixture(t, v1, 1, nil))
+	// Version 2: it no longer does (mitigated); the policy section raises an
+	// unrelated rsk_timeout on h1.
+	v2 := authored(t)
+	v2.Sections[0].Risks = []Risk{{ID: "rsk_timeout", Tier: "medium", Category: "correctness", Text: "Retries never time out.", Cites: []Anchor{HunkAnchor("h_a00000000001", nil)}}}
+	second := completeFixture(t, v2, 2, first)
+	if r := riskIn(second, "rsk_timeout"); r["sec_delivery_errors"].State != "mitigated" || r["sec_retry_policy"].State != "active" {
+		t.Fatalf("version 2: %+v", r)
+	}
+	// Version 3: h1 and the policy section's risk move to the delivery section.
+	v3 := authored(t)
+	v3.Sections[0].Hunks, v3.Sections[0].Risks = []string{"h_a00000000003"}, []Risk{}
+	v3.Sections[1].Hunks, v3.Sections[1].Risks = []string{"h_a00000000002", "h_a00000000001"}, v2.Sections[0].Risks
+	out := completeFixture(t, v3, 3, encode(t, second))
+
+	old, moved := riskIn(out, "rsk_timeout"), riskIn(out, "rsk_timeout_2")
+	if len(old) != 1 || len(moved) != 1 {
+		t.Fatalf("rsk_timeout in %+v, rsk_timeout_2 in %+v", old, moved)
+	}
+	if r := old["sec_delivery_errors"]; r.State != "mitigated" || r.IntroducedVersion == nil || *r.IntroducedVersion != 1 || r.MitigatedVersion == nil || *r.MitigatedVersion != 2 || r.Text != "A slow remote holds a worker." {
+		t.Errorf("historical risk: %+v", r)
+	}
+	if r := moved["sec_delivery_errors"]; r.State != "active" || r.IntroducedVersion == nil || *r.IntroducedVersion != 2 || r.Text != "Retries never time out." {
+		t.Errorf("handed-over risk: %+v", r)
+	}
+	// The authored document keeps the ID it was written with.
+	if v3.Sections[1].Risks[0].ID != "rsk_timeout" {
+		t.Errorf("Complete changed the authored document: %+v", v3.Sections[1].Risks)
+	}
+}
+
 // The fixed risk IDs are those mitigated and nowhere active.
 func TestFixedRiskIDs(t *testing.T) {
 	one := 1

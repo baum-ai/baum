@@ -2124,7 +2124,11 @@ section has and every hunk it cites has left its old section; when its hunks
 split, only the section that has the first of them gets it. `Complete`
 follows the same rule: a previous risk that that section names under its ID,
 citing a hunk it cited, is dropped from its old section (even where that
-section still names it) and keeps its introduced version. A renamed section
+section still names it) and keeps its introduced version. Risk IDs are
+unique only within a section: when the receiving section had a mitigated
+risk of that ID (which its agent is not shown), the handed-over risk takes
+the next `<id>_N` no previous risk had, so each keeps its own history. A
+renamed section
 is its previous section for both: that section's code is not joined, and its
 risks are reconciled under the new ID (named ones keep their history, the
 rest are mitigated there). Any other risk of the same ID elsewhere is a new

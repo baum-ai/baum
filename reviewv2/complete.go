@@ -278,9 +278,20 @@ func previousOf(document []byte, fromBundle *bundle.PreviousVersion) (previous, 
 // a section of a new ID continues (renamed, by the new ID) is that
 // section's: its risks stay in it, and leave it as they leave a section of
 // the same ID.
+//
+// Risk IDs are unique only within a section, so the section a risk joins may
+// have had a mitigated risk of the same ID, which its agent is not shown.
+// The joining risk then takes the next ID no previous risk had (<id>_N, in
+// sections, which it changes) so that each keeps its own history.
 func handOvers(prior previous, sections []Section, renamed map[string]string) (map[string]map[string]bool, map[string]map[string]Risk) {
 	off, in := map[string]map[string]bool{}, map[string]map[string]Risk{}
 	hunks, owner := map[string][]string{}, map[string]string{}
+	priorIDs := map[string]bool{}
+	for _, s := range prior.sections {
+		for _, r := range s.Risks {
+			priorIDs[r.ID] = true
+		}
+	}
 	for _, s := range sections {
 		hunks[s.ID] = s.Hunks
 		for _, h := range s.Hunks {
@@ -309,7 +320,8 @@ func handOvers(prior previous, sections []Section, renamed map[string]string) (m
 			}
 			cited := CitedHunks(old.Cites)
 			to := heir(cited, owner)
-			for _, s := range sections {
+			for k := range sections {
+				s := &sections[k]
 				if s.ID != to || s.ID == next || in[s.ID][old.ID].ID != "" {
 					continue
 				}
@@ -317,13 +329,24 @@ func handOvers(prior previous, sections []Section, renamed map[string]string) (m
 				if i < 0 || !HandedOver(cited, hunks[next], func(h string) bool { return slices.Contains(CitedHunks(s.Risks[i].Cites), h) }) {
 					continue
 				}
+				pred := s.ID
+				if p, ok := renamed[s.ID]; ok {
+					pred = p
+				}
+				id := old.ID
+				if slices.ContainsFunc(prior.sections[pred].Risks, func(r Risk) bool { return r.ID == old.ID && r.State == "mitigated" }) {
+					for n := 2; priorIDs[id] || slices.ContainsFunc(s.Risks, func(r Risk) bool { return r.ID == id }); n++ {
+						id = fmt.Sprintf("%s_%d", old.ID, n)
+					}
+					s.Risks[i].ID = id
+				}
 				if off[from] == nil {
 					off[from] = map[string]bool{}
 				}
 				if in[s.ID] == nil {
 					in[s.ID] = map[string]Risk{}
 				}
-				off[from][old.ID], in[s.ID][old.ID] = true, old
+				off[from][old.ID], in[s.ID][id] = true, old
 				break
 			}
 		}
