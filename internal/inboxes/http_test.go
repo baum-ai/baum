@@ -267,3 +267,24 @@ func TestUnreadableDatabaseHasTheSameReadAndWriteError(t *testing.T) {
 		t.Fatalf("changed corrupt database: %q %v", raw, err)
 	}
 }
+
+func TestPutKeepsAutoReviewAndReadsAMissingOneAsOn(t *testing.T) {
+	h := newHarness(t)
+	off := strings.Replace(entry("Off"), `"badge":true`, `"badge":true,"auto_review":false`, 1)
+	on := strings.Replace(entry("On"), `"badge":true`, `"badge":true,"auto_review":true`, 1)
+	code, body := h.put(`{"revision":0,"inboxes":[` + entry("Omitted") + `,` + off + `,` + on + `]}`)
+	if code != 200 {
+		t.Fatalf("%d %v", code, body)
+	}
+	for i, want := range []bool{true, false, true} {
+		if got := list(body)[i]["auto_review"]; got != want {
+			t.Fatalf("saved %d: %v, want %v: %v", i, got, want, list(body))
+		}
+	}
+	_, read := h.do(http.MethodGet, "")
+	for i, want := range []bool{true, false, true} {
+		if got := list(read)[i]["auto_review"]; got != want {
+			t.Fatalf("read %d: %v, want %v", i, got, want)
+		}
+	}
+}

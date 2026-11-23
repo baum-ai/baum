@@ -425,6 +425,37 @@ it("makes the row Tab lands on the focused one, but not a row the pointer focuse
   expect(focusedTitle()).not.toBe(first);
 });
 
+it("moves Tab past controls that are laid out but hidden", async () => {
+  await act(async () =>
+    root.render(
+      <>
+        <TabStops />
+        <button type="button" id="before">
+          Before
+        </button>
+        <div style={{ visibility: "hidden" }}>
+          <button type="button" id="hidden">
+            Hidden
+          </button>
+        </div>
+        <button type="button" id="after">
+          After
+        </button>
+      </>,
+    ),
+  );
+  const before = document.getElementById("before")!;
+  const after = document.getElementById("after")!;
+  // jsdom lays nothing out, so give every element a box.
+  const rects = vi
+    .spyOn(HTMLElement.prototype, "getClientRects")
+    .mockReturnValue([{}] as unknown as DOMRectList);
+  before.focus();
+  await press("Tab", {}, before);
+  rects.mockRestore();
+  expect(document.activeElement).toBe(after);
+});
+
 it("takes Escape from a button Tab reached back to the focused row, keeping it", async () => {
   await renderWithTabStops();
   await press("j");

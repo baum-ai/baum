@@ -176,11 +176,11 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
             {(error || connection?.error) && (
               <button
                 type="button"
-                className="quiet"
+                className="secondary"
                 disabled={checking || busy}
                 onClick={() => void (error ? recheck() : action("retry"))}
               >
-                {checking || working === "retry" ? "Checking…" : "Check again"}
+                {checking || working === "retry" ? "Checking…" : "Check GitHub again"}
               </button>
             )}
           </div>

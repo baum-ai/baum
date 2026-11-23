@@ -518,10 +518,11 @@ func (s *Service) refreshDue(ctx context.Context) {
 // candidate is a pull request whose new head automatic generation could
 // review: what the scheduler requires (eligible), as far as the cached
 // snapshot and the refresh show. The scheduler decides again from a fresh
-// poll; this only spares a poll that could queue nothing.
+// poll; this only spares a poll that could queue nothing, so with automatic
+// reviews following the saved inboxes any pull request may be one.
 func candidate(pr discovery.PullRequest, o discovery.Observation, prefs repos.Preferences) bool {
 	open := o.State == "" || o.State == "OPEN"
-	return open && !o.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite && prefs.Covers(pr.AuthoredByMe, pr.ReviewRequestedFromMe)
+	return open && !o.Draft && !pr.Fork && pr.AuthorHasWrite != nil && *pr.AuthorHasWrite && (prefs.PullRequests == repos.PullRequestsInboxes || prefs.Covers(pr.AuthoredByMe, pr.ReviewRequestedFromMe))
 }
 
 // queueTrigger has the scheduler poll the repository now, or Window after

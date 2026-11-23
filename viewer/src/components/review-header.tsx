@@ -63,8 +63,8 @@ export type ReviewHeaderSlots = {
   /** Additional status beside the full page title. */
   titleAside?: ReactNode;
   pullRequest?: PullRequestFacts;
-  /** The way back to wherever the reader came from, drawn in the compact bar
-   *  through the host's link component. */
+  /** The way back to wherever the reader came from, drawn before the title and
+   *  in the compact bar through the host's link component. */
   back?: { href: string; label: string };
   /** An approval state, shown beside the title and in the compact bar. */
   approval?: ReactNode;
@@ -260,6 +260,7 @@ export function ReviewHeader({
       <div className="sticky top-0 z-(--z-sticky) hidden h-0 lg:block">
         <div
           aria-hidden={!compact}
+          inert={!compact}
           style={{ height: REVIEW_BAR_PX }}
           className={cn(
             REVIEW_GUTTER,
@@ -326,6 +327,18 @@ export function ReviewHeader({
       <header ref={head} className={cn(REVIEW_GUTTER, "border-b border-subtle")}>
         <div className="pb-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
+            {slots.back ? (
+              <ViewerLink
+                href={slots.back.href}
+                aria-label={slots.back.label}
+                className={cn(
+                  "-mr-1 inline-flex h-7 w-7 flex-none items-center justify-center rounded-sm text-tertiary hover:bg-surface-hover hover:text-secondary",
+                  FOCUS_RING,
+                )}
+              >
+                <ChevronLeftIcon size={14} />
+              </ViewerLink>
+            ) : null}
             <h1 className="text-2xl font-medium tracking-[-0.015em]">
               {heading !== undefined ? (
                 heading

@@ -1088,6 +1088,41 @@ the tile library cannot be read. An added built-in type keeps its built-in
 label: the served definition is marked by its digest (`library.IsBuiltin`),
 never by data.
 
+**Built-in added tiles.** A `native` added tile is a type the review page
+draws with its own components: `flow`, `columns`, `sequence`, `table`,
+`code` and `images` (`uiserver.NativeAddTypes`, the same list as
+`agentcontext.BuiltinTypes`). Its ID is `added_<type>_<10 hex>`, so a page
+may have several of one type, and its digest is `native`. It always has
+the data the session panel's agent wrote, for the latest version, and
+nothing fills it: an add without data is refused. The host checks the data
+as a generated tile's: a diagram is the reply shape the review's tile agent
+writes (`view.DiagramSchema`, checked by `view.CheckDiagram`, refused rather
+than cut when a text is over its limit or a source is not a hunk of the
+version), its caption and source lifted to the tile
+(`reviewv2.LiftNative`); a code tile names a hunk and, optionally, lines of
+its new side (at most 80), and the host reads those lines from the clone at
+the version's head (`gitlocal.Repo.Blob`), so its text is never the agent's;
+an images tile names image files on this computer by absolute path (at most
+6). Each is sniffed (`bundle.SniffImage`: PNG, JPEG, GIF or WebP), downscaled
+as a session image is (`assemble.Downscale`), and kept per pull request in
+`added_images(pr, id, content_type, bytes, at)` under an attachment ID
+(`att_` and 32 hex of its SHA-256, at most 10 MiB), while the pull request
+has an added tile, removed ones included, and for an hour after it was last
+stored (`addedtiles.ImageGrace`), so the images a custom tile's check
+stored wait for its add. The tile is then
+`reviewv2.CheckTile`ed against the version's index, masked, and stored
+(`Service.PutNative`) in `tile_fills` as `tileview.NativeAdded` (type,
+title, caption, citations, data) with digest `native`. `AddedFor` shows it
+on the version it was written for and, marked `from` that version, on every
+later one; never on an earlier one. The tile route serves it beside the
+document's tiles (`tileview.nativeTiles`, for `baum.review/2` and converted
+`baum.review/1` documents alike), checked again against the version served
+(unavailable, with its problems, when a hunk it cites is gone), on its
+section or by its citations; an images tile's images join the served
+index's `attachments`, and `GET /api/attachments/{id}` serves an image of
+the pull request's added tiles when the version has no attachment of that
+ID, so the page draws them as it draws the description's screenshots.
+
 **Tiles made in chat.** A `custom` added tile is a tile type the session
 panel's agent wrote for this pull request (agentcontext's tile making tools;
 `uiserver.ChatTiles`). Its definition is kept by digest in
@@ -1118,7 +1153,8 @@ added one at once, and the page's Remove takes one away (`DELETE
 /api/tiles/drafts/{tile}?clone=&pr=`, 404 for none). The tile route serves
 the latest version's cards as `drafts` beside the document, and its cache
 key includes them; each change publishes the `added_tiles` event `{pr}`.
-`check_tile` masks the data (`agent.RedactTaskOutput`)
+`check_tile` stores the image files the data names (see "Images in a custom
+tile" below), masks the data (`agent.RedactTaskOutput`)
 first, refuses a built-in library type's name as a `fail`, checks with the
 validator that every citation of the data resolves to the version shown
 and that it cites at least one hunk, file, prompt or session event
@@ -1134,6 +1170,35 @@ or when the pull request already has 8 added tiles; otherwise it stores the
 fill, adds the tile on the section it names, else the pending card's, else
 the one whose hunks the data cites most, takes the card away and answers the
 tile and its section.
+
+**Images in a custom tile.** A frame's policy admits images only as
+`data:` URLs, and an agent writing one as base64 spends minutes of output
+on it and must crop to fit the 64 KiB data limit. So where a custom tile's
+schema has a string for an image, `check_tile`'s data may hold
+`{"image_file": "/absolute/path"}` instead (an object with that one key;
+`uiserver.customImages`): the host reads the file exactly as an images tile's
+(`readImage`: an absolute path, at most 40 MiB, sniffed as PNG, JPEG, GIF or
+WebP, downscaled), stores it in `added_images` for the pull request, and puts
+`baum-image:att_<32 hex>` (`addedtiles.ImageRef`) in the object's place,
+before the data is masked, checked against the schema and kept. A tile's
+data names at most 6 distinct images, 16 MiB together after downscaling,
+counting an image each time the data names it (each becomes a whole `data:`
+URL); the references count against its 64 KiB, the images do not. Inlining
+stops at 24 MiB of `data:` URLs a tile (`addedtiles.MaxInlined`, and the
+page's `MAX_INLINED`), past which a reference becomes an empty string, so
+references repeated or written by hand cannot grow the data without bound. A file that cannot
+be read, is not an image or is over a limit is a `fail` with `data_invalid`,
+and nothing is checked. Whatever hands the data to a frame puts each stored
+image there as a `data:` URL in its reference's place, so the tile draws it
+with `baum.html` as it draws any `data:image` string: the render check's
+runner gets its job's data inlined by the daemon (`tilechecks.Options.Inline`,
+`addedtiles.Service.InlineImages`, which reads an image by its id), and the
+review page reads each image from `GET /api/attachments/{id}` and inlines it
+before the frame's `init` (`useInlinedImages`, in
+`app/src/tiles/custom/images.ts`); a reference to an image no longer stored
+becomes an empty string. The tile route, its cache, the preflight and the
+check's kept verdict all hold the short reference, so the preflight of an
+added tile finds the verdict its check kept. Samples cannot name files.
 
 A fill comes from one of three places. The session panel's agent writes the
 data itself (`add_tile` with `data`, after `tile_type`), which is checked
@@ -6178,8 +6243,13 @@ it and `Queue.SubmitAutomatic` decides each job.
   pending head if it is eligible: the user's review is requested or the user
   authored it (narrowed to one of these, or widened to every pull request, by
   the `pull_requests` preference), it is not a draft, it is not from a fork,
-  and its author has known write access. Hook refresh applies the same rule
-  before it triggers a poll. Drafts get no automatic review, so pushes to a
+  and its author has known write access. With `pull_requests` `inboxes`, the
+  first condition is instead that a saved inbox with `auto_review` on holds
+  the PR (`inboxqueue.Service.AutoReview`, read once per snapshot and per
+  catch-up, so an inbox change counts from the next one); saved inboxes that
+  do not read skip the snapshot rather than drop pending heads. Hook refresh
+  applies the same rule before it triggers a poll, except that with
+  `inboxes` any pull request may qualify and the scheduler decides. Drafts get no automatic review, so pushes to a
   draft wait for "ready for review"; manual generation of a draft still works.
   A queued automatic job whose PR turned draft before it started is cancelled
   (`draft`) by the recheck before any model call, and its head is pending
@@ -7976,8 +8046,8 @@ long turn begun on one cannot change another.
 
 | Tool | Arguments | Answers |
 | --- | --- | --- |
-| `tile_type` | `{type}` | a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself, beside the type in full from the tile library (its definition with HTML, samples and versions); read-only, page-bound like the others |
-| `add_tile` | `{type, section?, data?}` | adds a library type to the pull request, with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background; `{tile, state: "ready" \| "filling", section, note}`. An unknown type names the library's types; a ninth added tile is refused |
+| `tile_type` | `{type}` | a built-in type's `type`, `title`, `use_when`, `fill_schema` (what `add_tile` takes) and `fill_instructions`, with `built_in: true`; or a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself, beside the type in full from the tile library (its definition with HTML, samples and versions); read-only, page-bound like the others |
+| `add_tile` | `{type, section?, title?, data?}` | adds a built-in type (`flow`, `columns`, `sequence`, `table`, `code`, `images`; data required, see "Built-in added tiles") or a library type to the pull request; a library type with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background; `{tile, state: "ready" \| "filling", section, note}`. An unknown type names the library's types; a ninth added tile is refused |
 | `start_tile` | `{title, section?}` | puts a pending card on the section where the tile will stand; its ID, `draft_<n>` |
 | `add_custom_tile` | `{check, draft?, section?}` | adds the tile a passed `check_tile` check made, on the section named, else the pending card's; the tile and its section |
 

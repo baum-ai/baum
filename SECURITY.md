@@ -2332,6 +2332,22 @@ safe to do without asking for the same reasons, and these:
 - Where the desktop app does not mount tile frames (Windows, for now), the
   tools refuse before anything is made.
 
+Both an images tile (`add_tile`) and a tile made in chat (an
+`{"image_file": path}` in `check_tile`'s data) may name image files on this
+computer, so the agent never writes image bytes. The daemon reads such a
+file under one set of rules for both: an absolute path, read as the user
+baum runs as (a link is followed), at most 40 MiB, kept only when its bytes
+sniff as PNG, JPEG, GIF or WebP (never by name or extension), downscaled,
+and stored in `app.sqlite` for that pull request, at most 6 images a tile
+(a made tile's 16 MiB together). Anything else is refused with the file's
+base name only, never its contents. A stored image is shown only on your own
+page: the attachment route serves it, behind the server's usual checks, and
+a custom tile's frame gets it from the page as a `data:` URL in its data, so
+the frame's policy, sandbox and lack of network are unchanged, and the
+frame never reaches the daemon. The agent gets back a short reference, never
+the pixels. The worst untrusted text can do is have the agent show you an
+image file that is already on your computer, on your own page.
+
 There is no confirmation and no rate cap on purpose: each would make "add
 the API changes tile" slower for everyone to guard against an attack whose
 worst result is a tile you see and remove. Anything that lasts beyond the page you have open
@@ -2442,7 +2458,9 @@ navigation elsewhere before the app is asked, but a page without that policy
 through; if a navigation could open the browser, such a frame could open it
 at an address carrying data it read, as often as it liked. Links to other web
 hosts open in your default browser only as requests for a new window
-(`target="_blank"` links and `window.open`); no window ever opens. A
+(`target="_blank"` links and `window.open`), or through the app's
+`open_link` command, which opens the same addresses and only from the page
+itself; no window ever opens. A
 sandboxed frame can make such a request only when its sandbox allows pop-ups.
 On Linux the webview allows a page one only while you interact with it; on
 macOS and Windows a page's script can make one at any time, so the app opens
@@ -2455,8 +2473,9 @@ The daemon's pages can call a few of the app's commands, granted to pages of
 folder picker, reading and changing the `baum` command and the user-wide agent
 hooks (as Settings does), the window's zoom, and reading, checking for,
 installing and dismissing app updates (only an update the app has already
-downloaded and verified installs), and opening and closing the tile check
-window. They can call no other command and no plugin. Only the page itself can call them: on macOS and Linux the app's
+downloaded and verified installs), opening and closing the tile check
+window, and opening a link to another web host in your browser (at most once
+a second). They can call no other command and no plugin. Only the page itself can call them: on macOS and Linux the app's
 command bridge is injected into the page's main frame only, so a frame
 embedded in it, even one served from the daemon's origin, cannot reach a
 command; on Linux this is checked with a sandboxed frame trying every way the

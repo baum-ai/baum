@@ -206,6 +206,11 @@ type Options struct {
 	// (default 10 s); Hang, how long a claimed job may go without a report
 	// (default 10 s).
 	Wait, Claim, Hang time.Duration
+	// Inline gives the pull request's data of a job (a check's data or a
+	// preflight's) as the runner draws it: a custom tile's data holds
+	// references to images the host stored, which a frame can only show as
+	// data: URLs (addedtiles.InlineImages). nil draws the data as it is.
+	Inline func(context.Context, json.RawMessage) json.RawMessage
 	// Log receives what the check logs; nil is slog.Default.
 	Log *slog.Logger
 	// Now is the clock Result's results expire by; nil is time.Now.
@@ -650,6 +655,22 @@ func (c *Checker) dequeue(j *job) bool {
 	return true
 }
 
+// inlined is a job as the runner gets it: the pull request's data passed
+// through Options.Inline, in a copy of its samples.
+func (c *Checker) inlined(ctx context.Context, j Job) Job {
+	if c.opts.Inline == nil {
+		return j
+	}
+	samples := slices.Clone(j.Samples)
+	for i, s := range samples {
+		if s.Kind == KindData {
+			samples[i].Data = c.opts.Inline(ctx, s.Data)
+		}
+	}
+	j.Samples = samples
+	return j
+}
+
 // poke wakes every runner waiting in Next. It is called with mu held.
 func (c *Checker) poke() {
 	close(c.wake)
@@ -659,7 +680,7 @@ func (c *Checker) poke() {
 // Next claims the next job, waiting up to wait for one; it reports false
 // when none came. Only one job runs at a time. Claiming registers the
 // candidate's frame document, so the frame route serves it to the runner,
-// and starts the hang timer.
+// and starts the hang timer. The job's data is inlined (Options.Inline).
 func (c *Checker) Next(ctx context.Context, wait time.Duration) (Job, bool) {
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
@@ -694,7 +715,7 @@ func (c *Checker) Next(ctx context.Context, wait time.Duration) (Job, bool) {
 			}
 			c.publish(j.ID, StateRunning)
 			c.mu.Unlock()
-			return j.Job, true
+			return c.inlined(ctx, j.Job), true
 		}
 		wake := c.wake
 		c.mu.Unlock()

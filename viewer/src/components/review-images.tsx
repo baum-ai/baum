@@ -1,12 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import type { Block, IndexedAttachment, ReviewDocument } from "../review-document";
-import { layoutImages, sectionImageHeight, viewerImageWidth } from "../review-image-layout";
+import { layoutImages, sectionImageHeight } from "../review-image-layout";
 import { useAttachmentUrl } from "../host";
 import { cn, FOCUS_RING } from "./classnames";
-import { ExternalLinkIcon } from "./icons";
+import { ImageViewer } from "./image-viewer";
 import { AnchorChips, Part } from "./review-parts";
-import { Button, CloseButton } from "./ui";
+import { Button } from "./ui";
 
 type ImagesBlock = Extract<Block, { kind: "images" }>;
 
@@ -26,8 +26,9 @@ export function ReviewImages({
 }: {
   document: ReviewDocument;
   block: ImagesBlock;
-  /** The heading over the images. */
-  heading?: string;
+  /** The heading over the images; null for none, when the images stand
+   *  under a heading of their own (a tile's). */
+  heading?: string | null;
 }) {
   const attachmentUrl = useAttachmentUrl();
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
@@ -42,10 +43,6 @@ export function ReviewImages({
   });
   const triggers = useRef(new Map<string, HTMLButtonElement>());
   const images = useRef(new Map<HTMLImageElement, string>());
-  const dialog = useRef<HTMLDialogElement>(null);
-  const header = useRef<HTMLDivElement>(null);
-  // The viewer's header wraps with a long caption; the image fits below it.
-  const [headerHeight, setHeaderHeight] = useState(58);
   // Retrying swaps the placeholder for the image and a repeat failure swaps
   // it back, so focus follows to whichever control replaces the focused one.
   const focusNext = useRef<string | null>(null);
@@ -81,24 +78,6 @@ export function ReviewImages({
       window.removeEventListener("resize", measure);
     };
   }, [pane]);
-
-  useEffect(() => {
-    const element = dialog.current;
-    if (!element) return;
-    if (viewing && !element.open) element.showModal();
-    if (!viewing && element.open) element.close();
-    // Only an open dialog has a laid-out header to measure. It is watched
-    // while open, as a resize or rotation can wrap its caption.
-    const caption = header.current;
-    if (!viewing || !caption) return;
-    const measure = () => {
-      if (caption.offsetHeight) setHeaderHeight(caption.offsetHeight);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(caption);
-    return () => observer.disconnect();
-  }, [viewing]);
 
   const listed = new Map((document.index.attachments ?? []).map((item) => [item.id, item]));
   const shown: Shown[] = attachmentUrl
@@ -136,8 +115,8 @@ export function ReviewImages({
     sectionImageHeight(space.viewport.height),
   );
 
-  return (
-    <Part label={heading}>
+  const content = (
+    <>
       <div ref={setPane} className="space-y-4">
         {rows.map((row) => (
           <div
@@ -216,62 +195,36 @@ export function ReviewImages({
         ))}
       </div>
       <AnchorChips document={document} anchors={block.source} className="mt-2" />
-      <dialog
-        ref={dialog}
-        aria-label={viewing?.text ?? "Image"}
+      <ImageViewer
+        image={
+          viewing && {
+            src: source(viewing.attachment.id),
+            alt: viewing.attachment.alt || viewing.text || "",
+            width: viewing.attachment.width,
+            height: viewing.attachment.height,
+          }
+        }
+        label={viewing?.text ?? "Image"}
+        caption={
+          viewing && (
+            <>
+              {viewing.text}
+              <ImageProvenance document={document} attachment={viewing.attachment} />
+            </>
+          )
+        }
         onClose={() => {
           const key = viewing?.key;
           setViewing(null);
           if (key) triggers.current.get(key)?.focus();
         }}
-        className={cn(
-          "m-auto max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-default",
-          "bg-surface-card p-3 text-primary shadow-card",
-          "backdrop:bg-surface-scrim",
-        )}
-      >
-        {viewing && (
-          <figure className="space-y-2">
-            <div
-              ref={header}
-              className="sticky -top-3 z-10 -mx-3 -mt-3 flex items-start justify-between gap-3 bg-surface-card px-3 pt-3 pb-2"
-            >
-              <figcaption className="min-w-0 pt-1 text-base text-secondary">
-                {viewing.text}
-                <ImageProvenance document={document} attachment={viewing.attachment} />
-              </figcaption>
-              <div className="flex flex-none items-center gap-2">
-                <a
-                  href={source(viewing.attachment.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-base"
-                >
-                  Open original
-                  <ExternalLinkIcon size={10} />
-                </a>
-                <CloseButton
-                  label="Close image"
-                  autoFocus
-                  onClick={() => dialog.current?.close()}
-                />
-              </div>
-            </div>
-            <img
-              src={source(viewing.attachment.id)}
-              alt={viewing.attachment.alt || viewing.text || ""}
-              width={viewing.attachment.width}
-              height={viewing.attachment.height}
-              decoding="async"
-              style={{
-                width: viewerImageWidth(viewing.attachment, space.viewport, headerHeight),
-              }}
-              className="block h-auto max-w-full"
-            />
-          </figure>
-        )}
-      </dialog>
-    </Part>
+      />
+    </>
+  );
+  return heading === null ? (
+    <div className="min-w-0">{content}</div>
+  ) : (
+    <Part label={heading}>{content}</Part>
   );
 }
 

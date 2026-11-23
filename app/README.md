@@ -46,6 +46,10 @@ JSON, what it recorded since the page opened or since `__baumPerf.reset()`:
 - the scenario's own `__baumPerf.mark(name)` markers, the DOM's element count
   and, where the engine has it, the JS heap size.
 
+`__baumPerf.progress()` returns just the latest navigation and how many
+interactions were recorded, without copying the rest, for a scenario to
+wait on (`just desktop::profile`, [desktop](../desktop/README.md#profiling)).
+
 It measures by hand rather than with the Event Timing or Long Tasks APIs,
 which WebKit lacks, so WebKitGTK, WKWebView and Chromium report the same
 things. Every other build leaves it out, and fails if `__baumPerf` reaches a
@@ -631,7 +635,8 @@ beside its Transcript): the notice goes and the run joins the fix runs below,
 remembered in this browser (`useDismissedFixes`, the 50 latest). A running
 fix's notice cannot be dismissed.
 
-Merging: a pull request whose Merge state is Ready (open, not a draft) shows a
+Merging: an open pull request, not a draft, that GitHub can merge (Merge state
+Ready or Blocked, that is without a conflict) shows a
 Merge button in the PR page header, **Merge…** in its Pull requests row's
 menu, and the Inbox card's action. It opens a confirmation dialog
 that reads `GET /api/prs/merge-options` for the repository's allowed methods
@@ -743,8 +748,7 @@ opened on the page itself goes to its list.
 On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `g`/`Home` and `G`/`End` move it to the first and last row, `Enter` or `o` opens the focused pull request or group, `x` toggles
-its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
-where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
+its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them, `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
 and `Esc` clears the focus. On a pull request's or group's page, `Shift+K`
 (`Shift+↑`, `←`) and `Shift+J` (`Shift+↓`, `→`) move to the previous and next
@@ -907,7 +911,9 @@ GitHub** without guessing the cause. Older snapshots without the review
 requirement keep that neutral explanation. An otherwise unexplained GitHub
 merge blocker adds **Merge blocked by GitHub** under **On GitHub**, saying when
 GitHub has not supplied the reason. Known blockers keep their existing rows and
-chips. **Open on GitHub** is offered beside Open for waiting pull requests.
+chips. **Merge** is offered beside Open, and `m` opens it, for any pull request
+GitHub can merge, failing checks or missing reviews
+included; only a Ready one joins Ready to merge.
 
 The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
@@ -971,7 +977,11 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
-member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+member of their stack, offer Snooze too. A stack's or group's row offers
+Snooze in its panel, on `s` and in its menu: it snoozes every member the row
+shows, together, with one **Undo**; each is then listed under Snoozed and
+brought back on its own (one snoozed until it changes comes back when it is
+pushed to). Snoozed waiting PRs keep their
 waiting classification, so the same inbox filters apply before and after
 snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
@@ -1083,7 +1093,9 @@ over the page, which does not move, and it folds again shortly after the
 pointer leaves or when a link in it is chosen. It folds at once when the
 pointer leaves the window or the window loses focus, since a pointer that
 leaves straight off the rail at the window's edge may never send the rail
-its own leave event; keyboard focus in the rail
+its own leave event. On Linux under Wayland, WebKitGTK may send the page no
+leave at all, so the desktop app announces it with a `baum:pointer-left`
+event; keyboard focus in the rail
 opens it too. The choice is the `sidebar` appearance preference (`pinned` or
 `folded`), saved by the daemon like the theme, so it survives restarts and
 port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
@@ -1254,7 +1266,7 @@ and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
 agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
 verdicts, **Snooze…** (which picks the row and opens its snooze choices), **Archive** and
-**Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
+**Open on GitHub**; on a group's row, **Open**, Show or Hide its pull requests and **Snooze…**; on a
 row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
@@ -1307,7 +1319,10 @@ They are pressed while every part of their query must already hold as written
 syntax** link beside the "What it catches" heading opens the docs' Inbox page
 at "Filter what you see" (`DOCS_URL` + `inbox/#filter-what-you-see`). A
 switch shows or hides the inbox's count in the sidebar; its pull requests still
-count in the Inbox total. **Delete inbox** asks, then
+count in the Inbox total. **Review automatically** (`auto_review`, on by
+default and for inboxes saved before it) has baum review the inbox's pull
+requests on its own while Settings › Reviews follows the inboxes; while it
+does not, the switch's sentence says so and links there. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the
 sidebar; with only one inbox it is disabled and the page says "Keep at least one
 inbox".
@@ -1805,8 +1820,9 @@ returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
-for which pull requests (a select of authored, requested, both, or all open
-pull requests in the repository), the **Agent** (Claude Code or Codex) and the
+for which pull requests (a select of authored, requested, both, all open
+pull requests in the repository, or "In my inboxes": those held by an inbox
+whose own **Review automatically** switch is on), the **Agent** (Claude Code or Codex) and the
 **Model**, a select of the agent's models with a custom name (saved when its
 field is left or Enter is pressed) beside the reasoning effort ("Default
 effort", which leaves it to the agent, then Low, Medium or High; a higher level
@@ -2456,6 +2472,18 @@ fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 `e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
 only with `INBOX_SCREENSHOTS=1`.
 
+Screenshots for a pull request: `just local_app::shot '<route>' ['<selector>']
+['<name>']` builds the app, rebuilds the fixture (it embeds the build) and runs
+`e2e/shot.spec.ts` against the browser fixture, which writes
+`oss/app/screenshots/<name>-light.png` and `-dark.png` (default name `shot`).
+The route is the part after the launch URL, such as
+`'?page=settings&section=reviews'`; a selector narrows the picture to that
+element. `SHOT_WAIT` (a selector to wait for), `SHOT_WIDTH` and `SHOT_HEIGHT`
+pass through. `screenshots/` is ignored by git and, unlike `test-results/`,
+not emptied by the next Playwright run. The spec skips without `SHOT_ROUTE`, so
+the e2e suites never take these pictures. The fixture holds demo data, not the
+person's own.
+
 Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
 `../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
 `pnpm test:unit` runs them again against the compacted script the daemon inlines
@@ -3044,6 +3072,14 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   once in that window, unless it already has. A tile that hung there says
   "This tile stopped responding when it was checked." instead of mounting;
   every other answer mounts it.
+- **Stored images** (`src/tiles/custom/images.ts`). A tile made in chat
+  holds each image the host stored for it as `baum-image:att_<id>` in its
+  data. Before the frame's `init`, the page reads each from `api/attachments/{id}`
+  (the review page's attachment address) and gives the frame the data with
+  the image as a `data:` URL in its place, the only image a frame's policy
+  admits; the box reads `loading` meanwhile, and an image that cannot be read
+  becomes an empty string. The render check's runner gets its job's data
+  with the images already inlined by the daemon.
 - **A tile's menu** (⋯, or a right click) offers Comment, Ask about this tile,
   **Save to library…** on a custom tile that is not baum's own (it opens the
   panel on the pull request about that tile with "Save this tile to my

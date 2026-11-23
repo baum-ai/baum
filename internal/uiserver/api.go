@@ -622,6 +622,13 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		image, err := s.Attachment(r.Context(), key, n, r.PathValue("id"))
+		if errors.Is(err, store.ErrNotFound) && a.Added != nil {
+			// An image of a tile the person added (an images tile) is the
+			// pull request's, on every version.
+			if added, aerr := a.Added.Image(r.Context(), addedtiles.Key(key.Repository, key.Number), r.PathValue("id")); aerr == nil {
+				image, err = store.Attachment{ID: r.PathValue("id"), ContentType: added.ContentType, Bytes: added.Bytes}, nil
+			}
+		}
 		if err != nil {
 			apiError(w, err)
 			return

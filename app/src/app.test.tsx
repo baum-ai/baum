@@ -7,7 +7,13 @@ import { App } from "./app";
 import { ReviewSettingsForm } from "./desktop/reviews";
 import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone, type Job } from "./api";
+import { openExternal } from "./outside-links";
 import { forgetLastRows } from "./shortcuts";
+
+vi.mock("./outside-links", async (original) => ({
+  ...(await original<typeof import("./outside-links")>()),
+  openExternal: vi.fn(),
+}));
 const entry = (number: number, status = "no_review", historical = false): Entry => ({
   pull_request: {
     repository: "acme/demo",
@@ -235,16 +241,22 @@ it.each([
   },
 );
 
+it("names the page in the window title", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  await act(async () => root.render(<App />));
+  expect(document.title).toBe("Jobs · baum");
+});
+
 it("does not call a review group missing when the groups could not be read", async () => {
   const heal = refuse("api/groups");
   history.replaceState(null, "", "/s/test-ns/?page=pulls&group=g1");
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Couldn't load the review group");
-  expect(node.textContent).not.toContain("does not exist any more");
+  expect(node.textContent).not.toContain("no longer exists");
   expect(retryButtons()).toHaveLength(1);
   heal();
   await act(async () => retryButtons()[0]!.click());
-  expect(node.textContent).toContain("does not exist any more");
+  expect(node.textContent).toContain("no longer exists");
 });
 
 it("reads again on Retry when a read under way never answers", async () => {
@@ -279,7 +291,7 @@ it("reads again on Retry when a read under way never answers", async () => {
   await act(async () => listeners.get("index")!());
   expect(node.textContent).toContain("Couldn't load the review group");
   await act(async () => retryButtons()[0]!.click());
-  expect(node.textContent).toContain("does not exist any more");
+  expect(node.textContent).toContain("no longer exists");
 });
 
 it("says the sessions could not be read instead of listing none", async () => {
@@ -419,15 +431,19 @@ it("shows GitHub states that ask for something, one merge status, and nothing fo
     Array.from(row.querySelectorAll<HTMLElement>(".inbox-status")).map((cell) => cell.textContent),
   );
   expect(states[0]).toEqual(["Review time: ~1 min", "Review: Approved", "Status: Ready"]);
-  // A ready pull request offers Merge after Peek in its row's menu, each with
-  // its key hint.
+  // A ready pull request offers Merge after Open and Peek in its row's menu,
+  // each with its key hint.
   await act(async () =>
     rows[0]!.querySelector<HTMLButtonElement>("button.row-menu-button")!.click(),
   );
   const menuItems = Array.from(
     node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'),
   );
-  expect(menuItems.slice(0, 2).map((item) => item.textContent)).toEqual(["PeekSpace", "Merge…m"]);
+  expect(menuItems.slice(0, 3).map((item) => item.textContent)).toEqual([
+    "Open↵",
+    "PeekSpace",
+    "Merge…m",
+  ]);
   await act(async () =>
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
   );
@@ -1029,6 +1045,10 @@ function stubAutomatic(
   vi.mocked(fetch).mockImplementation((...args) => {
     const path = String(args[0]);
     const init = args[1] as RequestInit | undefined;
+    // The session panel reports the open page 250ms after each navigation on
+    // real timers, so recording it would race the settings saves tests check.
+    if (init?.method === "PUT" && path.endsWith("api/console/page"))
+      return Promise.resolve(Response.json({}));
     if (init?.method === "PUT") {
       puts.push({ path, body: JSON.parse(String(init.body)) });
       if (
@@ -1103,6 +1123,14 @@ it("saves each review setting as it changes", async () => {
     },
   });
   expect(section().textContent).toContain("Saved");
+  // Reviews can follow the inboxes, each with its own switch.
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "inboxes");
+  expect(puts.at(-1)!.body).toMatchObject({ pull_requests: "inboxes" });
+  expect(node.querySelector("#review-all-note")).toBeNull();
+  expect(node.querySelector("#review-inboxes-note")!.textContent).toContain(
+    "Pull requests in any inbox with Review automatically on get reviewed.",
+  );
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "all");
   await choose(global, "on_change");
   expect(puts.at(-1)!.body).toMatchObject({ enabled: true, updates: "on_change" });
   expect(section().textContent).toContain("only when the change would alter it");
@@ -1358,6 +1386,7 @@ it("saves one change at a time and only the newest of those made meanwhile", asy
   vi.mocked(fetch).mockImplementation((...args) => {
     const response = stubbed(...args);
     if ((args[1] as RequestInit | undefined)?.method !== "PUT") return response;
+    if (String(args[0]).endsWith("api/console/page")) return response;
     return new Promise((resolve) => held.push(() => resolve(response)));
   });
   await act(async () => root.render(<App />));
@@ -3342,6 +3371,11 @@ it("folds the sidebar opened under the mouse when the pointer or focus leaves th
     expect(rail()).toBe("open");
     await act(async () => window.dispatchEvent(new FocusEvent("blur")));
     expect(rail()).toBe("folded");
+    // The desktop app's word that the pointer left, where WebKitGTK sends none.
+    await hover();
+    expect(rail()).toBe("open");
+    await act(async () => window.dispatchEvent(new Event("baum:pointer-left")));
+    expect(rail()).toBe("folded");
   } finally {
     vi.useRealTimers();
   }
@@ -3354,8 +3388,8 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
       this.open = true;
     },
   });
-  const open = vi.fn();
-  vi.stubGlobal("open", open);
+  const open = vi.mocked(openExternal);
+  open.mockClear();
   await act(async () => root.render(<App />));
   const help = () => node.querySelector<HTMLButtonElement>('button[aria-label="Help"]')!;
   const choose = async (label: string) => {
@@ -3365,6 +3399,7 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
     expect(items.map((item) => item.textContent)).toEqual([
       "Show shortcuts",
       "Report a problem",
+      "Take the tour",
       "Open the docs",
     ]);
     await act(async () => items.find((item) => item.textContent?.startsWith(label))!.click());
@@ -3373,7 +3408,7 @@ it("offers the shortcuts, a problem report and the docs from Help beside the bau
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   await choose("Open the docs");
-  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
+  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/");
   await choose("Report a problem");
   expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
 });

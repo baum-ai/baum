@@ -343,7 +343,7 @@ it("asks in the session panel with a and the Ask button, ignoring a typed in a t
   // No panel of its own, and nothing in the address.
   expect(node.querySelector(".ask-panel")).toBeNull();
   expect(node.querySelector("[data-search]")!.textContent).toBe("");
-  await act(async () => button("Ask")!.click());
+  await act(async () => button(/^Ask/)!.click());
   expect(panelState?.ask?.seq).toBe(2);
   // Without earlier questions there is nothing to open them with.
   expect(button("Earlier questions")).toBeUndefined();

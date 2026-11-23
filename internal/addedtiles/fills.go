@@ -79,7 +79,7 @@ const (
 // ensureTables creates the added tiles' tables, and adds origin to a fills
 // table that lacks it.
 func ensureTables(ctx context.Context, conn *sql.Conn) error {
-	for _, statement := range []string{schema, fillsSchema, definitionsSchema} {
+	for _, statement := range []string{schema, fillsSchema, definitionsSchema, imagesSchema} {
 		if _, err := conn.ExecContext(ctx, statement); err != nil {
 			return err
 		}
@@ -345,6 +345,12 @@ type Version struct {
 func AddedFor(added []Added, fills []Fill, v Version, definition func(digest string) (json.RawMessage, bool)) (held []tileview.AddedTile, missing []Added) {
 	validator := fillValidator()
 	for _, a := range added {
+		if a.Kind == KindNative {
+			if note, ok := nativeFor(a, fills, v); ok {
+				held = append(held, note)
+			}
+			continue
+		}
 		entry, fillable, ok := addedEntry(a, definition)
 		if !ok || v.Generated[a.Name] {
 			continue

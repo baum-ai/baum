@@ -537,7 +537,7 @@ helpers the card uses) and what the host adds:
   page uses it.
 
 A prompt can carry `images`, each a `src` the host serves and an `alt`: they
-show under its text as thumbnails that open full size in a dialog. Agent
+show under its text as thumbnails that open in the image viewer. Agent
 messages are marked `data-agent-text` (`progress` for the folded ones), for a
 host's keys that move a message at a time.
 
@@ -958,6 +958,16 @@ the full-size dialog. Session-only images have no `source_url`; their image
 blocks cite an attachment ID. Old description-image records remain valid.
 Identical image bytes can retain both PR-description URLs and several session
 origins while sharing one stored image.
+
+Description images and prompt images open in one viewer
+(`components/image-viewer`). It opens as large as the screen allows, enlarging
+an image past its own pixels, and keeps the image's proportions. Its corner
+drags to scale the image; until then it refits when the window changes size.
+A click on the backdrop, the close control or Escape closes it. Its
+full-screen control fills the screen through the browser's Fullscreen API
+(on the dialog's content, since a dialog itself cannot go full screen), or
+covers the window where the host does not grant it. Escape leaves full screen
+before it closes the viewer.
 
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and

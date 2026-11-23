@@ -841,6 +841,10 @@ function SessionPanel({
   const model = conversation ? conversation.model || usedModel : (settings?.model ?? "");
   const directory = conversation?.directory;
   const looking = pageLabel(page, title);
+  const directoryNote =
+    page.page === "pull_request"
+      ? `A checkout of ${page.repository} #${page.pull_request}, made when it starts`
+      : "A new empty folder, made when it starts";
   const headId = useId();
   return (
     <section
@@ -924,14 +928,8 @@ function SessionPanel({
           </div>
           <div className="session-panel-directory">
             <dt>Directory</dt>
-            <dd title={directory}>
-              {directory ? (
-                <code>{homePath(directory)}</code>
-              ) : page.page === "pull_request" ? (
-                `A checkout of ${page.repository} #${page.pull_request}, made when it starts`
-              ) : (
-                "A new empty folder, made when it starts"
-              )}
+            <dd title={directory ?? directoryNote}>
+              {directory ? <code>{homePath(directory)}</code> : directoryNote}
             </dd>
           </div>
           <div>

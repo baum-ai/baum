@@ -1,6 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { ViewerLink, useUrlState } from "@baum/viewer/navigation";
 import { Alert, Button } from "@baum/viewer/components/ui";
+import { Empty } from "@baum/viewer/components/states";
+import { ChevronLeftIcon } from "@baum/viewer/components/icons";
+import { SMALL } from "./action-classes";
 import { backTo } from "./api";
 import { useModal } from "./modal";
 import { PageBar } from "./shell";
@@ -121,12 +124,34 @@ export function GroupMissing() {
   const back = backTo(useUrlState().search);
   return (
     <section>
-      <PageBar title="Review group not found" />
-      <div className="local-page-body local-stack">
-        <ViewerLink href={back.href}>{back.label}</ViewerLink>
-        <p>
-          This review group does not exist any more. Its pull requests and saved reviews are kept.
-        </p>
+      <PageBar
+        title="Review group not found"
+        back={
+          <ViewerLink
+            href={back.href}
+            className="local-page-back"
+            aria-label={`Back to ${back.label}`}
+            title={`Back to ${back.label} (Esc)`}
+          >
+            <ChevronLeftIcon size={18} />
+            <kbd aria-hidden="true" className="key-hint">
+              Esc
+            </kbd>
+          </ViewerLink>
+        }
+      />
+      <div className="local-page-body">
+        <Empty
+          variant="page"
+          title="This review group no longer exists"
+          action={
+            <ViewerLink href={back.href} className={SMALL}>
+              Go to {back.label}
+            </ViewerLink>
+          }
+        >
+          Its pull requests and saved reviews are kept.
+        </Empty>
       </div>
     </section>
   );

@@ -31,6 +31,7 @@ import {
   REFRESH_KEY_LABEL,
   REFRESH_KEY_SHORTCUT,
 } from "./shortcuts";
+import { openExternal } from "./outside-links";
 
 /** The inboxes nested under Inbox, with what changes them. Absent when the
  *  daemon is older and has none. */
@@ -110,7 +111,9 @@ function usePeek(folded: boolean) {
   // window's left edge), or an app that loses focus to another window, may
   // never send the sidebar a leave event, so it would stay open over the page.
   // Leaving the document or the window counts as leaving the sidebar, which
-  // also drops an open still waiting on its delay.
+  // also drops an open still waiting on its delay. On Linux under Wayland,
+  // WebKitGTK may not tell the page the pointer left at all, so the desktop
+  // app announces it with `baum:pointer-left` (oss/desktop/src/pointer.rs).
   useEffect(() => {
     const away = () => {
       inside.current = false;
@@ -123,10 +126,12 @@ function usePeek(folded: boolean) {
       if (event.relatedTarget === null) away();
     };
     window.addEventListener("blur", away);
+    window.addEventListener("baum:pointer-left", away);
     document.addEventListener("mouseout", onMouseOut);
     document.addEventListener("visibilitychange", away);
     return () => {
       window.removeEventListener("blur", away);
+      window.removeEventListener("baum:pointer-left", away);
       document.removeEventListener("mouseout", onMouseOut);
       document.removeEventListener("visibilitychange", away);
     };
@@ -445,6 +450,8 @@ export type RailHelp = {
   shortcuts: () => void;
   /** Starts a report of a problem. */
   report: () => void;
+  /** Starts the tour again. */
+  tour?: () => void;
   /** Set while the button is mounted to what opens its menu, so the `?` key
    *  can open it with the keys on Show shortcuts: `?` then Enter shows the
    *  sheet. */
@@ -472,12 +479,13 @@ function HelpButton({
       ? [
           { label: "Show shortcuts", onSelect: help.shortcuts },
           { label: "Report a problem", onSelect: help.report },
+          ...(help.tour ? [{ label: "Take the tour", onSelect: help.tour }] : []),
         ]
       : []),
     {
       label: "Open the docs",
       // The desktop app hands a new window to the browser.
-      onSelect: () => void window.open(DOCS_URL, "_blank", "noopener,noreferrer"),
+      onSelect: () => openExternal(DOCS_URL),
     },
   ];
   const show = (last = false, returnTo?: Element | null) => {
@@ -623,7 +631,9 @@ function InboxRows({
               className="local-rail-sub"
             >
               <span aria-hidden="true" className="inbox-dot" />
-              <span className="local-rail-label">{inbox.name}</span>
+              <span className="local-rail-label" title={inbox.name}>
+                {inbox.name}
+              </span>
               {count > 0 && inbox.badge ? (
                 <span className="local-rail-sub-count">{count}</span>
               ) : null}

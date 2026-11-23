@@ -60,6 +60,23 @@ type Inbox struct {
 	Query        string   `json:"query"`
 	NoBots       bool     `json:"no_bots"`
 	Badge        bool     `json:"badge"`
+	// AutoReview has the automatic scheduler review the pull requests the
+	// inbox holds, when automatic reviews follow the inboxes
+	// (repos.PullRequestsInboxes). A missing value is true.
+	AutoReview bool `json:"auto_review"`
+}
+
+// UnmarshalJSON reads an inbox, with AutoReview true when the key is missing:
+// inboxes stored before it, and clients that do not send it, keep automatic
+// reviews on.
+func (i *Inbox) UnmarshalJSON(data []byte) error {
+	type plain Inbox
+	p := plain{AutoReview: true}
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*i = Inbox(p)
+	return nil
 }
 
 // State is the stored list and the revision it is at.
@@ -191,7 +208,7 @@ func initialize(raw []byte) ([]byte, State, error) {
 	if len(items) == 0 {
 		def, err := json.Marshal(Inbox{
 			ID: newID(), Name: DefaultName, Color: "blue", What: "any",
-			Owners: []string{}, Risk: "any", Repositories: []string{}, Query: DefaultQuery, Badge: true,
+			Owners: []string{}, Risk: "any", Repositories: []string{}, Query: DefaultQuery, Badge: true, AutoReview: true,
 		})
 		if err != nil {
 			return nil, State{}, err

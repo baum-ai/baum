@@ -293,7 +293,7 @@ func (p *Proposers) inboxTarget(_ agentcontext.PageContext, name string) (*targe
 			return nil, err
 		}
 		if in == (agentcontext.InboxChange{}) {
-			return nil, errors.New("propose a name, color, query or badge")
+			return nil, errors.New("propose a name, color, query, badge or auto_review")
 		}
 		if in.Query != nil {
 			// The app refuses to save a query it cannot read.
@@ -308,7 +308,7 @@ func (p *Proposers) inboxTarget(_ agentcontext.PageContext, name string) (*targe
 			if in.Name == nil {
 				return nil, errors.New("a new inbox needs a name")
 			}
-			list = append(list, inboxes.Inbox{Color: "blue", What: "any", Owners: []string{}, Risk: "any", Repositories: []string{}, Badge: true})
+			list = append(list, inboxes.Inbox{Color: "blue", What: "any", Owners: []string{}, Risk: "any", Repositories: []string{}, Badge: true, AutoReview: true})
 			inbox = &list[len(list)-1]
 		} else {
 			i, err := find(state)
@@ -328,6 +328,9 @@ func (p *Proposers) inboxTarget(_ agentcontext.PageContext, name string) (*targe
 		}
 		if in.Badge != nil {
 			inbox.Badge = *in.Badge
+		}
+		if in.AutoReview != nil {
+			inbox.AutoReview = *in.AutoReview
 		}
 		return list, state.Check(list)
 	}

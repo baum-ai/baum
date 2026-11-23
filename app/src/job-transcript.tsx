@@ -24,6 +24,8 @@ import { phaseText, ThreadOutcomes } from "./fix";
 import { jobOrigin, jobTarget, jobType, useJobTimes } from "./job-info";
 import { UsageBar } from "./usage";
 import { LoadingStatus } from "./nine-dots";
+import { Empty } from "@baum/viewer/components/states";
+import { SMALL } from "./action-classes";
 import { ReadFailed } from "./page-state";
 import { PageBar, pageScroll } from "./shell";
 import { useFollowScroll } from "./session-transcript";
@@ -583,10 +585,17 @@ export function JobPage({
         ) : loading ? (
           <LoadingStatus block>Loading job…</LoadingStatus>
         ) : (
-          <section className="local-panel local-transcript-missing">
-            <h2>Job not found</h2>
-            <p>It may be older than the jobs this computer keeps.</p>
-          </section>
+          <Empty
+            variant="page"
+            title="Job not found"
+            action={
+              <Link href={appURL("?page=jobs")} className={SMALL}>
+                Go to Jobs
+              </Link>
+            }
+          >
+            It may be older than the jobs this computer keeps.
+          </Empty>
         )}
       </div>
     </>
