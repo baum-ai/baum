@@ -82,6 +82,11 @@ including across independent store instances.
   brought back by Undo keeps its links; any other `id` is refused. Other
   methods answer 405.
 
+`PUT` saves through `API.Save` (`Store.Replace`, then `Changed`), which a
+chat's proposal of a new inbox or a change to one also saves with, at the
+revision the proposal was read at; `State.Check` refuses a list `Replace`
+would refuse, with the same error, without saving.
+
 Errors are `{"code": "...", "message": "..."}` with these codes. A refused save
 changes nothing.
 

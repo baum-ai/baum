@@ -322,6 +322,17 @@ func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 	return next, err
 }
 
+// Check refuses a list Replace would refuse over this state, with the same
+// InvalidError, and saves nothing. Revisions are not compared.
+func (s State) Check(inboxes []Inbox) error {
+	known := map[string]bool{}
+	for _, inbox := range s.Inboxes {
+		known[inbox.ID] = true
+	}
+	_, err := normalize(inboxes, known)
+	return err
+}
+
 func newID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

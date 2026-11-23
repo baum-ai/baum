@@ -214,12 +214,12 @@ export function BuildStatus({
               : "A feature history build is in progress or stopped"}
         </p>
         {building.workflow === "legacy" ? (
-          <p className="text-xs text-(--text-tertiary)">
+          <p className="text-xs text-tertiary">
             This saved build covers full history. Resume keeps its saved progress.
           </p>
         ) : null}
         {building.coverage ? <BuildCoverageSummary coverage={building.coverage} /> : null}
-        <p className="text-xs text-(--text-tertiary)">
+        <p className="text-xs text-tertiary">
           {!building.coverage && building.total > 0
             ? `${formatCount(building.placed)} of ${formatCount(building.total)} pull requests placed, `
             : null}
@@ -234,7 +234,7 @@ export function BuildStatus({
         {onNewBuild ? action("Start new build", onNewBuild, false) : null}
       </div>
       {onNewBuild ? (
-        <p className="w-full text-xs text-(--text-tertiary)">
+        <p className="w-full text-xs text-tertiary">
           Starting a new build replaces this build's saved progress and chooses recent work again.
           Current features stay until it finishes.
         </p>
@@ -304,7 +304,7 @@ export function useFeatureBuildStart(targets: BuildTarget[], started: () => void
 /** A compact account of the window and evidence made available to discovery. */
 export function BuildCoverageSummary({ coverage }: { coverage: BuildCoverage }) {
   return (
-    <div className="text-xs text-(--text-tertiary)" aria-label="Build coverage">
+    <div className="text-xs text-tertiary" aria-label="Build coverage">
       {coverage.since ? (
         <p>Pull requests updated since {formatDate(coverage.since)}; older open work included.</p>
       ) : null}

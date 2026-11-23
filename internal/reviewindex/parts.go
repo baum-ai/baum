@@ -211,7 +211,7 @@ func (s *Service) storeStamp(commonDir string) (string, []os.FileInfo, bool) {
 // fileStoreStamp stamps the store store.Open reads for commonDir: the size,
 // modification time and mode of versions.sqlite and its write-ahead log
 // under both roots it chooses between, a missing file included, and the
-// files themselves for their identity. It only stats them: closing a
+// files themselves for their identity. On Unix it only stats them: closing a
 // descriptor to a SQLite file drops this process's locks on it.
 //
 // Unlike the watcher's fingerprint, it does not look through lease renewals
@@ -228,7 +228,7 @@ func fileStoreStamp(commonDir string, now time.Time) (string, []os.FileInfo, boo
 	for _, root := range roots {
 		for _, name := range []string{"versions.sqlite", "versions.sqlite-wal"} {
 			path := filepath.Join(root, name)
-			info, err := os.Stat(path)
+			info, err := statStoreFile(path)
 			switch {
 			case errors.Is(err, fs.ErrNotExist):
 				_, _ = fmt.Fprintf(&b, "%q -\n", path)

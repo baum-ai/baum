@@ -128,9 +128,10 @@ func TestACodexSessionIsFoundByItsRolloutsNameBesideCompressedOnes(t *testing.T)
 	home := t.TempDir()
 	const id = "019f0000-0000-7000-8000-000000000005"
 	day := filepath.Join(home, ".codex", "sessions", "2026", "10", "20")
-	// Codex compresses old rollouts; baum does not read them, and they must
-	// not stop the lookup.
+	// Codex compresses old rollouts; one that cannot be read, or is another
+	// thread's, must not stop the lookup.
 	write(t, filepath.Join(home, ".codex", "sessions", "2026", "02", "11", "rollout-2026-02-11T10-42-31-019c0000-0000-7000-8000-000000000001.jsonl.zst"), "zstd")
+	write(t, filepath.Join(home, ".codex", "sessions", "2026", "02", "11", "rollout-2026-02-11T10-42-31-"+id+".jsonl.zst"), "zstd")
 	// A rollout named for the id whose first line names another thread is
 	// not it.
 	write(t, filepath.Join(day, "rollout-2026-10-20T08-00-00-"+id+".jsonl"),

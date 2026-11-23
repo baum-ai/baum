@@ -3,6 +3,7 @@ package collector
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func storeLayout(t *testing.T, dir string) (claudeDir, codexDir, cursorDir strin
 
 	write(t, filepath.Join(codexDir, "2025", "06", "01", "rollout-2025-06-01T10-00-00-abc.jsonl"), `{"type":"session_meta"}`)
 	write(t, filepath.Join(filepath.Dir(codexDir), "archived_sessions", "2025", "06", "02", "rollout-2025-06-02T10-00-00-def.jsonl"), `{"type":"session_meta"}`)
-	// Only rollout-*.jsonl files count.
+	// Only rollout-*.jsonl and rollout-*.jsonl.zst files count.
 	write(t, filepath.Join(codexDir, "2025", "06", "01", "history.jsonl"), `{}`)
 
 	write(t, filepath.Join(cursorDir, "User", "globalStorage", "state.vscdb"), "SQLite format 3\x00")
@@ -187,5 +188,25 @@ func touch(t *testing.T, path string, when time.Time) {
 	t.Helper()
 	if err := os.Chtimes(path, when, when); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A compressed rollout is a store, unless Codex left the plain file beside it.
+func TestFindStoresListsCompressedCodexRollouts(t *testing.T) {
+	dir := t.TempDir()
+	_, codexDir, _ := storeLayout(t, dir)
+	day := filepath.Join(codexDir, "2025", "06", "01")
+	old := filepath.Join(day, "rollout-2025-05-01T10-00-00-old.jsonl.zst")
+	write(t, old, "zstd")
+	write(t, filepath.Join(day, "rollout-2025-06-01T10-00-00-abc.jsonl.zst"), "zstd")
+	write(t, filepath.Join(day, "notes-rollout.jsonl.zst"), "zstd")
+
+	stores, err := FindStores(StoreOptions{CodexSessionsDir: codexDir, Sources: []vendors.Slug{vendors.Codex}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := paths(stores, vendors.Codex)
+	if len(got) != 3 || !slices.Contains(got, old) {
+		t.Fatalf("codex stores = %v, want the two plain rollouts and %s", got, old)
 	}
 }

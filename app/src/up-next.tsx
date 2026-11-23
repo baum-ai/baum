@@ -2517,7 +2517,7 @@ function Panel({
             onClick={() => setMenu((open) => !open)}
           >
             Snooze
-            <ChevronDownIcon size={14} className="text-(--text-tertiary)" />
+            <ChevronDownIcon size={14} className="text-tertiary" />
             <kbd aria-hidden="true" className="key-hint">
               s
             </kbd>
@@ -2593,7 +2593,7 @@ function Panel({
       ))}
       {item && item.working.length > 0 ? (
         <p className="upnext-agents">
-          <LiveDot className="text-(--status-positive)" />
+          <LiveDot className="text-status-positive" />
           {/* Each opens on Sessions with that session selected. */}
           {item.working.length === 1 ? (
             <Link href={peekHref(item.working[0]!)}>
@@ -3312,7 +3312,7 @@ export function MergeReadyDialog({
         </h2>
         {finished ? <CloseButton ref={closeButton} onClick={close} /> : null}
       </div>
-      <p className="my-3 text-(--text-secondary)">
+      <p className="my-3 text-secondary">
         Each merges with GitHub's default method for you in its repository, and only at the commit
         shown here.
       </p>
@@ -3325,14 +3325,14 @@ export function MergeReadyDialog({
                 <span className="block truncate font-medium">
                   #{pr.number} {pr.title}
                 </span>
-                <span className="block text-xs text-(--text-tertiary)">
+                <span className="block text-xs text-tertiary">
                   {pr.repository}
                   {merge.options && !merge.refusal
                     ? ` · ${mergeMethodLabel(defaultMergeMethod(merge.options))}`
                     : ""}
                 </span>
                 {merge.refusal || merge.error ? (
-                  <span className="block text-xs text-(--status-critical)">
+                  <span className="block text-xs text-status-critical">
                     {merge.refusal || merge.error}
                   </span>
                 ) : null}
@@ -3346,7 +3346,7 @@ export function MergeReadyDialog({
                     Merged
                   </span>
                 ) : merge.state === "failed" ? (
-                  <span className="text-(--status-critical)">Not merged</span>
+                  <span className="text-status-critical">Not merged</span>
                 ) : null}
               </span>
             </li>

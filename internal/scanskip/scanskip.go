@@ -7,8 +7,9 @@ import (
 	"strings"
 )
 
-// Dir reports directory names a scan never enters: hidden folders,
-// dependency and build output, and operating system application folders.
+// Dir reports directory names a scan never enters: hidden folders (.venv,
+// .git and the like), dependency, virtual environment and build output, and
+// operating system application folders.
 func Dir(name string) bool { return DirFor(runtime.GOOS, name) }
 
 // UserData reports well-known folders of a home directory that hold personal
@@ -40,7 +41,7 @@ func DirFor(goos, name string) bool {
 	if strings.HasPrefix(name, ".") {
 		return true
 	}
-	for _, skipped := range []string{"node_modules", "vendor", "target", "dist", "build", "__pycache__", "Library", "Applications"} {
+	for _, skipped := range []string{"node_modules", "bower_components", "vendor", "target", "dist", "build", "__pycache__", "venv", "site-packages", "Pods", "Carthage", "DerivedData", "Library", "Applications"} {
 		if equal(goos, name, skipped) {
 			return true
 		}

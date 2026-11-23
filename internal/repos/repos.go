@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
@@ -76,6 +77,13 @@ type DecisionPreferences struct {
 	Backend *config.Backend `json:"backend,omitempty"`
 	Model   *string         `json:"model,omitempty"`
 	Effort  *string         `json:"effort,omitempty"`
+	// ClaudeConfigDir is the Claude Code configuration directory extraction
+	// runs with, as Preferences.FixClaudeConfigDir is for fixes: only with a
+	// Backend of its own; without one extraction follows the reviews,
+	// directory included.
+	ClaudeConfigDir *string `json:"claude_config_dir,omitempty"`
+	// CodexHome is the Codex home extraction runs with, under the same rule.
+	CodexHome *string `json:"codex_home,omitempty"`
 }
 
 // AppearancePreferences are device choices kept independently of the daemon HTTP origin.
@@ -85,6 +93,10 @@ type AppearancePreferences struct {
 	// PageModifier is the key held with 1 to 8 to open the sidebar's pages:
 	// "meta", "ctrl" or "alt"; empty is the platform's command key.
 	PageModifier string `json:"page_modifier,omitempty"`
+	// Sidebar is whether the app's sidebar stays open beside the page
+	// ("pinned") or folds to its glyphs and opens over the page under the
+	// pointer ("folded"); empty is pinned.
+	Sidebar string `json:"sidebar,omitempty"`
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan
@@ -115,6 +127,19 @@ type Preferences struct {
 	FixBackend *config.Backend `json:"fix_backend,omitempty"`
 	FixModel   *string         `json:"fix_model,omitempty"`
 	FixEffort  *string         `json:"fix_effort,omitempty"`
+	// ClaudeConfigDir and FixClaudeConfigDir are the Claude Code
+	// configuration directories reviews (with data extraction) and fixes run
+	// Claude Code with (config.Config.ClaudeConfigDir), absolute paths; nil
+	// or empty leaves it to the environment. FixClaudeConfigDir applies only
+	// with a FixBackend: without one a fix follows the reviews, directory
+	// included. Another agent ignores them.
+	ClaudeConfigDir    *string `json:"claude_config_dir,omitempty"`
+	FixClaudeConfigDir *string `json:"fix_claude_config_dir,omitempty"`
+	// CodexHome and FixCodexHome are the same for Codex: the Codex homes
+	// reviews and fixes run Codex with (config.Config.CodexHome), under the
+	// same rules.
+	CodexHome    *string `json:"codex_home,omitempty"`
+	FixCodexHome *string `json:"fix_codex_home,omitempty"`
 	// PullRequests narrows which pull requests get automatic reviews:
 	// PullRequestsAuthored, PullRequestsRequested, PullRequestsAll, or empty
 	// for both authored and requested.
@@ -228,6 +253,25 @@ func (p Preferences) Validate() error {
 	if p.FixBackend == nil && p.FixEffort != nil && *p.FixEffort != "" {
 		return errors.New("choose the agent for fixes before its effort")
 	}
+	if p.FixBackend == nil && (chosen(p.FixClaudeConfigDir) || chosen(p.FixCodexHome)) {
+		return errors.New("choose the agent for fixes before its configuration directory")
+	}
+	if p.Decisions.Backend == nil && (chosen(p.Decisions.ClaudeConfigDir) || chosen(p.Decisions.CodexHome)) {
+		return errors.New("choose the agent for data extraction before its configuration directory")
+	}
+	for what, dirs := range map[string][]*string{
+		agentdirs.Claude.What: {p.ClaudeConfigDir, p.FixClaudeConfigDir, p.Decisions.ClaudeConfigDir},
+		agentdirs.Codex.What:  {p.CodexHome, p.FixCodexHome, p.Decisions.CodexHome},
+	} {
+		for _, dir := range dirs {
+			if !chosen(dir) {
+				continue
+			}
+			if clean, err := agentdirs.Normalize(*dir); err != nil || clean != *dir {
+				return fmt.Errorf("%s %q must be an absolute, clean path", what, *dir)
+			}
+		}
+	}
 	if err := config.ValidateAgentEnv(p.AgentEnv); err != nil {
 		return fmt.Errorf("agent environment: %w", err)
 	}
@@ -247,8 +291,12 @@ func ValidateTimeLimit(minutes int) error {
 	return nil
 }
 
-// Resolve overlays the app's backend, model, agent environment and time
-// limits on the config file's.
+// chosen reports whether s holds a non-empty choice.
+func chosen(s *string) bool { return s != nil && *s != "" }
+
+// Resolve overlays the app's backend, model, Claude Code configuration
+// directory, Codex home, agent environment and time limits on the config
+// file's.
 func (p Preferences) Resolve(global config.Config) config.Config {
 	if len(p.AgentEnv) > 0 {
 		global.AgentEnv = p.AgentEnv
@@ -270,30 +318,53 @@ func (p Preferences) Resolve(global config.Config) config.Config {
 	if p.Effort != nil {
 		global.Effort = *p.Effort
 	}
+	if p.ClaudeConfigDir != nil {
+		global.ClaudeConfigDir = *p.ClaudeConfigDir
+	}
+	if p.CodexHome != nil {
+		global.CodexHome = *p.CodexHome
+	}
 	return global
 }
 
 // ResolveExtraction gives the config data extraction runs with, from cfg,
-// the config resolved for reviews: the extraction's own effort. Its backend
-// and model are decisionlog's to resolve.
+// the config resolved for reviews: the extraction's own effort, and with an
+// agent of its own its own Claude Code configuration directory and Codex home
+// (none when it chose none). Its backend and model are decisionlog's to resolve.
 func (p Preferences) ResolveExtraction(cfg config.Config) config.Config {
 	cfg.Effort = ""
 	if p.Decisions.Effort != nil {
 		cfg.Effort = *p.Decisions.Effort
+	}
+	if p.Decisions.Backend != nil {
+		cfg.ClaudeConfigDir, cfg.CodexHome = "", ""
+		if p.Decisions.ClaudeConfigDir != nil {
+			cfg.ClaudeConfigDir = *p.Decisions.ClaudeConfigDir
+		}
+		if p.Decisions.CodexHome != nil {
+			cfg.CodexHome = *p.Decisions.CodexHome
+		}
 	}
 	return cfg
 }
 
 // ResolveFix gives the config a fix runs with, from review, the config
 // already resolved for reviews. A set FixBackend replaces the review backend,
-// model and effort, and takes FixModel and FixEffort (empty for the backend's
-// own); without one the fix follows the reviews.
+// model, effort, Claude Code configuration directory and Codex home, and takes
+// FixModel, FixEffort, FixClaudeConfigDir and FixCodexHome (empty for the
+// backend's own); without one the fix follows the reviews.
 func (p Preferences) ResolveFix(review config.Config) config.Config {
 	if p.FixBackend == nil {
 		return review
 	}
 	review.Backend = *p.FixBackend
-	review.Model, review.Effort = "", ""
+	review.Model, review.Effort, review.ClaudeConfigDir, review.CodexHome = "", "", "", ""
+	if p.FixClaudeConfigDir != nil {
+		review.ClaudeConfigDir = *p.FixClaudeConfigDir
+	}
+	if p.FixCodexHome != nil {
+		review.CodexHome = *p.FixCodexHome
+	}
 	if p.FixModel != nil {
 		review.Model = strings.TrimSpace(*p.FixModel)
 	}
@@ -301,6 +372,53 @@ func (p Preferences) ResolveFix(review config.Config) config.Config {
 		review.Effort = *p.FixEffort
 	}
 	return review
+}
+
+// ClaudeConfigDirs are the Claude Code configuration directories chosen for
+// the runs that use Claude Code, the reviews', the fixes' then data
+// extraction's, once each, with global the config file's. A directory chosen
+// for another agent, which ignores it, is left out; Auto counts, as it runs
+// Claude Code first.
+func (p Preferences) ClaudeConfigDirs(global config.Config) []string {
+	return p.runDirs(global, func(cfg config.Config) string {
+		if cfg.Backend == config.BackendClaude || cfg.Backend == config.BackendAuto || cfg.Backend == "" {
+			return cfg.ClaudeConfigDir
+		}
+		return ""
+	})
+}
+
+// CodexHomes are the Codex homes chosen for the runs that use Codex, in the
+// same order and under the same rules as ClaudeConfigDirs; only a run with
+// the Codex backend counts.
+func (p Preferences) CodexHomes(global config.Config) []string {
+	return p.runDirs(global, func(cfg config.Config) string {
+		if cfg.Backend == config.BackendCodex {
+			return cfg.CodexHome
+		}
+		return ""
+	})
+}
+
+// runDirs is dir of the configs of reviews, fixes and data extraction (only
+// while it is on), once each and without empty ones.
+func (p Preferences) runDirs(global config.Config, dir func(config.Config) string) []string {
+	review := p.Resolve(global)
+	extraction := p.ResolveExtraction(review)
+	if p.Decisions.Backend != nil {
+		extraction.Backend = *p.Decisions.Backend
+	}
+	uses := []config.Config{review, p.ResolveFix(review)}
+	if p.Decisions.Enabled == nil || *p.Decisions.Enabled {
+		uses = append(uses, extraction)
+	}
+	var dirs []string
+	for _, cfg := range uses {
+		if d := dir(cfg); d != "" && !slices.Contains(dirs, d) {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
 }
 
 // DefaultPreferences apply until the user changes them: automatic generation
@@ -1015,6 +1133,16 @@ func (r *Registry) Preferences(ctx context.Context) (Preferences, error) {
 // UpdatePreferences atomically edits the global preferences. The edit runs
 // under the writer transaction and must not call back into the registry.
 func (r *Registry) UpdatePreferences(ctx context.Context, edit func(Preferences) Preferences) (Preferences, error) {
+	return r.UpdatePreferencesIf(ctx, func(p Preferences) (Preferences, error) { return edit(p), nil })
+}
+
+// UpdatePreferencesIf is UpdatePreferences with an edit that may refuse: an
+// error it returns rolls the transaction back, writes nothing and is
+// returned as it is. The transaction holds the write lock from its start
+// (appdb's immediate transactions), so a check the edit makes of the
+// preferences it is given, such as the revision a proposal was read at, and
+// the write are one step.
+func (r *Registry) UpdatePreferencesIf(ctx context.Context, edit func(Preferences) (Preferences, error)) (Preferences, error) {
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return Preferences{}, e
@@ -1032,7 +1160,9 @@ func (r *Registry) UpdatePreferences(ctx context.Context, edit func(Preferences)
 	if e = json.Unmarshal([]byte(raw), &p); e != nil {
 		return Preferences{}, e
 	}
-	p = edit(p)
+	if p, e = edit(p); e != nil {
+		return Preferences{}, e
+	}
 	if _, e = tx.ExecContext(ctx, "UPDATE preferences SET value=? WHERE key=?", mustJSON(p), automaticPreferences); e != nil {
 		return Preferences{}, e
 	}
@@ -1218,6 +1348,40 @@ func usedEarlierNames(repository string, clones []Clone) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// UpdateRepositoryIf replaces a picked repository's shared settings with what
+// edit makes of the stored ones, read and written in one immediate
+// transaction: an error edit returns, such as a revision a proposal was read
+// at that no longer holds, writes nothing and is returned as it is. An
+// unpicked repository is ErrNotFound, as with UpdateRepository.
+func (r *Registry) UpdateRepositoryIf(ctx context.Context, repository string, edit func(Settings) (Settings, error)) (Settings, error) {
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return Settings{}, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	identity := strings.ToLower(repository)
+	var raw string
+	e = tx.QueryRowContext(ctx, `SELECT r.settings FROM repositories r WHERE r.identity=? AND (`+r.pickedSQL()+`)`, identity).Scan(&raw)
+	if errors.Is(e, sql.ErrNoRows) {
+		return Settings{}, ErrNotFound
+	}
+	if e != nil {
+		return Settings{}, e
+	}
+	var current Settings
+	if e = json.Unmarshal([]byte(raw), &current); e != nil {
+		return Settings{}, e
+	}
+	next, e := edit(current)
+	if e != nil {
+		return Settings{}, e
+	}
+	if _, e = tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), identity); e != nil {
+		return Settings{}, e
+	}
+	return next, tx.Commit()
 }
 
 // UpdateRepository replaces a picked repository's shared settings by identity.

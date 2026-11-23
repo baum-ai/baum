@@ -109,14 +109,12 @@ export function SessionCard({
       <section className="flex min-w-0 flex-col" data-session-id={session.run_id}>
         <div className="flex items-center gap-3 px-5 py-3.5">
           <span className={cn(CARD_LABEL, "flex-none")}>Session</span>
-          <span className="min-w-0 flex-1 text-base text-(--text-secondary)">
+          <span className="min-w-0 flex-1 text-base text-secondary">
             <HarnessName vendor={session.source} className="align-middle" /> attribution
           </span>
           <Badge size="compact">Details restricted</Badge>
         </div>
-        <p className="border-t border-(--border-subtle) px-5 py-4 text-base text-(--text-tertiary)">
-          {restrictedNote}
-        </p>
+        <p className="border-t border-subtle px-5 py-4 text-base text-tertiary">{restrictedNote}</p>
       </section>
     );
   }
@@ -131,29 +129,23 @@ export function SessionCard({
           aria-expanded={open}
           onClick={toggle}
           className={cn(
-            "flex w-full cursor-pointer items-center gap-3 rounded-t-(--radius-lg) px-5 py-3.5 text-left transition-colors duration-150 hover:bg-(--surface-hover)",
-            (open || Boolean(meta)) && "border-b border-(--border-subtle)",
+            "flex w-full cursor-pointer items-center gap-3 rounded-t-lg px-5 py-3.5 text-left transition-colors duration-150 hover:bg-surface-hover",
+            (open || Boolean(meta)) && "border-b border-subtle",
             FOCUS_RING,
           )}
         >
           <ChevronDownIcon
-            className={cn(
-              "flex-none text-(--text-tertiary) transition-transform",
-              !open && "-rotate-90",
-            )}
+            className={cn("flex-none text-tertiary transition-transform", !open && "-rotate-90")}
           />
           <span className="sr-only">Session: </span>
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="truncate text-base font-medium text-(--text-primary)">
+            <span className="truncate text-base font-medium text-primary">
               {session.title || "Coding session"}
             </span>
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-(--text-tertiary)">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-tertiary">
               <HarnessName vendor={session.source} size={12} />
               {full.models.length > 0 ? (
-                <span
-                  className="text-(--text-secondary)"
-                  title={full.models.map(modelLabel).join(", ")}
-                >
+                <span className="text-secondary" title={full.models.map(modelLabel).join(", ")}>
                   {full.models.map(modelLabel).join(" · ")}
                 </span>
               ) : null}
@@ -209,7 +201,7 @@ export function SessionCard({
         <div
           className={cn(
             "flex flex-wrap items-center gap-x-3 gap-y-1.5 px-5 py-2.5 text-base",
-            open && "border-b border-(--border-subtle)",
+            open && "border-b border-subtle",
           )}
         >
           {meta}
@@ -221,7 +213,7 @@ export function SessionCard({
           {/* Nothing of this session's own figures is on the card until they
               arrive: zeroes would read as measurements. */}
           {typeof detail === "string" && full.prompts.length === 0 ? (
-            <p className="flex items-center gap-2 text-base text-(--text-tertiary) italic">
+            <p className="flex items-center gap-2 text-base text-tertiary italic">
               {detail === "loading" ? <Spinner /> : null}
               {detail === "loading" ? "Loading this session…" : "This session could not be loaded."}
             </p>
@@ -275,10 +267,7 @@ function SessionTotals({
   const totals = session.totals;
   return (
     <div
-      className={cn(
-        "@container space-y-3 border-b border-(--border-subtle)",
-        compact ? "pb-3" : "mb-5 pb-4",
-      )}
+      className={cn("@container space-y-3 border-b border-subtle", compact ? "pb-3" : "mb-5 pb-4")}
     >
       <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-base @lg:grid-cols-4">
         <Stat
@@ -287,7 +276,7 @@ function SessionTotals({
             <span className="flex flex-wrap items-baseline gap-x-2">
               <span>{formatCompact(session.tokens)}</span>
               {formatCost ? (
-                <span className="text-(--text-secondary)">
+                <span className="text-secondary">
                   {formatCost(session.cost_usd, session.cost_is_floor) ?? formatUSD(null)}
                 </span>
               ) : null}
@@ -314,11 +303,11 @@ function SessionTotals({
                 <span className="flex flex-wrap gap-x-3">
                   <span>
                     {formatCount(totals.files_read)}{" "}
-                    <span className="text-xs text-(--text-tertiary)">read</span>
+                    <span className="text-xs text-tertiary">read</span>
                   </span>
                   <span>
                     {formatCount(totals.files_edited)}{" "}
-                    <span className="text-xs text-(--text-tertiary)">edited</span>
+                    <span className="text-xs text-tertiary">edited</span>
                   </span>
                 </span>
               }
@@ -327,12 +316,8 @@ function SessionTotals({
               label="Lines"
               value={
                 <span className="flex flex-wrap gap-x-2">
-                  <span className="text-(--status-positive)">
-                    +{formatCount(totals.added_lines)}
-                  </span>
-                  <span className="text-(--status-critical)">
-                    −{formatCount(totals.removed_lines)}
-                  </span>
+                  <span className="text-status-positive">+{formatCount(totals.added_lines)}</span>
+                  <span className="text-status-critical">−{formatCount(totals.removed_lines)}</span>
                 </span>
               }
             />
@@ -342,7 +327,7 @@ function SessionTotals({
                 <span className="flex flex-wrap items-baseline gap-x-3">
                   <span>{formatCount(totals.tool_calls)}</span>
                   {totals.failed_calls > 0 ? (
-                    <span className="text-xs text-(--status-critical)">
+                    <span className="text-xs text-status-critical">
                       {formatCount(totals.failed_calls)} failed
                     </span>
                   ) : null}

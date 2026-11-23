@@ -166,6 +166,10 @@ func requirePicked(ctx context.Context, tx *sql.Tx, repository string) error {
 // non-empty repository must be picked (ErrNotPicked). A rejected text fails
 // with an error wrapping ErrInvalidPrompt.
 func (r *Registry) SetPromptOverride(ctx context.Context, repository string, id prompt.ID, text string) (PromptOverride, error) {
+	return r.setPromptOverride(ctx, repository, id, text, nil)
+}
+
+func (r *Registry) setPromptOverride(ctx context.Context, repository string, id prompt.ID, text string, check func(PromptState) error) (PromptOverride, error) {
 	if e := prompt.Validate(id, text); e != nil {
 		return PromptOverride{}, fmt.Errorf("%w: %s", ErrInvalidPrompt, e.Error())
 	}
@@ -180,6 +184,9 @@ func (r *Registry) SetPromptOverride(ctx context.Context, repository string, id 
 	if e = requirePicked(ctx, tx, scope); e != nil {
 		return PromptOverride{}, e
 	}
+	if e = r.checkPrompt(ctx, tx, scope, id, check); e != nil {
+		return PromptOverride{}, e
+	}
 	if _, e = tx.ExecContext(ctx, `INSERT INTO prompt_overrides VALUES (?,?,?,?,?) ON CONFLICT(repository,prompt_id) DO UPDATE SET text=excluded.text, based_on=excluded.based_on, updated_at=excluded.updated_at`,
 		scope, string(id), text, o.BasedOn, o.UpdatedAt.Format(time.RFC3339Nano)); e != nil {
 		return PromptOverride{}, e
@@ -191,6 +198,10 @@ func (r *Registry) SetPromptOverride(ctx context.Context, repository string, id 
 // is not an error. An unknown id fails with ErrInvalidPrompt and a
 // non-empty repository must be picked (ErrNotPicked).
 func (r *Registry) DeletePromptOverride(ctx context.Context, repository string, id prompt.ID) error {
+	return r.deletePromptOverride(ctx, repository, id, nil)
+}
+
+func (r *Registry) deletePromptOverride(ctx context.Context, repository string, id prompt.ID, check func(PromptState) error) error {
 	if _, ok := prompt.Lookup(id); !ok {
 		return fmt.Errorf("%w: unknown prompt %q", ErrInvalidPrompt, id)
 	}
@@ -203,10 +214,80 @@ func (r *Registry) DeletePromptOverride(ctx context.Context, repository string, 
 	if e = requirePicked(ctx, tx, scope); e != nil {
 		return e
 	}
+	if e = r.checkPrompt(ctx, tx, scope, id, check); e != nil {
+		return e
+	}
 	if _, e = tx.ExecContext(ctx, `DELETE FROM prompt_overrides WHERE repository=? AND prompt_id=?`, scope, string(id)); e != nil {
 		return e
 	}
 	return tx.Commit()
+}
+
+// PromptState is one prompt's stored rows as a scope sees them: the scope's
+// own override, and for a repository the global one it inherits; nil where
+// there is none.
+type PromptState struct {
+	Own    *PromptOverride
+	Global *PromptOverride
+}
+
+// PromptState reads one prompt's rows for a scope ("" is global) in one
+// transaction. A non-empty repository must be picked (ErrNotPicked).
+func (r *Registry) PromptState(ctx context.Context, repository string, id prompt.ID) (PromptState, error) {
+	global, own, picked, e := r.promptSnapshot(ctx, repository)
+	if e != nil {
+		return PromptState{}, e
+	}
+	if repository != GlobalPrompts && !picked {
+		return PromptState{}, ErrNotPicked
+	}
+	if repository == GlobalPrompts {
+		own, global = global, nil
+	}
+	return promptStateOf(id, own, global), nil
+}
+
+func promptStateOf(id prompt.ID, own, global map[prompt.ID]PromptOverride) PromptState {
+	var state PromptState
+	if o, ok := own[id]; ok {
+		state.Own = &o
+	}
+	if o, ok := global[id]; ok {
+		state.Global = &o
+	}
+	return state
+}
+
+// checkPrompt runs check, when set, on the prompt's rows as tx reads them.
+func (r *Registry) checkPrompt(ctx context.Context, tx *sql.Tx, scope string, id prompt.ID, check func(PromptState) error) error {
+	if check == nil {
+		return nil
+	}
+	own, e := r.promptRows(ctx, tx, scope)
+	if e != nil {
+		return e
+	}
+	var global map[prompt.ID]PromptOverride
+	if scope != GlobalPrompts {
+		if global, e = r.promptRows(ctx, tx, GlobalPrompts); e != nil {
+			return e
+		}
+	}
+	return check(promptStateOf(id, own, global))
+}
+
+// PutPromptOverrideIf is what PUT .../prompts/{id} does, a text stored with
+// SetPromptOverride's validation or, for nil or "", the override deleted, but
+// only when check accepts the prompt's rows as the writing transaction reads
+// them: the transaction holds the write lock from its start, so the check
+// (the revision a proposal was read at) and the write are one step. An error
+// check returns writes nothing and is returned as it is.
+func (r *Registry) PutPromptOverrideIf(ctx context.Context, repository string, id prompt.ID, text *string, check func(PromptState) error) error {
+	if text == nil || *text == "" {
+		return r.deletePromptOverride(ctx, repository, id, check)
+	}
+	_, e := r.setPromptOverride(ctx, repository, id, *text, check)
+	return e
 }
 
 // ResolvePrompts picks, for every catalogue prompt, the repository's

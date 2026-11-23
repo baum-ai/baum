@@ -3,6 +3,7 @@ package claude
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -57,8 +58,8 @@ func (c *Backend) args(request agent.Request) []string {
 			args = append(args, "--fork-session")
 		}
 	}
-	return append(args, "--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
-		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
+	return append(append(args, "--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
+		"--setting-sources", ""), mcpArgs(request)...)
 }
 
 // fixSystemPrompt frames a fix (Backend.Fix).
@@ -76,10 +77,39 @@ func (c *Backend) fixArgs(request agent.Request) []string {
 		args = append(args, "--model", c.Model)
 	}
 	args = append(args, c.effortArgs()...)
-	return append(maxTurns(append(args, "--system-prompt", fixSystemPrompt), request),
+	return append(append(maxTurns(append(args, "--system-prompt", fixSystemPrompt), request),
 		"--restricted", "--tools", "Read,Glob,Grep,Edit,Write", "--permission-mode", "acceptEdits", "--no-session-persistence",
 		"--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
-		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
+		"--setting-sources", ""), mcpArgs(request)...)
+}
+
+// noMCPConfig is the --mcp-config of a run without an MCP server.
+const noMCPConfig = `{"mcpServers":{}}`
+
+// mcpArgs are the flags that decide which MCP servers a run loads.
+// --strict-mcp-config always stays, so only the servers --mcp-config names
+// load, never the user's, a project's or a plugin's.
+//
+// Without request.MCP none is named. With it, exactly one is, baum's own as an
+// HTTP server whose configuration holds no token: its Authorization header
+// names agent.MCPTokenEnv, which Claude Code expands from its own environment,
+// so the token is never in the argument list.
+//
+// --tools only selects Claude Code's built-in tools, so it neither adds nor
+// removes MCP tools. Permissions decide those, and a --print run has no one to
+// ask: a tool that nothing allows is denied. --allowedTools mcp__baum allows
+// every tool of the baum server and nothing else; the server is the only one
+// loaded and exposes only what baum's tool registry registers, so naming the
+// tools one by one would only add a list to keep in step with the server.
+func mcpArgs(request agent.Request) []string {
+	if request.MCP == nil {
+		return []string{"--strict-mcp-config", "--mcp-config", noMCPConfig}
+	}
+	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"baum": map[string]any{
+		"type": "http", "url": request.MCP.URL,
+		"headers": map[string]string{"Authorization": "Bearer ${" + agent.MCPTokenEnv + "}"},
+	}}})
+	return []string{"--strict-mcp-config", "--mcp-config", string(config), "--allowedTools", "mcp__baum"}
 }
 
 // maxTurns adds --max-turns when the request bounds its calls; without it

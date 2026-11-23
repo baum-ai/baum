@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -28,6 +27,9 @@ type Entry struct {
 type ScanReport struct {
 	SkippedFiles int      `json:"skipped_files"`
 	SkippedPaths []string `json:"skipped_paths,omitempty"`
+	// UnreadablePaths are the compressed rollouts (.jsonl.zst) whose zstd data
+	// is corrupt or truncated. They are skipped too, and listed here as well.
+	UnreadablePaths []string `json:"unreadable_paths,omitempty"`
 }
 
 type Files = model.Files
@@ -35,7 +37,7 @@ type Files = model.Files
 // RootFile is the root-only file list used when a damaged store index cannot
 // resolve the rest of a tree.
 func RootFile(path string) Files {
-	return Files{{Path: path, Name: filepath.Base(path), Kind: model.KindTranscript}}
+	return Files{{Path: path, Name: codextranscript.PlainName(filepath.Base(path)), Kind: model.KindTranscript}}
 }
 
 type candidate struct {
@@ -98,12 +100,20 @@ func loadEntries(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport, s
 	index, scan, err := scanStore(filepath.Dir(sessionsDir), cache)
 	if err == nil {
 		var report model.ScanReport
+		unreadable := map[string]bool{}
+		for _, path := range scan.UnreadablePaths {
+			unreadable[path] = true
+		}
 		for _, path := range scan.SkippedPaths {
-			report.Add(path, "first record absent or incomplete")
+			if unreadable[path] {
+				report.Add(path, unreadableReason)
+			} else {
+				report.Add(path, "first record absent or incomplete")
+			}
 		}
 		return index, report, ""
 	}
-	index, report := softIndex(sessionsDir)
+	index, report := softIndex(sessionsDir, cache)
 	return index, report, fmt.Sprintf("Codex store scan fell back to a partial index: %v", err)
 }
 
@@ -153,7 +163,7 @@ func ScanStore(codexHome string) ([]Entry, ScanReport, error) {
 // scanStore is ScanStore reading first records through cache, which may be nil.
 func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	var report ScanReport
-	var paths []string
+	var found []string
 	scan := cache.beginScan(codexHome)
 	for _, dir := range []string{filepath.Join(codexHome, "sessions"), filepath.Join(codexHome, "archived_sessions")} {
 		err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
@@ -163,14 +173,8 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 			if entry.IsDir() {
 				return nil
 			}
-			name := entry.Name()
-			switch {
-			case strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl"):
-				paths = append(paths, path)
-			case strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl.zst"):
-				if _, statErr := os.Stat(strings.TrimSuffix(path, ".zst")); statErr != nil {
-					return fmt.Errorf("compressed rollout %s has no plain twin; .zst decoding is unsupported", path)
-				}
+			if codextranscript.IsRolloutName(entry.Name()) {
+				found = append(found, path)
 			}
 			return nil
 		})
@@ -178,6 +182,7 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 			return nil, report, fmt.Errorf("scanning %s: %w", dir, err)
 		}
 	}
+	paths, siblings := chooseRollouts(found)
 	slices.Sort(paths)
 	// Reading each rollout's first record is independent per file and is what
 	// scanning the store costs, so the reads run concurrently. Every outcome is
@@ -189,7 +194,7 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	group.SetLimit(runtime.GOMAXPROCS(0))
 	for i, path := range paths {
 		group.Go(func() error {
-			read[i].entry, read[i].err = scan.read(path)
+			read[i].entry, read[i].err = scan.readOrSibling(path, siblings)
 			return nil
 		})
 	}
@@ -200,9 +205,12 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	seen := map[string]string{}
 	for i, path := range paths {
 		entry, err := read[i].entry, read[i].err
-		if errors.Is(err, codextranscript.ErrIncompleteFirstLine) || errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, codextranscript.ErrIncompleteFirstLine) || errors.Is(err, os.ErrNotExist) || errors.Is(err, errUnreadableCompressed) {
 			report.SkippedFiles++
 			report.SkippedPaths = append(report.SkippedPaths, path)
+			if errors.Is(err, errUnreadableCompressed) {
+				report.UnreadablePaths = append(report.UnreadablePaths, path)
+			}
 			continue
 		}
 		if err != nil {
@@ -217,14 +225,66 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	return entries, report, nil
 }
 
+// errUnreadableCompressed marks a compressed rollout whose zstd data cannot be
+// decompressed. The rollout is skipped, not an error for the whole scan.
+var errUnreadableCompressed = errors.New("compressed rollout is unreadable")
+
+// unreadableReason is why a corrupt compressed rollout is skipped.
+const unreadableReason = "compressed rollout is corrupt or truncated"
+
+// chooseRollouts is the rollouts to read among the ones a walk found: a plain
+// one, or a compressed one without a plain copy. siblings gives, for each
+// plain rollout that has a compressed copy, that copy: Codex deletes the plain
+// file once it has compressed it, which may happen after the walk.
+func chooseRollouts(found []string) (paths []string, siblings map[string]string) {
+	listed := make(map[string]bool, len(found))
+	for _, path := range found {
+		listed[path] = true
+	}
+	siblings = map[string]string{}
+	for _, path := range found {
+		switch {
+		case !codextranscript.Compressed(path):
+			paths = append(paths, path)
+			if listed[path+".zst"] {
+				siblings[path] = path + ".zst"
+			}
+		case !listed[codextranscript.PlainPath(path)]:
+			paths = append(paths, path)
+		}
+	}
+	return paths, siblings
+}
+
+// readOrSibling reads the rollout at path, or its compressed copy when the
+// plain file is gone: Codex may have compressed it since the walk, whether or
+// not the walk saw the compressed copy.
+func (s *scan) readOrSibling(path string, siblings map[string]string) (Entry, error) {
+	entry, err := s.read(path)
+	if !errors.Is(err, os.ErrNotExist) || codextranscript.Compressed(path) {
+		return entry, err
+	}
+	compressed, ok := siblings[path]
+	if !ok {
+		compressed = path + ".zst"
+	}
+	if sibling, siblingErr := s.read(compressed); siblingErr == nil {
+		return sibling, nil
+	}
+	return entry, err
+}
+
 func readEntry(path string) (Entry, error) {
-	handle, err := os.Open(path)
+	handle, err := codextranscript.OpenRollout(path)
 	if err != nil {
 		return Entry{}, fmt.Errorf("opening rollout %s: %w", path, err)
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }()
 	line, err := codextranscript.DecodeFirst(handle)
 	if err != nil {
+		if errors.Is(err, codextranscript.ErrDecompress) {
+			err = fmt.Errorf("%w: %w", errUnreadableCompressed, err)
+		}
 		return Entry{}, fmt.Errorf("reading rollout %s: %w", path, err)
 	}
 	class, err := codextranscript.ClassifyThread([]codextranscript.Line{line})
@@ -247,9 +307,15 @@ func SessionWorkingDir(path string) (string, bool, error) {
 	return filepath.Clean(entry.Meta.CWD), true, nil
 }
 
-func softIndex(sessionsDir string) ([]Entry, model.ScanReport) {
+// softIndex is the partial index of sessionsDir used when a full scan of the
+// store fails. It reads first records through cache but never ends its scan:
+// it does not walk archived_sessions, so ending it would evict the archived
+// entries and the next full scan would read them all again.
+func softIndex(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport) {
+	var found []string
 	var index []Entry
 	var report model.ScanReport
+	scan := cache.beginScan(filepath.Dir(sessionsDir))
 	_ = filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == sessionsDir {
@@ -260,17 +326,23 @@ func softIndex(sessionsDir string) ([]Entry, model.ScanReport) {
 			}
 			return nil
 		}
-		if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || filepath.Ext(d.Name()) != ".jsonl" {
-			return nil
-		}
-		entry, err := readEntry(path)
-		if err != nil {
-			report.Add(path, err.Error())
-		} else {
-			index = append(index, entry)
+		if !d.IsDir() && codextranscript.IsRolloutName(d.Name()) {
+			found = append(found, path)
 		}
 		return nil
 	})
+	paths, siblings := chooseRollouts(found)
+	for _, path := range paths {
+		entry, err := scan.readOrSibling(path, siblings)
+		switch {
+		case errors.Is(err, errUnreadableCompressed):
+			report.Add(path, unreadableReason)
+		case err != nil:
+			report.Add(path, err.Error())
+		default:
+			index = append(index, entry)
+		}
+	}
 	return index, report
 }
 
@@ -372,12 +444,12 @@ func (t *Tree) Find(rootEntry Entry) (Files, error) {
 	}
 	sort.Slice(children, func(i, j int) bool { return children[i].Meta.ID < children[j].Meta.ID })
 
-	files := Files{{Path: root.Path, Name: filepath.Base(root.Path), Kind: model.KindTranscript}}
+	files := Files{{Path: root.Path, Name: codextranscript.PlainName(filepath.Base(root.Path)), Kind: model.KindTranscript}}
 	seen := map[string]bool{filepath.Clean(root.Path): true}
 	for _, child := range children {
 		cleaned := filepath.Clean(child.Path)
 		if !seen[cleaned] {
-			files = append(files, model.SessionFile{Path: child.Path, Name: filepath.Base(child.Path), Kind: model.KindSubTranscript})
+			files = append(files, model.SessionFile{Path: child.Path, Name: codextranscript.PlainName(filepath.Base(child.Path)), Kind: model.KindSubTranscript})
 			seen[cleaned] = true
 		}
 		if child.Meta.SubagentHistoryStartOrdinal != nil || child.Meta.ForkedFromID == "" {
@@ -388,7 +460,7 @@ func (t *Tree) Find(rootEntry Entry) (Files, error) {
 			return nil, fmt.Errorf("child rollout %s names missing fork source %s and has no subagent_history_start_ordinal", child.Path, child.Meta.ForkedFromID)
 		}
 		if cleaned := filepath.Clean(fork.Path); !seen[cleaned] {
-			files = append(files, model.SessionFile{Path: fork.Path, Name: filepath.Base(fork.Path), Kind: model.KindForkSource})
+			files = append(files, model.SessionFile{Path: fork.Path, Name: codextranscript.PlainName(filepath.Base(fork.Path)), Kind: model.KindForkSource})
 			seen[cleaned] = true
 		}
 	}

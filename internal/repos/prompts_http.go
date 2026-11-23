@@ -159,12 +159,7 @@ func (r *Registry) ServePromptPut(w http.ResponseWriter, req *http.Request, repo
 		writePromptError(w, http.StatusBadRequest, `invalid JSON request: expected {"text": string|null}`)
 		return
 	}
-	if input.Text == nil || *input.Text == "" {
-		e = r.DeletePromptOverride(req.Context(), repository, prompt.ID(id))
-	} else {
-		_, e = r.SetPromptOverride(req.Context(), repository, prompt.ID(id), *input.Text)
-	}
-	if e != nil {
+	if e = r.PutPromptOverrideIf(req.Context(), repository, prompt.ID(id), input.Text, nil); e != nil {
 		writePromptFailure(w, e)
 		return
 	}

@@ -13,6 +13,7 @@ mod autostart;
 mod client;
 mod daemon;
 mod development;
+mod events;
 mod install;
 mod lifecycle;
 #[cfg(target_os = "linux")]
@@ -170,12 +171,12 @@ fn connect(app: &AppHandle, why: Attach) {
             "baum desktop: attached to baum daemon {} (pid {})",
             launch.status.version, launch.status.pid
         );
-        tray::attached(&app, &launch);
         let Some(window) = app.get_webview_window(MAIN) else {
             return;
         };
         // The setup screen stays until the user leaves it, which attaches again.
         let Some(navigated) = onboarding::attach(&app, &window, &frontend) else {
+            tray::attached(&app, &launch);
             return watch(&app, &state, attempt, &launch, why);
         };
         if let Err(e) = navigated {
@@ -185,10 +186,8 @@ fn connect(app: &AppHandle, why: Attach) {
             };
             return fail(&app, &state, attempt, failure);
         }
-        let current = state.clone();
-        notifications::attach(&app, &launch, &frontend, move || {
-            current.lock().attempt != attempt
-        });
+        notifications::attach(&app, &launch, &frontend);
+        tray::attached(&app, &launch);
         watch(&app, &state, attempt, &launch, why);
     });
 }

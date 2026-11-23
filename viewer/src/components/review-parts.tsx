@@ -129,7 +129,7 @@ export function RiskCategoryTag({ category }: { category?: string | null }) {
   const label = riskCategory({ category }, "");
   if (!label) return null;
   return (
-    <span className="inline-flex items-center rounded-(--radius-sm) border border-(--border-default) bg-(--surface-sunken) px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-(--text-primary)">
+    <span className="inline-flex items-center rounded-sm border border-default bg-surface-sunken px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-primary">
       {label}
     </span>
   );
@@ -171,17 +171,17 @@ export function RiskTags({
 }
 
 const CHANGE_KIND_COLOURS: Record<string, string> = {
-  feature: "bg-(--data-1)/15 text-(--text-primary)",
-  bugfix: "bg-(--data-3)/15 text-(--text-primary)",
-  refactor: "bg-(--data-4)/15 text-(--text-primary)",
-  dependency: "bg-(--data-5)/15 text-(--text-primary)",
-  cherry_pick: "bg-(--data-4)/15 text-(--text-primary)",
-  upstream_sync: "bg-(--data-6)/15 text-(--text-primary)",
-  docs: "bg-(--data-6)/15 text-(--text-primary)",
-  ci: "bg-(--data-3)/15 text-(--text-primary)",
-  translation: "bg-(--data-6)/15 text-(--text-primary)",
-  release: "bg-(--data-2)/15 text-(--text-primary)",
-  export: "bg-(--data-7)/15 text-(--text-primary)",
+  feature: "bg-(--data-1)/15 text-primary",
+  bugfix: "bg-(--data-3)/15 text-primary",
+  refactor: "bg-(--data-4)/15 text-primary",
+  dependency: "bg-(--data-5)/15 text-primary",
+  cherry_pick: "bg-(--data-4)/15 text-primary",
+  upstream_sync: "bg-(--data-6)/15 text-primary",
+  docs: "bg-(--data-6)/15 text-primary",
+  ci: "bg-(--data-3)/15 text-primary",
+  translation: "bg-(--data-6)/15 text-primary",
+  release: "bg-(--data-2)/15 text-primary",
+  export: "bg-(--data-7)/15 text-primary",
 };
 
 /** The change category beside the title, quieter than review status. */
@@ -190,7 +190,7 @@ export function ChangeKindTag({ kind }: { kind: string }) {
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2 py-0.5 text-xs whitespace-nowrap",
-        CHANGE_KIND_COLOURS[kind] ?? "bg-(--surface-wash) text-(--text-secondary)",
+        CHANGE_KIND_COLOURS[kind] ?? "bg-surface-wash text-secondary",
       )}
     >
       {humanize(kind)}
@@ -248,9 +248,9 @@ export function Lines({
 }) {
   return (
     <span className={cn("tabular-nums whitespace-nowrap", className)}>
-      <span className="text-(--status-positive)">+{format(additions)}</span>
+      <span className="text-status-positive">+{format(additions)}</span>
       {separator}
-      <span className="text-(--status-critical)">−{format(deletions)}</span>
+      <span className="text-status-critical">−{format(deletions)}</span>
     </span>
   );
 }
@@ -277,8 +277,8 @@ export function Part({
 }) {
   return (
     <section aria-label={label} className={cn("min-w-0", className)}>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-(--border-subtle) pb-1.5">
-        <Heading className="text-base font-semibold tracking-[0.08em] text-(--text-primary) uppercase">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-subtle pb-1.5">
+        <Heading className="text-base font-semibold tracking-[0.08em] text-primary uppercase">
           {label}
         </Heading>
         {aside ? (
@@ -293,13 +293,13 @@ export function Part({
 }
 
 /** Body copy for a generated paragraph: measured, a touch larger, secondary. */
-export const PROSE = "max-w-[90ch] text-base leading-[1.7] text-(--text-primary)";
+export const PROSE = "max-w-[90ch] text-base leading-[1.7] text-primary";
 
 /** A dashed pale row: the shape of "nothing here", which for this document is
  *  itself a statement — an empty risk list means none were identified. */
 export function None({ children }: { children: ReactNode }) {
   return (
-    <p className="rounded-(--radius-md) border border-dashed border-(--border-default) px-3 py-2.5 text-base text-(--text-tertiary)">
+    <p className="rounded-md border border-dashed border-default px-3 py-2.5 text-base text-tertiary">
       {children}
     </p>
   );
@@ -360,15 +360,15 @@ export function DecisionContext({
       {decision.rejected && (
         // Inline, so a long alternative wraps under its label the way the
         // reason does.
-        <p className="text-(--text-secondary)">
-          <span className="text-(--text-tertiary)">Instead of: </span>
+        <p className="text-secondary">
+          <span className="text-tertiary">Instead of: </span>
           <InlineMarkdown>{decision.rejected}</InlineMarkdown>
         </p>
       )}
       {(trigger || decision.rationale) && (
-        <p className="text-(--text-secondary)">
+        <p className="text-secondary">
           {trigger && (
-            <span className="text-(--text-tertiary)">
+            <span className="text-tertiary">
               {trigger}
               {decision.rationale ? ": " : ""}
             </span>
@@ -377,7 +377,7 @@ export function DecisionContext({
         </p>
       )}
       {decision.evidence && (
-        <blockquote className="border-l-2 border-(--border-subtle) pl-2 text-(--text-tertiary)">
+        <blockquote className="border-l-2 border-subtle pl-2 text-tertiary">
           {decision.evidence}
         </blockquote>
       )}
@@ -460,7 +460,7 @@ export function AnchorChips({
                 }}
               >
                 {label}
-                <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
+                <ExternalLinkIcon size={10} className="flex-none text-tertiary" />
               </a>
             ) : (
               <span title={title} className={chipClass}>
@@ -494,7 +494,7 @@ export function Item({
       // the one.
       data-review-block=""
       className={cn(
-        "rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-card) px-3 text-base scroll-mt-4 outline-none target:border-(--border-focus) data-[review-block-active]:bg-(--surface-wash)",
+        "rounded-md border border-subtle bg-surface-card px-3 text-base scroll-mt-4 outline-none target:border-focus data-[review-block-active]:bg-surface-wash",
         compact ? "py-2" : "py-2.5",
         className,
       )}
@@ -507,9 +507,7 @@ export function Item({
 /** The quiet second line under an item: category, source, who said it. */
 export function ItemMeta({ children }: { children: ReactNode }) {
   return (
-    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-(--text-tertiary)">
-      {children}
-    </p>
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tertiary">{children}</p>
   );
 }
 
@@ -519,8 +517,8 @@ export function Facts({ items }: { items: { label: string; value: ReactNode }[] 
     <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-base">
       {items.map((item) => (
         <div key={item.label} className="contents">
-          <dt className="text-(--text-tertiary)">{item.label}</dt>
-          <dd className="min-w-0 text-(--text-primary) [overflow-wrap:anywhere]">{item.value}</dd>
+          <dt className="text-tertiary">{item.label}</dt>
+          <dd className="min-w-0 text-primary [overflow-wrap:anywhere]">{item.value}</dd>
         </div>
       ))}
     </dl>
@@ -528,9 +526,9 @@ export function Facts({ items }: { items: { label: string; value: ReactNode }[] 
 }
 
 const JUMP_LINK_TONE = {
-  link: "text-(--text-link) hover:text-(--text-link-hover)",
-  primary: "text-(--text-primary) hover:text-(--text-link)",
-  secondary: "text-(--text-secondary) hover:text-(--text-link)",
+  link: "text-link hover:text-link-hover",
+  primary: "text-primary hover:text-link",
+  secondary: "text-secondary hover:text-link",
 } as const;
 
 /** An in-pane jump — to another section, or to an item further down. Styled as
@@ -554,7 +552,7 @@ export function JumpLink({
       data-block-open=""
       onClick={onClick}
       className={cn(
-        "cursor-pointer rounded-(--radius-sm) text-left hover:underline",
+        "cursor-pointer rounded-sm text-left hover:underline",
         JUMP_LINK_TONE[tone],
         FOCUS_RING,
         className,

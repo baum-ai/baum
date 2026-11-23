@@ -82,6 +82,8 @@ func TestHooksCommandsUseNativeMarketplaceAndReportTrustSeparately(t *testing.T)
 
 func TestHooksUpdateBringsInstalledPluginsToTheLatestVersion(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	// The default home, which the messages do not name.
+	t.Setenv("CODEX_HOME", "")
 	bin := t.TempDir()
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+systemBinaryPath)
 	log := stubPluginAgent(t, bin, "claude-code")

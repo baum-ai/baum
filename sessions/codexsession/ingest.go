@@ -365,7 +365,7 @@ func (f *threadState) vendorRow(ourID string, ourType session.EntityType, kind, 
 	if vendorID == "" {
 		return
 	}
-	ref := filepath.Base(f.file.Path)
+	ref := codextranscript.PlainName(filepath.Base(f.file.Path))
 	if ordinal > 0 {
 		ref = fmt.Sprintf("%s#%d", ref, ordinal)
 	}

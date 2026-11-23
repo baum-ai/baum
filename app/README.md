@@ -37,7 +37,9 @@ visible on large screens, and it follows the form on tall windows. It is static,
 fades into the page and leaves the step controls in place.
 
 Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
-walkthrough, sessions, settings and charts reuse its semantic tokens. Stumpy's
+walkthrough, sessions, settings and charts reuse its semantic tokens, in
+markup through the palette utilities in `../viewer/src/palette-utilities.css`
+(`text-secondary`, `bg-surface-card`, `border-subtle`). Stumpy's
 fixed illustration colors live with the component in
 `../viewer/src/components/stumpy-artwork.ts`; the log mark and native icon
 generator reuse them. Fixed vendor logo colors live in
@@ -60,7 +62,10 @@ viewer components, bundled HTML, native sources/configuration and SVG icon
 templates. Hex colors, RGB/HSL and other literal color functions, named CSS
 colors, and Tailwind's fixed color utilities are rejected with file and line
 numbers. Palette variables, `currentColor`, `transparent` and derived mixes of
-palette variables are allowed. Only palette/theme definition files and the two
+palette variables are allowed. An arbitrary value for a token that has a
+palette utility, such as `text-(--text-secondary)`, is rejected with the
+utility to write instead (`text-secondary`); so is a corner written as
+`rounded-(--radius-sm)` rather than `rounded-sm`. Only palette/theme definition files and the two
 specific artwork modules may define literal colors; tests and generated files
 are excluded. Inbox filter color names are persisted palette keys, not CSS colors.
 
@@ -144,8 +149,8 @@ A repository's name in the list opens its page
 (`?page=repositories&repository=<owner/name>&section=`, `RepositoryPage` in
 `src/settings.tsx`), drawn as Settings is: its sections in a sand list down the
 left, each with a line under its name, and the chosen one on the warm panel, with
-the same keys (`useSettingsKeys`: j/k, 1 to 3, Enter into a section, Esc back to
-the list). Esc on the list, `u`, or the back link return to Repositories. The
+the same keys (`useSettingsKeys`: Shift+J/K between sections, 1 to 3, j/k
+through the section's controls, Esc back to the list). Esc on the list, `u`, or the back link return to Repositories. The
 sections are **Reviews** (automatic reviews for this repository and decision
 capture, setting rows saved as they change with "Saved" by the heading, as
 Settings' sections are), **Prompts** (below; its line counts the custom ones and
@@ -388,6 +393,22 @@ tooltip. A failing check with a
 (`viewer_can_push`): it posts `api/prs/rerun-job` at once, reads **Retrying…**,
 then shows "Re-running on GitHub"; a refusal is shown under the check. The
 Checks failing row has no fix of its own: the panel's fix covers the checks.
+
+A failing check that GitHub keeps a log for (`has_log`: a completed GitHub
+Actions run, with its check run `id`) has **Show log** under its status line, a
+chevron toggle (`aria-expanded`) that is folded by default. Nothing reads a log
+until it is opened: opening reads `GET api/prs/check-log` (`CheckLog` in
+`src/checks.tsx`), showing "Reading the log from GitHub…" meanwhile. The log is
+the check's last lines, at most 200 lines and 64 KiB with GitHub's timestamps
+and terminal colours removed, in a monospace block at most 20 rem tall that
+scrolls inside itself, opens scrolled to its end and can be reached with the
+keyboard (`tabIndex` 0, labelled "Log of <check>"), with a **Copy** button and a
+line saying "The end of the log" when it is longer. A check with no log, one
+still running, one GitHub has no log for (it may not have run, or its log is older than the repository keeps) or one too long to show the end of shows that sentence
+instead; a failed read shows its reason with an **Open on GitHub** link. A
+commit status or another app's check has no **Show log** (its **Details** link
+goes to the app's own page). The Ask chat's `check_log` tool returns the same
+tail.
 
 The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
 with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
@@ -818,12 +839,14 @@ transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
 and `Esc` in an empty search leaves it); on the Timeline `Enter` or `o` opens or
 closes the feature or decision, an open feature's side panel follows the
-focus, and `/` focuses the search box (its hint shows inside the box). Settings' section list is its
-selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `6` jump
-to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
-`k` step through its controls, `Space` or `Enter` changes the focused one and
-`Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
-it up first, and `j` and `k` go on from it). On a pull request or group page `j`
+focus, and `/` focuses the search box (its hint shows inside the box). In Settings, as on a
+review page, `Shift+J`/`Shift+↓` and `Shift+K`/`Shift+↑` move to the next or
+previous section from anywhere, and `1` to `6` jump to one. `j`/`↓` and `k`/`↑`
+step through the shown section's controls; from the section list `j` goes to
+the first control and `k` to the last, as `Enter`, `l` or `→` go to the first.
+`Space` or `Enter` changes the focused control and `Esc`, `h` or `←` go back to
+the list (`Esc` in a text field or select gives it up first, and `j` and `k` go
+on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
 navigator's arrows do (`ReviewViewer`'s `steps` ref), `m` and `f`
 merge and fix where the header offers them, and `t`
@@ -1093,8 +1116,20 @@ the pull request is also in. A pull request or group opened from an inbox keeps
 inbox. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
-A Help button at the right of the sidebar's baum title (under it when the
-sidebar is folded) opens a help menu (`HelpButton` in `src/shell.tsx`):
+The sidebar is pinned open beside the page by default. The button at the
+right of its baum title, after Help, folds it to a rail of glyphs (56px) so
+the page gets the width, and pins it open again (`Sidebar` in
+`src/shell.tsx`). Folded, resting the mouse on the rail for a moment opens it
+over the page, which does not move, and it folds again shortly after the
+pointer leaves or when a link in it is chosen; keyboard focus in the rail
+opens it too. The choice is the `sidebar` appearance preference (`pinned` or
+`folded`), saved by the daemon like the theme, so it survives restarts and
+port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
+was before the preferences arrive. A window narrower than 64rem always folds
+the sidebar, opens it the same way, and hides the pin button.
+
+A Help button at the right of the sidebar's baum title opens a help menu
+(`HelpButton` in `src/shell.tsx`):
 **Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
 Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
 what happened, what to attach with a preview, then **Open issue**, which opens
@@ -1103,8 +1138,9 @@ a new issue in baum-ai/baum on GitHub; see the
 window (the desktop app hands it to the browser). The `?` key opens the same
 menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
 the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
-where they were rather than to the button. With the glyph-only rail the button
-sits under the Settings glyph.
+where they were rather than to the button. The folded sidebar hides Help
+until it opens over the page; while it is hidden `?` shows the shortcuts sheet
+directly.
 
 In the sidebar Inbox is a heading, not a link: it has no address, is never the
 current page and shows the total of what waits (and, for screen readers, ", N
@@ -1523,9 +1559,12 @@ each window (for example 5-hour and weekly) with the share left, when it
 resets and a thin bar coloured by what remains, and how old the oldest figure
 is; hovering "resets in" shows the exact date and time. A narrow window folds
 it to the lowest share left. Only
-plans the daemon could read show: a provider that is not installed, signed
-out or has not run yet is left out, and with neither readable (or a failed
-request) the box is not drawn. Which plans show is a choice in Settings
+plans the daemon could read show, and those whose sign-in needs refreshing
+(`needs_sign_in`), which show their reason ("Open Claude Code to refresh its
+sign-in.") with no bar and leave the age to the plans read. A provider that is
+not installed, signed out or has not run yet is left out, and with none to
+show (or a failed request) the box is not drawn. The tray's panel does the
+same. Which plans show is a choice in Settings
 (below): by default only those of the backends baum uses. The desktop setup
 shows no plan usage. The sidebar asks
 `GET api/plan-usage?refresh=1` on mount and every five minutes while the
@@ -1698,7 +1737,7 @@ themes, the modifier held with `1` to `8` for the sidebar's pages, and whether
 holding Option (Alt elsewhere) shows keyboard shortcut hints; each names only
 the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
-`key_hints`, `page_modifier`), in the daemon’s SQLite registry, so they survive daemon restarts
+`key_hints`, `page_modifier`, and the sidebar's `sidebar`), in the daemon’s SQLite registry, so they survive daemon restarts
 and loopback port changes. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
@@ -1714,11 +1753,16 @@ returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
-for which pull requests (authored, requested, both, or all open pull requests
-in the repository), the harness and its model (a listed model or a custom
-name, saved when its field is left or Enter is pressed) and the reasoning
-effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
-selected in onboarding remain visible). The harness is Claude Code or Codex
+for which pull requests (a select of authored, requested, both, or all open
+pull requests in the repository), the **Agent** (Claude Code or Codex) and the
+**Model**, a select of the agent's models with a custom name (saved when its
+field is left or Enter is pressed) beside the reasoning effort ("Default
+effort", which leaves it to the agent, then Low, Medium or High; a higher level
+selected in onboarding stays visible). The rows of choices (`SettingRow`'s
+`pick`) put the name and control on one line, every control at the same width
+on the right, with the row's sentence under both; when the panel is narrower
+than 40rem (a container query) the control drops below and fills it. The
+harness is Claude Code or Codex
 only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
 failed job for one already in `config.toml`), and when neither is installed
 the section says so. Each change is saved
@@ -1728,12 +1772,37 @@ keeps as app preferences over the config file; `GET api/settings` reports the
 effective harness, model and effort. Each section sends all its choices and runs one
 save at a time; changes made while one runs are sent together afterwards, so
 an older choice never lands after a newer one. A failed save shows the error
-and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
-default) or Claude Code
-or Codex with a model and a reasoning effort, sent as `fix_backend`,
-`fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
-and reported by `GET api/settings`. A chosen fix agent applies
-in every repository. In the desktop app, the agent selects of Reviews, Fixes
+and puts the control back. **Fixes** chooses the agent that fixes: "Same as
+reviews (agent · model)" (the default) or Claude Code or Codex, then a model
+and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
+(`""` returns to the reviews', effort included) and reported by `GET
+api/settings`. A chosen fix agent applies in every repository. **Data
+extraction** has the same Agent and Model rows, its agent "Same as reviews
+(agent)" by default.
+
+While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
+or Codex, a closed **Advanced** disclosure at the end of the section
+(`AccountAdvanced`, open when a folder is chosen) holds **Claude Code
+account** or **Codex account**: Default (the environment's, named in the
+row's sentence), the other folders baum knows, written with `~`, or another
+path typed and saved when its field is left or Enter is pressed. For Claude
+Code it is sent as `claude_config_dir` or `fix_claude_config_dir` (`PUT
+api/automatic`), or `claude_config_dir` (`PUT api/settings/decisions`); for
+Codex as `codex_home`, `fix_codex_home` or `codex_home`. Each is sent only
+when it changes (`""` returns to the default; fixes and extraction that follow
+the reviews' agent have none of their own), and changing the agent clears the
+other agent's. The daemon refuses a path that is not an existing directory or
+that the agent is signed out with, saying how to sign in; the section shows
+the refusal and puts the control back. `GET api/settings` reports
+`claude_config_dir`, `fix_claude_config_dir`, `default_claude_config_dir`,
+`claude_config_dirs`, `codex_home`, `fix_codex_home`, `default_codex_home`,
+`codex_homes` and `home`. The sidebar's plan usage and the tray then show the
+chosen account's plan too: the sidebar puts an agent's plans under one
+heading, each on a line naming its folder ("Default" for the daemon's own) and
+plan; the tray names it after the agent with the folder (`config_dir`,
+`planName`). The capture note under Data extraction (`DecisionsDisclosure`)
+says in two sentences what is sent, what never is, and that it needs the
+hooks. In the desktop app, the agent selects of Reviews, Fixes
 and Data extraction label a CLI that reports no sign-in "(not signed in)",
 and while the agent a section uses is one, its row says that section's jobs
 will fail and how to sign in. **Connections** holds the GitHub connection and, in the
@@ -1744,7 +1813,8 @@ daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
 in parallel, 1–4 and 4 by default, saved with `PUT
 api/settings/job-concurrency` and reported as `job_concurrency` by `GET
 api/settings`; the daemon applies it at once, and lowering it lets running jobs
-finish), **Review time limit** (10 minutes by default) and **Fix time limit**
+finish), **Review time limit** (10 minutes by default; a review group gets half
+as much again per member after the first, up to three times it) and **Fix time limit**
 (how long a fix or a question to a review's agent may run, 30
 minutes by default), each chosen from 5 to 240 minutes, saved together with
 `PUT api/settings/time-limits` as `review_time_limit_minutes` and
@@ -1838,13 +1908,22 @@ followed by why capture will not run again (paused, off, off for the
 repository, or not a picked repository; `capture_off`).
 The PR page's review rail has a **Decisions** row above Sessions and
 Commits, with the count (the viewer's `decisions` slot, `?pane=decisions`):
-its pane lists, session by session as cards, the decisions of every session
-of the pull request, in progress or linked by the saved review, marking those
+its pane lists, session by session as cards, only decisions assessed as relevant
+to the PR's changes from its sessions, in progress or linked by the saved review, marking those
 made after that review was generated "Provisional", ended sessions the
 tracker still holds included (`usePullRequestDecisions`,
 `PullRequestDecisionsPane`). A session's decisions are split into **Decided by
 you** (the person's own, and those the agent proposed and they approved) and
 **Decided by the agent**, each with its count; an empty group is left out.
+The daemon checks relevance asynchronously and caches it per PR revision and
+decision content. Pending checks, failures, unavailable context and uncertain
+relevance have their own status text, distinct from no relevant decisions.
+The page sends its current head with the read, so cached decisions from an
+older head are withheld. Live session disclosures on a PR reuse this filtered
+answer, with no additional full-session decision requests. Session-only views
+and Timeline retain the full history. The walkthrough reuses the page's read;
+stack panes union the member PRs' relevant decisions by ID and keep their
+filtering status counts.
 Each decision is one row to scan: its title, its
 category as a pill and the time it was made, with its summary cut to a line
 under it; the row opens to the whole summary, **Why** (its rationale) and its
@@ -2172,9 +2251,12 @@ desktop setup's first step. Device sign-in requests repository and organization
 read access. Workflow access is opt-in and offered only in Settings: Reconnect
 is a split button whose menu adds **Reconnect with workflow access** (or
 **Reconnect without workflow access** once granted), and Reconnect itself keeps
-the access the connection has. A saved connection without workflow access shows
-a caution note that merges of pull requests changing GitHub Actions workflows
-need it. `POST api/github-auth/start` takes `{"workflow": true}` for that
+the access the connection has. A saved connection without workflow access says so
+in small print, not a warning, since that is the default: pull requests
+changing GitHub Actions workflows merge on GitHub. The panel's footer is a
+short list (Access, Credential, Data); Access is left out for an explicit
+credential, whose scopes are not known. Disconnect is the last choice in the
+Reconnect button's menu. `POST api/github-auth/start` takes `{"workflow": true}` for that
 choice; an empty object is a plain sign-in.
 The desktop setup's GitHub step and Settings share
 `src/github-auth.ts`. Sign in with GitHub starts device authorization through

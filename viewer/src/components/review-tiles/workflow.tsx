@@ -45,10 +45,10 @@ export function WorkflowTile({ change }: { change: WorkflowChange }) {
     >
       <section
         aria-label="Workflow paths"
-        className="mt-4 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+        className="mt-4 overflow-hidden rounded-sm border border-default bg-surface-card"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--surface-wash) px-3 py-2">
-          <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
+          <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
             How it flows
           </h5>
           <Legend hasFailure={hasFailure} added={added} />
@@ -94,11 +94,11 @@ function WorkflowPath({
   return (
     <section
       aria-label={label}
-      className="border-t border-(--border-subtle) px-3 py-3 first-of-type:border-t-0"
+      className="border-t border-subtle px-3 py-3 first-of-type:border-t-0"
     >
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <h6 className="text-base font-medium text-(--text-primary)">{label}</h6>
-        <span className="text-xs text-(--text-tertiary)">{caption}</span>
+        <h6 className="text-base font-medium text-primary">{label}</h6>
+        <span className="text-xs text-tertiary">{caption}</span>
       </div>
 
       {/* Across on wide screens: markers on one line, labels beneath. */}
@@ -130,8 +130,8 @@ function WorkflowPath({
                   className={cn(
                     "min-h-4 w-0 flex-1 border-l",
                     lane === "failure"
-                      ? "border-dashed border-(--status-critical)/50"
-                      : "border-(--border-strong)",
+                      ? "border-dashed border-status-critical/50"
+                      : "border-strong",
                   )}
                 />
               ) : null}
@@ -153,8 +153,8 @@ function Connector({ lane, hidden }: { lane: Lane; hidden: boolean }) {
         hidden
           ? "border-transparent"
           : lane === "failure"
-            ? "border-dashed border-(--status-critical)/50"
-            : "border-(--border-strong)",
+            ? "border-dashed border-status-critical/50"
+            : "border-strong",
       )}
     />
   );
@@ -184,14 +184,14 @@ function StepMarker({ step, lane, number }: { step: WorkflowStep; lane: Lane; nu
       className={cn(
         "flex h-7 w-7 flex-none items-center justify-center rounded-full border text-xs font-semibold",
         successEnd
-          ? "border-(--status-positive) bg-(--status-positive-bg) text-(--status-positive)"
+          ? "border-status-positive bg-status-positive-bg text-status-positive"
           : trigger
-            ? "border-(--status-critical) bg-(--status-critical-bg) text-(--status-critical)"
+            ? "border-status-critical bg-status-critical-bg text-status-critical"
             : failureEnd
-              ? "border-(--text-secondary) bg-(--text-secondary) text-(--surface-card)"
+              ? "border-(--text-secondary) bg-(--text-secondary) text-surface-card"
               : step.kind === "start"
-                ? "border-(--text-secondary) bg-(--surface-card) text-(--text-primary)"
-                : "border-(--border-default) bg-(--surface-wash) text-(--text-secondary)",
+                ? "border-(--text-secondary) bg-surface-card text-primary"
+                : "border-default bg-surface-wash text-secondary",
       )}
     >
       <span className="sr-only">{described}: </span>
@@ -200,7 +200,7 @@ function StepMarker({ step, lane, number }: { step: WorkflowStep; lane: Lane; nu
       ) : trigger ? (
         <span aria-hidden>!</span>
       ) : failureEnd ? (
-        <span aria-hidden className="h-2 w-2 rounded-[2px] bg-(--surface-card)" />
+        <span aria-hidden className="h-2 w-2 rounded-[2px] bg-surface-card" />
       ) : (
         <span aria-hidden>{number}</span>
       )}
@@ -211,7 +211,7 @@ function StepMarker({ step, lane, number }: { step: WorkflowStep; lane: Lane; nu
 function StepLabel({ step, className }: { step: WorkflowStep; className?: string }) {
   return (
     <span className={cn("flex min-w-0 flex-col gap-1 sm:items-center", className)}>
-      <span className="text-xs font-medium leading-[1.35] text-(--text-primary)">{step.label}</span>
+      <span className="text-xs font-medium leading-[1.35] text-primary">{step.label}</span>
       {step.change === "add" ? (
         <Badge tone="positive" size="compact">
           New
@@ -227,14 +227,11 @@ function Legend({ hasFailure, added }: { hasFailure: boolean; added: number }) {
   const dot =
     "flex h-3.5 w-3.5 items-center justify-center rounded-full border text-3xs leading-none font-bold";
   return (
-    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-3xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-3xs font-semibold tracking-[0.08em] uppercase text-tertiary">
       <span className={item}>
         <span
           aria-hidden
-          className={cn(
-            dot,
-            "border-(--status-positive) bg-(--status-positive-bg) text-(--status-positive)",
-          )}
+          className={cn(dot, "border-status-positive bg-status-positive-bg text-status-positive")}
         >
           <CheckIcon size={9} />
         </span>
@@ -247,7 +244,7 @@ function Legend({ hasFailure, added }: { hasFailure: boolean; added: number }) {
               aria-hidden
               className={cn(
                 dot,
-                "border-(--status-critical) bg-(--status-critical-bg) text-(--status-critical)",
+                "border-status-critical bg-status-critical-bg text-status-critical",
               )}
             >
               !
@@ -259,7 +256,7 @@ function Legend({ hasFailure, added }: { hasFailure: boolean; added: number }) {
               aria-hidden
               className={cn(dot, "border-(--text-secondary) bg-(--text-secondary)")}
             >
-              <span className="h-1 w-1 rounded-[1px] bg-(--surface-card)" />
+              <span className="h-1 w-1 rounded-[1px] bg-surface-card" />
             </span>
             Stops
           </span>

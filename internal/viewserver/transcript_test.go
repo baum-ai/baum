@@ -294,3 +294,55 @@ func TestTranscriptRouteIsBehindTheHostCheckAndReadOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestSummaryLoadsTranscriptOnlyOnDemand(t *testing.T) {
+	graph := transcriptGraph("Mail " + plantedMail)
+	legacy := transcriptLinker(graph)
+	_, fullBase := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Home: testHome, Sessions: legacy})
+	_, want := get(t, fullBase+"/api/sessions/s-1")
+	var loads atomic.Int64
+	lazy := func(ctx context.Context, r Review) (locallink.Result, error) {
+		result, err := legacy(ctx, r)
+		result.Graphs = nil
+		result.Sessions[0].Branch = "old-branch"
+		result.LoadGraph = func(ctx context.Context, _ string) (locallink.Result, error) { loads.Add(1); return legacy(ctx, r) }
+		return result, err
+	}
+	server, base := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Home: testHome, Sessions: lazy})
+	fetchSessions(t, base)
+	server.LinkedSessions(context.Background())
+	if loads.Load() != 0 {
+		t.Fatal("metadata read decoded full graph")
+	}
+	resp, _ := get(t, base+"/api/sessions/s-2")
+	if resp.StatusCode != http.StatusNotFound || loads.Load() != 0 {
+		t.Fatal("unlinked session reached graph loader")
+	}
+	resp, got := get(t, base+"/api/sessions/s-1")
+	if resp.StatusCode != http.StatusOK || got != want || loads.Load() != 1 {
+		t.Fatalf("lazy transcript differs: status %d loads %d", resp.StatusCode, loads.Load())
+	}
+	get(t, base+"/api/sessions/s-1")
+	if loads.Load() != 1 {
+		t.Fatal("successful lazy transcript was not shared")
+	}
+}
+
+func TestLazyTranscriptRevalidatesLinkageAndRetries(t *testing.T) {
+	var loads atomic.Int64
+	_, base := start(t, Options{Document: []byte(reviewDocument(headA, "one")), Sessions: func(context.Context, Review) (locallink.Result, error) {
+		return locallink.Result{Available: true, Sessions: []locallink.Session{{ID: "s"}}, LoadGraph: func(context.Context, string) (locallink.Result, error) {
+			loads.Add(1)
+			return locallink.Result{Available: true}, nil
+		}}, nil
+	}})
+	for range 2 {
+		resp, _ := get(t, base+"/api/sessions/s")
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatal("removed link served a transcript")
+		}
+	}
+	if loads.Load() != 2 {
+		t.Fatal("failed graph load did not retry")
+	}
+}

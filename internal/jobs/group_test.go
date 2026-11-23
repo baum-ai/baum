@@ -357,3 +357,14 @@ func TestPrepareGroupReadsEveryMemberAndNeedsTheirReviews(t *testing.T) {
 		t.Fatalf("no group store: %v", err)
 	}
 }
+
+func TestGroupReviewTimeoutGrowsWithMembers(t *testing.T) {
+	for _, c := range []struct {
+		members int
+		want    time.Duration
+	}{{1, 10 * time.Minute}, {2, 15 * time.Minute}, {3, 20 * time.Minute}, {5, 30 * time.Minute}, {8, 30 * time.Minute}} {
+		if got := groupReviewTimeout(10*time.Minute, c.members); got != c.want {
+			t.Errorf("groupReviewTimeout(10m, %d) = %v, want %v", c.members, got, c.want)
+		}
+	}
+}

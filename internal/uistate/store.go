@@ -5,6 +5,7 @@ package uistate
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"regexp"
@@ -291,24 +292,8 @@ func validate(kind string, raw []byte) error {
 		}
 	case "review":
 		var value struct {
-			Comments *[]*struct {
-				ID     *string `json:"id"`
-				Target *struct {
-					Kind  *string `json:"kind"`
-					ID    *string `json:"id"`
-					Title *string `json:"title"`
-				} `json:"target"`
-				Body  *string `json:"body"`
-				Place *struct {
-					Path      *string `json:"path"`
-					Line      *int    `json:"line"`
-					Side      *string `json:"side"`
-					StartLine *int    `json:"start_line"`
-				} `json:"place"`
-				Head    *string `json:"head"`
-				Created *int64  `json:"created"`
-			} `json:"comments"`
-			Note *string `json:"note"`
+			Comments *[]*reviewComment `json:"comments"`
+			Note     *string           `json:"note"`
 			// Absent from a record saved before sent reviews were kept.
 			Sent []*struct {
 				URL      *string `json:"url"`
@@ -342,28 +327,10 @@ func validate(kind string, raw []byte) error {
 		}
 		ids := map[string]bool{}
 		for _, comment := range *value.Comments {
-			if comment == nil || comment.ID == nil || !commentID.MatchString(*comment.ID) || ids[*comment.ID] || comment.Body == nil || strings.TrimSpace(*comment.Body) == "" || len(*comment.Body) > 64<<10 || comment.Head == nil || (*comment.Head != "" && !headSHA.MatchString(*comment.Head)) || comment.Created == nil || *comment.Created < 0 {
+			if comment == nil || checkReviewComment(*comment) != nil || ids[*comment.ID] {
 				return ErrInvalid
 			}
 			ids[*comment.ID] = true
-			target := comment.Target
-			if target == nil || target.Kind == nil || target.ID == nil || target.Title == nil || len(*target.ID) > 4096 || len(*target.Title) > 1024 {
-				return ErrInvalid
-			}
-			switch *target.Kind {
-			case "general":
-			case "section", "risk", "file":
-				if *target.ID == "" {
-					return ErrInvalid
-				}
-			default:
-				return ErrInvalid
-			}
-			if place := comment.Place; place != nil {
-				if place.Path == nil || *place.Path == "" || len(*place.Path) > 4096 || place.Line == nil || *place.Line < 1 || place.Side == nil || (*place.Side != "RIGHT" && *place.Side != "LEFT") || (place.StartLine != nil && (*place.StartLine < 1 || *place.StartLine >= *place.Line)) {
-					return ErrInvalid
-				}
-			}
 		}
 	case "filters":
 		var value struct {
@@ -402,4 +369,76 @@ func validate(kind string, raw []byte) error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// reviewComment is one comment of a pending review as the review record
+// holds it.
+type reviewComment struct {
+	ID     *string `json:"id"`
+	Target *struct {
+		Kind  *string `json:"kind"`
+		ID    *string `json:"id"`
+		Title *string `json:"title"`
+	} `json:"target"`
+	Body  *string `json:"body"`
+	Place *struct {
+		Path      *string `json:"path"`
+		Line      *int    `json:"line"`
+		Side      *string `json:"side"`
+		StartLine *int    `json:"start_line"`
+	} `json:"place"`
+	Head    *string `json:"head"`
+	Created *int64  `json:"created"`
+}
+
+// MaxCommentBody is the longest body, in bytes, of a pending review comment.
+const MaxCommentBody = 64 << 10
+
+// checkReviewComment refuses a comment a review record does not hold, saying
+// why; each reason wraps ErrInvalid.
+func checkReviewComment(c reviewComment) error {
+	refuse := func(reason string) error { return fmt.Errorf("%w: %s", ErrInvalid, reason) }
+	if c.ID == nil || !commentID.MatchString(*c.ID) {
+		return refuse("a comment's id is 1 to 64 letters, digits, - or _")
+	}
+	if c.Body == nil || strings.TrimSpace(*c.Body) == "" || len(*c.Body) > MaxCommentBody {
+		return refuse(fmt.Sprintf("a comment's body is text that is not blank, of at most %d bytes", MaxCommentBody))
+	}
+	if c.Head == nil || (*c.Head != "" && !headSHA.MatchString(*c.Head)) {
+		return refuse("a comment's head is empty or a commit's hex id")
+	}
+	if c.Created == nil || *c.Created < 0 {
+		return refuse("a comment's creation time is not negative")
+	}
+	target := c.Target
+	if target == nil || target.Kind == nil || target.ID == nil || target.Title == nil || len(*target.ID) > 4096 || len(*target.Title) > 1024 {
+		return refuse("a comment's target has a kind, an id of at most 4096 bytes and a title of at most 1024")
+	}
+	switch *target.Kind {
+	case "general":
+	case "section", "risk", "file":
+		if *target.ID == "" {
+			return refuse("a section, risk or file target names its id")
+		}
+	default:
+		return refuse("a comment's target is general, section, risk or file")
+	}
+	if place := c.Place; place != nil {
+		if place.Path == nil || *place.Path == "" || len(*place.Path) > 4096 || place.Line == nil || *place.Line < 1 || place.Side == nil || (*place.Side != "RIGHT" && *place.Side != "LEFT") || (place.StartLine != nil && (*place.StartLine < 1 || *place.StartLine >= *place.Line)) {
+			return refuse("a comment's place is a file's path, a line from 1, the side RIGHT or LEFT, and a start line before the line")
+		}
+	}
+	return nil
+}
+
+// CheckReviewComment refuses a pending review comment ({id, target, body,
+// place, head, created}) that a review record would not hold, saying why;
+// the error wraps ErrInvalid. Whether its id is unused in the review is the
+// caller's to check.
+func CheckReviewComment(comment json.RawMessage) error {
+	var c reviewComment
+	if json.Unmarshal(comment, &c) != nil {
+		return fmt.Errorf("%w: a comment is a JSON object", ErrInvalid)
+	}
+	return checkReviewComment(c)
 }
