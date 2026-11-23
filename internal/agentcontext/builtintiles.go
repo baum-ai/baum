@@ -30,7 +30,7 @@ const diagramNote = "Write the diagram as fill_schema gives it, from this pull r
 // lists them. internal/uiserver adds them (NativeAddTypes, the same names).
 var BuiltinTypes = []BuiltinType{
 	{Name: view.TypeFlow, Title: "Flow", UseWhen: "how a request, a job or a person moves through the parts, step by step, with lanes for who or what each path follows", Schema: view.DiagramSchema(view.TypeFlow), Note: diagramNote},
-	{Name: view.TypeColumns, Title: "Columns", UseWhen: "two or three lists side by side the reader compares: before and after, allowed and refused, kept and removed", Schema: view.DiagramSchema(view.TypeColumns), Note: diagramNote},
+	{Name: view.TypeColumns, Title: "Columns", UseWhen: "two or three lists side by side the reader compares: allowed and refused, kept and removed; or, with rows, before and after compared item by item", Schema: view.DiagramSchema(view.TypeColumns), Note: diagramNote},
 	{Name: view.TypeSequence, Title: "Sequence", UseWhen: "messages between two to four parties in order: a protocol, a handshake, a request across processes", Schema: view.DiagramSchema(view.TypeSequence), Note: diagramNote},
 	{Name: view.TypeTable, Title: "Table", UseWhen: "values a reader compares: limits, codes, states, who may do what", Schema: view.DiagramSchema(view.TypeTable), Note: diagramNote},
 	{Name: "code", Title: "Code", UseWhen: "the few lines of one hunk the reader must see; the host reads them from the clone", Schema: json.RawMessage(codeAddSchema),

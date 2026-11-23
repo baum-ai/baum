@@ -37,8 +37,13 @@ export type FlowData = Captioned & {
   /** `from`: the step of the first lane (from 1) a later lane branches off. */
   lanes: { label?: string; from?: number; steps: FlowStep[] }[];
 };
+export type ColumnItem = { title: string; note?: string };
+/** Lists side by side in `items`, or, with `rows`, states of one thing
+ *  compared item by item: a row holds one item per column, null where that
+ *  column has none, and the columns have no items of their own. */
 export type ColumnsData = Captioned & {
-  columns: { label: string; tone?: Tone; items: { title: string; note?: string }[] }[];
+  columns: { label: string; tone?: Tone; items?: ColumnItem[] }[];
+  rows?: (ColumnItem | null)[][];
 };
 export type SequenceData = Captioned & {
   actors: string[];

@@ -3008,7 +3008,19 @@ builds the rail's model (the sections and the file list) from it.
 - **Tiles** always show their title. Flows, columns, sequences and tables are
   drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's
   caption and citations, and lay themselves out by the room they have: lanes
-  wrap and then stack, columns stack, and a sequence becomes a list. While a
+  wrap and then stack, columns stack, and a sequence becomes a list. A
+  column's label carries its item count and its tone, which tints the items
+  while their titles stay in the primary ink; an item whose title another
+  column lists too is drawn dashed and quieter, with a legend saying so, and
+  an arrow runs from a `muted` column to a `new` or `good` one after it
+  (down while they stack). Columns with `rows` compare states of one thing
+  item by item, as the model paired them: each row lines its items up with
+  arrows between, an item that differs from the one before it has its words
+  that differ highlighted (only where the two are mostly alike) and, when
+  some rows stayed the same, a Changed pill, one the column before lacks a New pill, and an item not otherwise
+  marked that the next column lacks a Removed pill. A row the same in every
+  column is drawn quieter, and arrows join only two items.
+  Every row shows; "Show only changes" hides the unchanged ones. While a
   flow's lanes are rows, lines join its steps, a branch drops from the step
   it leaves after into its first step (or, when that line would cross
   another lane or the branch sits left of its step, its label names the
