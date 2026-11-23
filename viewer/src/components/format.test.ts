@@ -12,6 +12,7 @@ import {
   formatHours,
   formatSHA,
   formatShare,
+  formatShortDateTime,
   formatTime,
   formatUSD,
   initialsFor,
@@ -91,5 +92,11 @@ describe("formatBucket in the report timezone", () => {
     expect(formatBucket("2026-07-23T12:00:00Z", "day", "Not/AZone")).toBe(
       formatBucket("2026-07-23T12:00:00Z", "day"),
     );
+  });
+});
+
+describe("formatShortDateTime", () => {
+  it("labels the UTC time it shows", () => {
+    expect(formatShortDateTime("2026-11-14T03:19:00Z")).toBe("14 Nov, 03:19 UTC");
   });
 });
