@@ -1159,7 +1159,7 @@ export function LocalReview({
                               ? [{ label: "Re-run checks", onSelect: () => setRerunning(true) }]
                               : []),
                             ...(canUpdateBranch(entry)
-                              ? [{ label: "Update branch", onSelect: () => setUpdating(true) }]
+                              ? [{ label: "Update branch…", onSelect: () => setUpdating(true) }]
                               : []),
                           ]}
                         />

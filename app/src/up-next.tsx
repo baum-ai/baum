@@ -1082,7 +1082,7 @@ function InboxHeadEdit({
           <button
             type="button"
             className="inbox-head-name"
-            title="Rename"
+            title={`${inbox.name} · Rename`}
             onClick={() => setDraft(inbox.name)}
           >
             {inbox.name}
@@ -1629,7 +1629,7 @@ export function UpNextPage({
     if (!job && !waiting) {
       const label = fixLabel(entry);
       if (item?.kind === "update")
-        items.push({ label: "Update the branch…", onSelect: () => setUpdating(entry) });
+        items.push({ label: "Update branch…", onSelect: () => setUpdating(entry) });
       else if (item?.kind === "fix" && label && cloneFor(entry) && !fixState(entry).starting)
         items.push({ label, hint: "f", onSelect: () => fix(entry) });
     }
@@ -1773,7 +1773,7 @@ export function UpNextPage({
               ) : (
                 <>
                   <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                  <h1>{scope.name}</h1>
+                  <h1 title={scope.name}>{scope.name}</h1>
                 </>
               )}
               {filterButton}
@@ -1811,9 +1811,10 @@ export function UpNextPage({
                   data-row={row.key}
                   data-focused={row.key === line?.key || undefined}
                   className={`list-row upnext-item${group ? " upnext-member" : ""}`}
-                  onContextMenu={(event) =>
-                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request))
-                  }
+                  onContextMenu={(event) => {
+                    select(row.key);
+                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request));
+                  }}
                 >
                   <ListRow
                     row={row}
@@ -1850,9 +1851,10 @@ export function UpNextPage({
                           data-row={entry.key}
                           data-focused={entry.key === line?.key || undefined}
                           className="list-row upnext-item"
-                          onContextMenu={(event) =>
-                            actionsMenu.open(event, groupActions(entry), entry.group.name)
-                          }
+                          onContextMenu={(event) => {
+                            select(entry.key);
+                            actionsMenu.open(event, groupActions(entry), entry.group.name);
+                          }}
                         >
                           <GroupListRow
                             line={entry}
@@ -2139,10 +2141,13 @@ function ListRow({
       onClick={() => pick(row.key)}
     >
       <span className="upnext-row-text">
-        <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
+        <span className="upnext-row-title" title={pr.title || undefined}>
+          {pr.title || "Untitled pull request"}
+        </span>
         <span className="upnext-row-line">
           <ReviewDot state={dot} detail={row.entry.failure_reason} labelled={false} compact />
           <span
+            title={sub}
             className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
           >
             {row.job ? (
@@ -2512,7 +2517,7 @@ function Panel({
         </Link>
       ) : waiting ? null : kind === "update" ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={update}>
-          Update the branch
+          Update branch…
         </button>
       ) : kind === "fix" && fix ? (
         <button
@@ -2535,7 +2540,7 @@ function Panel({
       ) : null}
       {!job && canMerge(entry) ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
-          Merge
+          Merge…
           <kbd aria-hidden="true" className="key-hint">
             m
           </kbd>

@@ -628,7 +628,9 @@ function InboxRows({
               className="local-rail-sub"
             >
               <span aria-hidden="true" className="inbox-dot" />
-              <span className="local-rail-label">{inbox.name}</span>
+              <span className="local-rail-label" title={inbox.name}>
+                {inbox.name}
+              </span>
               {count > 0 && inbox.badge ? (
                 <span className="local-rail-sub-count">{count}</span>
               ) : null}
