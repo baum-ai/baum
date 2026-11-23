@@ -91,7 +91,7 @@ it("adds a field, turns it round, drops it and the last key", () => {
   expect(dropLastSortKey(sort)).toBe("-opened");
   expect(withoutSortField(sort, "opened")).toBe("risk");
   expect(describeSort(sort)).toBe("Opened, newest first, then Risk, highest first");
-  expect(describeSort("")).toBe("Priority");
+  expect(describeSort("")).toBe("");
 });
 
 it("sorts by each key in turn, ties keeping their order, missing values last", () => {
@@ -181,7 +181,7 @@ it("places a sorted stack at its first-ranked member, not its base", () => {
   expect(keys(withGroups([section], [stack])[0]!.lines)).toEqual(["acme/demo#3", "group:s"]);
 });
 
-it("opens with Shift+S and takes digits, Backspace, 0 and Escape", async () => {
+it("opens with Shift+S and takes digits, Backspace and Escape", async () => {
   const node = document.createElement("div");
   document.body.append(node);
   const root = createRoot(node);
@@ -220,7 +220,10 @@ it("opens with Shift+S and takes digits, Backspace, 0 and Escape", async () => {
     await press("Backspace", panel);
     expect(sort).toBe("-opened");
     await render();
+    // Nothing reads 0 any more; Backspace drops the last key.
     await press("0", panel);
+    expect(sort).toBe("-opened");
+    await press("Backspace", panel);
     expect(sort).toBe("");
     await render();
     await press("Escape", panel);

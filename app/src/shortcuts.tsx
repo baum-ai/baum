@@ -56,7 +56,6 @@ const SORT_SHORTCUTS: Shortcut[] = [
   { keys: ["S"], label: "Open the sort (Shift+S)", short: "sort" },
   { keys: ["1–8"], label: "In the sort: add a field, or turn it round" },
   { keys: ["Backspace"], label: "In the sort: drop the last field" },
-  { keys: ["0"], label: "In the sort: back to Priority" },
 ];
 /** The Up next inbox's keys, which `UpNextPage` handles itself. */
 const UP_NEXT_SHORTCUTS: Shortcut[] = [

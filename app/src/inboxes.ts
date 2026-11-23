@@ -34,7 +34,7 @@ export type Inbox = {
   /** A filter query on top of the rest (see `pr-filter.ts`); "" for none. */
   query: string;
   /** The order of the inbox's queue within its sections (see `pr-sort.ts`),
-   *  as `opened,-risk`; "" for Priority. */
+   *  as `opened,-risk`; "" for none. */
   sort?: string;
   no_bots: boolean;
   badge: boolean;
