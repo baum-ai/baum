@@ -1323,6 +1323,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
       {error ? <Alert>{error}</Alert> : null}
       <div className="local-panel settings-list">
         <SettingRow
+          pick
           label="Agent"
           htmlFor="panel-agent"
           detail={
@@ -1346,7 +1347,7 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
           />
         </SettingRow>
         {draft.agent ? (
-          <SettingRow label="Model" htmlFor="panel-model">
+          <SettingRow pick label="Model" htmlFor="panel-model">
             <ModelField
               key={draft.agent}
               id="panel-model"
@@ -1958,7 +1959,9 @@ export function SettingsPage({
                     </span>
                   ) : null}
                 </span>
-                <span className="settings-nav-sub">{item.sub}</span>
+                <span className="settings-nav-sub" title={item.sub}>
+                  {item.sub}
+                </span>
               </span>
             </button>
           ))}
@@ -3481,7 +3484,11 @@ export function RepositoryPage({
                     </span>
                   ) : null}
                 </span>
-                {item.sub ? <span className="settings-nav-sub">{item.sub}</span> : null}
+                {item.sub ? (
+                  <span className="settings-nav-sub" title={item.sub}>
+                    {item.sub}
+                  </span>
+                ) : null}
               </span>
             </button>
           ))}

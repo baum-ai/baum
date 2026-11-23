@@ -30,7 +30,8 @@ const PREVIEW_GROUPS = [
   ...GROUPS,
   { id: "others", title: OTHERS_TITLE, kinds: ["other"] as QueueItem["kind"][] },
 ];
-import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
+import { DANGER, PRIMARY, SECONDARY, SMALL } from "./action-classes";
+import { Empty } from "@baum/viewer/components/states";
 import { CheckIcon, ExternalLinkIcon } from "@baum/viewer/components/icons";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
@@ -197,12 +198,15 @@ export function EditInboxPage({
       <section>
         <PageBar title="Inbox not found" />
         <div className="local-page-body">
-          <div className="local-empty">
-            <h2>This inbox no longer exists</h2>
-            <p>
-              <Link href={appURL()}>Go to Inbox</Link>
-            </p>
-          </div>
+          <Empty
+            variant="page"
+            title="This inbox no longer exists"
+            action={
+              <Link href={appURL()} className={SMALL}>
+                Go to Inbox
+              </Link>
+            }
+          />
         </div>
       </section>
     );
@@ -332,6 +336,10 @@ function EditInbox({
         event.preventDefault();
         const problem = nameProblem(draft, inboxes, inbox.id);
         setNameError(problem);
+        if (problem) {
+          nameField.current?.focus();
+          nameField.current?.select();
+        }
         if (!problem) {
           const text =
             event.currentTarget.querySelector<HTMLTextAreaElement>(".inbox-query textarea")?.value;
@@ -494,9 +502,9 @@ function EditInbox({
               detail={
                 reviewsFollowInboxes === false ? (
                   <>
-                    Counts once{" "}
+                    No effect yet: turn on reviewing the pull requests in your inboxes in{" "}
                     <Link href={appURL("?page=settings&section=reviews")}>Settings › Reviews</Link>{" "}
-                    reviews the pull requests in your inboxes.
+                    first.
                   </>
                 ) : inbox.auto_review ? (
                   "baum reviews its pull requests on its own. Drafts, forks and authors without write access are skipped."
@@ -525,6 +533,10 @@ function EditInbox({
                   // The name as typed, checked as leaving its field would.
                   const problem = nameProblem(draft, inboxes, inbox.id);
                   setNameError(problem);
+                  if (problem) {
+                    nameField.current?.focus();
+                    nameField.current?.select();
+                  }
                   if (!problem) saveDraft?.({ ...inbox, name: draft.trim() });
                 }}
               >

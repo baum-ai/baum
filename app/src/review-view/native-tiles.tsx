@@ -126,9 +126,7 @@ function Box({
           </span>
         </>
       ) : null}
-      <InlineMarkdown className={cn("text-sm font-medium leading-snug", INK[tone])}>
-        {title}
-      </InlineMarkdown>
+      <InlineMarkdown className={cn("font-medium leading-snug", INK[tone])}>{title}</InlineMarkdown>
       {note ? (
         <InlineMarkdown className="text-xs leading-snug text-secondary">{note}</InlineMarkdown>
       ) : null}
@@ -658,7 +656,7 @@ function MessageLabel({ step, at }: { step: SequenceStep; at: number }) {
       <span className="min-w-0">
         <InlineMarkdown className="block">{step.text}</InlineMarkdown>
         {change === "changed" && step.was ? (
-          <del className="block text-sm text-tertiary">
+          <del className="block text-tertiary">
             <InlineMarkdown>{step.was}</InlineMarkdown>
           </del>
         ) : null}
@@ -836,7 +834,7 @@ function FlowKey({
         {entries}
       </ul>
       {toggle ? (
-        <Toggle checked={focused} onChange={onFocus} className="ml-auto text-sm">
+        <Toggle checked={focused} onChange={onFocus} className="ml-auto">
           Show only changes
         </Toggle>
       ) : null}
@@ -892,7 +890,7 @@ function SequenceKey({
         {entries}
       </ul>
       {toggle ? (
-        <Toggle checked={focused} onChange={onFocus} className="ml-auto text-sm">
+        <Toggle checked={focused} onChange={onFocus} className="ml-auto">
           Show only changes
         </Toggle>
       ) : null}
@@ -915,7 +913,7 @@ export function SequenceDiagram({ data }: { data: SequenceData }) {
         <div style={columns} className="grid">
           {data.actors.map((actor, at) => (
             <div key={at} className="flex justify-center px-1">
-              <InlineMarkdown className="max-w-full rounded-md border border-default bg-surface-card px-3 py-1 text-center text-sm font-semibold text-primary shadow-xs">
+              <InlineMarkdown className="max-w-full rounded-md border border-default bg-surface-card px-3 py-1 text-center font-semibold text-primary shadow-xs">
                 {actor}
               </InlineMarkdown>
             </div>
@@ -981,7 +979,7 @@ export function SequenceDiagram({ data }: { data: SequenceData }) {
                   {step.text}
                 </InlineMarkdown>
                 {change === "changed" && step.was ? (
-                  <del className="block text-sm text-tertiary">
+                  <del className="block text-tertiary">
                     <InlineMarkdown>{step.was}</InlineMarkdown>
                   </del>
                 ) : null}

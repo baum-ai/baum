@@ -2,6 +2,7 @@
 // apart from the browser and the driver so they can be tested
 // (summary.test.ts). The runner (run.ts) collects one Run per run.
 import type { Interaction, Snapshot } from "../../src/perf-collector.ts";
+import { isPageMetric, pagesSection } from "./pages-summary.ts";
 
 export type Run = {
   /** 0 for the warm-up, then 1..N. */
@@ -246,6 +247,7 @@ export function summarise(profile: Profile): string {
   ];
   if (profile.partial) lines.push("", `**Partial: ${profile.partial}**`);
   if (profile.notes.length) lines.push("", ...profile.notes.map((note) => `- ${note}`));
+  lines.push(...pagesSection(profile));
 
   lines.push(
     "",
@@ -255,13 +257,16 @@ export function summarise(profile: Profile): string {
     "",
     ...table(
       ["metric", "median", "p95", "min", "max"],
-      metricStats(runs).map(([name, s]) => [
-        name,
-        format(s.median, name),
-        format(s.p95, name),
-        format(s.min, name),
-        format(s.max, name),
-      ]),
+      // The pages scenario's per-page numbers are in its Pages table.
+      metricStats(runs)
+        .filter(([name]) => !isPageMetric(name))
+        .map(([name, s]) => [
+          name,
+          format(s.median, name),
+          format(s.p95, name),
+          format(s.min, name),
+          format(s.max, name),
+        ]),
     ),
   );
 

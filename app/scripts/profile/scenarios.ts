@@ -6,6 +6,7 @@
 // fails rather than report numbers for something else. The runner supplies
 // the Context.
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
+import { pagesScenario } from "./pages.ts";
 import { percentile, ROOT_REGION } from "./summary.ts";
 import { KEY } from "./webdriver.ts";
 
@@ -618,4 +619,5 @@ export const scenarios: Scenario<never>[] = [
   filter,
   switchInboxes,
   sessionPanel,
+  pagesScenario,
 ] as Scenario<never>[];

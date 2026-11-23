@@ -793,18 +793,31 @@ does when the window loses focus.
   embedded webview) and WKWebView (where wry leaves
   `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
   any time, so the app opens the browser at most once a second
-  (`navigation::OpenLimit`) and drops the rest. The app's pages open every
-  outside link with `target="_blank" rel="noreferrer"` (Markdown links
-  included) or `window.open`, and the app (`app/src/outside-links.ts`) turns a
-  person's click on a same-window link to another site into such a request,
-  so no link is dead. Setup
+  (`navigation::OpenLimit`) and drops the rest.
+- WKWebView asks the navigation handler about a `target="_blank"` click
+  before it asks for a new window, and wry passes the handler only the URL,
+  so the shell refuses the click as it would a frame's navigation and WebKit
+  never asks for the window. So the app opens links through the `open_link`
+  command instead (`src/links.rs`), which the daemon's pages and the setup
+  screen may call. It opens the same URLs as a new-window request, under the
+  same once-a-second limit, and Tauri's command bridge is in the page's main
+  frame only on macOS and Linux, so a frame cannot call it there. The shell
+  declares it as `openLinks: true` (below); the app
+  (`app/src/outside-links.ts`) then turns a person's click on any link to
+  another site, `target="_blank"` or not, into the command, and its own
+  `openExternal` calls it too. With an older shell, which does not declare
+  it, the app opens outside links as new-window requests and turns a click on
+  a same-window link into one, so no link is dead. Setup
   opens GitHub's device page a few seconds after a sign-in starts, when it can
   no longer ask for a window, through the `open` action of
   `github_connection`, which opens that fixed address whatever the page
   passes.
 - Before the page's own scripts run, the main window (and the check window,
   below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
-  replaced (`src/declaration.rs`), with two fields. `checkWindow` says whether
+  replaced (`src/declaration.rs`), with three fields. `openLinks` says
+  whether the page opens links to other sites with `open_link`; it is `true`
+  in the main window and `false` in the check window, which may call no
+  command. `checkWindow` says whether
   the page can open the tile check window; it is `true` on Linux only (see
   Tile check window). `tileFrames` says whether the page may embed
   sandboxed frames of untrusted content served from the daemon's origin. It
@@ -835,7 +848,8 @@ does when the window loses focus.
   opens the native save dialog for `<name>.baumtile.json` and writes the
   exported file only where the person chose, refusing a name that is not a
   tile type's or a file over 3 MiB, and `open_check_window` and
-  `close_check_window` (see Tile check window). They can call no other Tauri
+  `close_check_window` (see Tile check window), and `open_link` (see above).
+  They can call no other Tauri
   command or
   plugin.
   `withGlobalTauri` is off.
@@ -844,7 +858,7 @@ does when the window loses focus.
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
+  `save_review_settings` and `finish_setup`) and `open_link`. Both also allow `step_zoom`
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
@@ -971,7 +985,7 @@ macOS, Ctrl+Shift+I on Windows) and, in its console:
 5. Click links to other sites as a person does: "Open on GitHub" in a pull
    request's menu, a link in a review's Markdown, the docs in the `?` menu, the
    release notes link of an update notice. Each opens the default browser,
-   once.
+   once, and a debug build logs no refused navigation for it.
 6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
    browser opens once at most.
 7. In setup's GitHub step (first run, with a fresh configuration directory),
@@ -1191,6 +1205,54 @@ the CPUs it had. The scenarios:
 | `filter` | `/` on the Inbox, type `retry` a key at a time, Enter to search titles; reports the Inbox's rows before and after | the Inbox's filter |
 | `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled; each must switch | two inboxes |
 | `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
+| `pages` | Every page and its main sub-views, rendered two ways and ranked slowest first (below) | |
+
+`pages` is the scenario for making every page render fast: it ranks the
+pages, so the slowest is the one to work on, and a change shows as that
+row's numbers going down. It covers the sidebar's pages (Inbox, Sessions,
+Timeline, Pull requests, Analytics, Repositories, Jobs, Settings) and the
+sub-views of a pull request's review (the largest reviewed pull request
+the Pull requests page links to), a session's transcript (the largest),
+New inbox and Edit inbox (opened, never saved); the summary lists the app's
+routes it does not measure. The pages are read from the sidebar and checked
+against the app's own page list (`src/pages.ts`): the run fails if the two
+differ, or if the app has a page the scenario does not know (add it to
+`KNOWN` in `app/scripts/profile/pages.ts`), so a new page is not left out
+unseen.
+
+Each page is measured two ways. `nav` moves to it as a person does, from the
+page before: Ctrl+1 to Ctrl+8 where they work, else a click on the sidebar's
+link (WebDriver's synthesized keys leave the key's place, `code`, which the
+app reads, empty; the summary says so, and each run probes it once before
+its first mark); a sub-view clicks its link on the page, else uses the
+history entry the app's own links make. Its times run from the start of that
+navigation, with the app's code and in-memory caches loaded, so a `nav` row
+depends on the pages before it. `direct` reloads the page's address and its
+times run from the document's own start, so the bundle's fetch and parse are
+in them. Which of the two goes first alternates from run to run.
+
+A page must show its own content (a row, a field, a message: never a wrapper
+around a loader) or its own empty state, and a failure panel, a "not
+available" or "not found" panel, or a loader that stays fails the run. A
+page the data should fill (the Inbox, Pull requests, Repositories, a review,
+a transcript, and Sessions when a session runs) fails the run if empty. Pages
+that seeded data leaves empty (Timeline, Jobs, and Sessions: its sessions
+all ended and "Ended recently" starts folded) report `empty` in the table and
+are not timed; a page empty in some runs only, or empty one way and not the
+other, is flagged. Analytics' Delivery card reads GitHub, which an offline
+instance never answers promptly, so its content and settled times can be
+missing: the table says in how many runs (`n/N`).
+
+The `## Pages` table has a row per page and way, slowest `content` first,
+then the empty ones: `content` and `settled` are the collector's navigation
+times (first frame with no loader on screen, then with no request in flight
+as well), `commits` and `render ms` the root `app` region's in the page's own
+window (between marks around it), `long frames`, `requests` and `request ms`
+those that began in it (a request begun in the window counts whole), and
+`DOM` the element count once it settled. Numbers are medians over the runs.
+The summary's other sections (metrics, interactions, components, requests)
+describe a last load of the Inbox, the same every run, and are not the
+scenario's result.
 
 A scenario the data cannot run exits with status 3 and a summary saying
 why. A journey that does not go as planned fails rather than report

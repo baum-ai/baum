@@ -322,6 +322,8 @@ it("checks the name as typed on Save, and keeps the unsaved inbox when the save 
   expect(node.querySelector(".inbox-name-error")!.textContent).toBe(
     "Another inbox already has that name.",
   );
+  // Focus goes back to the name, not left on Save.
+  expect(document.activeElement).toBe(nameInput());
   await type(nameInput(), "Hot");
   inboxesFail = 500;
   await click(button("Save"));
@@ -568,7 +570,7 @@ it("says the switch waits for the Reviews setting when reviews don't follow the 
   automatic = { enabled: true, pull_requests: "both", repositories: [] };
   await render("?page=inbox-edit&inbox=Acme");
   expect(node.textContent).toContain(
-    "Counts once Settings › Reviews reviews the pull requests in your inboxes.",
+    "No effect yet: turn on reviewing the pull requests in your inboxes in Settings › Reviews first.",
   );
   const link = Array.from(node.querySelectorAll("a")).find(
     (a) => a.textContent === "Settings › Reviews",

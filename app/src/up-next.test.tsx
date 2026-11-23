@@ -567,7 +567,7 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
-// A right click on a row opens its menu, without picking the row.
+// A right click on a row picks it and opens its menu.
 const rightClick = (title: string) =>
   act(async () => {
     row(title).dispatchEvent(
@@ -592,9 +592,9 @@ it("offers a pull request's actions on a right click on its row", async () => {
     "Actions for acme/demo #3",
   );
   expect(choices()).toEqual(expect.arrayContaining(["Open", "Merge…", "Snooze…"]));
-  expect(choices()).not.toContain("Update the branch…");
-  // The panel stays on what it showed.
-  expect(shown()).toBe("Change 1");
+  expect(choices()).not.toContain("Update branch…");
+  // The panel follows the row, so the menu and the detail agree.
+  expect(shown()).toBe("Change 3");
   await choose("Merge…");
   expect(node.querySelector("dialog")).not.toBeNull();
 });
@@ -1740,6 +1740,60 @@ it.each(["1 hour", "Until it changes"])(
     expect(list()).toContain("Stack");
   },
 );
+
+it("snoozes a whole stack from its panel or its row's menu, with one Undo", async () => {
+  entries = [requested(1), mine(2, { checks: "failing" }), ready(3)];
+  const original = globalThis.fetch;
+  vi.stubGlobal("fetch", (...args: Parameters<typeof fetch>) =>
+    String(args[0]).endsWith("api/groups")
+      ? Response.json({
+          groups: [
+            {
+              id: "g1",
+              repository: "acme/demo",
+              name: "Payments stack",
+              members: [2, 3],
+              stack: true,
+              created_at: "",
+              updated_at: "",
+              version_count: 0,
+              latest: null,
+              risk_score: null,
+              reviewed: [],
+              outdated: false,
+            },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  expect(list()).toEqual(["Change 1", "Payments stack"]);
+  await act(async () => row("Payments stack").click());
+  expect(shown()).toBe("Payments stack");
+  await act(async () => button("Snooze").click());
+  await act(async () => snoozeFor("Tomorrow morning").click());
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(
+    /^Snoozed Payments stack \(2 pull requests\) until tomorrow /,
+  );
+  expect(list()).toEqual(["Change 1"]);
+  expect(groups()).toContain("Snoozed · 2");
+  // One Undo brings back every member, on the stack.
+  await press("u");
+  expect(list()).toEqual(["Change 1", "Payments stack"]);
+  expect(shown()).toBe("Payments stack");
+  // From its row's menu, Snooze… picks the stack and opens the same choices.
+  await act(async () => row("Change 1").click());
+  await rightClick("Payments stack");
+  expect(choices()).toContain("Snooze…");
+  await choose("Snooze…");
+  expect(shown()).toBe("Payments stack");
+  await act(async () => snoozeFor("Until it changes").click());
+  expect(list()).toEqual(["Change 1"]);
+  // A reload keeps both snoozed.
+  await render();
+  expect(list()).toEqual(["Change 1"]);
+  expect(groups()).toContain("Snoozed · 2");
+});
 
 it("links the agent sessions working on the pull request to their cards on Sessions, opened", async () => {
   liveList = [

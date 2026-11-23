@@ -982,13 +982,7 @@ export function navigate(href: string) {
   dispatchEvent(new PopStateEvent("popstate"));
 }
 /** Opens a page outside the app, as a link to it would. */
-export function openExternal(url: string) {
-  Object.assign(document.createElement("a"), {
-    href: url,
-    target: "_blank",
-    rel: "noreferrer",
-  }).click();
-}
+export { openExternal } from "./outside-links";
 /** A job's own page: everything kept about it and its transcript. */
 export function jobHref(job: Job) {
   return appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`);
@@ -1054,6 +1048,7 @@ async function failure(response: Response): Promise<LocalRequestError> {
   let body: {
     code?: string;
     message?: string;
+    error?: string;
     needs_clone?: boolean;
     blocked_reason?: string;
     isolation_required?: boolean;
@@ -1070,7 +1065,9 @@ async function failure(response: Response): Promise<LocalRequestError> {
       ? "Needs a local clone"
       : body.blocked_reason
         ? jobReasonText(body.blocked_reason)
-        : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
+        : (body.message ??
+          body.error ??
+          `Local request failed (${response.status}): ${text.slice(0, 240)}`),
     body.needs_clone
       ? "needs_clone"
       : body.isolation_required

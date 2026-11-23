@@ -4,6 +4,7 @@ import { request, type Diagnostics, type IssueParts } from "./api";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 import { COMMAND } from "./shortcuts";
+import { openExternal } from "./outside-links";
 
 /** Where a problem is reported: the public repository's bug report form,
  *  whose field ids are those of `.github/ISSUE_TEMPLATE/bug_report.yml`. */
@@ -96,8 +97,7 @@ export function ReportProblemDialog({
   const ready = description.trim() !== "" && !waiting && link !== null;
   const open = () => {
     if (!ready || !link) return;
-    // The desktop app hands a new window to the browser.
-    window.open(link.url, "_blank", "noopener,noreferrer");
+    openExternal(link.url);
     close();
   };
   return (

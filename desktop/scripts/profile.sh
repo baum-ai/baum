@@ -11,8 +11,8 @@ usage() {
 usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout SECONDS]
                   [--seed-data[=SEED] | --copy-data] [--workspace DIR]...
 
-  scenario         cold-start, jk, review, filter, switch-inboxes or
-                   session-panel
+  scenario         cold-start, jk, review, filter, switch-inboxes,
+                   session-panel or pages
   --check          only check the arguments (just desktop::profile does,
                    before it builds anything)
   --runs N         measured runs after the warm-up (default 5)
@@ -58,8 +58,9 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$scenario" ] || { usage >&2; exit 2; }
-# The scenarios the runner knows, from their definitions.
-known=$(sed -n 's/^  name: "\([a-z-]*\)",$/\1/p' "$desktop/../app/scripts/profile/scenarios.ts")
+# The scenarios the runner knows, from their definitions (scenarios.ts, and
+# the modules it registers scenarios from).
+known=$(sed -n 's/^  name: "\([a-z-]*\)",$/\1/p' "$desktop/../app/scripts/profile/scenarios.ts" "$desktop/../app/scripts/profile/pages.ts")
 if ! printf '%s\n' "$known" | grep -qx -- "$scenario"; then
   echo "profile: no scenario $scenario; the scenarios are: $(printf '%s' "$known" | tr '\n' ' ')" >&2
   exit 2

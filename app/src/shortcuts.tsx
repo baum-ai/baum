@@ -742,7 +742,8 @@ const TABBABLE = [
 function tabbables(root: ParentNode, all = false) {
   return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((element) => {
     if ((!all && element.tabIndex < 0) || element.closest("[inert]")) return false;
-    if (element.getClientRects().length === 0) return false;
+    if (element.getClientRects().length === 0 || getComputedStyle(element).visibility === "hidden")
+      return false;
     if (element instanceof HTMLInputElement && element.type === "radio" && element.name) {
       const group = Array.from(
         (element.form ?? document).querySelectorAll<HTMLInputElement>(

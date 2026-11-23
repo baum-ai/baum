@@ -404,7 +404,10 @@ function withoutHunks(anchors: Anchor[] | undefined): Anchor[] | undefined {
 }
 
 function scrollToItem(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? true;
+  document
+    .getElementById(id)
+    ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
 }
 
 type AttentionRef = {

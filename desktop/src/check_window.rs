@@ -85,8 +85,12 @@ pub fn open<R: Runtime>(
         .focused(false)
         .focusable(false)
         .decorations(false)
-        // The page reads the same declaration as the main window's.
-        .initialization_script(declaration::script(declaration::SHELL))
+        // The page reads the same declaration as the main window's, except
+        // that it may not open links (its capability grants no command).
+        .initialization_script(declaration::script(declaration::Declaration {
+            open_links: false,
+            ..declaration::SHELL
+        }))
         // The main window's rules, without the setup screen. Never opens
         // anything (see `navigation::decide`).
         .on_navigation(move |url| {

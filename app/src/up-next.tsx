@@ -17,6 +17,7 @@ import {
   useState,
   type ComponentType,
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
 } from "react";
 import { formatCount } from "@baum/viewer/components/format";
@@ -756,17 +757,33 @@ export function useUpNext(
     watchable: (entry: Entry) => watchableFix(entry, jobs),
     snoozedUntil: (key: string): SnoozeEnd =>
       key in state.held ? "change" : (state.snoozed[key] ?? 0),
-    snooze: (item: Pick<UpNextItem, "key" | "entry">, until: SnoozeEnd) =>
+    /** Snoozes pull requests together, as a stack's members, in one save. */
+    snooze: (items: Pick<UpNextItem, "key" | "entry">[], until: SnoozeEnd) =>
       update((s) =>
         until === "change"
-          ? { ...s, held: { ...s.held, [item.key]: item.entry.pull_request.head_sha } }
-          : { ...s, snoozed: { ...s.snoozed, [item.key]: until } },
+          ? {
+              ...s,
+              held: {
+                ...s.held,
+                ...Object.fromEntries(
+                  items.map((item) => [item.key, item.entry.pull_request.head_sha]),
+                ),
+              },
+            }
+          : {
+              ...s,
+              snoozed: {
+                ...s.snoozed,
+                ...Object.fromEntries(items.map((item) => [item.key, until])),
+              },
+            },
       ),
-    wake: (key: string) =>
+    wake: (keys: string[]) =>
       update((s) => {
-        const { [key]: _until, ...snoozed } = s.snoozed;
-        const { [key]: _head, ...held } = s.held;
-        return { ...s, snoozed, held };
+        const gone = new Set(keys);
+        const without = <T,>(record: Record<string, T>) =>
+          Object.fromEntries(Object.entries(record).filter(([key]) => !gone.has(key)));
+        return { ...s, snoozed: without(s.snoozed), held: without(s.held) };
       }),
     /** Hides a pull request from every inbox for good. Its record of today
      *  goes, so it is never done; a snooze it had waits, for an unarchive. */
@@ -1065,7 +1082,7 @@ function InboxHeadEdit({
           <button
             type="button"
             className="inbox-head-name"
-            title="Rename"
+            title={`${inbox.name} · Rename`}
             onClick={() => setDraft(inbox.name)}
           >
             {inbox.name}
@@ -1430,17 +1447,24 @@ export function UpNextPage({
       : undefined;
   // Read when rendered: `now` only moves when a snooze ends or the day rolls over.
   const options = snoozeOptions(Date.now());
+  // A selected stack or group snoozes the members its row shows, together.
   const snooze = (until: SnoozeEnd) => {
-    const item = selected;
-    if (!item) return;
-    inbox.snooze(item, until);
+    const line = selected ?? selectedGroup;
+    if (!line) return;
+    const members = isGroup(line) ? line.members : [line];
+    const keys = members.map((member) => member.key);
+    inbox.snooze(members, until);
     setMenu(false);
     setToast({
       id: Date.now(),
-      text: `Snoozed #${item.entry.pull_request.number} until ${snoozeText(until, now)}`,
+      text: `Snoozed ${
+        isGroup(line)
+          ? `${line.group.name} (${plural(members.length, "pull request")})`
+          : `#${line.entry.pull_request.number}`
+      } until ${snoozeText(until, now)}`,
       undo: () => {
-        inbox.wake(item.key);
-        restoreSelection(item.key);
+        inbox.wake(keys);
+        restoreSelection(line.key);
       },
     });
   };
@@ -1524,7 +1548,7 @@ export function UpNextPage({
       event.preventDefault();
       primary.click();
     } else if (key === "s") {
-      if (!selected) return;
+      if (!selected && !selectedGroup) return;
       event.preventDefault();
       setMenu((open) => !open);
     } else if (key === "e") {
@@ -1605,7 +1629,7 @@ export function UpNextPage({
     if (!job && !waiting) {
       const label = fixLabel(entry);
       if (item?.kind === "update")
-        items.push({ label: "Update the branch…", onSelect: () => setUpdating(entry) });
+        items.push({ label: "Update branch…", onSelect: () => setUpdating(entry) });
       else if (item?.kind === "fix" && label && cloneFor(entry) && !fixState(entry).starting)
         items.push({ label, hint: "f", onSelect: () => fix(entry) });
     }
@@ -1650,6 +1674,14 @@ export function UpNextPage({
       hint: "Space",
       onSelect: () => toggleGroup(line),
     },
+    {
+      label: "Snooze…",
+      hint: "s",
+      onSelect: () => {
+        select(line.key);
+        setMenu(true);
+      },
+    },
   ];
   // A done one's page while the app still lists it, and its GitHub page.
   const doneActions = ({ entry, url }: (typeof cleared)[number]): MenuItem[] => [
@@ -1660,7 +1692,7 @@ export function UpNextPage({
     {
       label: "Bring back",
       onSelect: () => {
-        inbox.wake(item.key);
+        inbox.wake([item.key]);
         select(item.key);
       },
     },
@@ -1741,7 +1773,7 @@ export function UpNextPage({
               ) : (
                 <>
                   <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                  <h1>{scope.name}</h1>
+                  <h1 title={scope.name}>{scope.name}</h1>
                 </>
               )}
               {filterButton}
@@ -1779,9 +1811,10 @@ export function UpNextPage({
                   data-row={row.key}
                   data-focused={row.key === line?.key || undefined}
                   className={`list-row upnext-item${group ? " upnext-member" : ""}`}
-                  onContextMenu={(event) =>
-                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request))
-                  }
+                  onContextMenu={(event) => {
+                    select(row.key);
+                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request));
+                  }}
                 >
                   <ListRow
                     row={row}
@@ -1818,9 +1851,10 @@ export function UpNextPage({
                           data-row={entry.key}
                           data-focused={entry.key === line?.key || undefined}
                           className="list-row upnext-item"
-                          onContextMenu={(event) =>
-                            actionsMenu.open(event, groupActions(entry), entry.group.name)
-                          }
+                          onContextMenu={(event) => {
+                            select(entry.key);
+                            actionsMenu.open(event, groupActions(entry), entry.group.name);
+                          }}
                         >
                           <GroupListRow
                             line={entry}
@@ -1977,6 +2011,15 @@ export function UpNextPage({
                   select(key);
                 }}
                 Link={Link}
+                snooze={
+                  <SnoozeMenu
+                    menu={menu}
+                    setMenu={setMenu}
+                    options={options}
+                    snooze={snooze}
+                    now={now}
+                  />
+                }
               />
             </ReviewHunksProvider>
           ) : filtering &&
@@ -2098,10 +2141,13 @@ function ListRow({
       onClick={() => pick(row.key)}
     >
       <span className="upnext-row-text">
-        <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
+        <span className="upnext-row-title" title={pr.title || undefined}>
+          {pr.title || "Untitled pull request"}
+        </span>
         <span className="upnext-row-line">
           <ReviewDot state={dot} detail={row.entry.failure_reason} labelled={false} compact />
           <span
+            title={sub}
             className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
           >
             {row.job ? (
@@ -2442,16 +2488,6 @@ function Panel({
   const pr = entry.pull_request;
   const kind = item?.kind ?? "fix";
   const pending = usePendingReview(entry);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuFocus = useMenuFocus(menu, () => setMenu(false));
-  useEffect(() => {
-    if (!menu) return;
-    const close = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [menu]);
   const who = pr.review_requested_from_me
     ? `${pr.author ?? "Someone"} asked for your review`
     : pr.authored_by_me
@@ -2481,7 +2517,7 @@ function Panel({
         </Link>
       ) : waiting ? null : kind === "update" ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={update}>
-          Update the branch
+          Update branch…
         </button>
       ) : kind === "fix" && fix ? (
         <button
@@ -2504,7 +2540,7 @@ function Panel({
       ) : null}
       {!job && canMerge(entry) ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
-          Merge
+          Merge…
           <kbd aria-hidden="true" className="key-hint">
             m
           </kbd>
@@ -2580,37 +2616,7 @@ function Panel({
             className="upnext-secondary"
           />
         ) : null}
-        <div className="upnext-snooze" ref={menuRef}>
-          <button
-            type="button"
-            className={cn("upnext-secondary", SECONDARY)}
-            aria-haspopup="menu"
-            aria-expanded={menu}
-            onClick={() => setMenu((open) => !open)}
-          >
-            Snooze
-            <ChevronDownIcon size={14} className="text-tertiary" />
-            <kbd aria-hidden="true" className="key-hint">
-              s
-            </kbd>
-          </button>
-          {menu ? (
-            <div role="menu" className="upnext-menu" {...menuFocus}>
-              {options.map((option, index) => (
-                <button
-                  key={option.label}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => snooze(option.until)}
-                >
-                  <span className="upnext-menu-key">{index + 1}</span>
-                  <span className="upnext-menu-label">{option.label}</span>
-                  <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <SnoozeMenu menu={menu} setMenu={setMenu} options={options} snooze={snooze} now={now} />
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={archive}>
           Archive
           <kbd aria-hidden="true" className="key-hint">
@@ -2918,6 +2924,66 @@ function memberState(row: Row): { text: string; tone: string } {
   };
 }
 
+/** The panel's Snooze button and its menu of when, which `s` opens and
+ *  `1`–`4` choose from. */
+function SnoozeMenu({
+  menu,
+  setMenu,
+  options,
+  snooze,
+  now,
+}: {
+  menu: boolean;
+  setMenu: (open: boolean | ((open: boolean) => boolean)) => void;
+  options: { label: string; until: SnoozeEnd }[];
+  snooze: (until: SnoozeEnd) => void;
+  now: number;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuFocus = useMenuFocus(menu, () => setMenu(false));
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menu]);
+  return (
+    <div className="upnext-snooze" ref={menuRef}>
+      <button
+        type="button"
+        className={cn("upnext-secondary", SECONDARY)}
+        aria-haspopup="menu"
+        aria-expanded={menu}
+        onClick={() => setMenu((open) => !open)}
+      >
+        Snooze
+        <ChevronDownIcon size={14} className="text-tertiary" />
+        <kbd aria-hidden="true" className="key-hint">
+          s
+        </kbd>
+      </button>
+      {menu ? (
+        <div role="menu" className="upnext-menu" {...menuFocus}>
+          {options.map((option, index) => (
+            <button
+              key={option.label}
+              type="button"
+              role="menuitem"
+              onClick={() => snooze(option.until)}
+            >
+              <span className="upnext-menu-key">{index + 1}</span>
+              <span className="upnext-menu-label">{option.label}</span>
+              <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** A review group's panel, laid out as a pull request's: its base and facts
  *  summed, its review's state, its risk, and its shown members in order, a
  *  stack's from its base up, each with what it waits on. Picking a member
@@ -2930,6 +2996,7 @@ function GroupPanel({
   memberHref,
   pick,
   Link,
+  snooze,
 }: {
   line: GroupRow;
   /** Its latest group review, once read. */
@@ -2941,6 +3008,8 @@ function GroupPanel({
   memberHref: (entry: Entry) => string;
   pick: (key: string) => void;
   Link: ComponentType<ViewerLinkProps>;
+  /** Snoozes its shown members together. */
+  snooze: ReactNode;
 }) {
   const { group, members } = line;
   const [listOpen, setListOpen] = useState(true);
@@ -3000,6 +3069,7 @@ function GroupPanel({
         href={href}
         memberHref={memberHref}
         Link={Link}
+        actions={snooze}
       />
     );
   const reason = doc?.summary.risk_score?.reasons[0];
@@ -3081,6 +3151,7 @@ function GroupPanel({
             ↵
           </kbd>
         </Link>
+        {snooze}
       </div>
       {score != null ? (
         <RiskCard
