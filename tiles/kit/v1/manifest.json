@@ -50,7 +50,7 @@
       "name": "baum.compare",
       "kind": "function",
       "signature": "baum.compare(was: string, now: string): { was: HTMLElement, now: HTMLElement, same: boolean }",
-      "description": "A before and an after compared word by word, as the review's columns compare them: was and now are spans of the text, the runs of words the other lacks in <del class=\"kit-del\"> and <ins class=\"kit-ins\">. Texts that share under half their words are left unmarked (rewritten, not edited). same is true when the two have the same words, whatever their case and spacing."
+      "description": "A before and an after compared word by word, as the review's columns compare them: was and now are spans of the text, the runs of words the other lacks in <del class=\"kit-del\"> and <ins class=\"kit-ins\">. Texts that share under half their words are left unmarked (rewritten, not edited). same is true when the two have the same words, whatever their spacing; case counts."
     },
     {
       "name": "baum.empty",

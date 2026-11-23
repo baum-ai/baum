@@ -596,27 +596,26 @@ function diff(citation, options) {
 // ---------------------------------------------------------------------------
 // Before and after, word by word, as the review's columns compare them.
 
-/** Text as compare reads it: the same words, whatever their case and
- *  spacing, are the same. */
-const sameKey = (text) => text.trim().replace(/\s+/g, " ").toLowerCase();
+/** Text as compare reads it: the same words, whatever their spacing, are
+ *  the same. Case counts, as it does in code, values and names. */
+const sameKey = (text) => text.trim().replace(/\s+/g, " ");
 
 /** Which words of `a` and `b` (arrays of words and spaces) are in their
  *  longest run in common, as two sets of positions. */
 function keptWords(a, b) {
   const words = (pieces) => pieces.flatMap((piece, at) => (/^\s+$/.test(piece) ? [] : [at]));
   const [wa, wb] = [words(a), words(b)];
-  const key = (piece) => piece.toLowerCase();
   const lengths = Array.from({ length: wa.length + 1 }, () => new Array(wb.length + 1).fill(0));
   for (let i = wa.length - 1; i >= 0; i--)
     for (let j = wb.length - 1; j >= 0; j--)
       lengths[i][j] =
-        key(a[wa[i]]) === key(b[wb[j]])
+        a[wa[i]] === b[wb[j]]
           ? lengths[i + 1][j + 1] + 1
           : Math.max(lengths[i + 1][j], lengths[i][j + 1]);
   const keptA = new Set();
   const keptB = new Set();
   for (let i = 0, j = 0; i < wa.length && j < wb.length; ) {
-    if (key(a[wa[i]]) === key(b[wb[j]])) {
+    if (a[wa[i]] === b[wb[j]]) {
       keptA.add(wa[i++]);
       keptB.add(wb[j++]);
     } else if (lengths[i + 1][j] >= lengths[i][j + 1]) i++;

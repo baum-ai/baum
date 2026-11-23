@@ -53,12 +53,12 @@
     min-width: 9rem;
     overflow-wrap: break-word;
   }
-  /* On a phone the columns share what there is and wrap, and the glance
-     lists its rows in one column so a name keeps its room. */
   /* With "Show only changes" on, the last row left shown ends the table. */
   .kit-table tbody tr:not([hidden]):not(:has(~ tr:not([hidden]))) > td {
     border-bottom: 0;
   }
+  /* On a phone the columns share what there is and wrap, and the glance
+     lists its rows in one column so a name keeps its room. */
   @media (max-width: 480px) {
     .glance-rows.across {
       grid-template-columns: minmax(0, 1fr);
@@ -96,11 +96,11 @@
   const plural = (count, one, many) => `${count} ${count === 1 ? one : many || `${one}s`}`;
   /** Columns the table changes, without those listed only beside them. */
   const changedColumns = (table) => table.columns.filter((column) => column.change !== "unchanged");
+  /** Columns listed as unchanged whose definition differs: drawn, and
+   *  counted, as altered. */
+  const misListed = (table) =>
+    table.columns.filter((column) => column.change === "unchanged" && column.before !== column.after);
   const destructiveColumns = (table) => changedColumns(table).filter((column) => column.destructive);
-  /** Whether a before and an after are written the same, spacing aside:
-   *  case counts, as it does in names, values and quoted defaults. */
-  const written = (text) => (text ?? "").trim().replace(/\s+/g, " ");
-  const alike = (before, after) => before !== null && after !== null && written(before) === written(after);
 
   const destructive = (table) => table.change === "dropped" || destructiveColumns(table).length > 0;
   const blocking = (table) => table.indexes.filter((index) => index.online === false && index.change !== "removed");
@@ -148,7 +148,7 @@
     const count = (...changes) => changedColumns(table).filter((column) => changes.includes(column.change)).length;
     const added = count("added");
     const removed = count("removed");
-    const altered = count("altered", "renamed");
+    const altered = count("altered", "renamed") + misListed(table).length;
     if (table.change === "dropped" && changedColumns(table).length === 0) return null;
     return baum.html`<span class="delta kit-small kit-num" title="Columns added, removed and altered">
       ${added ? baum.html`<span class="kit-added">+${added}</span>` : null}
@@ -266,7 +266,7 @@
     // A column listed as unchanged whose definition differs is drawn as the
     // change it is.
     const listed = column.change === "unchanged";
-    const same = alike(column.before, column.after) && (listed || (column.change === "altered" && !column.destructive));
+    const same = column.before !== null && column.after !== null && words.same && (listed || (column.change === "altered" && !column.destructive));
     const change = listed ? "altered" : column.change;
     const lost = column.destructive && !listed;
     return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>

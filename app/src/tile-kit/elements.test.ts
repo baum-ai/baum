@@ -342,17 +342,24 @@ describe("baum.compare", () => {
     expect(out.ins).toEqual([]);
   });
 
-  it("leaves a rewrite unmarked and reads case and spacing as the same", () => {
+  it("leaves a rewrite unmarked, reads spacing as the same and case as a change", () => {
     expect(compare("int64", "string, a user login")).toMatchObject({
       del: [],
       ins: [],
       same: false,
     });
-    expect(compare("Text  not null", "TEXT NOT NULL")).toMatchObject({
+    expect(compare("TEXT  NOT\nNULL", "TEXT NOT NULL")).toMatchObject({
       del: [],
       ins: [],
       same: true,
     });
+  });
+
+  it("marks a word whose case changed", () => {
+    const out = compare("DEFAULT 'Draft'", "DEFAULT 'draft'");
+    expect(out.same).toBe(false);
+    expect(out.del).toEqual([["kit-del", "'Draft'"]]);
+    expect(out.ins).toEqual([["kit-ins", "'draft'"]]);
   });
 
   it("keeps markup in the texts as text", () => {

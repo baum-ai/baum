@@ -515,22 +515,21 @@ box.append(more);
 }
 return node;
 }
-const sameKey = (text) => text.trim().replace(/\s+/g, " ").toLowerCase();
+const sameKey = (text) => text.trim().replace(/\s+/g, " ");
 function keptWords(a,b){
 const words = (pieces) => pieces.flatMap((piece, at) => (/^\s+$/.test(piece) ? [] : [at]));
 const[wa,wb]=[words(a),words(b)];
-const key=(piece)=>piece.toLowerCase();
 const lengths=Array.from({length:wa.length+1},()=>new Array(wb.length+1).fill(0));
 for(let i=wa.length-1;i>=0;i--)
 for(let j=wb.length-1;j>=0;j--)
 lengths[i][j]=
-key(a[wa[i]])===key(b[wb[j]])
+a[wa[i]]===b[wb[j]]
 ?lengths[i+1][j+1]+1
 :Math.max(lengths[i+1][j],lengths[i][j+1]);
 const keptA=new Set();
 const keptB=new Set();
 for(let i=0,j=0;i<wa.length&&j<wb.length;){
-if(key(a[wa[i]])===key(b[wb[j]])){
+if(a[wa[i]]===b[wb[j]]){
 keptA.add(wa[i++]);
 keptB.add(wb[j++]);
 }else if(lengths[i+1][j]>=lengths[i][j+1])i++;

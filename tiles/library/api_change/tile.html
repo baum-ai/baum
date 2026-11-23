@@ -61,12 +61,12 @@
     min-width: 9rem;
     overflow-wrap: break-word;
   }
-  /* On a phone the columns share what there is and wrap, and the glance
-     lists its rows in one column so a name keeps its room. */
   /* With "Show only changes" on, the last row left shown ends the table. */
   .kit-table tbody tr:not([hidden]):not(:has(~ tr:not([hidden]))) > td {
     border-bottom: 0;
   }
+  /* On a phone the columns share what there is and wrap, and the glance
+     lists its rows in one column so a name keeps its room. */
   @media (max-width: 480px) {
     .glance-rows.across {
       grid-template-columns: minmax(0, 1fr);
@@ -229,10 +229,6 @@
     return baum.html`<span class="kit-row" data-gap="1">${list.map((citation) => baum.cite(citation))}</span>`;
   }
 
-  /** Whether a before and an after are written the same, spacing aside:
-   *  case counts, as it does in names, values and quoted defaults. */
-  const written = (text) => (text ?? "").trim().replace(/\s+/g, " ");
-  const alike = (before, after) => before !== null && after !== null && written(before) === written(after);
 
   const REQUIRED = { true: "required", false: "optional" };
 
@@ -251,7 +247,7 @@
     const words = baum.compare(row.before ?? "", row.after ?? "");
     // A field listed as unchanged whose type differs is drawn as the change
     // it is.
-    const same = alike(row.before, row.after) && (row.change === "unchanged" || row.change === "changed");
+    const same = row.before !== null && row.after !== null && words.same && (row.change === "unchanged" || row.change === "changed");
     const change = row.change === "unchanged" ? "changed" : row.change;
     return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>
       <td class="ident">

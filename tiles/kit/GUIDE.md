@@ -214,7 +214,7 @@ citations, the most telling first.
 | `baum.cite(citation, label?)` | A citation chip; a button that jumps to the code in a detail. |
 | `baum.diff(citation, { maxLines })` | The cited hunk: one line (file and range) in a glance, numbered lines in a detail (default 40, then "Show N more lines"). |
 | `baum.md(text, { inline })` | Markdown subset: paragraphs, `**strong**`, `*em*`, `` `code` ``, lists, `###` headings, quotes. Raw HTML stays text. |
-| `baum.compare(was, now)` | A before and an after word by word: `{ was, now, same }`, two spans with the words the other lacks marked (`kit-del`, `kit-ins`), and whether they read the same. Put each span in its own `baum.html` slot. |
+| `baum.compare(was, now)` | A before and an after word by word: `{ was, now, same }`, two spans with the words the other lacks marked (`kit-del`, `kit-ins`), and whether they are the same words (spacing aside; case counts). Put each span in its own `baum.html` slot. |
 | `baum.empty(text)` | The empty state. |
 | `baum.fail(message)` | The error state, for data the tile cannot draw. |
 | `baum.refs.get(citation)` | What the page resolved for a citation (`label`, `path`, `range`, `tier`…), or null. |
