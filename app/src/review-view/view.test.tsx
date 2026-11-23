@@ -971,6 +971,9 @@ describe("the code tile", () => {
     expect(shown.map((line) => line.newLine)).toEqual(
       Array.from({ length: 12 }, (_, at) => at + 20),
     );
+    // Focus lines too far apart: the window keeps its lead-in to the first.
+    const apart = lines.map((line, at) => ({ ...line, focus: at === 19 || at === 32 }));
+    expect(foldedLines(apart)![0]?.newLine).toBe(18);
     expect(foldedLines(lines.slice(0, 14))).toBeNull();
   });
 
