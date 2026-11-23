@@ -81,7 +81,8 @@ host adds `digest` when it loads the type; never write it.
    its content, so they grow without end).
 6. Status tones (`data-tone`: `positive`, `caution`, `critical`, `info`,
    `neutral`) mean status only, never a category. A kind of change is a
-   `kit-tag`; "breaking" is a `kit-badge` with `data-tone="critical"`.
+   `kit-tag`; what a change is (New, Changed, Removed, Breaking) is a
+   `kit-pill`, and "breaking" is one with `data-tone="critical"`.
 7. Every fact the tile states cites the code behind it.
 8. The glance answers "do I need to open this?" and fits its box. The detail
    shows everything in the data.
@@ -124,7 +125,11 @@ it 720px and 360px wide (a phone). Its height follows its content. Use `kit-sect
 tables, `baum.cite` chips, and `baum.diff` for the code. Put the most
 important things first (breaking, destructive, high severity). Long lists go
 in `<details class="kit-details">` (one may hold others). A list of cards goes
-in a `kit-stack`, which spaces them. On a 360px phone a table of more than
+in a `kit-stack`, which spaces them. Rows of a before and an after (a
+column's old and new type) mark the words that differ with `baum.compare`,
+put a `kit-pill` on what changed, draw the rows that stayed the same in
+`kit-muted` and, when some did, offer a `kit-switch` "Show only changes"
+that hides them. On a 360px phone a table of more than
 three columns wraps badly: keep tables to three or four short columns.
 
 ## 4. The data schema
@@ -209,6 +214,7 @@ citations, the most telling first.
 | `baum.cite(citation, label?)` | A citation chip; a button that jumps to the code in a detail. |
 | `baum.diff(citation, { maxLines })` | The cited hunk: one line (file and range) in a glance, numbered lines in a detail (default 40, then "Show N more lines"). |
 | `baum.md(text, { inline })` | Markdown subset: paragraphs, `**strong**`, `*em*`, `` `code` ``, lists, `###` headings, quotes. Raw HTML stays text. |
+| `baum.compare(was, now)` | A before and an after word by word: `{ was, now, same }`, two spans with the words the other lacks marked (`kit-del`, `kit-ins`), and whether they read the same. Put each span in its own `baum.html` slot. |
 | `baum.empty(text)` | The empty state. |
 | `baum.fail(message)` | The error state, for data the tile cannot draw. |
 | `baum.refs.get(citation)` | What the page resolved for a citation (`label`, `path`, `range`, `tier`…), or null. |
@@ -227,12 +233,16 @@ with the factories. The view's fields are `data`, `face`, `size`, `theme`,
 `kit-lede`, `kit-count` (a headline number), `kit-heading`, `kit-kicker`,
 `kit-muted`, `kit-subtle`, `kit-small`, `kit-strong`, `kit-mono`, `kit-num`,
 `kit-break`, `kit-truncate`, `kit-clamp-1`, `kit-clamp-2`, `kit-clamp-3`,
-`kit-added`, `kit-removed`, `kit-sep`. Marks: `kit-badge` (status pill,
-`data-tone`), `kit-tag` (a kind or a method; add `kit-mono` for code),
+`kit-added`, `kit-removed`, `kit-ins`, `kit-del`, `kit-sep`. Marks:
+`kit-badge` (status pill, `data-tone`), `kit-pill` (a solid pill for what a
+change is: `info` New, `caution` Changed, `critical` Removed or Breaking),
+`kit-tag` (a kind or a method; add `kit-mono` for code),
 `kit-dot` (`data-tone` or `data-tier`), `kit-callout` (`data-tone`),
 `kit-tone`, `kit-bar` (`style="--value:${share}"`, 0 to 1). Structure:
 `kit-facts` (a `dl`), `kit-table` (`data-tone` on a `tr` tints an added,
-changed or removed row), `kit-details`. States: `kit-empty`, `kit-fail`.
+changed or removed row), `kit-details`. Controls: `kit-switch` (a `<label>` around an
+`<input type="checkbox" role="switch">` and its words; listen with
+`addEventListener`). States: `kit-empty`, `kit-fail`.
 
 **Tokens** (in your `<style>`, as `var(--…)`): text `--text-primary`,
 `--text-secondary`, `--text-tertiary`, `--text-disabled`, `--text-link`;

@@ -598,6 +598,7 @@ Object.defineProperty(window, "baum", {
     cite,
     diff,
     md,
+    compare,
     empty,
     fail,
     refs: Object.freeze({

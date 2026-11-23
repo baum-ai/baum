@@ -22,8 +22,8 @@ import (
 // same digest, so an edit must be deliberate: update the digest in the same
 // commit and say in its message what changed.
 var digests = map[string]string{
-	"schema_change": "sha256:b15a76f1406641b12153e9561104c81d1e8e10cbed6af91d7a4d0fe97a8db756",
-	"api_change":    "sha256:aea255e61a0cd23f5f11642e2c936ae0bbf967974b830e5d9f144d243629a3a5",
+	"schema_change": "sha256:cdd00c8b905995a7e30ad4bdf70f45f33d329cf6137f8c2dd2b77b8a346195d6",
+	"api_change":    "sha256:210edc2983e18392a4e22a4c5970c3bcaf9c3444d8fd107a836fe4c9202ed222",
 }
 
 // A built-in definition is recognised by its content's digest, current or

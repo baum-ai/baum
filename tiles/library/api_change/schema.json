@@ -66,7 +66,7 @@
       "required": ["field", "change", "before", "after", "required"],
       "properties": {
         "field": { "type": "string", "minLength": 1, "maxLength": 120, "description": "The field, parameter, flag or argument, as the wire or the call names it (nested fields as a.b)." },
-        "change": { "$ref": "#/$defs/change" },
+        "change": { "enum": ["added", "removed", "changed", "unchanged"], "description": "unchanged: a field of a changed entry point the pull request leaves as it is, listed for context with before equal to after." },
         "before": { "type": ["string", "null"], "maxLength": 160, "description": "Its type or meaning before; null for an added field." },
         "after": { "type": ["string", "null"], "maxLength": 160, "description": "Its type or meaning after; null for a removed field." },
         "required": { "type": ["boolean", "null"], "description": "Whether a caller must send it (request) or can rely on it (response); null when unknown." }
@@ -91,13 +91,13 @@
         "request": {
           "type": "array",
           "maxItems": 40,
-          "description": "Request fields, parameters, flags or arguments: every one of an added entry point, the changed ones of another.",
+          "description": "Request fields, parameters, flags or arguments: every one of an added entry point; the changed ones of another, and at most as many unchanged ones beside them as help read the change.",
           "items": { "$ref": "#/$defs/field" }
         },
         "response": {
           "type": "array",
           "maxItems": 40,
-          "description": "Response or result fields: every one of an added entry point, the changed ones of another.",
+          "description": "Response or result fields: every one of an added entry point; the changed ones of another, and at most as many unchanged ones beside them as help read the change.",
           "items": { "$ref": "#/$defs/field" }
         },
         "errors": {
