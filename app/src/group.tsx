@@ -203,6 +203,12 @@ export function GroupPage({
     repository: group.repository,
     members: railMembers,
     numbers: group.members,
+    heads: Object.fromEntries(
+      [...landed, ...members].map(({ number, entry }) => [
+        number,
+        entry?.pull_request.head_sha ?? "",
+      ]),
+    ),
     listed: listedForGroup(live, group.repository, group.members),
     document: doc,
     revision: `${group.version_count}:${group.updated_at}:${revision}`,
@@ -525,7 +531,7 @@ export function GroupPage({
                                 {entry.pull_request.title}
                               </ViewerLink>
                             ) : (
-                              <span className="text-(--text-tertiary)">Not in the inbox</span>
+                              <span className="text-tertiary">Not in the inbox</span>
                             )}
                             <span className="local-group-member-state">
                               {state === "merged" ? (
@@ -549,13 +555,13 @@ export function GroupPage({
                                 {entry.pull_request.title}
                               </ViewerLink>
                             ) : (
-                              <span className="text-(--text-tertiary)">Not in the inbox</span>
+                              <span className="text-tertiary">Not in the inbox</span>
                             )}
                             {entry ? (
                               <span className="local-group-member-state">
                                 <PullRequestState entry={entry} />
                                 {entry.status === "generating" ? (
-                                  <span className="inline-flex items-center gap-1.5 text-(--text-secondary)">
+                                  <span className="inline-flex items-center gap-1.5 text-secondary">
                                     <NineDots size={14} />
                                     {reviewStatus.generating}
                                   </span>

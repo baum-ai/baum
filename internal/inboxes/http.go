@@ -91,13 +91,24 @@ func (h *API) put(w http.ResponseWriter, r *http.Request) {
 		failure(w, http.StatusBadRequest, CodeInvalidRequest, "Send one JSON request.")
 		return
 	}
-	state, err := h.Store.Replace(*req.Revision, req.Inboxes)
+	state, err := h.Save(*req.Revision, req.Inboxes)
 	if err != nil {
 		fail(w, err)
 		return
 	}
+	respond(w, http.StatusOK, listResponse{true, state})
+}
+
+// Save is what PUT /api/inboxes does: Store.Replace at the revision the
+// caller read (a *StaleError when it is not the stored one), then Changed
+// after a save. A proposal's save goes through it too.
+func (h *API) Save(revision int, inboxes []Inbox) (State, error) {
+	state, err := h.Store.Replace(revision, inboxes)
+	if err != nil {
+		return State{}, err
+	}
 	if h.Changed != nil {
 		h.Changed()
 	}
-	respond(w, http.StatusOK, listResponse{true, state})
+	return state, nil
 }

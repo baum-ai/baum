@@ -49,7 +49,7 @@ export function NameDialog({
           <h2 id="group-name-title" className="text-lg font-semibold">
             {title}
           </h2>
-          {detail ? <p className="text-xs text-(--text-secondary)">{detail}</p> : null}
+          {detail ? <p className="text-xs text-secondary">{detail}</p> : null}
         </div>
         <label className="local-field-label">
           Group name

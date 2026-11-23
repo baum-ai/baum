@@ -703,7 +703,7 @@
       "evidence": [
         {
           "id": "ev_cli_build",
-          "kind": "ci",
+          "kind": "run",
           "claim": "The command builds and passes lint with the rest of the module.",
           "status": "verified",
           "granularity": "job",
@@ -842,8 +842,8 @@
       "evidence": [
         {
           "id": "ev_tests_pass",
-          "kind": "ci",
-          "claim": "The test job passed on the head.",
+          "kind": "test",
+          "claim": "The tag query tests and the benchmark run in the test job, which passed on the head.",
           "status": "verified",
           "granularity": "job",
           "source": "ci",
@@ -851,6 +851,10 @@
             {
               "type": "check",
               "id": "check_run:1"
+            },
+            {
+              "type": "hunk",
+              "id": "@tags_test.go"
             }
           ]
         }

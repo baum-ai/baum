@@ -2,12 +2,14 @@ package locallink
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/workstats"
+	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
@@ -63,13 +65,35 @@ func LinkCommits(ctx context.Context, dir string, commits []gitlocal.Commit, opt
 		}
 		remote = remoteFor(remotes, opts.Repository)
 	}
-	found, _, err := loadSessions(ctx, dir, repo, opts.Sessions, commits, remote, opts.Warn)
+	d, err := discoverSessions(ctx, dir, opts.Sessions, commits)
 	if err != nil {
 		return nil, err
 	}
-	_, latest, edges, err := linkSessions(ctx, found, commits, nil)
-	if err != nil {
-		return nil, err
+	book := newBuildBook(sessionDigests)
+	// Hold warnings until a complete attempt, as evidence builds do: a
+	// missing digest must fall back to real graphs before any links escape.
+	warnings := heldWarnings(opts.Warn)
+	defer warnings.flush()
+	var latest map[string]snapshot
+	var edges []linkage.Edge
+	for {
+		warnings.reset()
+		found, _, _, err := loadDiscovered(ctx, d, dir, repo, commits, remote, warnings.writer(), book)
+		if err != nil {
+			return nil, err
+		}
+		_, latest, edges, err = linkSessions(ctx, found, commits, book)
+		if err != nil {
+			return nil, err
+		}
+		if !book.missing {
+			break
+		}
+		if book.refusingAll {
+			return nil, errors.New("linking commits: a session was not mapped though every one was refused")
+		}
+		book.missing = false
+		book.refuseAll()
 	}
 	links := make([]CommitLink, 0, len(edges))
 	for _, edge := range edges {

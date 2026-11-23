@@ -177,7 +177,7 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
           <CloseButton ref={closeButton} onClick={close} aria-keyshortcuts="Escape" />
         ) : null}
       </div>
-      <p className="my-3 text-(--text-secondary)">
+      <p className="my-3 text-secondary">
         {pr.title} · {pr.repository}
       </p>
       {!options && !error ? <LoadingStatus>Checking GitHub…</LoadingStatus> : null}
@@ -303,8 +303,8 @@ export function RerunChecksDialog({
           </ul>
           {o.not_rerunnable.length > 0 ? (
             <>
-              <p className="text-(--text-secondary)">Not re-runnable from baum:</p>
-              <ul className="my-2 list-disc pl-5 text-(--text-secondary)">
+              <p className="text-secondary">Not re-runnable from baum:</p>
+              <ul className="my-2 list-disc pl-5 text-secondary">
                 {o.not_rerunnable.map((name) => (
                   <li key={name}>{name}</li>
                 ))}

@@ -83,6 +83,17 @@ func (r *registry) UpdatePreferences(_ context.Context, edit func(repos.Preferen
 	return r.prefs, nil
 }
 
+func (r *registry) UpdatePreferencesIf(_ context.Context, edit func(repos.Preferences) (repos.Preferences, error)) (repos.Preferences, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next, err := edit(r.prefs)
+	if err != nil {
+		return repos.Preferences{}, err
+	}
+	r.prefs = next
+	return r.prefs, nil
+}
+
 func (r *registry) RepositorySettings(_ context.Context, repository string) (repos.Settings, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

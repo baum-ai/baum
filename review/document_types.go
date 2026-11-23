@@ -112,10 +112,13 @@ type documentSummary struct {
 	BreakingChange *string                `json:"breaking_change"`
 	// ReviewMinutes is absent on documents generated before the estimate
 	// existed and on stack reviews.
-	ReviewMinutes *int               `json:"review_minutes,omitempty"`
-	Attention     json.RawMessage    `json:"attention"`
-	Author        documentAuthor     `json:"author"`
-	Authorship    documentAuthorship `json:"authorship"`
+	ReviewMinutes *int            `json:"review_minutes,omitempty"`
+	Attention     json.RawMessage `json:"attention"`
+	// Recommendation is absent on documents generated before it existed and
+	// null when the review gives none.
+	Recommendation json.RawMessage    `json:"recommendation,omitempty"`
+	Author         documentAuthor     `json:"author"`
+	Authorship     documentAuthorship `json:"authorship"`
 	// RiskScore is absent on documents generated before assessments existed.
 	RiskScore *documentRiskScore `json:"risk_score,omitempty"`
 }
@@ -140,7 +143,8 @@ type documentRiskLimitation struct {
 }
 
 type documentReviewExchange struct {
-	Summary             string                    `json:"summary"`
+	// Summary is null when there has been no review.
+	Summary             *string                   `json:"summary"`
 	Reviews             int                       `json:"reviews"`
 	BackAndForths       *int                      `json:"back_and_forths"`
 	CriticalIssuesFound *int                      `json:"critical_issues_found"`

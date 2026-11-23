@@ -24,7 +24,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentcontext"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
@@ -437,6 +441,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
 		scheduler := &automatic.Scheduler{Registry: registry, Path: database, Discover: discover.PollNow, Groups: groups, Log: log,
+			ClaudeSignedIn: claude.SignedInWithConfigDir(cfg.BackendPaths[config.BackendClaude]),
+			CodexSignedIn:  codex.SignedInWithHome(cfg.BackendPaths[config.BackendCodex]),
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -578,6 +584,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// derived, redacted decisions in the daemon's state.
 		var capture *decisionlog.Scheduler
 		var decisionStore *decisionlog.Store
+		var decisionRelevance *decisionlog.Relevance
 		var timeline http.Handler
 		// The GitHub connection's login, once it exists below.
 		var connectionLogin func() string
@@ -586,9 +593,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
 				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
+				decisionRelevance = &decisionlog.Relevance{Store: decisionStore, Registry: registry, Config: cfg, Patch: decisionlog.LocalRelevancePatch(registry), Log: log}
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log, Changed: timelineChanged,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
-				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
+				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: func() { timelineChanged(); decisionStore.Changed() }}
 				builds.worker.Store(featureLog)
 				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
 					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
@@ -669,6 +677,31 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// of the sessions in registered clones, the merges, branch updates
 		// and re-runs made from the app, and plan usage samples.
 		plans := planusage.NewService()
+		// The plans of the Claude Code configuration directories and Codex
+		// homes Settings chose for runs show beside the daemon's own.
+		plans.Others = func(ctx context.Context) []planusage.Other {
+			prefs, err := registry.Preferences(ctx)
+			if err != nil {
+				return nil
+			}
+			var others []planusage.Other
+			for _, use := range []struct {
+				provider string
+				agent    agentdirs.Agent
+				dirs     []string
+			}{
+				{"claude", agentdirs.Claude, prefs.ClaudeConfigDirs(cfg)},
+				{"codex", agentdirs.Codex, prefs.CodexHomes(cfg)},
+			} {
+				own := use.agent.Current()
+				for _, dir := range use.dirs {
+					if dir != own {
+						others = append(others, planusage.Other{Provider: use.provider, Dir: dir})
+					}
+				}
+			}
+			return others
+		}
 		planHistory := &planusage.History{Path: database, Service: plans}
 		actions := &analytics.Actions{Path: database}
 		sessionIndex := &analytics.Index{Path: database, Clones: registry, Log: log}
@@ -679,7 +712,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			insights.Pulls = decisionStore.PullFlow
 			insights.Login = func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }
 			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
-				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
+				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Relevance: decisionRelevance, Log: log}).Handler()
 			}
 		}
 		// A pull request with no saved review shows its facts, read when its
@@ -715,9 +748,19 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			state, err := savedInboxes.Read()
 			return state.Inboxes, err
 		}}
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+		inboxesAPI := &inboxes.API{Store: savedInboxes, Changed: changed}
+		var lastHookTrust uiserver.LastHookTrust
+		local := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+			var cached []json.RawMessage
+			for _, plan := range plans.Cached() {
+				if raw, err := json.Marshal(plan); err == nil {
+					cached = append(cached, raw)
+				}
+			}
+			return cached
+		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
-			Inboxes:   (&inboxes.API{Store: savedInboxes, Changed: changed}).Handler(),
+			Inboxes:   inboxesAPI.Handler(),
 			Groups:    groupsAPI.Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
@@ -726,7 +769,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				e := decisionlog.EffectiveModel(ctx, cfg, prefs, generate.Backends{}, nil)
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
 			},
-			HookTrust: func(ctx context.Context) agentplugins.HookTrust {
+			// The MCP server reports the newest answer and never reads again.
+			HookTrust: lastHookTrust.Wrap(func(ctx context.Context) agentplugins.HookTrust {
 				home, err := os.UserHomeDir()
 				if err != nil {
 					return agentplugins.HookTrust{State: "unknown"}
@@ -742,16 +786,53 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					}
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
-			},
-			Diagnostics: uiDiagnostics, Version: version()}.Handler()
+			}),
+			Diagnostics: uiDiagnostics, Version: version()}
+		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
+		// What a chat proposes is saved, when the person saves it, through
+		// the pages' own saves.
+		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState}
+		if requests != nil {
+			proposers.CodexApprovals = func() bool { return requests.Settings().CodexApprovals }
+			proposers.SetCodexApprovals = func(on bool, check func(bool) error) error {
+				_, err := requests.SetSettingsIf(agentrequests.Settings{CodexApprovals: on}, func(current agentrequests.Settings) error { return check(current.CodexApprovals) })
+				return err
+			}
+		}
+		// Agents' MCP server; an action's reads resolve clone ids to check
+		// they stay in its repository.
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+			listing, loaded, err := pickList.Cached(ctx, query)
+			if err != nil {
+				return agentcontext.PickList{}, err
+			}
+			out := agentcontext.PickList{Loaded: loaded, Total: listing.TotalCount, More: listing.HasMore}
+			for _, r := range listing.Repositories {
+				out.Repositories = append(out.Repositories, agentcontext.PickRepository{Repository: r.Repository, Private: r.Private, Fork: r.Fork,
+					Description: r.Description, PushedAt: r.PushedAt, Picked: r.Picked, Cloned: r.Clone != ""})
+			}
+			return out, nil
+		}, Clone: func(ctx context.Context, id string) (string, error) {
+			clones, err := registry.CloneRows(ctx)
+			if err != nil {
+				return "", err
+			}
+			for _, c := range clones {
+				if c.ID == id {
+					return c.Repository, nil
+				}
+			}
+			return "", errors.New("unknown clone")
+		}})
 		// Everything the journaled jobs need is wired: start them.
 		queue.Resume()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
 			Sample:  sample,
+			MCP:     mcp,
 			Methods: methods,
 			Waits:   waits,
 			Run: func(ctx context.Context) {
@@ -776,6 +857,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					wg.Go(func() { transcripts.Watch(ctx, func() { _ = server.Publish("live", struct{}{}) }) })
 				}
 				if capture != nil {
+					wg.Go(func() { decisionRelevance.Run(ctx) })
 					wg.Go(func() { capture.Run(ctx) })
 					wg.Go(func() { featureLog.Run(ctx) })
 				}

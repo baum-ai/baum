@@ -193,16 +193,34 @@ jobs:
       - name: Verify module downloads
         run: go mod verify
 
+      # The notes are the tag's version section of CHANGELOG.md on main, read
+      # from origin/main rather than the tagged commit: a release candidate is
+      # promoted from the commit it was made from, which predates notes written
+      # since. The script runs as it is on main too, because the tagged commit
+      # may predate it. Both are data for this script only; nothing is built
+      # from them. A stable tag without notes fails here, before anything is
+      # created. Until the script reaches main, notes stay empty.
+      - name: Write the release notes from the changelog on main
+        run: |
+          if git cat-file -e origin/main:scripts/release-notes.sh 2>/dev/null; then
+            git show origin/main:scripts/release-notes.sh > "$RUNNER_TEMP/release-notes.sh"
+            git show origin/main:CHANGELOG.md > "$RUNNER_TEMP/changelog.md"
+            sh "$RUNNER_TEMP/release-notes.sh" "$GITHUB_REF_NAME" "$RUNNER_TEMP/changelog.md" > "$RUNNER_TEMP/release-notes.md"
+          else
+            echo "::notice::scripts/release-notes.sh is not on main yet; the release has no notes."
+            : > "$RUNNER_TEMP/release-notes.md"
+          fi
+
       # Builds linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and
       # windows/amd64 with CGO off, archives them, writes checksums.txt and
-      # creates a draft GitHub release with empty notes (see .goreleaser.yaml);
-      # desktop-publish publishes it.
+      # creates a draft GitHub release with the notes above (see
+      # .goreleaser.yaml); desktop-publish publishes it.
       - name: goreleaser release
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           distribution: goreleaser
           version: v2.18.3
-          args: release --clean
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
         env:
           # The viewer-dist job, which has a read-only token, already checked
           # the bundle, so the before hook skips it: no JavaScript tooling

@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { useCopy } from "./desktop/terminal-setup";
 import { formatCount } from "@baum/viewer/components/format";
-import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
+import {
+  ChevronRightIcon,
+  CircleCheckIcon,
+  CircleCrossIcon,
+  CircleDashedIcon,
+} from "@baum/viewer/components/icons";
 import { LocalRequestError, joinAnd, request } from "./api";
 import { githubToast } from "./github-toast";
 import { LoadingStatus } from "./nine-dots";
@@ -25,6 +31,23 @@ export type Check = {
   /** The GitHub Actions job behind a failing check, which Retry re-runs;
    *  absent for other apps' checks and commit statuses. */
   job_id?: number;
+  /** The check run's id, which `api/prs/check-log` takes; absent for a commit
+   *  status and from an older daemon. */
+  id?: number;
+  /** GitHub keeps a log for the check: a completed GitHub Actions run. */
+  has_log?: boolean;
+};
+
+/** The tail of a check's log, or why there is none, as `api/prs/check-log`
+ *  answers. The log is the check's own output. */
+export type CheckLogRead = {
+  available: boolean;
+  /** `no_log`, `running` or `expired` when not available. */
+  reason?: string;
+  message?: string;
+  log?: string;
+  /** The log is longer than the tail shown. */
+  truncated?: boolean;
 };
 
 /** A failing check, as an older daemon's `api/prs/failing-checks` lists it. */
@@ -173,6 +196,89 @@ export function useChecks(
   return read;
 }
 
+/** The last lines of a failing check's log, read from GitHub when this opens
+ *  (the daemon keeps a finished log): in a bounded, scrolling block that
+ *  starts at the end, where the failure is, with a button that copies it. */
+function CheckLog({
+  repository,
+  number,
+  check,
+  id,
+  url,
+}: {
+  repository: string;
+  number: number;
+  check: string;
+  id: number;
+  url?: string;
+}) {
+  const [read, setRead] = useState<{ log?: CheckLogRead; error?: string }>({});
+  const { copied, copy } = useCopy();
+  const text = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    request<CheckLogRead>(
+      `api/prs/check-log?repository=${encodeURIComponent(repository)}&pr=${number}&check=${id}`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
+      .then((log) => setRead({ log }))
+      .catch((error: unknown) => {
+        if (abort.signal.aborted) return;
+        setRead({ error: error instanceof Error ? error.message : String(error) });
+      });
+    return () => abort.abort();
+  }, [repository, number, id]);
+  // The end of the log is what matters, so it opens scrolled to it.
+  useEffect(() => {
+    if (text.current) text.current.scrollTop = text.current.scrollHeight;
+  }, [read.log]);
+  const { log, error } = read;
+  if (error) {
+    return (
+      <p className="upnext-thread-error" role="alert">
+        {error}
+        {url ? (
+          <>
+            {" "}
+            <a href={url} target="_blank" rel="noreferrer">
+              Open on GitHub
+            </a>
+          </>
+        ) : null}
+      </p>
+    );
+  }
+  if (!log) return <LoadingStatus>Reading the log from GitHub…</LoadingStatus>;
+  if (!log.available) {
+    return <p className="upnext-block-sub">{log.message || "GitHub has no log for this check."}</p>;
+  }
+  return (
+    <div className="upnext-check-log">
+      <pre ref={text} className="upnext-check-log-text" tabIndex={0} aria-label={`Log of ${check}`}>
+        {log.log || "The log is empty."}
+      </pre>
+      <div className="upnext-check-log-foot">
+        <span className="upnext-block-sub">
+          {log.truncated ? "The end of the log" : "The whole log"}
+        </span>
+        <button
+          type="button"
+          className={cn("upnext-secondary", SMALL)}
+          aria-label={`Copy the log of ${check}`}
+          onClick={() => void copy(log.log ?? "")}
+        >
+          {copied || "Copy"}
+        </button>
+        <span className="sr-only" role="status">
+          {copied}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /** Every check of the head commit the panel shows, failing first, each
  *  linking to its details: `checks` when the caller reads them (`useChecks`),
  *  else read here. When the signed-in account may push (`canRetry`), a failing
@@ -204,6 +310,16 @@ export function PullRequestChecks({
   const [failed, setFailed] = useState<Record<number, string>>({});
   // The checks that are not failing stay folded away until asked for.
   const [showOthers, setShowOthers] = useState(false);
+  // The checks whose log tail is open, by check run id; each reads its log
+  // only once opened.
+  const [logs, setLogs] = useState<Set<number>>(new Set());
+  const logPanel = useId();
+  const toggleLog = (id: number) =>
+    setLogs((open) => {
+      const next = new Set(open);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const retry = async (job: number) => {
     setRetrying((ids) => new Set(ids).add(job));
     setFailed((all) =>
@@ -275,8 +391,11 @@ export function PullRequestChecks({
           const job = check.job_id;
           const busy = job != null && retrying.has(job);
           const done = job != null && retried.has(job);
+          // A failing GitHub Actions run has a log to show the end of.
+          const logId = state === "failing" && check.has_log ? check.id : undefined;
+          const logOpen = logId != null && logs.has(logId);
           return (
-            <li key={`${check.name}-${index}`}>
+            <li key={`${check.name}-${index}`} className="upnext-check-row">
               <StateIcon state={done ? "running" : state} />
               <span className="upnext-block-text">
                 <span className="upnext-thread-excerpt">{check.name}</span>
@@ -290,6 +409,18 @@ export function PullRequestChecks({
                       : conclusionText(check.conclusion)}
                   {!done && check.title ? ` · ${check.title}` : ""}
                 </span>
+                {logId != null ? (
+                  <button
+                    type="button"
+                    className="upnext-log-toggle"
+                    aria-expanded={logOpen}
+                    aria-controls={logOpen ? `${logPanel}-${logId}` : undefined}
+                    onClick={() => toggleLog(logId)}
+                  >
+                    <ChevronRightIcon size={12} className="upnext-chevron" />
+                    {logOpen ? "Hide log" : "Show log"}
+                  </button>
+                ) : null}
                 {job != null && failed[job] ? (
                   <span className="upnext-thread-error" role="alert">
                     {failed[job]}
@@ -319,6 +450,17 @@ export function PullRequestChecks({
                   </a>
                 ) : null}
               </span>
+              {logOpen && logId != null ? (
+                <div id={`${logPanel}-${logId}`} className="upnext-check-log-panel">
+                  <CheckLog
+                    repository={repository}
+                    number={number}
+                    check={check.name}
+                    id={logId}
+                    url={check.url}
+                  />
+                </div>
+              ) : null}
             </li>
           );
         })}

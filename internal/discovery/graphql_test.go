@@ -339,9 +339,15 @@ func TestIdleTimeoutStopsOnlyAPollGitHubStoppedAnswering(t *testing.T) {
 		{name: "a poll queued behind another for longer than idle completes", queued: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// How long the unanswered request waited before the poll gave
+			// it up. Saving the failed poll afterwards is not timed: it is
+			// disk work, slow on some machines, not waiting on GitHub.
+			var stalled time.Duration
 			s, _ := inboxService(t, func(r *http.Request, call int) (int, string) {
 				if call == tc.stall {
+					at := time.Now()
 					<-r.Context().Done()
+					stalled = time.Since(at)
 				} else {
 					time.Sleep(idle / 8)
 				}
@@ -358,7 +364,10 @@ func TestIdleTimeoutStopsOnlyAPollGitHubStoppedAnswering(t *testing.T) {
 			if tc.failed != (err != nil) || !tc.failed && len(got.PullRequests) != 12 {
 				t.Fatalf("snapshot=%+v err=%v", got, err)
 			}
-			if took := time.Since(started); tc.failed && took > 10*idle || !tc.failed && took < idle {
+			if tc.failed && (stalled == 0 || stalled > 10*idle) {
+				t.Fatalf("the unanswered request waited %s", stalled)
+			}
+			if took := time.Since(started); !tc.failed && took < idle {
 				t.Fatalf("took %s", took)
 			}
 		})

@@ -139,6 +139,14 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	if request.WantsSession() && (c.Profile != Local || fix) {
 		return result, errors.New("codex: only a Local profile review or task can keep, resume or fork a session")
 	}
+	if request.MCP != nil {
+		if c.Profile != Local {
+			return result, errors.New("codex: only the Local profile can use an MCP server")
+		}
+		if err := request.MCP.Validate(); err != nil {
+			return result, fmt.Errorf("codex: %w", err)
+		}
+	}
 	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
@@ -219,6 +227,15 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	args = append(args, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
 		"--skip-git-repo-check")
 	args = append(args, fixConfig...)
+	if request.MCP != nil {
+		mcp, err := mcpConfig(request.MCP)
+		if err != nil {
+			return result, err
+		}
+		args = append(args, mcp...)
+		// Set last, so neither agent_env nor anything above replaces the token.
+		env = agent.WithMCPToken(env, request.MCP)
+	}
 	args = append(args, extra...)
 	if c.Effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(c.Effort))
@@ -587,4 +604,21 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		_, _ = b.Buffer.Write(p[:min(len(p), 65536-b.Len())])
 	}
 	return n, nil
+}
+
+// mcpConfig configures baum's own MCP server, the only one a run has:
+// --ignore-user-config already keeps the user's servers out. Codex reaches it
+// over HTTP and reads the bearer token from the variable that
+// bearer_token_env_var names in its own environment, so the token is in no
+// argument.
+func mcpConfig(server *agent.MCPServer) ([]string, error) {
+	url, err := json.Marshal(server.URL)
+	if err != nil {
+		return nil, err
+	}
+	name, err := json.Marshal(agent.MCPTokenEnv)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"-c", "mcp_servers.baum.url=" + string(url), "-c", "mcp_servers.baum.bearer_token_env_var=" + string(name)}, nil
 }

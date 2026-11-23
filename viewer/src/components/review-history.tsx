@@ -51,7 +51,7 @@ export function HistoryMenu({
         aria-controls={id}
         popoverTarget={id}
         className={cn(
-          "inline-flex h-8 max-w-full items-center gap-2 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) px-2 text-base text-(--text-primary)",
+          "inline-flex h-8 max-w-full items-center gap-2 rounded-sm border border-default bg-surface-card px-2 text-base text-primary",
           FOCUS_RING,
         )}
         onClick={() => {
@@ -82,13 +82,13 @@ export function HistoryMenu({
         role="group"
         aria-label={`${label} options`}
         onToggle={(event) => setOpen(event.newState === "open")}
-        className="fixed m-0 w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 text-base text-(--text-primary) shadow-(--shadow-overlay)"
+        className="fixed m-0 w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-md border border-default bg-surface-card p-1 text-base text-primary shadow-overlay"
       >
         <button
           type="button"
           aria-pressed={value === null}
           className={cn(
-            "flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-2 text-left hover:bg-(--surface-hover)",
+            "flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left hover:bg-surface-hover",
             FOCUS_RING,
           )}
           onClick={() => choose(null)}
@@ -97,16 +97,13 @@ export function HistoryMenu({
           Current · v{currentVersion}
         </button>
         {versions.map((version) => (
-          <div
-            key={version}
-            className="flex items-center rounded-(--radius-sm) hover:bg-(--surface-hover)"
-          >
+          <div key={version} className="flex items-center rounded-sm hover:bg-surface-hover">
             <button
               type="button"
               aria-label={`View v${version}`}
               aria-pressed={value?.version === version && !value.compare}
               className={cn(
-                "flex min-w-0 flex-1 items-center gap-2 rounded-(--radius-sm) px-2 py-2 text-left",
+                "flex min-w-0 flex-1 items-center gap-2 rounded-sm px-2 py-2 text-left",
                 FOCUS_RING,
               )}
               onClick={() => choose({ version, compare: false })}
@@ -114,7 +111,7 @@ export function HistoryMenu({
               <span className="w-3.5">{value?.version === version && <CheckIcon size={13} />}</span>
               v{version}
             </button>
-            <label className="flex cursor-pointer items-center gap-1.5 px-2 py-2 text-(--text-secondary)">
+            <label className="flex cursor-pointer items-center gap-1.5 px-2 py-2 text-secondary">
               <input
                 type="checkbox"
                 aria-label={`Compare v${version}`}
@@ -126,14 +123,14 @@ export function HistoryMenu({
           </div>
         ))}
         {actions.length > 0 ? (
-          <div className="mt-1 border-t border-(--border-subtle) pt-1">
+          <div className="mt-1 border-t border-subtle pt-1">
             {actions.map((action) => (
               <button
                 key={action.label}
                 type="button"
                 disabled={action.disabled}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-2 text-left hover:bg-(--surface-hover) disabled:cursor-default disabled:text-(--text-tertiary) disabled:hover:bg-transparent",
+                  "flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left hover:bg-surface-hover disabled:cursor-default disabled:text-tertiary disabled:hover:bg-transparent",
                   FOCUS_RING,
                 )}
                 onClick={() => {
@@ -190,7 +187,7 @@ export function HistoryToolbar({
       )}
       {status}
       {view.selection ? (
-        <span className="text-base text-(--text-tertiary)">
+        <span className="text-base text-tertiary">
           {view.selection.compare
             ? `Comparing current v${currentVersion} with v${view.selection.version}`
             : `Viewing historical review v${view.selection.version} · Read only`}
@@ -217,18 +214,18 @@ export function ReviewHistory({
       <div
         className={
           compare
-            ? "grid min-h-0 flex-1 gap-5 xl:overflow-hidden 2xl:grid-cols-2 2xl:divide-x 2xl:divide-(--border-subtle)"
+            ? "grid min-h-0 flex-1 gap-5 wide:overflow-hidden 2xl:grid-cols-2 2xl:divide-x 2xl:divide-subtle"
             : "contents"
         }
       >
         {(!selection || compare) && (
           <div
             className={
-              compare ? "flex min-h-0 min-w-0 flex-col xl:overflow-hidden 2xl:pr-5" : "contents"
+              compare ? "flex min-h-0 min-w-0 flex-col wide:overflow-hidden 2xl:pr-5" : "contents"
             }
           >
             {compare && (
-              <p className="mb-3 text-base font-medium text-(--text-tertiary)">
+              <p className="mb-3 text-base font-medium text-tertiary">
                 Current · Review v{document.review.version}
               </p>
             )}
@@ -239,21 +236,21 @@ export function ReviewHistory({
           <section
             aria-label={`Historical ${compare ? "comparison" : "view"} v${selection.version}`}
             className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col xl:overflow-hidden",
+              "flex min-h-0 min-w-0 flex-1 flex-col wide:overflow-hidden",
               compare && "2xl:pl-5",
             )}
           >
-            <p className="mb-3 text-base font-medium text-(--text-tertiary)">
+            <p className="mb-3 text-base font-medium text-tertiary">
               Historical · Review v{selection.version}
               {state?.status === "ready" &&
                 ` · Generated against ${shortSha(state.document.review.head)} · ${formatDateTime(state.document.review.generated_at)}`}
             </p>
             {!state || state.status === "loading" ? (
-              <p role="status" className="text-base text-(--text-tertiary)">
+              <p role="status" className="text-base text-tertiary">
                 Loading review v{selection.version}…
               </p>
             ) : state.status !== "ready" ? (
-              <div role="alert" className="space-y-2 text-base text-(--status-critical)">
+              <div role="alert" className="space-y-2 text-base text-status-critical">
                 <p>
                   Review v{selection.version} could not be loaded. No other version was substituted.
                 </p>

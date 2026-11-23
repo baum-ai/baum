@@ -14,7 +14,9 @@ machine uses an NVIDIA GPU under Wayland.
 **Why:** the desktop app renders its pages with WebKitGTK. On NVIDIA with
 Wayland, only WebKitGTK 2.54 and newer can use the GPU renderer there; older
 versions fall back to a much slower one. The AppImage carries its own
-WebKitGTK (2.50), and the `.deb` uses the system's.
+WebKitGTK (Ubuntu 24.04's 2.52), and the `.deb` uses the system's. The newer
+AppImage engine fixes a resource-loader memory leak, but still has this NVIDIA
+limitation.
 
 **Workaround:** use the `.deb` on a distribution that ships WebKitGTK 2.54 or
 newer. To check the version on a Debian or Ubuntu system, run

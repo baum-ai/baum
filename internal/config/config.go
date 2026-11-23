@@ -172,7 +172,19 @@ type Config struct {
 	Model   string  `toml:"model,omitempty"`
 	// Effort is the reasoning effort the app chose (Efforts); empty leaves
 	// it to the harness. It is never read from or written to the file.
-	Effort      string `toml:"-"`
+	Effort string `toml:"-"`
+	// ClaudeConfigDir is the Claude Code configuration directory the app
+	// chose for these runs, an absolute path: Claude Code runs with it as
+	// CLAUDE_CONFIG_DIR, so with that directory's sign-in, settings and
+	// sessions. Empty leaves it to the environment (AgentEnv, else the
+	// daemon's own). It is never read from or written to the file, where
+	// agent_env can set CLAUDE_CONFIG_DIR.
+	ClaudeConfigDir string `toml:"-"`
+	// CodexHome is the Codex home the app chose for these runs, an absolute
+	// path: Codex runs with it as CODEX_HOME, so with that home's sign-in,
+	// settings and sessions. Empty leaves it to the environment, as for
+	// ClaudeConfigDir; agent_env can set CODEX_HOME.
+	CodexHome   string `toml:"-"`
 	GitHubToken string `toml:"github_token,omitempty"`
 	// GitHubTokenSource names where GitHubToken came from: GITHUB_TOKEN,
 	// GH_TOKEN or the config file. It is empty when there is no token and is

@@ -114,47 +114,103 @@ const maxDownload = 64 << 20
 // and the token is never sent there: it goes to the API host alone. At most
 // 64 MiB are read; w keeps what it needs of them.
 func (r *RESTReader) Download(ctx context.Context, path string, w io.Writer) (int, error) {
+	status, _, err := r.download(ctx, path, w, 0)
+	return status, err
+}
+
+// ErrDownloadTooLarge is a download whose end DownloadTail could not reach:
+// it is over the bound and its host does not honour a range request.
+var ErrDownloadTooLarge = errors.New("the download is too large to read the end of")
+
+// DownloadTail is Download for the end of a long file, as a job log's last
+// lines: after the redirect it asks the download host for the last tail
+// bytes only (a suffix range request). It writes what it got to w and reports
+// partial when that is only the end, whose first line may be cut; the file
+// whole, when the host ignores the range and it is under the bound, is not
+// partial. A host that ignores the range for a file over the 64 MiB bound
+// answers ErrDownloadTooLarge rather than the wrong part of the file.
+func (r *RESTReader) DownloadTail(ctx context.Context, path string, w io.Writer, tail int64) (status int, partial bool, err error) {
+	return r.download(ctx, path, w, max(tail, 1))
+}
+
+func (r *RESTReader) download(ctx context.Context, path string, w io.Writer, tail int64) (int, bool, error) {
 	relative, err := url.Parse(path)
 	if err != nil || !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || relative.Host != "" || relative.Scheme != "" || relative.Fragment != "" {
-		return 0, fmt.Errorf("invalid GitHub API path")
+		return 0, false, fmt.Errorf("invalid GitHub API path")
 	}
 	endpoint := *r.endpoint
 	endpoint.Path += relative.Path
 	endpoint.RawQuery = relative.RawQuery
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	client := *r.client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := client.Do(request)
 	if err != nil {
-		return 0, fmt.Errorf("GitHub request failed")
+		return 0, false, fmt.Errorf("GitHub request failed")
 	}
 	switch response.StatusCode {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
 		location, err := response.Location()
 		_ = response.Body.Close()
 		if err != nil || location.Scheme != "https" || location.Host == "" {
-			return 0, fmt.Errorf("GitHub redirected to an unusable download URL")
+			return 0, false, fmt.Errorf("GitHub redirected to an unusable download URL")
 		}
 		next, err := http.NewRequestWithContext(ctx, http.MethodGet, location.String(), nil)
 		if err != nil {
-			return 0, err
+			return 0, false, err
+		}
+		if tail > 0 {
+			next.Header.Set("Range", fmt.Sprintf("bytes=-%d", tail))
 		}
 		if response, err = client.Do(next); err != nil {
-			return 0, fmt.Errorf("GitHub download failed")
+			return 0, false, fmt.Errorf("GitHub download failed")
 		}
 	}
 	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return response.StatusCode, nil
+	switch {
+	case tail > 0 && response.StatusCode == http.StatusRequestedRangeNotSatisfiable:
+		// A range over an empty file.
+		return http.StatusOK, false, nil
+	case tail > 0 && response.StatusCode == http.StatusPartialContent:
+		if _, err := io.Copy(w, io.LimitReader(response.Body, tail)); err != nil {
+			return 0, false, fmt.Errorf("GitHub download unreadable")
+		}
+		// A file no longer than the range comes whole, from its first byte.
+		return http.StatusOK, !fromFirstByte(response.Header.Get("Content-Range")), nil
+	case response.StatusCode != http.StatusOK:
+		return response.StatusCode, false, nil
 	}
-	if _, err := io.Copy(w, io.LimitReader(response.Body, maxDownload)); err != nil {
-		return 0, fmt.Errorf("GitHub download unreadable")
+	if tail == 0 {
+		if _, err := io.Copy(w, io.LimitReader(response.Body, maxDownload)); err != nil {
+			return 0, false, fmt.Errorf("GitHub download unreadable")
+		}
+		return response.StatusCode, false, nil
 	}
-	return response.StatusCode, nil
+	// The host ignored the range: the file whole, or too long to read.
+	n, err := io.Copy(w, io.LimitReader(response.Body, maxDownload+1))
+	switch {
+	case err != nil:
+		return 0, false, fmt.Errorf("GitHub download unreadable")
+	case n > maxDownload:
+		return 0, false, ErrDownloadTooLarge
+	}
+	return response.StatusCode, false, nil
+}
+
+// fromFirstByte reports whether a 206 answer's Content-Range ("bytes
+// first-last/size") starts at the file's first byte. A missing or unreadable
+// header counts as not, so the part is treated as cut.
+func fromFirstByte(contentRange string) bool {
+	unit, rest, ok := strings.Cut(contentRange, " ")
+	if !ok || !strings.EqualFold(unit, "bytes") {
+		return false
+	}
+	first, _, ok := strings.Cut(rest, "-")
+	return ok && first == "0"
 }
 
 // GraphQL reads one bounded operation without retries or waiting. Discovery owns

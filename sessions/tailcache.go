@@ -23,11 +23,6 @@ import (
 // 150 MB transcript, the largest seen growing.
 const DefaultTailCacheBytes = 64 << 20
 
-// tailActiveFor is how recently a transcript must have changed for Map to
-// keep its decoded lines. One unchanged for longer is unlikely to grow, and
-// keeping its lines would only push out those of the transcripts that do.
-const tailActiveFor = time.Hour
-
 // tailIdleFor is how long a kept transcript may go unread before its lines
 // are released: its session has most likely finished. Within that time a
 // newly read transcript is only kept if it fits, since a session tree larger
@@ -49,8 +44,8 @@ const tailIdleFor = 30 * time.Minute
 // never from a second read of the file. A final line without a newline is
 // never kept: a writer may still be writing it, so each read decodes it again.
 //
-// Only files changed within tailActiveFor are kept, within limit bytes of
-// estimated line memory (Reading.Bytes); see account for what goes first.
+// Files of any age are kept within limit bytes of estimated line memory
+// (Reading.Bytes); see account for what goes first.
 // Files unread for tailIdleFor are released on the next read of any file.
 // The graphs the mapping cache keeps do not depend on this: it sits below
 // the mapping cache, which still keys a session on its files' sizes and
@@ -66,6 +61,9 @@ type tailCache struct {
 	// full, appended and lines count reads from a file's start, reads
 	// continuing an earlier one, and lines decoded; tests read them.
 	full, appended, lines int
+	// reused counts reads of a compressed rollout answered from its kept
+	// lines without decompressing it.
+	reused int
 }
 
 // tailEntry is one file's Reading. mu serialises reads of the file; the
@@ -79,6 +77,9 @@ type tailEntry struct {
 	// lines the reading kept end.
 	info   os.FileInfo
 	offset int64
+	// rest is the final line the last whole read of a compressed rollout left
+	// unread. A plain file's is read again each time.
+	rest []byte
 	// cost and covered are the Reading's estimated memory and offset when
 	// last accounted; used is when the file was last read; kept is false
 	// until a read was kept.
@@ -166,10 +167,16 @@ func tailRead[T any](c *tailCache, key, path, what string, start func() tailRead
 		return zero, fmt.Errorf("opening %s %s: %w", what, path, err)
 	}
 
-	e := c.entry(key, path, info)
+	compressed := codextranscript.Compressed(path)
+	e := c.entry(key, path)
 	if e == nil {
 		reading := start()
-		_, rest, err := c.continueFrom(reading, f, 0, info.Size())
+		var rest []byte
+		if compressed {
+			_, rest, err = c.continueDecompressed(reading, f)
+		} else {
+			_, rest, err = c.continueFrom(reading, f, 0, info.Size())
+		}
 		if err != nil {
 			return zero, err
 		}
@@ -178,6 +185,9 @@ func tailRead[T any](c *tailCache, key, path, what string, start func() tailRead
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if compressed {
+		return tailReadCompressed(c, e, f, info, start, build)
+	}
 	var from int64
 	if e.reading != nil {
 		if reason := e.changed(f, info); reason != "" {
@@ -201,12 +211,58 @@ func tailRead[T any](c *tailCache, key, path, what string, start func() tailRead
 	return build(e.reading, rest)
 }
 
+// tailReadCompressed is tailRead for a compressed rollout. Offsets into the
+// compressed file mean nothing to a Reading, which consumes decoded bytes, so
+// the file is never continued: while it is unchanged the kept lines are used
+// as they are, and any change decodes it whole again.
+func tailReadCompressed[T any](c *tailCache, e *tailEntry, f *os.File, info os.FileInfo, start func() tailReading, build func(tailReading, []byte) (T, error)) (T, error) {
+	var zero T
+	if e.reading != nil {
+		reason := e.changed(f, info)
+		if reason == "" {
+			workstats.Inc("sessions.tail.reads.reused")
+			c.mu.Lock()
+			c.reused++
+			c.mu.Unlock()
+			return build(e.reading, e.rest)
+		}
+		workstats.Inc("sessions.tail.restarts." + reason)
+	}
+	e.reading = start()
+	consumed, rest, err := c.continueDecompressed(e.reading, f)
+	if err != nil {
+		e.reading = nil
+		c.forget(e)
+		return zero, err
+	}
+	e.info, e.offset, e.rest = info, consumed, rest
+	c.account(e)
+	return build(e.reading, rest)
+}
+
+// continueDecompressed reads the whole decoded stream of the compressed file f.
+func (c *tailCache) continueDecompressed(reading tailReading, f *os.File) (int64, []byte, error) {
+	src, err := codextranscript.Decompress(f)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = src.Close() }()
+	return c.continueReader(reading, src, true)
+}
+
 // continueFrom continues reading at offset from, up to the size the file had
 // when it was opened, and counts what it read. Bytes written past that size
 // meanwhile are read next time.
 func (c *tailCache) continueFrom(reading tailReading, f *os.File, from, size int64) (int64, []byte, error) {
+	return c.continueReader(reading, io.NewSectionReader(f, from, max(size-from, 0)), from == 0)
+}
+
+// continueReader continues reading from src, which is the rest of the
+// rollout after the Reading's lines (all of it when full), and counts what it
+// read.
+func (c *tailCache) continueReader(reading tailReading, src io.Reader, full bool) (int64, []byte, error) {
 	before := reading.Lines()
-	consumed, rest, err := reading.Continue(io.NewSectionReader(f, from, max(size-from, 0)))
+	consumed, rest, err := reading.Continue(src)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -216,13 +272,13 @@ func (c *tailCache) continueFrom(reading tailReading, f *os.File, from, size int
 	}
 	workstats.Add("sessions.map.decoded_bytes", consumed+int64(len(rest)))
 	workstats.Add("sessions.map.decoded_lines", int64(lines))
-	if from == 0 {
+	if full {
 		workstats.Inc("sessions.tail.reads.full")
 	} else {
 		workstats.Inc("sessions.tail.reads.appended")
 	}
 	c.mu.Lock()
-	if from == 0 {
+	if full {
 		c.full++
 	} else {
 		c.appended++
@@ -237,11 +293,17 @@ func (c *tailCache) continueFrom(reading tailReading, f *os.File, from, size int
 //
 // A file whose size and modification time are those it had before the last
 // read is taken as unchanged without reading it. Otherwise its bytes before
-// the offset are checksummed again, which reads them but decodes nothing.
+// the offset are checksummed again, which reads them but decodes nothing. A
+// compressed file has no such prefix: any change to it is a rewrite.
 func (e *tailEntry) changed(f *os.File, info os.FileInfo) string {
 	switch {
 	case !os.SameFile(e.info, info):
 		return "replaced"
+	case codextranscript.Compressed(e.path):
+		if info.Size() == e.info.Size() && info.ModTime().Equal(e.info.ModTime()) {
+			return ""
+		}
+		return "rewritten"
 	case info.Size() < e.offset:
 		return "shrunk"
 	case info.Size() == e.info.Size() && info.ModTime().Equal(e.info.ModTime()):
@@ -265,7 +327,7 @@ func prefixSum(f *os.File, n int64) (uint32, bool) {
 
 // entry is the entry for key, created when the file is worth keeping lines
 // for, or nil. Every call releases the files unread for tailIdleFor.
-func (c *tailCache) entry(key, path string, info os.FileInfo) *tailEntry {
+func (c *tailCache) entry(key, path string) *tailEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	idle := time.Now().Add(-tailIdleFor)
@@ -278,7 +340,7 @@ func (c *tailCache) entry(key, path string, info os.FileInfo) *tailEntry {
 		e.used = time.Now()
 		return e
 	}
-	if c.limit <= 0 || time.Since(info.ModTime()) > tailActiveFor {
+	if c.limit <= 0 {
 		return nil
 	}
 	e := &tailEntry{key: key, path: path, used: time.Now()}
@@ -321,9 +383,11 @@ func (c *tailCache) account(e *tailEntry) {
 	if !ok || element.Value != e {
 		return
 	}
-	c.held += e.reading.Bytes() - e.cost
+	// A compressed rollout's final line is kept beside the Reading (rest).
+	cost := e.reading.Bytes() + int64(len(e.rest))
+	c.held += cost - e.cost
 	c.covered += e.offset - e.covered
-	e.cost, e.covered = e.reading.Bytes(), e.offset
+	e.cost, e.covered = cost, e.offset
 	if c.held > c.limit && !e.kept {
 		c.remove(element)
 		return

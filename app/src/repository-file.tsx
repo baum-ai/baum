@@ -138,7 +138,7 @@ export function RepositoryFileDialog({
         </div>
       ) : null}
       {file && content === null ? (
-        <p className="text-(--text-tertiary)">This file has no text to show.</p>
+        <p className="text-tertiary">This file has no text to show.</p>
       ) : null}
       {content !== null ? (
         <>

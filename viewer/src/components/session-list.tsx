@@ -89,25 +89,22 @@ function SessionCard({
           {title}
         </JumpLink>
       ) : (
-        <p className="font-medium text-(--text-primary) [overflow-wrap:anywhere]">{title}</p>
+        <p className="font-medium text-primary [overflow-wrap:anywhere]">{title}</p>
       )}
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-(--text-tertiary)">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tertiary">
         {session.branch ? <code className="font-mono">{session.branch}</code> : null}
         {meta.length > 0 ? <span>{meta.join(" · ")}</span> : null}
         {!session.branch && meta.length === 0 ? <span>{EM_DASH}</span> : null}
       </p>
       {commits.length > 0 ? (
         <div className="space-y-1">
-          <p className="text-xs text-(--text-tertiary)">
+          <p className="text-xs text-tertiary">
             {pluralize("linked commit", commits.length, true)}
           </p>
           <ul className="flex flex-col gap-0.5">
             {commits.map((commit) => (
               <li key={commit.id} className="flex min-w-0 items-baseline gap-2 text-base">
-                <span
-                  className="flex-none font-mono text-xs text-(--text-secondary)"
-                  title={commit.id}
-                >
+                <span className="flex-none font-mono text-xs text-secondary" title={commit.id}>
                   {formatSHA(commit.id)}
                 </span>
                 <JumpLink
@@ -167,7 +164,7 @@ export function SessionList({
     return (
       <>
         <CardHeader size="pane" title={own.label} />
-        <div className="min-h-0 flex-1 xl:overflow-y-auto">{own.renderPane()}</div>
+        <div className="min-h-0 flex-1 wide:overflow-y-auto">{own.renderPane()}</div>
       </>
     );
   }
@@ -183,7 +180,7 @@ export function SessionList({
         {hosted.length > 0 ? <ol className="flex flex-col gap-3 pb-3">{hostedItems}</ol> : null}
         {state.status === "loading" ? (
           <div role="status" aria-label="Loading sessions" className="space-y-3">
-            <p className="text-base text-(--text-tertiary)">
+            <p className="text-base text-tertiary">
               Reading the sessions on this machine. The rest of the review is ready to read.
             </p>
             <Skeleton height={96} />
@@ -229,8 +226,8 @@ export function SessionList({
           <ul aria-label="Linked commits" className="flex flex-col gap-0.5 pb-3">
             {commits.map((commit) => (
               <li key={commit.id} className="flex min-w-0 items-center gap-2 text-xs">
-                <CommitIcon size={13} className="flex-none text-(--text-tertiary)" />
-                <span className="flex-none font-mono text-(--text-tertiary)" title={commit.id}>
+                <CommitIcon size={13} className="flex-none text-tertiary" />
+                <span className="flex-none font-mono text-tertiary" title={commit.id}>
                   {formatSHA(commit.id)}
                 </span>
                 <JumpLink
@@ -243,7 +240,9 @@ export function SessionList({
             ))}
           </ul>
         ) : null}
-        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session, focusTurn)}</div>
+        <div className="min-h-0 flex-1 wide:overflow-y-auto">
+          {renderSession(session, focusTurn)}
+        </div>
       </>
     );
   }
@@ -261,8 +260,8 @@ export function SessionList({
           ) : undefined
         }
       />
-      {note ? <p className="pb-3 text-base text-(--text-secondary)">{note}</p> : null}
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      {note ? <p className="pb-3 text-base text-secondary">{note}</p> : null}
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {total === 0 ? (
           <Empty title="No agent sessions">{empty}</Empty>
         ) : (

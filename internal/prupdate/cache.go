@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/baum-ai/baum/internal/github"
 )
 
@@ -38,6 +40,12 @@ type Cache struct {
 	checks  map[string]cached[Checks]
 	// allChecks are all of a head's checks.
 	allChecks map[string]cached[CheckList]
+	// logs are the tails of finished check runs' logs, least recently used
+	// first in logOrder.
+	logs     map[string]CheckLog
+	logOrder []string
+	// flights are the log reads under way.
+	flights singleflight.Group
 	// gen counts account changes, so a read that began before one is not
 	// stored.
 	gen uint64
@@ -69,6 +77,7 @@ func (c *Cache) ResetIdentity() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.threads, c.checks, c.allChecks = nil, nil, nil
+	c.logs, c.logOrder = nil, nil
 	c.gen++
 }
 
@@ -195,6 +204,61 @@ func (c *Cache) storeAllChecks(key string, gen uint64, checks CheckList) {
 	}
 }
 
+// readLog runs read for the log under key, once for however many callers
+// ask while it runs; the others wait for its answer. Only callers that
+// began under the same account generation (gen) share a read: one that
+// began after an account change never gets the previous account's answer.
+func (c *Cache) readLog(key string, gen uint64, read func() (CheckLog, error)) (CheckLog, error) {
+	if c == nil {
+		return read()
+	}
+	v, err, _ := c.flights.Do(fmt.Sprintf("%d:%s", gen, key), func() (any, error) { return read() })
+	log, _ := v.(CheckLog)
+	return log, err
+}
+
+func logKey(repository github.Repository, check int64) string {
+	return fmt.Sprintf("%s/%d", strings.ToLower(repository.String()), check)
+}
+
+// cachedLog returns the check run's cached log tail, and marks it the most
+// recently used.
+func (c *Cache) cachedLog(key string) (CheckLog, bool) {
+	if c == nil {
+		return CheckLog{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	log, ok := c.logs[key]
+	if ok {
+		c.logOrder = append(slices.DeleteFunc(c.logOrder, func(k string) bool { return k == key }), key)
+	}
+	return log, ok
+}
+
+// storeLog keeps a finished check run's log tail, the least recently used
+// of logCacheSize going first, unless the account changed since the read
+// began (gen). A finished log does not change, so it has no age limit.
+func (c *Cache) storeLog(key string, gen uint64, log CheckLog) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if gen != c.gen {
+		return
+	}
+	if c.logs == nil {
+		c.logs = map[string]CheckLog{}
+	}
+	c.logs[key] = log
+	c.logOrder = append(slices.DeleteFunc(c.logOrder, func(k string) bool { return k == key }), key)
+	for len(c.logOrder) > logCacheSize {
+		delete(c.logs, c.logOrder[0])
+		c.logOrder = c.logOrder[1:]
+	}
+}
+
 // rerun forgets the head's checks: some are running again.
 func (c *Cache) rerun(key string) {
 	if c == nil {
@@ -204,4 +268,7 @@ func (c *Cache) rerun(key string) {
 	defer c.mu.Unlock()
 	delete(c.checks, key)
 	delete(c.allChecks, key)
+	// A re-run replaces check runs, so no kept log is trusted to be the
+	// latest one.
+	c.logs, c.logOrder = nil, nil
 }

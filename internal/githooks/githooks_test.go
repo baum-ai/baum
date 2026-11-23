@@ -205,7 +205,7 @@ func TestEnsureRepairsLegacyDispatchers(t *testing.T) {
 	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
 	hooks := filepath.Join(repo, ".git", "hooks")
 	writeExecutable(t, filepath.Join(hooks, "post-commit"), "#!/bin/sh\n"+legacyMarker+"\n# Entire CLI hooks\nold\n")
-	writeExecutable(t, filepath.Join(hooks, "pre-push"), "#!/bin/sh\n"+legacyMarker+"\n# Entire CLI hooks\nentire hooks git pre-push \"$1\"\n")
+	writeExecutable(t, filepath.Join(hooks, "pre-push"), "#!/bin/sh\n"+legacyMarker+"\nbaum hooks git pre-push \"$@\"\n")
 	writeExecutable(t, filepath.Join(hooks, "post-rewrite"), Dispatcher("post-rewrite", "")+"# stale\n")
 	report := ensure(t, repo)
 	for _, hook := range Hooks {

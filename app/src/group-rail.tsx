@@ -77,6 +77,7 @@ export function useGroupRail({
   repository,
   members,
   numbers,
+  heads,
   listed,
   document,
   revision,
@@ -85,6 +86,7 @@ export function useGroupRail({
   members: RailMember[];
   /** Every open member, for the decisions. */
   numbers: number[];
+  heads?: Record<number, string>;
   /** The sessions the daemon lists on the open members (`listedForGroup`). */
   listed: LiveSession[];
   document: ReviewDocument | null;
@@ -141,7 +143,7 @@ export function useGroupRail({
     [commitQuery, queriesKey],
   );
 
-  const decisions = useGroupDecisions(repository, numbers, `${ended}:${revision}`);
+  const decisions = useGroupDecisions(repository, numbers, `${ended}:${revision}`, heads);
 
   const load: SessionsLoad | null =
     queries.length === 0
@@ -167,6 +169,7 @@ export function useGroupRail({
                 title={session.title ?? undefined}
               />
             ),
+            decisions,
           )
         : undefined,
     commits: lists?.commits

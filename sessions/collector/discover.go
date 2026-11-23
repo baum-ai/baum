@@ -26,11 +26,15 @@ type (
 )
 
 type FindOptions struct {
-	// ClaudeProjectsDir overrides the Claude Code session store
-	// (default ~/.claude/projects).
+	// ClaudeProjectsDir overrides the Claude Code session stores with one
+	// directory. The default is the projects folder of every Claude Code
+	// configuration directory baum knows (agentdirs.Claude): ~/.claude,
+	// CLAUDE_CONFIG_DIR and the recorded ones.
 	ClaudeProjectsDir string
-	// CodexSessionsDir overrides the Codex session store
-	// (default ~/.codex/sessions).
+	// CodexSessionsDir overrides the Codex session stores with one
+	// directory. The default is the sessions folder of every Codex home baum
+	// knows (agentdirs.Codex): ~/.codex, CODEX_HOME and the recorded ones.
+	// The archived_sessions folder beside each is read too.
 	CodexSessionsDir string
 	// CursorStorePaths overrides Cursor state store discovery. Each entry is
 	// either a state.vscdb file or a directory searched for one; empty means
@@ -91,33 +95,38 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 		}
 		add(abs)
 	}
-	claudeDir, codexDir := opts.ClaudeProjectsDir, opts.CodexSessionsDir
-	if claudeDir == "" || codexDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, report, fmt.Errorf("resolve session stores: %w", err)
-		}
-		if claudeDir == "" {
-			claudeDir = filepath.Join(home, ".claude", "projects")
-		}
-		if codexDir == "" {
-			codexDir = filepath.Join(home, ".codex", "sessions")
-		}
-	}
-
-	sessions, claudeReport, err := claudecode.FindSessionsCached(claudeDir, roots, opts.Since, opts.ClaudeHeads)
+	claudeDirs, err := claudeProjectsDirs(opts.ClaudeProjectsDir, nil)
 	if err != nil {
 		return nil, report, err
+	}
+	codexDirs, err := codexSessionsDirs(opts.CodexSessionsDir, nil)
+	if err != nil {
+		return nil, report, err
+	}
+
+	var sessions []model.Session
+	var claudeReport model.ScanReport
+	for _, claudeDir := range claudeDirs {
+		found, foundReport, err := claudecode.FindSessionsCached(claudeDir, roots, opts.Since, opts.ClaudeHeads)
+		if err != nil {
+			return nil, report, err
+		}
+		sessions = append(sessions, found...)
+		claudeReport.Merge(foundReport)
 	}
 	codexCache := opts.CodexCache
 	if codexCache == nil {
 		codexCache = codex.Shared
 	}
-	codexSessions, codexReport, err := codex.FindSessionsCached(codexDir, roots, codexCache)
-	if err != nil {
-		return nil, report, err
+	var codexReport model.ScanReport
+	for _, codexDir := range codexDirs {
+		found, foundReport, err := codex.FindSessionsCached(codexDir, roots, codexCache)
+		if err != nil {
+			return nil, report, err
+		}
+		sessions = append(sessions, found...)
+		codexReport.Merge(foundReport)
 	}
-	sessions = append(sessions, codexSessions...)
 	cursorSessions, cursorReport, err := cursor.FindSessionsSince(opts.CursorStorePaths, roots, opts.Since)
 	if err != nil {
 		return nil, report, err

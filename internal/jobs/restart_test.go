@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -222,20 +223,20 @@ func TestDrainRunningAndSubmitNeverStartAJob(t *testing.T) {
 	}
 }
 
-// pausedMembers pauses the preparation of a group's member reviews, between
-// the group's own preparation and the queuing of its members.
+// pausedMembers pauses the preparation of a group's first member review,
+// between the group's own preparation and the queuing of its members. The
+// member waits for the test to see it entered, however late the test gets
+// there; the other members are not held.
 type pausedMembers struct {
 	*fakeExecutor
 	entered, resume chan struct{}
+	paused          atomic.Bool
 }
 
 func (p *pausedMembers) Prepare(ctx context.Context, item Item) (Prepared, string, error) {
-	if item.Group == "" && item.PR != 0 {
-		select {
-		case p.entered <- struct{}{}:
-			<-p.resume
-		default:
-		}
+	if item.Group == "" && item.PR != 0 && p.paused.CompareAndSwap(false, true) {
+		p.entered <- struct{}{}
+		<-p.resume
 	}
 	return p.fakeExecutor.Prepare(ctx, item)
 }
