@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import { useReviewFiles } from "@baum/viewer/components/review-contexts";
+import { Skeleton } from "@baum/viewer/components/states";
 import { Button } from "@baum/viewer/components/ui";
 import { indexedHunkFromFilePatch } from "@baum/viewer/patch";
 import type { IndexedHunk } from "@baum/viewer/review-document";
 import { useTileHost } from "../host";
-import { Quiet } from "../parts";
+import { Note, Quiet } from "../parts";
 import type { Tile, TileContext, TileSize } from "../types";
 import { GridIcon } from "../icons";
 import { framesAllowedHere, NOT_IN_THIS_SHELL, useAppTheme, useFrameSlot } from "./environment";
@@ -58,8 +59,47 @@ const failures = new Map<string, FrameFailure>();
 /** Instances whose silent frame was already remounted once after the page
  *  read its tile route again. */
 const retried = new Set<string>();
-/** A detail's last height, so opening it again reserves the room it takes. */
-const heights = new Map<string, number>();
+/** Each detail's last height, kept in this browser (the latest
+ *  KEPT_HEIGHTS), so opening it again, on this page or a later one, reserves
+ *  the room it takes before its frame draws. Storage can be missing or
+ *  refuse a write; the heights then hold for the page alone. */
+const HEIGHTS_KEY = "baum.tileFrame.heights";
+const KEPT_HEIGHTS = 200;
+/** The room a detail never drawn before reserves. */
+const FIRST_HEIGHT = 240;
+let heights: Map<string, number> | null = null;
+function keptHeights(): Map<string, number> {
+  if (heights) return heights;
+  heights = new Map();
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(HEIGHTS_KEY) ?? "{}");
+    for (const [instance, height] of Object.entries(saved as Record<string, unknown>))
+      if (typeof height === "number" && Number.isFinite(height) && height > 0)
+        heights.set(instance, height);
+  } catch {
+    // Nothing kept, or unreadable: every detail starts at the first height.
+  }
+  return heights;
+}
+function lastHeight(instance: string): number {
+  return keptHeights().get(instance) ?? FIRST_HEIGHT;
+}
+function keepHeight(instance: string, height: number) {
+  const kept = keptHeights();
+  if (kept.get(instance) === height) return;
+  // Latest last, so the oldest are dropped first.
+  kept.delete(instance);
+  kept.set(instance, height);
+  for (const oldest of kept.keys()) {
+    if (kept.size <= KEPT_HEIGHTS) break;
+    kept.delete(oldest);
+  }
+  try {
+    localStorage.setItem(HEIGHTS_KEY, JSON.stringify(Object.fromEntries(kept)));
+  } catch {
+    // Not kept past this page.
+  }
+}
 /** One reading of the tile routes again, shared by every frame that was
  *  silent while it runs. */
 let rereading: Promise<unknown> | null = null;
@@ -114,7 +154,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   const [attempt, setAttempt] = useState(0);
   const [failure, setFailure] = useState<FrameFailure | null>(() => failures.get(instance) ?? null);
   const [ready, setReady] = useState(false);
-  const [height, setHeight] = useState(() => heights.get(instance) ?? 240);
+  const [height, setHeight] = useState(() => lastHeight(instance));
   const box = useRef<HTMLDivElement>(null);
   const allowed = useMemo(() => framesAllowedHere(), []);
   const kit = definitionKit(tile.definition);
@@ -178,13 +218,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
 
   const label = tile.title;
   const quiet = (words: string) =>
-    face === "glance" ? (
-      <Quiet>{words}</Quiet>
-    ) : (
-      <div className="rounded-md border border-dashed border-default px-4 py-3">
-        <p className="text-base text-secondary">{words}</p>
-      </div>
-    );
+    face === "glance" ? <Quiet>{words}</Quiet> : <Note>{words}</Note>;
 
   if (!digest) return quiet("This tile couldn't be read.");
   if (newer) return quiet(NEWER_KIT);
@@ -196,13 +230,9 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
         <Quiet>This tile couldn't load.</Quiet>
       </div>
     ) : (
-      <div
-        role="alert"
-        data-frame-failure={failure.why}
-        className="space-y-3 rounded-md border border-dashed border-default px-4 py-3"
-      >
-        <div className="space-y-1">
-          <p className="text-base text-secondary">This tile couldn't load.</p>
+      <div data-frame-failure={failure.why}>
+        <Note alert>
+          <p>This tile couldn't load.</p>
           <p className="text-xs text-tertiary">{FAILURE_WORDS[failure.why]}</p>
           {failure.why === "error" && failure.message ? (
             <details className="text-xs text-tertiary">
@@ -213,10 +243,10 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
               </blockquote>
             </details>
           ) : null}
-        </div>
-        <Button variant="secondary" size="compact" onClick={retry}>
-          Retry
-        </Button>
+          <Button variant="secondary" size="compact" className="mt-2" onClick={retry}>
+            Retry
+          </Button>
+        </Note>
       </div>
     );
 
@@ -237,6 +267,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
       )}
       style={face === "detail" ? { height } : undefined}
     >
+      {ready ? null : <Placeholder />}
       {slot && preflight === "show" && !images.pending ? (
         <FrameView
           key={attempt}
@@ -260,7 +291,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
           data={images.data}
           onReady={() => setReady(true)}
           onHeight={(next) => {
-            heights.set(instance, next);
+            keepHeight(instance, next);
             setHeight(next);
           }}
           onFail={fail}
@@ -323,7 +354,7 @@ export function PreviewFrame({
   const [attempt, setAttempt] = useState(0);
   const [failure, setFailure] = useState<FrameFailure | null>(null);
   const [ready, setReady] = useState(false);
-  const [height, setHeight] = useState(() => heights.get(instance) ?? 240);
+  const [height, setHeight] = useState(() => lastHeight(instance));
   const box = useRef<HTMLDivElement>(null);
   const allowed = useMemo(() => framesAllowedHere(), []);
   const theme = useAppTheme();
@@ -332,13 +363,7 @@ export function PreviewFrame({
   const retried = useRef(false);
   const valid = /^[0-9a-f]{64}$/.test(digest);
   const quiet = (words: string) =>
-    face === "glance" ? (
-      <Quiet>{words}</Quiet>
-    ) : (
-      <div className="rounded-md border border-dashed border-default px-4 py-3">
-        <p className="text-base text-secondary">{words}</p>
-      </div>
-    );
+    face === "glance" ? <Quiet>{words}</Quiet> : <Note>{words}</Note>;
   if (!valid) return quiet("This tile couldn't be read.");
   if (kit > KIT_SUPPORTED) return quiet(NEWER_KIT);
   if (!allowed) return quiet(NOT_IN_THIS_SHELL);
@@ -355,24 +380,23 @@ export function PreviewFrame({
   };
   if (failure)
     return (
-      <div
-        role="alert"
-        data-frame-failure={failure.why}
-        className="space-y-2 rounded-md border border-dashed border-default px-4 py-3"
-      >
-        <p className="text-base text-secondary">This tile couldn't load.</p>
-        <p className="text-xs text-tertiary">{FAILURE_WORDS[failure.why]}</p>
-        <Button
-          variant="secondary"
-          size="compact"
-          onClick={() => {
-            retried.current = false;
-            setFailure(null);
-            setAttempt((count) => count + 1);
-          }}
-        >
-          Retry
-        </Button>
+      <div data-frame-failure={failure.why}>
+        <Note alert>
+          <p>This tile couldn't load.</p>
+          <p className="text-xs text-tertiary">{FAILURE_WORDS[failure.why]}</p>
+          <Button
+            variant="secondary"
+            size="compact"
+            className="mt-2"
+            onClick={() => {
+              retried.current = false;
+              setFailure(null);
+              setAttempt((count) => count + 1);
+            }}
+          >
+            Retry
+          </Button>
+        </Note>
       </div>
     );
   return (
@@ -386,6 +410,7 @@ export function PreviewFrame({
       )}
       style={face === "detail" ? { height } : undefined}
     >
+      {ready ? null : <Placeholder />}
       {slot ? (
         <FrameView
           key={attempt}
@@ -409,7 +434,7 @@ export function PreviewFrame({
           data={data}
           onReady={() => setReady(true)}
           onHeight={(next) => {
-            heights.set(instance, next);
+            keepHeight(instance, next);
             setHeight(next);
           }}
           onFail={fail}
@@ -417,6 +442,23 @@ export function PreviewFrame({
           onAsk={() => {}}
         />
       ) : null}
+    </div>
+  );
+}
+
+/** What a frame's box shows until its frame draws: a few faint lines where
+ *  its text will be, so the room reads as loading, not as a gap. Its light
+ *  band stops under reduced motion. */
+function Placeholder() {
+  return (
+    <div
+      aria-hidden
+      data-frame-placeholder=""
+      className="pointer-events-none absolute inset-0 space-y-2.5 overflow-hidden p-1"
+    >
+      <Skeleton height={12} className="w-2/5" />
+      <Skeleton height={12} className="w-11/12" />
+      <Skeleton height={12} className="w-3/4" />
     </div>
   );
 }

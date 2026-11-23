@@ -266,6 +266,28 @@ describe("a custom tile's frame", () => {
     expect(box().style.height).toBe("520px");
   });
 
+  it("shows faint lines in its box until the frame draws", () => {
+    const { container, start } = mount("detail");
+    expect(container.querySelector("[data-frame-placeholder]")).not.toBeNull();
+    start();
+    expect(container.querySelector("[data-frame-placeholder]")).toBeNull();
+  });
+
+  it("reserves a detail's last height in this browser before it draws again", () => {
+    const tile = freshTile();
+    const first = mount("detail", tile);
+    first.start();
+    first.post({ protocol: PROTOCOL, kind: "resize", height: 515 });
+    nextFrame();
+    const kept = JSON.parse(localStorage.getItem("baum.tileFrame.heights") ?? "{}");
+    expect(Object.entries(kept)).toContainEqual([expect.stringContaining(tile.id), 515]);
+    act(() => root?.unmount());
+    const again = mount("detail", tile);
+    expect(again.container.querySelector<HTMLElement>("[data-frame-state]")!.style.height).toBe(
+      "515px",
+    );
+  });
+
   it("keeps a glance's box whatever the frame asks", () => {
     const { container, post, start } = mount("glance");
     start();
@@ -435,7 +457,7 @@ describe("a custom tile's frame", () => {
       message: "<b>Your session expired: sign in again</b>",
     });
     // The host's own reason; the tile's words only behind Details, quoted.
-    expect(container.querySelector("[role=alert] > div > p")?.textContent).toBe(
+    expect(container.querySelector("[role=alert] > p")?.textContent).toBe(
       "This tile couldn't load.",
     );
     expect(container.textContent).toContain("It failed while drawing.");

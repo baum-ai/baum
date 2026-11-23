@@ -3077,11 +3077,17 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   How it works, or the tile cited where it stands. Citations resolve against
   the shown version's review (its index, its sections, their risks and
   evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),
-  never by fetching. Frames follow the app's theme. A frame that doesn't
+  never by fetching. Frames follow the app's theme. Until its frame draws,
+  a tile's box shows three faint lines with a passing light band (still
+  under reduced motion) at the height the tile last drew at in this
+  browser, else 240px; the last heights of the latest 200 tiles are kept
+  (`baum.tileFrame.heights` in local storage), so a review opened again
+  starts at the right height. A frame that doesn't
   start, draw or behave says "This tile couldn't load" with Retry; a tile
   made with a newer kit says so; a desktop shell that has not declared
   `window.__BAUM_DESKTOP__ = { tileFrames: true }` shows custom tiles as not
-  available yet. The protocol, its checks and the states are in
+  available yet. These notes have the dashed box a native tile's
+  notes have (`Note`, `src/tiles/parts.tsx`). The protocol, its checks and the states are in
   `ARCHITECTURE.md` ("The app's host"); what a frame cannot reach is in
   `SECURITY.md` ("Custom tiles").
 - **Render check** (`src/tiles/custom/check-runner.tsx`). The daemon's render
