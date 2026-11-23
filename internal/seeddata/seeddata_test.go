@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -184,6 +185,13 @@ func TestTheDaemonReadsIt(t *testing.T) {
 func TestDefaultsMeetTheCriteria(t *testing.T) {
 	if testing.Short() {
 		t.Skip("writes the full dataset")
+	}
+	// The profiling scripts that use the full dataset run on Linux and
+	// macOS only, and writing it spawns thousands of git processes, which
+	// takes over 8 minutes on the Windows runner. The small datasets above
+	// cover the same code there.
+	if runtime.GOOS == "windows" {
+		t.Skip("the full dataset is only used on Linux and macOS")
 	}
 	requireGit(t)
 	o := Defaults()
