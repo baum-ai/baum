@@ -2332,6 +2332,22 @@ safe to do without asking for the same reasons, and these:
 - Where the desktop app does not mount tile frames (Windows, for now), the
   tools refuse before anything is made.
 
+Both an images tile (`add_tile`) and a tile made in chat (an
+`{"image_file": path}` in `check_tile`'s data) may name image files on this
+computer, so the agent never writes image bytes. The daemon reads such a
+file under one set of rules for both: an absolute path, read as the user
+baum runs as (a link is followed), at most 40 MiB, kept only when its bytes
+sniff as PNG, JPEG, GIF or WebP (never by name or extension), downscaled,
+and stored in `app.sqlite` for that pull request, at most 6 images a tile
+(a made tile's 16 MiB together). Anything else is refused with the file's
+base name only, never its contents. A stored image is shown only on your own
+page: the attachment route serves it, behind the server's usual checks, and
+a custom tile's frame gets it from the page as a `data:` URL in its data, so
+the frame's policy, sandbox and lack of network are unchanged, and the
+frame never reaches the daemon. The agent gets back a short reference, never
+the pixels. The worst untrusted text can do is have the agent show you an
+image file that is already on your computer, on your own page.
+
 There is no confirmation and no rate cap on purpose: each would make "add
 the API changes tile" slower for everyone to guard against an attack whose
 worst result is a tile you see and remove. Anything that lasts beyond the page you have open
