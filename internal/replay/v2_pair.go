@@ -84,7 +84,7 @@ func v2SectionsOf(d reviewv2.Document) []v2Section {
 	for _, s := range d.Sections {
 		sec := v2Section{section: section{id: s.ID, hunks: map[string]bool{}, paths: map[string]bool{}}, body: s.Body, hunkIDs: s.Hunks}
 		for _, h := range s.Hunks {
-			sec.section.hunks[h] = true
+			sec.hunks[h] = true
 			if p := pathOf[h]; p != "" {
 				sec.paths[p] = true
 			}
@@ -180,7 +180,9 @@ func containsToken(text, s string) bool {
 		start, end := from+i, from+i+len(s)
 		before, _ := utf8.DecodeLastRuneInString(text[:start])
 		after, _ := utf8.DecodeRuneInString(text[end:])
-		if !(start > 0 && word(first) && word(before)) && !(end < len(text) && word(last) && word(after)) {
+		cutBefore := start > 0 && word(first) && word(before)
+		cutAfter := end < len(text) && word(last) && word(after)
+		if !cutBefore && !cutAfter {
 			return true
 		}
 		from = start + 1
