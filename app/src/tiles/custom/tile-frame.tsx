@@ -59,8 +59,9 @@ const failures = new Map<string, FrameFailure>();
 /** Instances whose silent frame was already remounted once after the page
  *  read its tile route again. */
 const retried = new Set<string>();
-/** Each detail's last height, kept in this browser (the latest
- *  KEPT_HEIGHTS), so opening it again, on this page or a later one, reserves
+/** Each detail's last height on its pull request (a preview's on its type),
+ *  kept in this browser (the latest KEPT_HEIGHTS), so opening it again, on
+ *  this page or a later one, reserves
  *  the room it takes before its frame draws. Storage can be missing or
  *  refuse a write; the heights then hold for the page alone. */
 const HEIGHTS_KEY = "baum.tileFrame.heights";
@@ -248,7 +249,7 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
               </blockquote>
             </details>
           ) : null}
-          <Button variant="secondary" size="compact" className="mt-2" onClick={retry}>
+          <Button variant="secondary" size="compact" className="mt-1" onClick={retry}>
             Retry
           </Button>
         </Note>
@@ -392,7 +393,7 @@ export function PreviewFrame({
           <Button
             variant="secondary"
             size="compact"
-            className="mt-2"
+            className="mt-1"
             onClick={() => {
               retried.current = false;
               setFailure(null);

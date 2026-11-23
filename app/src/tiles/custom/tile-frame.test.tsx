@@ -90,8 +90,8 @@ function contextFor(overrides: Partial<TileContext> = {}): TileContext {
   };
 }
 
-function mount(face: Face, tile = freshTile()) {
-  const ctx = contextFor();
+function mount(face: Face, tile = freshTile(), overrides: Partial<TileContext> = {}) {
+  const ctx = contextFor(overrides);
   const host: TileHost = {
     draft: false,
     ask: vi.fn(),
@@ -285,6 +285,24 @@ describe("a custom tile's frame", () => {
     const again = mount("detail", tile);
     expect(again.container.querySelector<HTMLElement>("[data-frame-state]")!.style.height).toBe(
       "515px",
+    );
+  });
+
+  it("keeps a tile's height apart on each pull request", () => {
+    const tile = freshTile();
+    const on = (pr: number) => ({
+      review: { review: { repository: "acme/demo", pull_request: pr } } as ReviewDocument,
+    });
+    const first = mount("detail", tile, on(7));
+    first.start();
+    first.post({ protocol: PROTOCOL, kind: "resize", height: 640 });
+    nextFrame();
+    const kept = JSON.parse(localStorage.getItem("baum.tileFrame.heights") ?? "{}");
+    expect(Object.keys(kept)).toContainEqual(expect.stringMatching(/^acme\/demo#7:/));
+    act(() => root?.unmount());
+    const other = mount("detail", tile, on(8));
+    expect(other.container.querySelector<HTMLElement>("[data-frame-state]")!.style.height).toBe(
+      "240px",
     );
   });
 
