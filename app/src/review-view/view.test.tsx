@@ -978,6 +978,8 @@ describe("the code tile", () => {
     const container = await card(
       code({ hunk: "h_routes", lines: [61, 64], text: newSide(61, 64) }),
     );
+    // Only additions: the header has no old range.
+    expect(container.querySelector("tbody tr")?.textContent).toBe("@@ +61,4 @@");
     expect(rows(container)).toHaveLength(4);
     expect(container.querySelector("tbody tr.opacity-35")).toBeNull();
   });

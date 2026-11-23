@@ -45,25 +45,29 @@ export function excerptLines(
 
 /** The lines a folded excerpt shows: `EXCERPT_SHOWN` of them from the start,
  *  or from just above its first focused line when that lies further down,
- *  moved down to its last focused line when that fits. Folding one or two
+ *  moved down to take in its last focused line when both fit. Folding one or two
  *  lines saves nothing, so a short excerpt never folds. */
 export function foldedLines(lines: CodeDiffLine[]): CodeDiffLine[] | null {
   if (lines.length <= EXCERPT_SHOWN + 2) return null;
   const first = lines.findIndex((line) => line.focus);
   const last = lines.findLastIndex((line) => line.focus);
   let start = Math.max(0, Math.min(first - 2, lines.length - EXCERPT_SHOWN));
-  if (last >= start + EXCERPT_SHOWN) start = Math.min(first, last - EXCERPT_SHOWN + 1);
+  if (last >= start + EXCERPT_SHOWN && last - first < EXCERPT_SHOWN)
+    start = last - EXCERPT_SHOWN + 1;
   return lines.slice(start, start + EXCERPT_SHOWN);
 }
 
 /** The `@@` header of the lines drawn, with the hunk's own context after it
  *  (the function it is in), so its ranges agree with the numbers shown. */
 export function excerptHeader(hunkHeader: string | undefined, lines: CodeDiffLine[]): string {
-  const range = (sign: string, numbers: number[]) => `${sign}${numbers[0] ?? 0},${numbers.length}`;
+  // A side with no line drawn (only additions, or the host's text alone)
+  // gives no range.
+  const range = (sign: string, numbers: number[]) =>
+    numbers.length > 0 ? [`${sign}${numbers[0]},${numbers.length}`] : [];
   const olds = lines.flatMap((line) => (line.oldLine === undefined ? [] : [line.oldLine]));
   const news = lines.flatMap((line) => (line.newLine === undefined ? [] : [line.newLine]));
   const context = hunkHeader?.replace(/^@@[^@]*@@/, "") ?? "";
-  return `@@ ${range("-", olds)} ${range("+", news)} @@${context}`;
+  return ["@@", ...range("-", olds), ...range("+", news), `@@${context}`].join(" ");
 }
 
 /** A code tile's excerpt drawn as a diff: the file's path (opening it in

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -74,5 +75,14 @@ func TestToolsSectionNoRunTrees(t *testing.T) {
 		if s := toolsSection(mcp); strings.Contains(s, "head/") || strings.Contains(s, "merge-base") {
 			t.Errorf("mcp=%v: %s", mcp, s)
 		}
+	}
+}
+
+func TestClaimProposalKeepsCodeFocus(t *testing.T) {
+	o := &orchestration{tiles: []reviewv2.Tile{{ID: "tl_code"}}}
+	r := sectionResult{Propose: &reviewv2.Tile{ID: "tl_code", Type: TypeCode}, ProposeFocus: []int{4}}
+	o.claimProposal(&r)
+	if r.Propose.ID != "tl_code_2" || !slices.Equal(o.focus["tl_code_2"], []int{4}) || len(o.tiles[1].Data) != 0 {
+		t.Fatalf("proposal %s, focus %v, data %s", r.Propose.ID, o.focus, o.tiles[1].Data)
 	}
 }
