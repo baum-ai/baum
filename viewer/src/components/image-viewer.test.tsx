@@ -115,25 +115,34 @@ describe("ImageViewer", () => {
     expect(view.frame().style.aspectRatio).toBe("30 / 60");
   });
 
-  it("opens later images within the size the person last dragged to", () => {
+  it("opens later images at the share of the screen the person last dragged to", () => {
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const fit = (width: number, height: number) =>
+      viewerImageWidth({ width, height }, viewport(), 0);
+    const share = 300 / fit(40, 20);
     drag(view.frame(), 95, 95, "300px");
-    expect(JSON.parse(localStorage.getItem("baum.image-viewer.size")!)).toEqual({
-      width: 300,
-      height: 150,
-    });
+    expect(Number(localStorage.getItem("baum.image-viewer.scale"))).toBeCloseTo(share);
     view.render(null);
 
-    // A wide image takes the remembered width; a tall one, its height.
+    // Images of other shapes open at the same share of their own fit.
+    const width = () => Number.parseFloat(view.frame().style.width);
     view.render({ src: "/b.png", alt: "Wide", width: 80, height: 20 });
-    expect(view.frame().style.width).toBe("300px");
+    expect(Math.abs(width() - fit(80, 20) * share)).toBeLessThanOrEqual(1);
     view.render(null);
     view.render({ src: "/c.png", alt: "Tall", width: 20, height: 40 });
-    expect(view.frame().style.width).toBe("75px");
+    expect(Math.abs(width() - fit(20, 40) * share)).toBeLessThanOrEqual(1);
   });
 
-  it("ignores a remembered size it cannot read", () => {
-    localStorage.setItem("baum.image-viewer.size", "{nope");
+  it("remembers nothing from a press that moves the corner a pixel", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const before = Number.parseFloat(view.frame().style.width);
+    drag(view.frame(), 95, 95, `${before - 1}px`);
+    expect(localStorage.getItem("baum.image-viewer.scale")).toBeNull();
+    expect(view.frame().style.width).toBe(`${before}px`);
+  });
+
+  it("ignores a remembered scale it cannot read", () => {
+    localStorage.setItem("baum.image-viewer.scale", "nope");
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
     const width = viewerImageWidth({ width: 40, height: 20 }, viewport(), 0);
     expect(view.frame().style.width).toBe(`${width}px`);

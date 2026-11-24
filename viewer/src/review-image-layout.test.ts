@@ -82,12 +82,5 @@ describe("image heights", () => {
     expect(viewerImageWidth(retina, { width: 390, height: 844 }, 40)).toBe(390 - 58);
     // A 120px image opens far larger than its own pixels.
     expect(viewerImageWidth(tiny, { width: 1440, height: 900 }, 40)).toBe(1440 - 58);
-    // A remembered box bounds it by whichever side it reaches first.
-    expect(
-      viewerImageWidth(tiny, { width: 1440, height: 900 }, 40, { width: 500, height: 900 }),
-    ).toBe(500);
-    expect(
-      viewerImageWidth(phone, { width: 1440, height: 900 }, 40, { width: 900, height: 200 }),
-    ).toBe(Math.floor((200 * phone.width) / phone.height));
   });
 });

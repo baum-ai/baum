@@ -963,9 +963,8 @@ Description images and prompt images open in one viewer
 (`components/image-viewer`). It opens as large as the screen allows, enlarging
 an image past its own pixels, and keeps the image's proportions. Its corner
 drags to scale the image; until then it refits when the window changes size.
-The size dragged to is remembered in `localStorage`, and later images open
-within it (a wide image at its width, a tall one at its height), still no
-larger than the screen allows. A click on the backdrop, the close control or
+The size dragged to is remembered in `localStorage` as a share of that fit,
+and later images, of any shape, open at the same share. A click on the backdrop, the close control or
 Escape closes it.
 
 An indexed attachment whose `content_type` is `video/…` (local desktop reviews

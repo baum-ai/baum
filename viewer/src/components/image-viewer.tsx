@@ -10,28 +10,22 @@ import { CloseButton } from "./ui";
  *  pixel size when the host knows it (otherwise it is read once it loads). */
 export type ViewedImage = { src: string; alt: string; width?: number; height?: number };
 
-/** Where the size the person last dragged an image to is remembered. */
-const SIZE_KEY = "baum.image-viewer.size";
+/** Where the scale the person last dragged an image to is remembered: the
+ *  share of the screen's fit the image took, so images of any shape and
+ *  screens of any size open at the same share. */
+const SCALE_KEY = "baum.image-viewer.scale";
 
-const positive = (n: unknown): n is number => typeof n === "number" && n > 0 && Number.isFinite(n);
-
-/** The remembered size, or null when there is none or it is unreadable. */
-function storedSize(value: string | null): ImageSize | null {
-  if (!value) return null;
-  try {
-    const size = JSON.parse(value) as Partial<ImageSize>;
-    return positive(size.width) && positive(size.height)
-      ? { width: size.width, height: size.height }
-      : null;
-  } catch {
-    return null;
-  }
+/** The remembered scale, or 1 (the full fit) when there is none or it is
+ *  unreadable. */
+function storedScale(value: string | null): number {
+  const scale = Number(value);
+  return value && Number.isFinite(scale) && scale > 0 ? Math.min(1, scale) : 1;
 }
 
 /** A modal viewer for one image. It opens as large as the screen allows,
  *  past the image's own pixels, and keeps its proportions. Its corner drags
- *  to resize the image; the size dragged to is remembered, and later images
- *  open within it. `image` set opens it and `null` closes it; `onClose`
+ *  to resize the image; the share of the screen dragged to is remembered,
+ *  and later images open at it. `image` set opens it and `null` closes it; `onClose`
  *  follows any close, including Escape. */
 export function ImageViewer({
   image,
@@ -51,9 +45,9 @@ export function ImageViewer({
   const frame = useRef<HTMLDivElement>(null);
   const closer = useRef<HTMLButtonElement>(null);
   const captionId = useId();
-  const [stored, store] = useStoredSetting(SIZE_KEY);
-  const remembered = useRef<ImageSize | null>(null);
-  remembered.current = storedSize(stored);
+  const [stored, store] = useStoredSetting(SCALE_KEY);
+  const scale = useRef(1);
+  scale.current = storedScale(stored);
   // The size the frame fits to, until the person drags its corner; from then
   // on the size is theirs.
   const fitted = useRef<ImageSize | null>(null);
@@ -64,7 +58,7 @@ export function ImageViewer({
   const fittedHeader = useRef(0);
   const fit = (size: ImageSize) => {
     fitted.current = size;
-    fitFrame(frame.current, header.current, size, remembered.current);
+    fitFrame(frame.current, header.current, size, scale.current);
     fittedHeader.current = header.current?.offsetHeight ?? 0;
   };
 
@@ -187,17 +181,19 @@ export function ImageViewer({
           drawn = Math.min(drawn, Math.floor((target.offsetHeight * size.width) / size.height));
         target.style.removeProperty("max-width");
         target.style.width = `${drawn}px`;
-        if (drawn !== start) {
+        // Rounding can move the width a pixel on a press that resizes
+        // nothing; that is not a drag.
+        if (Math.abs(drawn - start) > 1) {
           dragged.current = true;
-          // Later images open within this size.
-          if (size)
-            store(
-              JSON.stringify({
-                width: drawn,
-                height: Math.round((drawn * size.height) / size.width),
-              }),
-            );
-        } else if (!dragged.current) element.removeAttribute("style");
+          // Later images open at the same share of the screen's fit.
+          if (size) {
+            const full = viewerImageWidth(size, viewport(), fittedHeader.current);
+            store(String(Math.min(1, drawn / full)));
+          }
+        } else {
+          target.style.width = `${start}px`;
+          if (!dragged.current) element.removeAttribute("style");
+        }
       },
       { once: true },
     );
@@ -288,6 +284,8 @@ function outside(element: Element, event: { clientX: number; clientY: number }) 
  *  browser's grip, with some slack. */
 const GRIP = 20;
 
+const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
+
 /** Keeps a pinned dialog inside the window, so a corner dragged outwards
  *  stops at its edge and the controls stay in view. */
 function bound(dialog: HTMLElement) {
@@ -297,24 +295,19 @@ function bound(dialog: HTMLElement) {
   dialog.style.maxHeight = `${Math.max(160, window.innerHeight - top - 16)}px`;
 }
 
-/** Sizes the image's frame to fill the screen below the header, within the
- *  remembered box. The header wraps to the frame's width, so the fit runs
- *  again at its new height. */
+/** Sizes the image's frame to `scale` of the screen below the header. The
+ *  header wraps to the frame's width, so the fit runs again at its new
+ *  height. */
 function fitFrame(
   frame: HTMLElement | null,
   header: HTMLElement | null,
   size: ImageSize,
-  box: ImageSize | null,
+  scale: number,
 ) {
   if (!frame || !size.width || !size.height) return;
   frame.style.aspectRatio = `${size.width} / ${size.height}`;
   for (let pass = 0; pass < 2; pass += 1) {
-    const width = viewerImageWidth(
-      size,
-      { width: window.innerWidth, height: window.innerHeight },
-      header?.offsetHeight ?? 0,
-      box,
-    );
-    frame.style.width = `${width}px`;
+    const width = viewerImageWidth(size, viewport(), header?.offsetHeight ?? 0);
+    frame.style.width = `${Math.max(1, Math.floor(width * scale))}px`;
   }
 }
