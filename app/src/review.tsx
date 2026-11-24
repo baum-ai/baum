@@ -196,34 +196,37 @@ const LIVE_AGENTS: Record<string, string> = {
   cursor: "cursor",
 };
 
-/** Whether a linked session's transcript is on this computer, by
- *  `agent:id`, as the daemon answered; pending while it is being asked. */
-const onComputer = new Map<string, boolean | "pending">();
+/** Linked sessions whose transcript the daemon has on this computer, by
+ *  `agent:id`, and those it is being asked about: where the answer should go,
+ *  the latest opening's page and address. */
+const onComputer = new Set<string>();
+const asking = new Map<string, { href: string; from: string }>();
 
 /** Opens a linked session on its page when its transcript is on this
  *  computer, which only the daemon knows: one linked from another computer,
- *  such as a teammate's, stays in the pane. The first time, the pane shows
- *  it while the daemon is asked, and the page replaces it once the answer
- *  says the session is here and it is still the one open. */
+ *  such as a teammate's, stays in the pane. Until the daemon answers, the
+ *  pane shows it, and the page replaces it if it is still the one open. A
+ *  session that is not here is asked about again the next time. */
 function openLinked(agent: string, id: string, focusTurn?: number): boolean {
   const key = `${agent}:${id}`;
   const href = transcriptHref({ agent, session_id: id }, focusTurn);
-  const known = onComputer.get(key);
-  if (known === true) {
+  if (onComputer.has(key)) {
     redirect(href);
     return true;
   }
-  if (known !== undefined) return false;
-  onComputer.set(key, "pending");
-  const asked = location.href;
+  const pending = asking.has(key);
+  asking.set(key, { href, from: location.href });
+  if (pending) return false;
   void request<unknown>(transcriptPath(agent, id, null))
-    .then((body) => {
-      const here = parseLiveTranscript(body)?.available === true;
-      onComputer.set(key, here);
-      if (here && location.href === asked) redirect(href);
-    })
-    // Asked again the next time it is opened.
-    .catch(() => onComputer.delete(key));
+    .then((body) => parseLiveTranscript(body)?.available === true)
+    .catch(() => false)
+    .then((here) => {
+      const latest = asking.get(key);
+      asking.delete(key);
+      if (!here) return;
+      onComputer.add(key);
+      if (latest && location.href === latest.from) redirect(latest.href);
+    });
   return false;
 }
 

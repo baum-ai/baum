@@ -477,7 +477,8 @@ export function SessionTranscriptPage({
   useEffect(() => {
     pageScroll().to(0);
   }, [agent, id]);
-  useFollowScroll(state.kind === "ready" ? state.version : undefined);
+  // Opened at a prompt, it stays there rather than at the end.
+  useFollowScroll(state.kind === "ready" ? state.version : undefined, focusTurn == null);
   const top = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const { reading, close } = useMessageKeys(body, top);

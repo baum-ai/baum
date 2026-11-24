@@ -6953,8 +6953,12 @@ replace it.
   provider) serves the transcript of a session the tracker lists, and of
   one it no longer lists (such as a pull request's session that ended days
   ago) found by its id in the agent's own store, as `Transcripts.Read` finds
-  a panel conversation's; one found nowhere is `available: false`. The file
-  is never named by the request. It is the `transcript_path` the session's
+  a panel conversation's; one found nowhere is `available: false`. Unlike
+  the Timeline's session route it is not limited to the repositories that
+  keep decisions: it serves the person's own sessions to their own app (and
+  its agents' `live_session_transcript`), by ids nobody can guess, and a
+  repository's decision setting is about capture, not about hiding its
+  sessions. The file is never named by the request. It is the `transcript_path` the session's
   hooks last reported (kept in the tracker's entry, never served, and not in
   `live-sessions.json`), read only when, its symbolic links resolved
   (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular

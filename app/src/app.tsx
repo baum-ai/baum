@@ -305,10 +305,12 @@ function LocalLink({ href, onClick, ...props }: ViewerLinkProps) {
           !e.metaKey &&
           !e.ctrlKey &&
           !e.shiftKey &&
-          href.startsWith(appBase())
+          (href.startsWith(appBase()) || href.startsWith("?"))
         ) {
+          // A link the viewer writes as a query of the page it is on, such
+          // as a quote's session, stays in the app too.
           e.preventDefault();
-          navigate(href);
+          navigate(href.startsWith("?") ? appURL(href) : href);
         }
       }}
     />

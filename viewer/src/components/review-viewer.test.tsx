@@ -215,6 +215,31 @@ describe("ReviewViewer without host slots", () => {
     );
     expect(open).toHaveBeenCalledWith("native", 4);
   });
+
+  it("hands the host a session the page opened on once the host's sessions arrive", async () => {
+    // As a host's: false until it knows the session.
+    let known = false;
+    const open = vi.fn(() => known);
+    const view = (ready: boolean) => (
+      <Host initial="pane=session&session=native">
+        <ReviewViewer
+          document={current}
+          sessions={{
+            state: ready
+              ? { status: "ready", items: [{ id: "native", label: "Native session" }] }
+              : { status: "loading" },
+            renderPane: () => null,
+            open,
+          }}
+        />
+      </Host>
+    );
+    await render(view(false));
+    expect(open).toHaveBeenCalledWith("native", undefined);
+    known = true;
+    await act(async () => root!.render(view(true)));
+    expect(open).toHaveLastReturnedWith(true);
+  });
   it("opens old risk links within their complete Changes section", async () => {
     const section = current.sections.find((item) => item.risks.length > 0)!;
     const risk = section.risks[0]!;

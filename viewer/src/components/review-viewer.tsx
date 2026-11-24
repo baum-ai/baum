@@ -750,9 +750,19 @@ function ReviewWorkspace<F extends ReviewFile>({
       : turnParam && /^\d+$/.test(turnParam)
         ? Number(turnParam)
         : undefined;
+  // Asked again as the host's sessions arrive, for a page that opened on a
+  // session before it knew it.
+  const sessionsKnown =
+    sessions?.state.status === "ready"
+      ? sessions.state.items.map((item) => item.id).join("\n")
+      : (sessions?.state.status ?? "");
   useLayoutEffect(() => {
     if (openedSession) openSession.current?.(openedSession, openedTurn);
-  }, [openedSession, openedTurn]);
+  }, [openedSession, openedTurn, sessionsKnown]);
+  // A prompt anchor's turn is for that opening only.
+  useEffect(() => {
+    if (!openedSession) setSessionFocus(null);
+  }, [openedSession]);
   const [folded, setFolded] = useState({
     changes: false,
     risks: false,

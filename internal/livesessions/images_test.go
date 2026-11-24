@@ -100,3 +100,14 @@ func TestCodexPastedImagesAreServed(t *testing.T) {
 	base := "/api/live-sessions/codex/" + id + "/transcript"
 	servedImage(t, f.live.Handler(), base, imageAnswer(t, f.live.Handler(), base))
 }
+
+func TestPastedImagesAreServedForASessionTheTrackerNoLongerLists(t *testing.T) {
+	f := newTranscriptFixture(t)
+	path := filepath.Join(f.home, ".claude", "projects", "-work-demo", "ended-1.jsonl")
+	write(t, path, claudeTurn("ended-1", 1, "Start", "Started."))
+	appendLines(t, path,
+		fmt.Sprintf(`{"type":"user","uuid":"u-img","sessionId":"ended-1","timestamp":"2026-10-27T18:05:00.000Z","promptId":"p-img","message":{"role":"user","content":[{"type":"text","text":"Here [Image #1]"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":%q}}]}}`,
+			base64.StdEncoding.EncodeToString(pixel)))
+	base := "/api/live-sessions/claude-code/ended-1/transcript"
+	servedImage(t, f.live.Handler(), base, imageAnswer(t, f.live.Handler(), base))
+}
