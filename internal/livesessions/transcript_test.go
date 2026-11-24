@@ -372,3 +372,21 @@ func TestTranscriptRouteReadsASessionTheTrackerNoLongerLists(t *testing.T) {
 		t.Errorf("the answer carries the home directory: %s", raw)
 	}
 }
+
+func TestSessionDirectoryIsWhereTheTranscriptSaysTheSessionWorked(t *testing.T) {
+	f := newTranscriptFixture(t)
+	// Tracked, and found by its id once the tracker no longer lists it.
+	ended := filepath.Join(f.home, ".claude", "projects", "-work-other", "ended-1.jsonl")
+	write(t, ended, `{"type":"user","cwd":"/work/other","sessionId":"ended-1","message":{"role":"user","content":"hi"}}`+"\n")
+	for id, want := range map[string]string{"s1": "/work/demo", "ended-1": "/work/other"} {
+		if dir, err := f.live.SessionDirectory(AgentClaudeCode, id); err != nil || dir != want {
+			t.Errorf("%s: %q %v", id, dir, err)
+		}
+	}
+	var missing *Unavailable
+	for _, agent := range []string{AgentClaudeCode, AgentCursor} {
+		if _, err := f.live.SessionDirectory(agent, "nowhere"); !errors.As(err, &missing) {
+			t.Errorf("%s: %v", agent, err)
+		}
+	}
+}

@@ -960,8 +960,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Price: func(backend string, accounting *agent.Accounting) (*float64, string) {
 				return pricing.Active().BackendAccountingCost(backend, accounting)
 			},
-			Publish:    func(event console.Event) { _ = server.Publish("console", event) },
-			Transcript: conversationTranscript(transcripts),
+			Publish:          func(event console.Event) { _ = server.Publish("console", event) },
+			Transcript:       conversationTranscript(transcripts),
+			SessionDirectory: sessionDirectory(transcripts),
 		})
 		if err != nil {
 			log.Warn("the session panel is off: its conversations did not open", "error", err)
@@ -1138,6 +1139,17 @@ func conversationTranscript(transcripts *livesessions.Transcripts) func(http.Res
 	return func(w http.ResponseWriter, r *http.Request, agent, id string) {
 		answer, err := transcripts.Read(r.Context(), agent, id, "", "")
 		transcripts.WriteAnswer(w, r, answer, err)
+	}
+}
+
+// sessionDirectory finds where a session the panel resumes worked; nil
+// without live transcripts.
+func sessionDirectory(transcripts *livesessions.Transcripts) func(context.Context, string, string) (string, error) {
+	if transcripts == nil {
+		return nil
+	}
+	return func(_ context.Context, agent, id string) (string, error) {
+		return transcripts.SessionDirectory(agent, id)
 	}
 }
 

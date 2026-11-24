@@ -41,6 +41,8 @@ import {
   SessionWhere,
 } from "./sessions";
 import { PageBar, pageScroll } from "./shell";
+import { startConversation } from "./console-api";
+import { useToast } from "./toast";
 
 /** How often an open transcript is read again without a `live` event: a
  *  transcript grows between hook events (the agent's replies are written
@@ -500,8 +502,10 @@ export function SessionTranscriptPage({
                   Open in panel
                 </Button>
               ) : null
-            ) : session ? (
+            ) : session && session.state !== "ended" ? (
               <FocusSession session={session} hotkey />
+            ) : openInPanel && (agent === "claude-code" || agent === "codex") ? (
+              <ContinueSession agent={agent} id={id} openInPanel={openInPanel} />
             ) : null
           }
         />
@@ -542,6 +546,41 @@ export function SessionTranscriptPage({
       {session ? <SessionReplyBar session={session} queued={queued} /> : null}
       {reading ? <MessageReader message={reading} onClose={close} /> : null}
     </>
+  );
+}
+
+/** Continues a session that ended, such as one from the person's terminal,
+ *  in the session panel: a conversation resumes it in the directory it
+ *  worked in, and the panel opens on it. */
+function ContinueSession({
+  agent,
+  id,
+  openInPanel,
+}: {
+  agent: "claude-code" | "codex";
+  id: string;
+  openInPanel: (conversation: string) => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const resume = async () => {
+    setBusy(true);
+    try {
+      openInPanel((await startConversation({ agent, resume: id })).id);
+    } catch (error) {
+      toast({
+        title: "The session could not be continued",
+        detail: error instanceof LocalRequestError ? error.message : undefined,
+        error: true,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button size="compact" disabled={busy} onClick={() => void resume()}>
+      Continue in panel
+    </Button>
   );
 }
 

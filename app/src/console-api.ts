@@ -132,6 +132,11 @@ export async function readConversation(id: string): Promise<Conversation | null>
 export function startConversation(input: {
   mode?: PanelMode;
   page?: PageContext;
+  /** With `resume`, the agent of the session to continue. */
+  agent?: PanelAgent;
+  /** A session the conversation continues, in the directory it worked in;
+   *  the conversation already continuing it is answered instead. */
+  resume?: string;
 }): Promise<Conversation> {
   return request(`${base}/conversations`, input);
 }

@@ -2877,7 +2877,13 @@ a panel session, so it is never under Waiting for you or counted in the
 sidebar's badge, and `needsYou` leaves panel sessions out too. Its transcript
 page offers **Open in panel** instead of Focus and has no reply bar, and a
 pull request's sessions tag it **Panel** with **Open in panel** beside Open
-transcript.
+transcript. The transcript page of a Claude Code or Codex session that ended,
+or that the daemon no longer lists (such as a pull request's session opened
+from its review), offers **Continue in panel**: it opens a panel conversation
+that resumes that session in the directory it worked in
+(`POST api/console/conversations` with `agent` and `resume`), or the one
+already continuing it, and opens the panel on it; why it cannot (its
+transcript or its directory is gone) shows as a toast.
 
 ## Review page
 

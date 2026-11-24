@@ -670,3 +670,33 @@ func cursorRevision(store, id string, recordOnly bool) (string, error) {
 	}
 	return db.Revision(id)
 }
+
+// SessionDirectory is the directory the agent's session id worked in, as its
+// transcript recorded it near its start, so the session can be resumed
+// there. Only Claude Code and Codex sessions can be. An error is an
+// *Unavailable.
+func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
+	path := ""
+	if t.Tracker != nil {
+		if _, tracked, ok := t.Tracker.Lookup(agent, id); ok {
+			path = tracked
+		}
+	}
+	if agent != AgentClaudeCode && agent != AgentCodex {
+		return "", unavailable("Only Claude Code and Codex sessions can be continued.")
+	}
+	loc, err := Locate(t.home(), "", agent, id, path)
+	if err != nil {
+		return "", err
+	}
+	var dir string
+	if agent == AgentClaudeCode {
+		dir, err = claudecode.SessionWorkingDir(loc.main)
+	} else {
+		dir, _, err = codex.SessionWorkingDir(loc.main)
+	}
+	if err != nil || dir == "" {
+		return "", unavailable("The session's transcript does not say where it worked.")
+	}
+	return dir, nil
+}

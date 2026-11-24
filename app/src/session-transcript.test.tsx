@@ -313,3 +313,50 @@ it("says why a transcript is not served, and when the session is gone", async ()
   expect(node.textContent).toContain("Couldn't load the transcript");
   expect(node.querySelector("button")?.textContent).toBe("Retry");
 });
+
+it("continues an ended session in the panel, resumed by the daemon", async () => {
+  const posted: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    mockStateFetch(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("api/console/conversations")) {
+        posted.push(JSON.parse(String(init?.body)));
+        return Response.json({ id: "conv-1" }, { status: 201 });
+      }
+      return Response.json({
+        available: true,
+        version: "v1",
+        live: false,
+        transcript: transcript("Add a retry budget"),
+      });
+    }),
+  );
+  const opened: string[] = [];
+  const page = (s: LiveSession | null) =>
+    act(async () =>
+      root.render(
+        <SessionTranscriptPage
+          agent="claude-code"
+          id="s1"
+          session={s}
+          tick={0}
+          prHref={() => null}
+          Link={(props) => <a {...props} />}
+          openInPanel={(id) => opened.push(id)}
+        />,
+      ),
+    );
+  const button = () =>
+    Array.from(node.querySelectorAll("button")).find((b) => b.textContent === "Continue in panel");
+  // A running session is written to where it runs, not continued here.
+  await page(session());
+  expect(button()).toBeUndefined();
+  // One the daemon no longer lists, or lists as ended, is.
+  await page(null);
+  await act(async () => button()!.click());
+  await wait(0);
+  expect(posted).toEqual([{ agent: "claude-code", resume: "s1" }]);
+  expect(opened).toEqual(["conv-1"]);
+  await page(session({ state: "ended", ended_at: new Date().toISOString() }));
+  expect(button()).toBeDefined();
+});

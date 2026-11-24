@@ -142,6 +142,10 @@ type Conversation struct {
 	// in an empty directory instead of a checkout of it: no clone, or a head
 	// that could not be fetched or checked out.
 	DirectoryNote string `json:"directory_note,omitempty"`
+	// Resumed is set when the conversation continues a session the person
+	// started elsewhere, in the directory it worked in: the person's own,
+	// so the sessions there stay theirs.
+	Resumed bool `json:"resumed,omitempty"`
 	// Session is the agent's session id once the agent reported it; every
 	// later turn resumes it.
 	Session string `json:"session,omitempty"`
@@ -224,7 +228,11 @@ type Options struct {
 	// whether or not the tracker lists it, never from a path a request
 	// names. Nil answers every conversation's transcript as unavailable.
 	Transcript func(w http.ResponseWriter, r *http.Request, agent, id string)
-	Log        *slog.Logger
+	// SessionDirectory is the directory the agent's session id worked in,
+	// read from its transcript, for a conversation that resumes it; its
+	// error says why it cannot be. Nil resumes none.
+	SessionDirectory func(ctx context.Context, agent, id string) (string, error)
+	Log              *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 }
@@ -340,6 +348,11 @@ type CreateRequest struct {
 	// Page is the page the person opened it from, which decides its
 	// directory: a pull request's page gets a checkout of the pull request.
 	Page *agentcontext.PageContext `json:"page,omitempty"`
+	// Resume is a session of Agent to continue, such as one that ended in
+	// the person's terminal: the conversation resumes it in the directory
+	// it worked in, whatever Page is. A conversation already continuing it
+	// is answered instead of a new one.
+	Resume string `json:"resume,omitempty"`
 }
 
 // Create opens a conversation: it chooses and, when needed, makes its
@@ -397,12 +410,21 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	defer cancel()
 	defer context.AfterFunc(s.base, cancel)()
 	id := newID()
-	placed, err := s.place(ctx, id, request.Page)
+	var placed placement
+	var err error
+	if request.Resume != "" {
+		if c, ok, err := s.resuming(request.Agent, request.Resume); err != nil || ok {
+			return c, err
+		}
+		placed.dir, err = s.resumeDirectory(ctx, request.Agent, request.Resume)
+	} else {
+		placed, err = s.place(ctx, id, request.Page)
+	}
 	if err != nil {
 		return Conversation{}, err
 	}
 	now := s.opts.Now().UTC()
-	c := Conversation{ID: id, Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,
+	c := Conversation{ID: id, Session: request.Resume, Resumed: request.Resume != "", Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,
 		Repository: placed.repository, PullRequest: placed.number, Branch: placed.branch, CreatedWorktree: placed.created,
 		CreatedBranch: placed.newBranch, DirectoryNote: placed.note, Pages: []agentcontext.PageContext{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
 	if request.Page != nil {
@@ -412,6 +434,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 		return Conversation{}, err
 	}
 	s.indexDirectory(c)
+	s.indexSession(c)
 	s.mu.Lock()
 	// The person is on the page they opened the conversation from, so it is
 	// the page every token, the new one included, has open.
@@ -425,6 +448,37 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	}
 	s.publish(Event{Conversation: id, Kind: EventCreated, State: c.State})
 	return c, nil
+}
+
+// resuming is the open conversation that already continues the agent's
+// session, if one does.
+func (s *Service) resuming(agentName, session string) (Conversation, bool, error) {
+	list, err := s.store.list()
+	if err != nil {
+		return Conversation{}, false, err
+	}
+	for _, c := range list {
+		if c.Agent == agentName && c.Session == session && c.State != StateClosed {
+			return c, true, nil
+		}
+	}
+	return Conversation{}, false, nil
+}
+
+// resumeDirectory is where the agent's session worked, which must still be
+// a directory for the agent to find the session again.
+func (s *Service) resumeDirectory(ctx context.Context, agentName, session string) (string, error) {
+	if s.opts.SessionDirectory == nil {
+		return "", invalid("this daemon cannot continue sessions")
+	}
+	dir, err := s.opts.SessionDirectory(ctx, agentName, session)
+	if err != nil {
+		return "", invalid("%s", err.Error())
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return "", invalid("The session worked in %s, which is no longer on this computer.", dir)
+	}
+	return dir, nil
 }
 
 // Get returns one conversation.
