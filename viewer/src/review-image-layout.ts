@@ -85,12 +85,17 @@ function pairs(first: ImageSize, second: ImageSize, paneWidth: number, maxHeight
 
 /** The viewer's image width: as large as the viewport allows around the
  *  dialog's margin, padding, border, the gap below its header and
- *  `headerHeight`, enlarging an image smaller than that. */
+ *  `headerHeight`, enlarging an image smaller than that. A `box` the person
+ *  last sized the image to bounds it further. */
 export function viewerImageWidth(
   size: ImageSize,
   viewport: { width: number; height: number },
   headerHeight: number,
+  box?: ImageSize | null,
 ): number {
-  const room = { width: viewport.width - 58, height: viewport.height - 66 - headerHeight };
+  const room = {
+    width: Math.min(viewport.width - 58, box?.width ?? Infinity),
+    height: Math.min(viewport.height - 66 - headerHeight, box?.height ?? Infinity),
+  };
   return Math.max(1, Math.floor(Math.min(room.width, room.height * aspect(size))));
 }

@@ -963,11 +963,10 @@ Description images and prompt images open in one viewer
 (`components/image-viewer`). It opens as large as the screen allows, enlarging
 an image past its own pixels, and keeps the image's proportions. Its corner
 drags to scale the image; until then it refits when the window changes size.
-A click on the backdrop, the close control or Escape closes it. Its
-full-screen control fills the screen through the browser's Fullscreen API
-(on the dialog's content, since a dialog itself cannot go full screen), or
-covers the window where the host does not grant it. Escape leaves full screen
-before it closes the viewer.
+The size dragged to is remembered in `localStorage`, and later images open
+within it (a wide image at its width, a tall one at its height), still no
+larger than the screen allows. A click on the backdrop, the close control or
+Escape closes it.
 
 An indexed attachment whose `content_type` is `video/…` (local desktop reviews
 only) draws as a muted `<video>` with native controls that loads only its

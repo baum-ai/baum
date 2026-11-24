@@ -1,20 +1,38 @@
-import { type PointerEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type PointerEvent, type ReactNode, useEffect, useId, useRef } from "react";
 
 import { type ImageSize, viewerImageWidth } from "../review-image-layout";
+import { useStoredSetting } from "../use-stored-setting";
 import { cn } from "./classnames";
-import { ExternalLinkIcon, FullScreenIcon, LeaveFullScreenIcon } from "./icons";
-import { CloseButton, IconButton } from "./ui";
+import { ExternalLinkIcon } from "./icons";
+import { CloseButton } from "./ui";
 
 /** An image to show large: where it is served, its description, and its
  *  pixel size when the host knows it (otherwise it is read once it loads). */
 export type ViewedImage = { src: string; alt: string; width?: number; height?: number };
 
+/** Where the size the person last dragged an image to is remembered. */
+const SIZE_KEY = "baum.image-viewer.size";
+
+const positive = (n: unknown): n is number => typeof n === "number" && n > 0 && Number.isFinite(n);
+
+/** The remembered size, or null when there is none or it is unreadable. */
+function storedSize(value: string | null): ImageSize | null {
+  if (!value) return null;
+  try {
+    const size = JSON.parse(value) as Partial<ImageSize>;
+    return positive(size.width) && positive(size.height)
+      ? { width: size.width, height: size.height }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A modal viewer for one image. It opens as large as the screen allows,
  *  past the image's own pixels, and keeps its proportions. Its corner drags
- *  to resize the image, and it can fill the screen: through the browser's
- *  full screen where the host allows it, otherwise by covering the window.
- *  Escape leaves full screen first, then closes. `image` set opens it and
- *  `null` closes it; `onClose` follows any close, including Escape. */
+ *  to resize the image; the size dragged to is remembered, and later images
+ *  open within it. `image` set opens it and `null` closes it; `onClose`
+ *  follows any close, including Escape. */
 export function ImageViewer({
   image,
   label,
@@ -29,27 +47,24 @@ export function ImageViewer({
   onClose: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const content = useRef<HTMLDivElement>(null);
   const header = useRef<HTMLDivElement>(null);
   const frame = useRef<HTMLDivElement>(null);
   const closer = useRef<HTMLButtonElement>(null);
-  const fullButton = useRef<HTMLButtonElement>(null);
-  const [full, setFull] = useState(false);
   const captionId = useId();
+  const [stored, store] = useStoredSetting(SIZE_KEY);
+  const remembered = useRef<ImageSize | null>(null);
+  remembered.current = storedSize(stored);
   // The size the frame fits to, until the person drags its corner; from then
   // on the size is theirs.
   const fitted = useRef<ImageSize | null>(null);
   const dragged = useRef(false);
-  // Whether this viewer holds the browser's full screen, so it only leaves
-  // a full screen it entered.
-  const holdsFullScreen = useRef(false);
 
   // The header's height when the image was fitted: one row beside the
   // controls when the image is wide enough.
   const fittedHeader = useRef(0);
   const fit = (size: ImageSize) => {
     fitted.current = size;
-    fitFrame(frame.current, header.current, size);
+    fitFrame(frame.current, header.current, size, remembered.current);
     fittedHeader.current = header.current?.offsetHeight ?? 0;
   };
 
@@ -90,17 +105,6 @@ export function ImageViewer({
     return () => window.removeEventListener("resize", refit);
   }, [src]);
 
-  useEffect(() => {
-    const follow = () => {
-      if (holdsFullScreen.current && !globalThis.document.fullscreenElement) {
-        holdsFullScreen.current = false;
-        setFull(false);
-      }
-    };
-    globalThis.document.addEventListener("fullscreenchange", follow);
-    return () => globalThis.document.removeEventListener("fullscreenchange", follow);
-  }, []);
-
   // A click on the backdrop, outside the dialog's box, closes it; Escape is
   // the keyboard's way out. The press must start there too, as a drag of
   // the corner can end outside.
@@ -123,38 +127,9 @@ export function ImageViewer({
     };
   }, []);
 
-  // Leaving the browser's full screen is asynchronous and moves focus, so a
-  // close from full screen waits for it; the host can then restore focus.
-  const close = async () => {
-    if (holdsFullScreen.current && globalThis.document.fullscreenElement) {
-      holdsFullScreen.current = false;
-      await globalThis.document.exitFullscreen?.().catch(() => {});
-    }
-    dialog.current?.close();
-  };
+  const close = () => dialog.current?.close();
   const closeRef = useRef(close);
   closeRef.current = close;
-
-  const leaveFullScreen = () => {
-    setFull(false);
-    if (holdsFullScreen.current && globalThis.document.fullscreenElement) {
-      holdsFullScreen.current = false;
-      globalThis.document.exitFullscreen?.().catch(() => {});
-    }
-  };
-  const enterFullScreen = () => {
-    setFull(true);
-    // Covering the window already fills it; the browser's full screen, when
-    // the host grants it, also hides the window's own chrome. A dialog
-    // cannot itself go full screen, so its content does.
-    const target = content.current;
-    if (!globalThis.document.fullscreenEnabled || globalThis.document.fullscreenElement) return;
-    if (!target?.requestFullscreen) return;
-    holdsFullScreen.current = true;
-    target.requestFullscreen().catch(() => {
-      holdsFullScreen.current = false;
-    });
-  };
 
   // Dragging the corner of a centred dialog would move the corner at half
   // the pointer's speed, as the dialog re-centres; pinning the dialog where
@@ -165,7 +140,7 @@ export function ImageViewer({
     const element = dialog.current;
     const box = event.currentTarget.getBoundingClientRect();
     const onGrip = event.clientX >= box.right - GRIP && event.clientY >= box.bottom - GRIP;
-    if (!element || full || !onGrip) return;
+    if (!element || !onGrip) return;
     const start = event.currentTarget.offsetWidth;
     const at = element.getBoundingClientRect();
     element.style.margin = "0";
@@ -212,8 +187,17 @@ export function ImageViewer({
           drawn = Math.min(drawn, Math.floor((target.offsetHeight * size.width) / size.height));
         target.style.removeProperty("max-width");
         target.style.width = `${drawn}px`;
-        if (drawn !== start) dragged.current = true;
-        else if (!dragged.current) element.removeAttribute("style");
+        if (drawn !== start) {
+          dragged.current = true;
+          // Later images open within this size.
+          if (size)
+            store(
+              JSON.stringify({
+                width: drawn,
+                height: Math.round((drawn * size.height) / size.width),
+              }),
+            );
+        } else if (!dragged.current) element.removeAttribute("style");
       },
       { once: true },
     );
@@ -224,19 +208,7 @@ export function ImageViewer({
       ref={dialog}
       aria-label={label}
       aria-describedby={caption ? captionId : undefined}
-      data-full={full || undefined}
-      onCancel={(event) => {
-        if (!full) return;
-        event.preventDefault();
-        leaveFullScreen();
-        // Leaving the cover can drop focus out of the dialog; it returns to
-        // the control that entered full screen.
-        if (!dialog.current?.contains(globalThis.document.activeElement)) {
-          fullButton.current?.focus();
-        }
-      }}
       onClose={() => {
-        leaveFullScreen();
         dialog.current?.removeAttribute("style");
         frame.current?.removeAttribute("style");
         onClose();
@@ -245,14 +217,10 @@ export function ImageViewer({
         "m-auto max-h-[calc(100dvh-2rem)] w-fit min-w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-default open:flex",
         "bg-surface-card p-3 text-primary shadow-card",
         "backdrop:bg-surface-scrim",
-        full && "inset-0! m-0! h-dvh max-h-none! w-screen max-w-none! rounded-none border-0",
       )}
     >
       {image && (
-        <div
-          ref={content}
-          className="flex min-h-0 min-w-0 flex-auto flex-col gap-2 bg-surface-card [&:fullscreen]:p-3"
-        >
+        <div className="flex min-h-0 min-w-0 flex-auto flex-col gap-2 bg-surface-card">
           {/* The header takes the image's width rather than widening the
               dialog past it. Where that leaves too little room beside the
               controls, as on a phone or above a tall, narrow image, the
@@ -272,14 +240,6 @@ export function ImageViewer({
                   Open original
                   <ExternalLinkIcon size={10} />
                 </a>
-                <IconButton
-                  ref={fullButton}
-                  label="Full screen"
-                  aria-pressed={full}
-                  onClick={full ? leaveFullScreen : enterFullScreen}
-                >
-                  {full ? <LeaveFullScreenIcon /> : <FullScreenIcon />}
-                </IconButton>
                 <CloseButton ref={closer} label="Close image" onClick={close} />
               </div>
             </div>
@@ -288,13 +248,10 @@ export function ImageViewer({
             ref={frame}
             data-image-frame=""
             onPointerDown={pin}
-            className={cn(
-              // The frame takes the image's proportions, so dragging its
-              // corner scales the image. It shrinks with the dialog when the
-              // window does, letterboxing the image on the sunken surface.
-              "min-h-0 min-w-0 max-w-full shrink self-center overflow-hidden rounded-md bg-surface-sunken",
-              full ? "aspect-auto! h-auto! w-full! max-w-none! flex-1" : "resize-x",
-            )}
+            // The frame takes the image's proportions, so dragging its
+            // corner scales the image. It shrinks with the dialog when the
+            // window does, letterboxing the image on the sunken surface.
+            className="min-h-0 min-w-0 max-w-full shrink resize-x self-center overflow-hidden rounded-md bg-surface-sunken"
           >
             <img
               src={image.src}
@@ -340,9 +297,15 @@ function bound(dialog: HTMLElement) {
   dialog.style.maxHeight = `${Math.max(160, window.innerHeight - top - 16)}px`;
 }
 
-/** Sizes the image's frame to fill the screen below the header. The header
- *  wraps to the frame's width, so the fit runs again at its new height. */
-function fitFrame(frame: HTMLElement | null, header: HTMLElement | null, size: ImageSize) {
+/** Sizes the image's frame to fill the screen below the header, within the
+ *  remembered box. The header wraps to the frame's width, so the fit runs
+ *  again at its new height. */
+function fitFrame(
+  frame: HTMLElement | null,
+  header: HTMLElement | null,
+  size: ImageSize,
+  box: ImageSize | null,
+) {
   if (!frame || !size.width || !size.height) return;
   frame.style.aspectRatio = `${size.width} / ${size.height}`;
   for (let pass = 0; pass < 2; pass += 1) {
@@ -350,6 +313,7 @@ function fitFrame(frame: HTMLElement | null, header: HTMLElement | null, size: I
       size,
       { width: window.innerWidth, height: window.innerHeight },
       header?.offsetHeight ?? 0,
+      box,
     );
     frame.style.width = `${width}px`;
   }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { viewerImageWidth } from "../review-image-layout";
 import { ImageViewer, type ViewedImage } from "./image-viewer";
@@ -28,7 +28,7 @@ afterEach(() => {
   root = null;
   document.body.replaceChildren();
   vi.restoreAllMocks();
-  Reflect.deleteProperty(document, "fullscreenEnabled");
+  localStorage.clear();
 });
 
 function mount(image: ViewedImage | null, onClose = () => {}) {
@@ -115,38 +115,27 @@ describe("ImageViewer", () => {
     expect(view.frame().style.aspectRatio).toBe("30 / 60");
   });
 
-  it("goes full screen, and Escape leaves full screen before it closes", () => {
-    const onClose = vi.fn();
-    const requestFullscreen = vi.fn(() => Promise.resolve());
-    // jsdom has no Fullscreen API; the stub is removed after the test.
-    const original = HTMLElement.prototype.requestFullscreen;
-    HTMLElement.prototype.requestFullscreen = requestFullscreen;
-    onTestFinished(() => {
-      HTMLElement.prototype.requestFullscreen = original;
+  it("opens later images within the size the person last dragged to", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    drag(view.frame(), 95, 95, "300px");
+    expect(JSON.parse(localStorage.getItem("baum.image-viewer.size")!)).toEqual({
+      width: 300,
+      height: 150,
     });
-    // jsdom has no Fullscreen API.
-    Object.defineProperty(document, "fullscreenEnabled", { configurable: true, value: true });
-    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 }, onClose);
+    view.render(null);
 
-    act(() => view.button("Full screen").click());
-    expect(requestFullscreen).toHaveBeenCalledOnce();
-    // A dialog cannot go full screen itself; its content does.
-    expect(requestFullscreen.mock.contexts[0]).toBe(view.dialog.firstElementChild);
-    expect(view.dialog.dataset.full).toBe("true");
-    expect(view.button("Full screen").getAttribute("aria-pressed")).toBe("true");
+    // A wide image takes the remembered width; a tall one, its height.
+    view.render({ src: "/b.png", alt: "Wide", width: 80, height: 20 });
+    expect(view.frame().style.width).toBe("300px");
+    view.render(null);
+    view.render({ src: "/c.png", alt: "Tall", width: 20, height: 40 });
+    expect(view.frame().style.width).toBe("75px");
+  });
 
-    const escape = () => {
-      const cancel = new Event("cancel", { cancelable: true });
-      act(() => view.dialog.dispatchEvent(cancel));
-      if (!cancel.defaultPrevented) act(() => view.dialog.close());
-    };
-    escape();
-    expect(view.dialog.dataset.full).toBeUndefined();
-    expect(view.dialog.open).toBe(true);
-    expect(onClose).not.toHaveBeenCalled();
-
-    escape();
-    expect(view.dialog.open).toBe(false);
-    expect(onClose).toHaveBeenCalledOnce();
+  it("ignores a remembered size it cannot read", () => {
+    localStorage.setItem("baum.image-viewer.size", "{nope");
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const width = viewerImageWidth({ width: 40, height: 20 }, viewport(), 0);
+    expect(view.frame().style.width).toBe(`${width}px`);
   });
 });
