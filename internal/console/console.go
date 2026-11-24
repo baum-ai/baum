@@ -326,7 +326,9 @@ func New(opts Options) (*Service, error) {
 		cancel()
 		return nil, err
 	}
-	for _, c := range all {
+	// Oldest first, as they were made, so a later conversation on the same
+	// session holds it, as it did before the restart.
+	for _, c := range slices.Backward(all) {
 		s.indexDirectory(c)
 		s.indexSession(c)
 	}

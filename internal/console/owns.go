@@ -65,9 +65,16 @@ func (s *Service) indexSession(c Conversation) {
 			delete(s.sessions, key)
 		}
 	}
-	// A closed conversation that resumed the person's own session gives it
-	// back: they may continue it in their terminal again.
-	if c.Session != "" && (!c.Resumed || c.State != StateClosed) {
-		s.sessions[agentcontext.SessionKey(c.Agent, c.Session)] = c.ID
+	if c.Session == "" {
+		return
 	}
+	key := agentcontext.SessionKey(c.Agent, c.Session)
+	// A closed conversation that resumed the person's own session gives it
+	// back, from any conversation that had it before: they may continue it
+	// in their terminal again.
+	if c.Resumed && c.State == StateClosed {
+		delete(s.sessions, key)
+		return
+	}
+	s.sessions[key] = c.ID
 }

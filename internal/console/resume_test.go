@@ -135,3 +135,41 @@ func TestTwoRequestsToContinueASessionMakeOneConversation(t *testing.T) {
 		t.Errorf("two conversations: %v", ids)
 	}
 }
+
+func TestAResumedConversationKeepsItsSessionFromAnOlderClosedOne(t *testing.T) {
+	dir := resolveExisting(t.TempDir())
+	f := newFixture(t, func(o *Options) {
+		o.SessionDirectory = func(context.Context, string, string) (string, error) { return dir, nil }
+	})
+	ctx := context.Background()
+	// A panel conversation that ran the session, closed.
+	older, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.Send(ctx, older.ID, "hello", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.finished(older.ID)
+	if _, err := f.service.Close(ctx, older.ID); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Resume: testSession})
+	if err != nil || resumed.ID == older.ID {
+		t.Fatalf("%+v %v", resumed, err)
+	}
+	_ = f.service.CloseStore()
+	f.open()
+	if got, ok := f.service.Owns("claude-code", testSession, dir); !ok || got != resumed.ID {
+		t.Errorf("after a restart: %q %v", got, ok)
+	}
+	// Closed, it gives the session back for good.
+	if _, err := f.service.Close(ctx, resumed.ID); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.service.CloseStore()
+	f.open()
+	if got, ok := f.service.Owns("claude-code", testSession, dir); ok {
+		t.Errorf("claimed again by %s", got)
+	}
+}
