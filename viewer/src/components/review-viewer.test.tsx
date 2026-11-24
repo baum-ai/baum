@@ -155,6 +155,50 @@ describe("ReviewViewer without host slots", () => {
     await act(async () => link.click());
     expect(container.textContent).toContain("Session native, turn 7");
   });
+  it("hands a session to the host's own page, at the prompt a link names, when the host opens it", async () => {
+    const snapshot = structuredClone(current);
+    const section = snapshot.sections[0]!;
+    const id = "att_0123456789abcdef0123456789abcdef";
+    snapshot.index.attachments = [
+      {
+        id,
+        position: 1,
+        content_type: "image/png",
+        width: 1,
+        height: 1,
+        origins: [
+          { session: "native", turn: 7, input: "image-only", kind: "human_input", position: 1 },
+        ],
+      },
+    ];
+    section.blocks = [
+      {
+        kind: "images",
+        items: [{ attachment: id, caption: "Native screenshot" }],
+        source: [{ type: "attachment", id }],
+      },
+    ];
+    const open = vi.fn(() => true);
+    const container = await render(
+      <Host initial={`pane=section&section=${section.id}`}>
+        <AttachmentUrlProvider resolve={(attachmentId) => `/images/${attachmentId}`}>
+          <ReviewViewer
+            document={snapshot}
+            sessions={{
+              state: { status: "ready", items: [{ id: "native", label: "Native session" }] },
+              renderPane: () => null,
+              open,
+            }}
+          />
+        </AttachmentUrlProvider>
+      </Host>,
+    );
+    const link = [...container.querySelectorAll<HTMLAnchorElement>("a")].find(
+      (item) => item.textContent === "Prompt 7",
+    )!;
+    await act(async () => link.click());
+    expect(open).toHaveBeenCalledWith("native", 7);
+  });
   it("opens old risk links within their complete Changes section", async () => {
     const section = current.sections.find((item) => item.risks.length > 0)!;
     const risk = section.risks[0]!;

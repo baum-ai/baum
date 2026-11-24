@@ -6,6 +6,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -152,6 +153,9 @@ export type ReviewListSlot = {
     actions: ReviewViewerActions,
     focusTurn?: number,
   ) => ReactNode;
+  /** Opens an item somewhere of the host's own instead of in the pane, at
+   *  `focusTurn` of a session; false leaves it to the pane. */
+  open?: (id: string, focusTurn?: number) => boolean;
 };
 
 /** A rail row a host fills with one pane of its own, such as the decisions
@@ -732,6 +736,14 @@ function ReviewWorkspace<F extends ReviewFile>({
   // reader reaches for either once the review has said where to look. Changes
   // and Risks stay open.
   const [sessionFocus, setSessionFocus] = useState<{ session: string; turn: number } | null>(null);
+  // A session the host opens on a page of its own leaves the review there,
+  // however it was selected (a row, a quote of its prompt, a link).
+  const openSession = sessions?.open;
+  const openedSession = selection.kind === "session" ? selection.id : null;
+  const openedTurn = sessionFocus?.session === openedSession ? sessionFocus?.turn : undefined;
+  useLayoutEffect(() => {
+    if (openedSession) openSession?.(openedSession, openedTurn);
+  }, [openSession, openedSession, openedTurn]);
   const [folded, setFolded] = useState({
     changes: false,
     risks: false,

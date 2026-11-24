@@ -48,10 +48,15 @@ test("a running session is one of the pull request's sessions, counted and liste
   await expect(page.getByRole("region", { name: "Sessions in progress" })).toHaveCount(0);
   await page.screenshot({ path: "test-results/pr-sessions-list.png" });
 
-  // Opened alone, it reads its transcript through the daemon's live record.
+  // Opened, it leaves the review for its own page on Sessions, where it can
+  // be continued, and Esc comes back to the review's list.
   await card.getByRole("button", { name: "Resolve the conflict with the base" }).click();
+  await expect(page).toHaveURL(/page=sessions&session=claude-code%3Arunning-on-7/);
   await expect(
     page.getByRole("heading", { name: "Resolve the conflict with the base" }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/pr-sessions-open.png" });
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL(/pane=sessions/);
+  await expect(card).toBeVisible();
 });

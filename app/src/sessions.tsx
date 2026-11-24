@@ -157,9 +157,12 @@ export const sessionKey = (s: Pick<LiveSession, "agent" | "session_id">) =>
 export const peekHref = (s: Pick<LiveSession, "agent" | "session_id">) =>
   appURL(`?page=sessions&peek=${encodeURIComponent(sessionKey(s))}`);
 
-/** Where a session's transcript opens in the app. */
-export const transcriptHref = (s: LiveSession) =>
-  appURL(`?page=sessions&session=${encodeURIComponent(sessionKey(s))}`);
+/** Where a session's transcript opens in the app, at its `turn` when one
+ *  is named. */
+export const transcriptHref = (s: Pick<LiveSession, "agent" | "session_id">, turn?: number) =>
+  appURL(
+    `?page=sessions&session=${encodeURIComponent(sessionKey(s))}${turn == null ? "" : `&turn=${turn}`}`,
+  );
 
 export function Agent({ agent }: { agent: string }) {
   const logo = agentLogos[agent];

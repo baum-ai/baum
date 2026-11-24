@@ -381,8 +381,10 @@ test("the rail's Sessions, Commits and Decisions are plain rows that open their 
     .getByRole("button", { name: /Resolve the conflict with the base/ })
     .first()
     .click();
-  await expect(page).toHaveURL(/pane=session&session=running-on-7/);
-  // The group's row stays current on its item.
+  // A session opens on its own page, and Back returns to the list.
+  await expect(page).toHaveURL(/page=sessions&session=claude-code%3Arunning-on-7/);
+  await page.goBack();
+  await expect(page).toHaveURL(/pane=sessions/);
   await expect(sessions).toHaveAttribute("aria-pressed", "true");
   await rail.getByRole("button", { name: /^Decisions/ }).click();
   await expect(page).toHaveURL(/pane=decisions/);

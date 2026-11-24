@@ -63,6 +63,7 @@ import {
   fixLabel,
   jobHref,
   navigate,
+  redirect,
   type LiveSession,
   type Provenance,
 } from "./api";
@@ -72,7 +73,7 @@ import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useVersionLoader } from "./version-cache";
-import { LiveSessionCard, liveSessionLabel } from "./sessions";
+import { LiveSessionCard, liveSessionLabel, transcriptHref } from "./sessions";
 import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
@@ -188,6 +189,13 @@ export function Transcript({
   return <TranscriptCard transcript={load} title={title} focusTurn={focusTurn} embedded />;
 }
 
+/** The live sessions' agent for a linked session's vendor. */
+const LIVE_AGENTS: Record<string, string> = {
+  claude_code: "claude-code",
+  codex: "codex",
+  cursor: "cursor",
+};
+
 /** The pull request's Sessions group: one list of the sessions linked to it
  *  through its commits (`linked`) and the sessions the daemon lists on it
  *  (`listed`: working, waiting, or ended and still listed). A listed session
@@ -202,6 +210,17 @@ export function pullRequestSessions(
   return sessionsSlot(linked, {
     renderSession,
     hosted: listedSessionRows(listed, linked, decisions),
+    // A session opens on its own page, where it can be continued.
+    open: (id, focusTurn) => {
+      const agent =
+        listed.find((s) => s.session_id === id)?.agent ??
+        (linked.status === "ready"
+          ? LIVE_AGENTS[linked.sessions.find((s) => s.id === id)?.vendor ?? ""]
+          : undefined);
+      if (!agent) return false;
+      redirect(transcriptHref({ agent, session_id: id }, focusTurn));
+      return true;
+    },
     empty:
       "Sessions on this computer show here while they work on this pull request, and once one of their commits is in it.",
   });

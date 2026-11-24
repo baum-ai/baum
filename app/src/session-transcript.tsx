@@ -439,9 +439,12 @@ export function SessionTranscriptPage({
   prHref,
   Link,
   openInPanel,
+  focusTurn,
 }: {
   agent: string;
   id: string;
+  /** The turn whose prompt is marked and scrolled into view. */
+  focusTurn?: number;
   session: LiveSession | null;
   /** The message queued for the session's next stop, if any. */
   queued?: AgentMessage;
@@ -470,7 +473,12 @@ export function SessionTranscriptPage({
   );
   const poll =
     session?.state === "running" ? POLL_RUNNING : session?.state === "idle" ? POLL_IDLE : null;
-  const { state, retry } = useLiveTranscript(agent, id, { tick, poll });
+  // One the list no longer has, such as a pull request's session that ended
+  // days ago, is read as the Timeline reads it, from where capture found it.
+  const route = session
+    ? undefined
+    : `api/timeline/sessions/${encodeURIComponent(`${agent}:${id}`)}/transcript`;
+  const { state, retry } = useLiveTranscript(agent, id, { tick, poll, route });
   useEffect(() => {
     pageScroll().to(0);
   }, [agent, id]);
@@ -532,6 +540,7 @@ export function SessionTranscriptPage({
           retry={retry}
           live={session !== null && session.state !== "ended"}
           title={session?.title}
+          focusTurn={focusTurn}
         />
       </div>
       {session ? <SessionReplyBar session={session} queued={queued} /> : null}
@@ -547,9 +556,11 @@ const TranscriptBody = memo(function TranscriptBody({
   retry,
   live,
   title,
+  focusTurn,
 }: {
   state: LiveTranscriptState;
   retry: () => void;
+  focusTurn?: number;
   /** The session still runs, so it has no outcome yet. */
   live: boolean;
   /** The listed session's title, for a transcript that holds none, such as
@@ -576,6 +587,7 @@ const TranscriptBody = memo(function TranscriptBody({
       summary={state.summary}
       live={live}
       title={title}
+      focusTurn={focusTurn}
     />
   );
 });
@@ -658,9 +670,12 @@ export function TranscriptReader({
   live,
   title,
   openLastReply = false,
+  focusTurn,
 }: {
   transcript: LocalTranscript;
   version: string;
+  /** The turn whose prompt is marked and scrolled into view. */
+  focusTurn?: number;
   summary?: string;
   live: boolean;
   title?: string;
@@ -679,6 +694,7 @@ export function TranscriptReader({
           source={source}
           layout="log"
           openLastReply={openLastReply}
+          focusTurn={focusTurn}
         />
       ) : (
         <p className="local-transcript-note">
