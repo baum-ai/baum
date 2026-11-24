@@ -873,7 +873,10 @@ repository's pull requests.
 An inbox's queue (`?inbox=<id>` on the app root, `src/up-next.tsx`) is a split view: a list of
 what waits on the person, grouped by what they do about it, beside the panel
 of the selected pull request. The page uses the shared palette in both themes; its list and
-panel scroll on their own, and below 760px the list stacks above the panel.
+panel scroll on their own. The queue takes less width below 760px so the
+selected pull request remains beside it at the smallest desktop window.
+Selecting a different pull request starts its panel at the top. Below
+560px of available space the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
 flags only: **Review** (their review is requested, or someone else's pull
 request is assigned to them), **Clone** (such a pull request whose repository
@@ -972,9 +975,10 @@ branch are counted at the foot of the panel, as a link to Sessions
 peek and its reply where it takes one, as a click on it does (with several,
 each by its agent's name).
 
-Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
-away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
-request until its head moves. A snooze selects the next pull request and shows
+The panel's Snooze menu stays within the window, opening above its button
+when there is too little room below. Snooze offers 1 hour, this afternoon
+(3 PM, while that is more than an hour away), tomorrow morning (9 AM) and
+**Until it changes**, which hides the pull request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
 member of their stack, offer Snooze too. A stack's or group's row offers
