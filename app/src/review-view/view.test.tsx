@@ -278,7 +278,7 @@ describe("the Overview", () => {
     const bare: ReviewV2 = {
       ...REVIEW_1303,
       summary: { ...REVIEW_1303.summary, verdict: null, risk_why: "" },
-      overview: { screenshots: [], diagram: null, intent: [] },
+      overview: { screenshots: [], videos: [], diagram: null, intent: [] },
       tiles: [],
     };
     const container = await page("", review1303(bare));

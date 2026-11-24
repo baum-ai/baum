@@ -370,6 +370,10 @@ func TestChecks(t *testing.T) {
 			d.Sections[0].Body[1].Items[0].Cites = []Anchor{HunkAnchor("h_a00000000002", []int{1, 2})}
 			return CheckSection(d.Sections[0], refs)
 		}, "outside the hunk's lines 39 to 44"},
+		{"image as a video", func(d Document) []string {
+			d.Overview.Videos = d.Overview.Screenshots
+			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
+		}, "is not a video clip"},
 		{"unknown prompt", func(d Document) []string {
 			d.Overview.Intent[0].Prompt = 9
 			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)

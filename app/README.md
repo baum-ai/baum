@@ -2962,7 +2962,8 @@ builds the rail's model (the sections and the file list) from it.
 - **Overview**, always in this order: the summary (`summary.text`), the risk
   (score, level and why: `risk_why`, or else the score's first reason) with
   the verdict inside its card when it has points (each linking to its
-  section), what it looks like (`overview.screenshots`), the main diagram
+  section), the description's clips of the change (`overview.videos`, under
+  Video), what it looks like (`overview.screenshots`), the main diagram
   (`overview.diagram`) under its title, and what was asked (`overview.intent`,
   else each linked session's first prompt), each linking to the prompt in its
   session.

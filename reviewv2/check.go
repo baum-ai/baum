@@ -36,6 +36,7 @@ const (
 	MaxIntent           = 3
 	MaxIntentText       = 160
 	MaxScreenshots      = 3
+	MaxVideos           = 3
 	MaxTiles            = 8
 	MaxShows            = 300
 	MaxTileTitle        = 80
@@ -535,9 +536,9 @@ func collectStrings(raw json.RawMessage, out *[]string) {
 // CheckOverview checks what the overview call wrote: the summary's text
 // (two or three sentences), the verdict (its decision, one line and at most
 // three points, each naming a section of the document when it names one),
-// why the risk is what it is, and the overview's screenshots (attachments
-// of the pull request), main diagram (a tile of the document) and intent
-// (asks of a linked session's prompts).
+// why the risk is what it is, and the overview's screenshots and videos
+// (attachments of the pull request), main diagram (a tile of the document)
+// and intent (asks of a linked session's prompts).
 func CheckOverview(summary Summary, overview Overview, sections []Section, tiles []Tile, refs *Refs) []string {
 	f := &findings{}
 	f.text("summary.text", summary.Text, textRule{limit: MaxSummary, sentences: MaxSummarySentences, required: true})
@@ -560,19 +561,8 @@ func CheckOverview(summary Summary, overview Overview, sections []Section, tiles
 		}
 	}
 	f.text("risk_why", summary.RiskWhy, textRule{limit: MaxRiskWhy, sentences: MaxRiskWhySentences, required: true})
-	if len(overview.Screenshots) > MaxScreenshots {
-		f.add("overview.screenshots", "there are %d; choose at most %d", len(overview.Screenshots), MaxScreenshots)
-	}
-	seen := map[string]bool{}
-	for _, id := range overview.Screenshots {
-		switch {
-		case !refs.Attachments[id]:
-			f.add("overview.screenshots", "%q is not an attachment of the pull request", id)
-		case seen[id]:
-			f.add("overview.screenshots", "%q is chosen twice", id)
-		}
-		seen[id] = true
-	}
+	f.attachments("overview.screenshots", overview.Screenshots, MaxScreenshots, false, refs)
+	f.attachments("overview.videos", overview.Videos, MaxVideos, true, refs)
 	if d := overview.Diagram; d != nil && !slices.ContainsFunc(tiles, func(t Tile) bool { return t.ID == *d }) {
 		f.add("overview.diagram", "%q is not a tile of the review", *d)
 	}
@@ -643,3 +633,23 @@ func CheckDocument(d Document, refs *Refs) []string {
 
 // Findings joins findings as repair text: one per line.
 func Findings(list []string) string { return strings.Join(list, "\n") }
+
+// attachments checks the overview's chosen attachments; video ones must be
+// clips.
+func (f *findings) attachments(at string, ids []string, limit int, video bool, refs *Refs) {
+	if len(ids) > limit {
+		f.add(at, "there are %d; choose at most %d", len(ids), limit)
+	}
+	seen := map[string]bool{}
+	for _, id := range ids {
+		switch {
+		case !refs.Attachments[id]:
+			f.add(at, "%q is not an attachment of the pull request", id)
+		case video && !refs.Videos[id]:
+			f.add(at, "%q is not a video clip", id)
+		case seen[id]:
+			f.add(at, "%q is chosen twice", id)
+		}
+		seen[id] = true
+	}
+}

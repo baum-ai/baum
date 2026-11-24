@@ -269,3 +269,63 @@ func TestSniffMediaDoesNotCollectElements(t *testing.T) {
 		t.Fatalf("%v allocations sniffing empty track entries", allocs)
 	}
 }
+
+func TestContextAroundKeepsTheCaptionsAroundMedia(t *testing.T) {
+	light, dark := markdownAsset(uploadBefore), markdownAsset(uploadAfter)
+	body := "## Tests\nAll green.\n\n### Video\n<!-- template -->\nFocus lines in a folded excerpt (light, dark):\n\nLight:\n\n" + light +
+		"\n\nDark:\n\n" + dark + "\n\n```\n" + "not prose\n```\nSee above.\n## Notes\nunrelated"
+	if got, want := contextAround(body, light), "Focus lines in a folded excerpt (light, dark):\nLight:\n[this]\nDark:\n[media]\nSee above."; got != want {
+		t.Errorf("light context = %q, want %q", got, want)
+	}
+	if got, want := contextAround(body, dark), "Focus lines in a folded excerpt (light, dark):\nLight:\n[media]\nDark:\n[this]\nSee above."; got != want {
+		t.Errorf("dark context = %q, want %q", got, want)
+	}
+	table := "| Before | After |\n| --- | --- |\n| ![old](" + light + ") | <img alt=\"new\" src=\"" + dark + "\"> |"
+	if got, want := contextAround(table, dark), "| Before | After |\n| --- | --- |\n| [media] | [this] |"; got != want {
+		t.Errorf("table context = %q, want %q", got, want)
+	}
+	long := strings.Repeat("word ", 100) + "\n" + light
+	if got := contextAround(long, light); len(got) > contextSideBytes+len("…\n[this]") || !strings.HasPrefix(got, "…") {
+		t.Errorf("long context = %q", got)
+	}
+	if got := contextAround("<!-- "+light+" -->", light); got != "" {
+		t.Errorf("commented-out context = %q, want empty", got)
+	}
+}
+
+func TestContextAroundKeepsTagsAndTokensWhole(t *testing.T) {
+	clip := markdownAsset(uploadBefore)
+	body := "Demo:\n<video controls>\n  <source src=\"" + clip + "\" type=\"video/mp4\">\n</video>\nIt retries."
+	if got, want := contextAround(body, clip), "Demo:\n[this]\nIt retries."; got != want {
+		t.Errorf("source tag context = %q, want %q", got, want)
+	}
+	token := "ghp_" + strings.Repeat("a", 36)
+	long := token + " " + strings.Repeat("x", 150) + "\n" + clip
+	if got := contextAround(long, clip); strings.Contains(got, "aaaa") {
+		t.Errorf("a cut token reached the context: %q", got)
+	}
+	line := strings.Repeat("lead ", 40) + "![x](" + clip + ") " + strings.Repeat("tail ", 40)
+	if got := contextAround(line, clip); !strings.Contains(got, "[this]") || len(got) > 2*contextLineBytes+len("…[this]…") {
+		t.Errorf("own line context = %q", got)
+	}
+	linked := "See [this](https://example.com) first, " + strings.Repeat("pad ", 30) + "<a href=\"" + clip + "\"><img src=\"" + clip + "\"></a><br>done"
+	if got := contextAround(linked, clip); strings.Count(got, "[this]") != 1 || !strings.HasSuffix(got, "pad [this] done") {
+		t.Errorf("linked image context = %q", got)
+	}
+}
+
+func TestRedactBuildsContextFromTheMaskedBody(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := markdownAsset(uploadBefore)
+	token := "ghp_" + strings.Repeat("Ab1", 12)
+	b := &Bundle{PullRequest: PullRequest{Body: "Token: " + token + " pad ![x](" + source + ")"}, Attachments: []Attachment{{ID: "att_a", SourceURL: source}}}
+	if err := Redact(context.Background(), b, redactor); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Attachments[0].Context; !strings.Contains(got, "[this]") || strings.Contains(got, "Ab1") {
+		t.Errorf("context = %q, want the masked body around [this]", got)
+	}
+}
