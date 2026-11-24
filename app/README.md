@@ -63,7 +63,8 @@ follow the active colour theme (`src/desktop/follow-theme.ts`, below).
 Setup has a decorative leaf banner just above its step label, using the
 transparent Discord artwork in both themes. Its width is capped so leaves stay
 visible on large screens, and it follows the form on tall windows. It is static,
-fades into the page and leaves the step controls in place.
+fades into the page and leaves the step controls in place. On short windows the
+setup form scrolls above the Back and Continue controls, which stay visible.
 
 Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
 sessions, settings and charts reuse its semantic tokens, in
