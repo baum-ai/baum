@@ -694,8 +694,12 @@ const transcript: Scenario<TranscriptState> = {
       ctx.execute<number>(
         `return [...document.querySelectorAll(${JSON.stringify(MESSAGE)})].findIndex((m) => m.classList.contains("local-message-current"));`,
       );
+    // At its first message k stays there, so a short transcript takes fewer.
+    const presses = Math.min(TRANSCRIPT_PRESSES, messages);
+    if (presses < TRANSCRIPT_PRESSES)
+      ctx.note(`The transcript has ${messages} messages; each run presses k ${presses} times.`);
     let last = -1;
-    for (let i = 0; i < TRANSCRIPT_PRESSES; i++) {
+    for (let i = 0; i < presses; i++) {
       await ctx.press("k");
       // k scrolls smoothly; a reader reads once it stops. A press during the
       // scroll marks the same message again, its target not yet in view.
