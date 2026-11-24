@@ -1607,8 +1607,10 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   to 20,000px and passes `HeightGuard`, which freezes it after ten growths
   by one amount within a second or six changes of direction within two
   seconds; at most one height is applied an animation frame. A detail
-  reserves its last height (240px the first time) so reopening it does not
-  move the page; the frame stays invisible until `ready`.
+  reserves its last height on that pull request, kept in the browser's
+  local storage for the latest 200 tiles (240px the first time), so
+  reopening it, or the review, does not move the page; the frame stays
+  invisible until `ready`, and its box shows faint skeleton lines meanwhile.
 - **The keyboard.** A frame holds the keyboard only when the reader gave
   it: a glance never (it is under its card's link with `tabindex=-1`); a
   detail when a Tab lands on its element (its `focus` event within 300ms of
