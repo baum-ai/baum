@@ -30,7 +30,7 @@ type Caps struct {
 	// MaxDiffPatchBytes assembly fails.
 	MaxDiffFiles      int
 	MaxDiffPatchBytes int64
-	// MaxImageAltBytes bounds each description image's alt text and heading.
+	// MaxImageAltBytes bounds each description image's alt text, heading and context.
 	MaxImageAltBytes int
 }
 
@@ -45,7 +45,7 @@ func (c Caps) DiffLimits() DiffLimits {
 	return DiffLimits{MaxFiles: c.MaxDiffFiles, MaxPatchBytes: c.MaxDiffPatchBytes, MaxHunkLines: c.MaxHunkPatchLines}
 }
 
-// capAttachments bounds each attachment's alt text and heading to
+// capAttachments bounds each attachment's alt text, heading and context to
 // MaxImageAltBytes and notes how many attachments it shortened. Fit runs it,
 // after redaction, so a cut cannot leave part of a secret unmasked.
 func capAttachments(bundle *Bundle, caps Caps) {
@@ -56,7 +56,7 @@ func capAttachments(bundle *Bundle, caps Caps) {
 	cut := 0
 	for i := range bundle.Attachments {
 		shortened := false
-		for _, text := range []*string{&bundle.Attachments[i].Alt, &bundle.Attachments[i].Heading} {
+		for _, text := range []*string{&bundle.Attachments[i].Alt, &bundle.Attachments[i].Heading, &bundle.Attachments[i].Context} {
 			if len(*text) > limit {
 				*text, shortened = strings.ToValidUTF8((*text)[:limit], ""), true
 			}
@@ -66,7 +66,7 @@ func capAttachments(bundle *Bundle, caps Caps) {
 		}
 	}
 	if cut > 0 {
-		bundle.Truncated = append(bundle.Truncated, fmt.Sprintf("alt text or heading capped to %d bytes for %d description image(s)", limit, cut))
+		bundle.Truncated = append(bundle.Truncated, fmt.Sprintf("alt text, heading or context capped to %d bytes for %d description image(s)", limit, cut))
 	}
 }
 
@@ -206,7 +206,7 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // stage cuts it: the files it lists reach the agent whole (the description-image rules).
 //
 // Fit runs after Redact. It first cuts each hunk's patch to MaxHunkPatchLines
-// and each attachment's alt text and heading to MaxImageAltBytes, so those
+// and each attachment's alt text, heading and context to MaxImageAltBytes, so those
 // cuts always follow redaction: a patch reaches Redact with the margin diff
 // parsing keeps past the line cap, and a secret the cap runs through is
 // masked whole.

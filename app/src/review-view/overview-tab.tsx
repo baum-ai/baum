@@ -55,6 +55,7 @@ export function OverviewTab({
   const diagram = viewTile(review, review.overview.diagram);
   const attachments = new Set((review.index.attachments ?? []).map((image) => image.id));
   const screenshots = review.overview.screenshots.filter((id) => attachments.has(id));
+  const videos = review.overview.videos.filter((id) => attachments.has(id));
   const intent = intentRows(review);
   const titleOf = (id: string) => list.find((section) => section.id === id)?.title;
   return (
@@ -63,6 +64,17 @@ export function OverviewTab({
         <Markdown className={cn(PROSE, "text-lg leading-[1.6]")}>{review.summary.text}</Markdown>
       ) : null}
       <RiskPart review={review} titleOf={titleOf} go={go} />
+      {videos.length > 0 ? (
+        <ReviewImages
+          document={document}
+          heading={videos.length === 1 ? "Video" : "Videos"}
+          block={{
+            kind: "images",
+            items: videos.map((attachment) => ({ attachment })),
+            source: [],
+          }}
+        />
+      ) : null}
       {screenshots.length > 0 ? (
         <ReviewImages
           document={document}

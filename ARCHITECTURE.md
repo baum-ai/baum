@@ -1607,8 +1607,10 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   to 20,000px and passes `HeightGuard`, which freezes it after ten growths
   by one amount within a second or six changes of direction within two
   seconds; at most one height is applied an animation frame. A detail
-  reserves its last height (240px the first time) so reopening it does not
-  move the page; the frame stays invisible until `ready`.
+  reserves its last height on that pull request, kept in the browser's
+  local storage for the latest 200 tiles (240px the first time), so
+  reopening it, or the review, does not move the page; the frame stays
+  invisible until `ready`, and its box shows faint skeleton lines meanwhile.
 - **The keyboard.** A frame holds the keyboard only when the reader gave
   it: a glance never (it is under its card's link with `tabindex=-1`); a
   detail when a Tab lands on its element (its `focus` event within 300ms of
@@ -2063,7 +2065,7 @@ them.
 
 `baum.review/2` is the desktop app's review document, shaped like its page:
 the overview (summary text, verdict, why the risk is what it is,
-screenshots, the main diagram, intent), the sections (outline, level and its
+screenshots, videos, the main diagram, intent), the sections (outline, level and its
 reasons, body, risks), where the change fits (`context`) and the
 tiles, each owned by `overview`, `context` or a section. Its Go types are
 `reviewv2.Document` (`oss/reviewv2/document.go`); every field says which
@@ -2127,11 +2129,11 @@ sentences and 320 characters, the area required), `CheckTile` (title within
 `view.CheckNative`, a code tile's hunk and lines on its new side) and
 `CheckOverview` (summary text, verdict line within 120 and at most three
 points within 200, `risk_why` within two sentences and 260 characters,
-screenshots and intent that the pull request has, a main diagram that is a
-tile). Every model text is refused the word "evidence" and hunk IDs, and
+screenshots and intent that the pull request has, videos that are its
+video clips, a main diagram that is a tile). Every model text is refused the word "evidence" and hunk IDs, and
 every citation must resolve (`Refs`: the bundle's hunks with their lines,
-files, linked sessions' prompts and events, attachments, checks and
-threads; `RefsOf` a bundle, `RefsOfIndex` a document's index).
+files, linked sessions' prompts and events, attachments and which of
+them are clips, checks and threads; `RefsOf` a bundle, `RefsOfIndex` a document's index).
 `CheckDocument` runs the schema and every level.
 
 **Completion.** `reviewv2.Complete` turns what the levels wrote into the
@@ -4099,7 +4101,14 @@ A desktop generation job uses `internal/generate` to:
    clips the description uploads are captured the same way, under their own
    limits (`bundle.MaxVideos`, 3, of at most `bundle.MaxVideoBytes`, 100 MiB,
    each; over them a clip is `over_limit` or `too_large`); the agent does not
-   open them and places one by its alt text and heading. After session
+   open them and places one by its alt text, heading and context. Each
+   attachment's `context` is the description text around it within its
+   heading's section, outside code fences and comments: up to 160 bytes of
+   the lines before and after its own and 80 on each side of it on its line,
+   cut only at whitespace, with the
+   attachment itself as `[this]` and other media as `[media]`. `bundle.Redact`
+   builds it from the redacted body, so a cut never parts a secret from the
+   text that marks it as one, and it is capped like the alt text. After session
    linkage and count caps, native Claude Code and Codex transcripts also supply
    retained inline pasted and tool-result images through `sessions/sessionimages`.
    Only readable linked roots and reachable subagents contribute; Entire
@@ -7739,7 +7748,7 @@ bound, like the documents.
 | Tool | Reads |
 | --- | --- |
 | `facts` | `/api/facts` at the head the index shows (the facts, which exist before any review) |
-| `review_outline` | `/api/tiles` (the version as a `baum.review/2` document) or the group's document (`baum.review/1`, converted with `reviewv2.Read`): the overview (title, text, change kind, verdict, `risk_why`, risk score, reading time, screenshots, main diagram, intent) and each section's id, title, kind, gist, scope, level, hunks, files, the ids of the tiles it owns and its `details` state (`pending`, `failed` or absent), never a section's body or risks |
+| `review_outline` | `/api/tiles` (the version as a `baum.review/2` document) or the group's document (`baum.review/1`, converted with `reviewv2.Read`): the overview (title, text, change kind, verdict, `risk_why`, risk score, reading time, screenshots, videos, main diagram, intent) and each section's id, title, kind, gist, scope, level, hunks, files, the ids of the tiles it owns and its `details` state (`pending`, `failed` or absent), never a section's body or risks |
 | `review_section` | one section by `id`: its outline, level reasons, body (prose, points with their detail and citations, notes, and the tiles it places by id) and risks with their citations, and its tiles (id, type, title, caption, state, never their data), or for a `failed` or `pending` section its outline and that state in words |
 | `review_context` | the document's `context`, or that it is absent, or failed (from the job's `context_failed`) |
 | `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft?tiles=1` (drafts are never stored; a `baum.review/2` document): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |

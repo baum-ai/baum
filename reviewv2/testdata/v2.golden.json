@@ -18,7 +18,7 @@
       "review_md": null,
       "review_md_changed": false,
       "truncated": [],
-      "schema_revision": "2026-11-23.1",
+      "schema_revision": "2026-11-24.2",
       "prompt_version": "v2-fixture"
     },
     "sources": {

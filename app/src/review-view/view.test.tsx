@@ -278,7 +278,7 @@ describe("the Overview", () => {
     const bare: ReviewV2 = {
       ...REVIEW_1303,
       summary: { ...REVIEW_1303.summary, verdict: null, risk_why: "" },
-      overview: { screenshots: [], diagram: null, intent: [] },
+      overview: { screenshots: [], videos: [], diagram: null, intent: [] },
       tiles: [],
     };
     const container = await page("", review1303(bare));
@@ -1013,7 +1013,10 @@ describe("the native tiles", () => {
       data: { text: "Phones can't reach a laptop behind NAT.", anchors: [] },
     });
     expect(container.querySelector("h3")?.textContent).toBe("Why a relay");
-    expect(container.textContent).toContain("Phones can't reach a laptop behind NAT.");
+    // Set apart from the section's own text, on its wash behind a rule.
+    expect(container.querySelector("[data-prose-callout]")?.textContent).toBe(
+      "Phones can't reach a laptop behind NAT.",
+    );
   });
 
   it("draws an added images tile from the images the index lists", async () => {
