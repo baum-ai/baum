@@ -132,6 +132,28 @@ func (s *Service) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusAccepted, s.detail(c))
 	})
+	mux.HandleFunc("POST /api/console/conversations/{id}/queued/send", func(w http.ResponseWriter, r *http.Request) {
+		if !decode(w, r, &struct{}{}) {
+			return
+		}
+		c, err := s.SendQueued(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, s.detail(c))
+	})
+	mux.HandleFunc("DELETE /api/console/conversations/{id}/queued/{queued}", func(w http.ResponseWriter, r *http.Request) {
+		if !decode(w, r, &struct{}{}) {
+			return
+		}
+		c, err := s.RemoveQueued(r.Context(), r.PathValue("id"), r.PathValue("queued"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.detail(c))
+	})
 	mux.HandleFunc("POST /api/console/conversations/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		if !decode(w, r, &struct{}{}) {
 			return
@@ -282,6 +304,8 @@ func classify(err error) (int, string) {
 		status, code = http.StatusBadRequest, bad.Code
 	case errors.Is(err, ErrNotFound):
 		status, code = http.StatusNotFound, "conversation_not_found"
+	case errors.Is(err, ErrQueuedNotFound):
+		status, code = http.StatusNotFound, "queued_not_found"
 	case errors.Is(err, ErrBusy):
 		status, code = http.StatusConflict, "busy"
 	case errors.Is(err, ErrClosed):

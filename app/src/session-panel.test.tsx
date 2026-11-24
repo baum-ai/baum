@@ -187,7 +187,24 @@ beforeEach(() => {
                 message: "Its file is not on this computer any more.",
               },
         );
-      if (path === "api/console/conversations/c1/messages") {
+      if (path === "api/console/conversations/c1/messages" && conversation?.state === "running") {
+        const queued = [...(conversation.queued ?? [])];
+        queued.push({ id: `q${queued.length + 1}`, text: call.body.text, queued_at: "" });
+        conversation = { ...conversation, queued };
+        return Response.json(conversation, { status: 202 });
+      }
+      if (path.startsWith("api/console/conversations/c1/queued/") && call.method === "DELETE") {
+        const gone = path.split("/").pop();
+        conversation = {
+          ...conversation!,
+          queued: (conversation!.queued ?? []).filter((q) => q.id !== gone),
+        };
+        return Response.json(conversation);
+      }
+      if (
+        path === "api/console/conversations/c1/messages" ||
+        path === "api/console/conversations/c1/queued/send"
+      ) {
         conversation = made({
           state: "running",
           title: "Why?",
@@ -196,7 +213,11 @@ beforeEach(() => {
         return Response.json(conversation, { status: 202 });
       }
       if (path === "api/console/conversations/c1/cancel") {
-        conversation = made({ state: "idle", error: "Stopped before the agent finished." });
+        conversation = made({
+          state: "idle",
+          error: "Stopped before the agent finished.",
+          queued: conversation?.queued ?? [],
+        });
         return Response.json(conversation);
       }
       if (path === "api/console/conversations/c1/close") {
@@ -471,21 +492,39 @@ it("starts a session from the page, showing the prompt at once, and stops it", a
   ]);
   expect(posts()[0]!.body).toEqual({ mode: "workspace", page: pr });
   expect(posts()[1]!.body).toEqual({ text: "Why is the delay capped?", page: pr });
-  // While it runs: the tool, Working, and Stop instead of Send.
+  // While it runs: the tool, Working, and Queue and Stop instead of Send.
   await until(() => expect(panel()!.textContent).toContain("Read docs/guide.md"));
   expect(panel()!.textContent).toContain("Working");
   expect(panel()!.textContent).toContain("Why is the delay capped?");
-  // Enter while it runs keeps what is typed and says why.
+  expect(button("Send")).toBeUndefined();
+  // Enter while it runs queues the message for when the turn ends.
   await type(composer(), "And the jitter?");
   await key(composer(), "Enter");
-  expect(composer().value).toBe("And the jitter?");
-  expect(panel()!.textContent).toContain("wait for the turn to finish, or Stop it");
-  expect(posts()).toHaveLength(2);
+  await until(() => expect(posts()).toHaveLength(3));
+  expect(posts()[2]!.body).toEqual({ text: "And the jitter?", page: pr });
+  expect(composer().value).toBe("");
+  const queuedList = () => panel()!.querySelector('[aria-label="Queued messages"]');
+  await until(() => expect(queuedList()!.textContent).toContain("And the jitter?"));
+  expect(queuedList()!.textContent).toContain("Queued for when the agent finishes · 1");
+  await type(composer(), "And the cap?");
+  await act(async () => button("Queue")!.click());
+  await until(() => expect(queuedList()!.querySelectorAll("li")).toHaveLength(2));
+  // One is removed.
+  await act(async () => button("Remove queued message: And the cap?")!.click());
+  await until(() => expect(queuedList()!.querySelectorAll("li")).toHaveLength(1));
+  expect(
+    calls.some((c) => c.method === "DELETE" && c.path === "api/console/conversations/c1/queued/q2"),
+  ).toBe(true);
+  // Stopped, the turn leaves the queue to be sent now.
   const stop = button("Stop")!;
   await act(async () => stop.click());
   await until(() => expect(button("Send")).toBeDefined());
   expect(calls.some((c) => c.path === "api/console/conversations/c1/cancel")).toBe(true);
   expect(panel()!.textContent).toContain("Stopped before the agent finished.");
+  expect(queuedList()!.textContent).toContain("Queued, not sent");
+  await act(async () => button("Send now")!.click());
+  await until(() => expect(queuedList()).toBeNull());
+  expect(calls.some((c) => c.path === "api/console/conversations/c1/queued/send")).toBe(true);
 });
 
 it("sends the first message with the page open once the session has started", async () => {

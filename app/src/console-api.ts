@@ -56,6 +56,17 @@ export type Conversation = ConversationSummary & {
   cost_usd?: number;
   session_key?: string;
   progress: Progress | null;
+  /** Messages sent while a turn ran, oldest first: they go together as the
+   *  next turn once it answers, or wait for the person when it stopped or
+   *  failed. Absent from an older daemon. */
+  queued?: QueuedMessage[];
+};
+
+/** A message waiting for the running turn to end. */
+export type QueuedMessage = {
+  id: string;
+  text: string;
+  queued_at: string;
 };
 
 /** A labelled part of an operation's summary. `quoted` text is not baum's
@@ -138,6 +149,15 @@ export function startConversation(input: {
 
 export function sendTurn(id: string, text: string, page?: PageContext): Promise<Conversation> {
   return request(`${conversationPath(id)}/messages`, page ? { text, page } : { text });
+}
+
+/** Sends the queued messages now, as one turn. */
+export function sendQueued(id: string): Promise<Conversation> {
+  return request(`${conversationPath(id)}/queued/send`, {});
+}
+
+export function removeQueued(id: string, queued: string): Promise<Conversation> {
+  return request(`${conversationPath(id)}/queued/${encodeURIComponent(queued)}`, {}, "DELETE");
 }
 
 export function stopTurn(id: string): Promise<Conversation> {

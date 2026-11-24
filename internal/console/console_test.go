@@ -27,11 +27,14 @@ const testSession = "6c2a4f1e-0b7d-4c55-9a7e-2f3b1d0c8e91"
 // its arguments, working directory and environment beside itself, then
 // answers as a session would. A prompt containing "wait" makes it start a
 // child that sleeps and wait for it, writing the child's pid first, so a
-// turn runs until it is stopped.
+// turn runs until it is stopped. One containing "hold" waits until a file
+// named release is beside it, then answers. Every prompt is appended to
+// prompts.txt, ended by a line "---".
 const fakeClaude = `#!/bin/sh
 if [ "$1" = "--version" ]; then echo '2.1.300 (Claude Code)'; exit 0; fi
 log=$(dirname "$0")
 prompt=$(cat)
+printf '%s\n---\n' "$prompt" >> "$log/prompts.txt"
 printf '%s\n' "$@" > "$log/arguments.txt"
 pwd > "$log/pwd.txt"
 env > "$log/environment.txt"
@@ -49,6 +52,8 @@ case "$prompt" in
   echo $! > "$log/child.pid"
   wait
   exit 1;;
+*hold*)
+  while [ ! -f "$log/release" ]; do sleep 0.05; done;;
 esac
 cat <<'EVENTS'
 {"type":"stream_event","event":{"type":"message_start","message":{"id":"m1","model":"fixture","usage":{"input_tokens":3,"output_tokens":1}}}}
@@ -178,9 +183,6 @@ func TestConversationRunsAndResumes(t *testing.T) {
 	}
 	if _, err := f.service.Send(ctx, c.ID, "  hello there\nsecond line ", nil); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := f.service.Send(ctx, c.ID, "again", nil); !errors.Is(err, ErrBusy) {
-		t.Errorf("a second message while running: %v", err)
 	}
 	finished := f.finished(c.ID)
 	if finished.State != StateIdle || finished.CostUSD == nil || *finished.CostUSD != 0.25 {

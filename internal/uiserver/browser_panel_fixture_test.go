@@ -27,6 +27,7 @@ import (
 // call the tool, before it answers. A request about the tiles' layout
 // ("move the risks to the top", "make this wider", "remove this", "undo",
 // "reset") runs the layout tools over HTTP as the agent CLI would (layout).
+// One that says "take your time" takes four times as long.
 type panelAgent struct {
 	events *hookevents.Store
 	home   string
@@ -70,11 +71,17 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	// The prompt is in the transcript at once, its answer once the turn ends.
 	writePanelTranscript(path, id, r.Directory, prompts, answers, false)
 	a.hook(id, r.Directory, path, "user-prompt-submit")
+	// A message that asks it to take its time gets a slower turn, long
+	// enough to queue and remove messages while it runs.
+	step := panelStep
+	if strings.Contains(strings.ToLower(r.Prompt), "take your time") {
+		step = 4 * panelStep
+	}
 	wait := func() error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(panelStep):
+		case <-time.After(step):
 			return nil
 		}
 	}

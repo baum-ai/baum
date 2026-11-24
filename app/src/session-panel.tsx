@@ -26,6 +26,8 @@ import {
   readPanelSettings,
   reportPage,
   saveProposal,
+  removeQueued,
+  sendQueued,
   sendTurn,
   sessionOf,
   startConversation,
@@ -38,6 +40,7 @@ import {
   type PanelSettings,
   type Progress,
   type Proposal,
+  type QueuedMessage,
   type SummaryField,
   type ThemeSave,
 } from "./console-api";
@@ -591,19 +594,46 @@ function SessionPanel({
   const latestPage = useRef(page);
   latestPage.current = page;
 
+  const queued = (!closed && conversation?.queued) || [];
+  const [queueing, setQueueing] = useState<string | null>(null);
+  const queue = async (target: string, text: string) => {
+    setQueueing("message");
+    setSendError("");
+    sessionPanel.setDraft("");
+    try {
+      update(await sendTurn(target, text, latestPage.current));
+    } catch (e) {
+      if (!sessionPanel.draft()) sessionPanel.setDraft(text);
+      setSendError(sendErrorText(e));
+    } finally {
+      setQueueing(null);
+    }
+  };
+  const changeQueue = async (change: () => Promise<Conversation>, what: string) => {
+    setQueueing(what);
+    setSendError("");
+    try {
+      update(await change());
+    } catch (e) {
+      setSendError(sendErrorText(e));
+    } finally {
+      setQueueing(null);
+    }
+  };
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     const text = panel.draft.trim();
-    if (!text || sending || !available) return;
-    // A message while the agent answers waits in the composer.
-    if (running) {
-      setSendError("The agent is still answering: wait for the turn to finish, or Stop it.");
+    if (!text || sending || queueing || !available) return;
+    // A message while the agent answers is queued for when it finishes.
+    if (running && id) {
+      await queue(id, text);
       return;
     }
-    // Shown at once: the prompt, the composer emptied and the button working.
+    // Shown at once: the prompt (after the messages still queued, which go
+    // first), the composer emptied and the button working.
     setSending(id && !closed ? "sending" : "starting");
     setSendError("");
-    setTurn({ text, prompts: prompts.current });
+    setTurn({ text: [...queued.map((q) => q.text), text].join("\n\n"), prompts: prompts.current });
     sessionPanel.setDraft("");
     try {
       let target = id && !closed ? id : null;
@@ -1025,6 +1055,15 @@ function SessionPanel({
               This session is closed. Choose New session in the panel's Sessions menu to go on.
             </p>
           ) : null}
+          {id && queued.length > 0 ? (
+            <QueuedList
+              queued={queued}
+              running={running}
+              working={queueing}
+              remove={(q) => void changeQueue(() => removeQueued(id, q), q)}
+              sendNow={() => void changeQueue(() => sendQueued(id), "send")}
+            />
+          ) : null}
           {picked ? (
             <p className="session-panel-focus">
               <span>
@@ -1049,7 +1088,7 @@ function SessionPanel({
               aria-label="Message to the agent"
               placeholder={
                 running
-                  ? "The agent is working; write your next message…"
+                  ? "The agent is working; queue your next message…"
                   : conversation
                     ? "Reply to the agent…"
                     : "Ask the agent to do something…"
@@ -1066,15 +1105,30 @@ function SessionPanel({
               }}
             />
             {running ? (
-              <Button
-                variant="secondary"
-                size="compact"
-                disabled={stopping}
-                onClick={() => void stop()}
-              >
-                {stopping ? <NineDots size={12} /> : null}
-                Stop
-              </Button>
+              <>
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  size="compact"
+                  title="Sent when the agent finishes this turn"
+                  disabled={!!queueing || !panel.draft.trim()}
+                >
+                  {queueing === "message" ? <NineDots size={12} /> : null}
+                  Queue
+                  <kbd aria-hidden="true" className="key-hint">
+                    ↵
+                  </kbd>
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  disabled={stopping}
+                  onClick={() => void stop()}
+                >
+                  {stopping ? <NineDots size={12} /> : null}
+                  Stop
+                </Button>
+              </>
             ) : (
               <Button
                 type="submit"
@@ -1108,6 +1162,59 @@ function SessionPanel({
         </span>
       </footer>
       {position === "top" ? <Grip position={position} size={panel.height} /> : null}
+    </section>
+  );
+}
+
+/** The messages waiting for the agent, above the composer: sent together
+ *  once the running turn answers, or, when it stopped or failed, kept until
+ *  the person sends them (or another message, which they go before). */
+function QueuedList({
+  queued,
+  running,
+  working,
+  remove,
+  sendNow,
+}: {
+  queued: QueuedMessage[];
+  running: boolean;
+  /** What is being changed: a queued message's id, "send" or "message". */
+  working: string | null;
+  remove: (id: string) => void;
+  sendNow: () => void;
+}) {
+  return (
+    <section aria-label="Queued messages" className="session-panel-queued">
+      <p className="session-panel-queued-head">
+        <span>
+          {running
+            ? `Queued for when the agent finishes · ${queued.length}`
+            : `Queued, not sent: the last turn didn't finish · ${queued.length}`}
+        </span>
+        {!running ? (
+          <Button size="compact" disabled={!!working} onClick={sendNow}>
+            {working === "send" ? <NineDots size={12} /> : null}
+            Send now
+          </Button>
+        ) : null}
+      </p>
+      <ol>
+        {queued.map((q) => (
+          <li key={q.id}>
+            <span className="session-panel-queued-text">{q.text}</span>
+            <Button
+              variant="secondary"
+              size="compact"
+              aria-label={`Remove queued message: ${q.text.slice(0, 60)}`}
+              disabled={!!working}
+              onClick={() => remove(q.id)}
+            >
+              {working === q.id ? <NineDots size={12} /> : null}
+              Remove
+            </Button>
+          </li>
+        ))}
+      </ol>
     </section>
   );
 }

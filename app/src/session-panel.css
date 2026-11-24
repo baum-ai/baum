@@ -372,6 +372,50 @@
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+/* Messages waiting for the agent to finish its turn, oldest first. */
+.session-panel-queued {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+  max-width: 52rem;
+  margin: 0 auto;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.session-panel-queued-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0;
+}
+.session-panel-queued ol {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.session-panel-queued li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.25rem 0.25rem 0.625rem;
+  border-left: 2px solid var(--border-default);
+  background: var(--surface-wash);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.session-panel-queued-text {
+  flex: 1;
+  min-width: 0;
+  max-height: 4.5em;
+  overflow: hidden;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .session-panel-compose {
   display: flex;
   align-items: flex-end;
