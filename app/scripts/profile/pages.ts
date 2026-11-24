@@ -14,6 +14,7 @@ import {
   pageMetrics,
   type Attributed,
 } from "./pages-summary.ts";
+import { slug } from "./compare.ts";
 import type { Context, Scenario } from "./scenarios.ts";
 import { KEY } from "./webdriver.ts";
 
@@ -89,6 +90,12 @@ type Step = {
 
 type State = {
   steps: Step[];
+  /** The page the tour starts on, and the one the keys are tried on: from
+   *  every page, when --page leaves them out. The tour starts where the app
+   *  opens, the Inbox (`search` ""), unless the Inbox is the only page
+   *  visited: going to the page already open is no navigation. */
+  start: { step: Step; search: string };
+  probe: Step;
   /** Runs so far: the order of direct loads and the tour alternates. */
   turn: number;
 };
@@ -401,7 +408,7 @@ const pagesScenario: Scenario<State> = {
 
     // The tour's order: a sub-view follows the page it is opened from; the
     // Inbox comes last, reached from the page before it.
-    const steps: Step[] = [
+    const all: Step[] = [
       page("Sessions"),
       ...(transcript ? [transcript] : []),
       page("Timeline"),
@@ -415,11 +422,26 @@ const pagesScenario: Scenario<State> = {
       page("Settings"),
       page("Inbox"),
     ];
+    // profile.sh --page: only the pages named, so a run (and a CPU profile)
+    // is theirs.
+    const only = (process.env.BAUM_PROFILE_PAGES ?? "")
+      .split(",")
+      .map((label) => label.trim())
+      .filter(Boolean);
+    const named = (s: Step) => only.some((label) => slug(label) === slug(s.label));
+    const unknownPages = only.filter((label) => !all.some((s) => slug(s.label) === slug(label)));
+    if (unknownPages.length)
+      throw new Error(
+        `No page ${unknownPages.map((l) => `"${l}"`).join(", ")} on this data; the pages are ` +
+          all.map((s) => `"${s.label}"`).join(", "),
+      );
+    const steps = only.length ? all.filter(named) : all;
+    if (only.length) ctx.note(`Only ${steps.map((s) => s.label).join(", ")} (--page).`);
 
     // The routes the app serves that no step opens.
     const app = readFileSync(new URL("../../src/app.tsx", import.meta.url), "utf8");
     const routes = /const knownPages = \[([^\]]*)\]/.exec(app)?.[1];
-    if (routes) {
+    if (routes && !only.length) {
       const covered = new Set(
         steps.map((s) => new URLSearchParams(s.search).get("page") ?? "inbox"),
       );
@@ -432,7 +454,20 @@ const pagesScenario: Scenario<State> = {
             "other sub-views of Repositories, Jobs and Settings.",
         );
     }
-    return { steps, turn: 0 };
+    return {
+      steps,
+      start:
+        steps.length === 1 && steps[0] === all.at(-1)
+          ? (() => {
+              const other =
+                all.find((s) => s.label === "Sessions" && !steps.includes(s)) ??
+                all.find((s) => !steps.includes(s))!;
+              return { step: other, search: other.search };
+            })()
+          : { step: all.at(-1)!, search: "" },
+      probe: all.find((s) => s.label === "Sessions") ?? all[0]!,
+      turn: 0,
+    };
   },
   async run(ctx, state) {
     const metrics: Record<string, number> = {};
@@ -458,9 +493,9 @@ const pagesScenario: Scenario<State> = {
     };
     // The tour by navigation: its windows are the marks around each page.
     const tour = async () => {
-      const keys = await keysWork(ctx, steps.find((s) => s.label === "Sessions") ?? steps[0]!);
-      await ctx.open("");
-      await shown(ctx, steps.at(-1)!);
+      const keys = await keysWork(ctx, state.probe);
+      await ctx.open(state.start.search);
+      await shown(ctx, state.start.step);
       await ctx.reset();
       const how: How = { sidebar: new Set(), history: new Set() };
       const extra: Record<string, Record<string, number>> = {};

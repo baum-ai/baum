@@ -9,6 +9,10 @@ export type Side = "base" | "head";
 
 export type Step = { side: Side; index: number };
 
+/** A metric's or a page's name in lower case with dashes for spaces, as
+ *  profile.sh's arguments can carry it: "page:edit-inbox:direct:content". */
+export const slug = (name: string) => name.trim().toLowerCase().replace(/\s+/g, "-");
+
 /** The order of a comparison's runs: each side's warm-up, then the
  *  measured runs in pairs whose order alternates (head then base, base then
  *  head, ...), so drift from other work on the machine, and anything that
@@ -162,10 +166,14 @@ function spread(list: number[]): Spread | undefined {
  *  change is a verdict only if its median moved at least FLOOR_MS (one for
  *  counts) and FLOOR_SHARE; one that is significant but smaller is
  *  negligible. */
-export function compareMetrics(base: Run[], head: Run[], headline: string): Row[] {
+export function compareMetrics(base: Run[], head: Run[], named: string): Row[] {
   const names: string[] = [];
   for (const run of [...base, ...head])
     for (const name of Object.keys(run.metrics)) if (!names.includes(name)) names.push(name);
+  // A name as a shell passes it, with dashes for spaces, names it too.
+  const headline = names.includes(named)
+    ? named
+    : (names.find((name) => slug(name) === slug(named)) ?? named);
   if (names.includes(headline)) names.splice(names.indexOf(headline), 1);
   names.unshift(headline);
 

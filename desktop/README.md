@@ -1314,6 +1314,18 @@ just desktop::profile review --engine chromium --runs 3
 just desktop::profile jk --engine chromium --runs 3
 ```
 
+The `pages` scenario visits every page, so its CPU profile is theirs together.
+`--page LABEL` (repeatable) visits only the pages named, directly and by
+navigation from the Inbox, for a profile, or a comparison, of one page. A label
+is the summary's page column in any case, with dashes for spaces, as are the
+page metrics `--metric` names (`just` passes its arguments split on spaces):
+
+```sh
+just desktop::profile pages --page edit-inbox --engine chromium --runs 3
+just desktop::profile pages --page edit-inbox --baseline origin/main \
+  --metric page:edit-inbox:direct:content
+```
+
 The instance starts as usual, with its daemon, its data and the profiling
 frontend in the sidecar, but no app: the runner starts the daemon with the
 bundled `baum daemon ensure`, as the app does, and Playwright's Chromium

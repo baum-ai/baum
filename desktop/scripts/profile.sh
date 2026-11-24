@@ -15,7 +15,7 @@ usage() {
   cat <<'EOF'
 usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout SECONDS]
                   [--seed-data[=SEED] | --copy-data] [--workspace DIR]...
-                  [--engine webkit|chromium]
+                  [--engine webkit|chromium] [--page LABEL]...
                   [--baseline REF [--metric NAME]]
 
   scenario         cold-start, jk, review, filter, switch-inboxes,
@@ -45,6 +45,10 @@ usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout S
                    says which metrics changed beyond noise
   --metric NAME    the metric the comparison judges first (default: the
                    scenario's headline)
+  --page LABEL     pages only: visit only the page(s) named, as the
+                   summary's page column names them, any case, dashes for
+                   spaces (edit-inbox), so a run, and a Chromium CPU
+                   profile, is theirs
 EOF
 }
 
@@ -58,6 +62,7 @@ timeout=600
 engine=webkit
 runs_given=
 baseline=
+pages=
 metric=
 pass=
 nl='
@@ -76,6 +81,7 @@ while [ "$#" -gt 0 ]; do
     --run-timeout=*) timeout=${1#--run-timeout=} ;;
     --engine) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; engine=$2; shift ;;
     --engine=*) engine=${1#--engine=} ;;
+    --page) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pages="${pages:+$pages,}$2"; shift ;;
     --check) check=1 ;;
     --copy-data|--seed-data|--seed-data=*) pass="$pass$nl$1" ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pass="$pass$nl--workspace$nl$2"; shift ;;
@@ -87,6 +93,10 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$scenario" ] || { usage >&2; exit 2; }
+if [ -n "$pages" ]; then
+  [ "$scenario" = pages ] || { echo "profile: --page is for the pages scenario" >&2; exit 2; }
+  case $pages in *"'"*) echo "profile: a page label has no quotes" >&2; exit 2 ;; esac
+fi
 # The scenarios the runner knows, from their definitions (scenarios.ts, and
 # the modules it registers scenarios from).
 definitions="$desktop/../app/scripts/profile/scenarios.ts $desktop/../app/scripts/profile/pages.ts"
@@ -114,7 +124,7 @@ if [ -n "$metric" ] && [ -z "$baseline" ]; then
   echo "profile: --metric names what a comparison judges first; it needs --baseline" >&2
   exit 2
 fi
-case $metric in *[!a-z0-9_]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
+case $metric in *[!a-z0-9_:-]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
 if [ -n "$baseline" ]; then
   # A comparison judges the scenario's headline first (`headline:` after
   # its name), unless --metric names another.
@@ -287,7 +297,7 @@ if [ -n "$baseline" ]; then
   }
   trap stop INT TERM HUP
 
-  run="BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario --out /oss/desktop/$out --runs $runs --run-timeout $timeout"
+  run="BAUM_PROFILE_SETTLE=$settle BAUM_PROFILE_PAGES='$pages' node /oss/app/scripts/profile/run.ts $scenario --out /oss/desktop/$out --runs $runs --run-timeout $timeout"
   # Each side runs in its own instance, the head's app built from this
   # checkout, the base's mounted from its build. Command lines for the
   # container's shell, so their quotes are meant.
@@ -397,12 +407,12 @@ out=target/profile/$scenario-$stamp
 # runner, which launches it through WebKitWebDriver. A command line for the
 # container's shell, so its quotes are meant.
 # shellcheck disable=SC2089,SC2090
-BAUM_ISOLATED_RUN="cargo build --locked --quiet && BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
+BAUM_ISOLATED_RUN="cargo build --locked --quiet && BAUM_PROFILE_SETTLE=$settle BAUM_PROFILE_PAGES='$pages' node /oss/app/scripts/profile/run.ts $scenario \
 --app /oss/desktop/target/debug/baum-desktop --out /oss/desktop/$out --runs $runs \
 --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
 # Chromium needs no app: the sidecar the app bundles starts the daemon.
 # shellcheck disable=SC2089,SC2090
-[ "$engine" = chromium ] && BAUM_ISOLATED_RUN="BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
+[ "$engine" = chromium ] && BAUM_ISOLATED_RUN="BAUM_PROFILE_SETTLE=$settle BAUM_PROFILE_PAGES='$pages' node /oss/app/scripts/profile/run.ts $scenario \
 --engine chromium --baum /oss/desktop/binaries/baum-\$(uname -m)-unknown-linux-gnu --out /oss/desktop/$out \
 --runs $runs --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
 # shellcheck disable=SC2090

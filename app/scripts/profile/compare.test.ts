@@ -197,6 +197,18 @@ describe("compareMetrics", () => {
     assert.ok(rows[0]!.headline);
     assert.equal(rows.find((r) => r.metric === "assets_count")!.verdict, "only in head");
   });
+
+  it("takes a headline named with dashes for spaces, as a shell passes it", () => {
+    const page = (n: number) =>
+      coldStarts(5, n).map((run) => ({
+        ...run,
+        metrics: { ...run.metrics, "page:Edit inbox:direct:content": run.metrics.settled! },
+      }));
+    const rows = compareMetrics(page(1), page(2), "page:edit-inbox:direct:content");
+    assert.equal(rows[0]!.metric, "page:Edit inbox:direct:content");
+    assert.ok(rows[0]!.headline);
+    assert.equal(rows.filter((r) => r.headline).length, 1);
+  });
 });
 
 const chunk = (file: string, kind: Chunk["kind"], bytes: number): Chunk => ({
