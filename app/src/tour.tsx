@@ -149,10 +149,23 @@ const STOPS: Stop[] = [
 ];
 
 const GAP = 12;
+type ReviewSpace = { height: number; bottom?: number };
+
+function spaceAroundActions(actions: DOMRect | undefined): ReviewSpace | undefined {
+  if (!actions || actions.bottom <= 0 || actions.top >= innerHeight) return;
+  const below = innerHeight - actions.bottom - 3 * GAP;
+  const above = actions.top - 2 * GAP;
+  // Prefer the lower corner when it can fit the heading, copy and navigation.
+  if (below >= 144) return { height: below };
+  if (above >= 144) return { height: above, bottom: actions.top - GAP };
+  // If the bar is near the middle of a zoomed-in window, use the larger side.
+  if (below >= 100 && below >= above) return { height: below };
+  if (above >= 100) return { height: above, bottom: actions.top - GAP };
+}
 
 /** Beside the target if it fits, else below or above it, else in the
  *  window's corner over a target that fills it. */
-function place(target: DOMRect | null, width: number, height: number) {
+function place(target: DOMRect | null, width: number, height: number, bottom?: number) {
   const vw = innerWidth;
   const vh = innerHeight;
   if (!target) return { left: (vw - width) / 2, top: (vh - height) / 2 };
@@ -162,7 +175,10 @@ function place(target: DOMRect | null, width: number, height: number) {
   if (target.left - GAP - width > 0) return { left: target.left - GAP - width, top };
   if (target.bottom + GAP + height < vh) return { left, top: target.bottom + GAP };
   if (target.top - GAP - height > 0) return { left, top: target.top - GAP - height };
-  return { left: vw - width - 2 * GAP, top: vh - height - 2 * GAP };
+  return {
+    left: Math.max(GAP, vw - width - 2 * GAP),
+    top: Math.max(GAP, Math.min(bottom ?? vh, vh - 2 * GAP) - height),
+  };
 }
 
 /** The app's first-run tour: a welcome, then a small card that steps
@@ -172,7 +188,10 @@ function place(target: DOMRect | null, width: number, height: number) {
 export function Tour({ close }: { close: () => void }) {
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
+  const [reviewSpace, setReviewSpace] = useState<ReviewSpace>();
+  const [copyScrollable, setCopyScrollable] = useState(false);
   const card = useRef<HTMLDivElement>(null);
+  const copy = useRef<HTMLParagraphElement>(null);
   const next = useRef<HTMLButtonElement>(null);
   const review = useRef<string | null>(null);
   const stop = STOPS[index]!;
@@ -187,6 +206,7 @@ export function Tour({ close }: { close: () => void }) {
       navigate(where);
     }
     setRect(null);
+    setReviewSpace(undefined);
     setIndex(to);
   };
 
@@ -201,8 +221,16 @@ export function Tour({ close }: { close: () => void }) {
         selected = true;
         next.current?.focus({ preventScroll: true });
       }
-      if (stop.at === "review" && new URLSearchParams(location.search).has("pr"))
+      if (stop.at === "review" && new URLSearchParams(location.search).has("pr")) {
         review.current = `${location.pathname}${location.search}`;
+        const actions = document
+          .querySelector('[data-tour="review-actions"]')
+          ?.getBoundingClientRect();
+        const space = spaceAroundActions(actions);
+        setReviewSpace((old) =>
+          old?.height === space?.height && old?.bottom === space?.bottom ? old : space,
+        );
+      }
       // Every match on screen, together: a narrow window hides some targets.
       const shown = [...(stop.target ? document.querySelectorAll(stop.target) : [])]
         .map((element) => element.getBoundingClientRect())
@@ -230,8 +258,24 @@ export function Tour({ close }: { close: () => void }) {
   const [position, setPosition] = useState({ left: 0, top: 0 });
   useLayoutEffect(() => {
     const element = card.current;
-    if (element) setPosition(place(rect, element.offsetWidth, element.offsetHeight));
-  }, [rect, index]);
+    const paragraph = copy.current;
+    if (!element || !paragraph) return;
+    const update = () => {
+      const placed = place(rect, element.offsetWidth, element.offsetHeight, reviewSpace?.bottom);
+      setPosition((old) => (old.left === placed.left && old.top === placed.top ? old : placed));
+      setCopyScrollable(paragraph.scrollHeight > paragraph.clientHeight);
+    };
+    update();
+    // The welcome has no target, and fonts and viewport changes can resize the card.
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    observer.observe(paragraph);
+    addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      removeEventListener("resize", update);
+    };
+  }, [rect, index, reviewSpace]);
   useEffect(() => next.current?.focus({ preventScroll: true }), [index]);
 
   // ← and → step between the cards, Enter presses Next or Done and Escape
@@ -281,8 +325,12 @@ export function Tour({ close }: { close: () => void }) {
         ref={card}
         role="dialog"
         aria-labelledby="tour-title"
-        className={stop.welcome ? "tour-card tour-welcome" : "tour-card"}
-        style={position}
+        className={cn(
+          "tour-card",
+          stop.welcome && "tour-welcome",
+          stop.at === "review" && "tour-review",
+        )}
+        style={{ ...position, maxHeight: reviewSpace?.height }}
         // Enter and Space press the tour's buttons; every other key reaches
         // the page, so the keys it teaches work.
         onKeyDown={(event) => {
@@ -302,12 +350,14 @@ export function Tour({ close }: { close: () => void }) {
             </span>
           </div>
         ) : null}
-        <div className={stop.welcome ? "tour-welcome-body" : undefined}>
+        <div className="tour-body">
           <div className="tour-head">
             {stop.welcome ? null : <Stumpy size={28} />}
             <h2 id="tour-title">{stop.title}</h2>
           </div>
-          <p>{stop.body}</p>
+          <p ref={copy} tabIndex={copyScrollable ? 0 : undefined}>
+            {stop.body}
+          </p>
           <div className="tour-foot">
             <span className="tour-count">
               {index + 1} of {STOPS.length}

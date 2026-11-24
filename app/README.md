@@ -274,7 +274,11 @@ that one.
 
 Buttons the tour's copy names, such as **Ask** or **Focus session**, are drawn
 as those buttons but are not controls: the pointer neither hovers nor presses
-them.
+them. The welcome fits the viewport and makes room for its controls in short
+windows by shrinking the illustration. The review step keeps the action bar
+clear by using the space below or above it. If a card's copy needs more
+space, it scrolls between the heading and the navigation buttons and can take
+keyboard focus.
 
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
