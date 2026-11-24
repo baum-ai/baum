@@ -1525,15 +1525,10 @@ select.local-field {
   color: var(--text-tertiary);
 }
 /* Report a problem: what happened, what to attach and a preview of it. */
-dialog.report-problem {
-  max-height: calc(100vh - 4rem);
-  overflow-y: auto;
-}
 .report-problem-field {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  margin-top: 1rem;
   color: var(--text-secondary);
   font-size: var(--text-xs);
   font-weight: 500;
