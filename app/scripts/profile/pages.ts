@@ -90,9 +90,11 @@ type Step = {
 
 type State = {
   steps: Step[];
-  /** The page the app opens on, and the one its keys are tried on: from
-   *  every page, when --page leaves them out. */
-  start: Step;
+  /** The page the tour starts on, and the one the keys are tried on: from
+   *  every page, when --page leaves them out. The tour starts where the app
+   *  opens, the Inbox (`search` ""), unless the Inbox is the only page
+   *  visited: going to the page already open is no navigation. */
+  start: { step: Step; search: string };
   probe: Step;
   /** Runs so far: the order of direct loads and the tour alternates. */
   turn: number;
@@ -454,7 +456,15 @@ const pagesScenario: Scenario<State> = {
     }
     return {
       steps,
-      start: all.at(-1)!,
+      start:
+        steps.length === 1 && steps[0] === all.at(-1)
+          ? (() => {
+              const other =
+                all.find((s) => s.label === "Sessions" && !steps.includes(s)) ??
+                all.find((s) => !steps.includes(s))!;
+              return { step: other, search: other.search };
+            })()
+          : { step: all.at(-1)!, search: "" },
       probe: all.find((s) => s.label === "Sessions") ?? all[0]!,
       turn: 0,
     };
@@ -484,8 +494,8 @@ const pagesScenario: Scenario<State> = {
     // The tour by navigation: its windows are the marks around each page.
     const tour = async () => {
       const keys = await keysWork(ctx, state.probe);
-      await ctx.open("");
-      await shown(ctx, state.start);
+      await ctx.open(state.start.search);
+      await shown(ctx, state.start.step);
       await ctx.reset();
       const how: How = { sidebar: new Set(), history: new Set() };
       const extra: Record<string, Record<string, number>> = {};
