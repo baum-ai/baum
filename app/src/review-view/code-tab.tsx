@@ -85,7 +85,7 @@ export function CodeTab({
       <nav
         ref={fileList}
         aria-label="Changed files"
-        className="min-w-0 space-y-3 self-start @max-3xl:-m-1 @max-3xl:max-h-[max(8rem,calc(100vh-22rem))] @max-3xl:overflow-y-auto @max-3xl:p-1 @max-3xl:scroll-py-1 @max-lg:max-h-[22vh] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-(--border-strong)"
+        className="min-w-0 space-y-3 self-start @max-3xl:-m-1 @max-3xl:max-h-[max(8rem,calc(100vh-22rem))] @max-3xl:overflow-y-auto @max-3xl:p-1 @max-3xl:scroll-py-1 @max-lg:max-h-[22vh] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-sm [&::-webkit-scrollbar-thumb]:bg-(--text-tertiary)"
       >
         <SegmentedControl<FileGrouping>
           label="Group files by"
