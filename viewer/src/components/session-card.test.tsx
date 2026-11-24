@@ -568,46 +568,99 @@ describe("a long session's transcript", () => {
     });
   const list = () => container.querySelector("ol")!;
   const turns = () => list().querySelectorAll(":scope > li");
-  async function untilAll() {
-    for (let i = 0; i < 20 && list().hasAttribute("aria-busy"); i++) await settle();
-  }
+  const earlier = () =>
+    [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("earlier"));
 
-  it("renders its last turns first, then the earlier ones, busy until it has them all", async () => {
+  /** What the transcript observes: `near` tells it the reader is in reach. */
+  const observed = new Set<{ callback: IntersectionObserverCallback }>();
+  function stubObserver() {
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        callback: IntersectionObserverCallback;
+        constructor(callback: IntersectionObserverCallback) {
+          this.callback = callback;
+        }
+        observe() {
+          observed.add(this);
+        }
+        disconnect() {
+          observed.delete(this);
+        }
+      },
+    );
+  }
+  async function near() {
+    act(() => {
+      for (const o of observed)
+        o.callback([{ isIntersecting: true } as IntersectionObserverEntry], o as never);
+    });
+    await settle();
+  }
+  async function untilAll() {
+    for (let i = 0; i < 20 && earlier(); i++) await near();
+  }
+  afterEach(() => {
+    observed.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("renders its last turns, and earlier ones only as the reader nears them", async () => {
+    stubObserver();
     render(createElement(SessionTranscript, { session: long(500), replies: "ready" }));
     expect(turns()).toHaveLength(30);
-    expect(list().getAttribute("aria-busy")).toBe("true");
     expect(turns()[29]!.textContent).toContain("Prompt 500");
     expect(turns()[0]!.textContent).toContain("Prompt 471");
-    // The browser's own scroll anchoring stays off while turns come in above.
-    expect(list().style.overflowAnchor).toBe("none");
+    expect(earlier()!.textContent).toBe("Show 470 earlier turns");
+    await settle();
+    expect(turns()).toHaveLength(30);
+    await near();
+    expect(turns()).toHaveLength(130);
+    expect(turns()[0]!.textContent).toContain("Prompt 371");
     await untilAll();
     expect(turns()).toHaveLength(500);
-    expect(list().hasAttribute("aria-busy")).toBe(false);
-    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
-    expect(list().style.overflowAnchor).toBe("");
     expect(turns()[0]!.textContent).toContain("Prompt 1");
+    expect(earlier()).toBeUndefined();
+  });
+
+  it("renders the next earlier turns when its button is pressed", async () => {
+    stubObserver();
+    render(createElement(SessionTranscript, { session: long(500), replies: "ready" }));
+    act(() => earlier()!.click());
+    await settle();
+    expect(turns()).toHaveLength(130);
+    expect(earlier()!.textContent).toBe("Show 370 earlier turns");
   });
 
   it("renders every turn at once when it is focused on one", () => {
+    stubObserver();
     render(
       createElement(SessionTranscript, { session: long(500), replies: "ready", focusTurn: 300 }),
     );
     expect(turns()).toHaveLength(500);
-    expect(list().hasAttribute("aria-busy")).toBe(false);
+    expect(earlier()).toBeUndefined();
+  });
+
+  it("renders every turn at once where nothing tells it the reader nears them", () => {
+    render(createElement(SessionTranscript, { session: long(500), replies: "ready" }));
+    expect(turns()).toHaveLength(500);
+    expect(earlier()).toBeUndefined();
   });
 
   it("renders every turn at once on the server", () => {
+    stubObserver();
     const html = renderToStaticMarkup(
       createElement(SessionTranscript, { session: long(100), replies: "ready" }),
     );
     expect(html).toContain("Prompt 1<");
-    expect(html).not.toContain("aria-busy");
+    expect(html).not.toContain("earlier turns");
   });
 
   /** The transcript in a panel 800 px tall that scrolls, its list `offset`
    *  px down the panel, each turn 100 px tall with its content 10 px in;
    *  `check` runs once it has all its turns, given the panel's scroll. */
   async function inPanel(offset: number, start: number, check: (top: number) => void) {
+    stubObserver();
     const panel = document.createElement("div");
     const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
       this: Element,

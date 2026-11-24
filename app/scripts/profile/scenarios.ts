@@ -673,8 +673,9 @@ const transcript: Scenario<TranscriptState> = {
       "the transcript's messages",
       120_000,
     );
-    // The transcript renders its last turns first and adds earlier ones while
-    // its list is busy; the keys are read once it has them all.
+    // A transcript that renders its earlier turns in the background marks its
+    // list busy until it has them all; the keys are read once it does. One
+    // that renders them as the reader nears them is never busy.
     const all = await ctx.execute<number>(`
       const frame = () => new Promise((r) => requestAnimationFrame(r));
       while (!document.querySelector(".local-transcript ol") || document.querySelector(".local-transcript ol[aria-busy]")) await frame();
@@ -692,8 +693,11 @@ const transcript: Scenario<TranscriptState> = {
     await ctx.mark("keys");
     const marked = () =>
       ctx.execute<number>(
-        `return [...document.querySelectorAll(${JSON.stringify(MESSAGE)})].findIndex((m) => m.classList.contains("local-message-current"));`,
+        `const messages = [...document.querySelectorAll(${JSON.stringify(MESSAGE)})];
+         const at = messages.findIndex((m) => m.classList.contains("local-message-current"));
+         return at < 0 ? -1 : messages.length - 1 - at;`,
       );
+    // Counted from the end: earlier turns may come in above as k reads up.
     // At its first message k stays there, so a short transcript takes fewer.
     const presses = Math.min(TRANSCRIPT_PRESSES, messages);
     if (presses < TRANSCRIPT_PRESSES)
@@ -709,8 +713,8 @@ const transcript: Scenario<TranscriptState> = {
         let still = 0, top = main.scrollTop;
         while (still < 3) { await frame(); still = main.scrollTop === top ? still + 1 : 0; top = main.scrollTop; }`);
       const now = await marked();
-      if (now < 0 || (last >= 0 && now !== last - 1))
-        throw new Error(`press ${i + 1} of k marked message ${now}, after ${last}`);
+      if (now < 0 || (last >= 0 && now !== last + 1))
+        throw new Error(`press ${i + 1} of k marked message ${now} from the end, after ${last}`);
       last = now;
     }
     await ctx.mark("end");

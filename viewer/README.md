@@ -536,14 +536,16 @@ helpers the card uses) and what the host adds:
   print, and runs of tool calls start folded. The desktop app's transcript
   page uses it.
 
-A long session renders its last 30 turns first, then its earlier turns in a
-few growing batches as a React transition, so keys and scrolling are not held
-up by them; the list is `aria-busy` until it has them all, and until then the
-browser's find does not reach the turns still to come. The turns the reader is
-among stay where they are as earlier ones come in above (the transcript moves
-its scroller by their height when the list is in view or above it, since
-WebKit does not anchor the scroll). A transcript given a `focusTurn`, and a
-server render, have every turn at once.
+A long session renders its last 30 turns first, and its earlier turns only
+as the reader comes within 3,000 px of the first one rendered, 100 at a time,
+as a React transition, so turns nobody scrolls up to cost nothing. A "Show
+earlier turns" button above the list does the same for keyboards and screen
+readers. The browser's find does not reach turns still to come. The turns the
+reader is among stay where they are as earlier ones come in above (the
+transcript moves its scroller by their height when the list is in view or
+above it, since WebKit does not anchor the scroll). A transcript given a
+`focusTurn`, a server render, and a browser without `IntersectionObserver`
+have every turn at once.
 
 A prompt can carry `images`, each a `src` the host serves and an `alt`: they
 show under its text as thumbnails that open in the image viewer. Agent

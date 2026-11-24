@@ -334,7 +334,7 @@ it("keeps a reader at the end as the page grows after a version is shown", async
   const toEnd = () => scrollTo.mock.calls.filter(([o]) => (o as ScrollToOptions).top === height);
   await show(session());
   scrolled(1200);
-  // A reply measured and folded, or earlier turns drawn, after the version.
+  // A reply measured and folded after the version.
   height = 2300;
   act(() => grown.forEach((callback) => callback()));
   expect(toEnd()).toHaveLength(1);

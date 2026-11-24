@@ -254,7 +254,7 @@ function atBottom() {
  *  it is false. The reader's position counts only once the first version is
  *  shown, since the page around a loading transcript scrolls by itself.
  *  What grows after a version is shown, on its own (a reply measured and
- *  folded, the transcript's earlier turns rendered), keeps a reader at the
+ *  folded), keeps a reader at the
  *  end too, until the reader clicks or types: what they open grows the page
  *  where they are reading. */
 export function useFollowScroll(version: string | undefined, follow = true) {
