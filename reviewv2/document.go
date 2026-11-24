@@ -92,8 +92,11 @@ type VerdictPoint struct {
 // Overview is the overview tab's model-chosen parts. Top level, overview
 // call, except Diagram's tile, which a tile agent fills.
 type Overview struct {
-	// Screenshots are attachment ids from the index, at most 3.
+	// Screenshots are image attachment ids from the index, at most 3.
 	Screenshots []string `json:"screenshots"`
+	// Videos are video clip attachment ids from the index, at most 3. A
+	// document from before them has none.
+	Videos []string `json:"videos,omitempty"`
 	// Diagram is the id of the main diagram tile (owner "overview"), or
 	// null.
 	Diagram *string `json:"diagram"`

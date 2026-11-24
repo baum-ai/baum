@@ -53,7 +53,7 @@ func (s *Server) reviewTools() []Tool {
 		Call:        callFacts,
 	}, {
 		Name:        "review_outline",
-		Description: "The overview of a saved review (summary, verdict, why the risk is what it is, risk score, reading time, screenshots, main diagram, intent) and an outline of each section: id, title, kind, gist, level, the hunks and files it covers, the ids of the tiles on it, and whether its details are pending or failed. Never a section's body or risks: read those with review_section.",
+		Description: "The overview of a saved review (summary, verdict, why the risk is what it is, risk score, reading time, screenshots, videos, main diagram, intent) and an outline of each section: id, title, kind, gist, level, the hunks and files it covers, the ids of the tiles on it, and whether its details are pending or failed. Never a section's body or risks: read those with review_section.",
 		InputSchema: reviewSchema(""),
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/tiles", "/api/groups"},
@@ -287,7 +287,7 @@ func outlineView(doc []byte) (map[string]any, error) {
 		sections = append(sections, sectionOutline(d, s))
 	}
 	overview := map[string]any{"title": d.Summary.Title, "text": d.Summary.Text, "change_kind": d.Summary.ChangeKind, "verdict": d.Summary.Verdict, "risk_why": d.Summary.RiskWhy,
-		"risk_score": d.Summary.RiskScore, "review_minutes": d.Summary.ReviewMinutes, "screenshots": d.Overview.Screenshots, "diagram": d.Overview.Diagram, "intent": d.Overview.Intent}
+		"risk_score": d.Summary.RiskScore, "review_minutes": d.Summary.ReviewMinutes, "screenshots": d.Overview.Screenshots, "videos": d.Overview.Videos, "diagram": d.Overview.Diagram, "intent": d.Overview.Intent}
 	out := map[string]any{"review": header, "overview": overview, "sections": sections}
 	var relations struct {
 		Relations json.RawMessage `json:"relations"`

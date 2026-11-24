@@ -2962,7 +2962,8 @@ builds the rail's model (the sections and the file list) from it.
 - **Overview**, always in this order: the summary (`summary.text`), the risk
   (score, level and why: `risk_why`, or else the score's first reason) with
   the verdict inside its card when it has points (each linking to its
-  section), what it looks like (`overview.screenshots`), the main diagram
+  section), the description's clips of the change (`overview.videos`, under
+  Video), what it looks like (`overview.screenshots`), the main diagram
   (`overview.diagram`) under its title, and what was asked (`overview.intent`,
   else each linked session's first prompt), each linking to the prompt in its
   session.
@@ -3070,6 +3071,10 @@ the document's native diagrams and tables, exhibits (code, prose, table and
 diagram source, `src/tiles/builtins/generic.tsx`), library tiles and tiles
 made in chat. Each stands on a section of How it works (or on Where this
 fits), or is the Overview's main diagram, and is as wide as its section.
+A prose exhibit's text stands on a faint wash behind a left rule, in a card
+or bare in a section's body, so it reads as an exhibit set apart from the
+section's own text (a note block has the rule but no wash); its lists keep
+their bullets and numbers.
 
 - **Custom tiles** (`src/tiles/custom/`) draw in sandboxed frames from the
   daemon's frame route: the title is the page's, the body is the tile's. A
@@ -3082,11 +3087,18 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   How it works, or the tile cited where it stands. Citations resolve against
   the shown version's review (its index, its sections, their risks and
   evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),
-  never by fetching. Frames follow the app's theme. A frame that doesn't
+  never by fetching. Frames follow the app's theme. Until its frame draws,
+  a tile's box shows three faint lines with a passing light band (still
+  under reduced motion) at the height the tile last drew at on that pull
+  request in this browser, else 240px (a tile's first show still moves to
+  its own height once it draws). The last heights of the latest 200 tiles
+  are kept (`baum.tileFrame.heights` in local storage), so a review opened
+  again starts at the right height. A frame that doesn't
   start, draw or behave says "This tile couldn't load" with Retry; a tile
   made with a newer kit says so; a desktop shell that has not declared
   `window.__BAUM_DESKTOP__ = { tileFrames: true }` shows custom tiles as not
-  available yet. The protocol, its checks and the states are in
+  available yet. These notes have the dashed box a native tile's
+  notes have (`Note`, `src/tiles/parts.tsx`). The protocol, its checks and the states are in
   `ARCHITECTURE.md` ("The app's host"); what a frame cannot reach is in
   `SECURITY.md` ("Custom tiles").
 - **Render check** (`src/tiles/custom/check-runner.tsx`). The daemon's render

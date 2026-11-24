@@ -31,7 +31,7 @@
   },
   "$defs": {
     "v2SchemaRevision": {
-      "const": "2026-11-23.2",
+      "const": "2026-11-24.2",
       "description": "Date-based revision of this schema file, bumped on every additive edit. A document records it in review.generator.schema_revision."
     },
     "v2Summary": {
@@ -86,6 +86,12 @@
       "required": ["screenshots", "diagram", "intent"],
       "properties": {
         "screenshots": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/attachmentId" }
+        },
+        "videos": {
           "type": "array",
           "maxItems": 3,
           "uniqueItems": true,

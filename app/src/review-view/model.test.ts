@@ -34,7 +34,7 @@ const REVIEW = parseReviewV2(JSON.parse(JSON.stringify(REVIEW_1303)))!;
 const BARE: ReviewV2 = {
   ...REVIEW,
   summary: { ...REVIEW.summary, verdict: null, risk_why: "" },
-  overview: { screenshots: [], diagram: null, intent: [] },
+  overview: { screenshots: [], videos: [], diagram: null, intent: [] },
   tiles: [],
 };
 
@@ -65,6 +65,7 @@ describe("parseReviewV2", () => {
       summary: { verdict: { decision: "maybe", text: "", points: [{ text: 3 }] } },
       overview: {
         screenshots: ["img_1", 4],
+        videos: ["vid_1", null],
         intent: [{ asked: "Make it work", session: "s", prompt: 1 }, { asked: 3 }],
       },
       context: { area: { text: " ", files: [] } },
@@ -95,6 +96,7 @@ describe("parseReviewV2", () => {
     expect(review?.summary.verdict).toBeNull();
     expect(review?.context).toBeNull();
     expect(review?.overview.screenshots).toEqual(["img_1"]);
+    expect(review?.overview.videos).toEqual(["vid_1"]);
     expect(review?.overview.intent).toEqual([
       { asked: "Make it work", got: "", session: "s", prompt: 1 },
     ]);
@@ -167,7 +169,7 @@ describe("the document a review carries", () => {
     expect(reviewOf(review1303())).toEqual(REVIEW);
     const bare = reviewOf({ ...chromeOf(REVIEW), schema: "baum.review/1" });
     expect(bare.tiles).toEqual([]);
-    expect(bare.overview).toEqual({ screenshots: [], diagram: null, intent: [] });
+    expect(bare.overview).toEqual({ screenshots: [], videos: [], diagram: null, intent: [] });
     expect(bare.sections.map((section) => section.id)).toEqual(
       REVIEW.sections.map((section) => section.id),
     );

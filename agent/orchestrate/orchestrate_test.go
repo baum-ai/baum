@@ -147,7 +147,7 @@ const contextReplyJSON = `{"area":{"text":"The job queue runs background work.",
 
 const overviewReplyJSON = `{"summary":"Failed jobs now retry and land in a dead-letter table. A new endpoint requeues them.",
  "verdict":{"decision":"look_first","text":"Check who may requeue before merging.","points":[{"text":"The endpoint trusts a header any caller sets.","section":"sec_api"}]},
- "risk_why":"Every job goes through the new retry path.","screenshots":["nope"],"diagram":"tl_path","intent":[]}`
+ "risk_why":"Every job goes through the new retry path.","screenshots":["nope"],"videos":[],"diagram":"tl_path","intent":[]}`
 
 func fullFake() *fake {
 	f := newFake()

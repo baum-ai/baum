@@ -458,6 +458,135 @@ func headingAbove(body, source string) string {
 	return heading
 }
 
+// An image's context keeps up to contextSideBytes of the lines before and
+// after its own, and contextLineBytes on each side of it on its line, so it
+// fits the alt text cap (max_image_alt_bytes, 512) whole.
+const (
+	contextSideBytes = 160
+	contextLineBytes = 80
+)
+
+var (
+	htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+	// A media reference outside a tag: a markdown image or a bare upload URL.
+	mediaReference = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)|` + markdownUpload.String())
+	htmlTag        = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
+	mediaTag       = regexp.MustCompile(`(?i)^<(?:img|video|source)\b[^>]*\bsrc=`)
+	blankRun       = regexp.MustCompile(`[ \t]+`)
+)
+
+// contextAround is the description text around source, within its heading's
+// section and outside code fences: its own line and the lines before and
+// after it, each part cut at whitespace to its limit. Authors caption media above, below, in a table's
+// header or a details summary, so the reader decides which part describes
+// it. The image itself reads [this], any other media [media].
+func contextAround(body, source string) string {
+	body = strings.ReplaceAll(htmlComment.ReplaceAllString(body, ""), "\x00", "")
+	at := strings.Index(body, source)
+	if at < 0 || source == "" {
+		return ""
+	}
+	lines := strings.Split(body, "\n")
+	line := strings.Count(body[:at], "\n")
+	start, end, fenced := 0, len(lines), false
+	for i, l := range lines {
+		if trimmed := strings.TrimLeft(l, " "); strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fenced = !fenced
+			lines[i] = ""
+			continue
+		}
+		switch {
+		case fenced:
+			lines[i] = ""
+		case i != line && atxHeading.MatchString(strings.TrimRight(l, "\r")):
+			if i > line {
+				end = i
+			} else {
+				start = i + 1
+			}
+		}
+		if end < len(lines) {
+			break
+		}
+	}
+	own := contextText(lines[line:line+1], source)
+	if at := strings.Index(own, thisMark); at >= 0 {
+		own = lastWords(own[:at], contextLineBytes) + thisMark + firstWords(own[at+len(thisMark):], contextLineBytes)
+	} else {
+		own = firstWords(own, 2*contextLineBytes)
+	}
+	before := lastWords(contextText(lines[start:line], source), contextSideBytes)
+	after := firstWords(contextText(lines[line+1:end], source), contextSideBytes)
+	context := strings.TrimSpace(strings.Join([]string{before, own, after}, "\n"))
+	return strings.ReplaceAll(context, thisMark, "[this]")
+}
+
+// firstWords keeps the whole words of s that fit in limit bytes: a cut
+// falls only on whitespace, so no masked token is left half shown.
+func firstWords(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	return s[:max(strings.LastIndexAny(s[:limit+1], " \n"), 0)] + "…"
+}
+
+// lastWords is firstWords from the end of s, starting at a line when one
+// fits, so a secret's keyword stays with its value on the line.
+func lastWords(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	from := len(s) - limit - 1
+	at := strings.IndexByte(s[from:], '\n')
+	if at < 0 {
+		at = strings.IndexByte(s[from:], ' ')
+	}
+	if at >= 0 {
+		return "…" + s[from+at+1:]
+	}
+	return "…"
+}
+
+// thisMark stands for the image while its context is cut. The text never
+// holds it (contextAround drops NUL bytes), unlike "[this]", and it is as
+// long, so the cuts measure the context as it ends up.
+const thisMark = "\x00this\x00"
+
+// thisRun is the image's mark repeated with only space between, as a linked
+// image gives.
+var thisRun = regexp.MustCompile(regexp.QuoteMeta(thisMark) + `(?:\s*` + regexp.QuoteMeta(thisMark) + `)+`)
+
+// contextText joins lines as plain text with media replaced and empty lines
+// dropped: a tag holding source reads as the image (once for a run of them,
+// as a linked image has two), an img, video or source tag [media], and any
+// other tag a space, so no text is spliced together.
+func contextText(lines []string, source string) string {
+	var kept []string
+	for _, l := range lines {
+		l = htmlTag.ReplaceAllStringFunc(l, func(tag string) string {
+			switch {
+			case strings.Contains(tag, source):
+				return thisMark
+			case mediaTag.MatchString(tag):
+				return "[media]"
+			}
+			return " "
+		})
+		l = mediaReference.ReplaceAllStringFunc(l, func(media string) string {
+			if strings.Contains(media, source) {
+				return thisMark
+			}
+			return "[media]"
+		})
+		l = thisRun.ReplaceAllString(l, thisMark)
+		l = strings.TrimSpace(blankRun.ReplaceAllString(l, " "))
+		if l != "" {
+			kept = append(kept, l)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
 // WriteAttachments archives the stored copies as a plain tar of
 // attachments/<id>.<ext> entries and returns the images it holds. open reads
 // one stored copy. A copy that cannot be read or no longer matches its hash
