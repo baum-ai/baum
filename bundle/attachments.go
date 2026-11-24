@@ -426,7 +426,7 @@ func DescriptionAttachments(body string, images []DescriptionImage) []Attachment
 		}
 		attachments = append(attachments, Attachment{
 			ID: image.ID, Path: path, SourceURL: image.SourceURL, SourceURLs: image.SourceURLs, Origins: image.Origins, ContentType: image.ContentType,
-			Alt: image.Alt, Heading: headingAbove(body, image.SourceURL), Context: contextAround(body, image.SourceURL), Position: image.Position,
+			Alt: image.Alt, Heading: headingAbove(body, image.SourceURL), Position: image.Position,
 			Width: image.Width, Height: image.Height, SHA256: image.SHA256,
 		})
 	}
@@ -521,9 +521,8 @@ func contextAround(body, source string) string {
 	return strings.ReplaceAll(context, thisMark, "[this]")
 }
 
-// firstWords keeps the whole words of s that fit in limit bytes. Cuts fall
-// only on whitespace, so the redaction that runs later sees every token
-// whole.
+// firstWords keeps the whole words of s that fit in limit bytes: a cut
+// falls only on whitespace, so no masked token is left half shown.
 func firstWords(s string, limit int) string {
 	if len(s) <= limit {
 		return s

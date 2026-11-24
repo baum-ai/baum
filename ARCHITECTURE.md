@@ -4102,9 +4102,10 @@ A desktop generation job uses `internal/generate` to:
    attachment's `context` is the description text around it within its
    heading's section, outside code fences and comments: up to 160 bytes of
    the lines before and after its own and 80 on each side of it on its line,
-   cut only at whitespace so redaction sees every token whole, with the
-   attachment itself as `[this]` and other media as `[media]`; it is
-   redacted and capped like the alt text. After session
+   cut only at whitespace, with the
+   attachment itself as `[this]` and other media as `[media]`. `bundle.Redact`
+   builds it from the redacted body, so a cut never parts a secret from the
+   text that marks it as one, and it is capped like the alt text. After session
    linkage and count caps, native Claude Code and Codex transcripts also supply
    retained inline pasted and tool-result images through `sessions/sessionimages`.
    Only readable linked roots and reachable subagents contribute; Entire

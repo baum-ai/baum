@@ -81,7 +81,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		fields = append(fields, &bundle.References[i].Value)
 	}
 	for i := range bundle.Attachments {
-		fields = append(fields, &bundle.Attachments[i].SourceURL, &bundle.Attachments[i].Alt, &bundle.Attachments[i].Heading, &bundle.Attachments[i].Context)
+		fields = append(fields, &bundle.Attachments[i].SourceURL, &bundle.Attachments[i].Alt, &bundle.Attachments[i].Heading)
 		for j := range bundle.Attachments[i].SourceURLs {
 			fields = append(fields, &bundle.Attachments[i].SourceURLs[j])
 		}
@@ -222,6 +222,12 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		if err := redactField(field); err != nil {
 			return err
 		}
+	}
+
+	// An attachment's context is cut from the redacted body, so a cut never
+	// parts a secret from the text that marks it as one.
+	for i := range bundle.Attachments {
+		bundle.Attachments[i].Context = contextAround(bundle.PullRequest.Body, bundle.Attachments[i].SourceURL)
 	}
 
 	bundle.MaskedSpanCount = total

@@ -313,3 +313,19 @@ func TestContextAroundKeepsTagsAndTokensWhole(t *testing.T) {
 		t.Errorf("linked image context = %q", got)
 	}
 }
+
+func TestRedactBuildsContextFromTheMaskedBody(t *testing.T) {
+	redactor, err := NewRedactor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := markdownAsset(uploadBefore)
+	token := "ghp_" + strings.Repeat("Ab1", 12)
+	b := &Bundle{PullRequest: PullRequest{Body: "Token: " + token + " pad ![x](" + source + ")"}, Attachments: []Attachment{{ID: "att_a", SourceURL: source}}}
+	if err := Redact(context.Background(), b, redactor); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Attachments[0].Context; !strings.Contains(got, "[this]") || strings.Contains(got, "Ab1") {
+		t.Errorf("context = %q, want the masked body around [this]", got)
+	}
+}
