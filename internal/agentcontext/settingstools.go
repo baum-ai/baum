@@ -53,7 +53,8 @@ func repositoryPageTools() []string {
 		out = append(out, repositorySectionTools[section]...)
 		out = append(out, repositorySectionProposals[section]...)
 	}
-	return out
+	// The prompts' propose_* tools are every page's, the list's too.
+	return slices.DeleteFunc(out, func(name string) bool { return slices.Contains(commonToolNames, name) })
 }
 
 // sectionTools are the tools of the page's open section, if it has one: the

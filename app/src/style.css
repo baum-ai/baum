@@ -3211,6 +3211,27 @@ dialog.local-dialog-wide {
   background: var(--status-critical-bg);
   color: var(--text-primary);
 }
+/* A diff that folds its unchanged runs is as tall as what it shows. */
+.prompt-diff.folded {
+  height: auto;
+  max-height: 24rem;
+}
+.prompt-diff-fold {
+  margin: 0.15rem 0;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised, var(--surface-card));
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.prompt-diff-fold:hover {
+  color: var(--text-primary);
+}
+.prompt-diff-fold:active {
+  transform: translateY(1px);
+}
 @media (max-width: 760px) {
   .settings-layout {
     grid-template-columns: minmax(0, 1fr);
