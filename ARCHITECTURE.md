@@ -7472,7 +7472,7 @@ random bytes, an opaque consumer id and a revoke function, and refuses any
 consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
 repository and a pull request number. Nothing about tokens is persisted or
 logged. A chat may read any page and propose changes to the page it has
-open (and, from any page, a colour theme or a switch of theme); an action only reads, within its repository: its tools default to its
+open (and, from any page, a colour theme, a switch of theme or a prompt); an action only reads, within its repository: its tools default to its
 pull request and may read the repository's other pull requests. `SetPage(id, PageContext)` records a chat's
 page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
 `jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
@@ -7903,11 +7903,14 @@ saves it (`Apply`), each given the page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
 one and a page with no proposer, with one exception: `ProposalAnywhere`
 (`"app"`, a sentinel and not a page) is for the two colour theme targets, `theme`
-and `theme_choice`, which are not about the page the person has open. For them
+and `theme_choice`, and the prompts, `prompt/<id>` and `<owner/name>:prompt/<id>`,
+which are not about the page the person has open (a prompt is changed while
+reading the review it wrote). For them
 `Propose` and `Save` skip the same-page check (some page must still be open),
 the proposer is `Options.Proposers["app"]` (the sentinel is never registered as
-a page), `Propose` refuses any target but those two under it and either of them
-under any real page, and the proposer resolves those two alone; it reads the target's value and revision
+a page), `Propose` refuses any other target under it and any of them
+under any real page, and the proposer resolves those alone. A new theme
+proposal replaces the open theme proposals; a prompt proposal replaces none; it reads the target's value and revision
 itself, ignoring the agent's revision, refuses with the bare
 `ErrNotRecorded` a `Before` the agent sent that no longer matches, and
 records the proposal; nothing changes. A tool gets only a `Receipt` (id,
@@ -7969,9 +7972,9 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | `settings` (`computer`) | `propose_job_concurrency` | `job_concurrency` | `PUT /api/settings/job-concurrency`, then the queue's concurrency |
 | `settings` (`computer`) | `propose_codex_approvals` | `codex_approvals` | `PUT /api/agent-requests/settings` (`agentrequests.Store.SetSettingsIf`) |
 | `settings` (`computer`) | `propose_agent_env` | `agent_env/<NAME>` | `PUT /api/settings/agent-env` of the environment in force with the name added (the value from `SaveInput`) or removed |
-| `settings` (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `prompt/<id>` | `PUT /api/settings/prompts/{id}` |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_prompt`, `propose_prompt_reset`, common tools listed on every page (and named in the Prompts sections' tools) | `prompt/<id>`, the global prompt, when no `repository` is given (on a repository's page, that repository's) | `PUT /api/settings/prompts/{id}`. Its "before" is `{text, inherited_text}`: the scope's own text (null when not customised) and the text without it (the valid global text for a repository, else the built-in), which the app diffs the proposal against |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_prompt`, `propose_prompt_reset` with `repository` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}`; refused for a repository baum does not watch |
 | `repositories` with a repository (`reviews`) | `propose_repository_settings` | `<owner/name>:settings` | `PUT /api/repositories/{owner}/{name}/settings`, the field left out kept |
-| `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
 | `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
 | `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
 | `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | Save appends the comment through `uistate.Store.Replace`, as `PUT /api/ui-state/review?key=` saves the pending review; other comments, note and sent reviews are kept. The panel reloads that record after Save. Nothing is sent to GitHub. |

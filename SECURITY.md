@@ -2228,7 +2228,9 @@ error that says nothing more. The current value is shown to you, never
 returned to the agent: a proposal tool answers only the proposal's id, page,
 target and kind. Saving checks that you still have the page open, showing the
 same repository, pull request or group, that the target still belongs to the
-section you see and that the agent's token is still live, and the page
+section you see and that the agent's token is still live (a colour theme or a
+prompt is about no page, so you can save it from any page, for example a
+prompt while reading the review it wrote), and the page
 compares the revision and writes in one step, so a target changed by anyone
 since the proposal was made is refused and nothing is saved. A token revoked
 while a save is writing takes effect once the write ends.

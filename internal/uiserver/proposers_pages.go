@@ -34,7 +34,9 @@ func promptFailure(err error) error {
 }
 
 // promptTarget is one prompt of a scope ("" is global), saved as
-// PUT .../prompts/{id} saves it. A text is validated as the route does
+// PUT .../prompts/{id} saves it. Its value, which the person compares the
+// proposal with, is the scope's own text and the text the scope inherits
+// (promptBefore). A text is validated as the route does
 // (prompt.Validate). An agent may not take a safety rule out of the prompt
 // in use: a text, or a reset to the text inherited, that leaves out a rule
 // the prompt in use has is refused. The person can still do that in the
@@ -64,10 +66,11 @@ func (p *Proposers) promptTarget(scope, id string) (*target, error) {
 			if err != nil {
 				return nil, nil, promptFailure(err)
 			}
-			value := agentcontext.PromptChange{}
+			value := promptBefore{}
 			if state.Own != nil {
 				value.Text = &state.Own.Text
 			}
+			_, value.InheritedText = promptInUse(prompt.ID(id), state)
 			return value, state, nil
 		},
 		validate: func(ctx context.Context, after json.RawMessage) error {
@@ -109,6 +112,15 @@ func (p *Proposers) promptTarget(scope, id string) (*target, error) {
 			return nil
 		},
 	}, nil
+}
+
+// promptBefore is a prompt proposal's Before: the scope's own custom text
+// (null when it has none) and the text it runs without one, the valid global
+// text for a repository, else the built-in. The app diffs the proposal
+// against the own text, else the inherited one.
+type promptBefore struct {
+	Text          *string `json:"text"`
+	InheritedText string  `json:"inherited_text"`
 }
 
 // promptRefusal is a prompt change refused beyond the route's own checks.
@@ -178,8 +190,8 @@ func (p *Proposers) repositoryChanged() {
 }
 
 // repositoryTarget is a target of a repository's page: its Reviews section's
-// settings, or a prompt of its Prompts section. It must be the repository
-// the page shows.
+// settings. It must be the repository the page shows. Its prompts are
+// proposed from any page (anywhereTarget).
 func (p *Proposers) repositoryTarget(page agentcontext.PageContext, name string) (*target, error) {
 	repository, what, ok := agentcontext.ParseRepositoryTarget(name)
 	if !ok {
@@ -198,11 +210,6 @@ func (p *Proposers) repositoryTarget(page agentcontext.PageContext, name string)
 			return nil, err
 		}
 		return p.repositorySettingsTarget(repository), nil
-	case strings.HasPrefix(what, agentcontext.TargetPrompt) && len(what) > len(agentcontext.TargetPrompt):
-		if err := checkSection(page, "prompts", "reviews", "the repository's page"); err != nil {
-			return nil, err
-		}
-		return p.promptTarget(repository, strings.TrimPrefix(what, agentcontext.TargetPrompt))
 	}
 	return nil, fmt.Errorf("a repository's page has no setting %q that takes proposals", what)
 }

@@ -775,7 +775,7 @@ it("shows a prompt's change as its lines, saying when it replaces the default", 
   const prompt = (before: unknown, after: unknown): Proposal => ({
     id: "p3",
     kind: "diff",
-    page: "settings",
+    page: "app",
     target: "prompt/review",
     before,
     after,
@@ -804,6 +804,70 @@ it("shows a prompt's change as its lines, saying when it replaces the default", 
   expect(shown({ name: "API_URL", remove: true })).toBe("name: API_URL\nremove: true");
   expect(shown({ name: "Inbox", query: "a\nb" })).toBe("name: Inbox\nquery:\na\nb");
   expect(shown({ list: [1, 2] })).toBe('{\n  "list": [\n    1,\n    2\n  ]\n}');
+});
+
+it("saves a repository's prompt proposed while reading a review from any page", async () => {
+  const diff: Proposal = {
+    id: "p4",
+    kind: "diff",
+    page: "app",
+    target: "acme/demo:prompt/review",
+    before: { text: null, inherited_text: "Review the change.\nList the risks." },
+    after: { text: "Review the change.\nList the risks.\nCheck the migrations." },
+    revision: "v1",
+    context: { page: "pull_request", repository: "acme/demo", pull_request: 7 },
+  };
+  answer = (call) => (call.path.endsWith("/save") ? Response.json({}) : undefined);
+  const { changed } = await card(diff, { page: "inbox" });
+  expect(node.querySelector(".session-panel-proposal-where")!.textContent).toBe(
+    "acme/demo's prompt · review",
+  );
+  expect(node.textContent).toContain(
+    "Gives acme/demo its own prompt in place of the text it inherits.",
+  );
+  // Shown against the text that runs now, not as a whole new text.
+  const added = [...node.querySelectorAll('.prompt-diff span[data-kind="add"]')].map((l) =>
+    l.textContent?.trim(),
+  );
+  expect(added).toEqual(["+ Check the migrations."]);
+  expect(node.textContent).not.toContain("open it to save");
+  await act(async () => button("Save")!.click());
+  await until(() => expect(changed).toHaveBeenCalled());
+  expect(calls.some((c) => c.path.endsWith("/proposals/p4/save"))).toBe(true);
+  // A reset goes back to the inherited text.
+  await card(
+    {
+      ...diff,
+      target: "prompt/review",
+      before: { text: "Mine", inherited_text: "Built in" },
+      after: { text: null },
+    },
+    { page: "inbox" },
+  );
+  expect(node.querySelector(".session-panel-proposal-where")!.textContent).toBe(
+    "Global prompt · review",
+  );
+  expect(node.textContent).toContain("Resets the prompt to baum's default.");
+  expect(node.querySelector('.prompt-diff span[data-kind="add"]')!.textContent).toContain(
+    "Built in",
+  );
+  // A long prompt's unchanged lines fold around the change, until asked for.
+  const long = Array.from({ length: 40 }, (_, i) => `Line ${i + 1}`);
+  await card(
+    {
+      ...diff,
+      before: { text: null, inherited_text: long.join("\n") },
+      after: { text: [...long.slice(0, 20), "New line", ...long.slice(20)].join("\n") },
+    },
+    { page: "inbox" },
+  );
+  const spans = () => [...node.querySelectorAll(".prompt-diff span")].map((s) => s.textContent);
+  expect(spans().filter((s) => s?.startsWith("  Line"))).toHaveLength(6);
+  const folds = [...node.querySelectorAll<HTMLButtonElement>(".prompt-diff-fold")];
+  expect(folds.map((b) => b.textContent)).toEqual(["17 unchanged lines", "17 unchanged lines"]);
+  await act(async () => folds[0]!.click());
+  expect(node.querySelector(".prompt-diff-fold")).toBeNull();
+  expect(spans()).toHaveLength(41);
 });
 
 it("points a proposal made on another page to it before anything is pressed", async () => {

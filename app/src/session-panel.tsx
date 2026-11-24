@@ -1483,21 +1483,36 @@ export function shown(value: unknown): string {
 }
 
 /** A prompt's change (`{text}`, null for the default): what the default
- *  stands for, said in words beside the diff. */
-function textChange(value: unknown): { text: string | null } | null {
+ *  stands for, said in words beside the diff. A prompt proposal's Before also
+ *  holds `inherited_text`, the text that runs without the scope's own. */
+function textChange(value: unknown): { text: string | null; inherited?: string } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const keys = Object.keys(value);
-  const text = (value as { text?: unknown }).text;
-  return keys.length === 1 && keys[0] === "text" && (text === null || typeof text === "string")
-    ? { text: text as string | null }
-    : null;
+  const keys = Object.keys(value).filter((key) => key !== "inherited_text");
+  const { text, inherited_text: inherited } = value as { text?: unknown; inherited_text?: unknown };
+  if (keys.length !== 1 || keys[0] !== "text" || !(text === null || typeof text === "string"))
+    return null;
+  return typeof inherited === "string"
+    ? { text: text as string | null, inherited }
+    : { text: text as string | null };
 }
 
-/** A colour theme proposal: the one proposal that is for no page in
- *  particular (the "app" sentinel), which the app previews as it is proposed. */
-const THEME_PAGE = "app";
+/** The proposals that are for no page in particular (the "app" sentinel),
+ *  which the person saves wherever they are: a colour theme or a choice of
+ *  one, which the app previews as it is proposed, and a prompt. */
+const ANYWHERE_PAGE = "app";
 const isThemeProposal = (proposal: Proposal) =>
-  proposal.kind === "diff" && proposal.page === THEME_PAGE && proposal.target === "theme";
+  proposal.kind === "diff" && proposal.page === ANYWHERE_PAGE && proposal.target === "theme";
+
+/** The prompt a proposal changes, from its target (`prompt/<id>` for a
+ *  global prompt, `<owner>/<name>:prompt/<id>` for a repository's), or null
+ *  when it changes none. */
+export function proposedPrompt(
+  proposal: Proposal,
+): { id: string; repository: string | null } | null {
+  if (proposal.kind !== "diff" || proposal.page !== ANYWHERE_PAGE) return null;
+  const match = /^(?:([^:]+):)?prompt\/(.+)$/.exec(proposal.target);
+  return match ? { id: match[2]!, repository: match[1] ?? null } : null;
+}
 
 type ThemeProposed = {
   /** The custom theme this edits, when it does. */
@@ -1528,7 +1543,7 @@ function proposedTheme(proposal: Proposal): ThemeProposed | null {
 
 /** A theme choice: the other proposal that is for no page in particular. */
 const isChoiceProposal = (proposal: Proposal) =>
-  proposal.kind === "diff" && proposal.page === THEME_PAGE && proposal.target === "theme_choice";
+  proposal.kind === "diff" && proposal.page === ANYWHERE_PAGE && proposal.target === "theme_choice";
 
 /** The choice a proposal's After holds, or null when it names neither a theme
  *  nor a mode. */
@@ -1688,21 +1703,41 @@ function ThemeView({ proposal }: { proposal: Proposal }) {
   );
 }
 
-/** What a change saves against what is saved now, as text. */
-function ChangeView({ before, after }: { before: unknown; after: unknown }) {
+/** What a change saves against what is saved now, as text. A prompt's is
+ *  shown against the text that runs now: the scope's own, else the text it
+ *  inherits (a repository's the global prompt, else baum's default). */
+function ChangeView({
+  before,
+  after,
+  repository,
+}: {
+  before: unknown;
+  after: unknown;
+  /** The repository whose prompt this is; none for a global one. */
+  repository?: string | null;
+}) {
   const from = textChange(before);
   const to = textChange(after);
   if (from || to) {
-    const note =
-      to?.text === null || to?.text === ""
-        ? "Resets the prompt to baum's default."
-        : !from || from.text === null
-          ? "Replaces baum's default prompt with this text."
-          : null;
+    const resets = to?.text === null || to?.text === "";
+    const note = resets
+      ? repository
+        ? `Resets ${repository}'s prompt to the text it inherits: the global prompt, else baum's default.`
+        : "Resets the prompt to baum's default."
+      : !from || from.text === null
+        ? repository
+          ? `Gives ${repository} its own prompt in place of the text it inherits.`
+          : "Replaces baum's default prompt with this text."
+        : null;
+    const inUse = from?.text ?? from?.inherited ?? "";
     return (
       <>
         {note ? <p className="session-panel-note">{note}</p> : null}
-        <Diff before={from?.text ?? ""} after={to?.text ?? ""} />
+        <Diff
+          before={inUse}
+          after={resets ? (from?.inherited ?? "") : (to?.text ?? "")}
+          context={3}
+        />
       </>
     );
   }
@@ -1775,7 +1810,9 @@ export function ProposalCard({
   // The theme a choice names may be gone by now: the daemon would refuse it.
   const choiceGone =
     !!choice?.theme_id && !preferences.themes.some((theme) => theme.id === choice.theme_id);
-  const elsewhere = !themed && !choiced && !samePage(proposal.context, page);
+  // A prompt is for no page either: it can be changed while reading a review.
+  const prompted = proposedPrompt(proposal);
+  const elsewhere = proposal.page !== ANYWHERE_PAGE && !samePage(proposal.context, page);
   const refused = (e: unknown) => {
     if (e instanceof LocalRequestError && e.code === "not_current_page")
       setError({
@@ -1866,7 +1903,16 @@ export function ProposalCard({
           {proposal.kind === "operation" ? "Asks to run" : "Proposes a change"}
         </span>
         <span className="session-panel-proposal-where">
-          {pageLabel(proposal.context)} · <code>{proposal.target}</code>
+          {prompted ? (
+            <>
+              {prompted.repository ? `${prompted.repository}'s prompt` : "Global prompt"} ·{" "}
+              <code>{prompted.id}</code>
+            </>
+          ) : (
+            <>
+              {pageLabel(proposal.context)} · <code>{proposal.target}</code>
+            </>
+          )}
         </span>
       </header>
       {summary ? (
@@ -1876,7 +1922,11 @@ export function ProposalCard({
       ) : choiced ? (
         <ChoiceView proposal={proposal} />
       ) : (
-        <ChangeView before={proposal.before} after={proposal.after} />
+        <ChangeView
+          before={proposal.before}
+          after={proposal.after}
+          repository={prompted?.repository}
+        />
       )}
       {themed && proposedColours ? (
         <div className="session-panel-value session-panel-theme-save">

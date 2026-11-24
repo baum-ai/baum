@@ -2802,8 +2802,11 @@ composer with why (`busy`, `closed`, `shutting_down`).
 The agent's proposals (`GET .../proposals`, read again on the conversation's
 `proposals` events) are cards under the transcript. A change (`diff`) shows
 what it saves against what is saved now (`Diff`, as a prompt's) as text: a
-prompt's `{text}` as its own lines, saying when it replaces or resets baum's
-default prompt, other plain fields as one line each; with **Save** and
+prompt's `{text}` as its own lines, against the text that runs now (the
+scope's own text, else the before's `inherited_text`: a repository's global
+prompt, else baum's default), saying when it gives a repository its own
+prompt, replaces baum's default or resets to the inherited text; other plain
+fields as one line each; with **Save** and
 **Dismiss**, and a field for the value the person types when the change needs
 one (an agent environment variable's), which never goes to the agent. An
 operation shows baum's summary: its action, its details, its model and effort,
@@ -2813,7 +2816,11 @@ as baum's words; one marked `by_agent` or `multiline` is shown whole,
 scrolling in its box (which the keys reach) rather than cut. Confirm sends the summary's revision on
 screen; a `409 operation_changed` replaces it with the new summary, says
 nothing ran and asks again. A proposal made on another page says so and links
-to it, and a `not_current_page` refusal says which page to open. A comment
+to it, and a `not_current_page` refusal says which page to open; a proposal
+under the `app` page (a colour theme, a theme choice or a prompt,
+`proposedPrompt`) is saved wherever the person is. A prompt's card is headed
+with its scope and id ("acme/web's prompt · review", "Global prompt · review")
+rather than the page it was proposed on. A comment
 for the pending review (`propose_review_comment`, a `…:review_comment` change,
 which replaces the earlier Ask's Add as comment) reads the pull request's
 pending review again once saved, so it shows in the review at once.
