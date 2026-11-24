@@ -269,3 +269,26 @@ func TestSniffMediaDoesNotCollectElements(t *testing.T) {
 		t.Fatalf("%v allocations sniffing empty track entries", allocs)
 	}
 }
+
+func TestContextAroundKeepsTheCaptionsAroundMedia(t *testing.T) {
+	light, dark := markdownAsset(uploadBefore), markdownAsset(uploadAfter)
+	body := "## Tests\nAll green.\n\n### Video\n<!-- template -->\nFocus lines in a folded excerpt (light, dark):\n\nLight:\n\n" + light +
+		"\n\nDark:\n\n" + dark + "\n\n```\n" + "not prose\n```\nSee above.\n## Notes\nunrelated"
+	if got, want := contextAround(body, light), "Focus lines in a folded excerpt (light, dark):\nLight:\n[this]\nDark:\n[media]\nSee above."; got != want {
+		t.Errorf("light context = %q, want %q", got, want)
+	}
+	if got, want := contextAround(body, dark), "Focus lines in a folded excerpt (light, dark):\nLight:\n[media]\nDark:\n[this]\nSee above."; got != want {
+		t.Errorf("dark context = %q, want %q", got, want)
+	}
+	table := "| Before | After |\n| --- | --- |\n| ![old](" + light + ") | <img alt=\"new\" src=\"" + dark + "\"> |"
+	if got, want := contextAround(table, dark), "| Before | After |\n| --- | --- |\n| [media] | [this] |"; got != want {
+		t.Errorf("table context = %q, want %q", got, want)
+	}
+	long := strings.Repeat("word ", 100) + "\n" + light
+	if got := contextAround(long, light); len(got) > contextSideBytes+len("…\n[this]") || !strings.HasPrefix(got, "…") {
+		t.Errorf("long context = %q", got)
+	}
+	if got := contextAround("<!-- "+light+" -->", light); got != "" {
+		t.Errorf("commented-out context = %q, want empty", got)
+	}
+}

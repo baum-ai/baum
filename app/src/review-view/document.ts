@@ -33,6 +33,8 @@ export type ReviewV2 = {
   };
   overview: {
     screenshots: string[];
+    /** Description clips the overview chose; none before it chose them. */
+    videos: string[];
     diagram: string | null;
     intent: V2Intent[];
   };
@@ -198,6 +200,7 @@ export function parseReviewV2(value: unknown, drafts?: unknown): ReviewV2 | null
     },
     overview: {
       screenshots: strings(overview.screenshots),
+      videos: strings(overview.videos),
       diagram: isString(overview.diagram) && overview.diagram ? overview.diagram : null,
       intent: records(overview.intent).flatMap((row) =>
         isString(row.asked) &&

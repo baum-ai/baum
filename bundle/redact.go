@@ -81,7 +81,7 @@ func Redact(ctx context.Context, bundle *Bundle, redactor *Redactor) error {
 		fields = append(fields, &bundle.References[i].Value)
 	}
 	for i := range bundle.Attachments {
-		fields = append(fields, &bundle.Attachments[i].SourceURL, &bundle.Attachments[i].Alt, &bundle.Attachments[i].Heading)
+		fields = append(fields, &bundle.Attachments[i].SourceURL, &bundle.Attachments[i].Alt, &bundle.Attachments[i].Heading, &bundle.Attachments[i].Context)
 		for j := range bundle.Attachments[i].SourceURLs {
 			fields = append(fields, &bundle.Attachments[i].SourceURLs[j])
 		}

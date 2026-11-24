@@ -359,10 +359,12 @@ type Attachment struct {
 	SourceURL   string        `json:"source_url,omitempty"`
 	SourceURLs  []string      `json:"source_urls,omitempty"`
 	ContentType string        `json:"content_type"`
-	// Alt and Heading, the nearest markdown heading above the image, are
-	// redacted and capped.
+	// Alt, Heading (the nearest markdown heading above the image) and
+	// Context (the description text around it, the image itself as [this])
+	// are redacted and capped.
 	Alt      string `json:"alt,omitempty"`
 	Heading  string `json:"heading,omitempty"`
+	Context  string `json:"context,omitempty"`
 	Position int    `json:"position"`
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`

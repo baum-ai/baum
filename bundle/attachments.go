@@ -426,7 +426,7 @@ func DescriptionAttachments(body string, images []DescriptionImage) []Attachment
 		}
 		attachments = append(attachments, Attachment{
 			ID: image.ID, Path: path, SourceURL: image.SourceURL, SourceURLs: image.SourceURLs, Origins: image.Origins, ContentType: image.ContentType,
-			Alt: image.Alt, Heading: headingAbove(body, image.SourceURL), Position: image.Position,
+			Alt: image.Alt, Heading: headingAbove(body, image.SourceURL), Context: contextAround(body, image.SourceURL), Position: image.Position,
 			Width: image.Width, Height: image.Height, SHA256: image.SHA256,
 		})
 	}
@@ -456,6 +456,82 @@ func headingAbove(body, source string) string {
 		}
 	}
 	return heading
+}
+
+// contextSideBytes bounds the text kept on each side of an image's context.
+const contextSideBytes = 240
+
+var (
+	htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+	// A media reference: a markdown image, an img or video element, or a bare
+	// upload URL.
+	mediaReference = regexp.MustCompile(`(?s)!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|<video\b.*?(?:</video>|/>|>)|` + markdownUpload.String())
+	htmlTag        = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
+	blankRun       = regexp.MustCompile(`[ \t]+`)
+)
+
+// contextAround is the description text around source, within its heading's
+// section and outside code fences: up to contextSideBytes before and after
+// the line holding it. Authors caption media above, below, in a table's
+// header or a details summary, so the reader decides which part describes
+// it. The image itself reads [this], any other media [media].
+func contextAround(body, source string) string {
+	body = htmlComment.ReplaceAllString(body, "")
+	at := strings.Index(body, source)
+	if at < 0 || source == "" {
+		return ""
+	}
+	lines := strings.Split(body, "\n")
+	line := strings.Count(body[:at], "\n")
+	start, end, fenced := 0, len(lines), false
+	for i, l := range lines {
+		if trimmed := strings.TrimLeft(l, " "); strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			fenced = !fenced
+			lines[i] = ""
+			continue
+		}
+		switch {
+		case fenced:
+			lines[i] = ""
+		case i != line && atxHeading.MatchString(strings.TrimRight(l, "\r")):
+			if i > line {
+				end = i
+			} else {
+				start = i + 1
+			}
+		}
+		if end < len(lines) {
+			break
+		}
+	}
+	before := contextText(lines[start:line], source)
+	after := contextText(lines[line+1:end], source)
+	if len(before) > contextSideBytes {
+		before = "…" + strings.ToValidUTF8(before[len(before)-contextSideBytes:], "")
+	}
+	if len(after) > contextSideBytes {
+		after = strings.ToValidUTF8(after[:contextSideBytes], "") + "…"
+	}
+	return strings.TrimSpace(strings.Join([]string{before, contextText(lines[line:line+1], source), after}, "\n"))
+}
+
+// contextText joins lines as plain text with media replaced and empty lines
+// dropped.
+func contextText(lines []string, source string) string {
+	var kept []string
+	for _, l := range lines {
+		l = mediaReference.ReplaceAllStringFunc(l, func(media string) string {
+			if strings.Contains(media, source) {
+				return "[this]"
+			}
+			return "[media]"
+		})
+		l = strings.TrimSpace(blankRun.ReplaceAllString(htmlTag.ReplaceAllString(l, ""), " "))
+		if l != "" {
+			kept = append(kept, l)
+		}
+	}
+	return strings.Join(kept, "\n")
 }
 
 // WriteAttachments archives the stored copies as a plain tar of

@@ -233,7 +233,7 @@ func overviewInput(sections []reviewv2.Section, tiles []reviewv2.Tile, b *bundle
 		if len(a.Origins) > 0 {
 			origin = "session " + a.Origins[0].Session
 		}
-		out.WriteString(jsonText(map[string]string{"id": a.ID, "alt": a.Alt, "heading": a.Heading, "from": origin, "path": a.Path}) + "\n")
+		out.WriteString(jsonText(map[string]string{"id": a.ID, "type": a.ContentType, "alt": a.Alt, "heading": a.Heading, "context": a.Context, "from": origin, "path": a.Path}) + "\n")
 	}
 	out.WriteString("\nThe linked sessions (read their prompts with your tools):\n")
 	linked := false
