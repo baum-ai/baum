@@ -178,6 +178,34 @@ describe("ImageViewer", () => {
     expect(width()).toBe(full);
   });
 
+  it("follows only the pointer that pressed, and drops a drag cut short by a close", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    const start = view.frame().style.width;
+    const grip = view.frame().querySelector<HTMLElement>('[data-resize="right"]')!;
+    const send = (type: string, x: number, pointerId = 1) =>
+      act(() => {
+        const event = new MouseEvent(type, { bubbles: true, clientX: x, clientY: 0 });
+        Object.defineProperty(event, "pointerId", { value: pointerId });
+        grip.dispatchEvent(event);
+      });
+    send("pointerdown", 500);
+    // A second finger neither moves nor ends the first one's drag.
+    send("pointermove", 400, 2);
+    send("pointerup", 400, 2);
+    expect(view.frame().style.width).toBe(start);
+    // Closed mid-drag: the next image ignores a move with no press.
+    view.render(null);
+    view.render({ src: "/b.png", alt: "Shot", width: 40, height: 20 });
+    const reopened = view.frame().style.width;
+    const next = view.frame().querySelector<HTMLElement>('[data-resize="right"]')!;
+    act(() => {
+      const event = new MouseEvent("pointermove", { bubbles: true, clientX: 100, clientY: 0 });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      next.dispatchEvent(event);
+    });
+    expect(view.frame().style.width).toBe(reopened);
+  });
+
   it("ignores a remembered scale it cannot read", () => {
     localStorage.setItem("baum.image-viewer.scale", "nope");
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });

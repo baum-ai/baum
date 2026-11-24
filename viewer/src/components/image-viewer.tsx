@@ -306,7 +306,7 @@ type Handle = { name: string; x: number; y: number; className: string };
 /** The frame's corners carry a visible bracket, so people see the image
  *  resizes; its edges resize too, shown by the pointer. */
 const CORNER =
-  "z-10 size-5 border-white/90 opacity-70 drop-shadow-[0_0_1px_rgb(0_0_0/0.8)] transition-opacity group-hover:opacity-100";
+  "z-10 size-5 border-surface-card opacity-80 drop-shadow-[0_0_1px_var(--surface-inverse)] transition-opacity group-hover:opacity-100";
 const HANDLES: Handle[] = [
   {
     name: "top-left",
