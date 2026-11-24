@@ -1736,10 +1736,10 @@ the daemon is still indexing or searching GitHub, then every five minutes. An
 older daemon without the capability gets a note to update baum.
 Settings (`?page=settings&section=…`, `SettingsPage` in `src/settings.tsx`)
 shows one section at a time, listed on the left with a line on where each
-stands and a dot when it needs attention; at narrow widths the list becomes
-a scrolling strip above the section. The section is in the address, so a
-reload or Back keeps it, and the GitHub notice's **Open settings** goes
-straight to Connections. **General**, the default, offers the modifier
+stands and a dot when it needs attention. At narrow widths the list wraps
+above the section so every section stays visible. The address includes the
+section, so a reload or Back keeps it, and the GitHub notice's **Open settings**
+goes straight to Connections. **General**, the default, offers the modifier
 held with `1` to `8` for the sidebar's pages, and whether holding Option (Alt
 elsewhere) shows keyboard shortcut hints; each names only the platform's key. **Appearance**
 (next, `src/settings-appearance.tsx`) has the **Theme mode** segmented control
