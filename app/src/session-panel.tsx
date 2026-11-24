@@ -494,6 +494,32 @@ function SessionPanel({
   useLayoutEffect(() => {
     composer.current?.focus({ preventScroll: true });
   }, [panel.focus]);
+  // The composer grows with its text up to its CSS max-height, then scrolls.
+  // WebKit, the desktop app's webview, ignores `field-sizing: content`. Its
+  // text re-wraps when the panel's width changes, so that measures it too.
+  const fitComposer = () => {
+    const box = composer.current;
+    if (!box) return;
+    // Measured without a scrollbar, which would narrow it and wrap more.
+    box.style.overflow = "hidden";
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
+    box.style.overflow = "";
+  };
+  useLayoutEffect(fitComposer, [panel.draft]);
+  useEffect(() => {
+    const box = composer.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    // Its first call fits it too: a remounted composer keeps its draft.
+    let width = -1;
+    const observer = new ResizeObserver(() => {
+      if (box.clientWidth === width) return;
+      width = box.clientWidth;
+      fitComposer();
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [panel.available]);
   // Hidden while the keys were in it, they go back to what had them before
   // it opened, or to the page.
   // Measured as it unmounts, before its elements leave the page and the focus

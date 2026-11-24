@@ -43,7 +43,16 @@ test("opens the session panel on a pull request and starts a session there", asy
 
   const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
   await expect(composer).toBeFocused();
+  // It grows with a longer message, its text never spilling out of it, and
+  // shrinks back once it is short again.
+  const oneLine = (await composer.boundingBox())!.height;
+  await composer.fill("first line\nsecond line\nthird line");
+  await expect
+    .poll(async () => (await composer.boundingBox())!.height)
+    .toBeGreaterThan(oneLine * 2);
+  expect(await composer.evaluate((box) => box.scrollHeight <= box.clientHeight)).toBe(true);
   await composer.fill("Why is the retry delay capped?");
+  await expect.poll(async () => (await composer.boundingBox())!.height).toBe(oneLine);
   await composer.press("Enter");
   // The prompt shows at once, before the daemon answers.
   await expect(panel(page).getByText("Why is the retry delay capped?").first()).toBeVisible();
