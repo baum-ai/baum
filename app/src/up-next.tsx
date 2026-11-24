@@ -10,6 +10,7 @@ import {
 import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
 import { parseSort, sortBy } from "./pr-sort";
 import { SortButton } from "./sort-menu";
+import { useTopLayer } from "./top-layer";
 import {
   Fragment,
   useEffect,
@@ -1013,13 +1014,19 @@ export function ColourSwatches({
   color: current,
   pick,
   className,
+  raised = false,
 }: {
   color: InboxColor;
   pick: (color: InboxColor) => void;
   className?: string;
+  /** Drawn as a menu over the page, in the top layer (`useTopLayer`). */
+  raised?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useTopLayer(ref, raised);
   return (
     <div
+      ref={ref}
       role="radiogroup"
       aria-label="Colour"
       className={className ? `inbox-swatches ${className}` : "inbox-swatches"}
@@ -1081,6 +1088,7 @@ function InboxHeadEdit({
           <ColourSwatches
             color={inbox.color}
             className="inbox-head-swatches"
+            raised
             pick={(color) => {
               colours.close();
               if (color !== inbox.color) update({ color });

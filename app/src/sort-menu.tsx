@@ -11,6 +11,7 @@ import {
   withoutSortField,
 } from "./pr-sort";
 import { useShortcuts } from "./shortcuts";
+import { useTopLayer } from "./top-layer";
 import "./filter-menu.css";
 
 /** ⇧S, which opens and closes the sort from anywhere on the page. */
@@ -43,6 +44,7 @@ export function SortButton({
     event.preventDefault();
     toggleOpen(!detailsProps.ref.current?.open);
   });
+  useTopLayer(panel, open);
   // The panel sits on the window under the icon, its right edge on the
   // icon's, kept on screen, as the filter's does.
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);

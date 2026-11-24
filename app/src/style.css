@@ -76,16 +76,14 @@ input[type="search"]::-webkit-search-cancel-button {
   transition: width 0.15s ease-out;
 }
 /* Unpinned, it opens over the page and over the session panel on it, which
-   starts at the folded sidebar's edge. Folded, with no menu of its own
-   showing, it stays under the page's menus (the filter's), which may hang
-   over its glyphs. */
+   starts at the folded sidebar's edge, even the panel in use. Folded and
+   closed, it stays under the page's own sheets (the review's, the chat's
+   scrim), which span the window. Menus draw over it from the top layer
+   (`top-layer.ts`). */
 .local-rail-lane:not([data-rail="pinned"]) {
-  z-index: calc(var(--z-sheet, 40) + 1);
+  z-index: calc(var(--z-sheet, 40) + 2);
 }
-.local-rail-lane[data-rail="folded"]:not(
-  [data-keyboard-focus],
-  :has(.local-rail-menu, .context-menu)
-) {
+.local-rail-lane[data-rail="folded"]:not([data-keyboard-focus]) {
   z-index: 5;
 }
 /* Open over the page, it needs the canvas under it and the lift. */
@@ -353,7 +351,6 @@ input[type="search"]::-webkit-search-cancel-button {
    clip it. */
 .local-rail-menu {
   position: fixed;
-  z-index: 10;
   top: 0;
   left: 0;
   display: flex;
@@ -1625,6 +1622,20 @@ dialog.report-problem {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+}
+
+/* A menu raised into the top layer (`top-layer.ts`) drops the browser's
+   popover box: its own rules place and draw it, and a submenu hung from it
+   is not clipped. */
+@layer base {
+  [popover] {
+    inset: auto;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    color: inherit;
+    background-color: transparent;
   }
 }
 
@@ -4548,7 +4559,7 @@ a.local-session-pr:hover {
    it was about, and where. */
 .local-toast {
   position: fixed;
-  z-index: 40;
+  z-index: calc(var(--z-sheet, 40) + 2);
   bottom: 22px;
   left: calc(50% + var(--rail-width) / 2);
   display: flex;
@@ -6212,7 +6223,6 @@ a.upnext-done-text:hover {
 }
 .upnext-menu {
   position: absolute;
-  z-index: 3;
   top: calc(100% + 6px);
   left: 0;
   display: flex;
@@ -7041,6 +7051,12 @@ a.upnext-done-text:hover {
   z-index: calc(var(--z-sheet, 40) - 1);
   background: var(--surface-scrim);
 }
+/* Of the sheets over the page, the session panel and the chat, the one in
+   use draws in front; both stay open. */
+.session-panel:focus-within,
+.ask-panel:focus-within {
+  z-index: calc(var(--z-sheet, 40) + 1);
+}
 @media (width >= 72rem) {
   .ask-backdrop {
     display: none;
@@ -7711,7 +7727,6 @@ dialog.local-file-dialog {
   position: absolute;
   top: calc(100% + 0.3rem);
   left: 0;
-  z-index: 30;
   padding: 0.5rem;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
