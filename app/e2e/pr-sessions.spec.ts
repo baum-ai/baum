@@ -60,3 +60,18 @@ test("a running session is one of the pull request's sessions, counted and liste
   await expect(page).toHaveURL(/pane=sessions/);
   await expect(card).toBeVisible();
 });
+
+test("a session that ended before baum started opens on the Sessions page from its id", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(await launchURL());
+  const sessions = page.getByRole("link", { name: "Sessions", exact: true }).first();
+  await sessions.click();
+  await page.goto(
+    page.url().replace(/\?.*$/, "?page=sessions&session=claude-code%3Aended-e2e&turn=2"),
+  );
+  const transcript = page.getByRole("region", { name: "Transcript", exact: true });
+  await expect(transcript.getByText("Cover it with a test", { exact: true })).toBeVisible();
+  await expect(transcript.getByText("Done: Add a retry budget to the uploader")).toBeVisible();
+});

@@ -667,6 +667,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	writeFixtureTitle(home, "live-e2e", "Reuse the PR page in the local app",
 		"Serve saved reviews in the local app with the hosted PR page's viewer, without a second implementation.")
 	writeFixtureTitle(home, "needs-e2e", "Run the migration tests", "")
+	// One that ended before baum started, which no hook names: the Sessions
+	// page finds its transcript by its id, and the panel can continue it.
+	writeFixtureTranscript(filepath.Join(home, ".claude", "projects", "-fixture-live", "ended-e2e.jsonl"), "ended-e2e",
+		time.Now().Add(-26*time.Hour), []string{"Add a retry budget to the uploader", "Cover it with a test"})
 	_ = os.RemoveAll(filepath.Join(state, "events"))
 	err = daemon.Run(ctx, daemon.Options{Paths: paths, Version: "fixture", Port: 4167, Start: func(appCtx context.Context, server *uiserver.Server) (daemon.App, error) {
 		events, err := hookevents.OpenStore(hookevents.RecordDir(paths), nil)
