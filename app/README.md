@@ -2988,8 +2988,27 @@ builds the rail's model (the sections and the file list) from it.
   summary, steps, risks and tiles cite, quoted with when and who, each linking
   to its turn of the transcript) and **Docs** (its docs hunks). Code, Tests and
   Docs count files, Session quotes. The view is `section_view=<view>` beside
-  `section=`, and opening another section opens its Overview. The full
-  review's check callouts and line counts are not shown.
+  `section=`, and opening another section opens its Overview. From 64rem of
+  section width the Overview stands in a left column and the other views sit
+  beside it in a right column with their own row (no Overview tab), showing
+  the view asked for, else the first that has something; that column sticks
+  under the bar and scrolls on its own while the Overview scrolls. Its divider
+  resizes it (dragged, or with the arrow keys; the width is remembered, and
+  the Overview keeps at least 360px), and its chevron or `]` collapses it
+  to a strip so the Overview takes the section, until expanded again. It
+  starts collapsed until the reader first opens it, then stays as they left
+  it (`section-split.tsx`). Its code is drawn a frame after the section, as
+  work React can drop, so a big diff never holds the Overview back. An excerpt of code in the Overview (a
+  step's or a risk's file chip) opens in that column, expanding it if
+  collapsed, in the view that draws the file, scrolled to the first line
+  from the one it names, and the Overview stays where it was; a file the
+  section doesn't draw opens in Files changed as before. Opening a point's
+  row does the same for the first file it cites that the section draws,
+  while the column is open (`side-reveal.ts`); a collapsed column stays
+  collapsed. The keys (`j` and `k`) go through a points block row by row,
+  and `Enter` or `Space` opens the row they are on. A section with nothing but its
+  Overview keeps one column. The full review's check
+  callouts and line counts are not shown.
 - **Files changed** (`code-tab.tsx`) lists every changed file in a list beside
   the open file, under a switch, **Group files by**, with three modes. **Type**
   groups them as code, tests, docs, config and generated (folded, and a
@@ -3049,7 +3068,7 @@ builds the rail's model (the sections and the file list) from it.
   is taken at its first place) and do nothing at the first and last file
   (`ReviewPlaceSteps.item`, `listedFiles` in `places.tsx`); the grouping is one
   shared choice (`useFileGrouping`, `readFileGrouping` in `file-grouping.ts`).
-  Elsewhere they mark blocks as above. `]`
+  Elsewhere they mark blocks as above. Ctrl+]
   opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request. The session
   panel's focus names the tab: on the
   Overview `tab: overview`; on How it works `tab: sections` and the `section`
@@ -3333,9 +3352,10 @@ sidebar order, stopping at the first and the last. Typing fields and dialogs kee
 Ctrl+K always opens Go to.
 Enter is drawn as ↵ in button shortcut hints.
 
-On PR and group review pages, `]` toggles the right-hand Details/Activity
-sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
-Opening it with `]` gives it the keys: `h` and `l` then step through Details,
+On PR and group review pages, Ctrl+] (`sidePaneKey`) toggles the right-hand
+Details/Activity sidebar, or its sheet on narrow windows; `]` by itself folds
+and opens the code beside a wide section's Overview. Both are listed in the
+review shortcut hints. Opening the sidebar with Ctrl+] gives it the keys: `h` and `l` then step through Details,
 Activity and Comments, until Esc (or a click in the review) gives them back.
 
 The page shortcut bar labels Shift+J/K as sections and lists only page actions;

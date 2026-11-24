@@ -33,11 +33,14 @@ export function SectionViewTabs({
   value,
   counts,
   onChange,
+  overview = true,
 }: {
   tablist: string;
   value: SectionView;
   counts: SectionViews["counts"];
   onChange: (view: SectionView) => void;
+  /** Off when the Overview stands in its own column beside the others. */
+  overview?: boolean;
 }) {
   // In a narrow pane the row scrolls: the view shown stays in sight.
   const row = useRef<HTMLDivElement>(null);
@@ -59,10 +62,11 @@ export function SectionViewTabs({
         onChange={onChange}
         // Scrolls sideways in a narrow pane rather than widening the page.
         className="max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        items={SECTION_VIEWS.map(({ value: view, label }) =>
-          view === "overview"
-            ? { value: view, label }
-            : { value: view, label, count: counts[view], disabled: counts[view] === 0 },
+        items={SECTION_VIEWS.filter(({ value: view }) => overview || view !== "overview").map(
+          ({ value: view, label }) =>
+            view === "overview"
+              ? { value: view, label }
+              : { value: view, label, count: counts[view], disabled: counts[view] === 0 },
         )}
       />
     </div>
@@ -77,6 +81,7 @@ export function SectionViewBody({
   shown,
   views,
   context,
+  reveal,
 }: {
   document: ReviewDocument;
   review: ReviewV2;
@@ -84,6 +89,8 @@ export function SectionViewBody({
   shown: Exclude<SectionView, "overview">;
   views: SectionViews;
   context: ReviewPlaceContext;
+  /** A file an excerpt asked to see: its fold opens if it is generated. */
+  reveal?: string;
 }) {
   const notes = useMemo(() => sectionNotes(notesByHunk(review), section), [review, section]);
   const files = (list: ViewFile[]) => (
@@ -101,6 +108,7 @@ export function SectionViewBody({
               notes={notes}
               context={context}
               open={views.code.files.length === 0}
+              reveal={reveal}
             />
           ) : null}
         </div>
@@ -226,14 +234,19 @@ function GeneratedFiles({
   notes,
   context,
   open: openFirst,
+  reveal,
 }: {
   document: ReviewDocument;
   files: ViewFile[];
   notes: Map<string, HunkNote[]>;
   context: ReviewPlaceContext;
   open: boolean;
+  reveal?: string;
 }) {
   const [open, setOpen] = useState(openFirst);
+  useEffect(() => {
+    if (reveal && files.some((file) => file.path === reveal)) setOpen(true);
+  }, [reveal, files]);
   return (
     <div className="space-y-3">
       <GeneratedToggle open={open} files={files.length} onToggle={() => setOpen((was) => !was)} />
