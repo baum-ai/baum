@@ -134,9 +134,8 @@ test("messages sent while the agent works are queued and sent once it answers", 
   // Ask on the pull request opens the panel on it.
   await page.getByRole("button", { name: /^Ask/ }).click();
   await expect(panel(page)).toBeVisible();
-  // A conversation of another test may be open: start a new one.
-  await panel(page).getByRole("button", { name: "Sessions" }).click();
-  await page.getByRole("menuitemcheckbox", { name: /New session/ }).click();
+  // It may reuse the pull request's conversation from another test, which
+  // queues the same way.
   const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
   // The scripted agent takes its time, so there is time to queue.
   await composer.fill("Why is the retry delay capped? Take your time.");
