@@ -561,9 +561,9 @@ func (s *Service) SendQueued(_ context.Context, id string) (Conversation, error)
 }
 
 // sendQueuedAfter starts the next turn with the queued messages once the
-// turn l ran has answered. A turn stopped (even as it answered, or just
-// after), failed or cut short by shutdown leaves them queued for the person
-// to send or remove.
+// turn l ran has answered. A turn stopped (also by a Stop that lands as it
+// answers, before the next turn starts), failed or cut short by shutdown
+// leaves them queued for the person to send or remove.
 func (s *Service) sendQueuedAfter(id string, l *live) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

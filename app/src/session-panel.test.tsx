@@ -522,6 +522,20 @@ it("starts a session from the page, showing the prompt at once, and stops it", a
   expect(calls.some((c) => c.path === "api/console/conversations/c1/cancel")).toBe(true);
   expect(panel()!.textContent).toContain("Stopped before the agent finished.");
   expect(queuedList()!.textContent).toContain("Queued, not sent yet1");
+  // Refused, Send now leaves no prompt behind, only why.
+  answer = (call) =>
+    call.path === "api/console/conversations/c1/queued/send"
+      ? Response.json({ code: "busy", message: "busy" }, { status: 409 })
+      : undefined;
+  await act(async () => button("Send now")!.click());
+  await until(() =>
+    expect(panel()!.textContent).toContain("The agent is still answering the last message."),
+  );
+  expect(panel()!.querySelector(".session-panel-prompt")?.textContent ?? "").not.toContain(
+    "And the jitter?",
+  );
+  expect(queuedList()).not.toBeNull();
+  answer = () => undefined;
   await act(async () => button("Send now")!.click());
   await until(() => expect(queuedList()).toBeNull());
   expect(calls.some((c) => c.path === "api/console/conversations/c1/queued/send")).toBe(true);

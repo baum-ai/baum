@@ -615,6 +615,8 @@ function SessionPanel({
     try {
       update(await change());
     } catch (e) {
+      // Send now's prompt went nowhere.
+      if (what === "send") setTurn(null);
       setSendError(sendErrorText(e));
     } finally {
       setQueueing(null);
