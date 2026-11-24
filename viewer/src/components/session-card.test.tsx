@@ -578,9 +578,13 @@ describe("a long session's transcript", () => {
     expect(list().getAttribute("aria-busy")).toBe("true");
     expect(turns()[29]!.textContent).toContain("Prompt 500");
     expect(turns()[0]!.textContent).toContain("Prompt 471");
+    // The browser's own scroll anchoring stays off while turns come in above.
+    expect(list().style.overflowAnchor).toBe("none");
     await untilAll();
     expect(turns()).toHaveLength(500);
     expect(list().hasAttribute("aria-busy")).toBe(false);
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(list().style.overflowAnchor).toBe("");
     expect(turns()[0]!.textContent).toContain("Prompt 1");
   });
 

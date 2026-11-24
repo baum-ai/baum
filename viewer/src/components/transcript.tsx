@@ -161,10 +161,24 @@ function contentTop(turn: Element, list: Element) {
 /** Keeps what the reader sees in place as earlier turns come in above it:
  *  the turn that was first moves down by their height, and so does the
  *  scroll, when the list was in view or above it. WebKit does not anchor the
- *  scroll itself, and the list opts out of anchoring where a browser does,
- *  so it moves once. */
+ *  scroll itself; while turns are still to come the list opts out of
+ *  anchoring where a browser does, so it moves once, and opts back in a frame
+ *  after the last of them, for what changes size later. */
 function useKeptPlace(list: RefObject<HTMLOListElement | null>, run: string, from: number) {
   const before = useRef({ run, from, top: 0 });
+  useLayoutEffect(() => {
+    const ol = list.current;
+    if (!ol) return;
+    if (from > 0) {
+      ol.style.overflowAnchor = "none";
+      return;
+    }
+    if (!ol.style.overflowAnchor) return;
+    const frame = requestAnimationFrame(() => {
+      ol.style.overflowAnchor = "";
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [list, from]);
   useLayoutEffect(() => {
     const previous = before.current;
     const ol = list.current;
@@ -261,7 +275,6 @@ export function SessionTranscript({
           <ol
             ref={list}
             className={cn("flex flex-col", log ? "divide-y divide-subtle" : "gap-5")}
-            style={{ overflowAnchor: "none" }}
             aria-busy={from > 0 || undefined}
           >
             {session.prompts.slice(from).map((prompt, at) => {
