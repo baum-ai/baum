@@ -4100,9 +4100,11 @@ A desktop generation job uses `internal/generate` to:
    each; over them a clip is `over_limit` or `too_large`); the agent does not
    open them and places one by its alt text, heading and context. Each
    attachment's `context` is the description text around it within its
-   heading's section, outside code fences and comments, up to 240 bytes
-   before and after its line, with the attachment itself as `[this]` and
-   other media as `[media]`; it is redacted and capped like the alt text. After session
+   heading's section, outside code fences and comments: up to 160 bytes of
+   the lines before and after its own and 80 on each side of it on its line,
+   cut only at whitespace so redaction sees every token whole, with the
+   attachment itself as `[this]` and other media as `[media]`; it is
+   redacted and capped like the alt text. After session
    linkage and count caps, native Claude Code and Codex transcripts also supply
    retained inline pasted and tool-result images through `sessions/sessionimages`.
    Only readable linked roots and reachable subagents contribute; Entire

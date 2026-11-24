@@ -458,21 +458,26 @@ func headingAbove(body, source string) string {
 	return heading
 }
 
-// contextSideBytes bounds the text kept on each side of an image's context.
-const contextSideBytes = 240
+// An image's context keeps up to contextSideBytes of the lines before and
+// after its own, and contextLineBytes on each side of it on its line, so it
+// fits the alt text cap (max_image_alt_bytes, 512) whole.
+const (
+	contextSideBytes = 160
+	contextLineBytes = 80
+)
 
 var (
 	htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
-	// A media reference: a markdown image, an img or video element, or a bare
-	// upload URL.
-	mediaReference = regexp.MustCompile(`(?s)!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>|<video\b.*?(?:</video>|/>|>)|` + markdownUpload.String())
+	// A media reference outside a tag: a markdown image or a bare upload URL.
+	mediaReference = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)|` + markdownUpload.String())
 	htmlTag        = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
+	mediaTag       = regexp.MustCompile(`(?i)^<(?:img|video|source)\b[^>]*\bsrc=`)
 	blankRun       = regexp.MustCompile(`[ \t]+`)
 )
 
 // contextAround is the description text around source, within its heading's
-// section and outside code fences: up to contextSideBytes before and after
-// the line holding it. Authors caption media above, below, in a table's
+// section and outside code fences: its own line and the lines before and
+// after it, each part cut at whitespace to its limit. Authors caption media above, below, in a table's
 // header or a details summary, so the reader decides which part describes
 // it. The image itself reads [this], any other media [media].
 func contextAround(body, source string) string {
@@ -504,29 +509,61 @@ func contextAround(body, source string) string {
 			break
 		}
 	}
-	before := contextText(lines[start:line], source)
-	after := contextText(lines[line+1:end], source)
-	if len(before) > contextSideBytes {
-		before = "…" + strings.ToValidUTF8(before[len(before)-contextSideBytes:], "")
+	own := contextText(lines[line:line+1], source)
+	if at := strings.Index(own, "[this]"); at >= 0 {
+		own = lastWords(own[:at], contextLineBytes) + "[this]" + firstWords(own[at+len("[this]"):], contextLineBytes)
+	} else {
+		own = firstWords(own, 2*contextLineBytes)
 	}
-	if len(after) > contextSideBytes {
-		after = strings.ToValidUTF8(after[:contextSideBytes], "") + "…"
+	before := lastWords(contextText(lines[start:line], source), contextSideBytes)
+	after := firstWords(contextText(lines[line+1:end], source), contextSideBytes)
+	return strings.TrimSpace(strings.Join([]string{before, own, after}, "\n"))
+}
+
+// firstWords keeps the whole words of s that fit in limit bytes. Cuts fall
+// only on whitespace, so the redaction that runs later sees every token
+// whole.
+func firstWords(s string, limit int) string {
+	if len(s) <= limit {
+		return s
 	}
-	return strings.TrimSpace(strings.Join([]string{before, contextText(lines[line:line+1], source), after}, "\n"))
+	return s[:max(strings.LastIndexAny(s[:limit+1], " \n"), 0)] + "…"
+}
+
+// lastWords is firstWords from the end of s.
+func lastWords(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	from := len(s) - limit - 1
+	if at := strings.IndexAny(s[from:], " \n"); at >= 0 {
+		return "…" + s[from+at+1:]
+	}
+	return "…"
 }
 
 // contextText joins lines as plain text with media replaced and empty lines
-// dropped.
+// dropped: a tag holding source reads [this], an img, video or source tag
+// [media], and any other tag nothing.
 func contextText(lines []string, source string) string {
 	var kept []string
 	for _, l := range lines {
+		l = htmlTag.ReplaceAllStringFunc(l, func(tag string) string {
+			switch {
+			case strings.Contains(tag, source):
+				return "[this]"
+			case mediaTag.MatchString(tag):
+				return "[media]"
+			}
+			return ""
+		})
 		l = mediaReference.ReplaceAllStringFunc(l, func(media string) string {
 			if strings.Contains(media, source) {
 				return "[this]"
 			}
 			return "[media]"
 		})
-		l = strings.TrimSpace(blankRun.ReplaceAllString(htmlTag.ReplaceAllString(l, ""), " "))
+		l = strings.TrimSpace(blankRun.ReplaceAllString(l, " "))
 		if l != "" {
 			kept = append(kept, l)
 		}

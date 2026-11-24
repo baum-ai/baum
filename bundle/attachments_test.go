@@ -292,3 +292,20 @@ func TestContextAroundKeepsTheCaptionsAroundMedia(t *testing.T) {
 		t.Errorf("commented-out context = %q, want empty", got)
 	}
 }
+
+func TestContextAroundKeepsTagsAndTokensWhole(t *testing.T) {
+	clip := markdownAsset(uploadBefore)
+	body := "Demo:\n<video controls>\n  <source src=\"" + clip + "\" type=\"video/mp4\">\n</video>\nIt retries."
+	if got, want := contextAround(body, clip), "Demo:\n[this]\nIt retries."; got != want {
+		t.Errorf("source tag context = %q, want %q", got, want)
+	}
+	token := "ghp_" + strings.Repeat("a", 36)
+	long := token + " " + strings.Repeat("x", 150) + "\n" + clip
+	if got := contextAround(long, clip); strings.Contains(got, "aaaa") {
+		t.Errorf("a cut token reached the context: %q", got)
+	}
+	line := strings.Repeat("lead ", 40) + "![x](" + clip + ") " + strings.Repeat("tail ", 40)
+	if got := contextAround(line, clip); !strings.Contains(got, "[this]") || len(got) > 2*contextLineBytes+len("…[this]…") {
+		t.Errorf("own line context = %q", got)
+	}
+}
