@@ -32,11 +32,18 @@ describe("a prose tile's text", () => {
     );
     expect(html).toContain("<strong>the reader</strong>");
     expect(html).toContain("<code");
+    expect(html).toMatch(/<ul[^>]*list-disc/);
     expect(html).toContain("<li>one</li>");
     expect(html).not.toContain("<a");
     expect(html).not.toContain("href");
     expect(html).not.toContain("<img");
     expect(html).not.toContain("<b>");
     expect(html).toContain("here");
+  });
+
+  it("numbers a list from where its text starts it", () => {
+    const html = renderToStaticMarkup(<ProseText text={"3. three\n4. four"} />);
+    expect(html).toMatch(/<ol[^>]*start="3"/);
+    expect(html).toMatch(/<ol[^>]*list-decimal/);
   });
 });
