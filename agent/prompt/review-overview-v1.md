@@ -49,7 +49,10 @@ reply's schema is `schema-overview.json` in the run directory.
   `heading` is only the heading above where it sits in the description, and
   uploaded images are often appended at its end: judge an image by its alt
   text and by what the change does. When a change alters a screen and the
-  description has pictures of it, show them.
+  description has pictures of it, show them. A `video/*` clip of the change
+  in use shows it best: when the description has one, give it the first
+  slot and fill the rest with images. A clip linked by its bare URL has no
+  alt text; judge it by its heading and the text around it.
 - `diagram`: the id of the overview's main diagram when it is ready; else
   the id of the ready section tile that best shows the whole change; else
   null. The page shows it under the screenshots.
