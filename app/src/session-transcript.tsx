@@ -252,21 +252,50 @@ function atBottom() {
  *  `version` keeps them there; once they scroll up, their place is kept.
  *  `follow` is where a reader starts: at the end, on the latest turn, unless
  *  it is false. The reader's position counts only once the first version is
- *  shown, since the page around a loading transcript scrolls by itself. */
+ *  shown, since the page around a loading transcript scrolls by itself.
+ *  What grows after a version is shown, on its own (a reply measured and
+ *  folded, the transcript's earlier turns rendered), keeps a reader at the
+ *  end too, until the reader clicks or types: what they open grows the page
+ *  where they are reading. */
 export function useFollowScroll(version: string | undefined, follow = true) {
   const pinned = useRef(follow);
   const shown = useRef(false);
+  const growing = useRef(false);
+  const grown = useRef<ResizeObserver | undefined>(undefined);
   useEffect(() => {
     const onScroll = () => {
       if (shown.current) pinned.current = atBottom();
     };
+    const onInput = () => {
+      growing.current = false;
+    };
     // Captured: the panel's scroll does not bubble.
     addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => removeEventListener("scroll", onScroll, { capture: true });
+    addEventListener("pointerdown", onInput, { capture: true, passive: true });
+    addEventListener("keydown", onInput, { capture: true, passive: true });
+    // Growing scrolls nothing, so it is watched: before the frame is drawn.
+    grown.current =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(() => {
+            if (!growing.current || !pinned.current) return;
+            const page = pageScroll();
+            if (page.top + page.view < page.height) page.to(page.height);
+          });
+    return () => {
+      removeEventListener("scroll", onScroll, { capture: true });
+      removeEventListener("pointerdown", onInput, { capture: true });
+      removeEventListener("keydown", onInput, { capture: true });
+      grown.current?.disconnect();
+    };
   }, []);
   useLayoutEffect(() => {
     if (!version) return;
     shown.current = true;
+    growing.current = true;
+    // What the page holds now: a transcript replaces its loader.
+    const main = document.querySelector<HTMLElement>(".local-main");
+    for (const child of (main ?? document.body).children) grown.current?.observe(child);
     if (pinned.current) {
       const page = pageScroll();
       page.to(page.height);

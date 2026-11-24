@@ -2,10 +2,14 @@ import { centerJump, flashJump } from "./jump-focus";
 import pluralize from "pluralize";
 import {
   createContext,
+  memo,
   type ReactNode,
+  type RefObject,
+  startTransition,
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -104,6 +108,85 @@ function useMounted(): boolean {
   );
 }
 
+/** The turns a transcript renders first, its last ones, and the fewest
+ *  earlier turns it adds at a time after that; each time it adds as many as
+ *  it shows, so a long session takes a few commits, each laying out the page
+ *  once. Its latest turns show without waiting for its first ones, and the
+ *  earlier ones render as a transition, so keys and scrolling interrupt them.
+ *  A transcript focused on a turn renders them all at once: the jump to it
+ *  aims at where the turn is as it starts. */
+const FIRST_TURNS = 30;
+const MORE_TURNS = 200;
+
+/** The index of the first turn to render: the turns before it are still to
+ *  come. A server render has them all. */
+function useShownFrom(session: TranscriptSession, focusTurn: number | undefined, mounted: boolean) {
+  const count = session.prompts.length;
+  const first = focusTurn === undefined ? Math.max(0, count - FIRST_TURNS) : 0;
+  const [shown, setShown] = useState({ run: session.run_id, from: first });
+  // Turns already rendered stay; a new session or a focus starts again.
+  const from = !mounted ? 0 : shown.run === session.run_id ? Math.min(shown.from, first) : first;
+  useEffect(() => {
+    if (from === 0) return;
+    const run = session.run_id;
+    const timer = setTimeout(() =>
+      startTransition(() =>
+        setShown({ run, from: Math.max(0, from - Math.max(MORE_TURNS, count - from)) }),
+      ),
+    );
+    return () => clearTimeout(timer);
+  }, [from, count, session.run_id]);
+  return from;
+}
+
+/** The element that scrolls `element`: its nearest scrolling ancestor, or
+ *  the page. */
+function scrollerOf(element: HTMLElement): HTMLElement {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight)
+      return node;
+  }
+  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+}
+
+/** How far into the list a turn's content starts. The first turn's padding
+ *  differs from the others', so its content, not its box, is what is kept. */
+function contentTop(turn: Element, list: Element) {
+  return (
+    (turn.firstElementChild ?? turn).getBoundingClientRect().top - list.getBoundingClientRect().top
+  );
+}
+
+/** Keeps what the reader sees in place as earlier turns come in above it:
+ *  the turn that was first moves down by their height, and so does the
+ *  scroll, when the list was in view or above it. WebKit does not anchor the
+ *  scroll itself, and the list opts out of anchoring where a browser does,
+ *  so it moves once. */
+function useKeptPlace(list: RefObject<HTMLOListElement | null>, run: string, from: number) {
+  const before = useRef({ run, from, top: 0 });
+  useLayoutEffect(() => {
+    const previous = before.current;
+    const ol = list.current;
+    // Only while turns are still to come is where the first one starts read.
+    const first = from > 0 && ol?.firstElementChild;
+    const top = first ? contentTop(first, ol) : 0;
+    before.current = { run, from, top };
+    if (!ol || previous.run !== run || from >= previous.from) return;
+    const kept = ol.children[previous.from - from];
+    if (!kept) return;
+    const moved = contentTop(kept, ol) - previous.top;
+    if (moved <= 0) return;
+    const scroller = scrollerOf(ol);
+    const view =
+      scroller === document.scrollingElement || scroller === document.documentElement
+        ? window.innerHeight
+        : scroller.getBoundingClientRect().bottom;
+    // Where the kept turn was before: below the view, the reader is elsewhere.
+    if (kept.getBoundingClientRect().top - moved < view) scroller.scrollTop += moved;
+  }, [list, run, from]);
+}
+
 /** A session read as the conversation it was: each prompt on the right, the
  *  agent's text replies on the left, and what the agent did in between — tool
  *  calls, model calls, tokens — folded under each turn until somebody asks.
@@ -131,6 +214,9 @@ export function SessionTranscript({
   // Days split in the reader's own zone. The routes that show a transcript
   // render it on the client only, so this guard is defensive, as charts are.
   const mounted = useMounted();
+  const from = useShownFrom(session, focusTurn, mounted);
+  const list = useRef<HTMLOListElement>(null);
+  useKeptPlace(list, session.run_id, from);
   const loadSubagentActivity = source?.loadSubagentActivity;
   const host = useMemo<SubagentHost>(
     () => ({
@@ -172,21 +258,29 @@ export function SessionTranscript({
               </SystemNote>
             ) : null}
           </div>
-          <ol className={cn("flex flex-col", log ? "divide-y divide-subtle" : "gap-5")}>
-            {session.prompts.map((prompt, index) => (
-              <Turn
-                key={prompt.turn_id}
-                prompt={prompt}
-                session={session}
-                replies={state}
-                day={days[index] ?? null}
-                focused={focusTurn === prompt.ordinal}
-                openReply={openLastReply && index === session.prompts.length - 1}
-                source={source}
-                formatCost={formatCost}
-                renderAvatar={renderAvatar}
-              />
-            ))}
+          <ol
+            ref={list}
+            className={cn("flex flex-col", log ? "divide-y divide-subtle" : "gap-5")}
+            style={{ overflowAnchor: "none" }}
+            aria-busy={from > 0 || undefined}
+          >
+            {session.prompts.slice(from).map((prompt, at) => {
+              const index = from + at;
+              return (
+                <Turn
+                  key={prompt.turn_id}
+                  prompt={prompt}
+                  session={session}
+                  replies={state}
+                  day={days[index] ?? null}
+                  focused={focusTurn === prompt.ordinal}
+                  openReply={openLastReply && index === session.prompts.length - 1}
+                  source={source}
+                  formatCost={formatCost}
+                  renderAvatar={renderAvatar}
+                />
+              );
+            })}
           </ol>
           {session.prompts_truncated ? (
             <SystemNote className="mt-3">
@@ -241,7 +335,8 @@ function useTurnActivity(runId: string, turnId: string, source: TranscriptSource
   return { activity, load, available: Boolean(loadTurnActivity) };
 }
 
-function Turn({
+/** Memoised: rendering earlier turns leaves the ones already shown alone. */
+const Turn = memo(function Turn({
   prompt,
   session,
   replies,
@@ -372,7 +467,7 @@ function Turn({
       {!systemLabel || hasAgentOutput ? agentContent : null}
     </li>
   );
-}
+});
 
 /** The prompt, as a bubble on the right: the side a chat puts its reader on.
  *  The host may send a preview; expanding loads the rest. */

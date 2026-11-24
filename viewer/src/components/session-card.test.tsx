@@ -558,3 +558,92 @@ it("keeps real agent replies visible after a folded context summary", () => {
   expect(folded.textContent).not.toContain("The budget is wired.");
   expect(container.textContent).toContain("The budget is wired.");
 });
+
+describe("a long session's transcript", () => {
+  const long = (count: number) =>
+    session({
+      prompts: Array.from({ length: count }, (_, i) =>
+        prompt(i + 1, `Prompt ${i + 1}`, { replies: [] }),
+      ),
+    });
+  const list = () => container.querySelector("ol")!;
+  const turns = () => list().querySelectorAll(":scope > li");
+  async function untilAll() {
+    for (let i = 0; i < 20 && list().hasAttribute("aria-busy"); i++) await settle();
+  }
+
+  it("renders its last turns first, then the earlier ones, busy until it has them all", async () => {
+    render(createElement(SessionTranscript, { session: long(500), replies: "ready" }));
+    expect(turns()).toHaveLength(30);
+    expect(list().getAttribute("aria-busy")).toBe("true");
+    expect(turns()[29]!.textContent).toContain("Prompt 500");
+    expect(turns()[0]!.textContent).toContain("Prompt 471");
+    await untilAll();
+    expect(turns()).toHaveLength(500);
+    expect(list().hasAttribute("aria-busy")).toBe(false);
+    expect(turns()[0]!.textContent).toContain("Prompt 1");
+  });
+
+  it("renders every turn at once when it is focused on one", () => {
+    render(
+      createElement(SessionTranscript, { session: long(500), replies: "ready", focusTurn: 300 }),
+    );
+    expect(turns()).toHaveLength(500);
+    expect(list().hasAttribute("aria-busy")).toBe(false);
+  });
+
+  it("renders every turn at once on the server", () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionTranscript, { session: long(100), replies: "ready" }),
+    );
+    expect(html).toContain("Prompt 1<");
+    expect(html).not.toContain("aria-busy");
+  });
+
+  /** The transcript in a panel 800 px tall that scrolls, its list `offset`
+   *  px down the panel, each turn 100 px tall with its content 10 px in;
+   *  `check` runs once it has all its turns, given the panel's scroll. */
+  async function inPanel(offset: number, start: number, check: (top: number) => void) {
+    const panel = document.createElement("div");
+    const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const li = this.closest("li");
+      const top = li
+        ? offset + [...li.parentElement!.children].indexOf(li) * 100 + (li === this ? 0 : 10)
+        : this.tagName === "OL"
+          ? offset
+          : 0;
+      const bottom = this === panel ? 800 : top + 100;
+      return { top, bottom, left: 0, right: 0, width: 0, height: bottom - top } as DOMRect;
+    });
+    try {
+      panel.style.overflowY = "auto";
+      Object.defineProperty(panel, "scrollHeight", { value: 100_000 });
+      Object.defineProperty(panel, "clientHeight", { value: 800 });
+      let top = 0;
+      Object.defineProperty(panel, "scrollTop", { get: () => top, set: (v: number) => (top = v) });
+      document.body.append(panel);
+      container = document.createElement("div");
+      panel.append(container);
+      root = createRoot(container);
+      act(() =>
+        root!.render(createElement(SessionTranscript, { session: long(500), replies: "ready" })),
+      );
+      top = start;
+      await untilAll();
+      check(top);
+    } finally {
+      rect.mockRestore();
+    }
+  }
+
+  it("keeps the reader's place as earlier turns come in above it", async () => {
+    // 470 turns came in above the 30 the reader was among.
+    await inPanel(0, 2_000, (top) => expect(top).toBe(2_000 + 470 * 100));
+  });
+
+  it("leaves the scroll alone while the list is below what the reader sees", async () => {
+    await inPanel(5_000, 0, (top) => expect(top).toBe(0));
+  });
+});

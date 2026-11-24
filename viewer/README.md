@@ -536,6 +536,15 @@ helpers the card uses) and what the host adds:
   print, and runs of tool calls start folded. The desktop app's transcript
   page uses it.
 
+A long session renders its last 30 turns first, then its earlier turns in a
+few growing batches as a React transition, so keys and scrolling are not held
+up by them; the list is `aria-busy` until it has them all, and until then the
+browser's find does not reach the turns still to come. The turns the reader is
+among stay where they are as earlier ones come in above (the transcript moves
+its scroller by their height when the list is in view or above it, since
+WebKit does not anchor the scroll). A transcript given a `focusTurn`, and a
+server render, have every turn at once.
+
 A prompt can carry `images`, each a `src` the host serves and an `alt`: they
 show under its text as thumbnails that open in the image viewer. Agent
 messages are marked `data-agent-text` (`progress` for the folded ones), for a

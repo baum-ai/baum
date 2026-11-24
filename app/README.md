@@ -2375,7 +2375,9 @@ events. Each read names the version shown, so an unchanged transcript costs a
 few bytes and draws nothing again; a new version keeps the turns the reader
 opened (the card's source carries the version as its `revision`, so an opened
 turn's activity is read again) and, when the reader is at the end of the page,
-keeps them there; every session opens at its end, on its latest turn. A transcript the daemon
+keeps them there, and so does what grows on its own after it is shown (a reply
+measured and folded, the transcript's earlier turns) until the reader clicks or
+types; every session opens at its end, on its latest turn. A transcript the daemon
 does not serve says why (the agent named no transcript, it is outside the
 agent's session folder, the file is gone), and a failed read keeps what is
 shown. The back chevron, `u` or Esc returns to the list. A reply bar stays at
