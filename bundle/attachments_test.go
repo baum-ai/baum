@@ -308,4 +308,8 @@ func TestContextAroundKeepsTagsAndTokensWhole(t *testing.T) {
 	if got := contextAround(line, clip); !strings.Contains(got, "[this]") || len(got) > 2*contextLineBytes+len("…[this]…") {
 		t.Errorf("own line context = %q", got)
 	}
+	linked := "See [this](https://example.com) first, " + strings.Repeat("pad ", 30) + "<a href=\"" + clip + "\"><img src=\"" + clip + "\"></a><br>done"
+	if got := contextAround(linked, clip); strings.Count(got, "[this]") != 1 || !strings.HasSuffix(got, "pad [this] done") {
+		t.Errorf("linked image context = %q", got)
+	}
 }

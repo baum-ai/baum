@@ -510,14 +510,15 @@ func contextAround(body, source string) string {
 		}
 	}
 	own := contextText(lines[line:line+1], source)
-	if at := strings.Index(own, "[this]"); at >= 0 {
-		own = lastWords(own[:at], contextLineBytes) + "[this]" + firstWords(own[at+len("[this]"):], contextLineBytes)
+	if at := strings.Index(own, thisMark); at >= 0 {
+		own = lastWords(own[:at], contextLineBytes) + thisMark + firstWords(own[at+len(thisMark):], contextLineBytes)
 	} else {
 		own = firstWords(own, 2*contextLineBytes)
 	}
 	before := lastWords(contextText(lines[start:line], source), contextSideBytes)
 	after := firstWords(contextText(lines[line+1:end], source), contextSideBytes)
-	return strings.TrimSpace(strings.Join([]string{before, own, after}, "\n"))
+	context := strings.TrimSpace(strings.Join([]string{before, own, after}, "\n"))
+	return strings.ReplaceAll(context, thisMark, "[this]")
 }
 
 // firstWords keeps the whole words of s that fit in limit bytes. Cuts fall
@@ -530,39 +531,52 @@ func firstWords(s string, limit int) string {
 	return s[:max(strings.LastIndexAny(s[:limit+1], " \n"), 0)] + "…"
 }
 
-// lastWords is firstWords from the end of s.
+// lastWords is firstWords from the end of s, starting at a line when one
+// fits, so a secret's keyword stays with its value on the line.
 func lastWords(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
 	from := len(s) - limit - 1
-	if at := strings.IndexAny(s[from:], " \n"); at >= 0 {
+	at := strings.IndexByte(s[from:], '\n')
+	if at < 0 {
+		at = strings.IndexByte(s[from:], ' ')
+	}
+	if at >= 0 {
 		return "…" + s[from+at+1:]
 	}
 	return "…"
 }
 
+// thisMark stands for the image while its context is cut; it cannot occur
+// in the text, unlike "[this]".
+const thisMark = "\x00"
+
 // contextText joins lines as plain text with media replaced and empty lines
-// dropped: a tag holding source reads [this], an img, video or source tag
-// [media], and any other tag nothing.
+// dropped: a tag holding source reads as the image (once for a run of them,
+// as a linked image has two), an img, video or source tag [media], and any
+// other tag a space, so no text is spliced together.
 func contextText(lines []string, source string) string {
 	var kept []string
 	for _, l := range lines {
 		l = htmlTag.ReplaceAllStringFunc(l, func(tag string) string {
 			switch {
 			case strings.Contains(tag, source):
-				return "[this]"
+				return thisMark
 			case mediaTag.MatchString(tag):
 				return "[media]"
 			}
-			return ""
+			return " "
 		})
 		l = mediaReference.ReplaceAllStringFunc(l, func(media string) string {
 			if strings.Contains(media, source) {
-				return "[this]"
+				return thisMark
 			}
 			return "[media]"
 		})
+		for strings.Contains(l, thisMark+thisMark) {
+			l = strings.ReplaceAll(l, thisMark+thisMark, thisMark)
+		}
 		l = strings.TrimSpace(blankRun.ReplaceAllString(l, " "))
 		if l != "" {
 			kept = append(kept, l)
