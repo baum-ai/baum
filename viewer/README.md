@@ -964,7 +964,8 @@ Description images and prompt images open in one viewer
 an image past its own pixels, and keeps the image's proportions. Its corner
 drags to scale the image; until then it refits when the window changes size.
 The size dragged to is remembered in `localStorage` as a share of that fit,
-and later images, of any shape, open at the same share. A click on the backdrop, the close control or
+and later images, of any shape, open at the same share. Its "Fit to screen"
+control returns to the full fit and forgets the share. A click on the backdrop, the close control or
 Escape closes it.
 
 An indexed attachment whose `content_type` is `video/…` (local desktop reviews

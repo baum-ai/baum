@@ -3,8 +3,8 @@ import { type PointerEvent, type ReactNode, useEffect, useId, useRef } from "rea
 import { type ImageSize, viewerImageWidth } from "../review-image-layout";
 import { useStoredSetting } from "../use-stored-setting";
 import { cn } from "./classnames";
-import { ExternalLinkIcon } from "./icons";
-import { CloseButton } from "./ui";
+import { ExternalLinkIcon, FitScreenIcon } from "./icons";
+import { CloseButton, IconButton } from "./ui";
 
 /** An image to show large: where it is served, its description, and its
  *  pixel size when the host knows it (otherwise it is read once it loads). */
@@ -25,7 +25,8 @@ function storedScale(value: string | null): number {
 /** A modal viewer for one image. It opens as large as the screen allows,
  *  past the image's own pixels, and keeps its proportions. Its corner drags
  *  to resize the image; the share of the screen dragged to is remembered,
- *  and later images open at it. `image` set opens it and `null` closes it; `onClose`
+ *  and later images open at it; "Fit to screen" returns to the full fit and
+ *  forgets it. `image` set opens it and `null` closes it; `onClose`
  *  follows any close, including Escape. */
 export function ImageViewer({
   image,
@@ -122,6 +123,17 @@ export function ImageViewer({
   }, []);
 
   const close = () => dialog.current?.close();
+
+  // A smaller dialog pinned where it opened can only grow down and right,
+  // so the way back to the full fit is a control.
+  const fitToScreen = () => {
+    store("1");
+    scale.current = 1;
+    dragged.current = false;
+    dialog.current?.removeAttribute("style");
+    frame.current?.style.removeProperty("max-width");
+    if (fitted.current) fit(fitted.current);
+  };
   const closeRef = useRef(close);
   closeRef.current = close;
 
@@ -236,6 +248,9 @@ export function ImageViewer({
                   Open original
                   <ExternalLinkIcon size={10} />
                 </a>
+                <IconButton label="Fit to screen" onClick={fitToScreen}>
+                  <FitScreenIcon />
+                </IconButton>
                 <CloseButton ref={closer} label="Close image" onClick={close} />
               </div>
             </div>

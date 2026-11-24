@@ -133,6 +133,15 @@ describe("ImageViewer", () => {
     expect(Math.abs(width() - fit(20, 40) * share)).toBeLessThanOrEqual(1);
   });
 
+  it("fits to the screen again and forgets the remembered share", () => {
+    const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
+    drag(view.frame(), 95, 95, "300px");
+    act(() => view.button("Fit to screen").click());
+    const width = viewerImageWidth({ width: 40, height: 20 }, viewport(), 0);
+    expect(view.frame().style.width).toBe(`${width}px`);
+    expect(localStorage.getItem("baum.image-viewer.scale")).toBe("1");
+  });
+
   it("remembers nothing from a press that moves the corner a pixel", () => {
     const view = mount({ src: "/a.png", alt: "Shot", width: 40, height: 20 });
     const before = Number.parseFloat(view.frame().style.width);

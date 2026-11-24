@@ -149,6 +149,15 @@ export function ExternalLinkIcon(props: IconProps) {
   );
 }
 
+/** Four corners pointing out: fit to the screen. */
+export function FitScreenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
+    </Icon>
+  );
+}
+
 /** A terminal window with a prompt: a device signed in from the command line. */
 export function TerminalIcon(props: IconProps) {
   return (
