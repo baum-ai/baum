@@ -713,3 +713,32 @@ test("Settings warns about Codex hook approval and clears after verification", a
   await expect(settings).not.toHaveAttribute("title", /Codex hooks need approval/);
   await expect(page.getByText(/Open \/hooks in Codex and trust baum/)).toHaveCount(0);
 });
+
+test("a narrow Analytics breakdown can scroll all the way to API prices by keyboard", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Analytics", exact: true }).click();
+
+  const breakdown = page.getByRole("region", { name: "Breakdown", exact: true });
+  const repository = breakdown.getByRole("button", { name: "Repository", exact: true });
+  const table = breakdown.locator(".analytics-scroll");
+  const prices = breakdown.getByRole("columnheader", { name: "At API prices" });
+  await expect(prices).toBeVisible();
+  await expect
+    .poll(() => table.evaluate((element) => element.scrollWidth > element.clientWidth))
+    .toBe(true);
+  await expect(table).toHaveAttribute("tabindex", "0");
+  await repository.focus();
+  await page.keyboard.press("Tab");
+  await expect(table).toBeFocused();
+
+  await expect(prices).not.toBeInViewport();
+  for (let step = 0; step < 10; step++) await page.keyboard.press("ArrowRight");
+  await expect(prices).toBeInViewport({ ratio: 0.95 });
+
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await expect(table).not.toHaveAttribute("tabindex", "0");
+});
