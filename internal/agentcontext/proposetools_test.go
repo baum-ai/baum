@@ -68,7 +68,9 @@ func TestPromptProposalsFromAnyPage(t *testing.T) {
 		if !isAnywhereTarget(p.Target) {
 			t.Errorf("%s: %q is not an any-page target", tt.name, p.Target)
 		}
-		s.Proposals.Dismiss(id, p.ID)
+		if err := s.Proposals.Dismiss(id, p.ID); err != nil {
+			t.Fatalf("%s: dismiss: %v", tt.name, err)
+		}
 	}
 	setPage(t, s, id, pull)
 	if text, failed := data(t, s, token, "propose_prompt", map[string]any{"id": "fix", "text": "t", "repository": "acme"}); !failed {

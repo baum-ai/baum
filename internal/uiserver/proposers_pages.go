@@ -203,15 +203,13 @@ func (p *Proposers) repositoryTarget(page agentcontext.PageContext, name string)
 	if !strings.EqualFold(repository, page.Repository) {
 		return nil, fmt.Errorf("the person has %s's page open: a proposal is for that repository", page.Repository)
 	}
-	repository = page.Repository
-	switch {
-	case what == agentcontext.TargetRepositorySettings:
-		if err := checkSection(page, "reviews", "reviews", "the repository's page"); err != nil {
-			return nil, err
-		}
-		return p.repositorySettingsTarget(repository), nil
+	if what != agentcontext.TargetRepositorySettings {
+		return nil, fmt.Errorf("a repository's page has no setting %q that takes proposals", what)
 	}
-	return nil, fmt.Errorf("a repository's page has no setting %q that takes proposals", what)
+	if err := checkSection(page, "reviews", "reviews", "the repository's page"); err != nil {
+		return nil, err
+	}
+	return p.repositorySettingsTarget(page.Repository), nil
 }
 
 // repositorySettingsTarget is a repository's shared settings, saved as
