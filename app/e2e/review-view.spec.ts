@@ -187,7 +187,7 @@ test("a wide section shows its Overview beside its other views, which stay in si
   expect(await overflows(page)).toBe(false);
   if (SHOTS) {
     mkdirSync(SHOTS, { recursive: true });
-    await page.mouse.wheel(0, -2000);
+    await page.evaluate(() => document.querySelector(".local-main")!.scrollTo({ top: 0 }));
     await views.getByRole("tab", { name: "Code" }).click();
     for (const scheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme: scheme });
