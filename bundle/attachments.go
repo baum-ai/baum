@@ -481,7 +481,7 @@ var (
 // header or a details summary, so the reader decides which part describes
 // it. The image itself reads [this], any other media [media].
 func contextAround(body, source string) string {
-	body = htmlComment.ReplaceAllString(body, "")
+	body = strings.ReplaceAll(htmlComment.ReplaceAllString(body, ""), "\x00", "")
 	at := strings.Index(body, source)
 	if at < 0 || source == "" {
 		return ""
@@ -548,9 +548,14 @@ func lastWords(s string, limit int) string {
 	return "…"
 }
 
-// thisMark stands for the image while its context is cut; it cannot occur
-// in the text, unlike "[this]".
-const thisMark = "\x00"
+// thisMark stands for the image while its context is cut. The text never
+// holds it (contextAround drops NUL bytes), unlike "[this]", and it is as
+// long, so the cuts measure the context as it ends up.
+const thisMark = "\x00this\x00"
+
+// thisRun is the image's mark repeated with only space between, as a linked
+// image gives.
+var thisRun = regexp.MustCompile(regexp.QuoteMeta(thisMark) + `(?:\s*` + regexp.QuoteMeta(thisMark) + `)+`)
 
 // contextText joins lines as plain text with media replaced and empty lines
 // dropped: a tag holding source reads as the image (once for a run of them,
@@ -574,9 +579,7 @@ func contextText(lines []string, source string) string {
 			}
 			return "[media]"
 		})
-		for strings.Contains(l, thisMark+thisMark) {
-			l = strings.ReplaceAll(l, thisMark+thisMark, thisMark)
-		}
+		l = thisRun.ReplaceAllString(l, thisMark)
 		l = strings.TrimSpace(blankRun.ReplaceAllString(l, " "))
 		if l != "" {
 			kept = append(kept, l)
