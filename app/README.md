@@ -2798,11 +2798,11 @@ there is none; while a turn runs, **Stop** cancels it, and Enter (or
 **Queue**) queues what is typed for when the turn ends. The queued messages
 list above the composer, oldest first, each with **Remove**; once the turn
 answers they go together, a blank line between them, as the next turn. A turn
-that was stopped or failed leaves them there, saying they were not sent, with
-**Send now**; the next message sent goes after them in the same turn. Closing
+that was stopped or failed leaves them there, saying they were not sent yet,
+with **Send now**; the next message sent goes after them in the same turn. Closing
 the session drops them. Undo in it is the app's, as in every field
 (`src/text-history.ts`). A refused message comes back into the composer with
-why (`busy`, `closed`, `shutting_down`, or the queue's limits).
+why (`closed`, `shutting_down`, or the queue's limits).
 
 The agent's proposals (`GET .../proposals`, read again on the conversation's
 `proposals` events) are cards under the transcript. A change (`diff`) shows

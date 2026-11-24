@@ -1061,7 +1061,14 @@ function SessionPanel({
               running={running}
               working={queueing}
               remove={(q) => void changeQueue(() => removeQueued(id, q), q)}
-              sendNow={() => void changeQueue(() => sendQueued(id), "send")}
+              sendNow={() => {
+                // Shown at once, as a sent message is.
+                setTurn({
+                  text: queued.map((q) => q.text).join("\n\n"),
+                  prompts: prompts.current,
+                });
+                void changeQueue(() => sendQueued(id), "send");
+              }}
             />
           ) : null}
           {picked ? (
@@ -1186,13 +1193,12 @@ function QueuedList({
   return (
     <section aria-label="Queued messages" className="session-panel-queued">
       <p className="session-panel-queued-head">
-        <span>
-          {running
-            ? `Queued for when the agent finishes · ${queued.length}`
-            : `Queued, not sent: the last turn didn't finish · ${queued.length}`}
+        <span className="inline-flex items-center gap-1.5">
+          {running ? "Queued for when the agent finishes" : "Queued, not sent yet"}
+          <Badge>{queued.length}</Badge>
         </span>
         {!running ? (
-          <Button size="compact" disabled={!!working} onClick={sendNow}>
+          <Button variant="secondary" size="compact" disabled={!!working} onClick={sendNow}>
             {working === "send" ? <NineDots size={12} /> : null}
             Send now
           </Button>

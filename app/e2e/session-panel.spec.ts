@@ -149,7 +149,7 @@ test("messages sent while the agent works are queued and sent once it answers", 
   await composer.press("Enter");
   await expect(composer).toHaveValue("");
   const queued = panel(page).getByRole("region", { name: "Queued messages" });
-  await expect(queued).toContainText("Queued for when the agent finishes · 1");
+  await expect(queued).toContainText("Queued for when the agent finishes1");
   await composer.fill("Never mind that, what about jitter?");
   await panel(page).getByRole("button", { name: "Queue", exact: true }).click();
   await composer.fill("Add a test for the cap.");

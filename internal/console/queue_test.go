@@ -101,6 +101,13 @@ func TestMessagesQueuedWhileRunningGoAsTheNextTurn(t *testing.T) {
 	if last := got.Pages[len(got.Pages)-1]; last.Page != agentcontext.PageJobs {
 		t.Fatalf("pages %+v", got.Pages)
 	}
+	// Sent on its own, it leaves the page the person has open alone.
+	f.service.mu.Lock()
+	open := f.service.page
+	f.service.mu.Unlock()
+	if open != nil {
+		t.Fatalf("the open page became %+v", open)
+	}
 }
 
 // A stopped turn leaves the queue for the person: it survives a restart,

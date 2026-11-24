@@ -425,7 +425,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	now := s.opts.Now().UTC()
 	c := Conversation{ID: id, Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,
 		Repository: placed.repository, PullRequest: placed.number, Branch: placed.branch, CreatedWorktree: placed.created,
-		CreatedBranch: placed.newBranch, DirectoryNote: placed.note, Pages: []agentcontext.PageContext{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
+		CreatedBranch: placed.newBranch, DirectoryNote: placed.note, Pages: []agentcontext.PageContext{}, Queued: []Queued{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
 	if request.Page != nil {
 		c.Pages = addPage(c.Pages, *request.Page)
 	}
@@ -489,6 +489,11 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	queued := append(slices.Clone(c.Queued), Queued{Text: message, Page: page})
 	if len(queuedText(queued)) > MaxMessageBytes {
 		return Conversation{}, invalid("the queued messages and this one are more than %d bytes together; remove some first", MaxMessageBytes)
+	}
+	// The person is on the page this message came from; queued messages
+	// sent later name theirs for their turn alone.
+	if page != nil {
+		s.setPageLocked(*page)
 	}
 	return s.startLocked(c, queued)
 }
@@ -555,13 +560,14 @@ func (s *Service) SendQueued(_ context.Context, id string) (Conversation, error)
 	return s.startLocked(c, c.Queued)
 }
 
-// sendQueuedAfter starts the next turn with the queued messages once a turn
-// has answered. A turn stopped, failed or cut short by shutdown leaves them
-// queued for the person to send or remove.
-func (s *Service) sendQueuedAfter(id string) {
+// sendQueuedAfter starts the next turn with the queued messages once the
+// turn l ran has answered. A turn stopped (even as it answered, or just
+// after), failed or cut short by shutdown leaves them queued for the person
+// to send or remove.
+func (s *Service) sendQueuedAfter(id string, l *live) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopping {
+	if s.stopping || l.stopped || s.live[id] != l {
 		return
 	}
 	c, err := s.store.get(id)
@@ -603,7 +609,6 @@ func (s *Service) startLocked(c Conversation, messages []Queued) (Conversation, 
 		return Conversation{}, err
 	}
 	if page != nil {
-		s.setPageLocked(*page)
 		c.Pages = addPage(c.Pages, *page)
 	}
 	// The turn is about the page it is sent from, else the one open now: a
@@ -626,7 +631,7 @@ func (s *Service) startLocked(c Conversation, messages []Queued) (Conversation, 
 	s.turns.Add(1)
 	go func() {
 		s.turn(ctx, c, message, l)
-		s.sendQueuedAfter(id)
+		s.sendQueuedAfter(id, l)
 	}()
 	s.publish(Event{Conversation: id, Kind: EventState, State: c.State})
 	return c, nil
@@ -639,8 +644,12 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 	s.mu.Lock()
 	l := s.live[id]
 	var done chan struct{}
-	if l != nil && l.cancel != nil {
+	if l != nil {
+		// Also when the turn has just ended: its queued messages then wait
+		// for the person rather than going on their own.
 		l.stopped = true
+	}
+	if l != nil && l.cancel != nil {
 		l.cancel()
 		done = l.done
 	}

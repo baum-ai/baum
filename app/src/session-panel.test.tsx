@@ -505,7 +505,7 @@ it("starts a session from the page, showing the prompt at once, and stops it", a
   expect(composer().value).toBe("");
   const queuedList = () => panel()!.querySelector('[aria-label="Queued messages"]');
   await until(() => expect(queuedList()!.textContent).toContain("And the jitter?"));
-  expect(queuedList()!.textContent).toContain("Queued for when the agent finishes · 1");
+  expect(queuedList()!.textContent).toContain("Queued for when the agent finishes1");
   await type(composer(), "And the cap?");
   await act(async () => button("Queue")!.click());
   await until(() => expect(queuedList()!.querySelectorAll("li")).toHaveLength(2));
@@ -521,7 +521,7 @@ it("starts a session from the page, showing the prompt at once, and stops it", a
   await until(() => expect(button("Send")).toBeDefined());
   expect(calls.some((c) => c.path === "api/console/conversations/c1/cancel")).toBe(true);
   expect(panel()!.textContent).toContain("Stopped before the agent finished.");
-  expect(queuedList()!.textContent).toContain("Queued, not sent");
+  expect(queuedList()!.textContent).toContain("Queued, not sent yet1");
   await act(async () => button("Send now")!.click());
   await until(() => expect(queuedList()).toBeNull());
   expect(calls.some((c) => c.path === "api/console/conversations/c1/queued/send")).toBe(true);
