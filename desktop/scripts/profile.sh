@@ -124,7 +124,7 @@ if [ -n "$metric" ] && [ -z "$baseline" ]; then
   echo "profile: --metric names what a comparison judges first; it needs --baseline" >&2
   exit 2
 fi
-case $metric in *[!a-z0-9_]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
+case $metric in *[!a-z0-9_:-]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
 if [ -n "$baseline" ]; then
   # A comparison judges the scenario's headline first (`headline:` after
   # its name), unless --metric names another.
