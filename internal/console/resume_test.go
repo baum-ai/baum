@@ -154,6 +154,8 @@ func TestAResumedConversationKeepsItsSessionFromAnOlderClosedOne(t *testing.T) {
 	if _, err := f.service.Close(ctx, older.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Updated later than the closed one, as the store orders them.
+	time.Sleep(5 * time.Millisecond)
 	resumed, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Resume: testSession})
 	if err != nil || resumed.ID == older.ID {
 		t.Fatalf("%+v %v", resumed, err)
