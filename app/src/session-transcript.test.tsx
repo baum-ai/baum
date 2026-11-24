@@ -1,5 +1,5 @@
 import { mockStateFetch } from "./ui-state-test-helper";
-import { act } from "react";
+import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { TranscriptSession } from "@baum/viewer/transcript";
@@ -10,6 +10,7 @@ import {
   parseLiveTranscript,
   POLL_RUNNING,
   SessionTranscriptPage,
+  useMessageKeys,
 } from "./session-transcript";
 
 // The transcript is the viewer's; here it shows the prompts it is given and
@@ -377,4 +378,53 @@ it("says why a transcript is not served, and when the session is gone", async ()
   expect(node.textContent).toContain("This session is no longer listed");
   expect(node.textContent).toContain("Couldn't load the transcript");
   expect(node.querySelector("button")?.textContent).toBe("Retry");
+});
+
+it("goes on from the message k marked while the page still scrolls to it", async () => {
+  // Five messages 100 px tall, the page scrolled to the last; the smooth
+  // scroll each press starts has not moved yet when the next press comes.
+  Object.defineProperty(window, "scrollY", { configurable: true, value: 400 });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 300 });
+  vi.stubGlobal("matchMedia", () => ({ matches: false }));
+  const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: Element,
+  ) {
+    const at = Number((this as HTMLElement).dataset.at ?? -1);
+    const top = at < 0 ? -100 : at * 100 - window.scrollY;
+    return { top, bottom: top + 100, left: 0, right: 0, width: 0, height: 100 } as DOMRect;
+  });
+  try {
+    function Keys() {
+      const body = useRef<HTMLDivElement>(null);
+      const top = useRef<HTMLDivElement>(null);
+      useMessageKeys(body, top);
+      return (
+        <>
+          <div ref={top} />
+          <div ref={body}>
+            {[0, 1, 2, 3, 4].map((at) => (
+              <p key={at} data-message="human" data-at={at}>
+                Message {at}
+              </p>
+            ))}
+          </div>
+        </>
+      );
+    }
+    await act(async () => root.render(<Keys />));
+    const marked = () => node.querySelector(".local-message-current")?.textContent;
+    const k = () =>
+      act(() => {
+        document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "k", bubbles: true }));
+      });
+    k();
+    expect(marked()).toBe("Message 4");
+    k();
+    expect(marked()).toBe("Message 3");
+    // Message 3 is above the view until the scroll arrives: k goes on from it.
+    k();
+    expect(marked()).toBe("Message 2");
+  } finally {
+    rect.mockRestore();
+  }
 });

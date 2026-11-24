@@ -701,8 +701,7 @@ const transcript: Scenario<TranscriptState> = {
     let last = -1;
     for (let i = 0; i < presses; i++) {
       await ctx.press("k");
-      // k scrolls smoothly; a reader reads once it stops. A press during the
-      // scroll marks the same message again, its target not yet in view.
+      // k scrolls smoothly; a reader reads once it stops.
       await ctx.execute(`
         const main = document.querySelector(".local-main") ?? document.scrollingElement;
         const frame = () => new Promise((r) => requestAnimationFrame(r));

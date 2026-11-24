@@ -320,12 +320,17 @@ export function useMessageKeys(
   top: RefObject<HTMLElement | null>,
 ) {
   const current = useRef<HTMLElement | null>(null);
+  // Where the last j or k scrolled the page, from and to: while the page is
+  // still on its way, the marked message counts as shown, so the next press
+  // goes on from it rather than from what the scroll has not reached yet.
+  const aim = useRef<{ from: number; to: number } | null>(null);
   const [reading, setReading] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const mark = (target: HTMLElement) => {
       current.current?.classList.remove("local-message-current");
       target.classList.add("local-message-current");
       current.current = target;
+      aim.current = null;
     };
     const onKey = (event: KeyboardEvent) => {
       if (!["j", "k", " ", "Enter"].includes(event.key)) return;
@@ -334,10 +339,17 @@ export function useMessageKeys(
       const messages = [...body.current.querySelectorAll<HTMLElement>(MESSAGE)];
       const edge = (top.current?.getBoundingClientRect().bottom ?? 0) + 12;
       const marked = current.current;
+      const scroll = aim.current;
+      const now = pageScroll().top;
+      const moving =
+        scroll !== null &&
+        now >= Math.min(scroll.from, scroll.to) - 1 &&
+        now <= Math.max(scroll.from, scroll.to) + 1;
       const shown =
         marked?.isConnected &&
-        marked.getBoundingClientRect().bottom > edge &&
-        marked.getBoundingClientRect().top < innerHeight;
+        (moving ||
+          (marked.getBoundingClientRect().bottom > edge &&
+            marked.getBoundingClientRect().top < innerHeight));
       const at = shown ? messages.indexOf(marked) : -1;
       if (event.key === " " || event.key === "Enter") {
         const target =
@@ -370,7 +382,9 @@ export function useMessageKeys(
       mark(target);
       const reduced = matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       const page = pageScroll();
-      page.to(page.top + target.getBoundingClientRect().top - edge, reduced ? "instant" : "smooth");
+      const to = page.top + target.getBoundingClientRect().top - edge;
+      page.to(to, reduced ? "instant" : "smooth");
+      aim.current = { from: page.top, to };
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
