@@ -23,8 +23,8 @@ function storedScale(value: string | null): number {
 }
 
 /** A modal viewer for one image. It opens as large as the screen allows,
- *  past the image's own pixels, and keeps its proportions. Its corner drags
- *  to resize the image; the share of the screen dragged to is remembered,
+ *  past the image's own pixels, and keeps its proportions. Any edge or
+ *  corner drags to resize the image; the share of the screen dragged to is remembered,
  *  and later images open at it; "Fit to screen" returns to the full fit and
  *  forgets it. `image` set opens it and `null` closes it; `onClose`
  *  follows any close, including Escape. */
@@ -49,18 +49,36 @@ export function ImageViewer({
   const [stored, store] = useStoredSetting(SCALE_KEY);
   const scale = useRef(1);
   scale.current = storedScale(stored);
-  // The size the frame fits to, until the person drags its corner; from then
+  // The size the frame fits to, until the person drags an edge; from then
   // on the size is theirs.
   const fitted = useRef<ImageSize | null>(null);
   const dragged = useRef(false);
+  // The drag under way: the pointer, where it pressed, the frame's width
+  // then and the handle it holds.
+  const drag = useRef<{
+    pointer: number;
+    x: number;
+    y: number;
+    width: number;
+    along: Handle;
+  } | null>(null);
 
-  // The header's height when the image was fitted: one row beside the
-  // controls when the image is wide enough.
+  // The header's height at the full fit: one row beside the controls when
+  // the image is wide enough. Remembered shares are of that fit, so a
+  // smaller image whose header wraps still opens at the same share.
   const fittedHeader = useRef(0);
   const fit = (size: ImageSize) => {
     fitted.current = size;
-    fitFrame(frame.current, header.current, size, scale.current);
+    fitFrame(frame.current, header.current, size);
     fittedHeader.current = header.current?.offsetHeight ?? 0;
+    if (frame.current && scale.current < 1) {
+      const full = viewerImageWidth(size, viewport(), fittedHeader.current);
+      frame.current.style.width = `${Math.max(1, Math.floor(full * scale.current))}px`;
+      // Narrower, the header may wrap and take room from the image.
+      const room = viewerImageWidth(size, viewport(), header.current?.offsetHeight ?? 0);
+      if (room < frame.current.offsetWidth)
+        frame.current.style.width = `${Math.max(1, Math.floor(room))}px`;
+    }
   };
 
   // Hosts pass a fresh object each render; only a different image refits,
@@ -78,6 +96,7 @@ export function ImageViewer({
     }
     if (!src && element.open) element.close();
     dragged.current = false;
+    drag.current = null;
     fitted.current = null;
     if (src && width && height) {
       fit({ width, height });
@@ -85,13 +104,10 @@ export function ImageViewer({
   }, [src, width, height]);
 
   // A window that changes size, or a phone that turns, refits the image
-  // until the person has sized it themselves, and re-centres a dialog
-  // pinned for a drag so it cannot be left outside the window.
+  // until the person has sized it themselves.
   useEffect(() => {
     if (!src) return;
     const refit = () => {
-      dialog.current?.removeAttribute("style");
-      frame.current?.style.removeProperty("max-width");
       if (!dragged.current && fitted.current) {
         fit(fitted.current);
       }
@@ -102,7 +118,7 @@ export function ImageViewer({
 
   // A click on the backdrop, outside the dialog's box, closes it; Escape is
   // the keyboard's way out. The press must start there too, as a drag of
-  // the corner can end outside.
+  // an edge can end outside.
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
@@ -124,91 +140,62 @@ export function ImageViewer({
 
   const close = () => dialog.current?.close();
 
-  // A smaller dialog pinned where it opened can only grow down and right,
-  // so the way back to the full fit is a control.
+  // One click back to the full fit, forgetting the remembered share.
   const fitToScreen = () => {
     store("1");
     scale.current = 1;
     dragged.current = false;
-    dialog.current?.removeAttribute("style");
-    frame.current?.style.removeProperty("max-width");
     if (fitted.current) fit(fitted.current);
   };
   const closeRef = useRef(close);
   closeRef.current = close;
 
-  // Dragging the corner of a centred dialog would move the corner at half
-  // the pointer's speed, as the dialog re-centres; pinning the dialog where
-  // it stands keeps the corner under the pointer. Only a press on the
-  // corner's grip counts, so a click on the image leaves the fit alone,
-  // and a press that resizes nothing lets the dialog go again.
-  const pin = (event: PointerEvent<HTMLDivElement>) => {
-    const element = dialog.current;
-    const box = event.currentTarget.getBoundingClientRect();
-    const onGrip = event.clientX >= box.right - GRIP && event.clientY >= box.bottom - GRIP;
-    if (!element || !onGrip) return;
-    const start = event.currentTarget.offsetWidth;
-    const at = element.getBoundingClientRect();
-    element.style.margin = "0";
-    element.style.top = `${at.top}px`;
-    element.style.left = `${at.left}px`;
-    bound(element);
-    // Past the height the window allows, a wider frame would only add bars
-    // beside the image, so the drag stops there. The cap is in pixels so the
-    // dialog sizes to it too. It counts the header as one row, as it was at
-    // fit time, since the caption returns beside the controls as the image
-    // widens; if capping narrows the frame enough to wrap the header, it is
-    // worked out again with the taller header.
+  // A press on any edge or corner of the image resizes it. The dialog stays
+  // centred, so it grows on both sides at once: the frame changes by twice
+  // the pointer's movement, which keeps the handle under the pointer. It
+  // grows no further than the screen's fit and keeps the image's
+  // proportions.
+  const press = (along: Handle) => (event: PointerEvent<HTMLDivElement>) => {
+    const target = frame.current;
+    if (!target || !fitted.current || event.button !== 0 || drag.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    drag.current = {
+      pointer: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      width: target.offsetWidth,
+      along,
+    };
+  };
+  const move = (event: PointerEvent<HTMLDivElement>) => {
+    const from = drag.current;
     const size = fitted.current;
-    const target = event.currentTarget;
-    if (size) {
-      const cap = (headerHeight: number) => {
-        const current = header.current?.offsetHeight ?? 0;
-        const around = element.offsetHeight - target.offsetHeight - current + headerHeight;
-        const room = window.innerHeight - at.top - 16 - around;
-        const across =
-          Number.parseFloat(element.style.maxWidth) - (element.offsetWidth - target.offsetWidth);
-        const widest = Math.max(
-          64,
-          Math.floor(Math.min((room * size.width) / size.height, across)),
-        );
-        target.style.maxWidth = `${widest}px`;
-      };
-      const before = header.current?.offsetHeight ?? 0;
-      const used = Math.min(before, fittedHeader.current || before);
-      cap(used);
-      const after = header.current?.offsetHeight ?? 0;
-      if (target.offsetWidth < start && after > used) cap(after);
+    if (!from || from.pointer !== event.pointerId || !size || !frame.current) return;
+    const across = 2 * from.along.x * (event.clientX - from.x);
+    const down = (2 * from.along.y * (event.clientY - from.y) * size.width) / size.height;
+    const change = Math.abs(across) >= Math.abs(down) ? across : down;
+    const full = Math.floor(viewerImageWidth(size, viewport(), fittedHeader.current));
+    const next = Math.round(Math.min(full, Math.max(MIN_WIDTH, from.width + change)));
+    frame.current.style.width = `${next}px`;
+  };
+  const release = (event: PointerEvent<HTMLDivElement>) => {
+    const from = drag.current;
+    if (from?.pointer !== event.pointerId) return;
+    const size = fitted.current;
+    drag.current = null;
+    if (!from || !size || !frame.current) return;
+    // A press that moves the image a pixel or less is not a drag.
+    const drawn = frame.current.offsetWidth;
+    if (Math.abs(drawn - from.width) <= 1) {
+      frame.current.style.width = `${from.width}px`;
+      return;
     }
-    window.addEventListener(
-      "pointerup",
-      () => {
-        // Keep the width as drawn: the browser's resizer writes the
-        // pointer's width, past the cap, and a later window resize lifts
-        // the cap.
-        let drawn = target.offsetWidth;
-        // Where the dialog's height squeezed the frame (the header wrapped
-        // during the drag), the width follows the height it was given.
-        if (size && target.offsetHeight)
-          drawn = Math.min(drawn, Math.floor((target.offsetHeight * size.width) / size.height));
-        target.style.removeProperty("max-width");
-        target.style.width = `${drawn}px`;
-        // Rounding can move the width a pixel on a press that resizes
-        // nothing; that is not a drag.
-        if (Math.abs(drawn - start) > 1) {
-          dragged.current = true;
-          // Later images open at the same share of the screen's fit.
-          if (size) {
-            const full = viewerImageWidth(size, viewport(), fittedHeader.current);
-            store(String(Math.min(1, drawn / full)));
-          }
-        } else {
-          target.style.width = `${start}px`;
-          if (!dragged.current) element.removeAttribute("style");
-        }
-      },
-      { once: true },
-    );
+    dragged.current = true;
+    // Later images open at the same share of the screen's fit.
+    const full = viewerImageWidth(size, viewport(), fittedHeader.current);
+    store(String(Math.min(1, drawn / full)));
   };
 
   return (
@@ -217,7 +204,6 @@ export function ImageViewer({
       aria-label={label}
       aria-describedby={caption ? captionId : undefined}
       onClose={() => {
-        dialog.current?.removeAttribute("style");
         frame.current?.removeAttribute("style");
         onClose();
       }}
@@ -258,11 +244,11 @@ export function ImageViewer({
           <div
             ref={frame}
             data-image-frame=""
-            onPointerDown={pin}
-            // The frame takes the image's proportions, so dragging its
-            // corner scales the image. It shrinks with the dialog when the
-            // window does, letterboxing the image on the sunken surface.
-            className="min-h-0 min-w-0 max-w-full shrink resize-x self-center overflow-hidden rounded-md bg-surface-sunken"
+            // The frame takes the image's proportions, so dragging any of
+            // its edges or corners scales the image. It shrinks with the
+            // dialog when the window does, letterboxing the image on the
+            // sunken surface.
+            className="group relative min-h-0 min-w-0 max-w-full shrink self-center overflow-hidden rounded-md bg-surface-sunken"
           >
             <img
               src={image.src}
@@ -277,6 +263,19 @@ export function ImageViewer({
               }}
               className="block size-full object-contain"
             />
+            {HANDLES.map((handle) => (
+              <div
+                key={handle.name}
+                data-resize={handle.name}
+                aria-hidden
+                onPointerDown={press(handle)}
+                onPointerMove={move}
+                onPointerUp={release}
+                onPointerCancel={release}
+                onLostPointerCapture={release}
+                className={cn("absolute touch-none", handle.className)}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -295,34 +294,58 @@ function outside(element: Element, event: { clientX: number; clientY: number }) 
   );
 }
 
-/** How far in from the frame's corner a press starts a resize: the
- *  browser's grip, with some slack. */
-const GRIP = 20;
-
 const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
 
-/** Keeps a pinned dialog inside the window, so a corner dragged outwards
- *  stops at its edge and the controls stay in view. */
-function bound(dialog: HTMLElement) {
-  const left = Number.parseFloat(dialog.style.left) || 0;
-  const top = Number.parseFloat(dialog.style.top) || 0;
-  dialog.style.maxWidth = `${Math.max(160, window.innerWidth - left - 16)}px`;
-  dialog.style.maxHeight = `${Math.max(160, window.innerHeight - top - 16)}px`;
-}
+/** The narrowest a drag makes the image. */
+const MIN_WIDTH = 64;
 
-/** Sizes the image's frame to `scale` of the screen below the header. The
+/** A place on the frame that resizes it: which way it faces across (`x`)
+ *  and down (`y`), each -1, 0 or 1. */
+type Handle = { name: string; x: number; y: number; className: string };
+
+/** The frame's corners carry a visible bracket, so people see the image
+ *  resizes; its edges resize too, shown by the pointer. */
+const CORNER =
+  "z-10 size-5 border-white/90 opacity-70 drop-shadow-[0_0_1px_rgb(0_0_0/0.8)] transition-opacity group-hover:opacity-100";
+const HANDLES: Handle[] = [
+  {
+    name: "top-left",
+    x: -1,
+    y: -1,
+    className: `${CORNER} left-1 top-1 cursor-nwse-resize rounded-tl-sm border-l-2 border-t-2`,
+  },
+  {
+    name: "top-right",
+    x: 1,
+    y: -1,
+    className: `${CORNER} right-1 top-1 cursor-nesw-resize rounded-tr-sm border-r-2 border-t-2`,
+  },
+  {
+    name: "bottom-left",
+    x: -1,
+    y: 1,
+    className: `${CORNER} bottom-1 left-1 cursor-nesw-resize rounded-bl-sm border-b-2 border-l-2`,
+  },
+  {
+    name: "bottom-right",
+    x: 1,
+    y: 1,
+    className: `${CORNER} bottom-1 right-1 cursor-nwse-resize rounded-br-sm border-b-2 border-r-2`,
+  },
+  { name: "top", x: 0, y: -1, className: "inset-x-6 top-0 h-2 cursor-ns-resize" },
+  { name: "bottom", x: 0, y: 1, className: "inset-x-6 bottom-0 h-2 cursor-ns-resize" },
+  { name: "left", x: -1, y: 0, className: "inset-y-6 left-0 w-2 cursor-ew-resize" },
+  { name: "right", x: 1, y: 0, className: "inset-y-6 right-0 w-2 cursor-ew-resize" },
+];
+
+/** Sizes the image's frame to fill the screen below the header. The
  *  header wraps to the frame's width, so the fit runs again at its new
  *  height. */
-function fitFrame(
-  frame: HTMLElement | null,
-  header: HTMLElement | null,
-  size: ImageSize,
-  scale: number,
-) {
+function fitFrame(frame: HTMLElement | null, header: HTMLElement | null, size: ImageSize) {
   if (!frame || !size.width || !size.height) return;
   frame.style.aspectRatio = `${size.width} / ${size.height}`;
   for (let pass = 0; pass < 2; pass += 1) {
     const width = viewerImageWidth(size, viewport(), header?.offsetHeight ?? 0);
-    frame.style.width = `${Math.max(1, Math.floor(width * scale))}px`;
+    frame.style.width = `${Math.max(1, Math.floor(width))}px`;
   }
 }
