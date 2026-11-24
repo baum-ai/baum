@@ -320,17 +320,25 @@ export function useMessageKeys(
   top: RefObject<HTMLElement | null>,
 ) {
   const current = useRef<HTMLElement | null>(null);
-  // Where the last j or k scrolled the page, from and to: while the page is
-  // still on its way, the marked message counts as shown, so the next press
-  // goes on from it rather than from what the scroll has not reached yet.
-  const aim = useRef<{ from: number; to: number } | null>(null);
+  // Where the last j or k is scrolling the page to, and how far it still
+  // is: until the page gets there, the marked message counts as shown, so
+  // the next press goes on from it rather than from what the scroll has not
+  // reached yet. Arriving, or a scroll away from it (the reader's own, or
+  // the page stopping short at its end), forgets it.
+  const aim = useRef<{ to: number; left: number } | null>(null);
   const [reading, setReading] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const mark = (target: HTMLElement) => {
+      if (target !== current.current) aim.current = null;
       current.current?.classList.remove("local-message-current");
       target.classList.add("local-message-current");
       current.current = target;
-      aim.current = null;
+    };
+    const onScroll = () => {
+      const scroll = aim.current;
+      if (!scroll) return;
+      const left = Math.abs(pageScroll().top - scroll.to);
+      aim.current = left <= 1 || left > scroll.left + 1 ? null : { to: scroll.to, left };
     };
     const onKey = (event: KeyboardEvent) => {
       if (!["j", "k", " ", "Enter"].includes(event.key)) return;
@@ -339,15 +347,9 @@ export function useMessageKeys(
       const messages = [...body.current.querySelectorAll<HTMLElement>(MESSAGE)];
       const edge = (top.current?.getBoundingClientRect().bottom ?? 0) + 12;
       const marked = current.current;
-      const scroll = aim.current;
-      const now = pageScroll().top;
-      const moving =
-        scroll !== null &&
-        now >= Math.min(scroll.from, scroll.to) - 1 &&
-        now <= Math.max(scroll.from, scroll.to) + 1;
       const shown =
         marked?.isConnected &&
-        (moving ||
+        (aim.current !== null ||
           (marked.getBoundingClientRect().bottom > edge &&
             marked.getBoundingClientRect().top < innerHeight));
       const at = shown ? messages.indexOf(marked) : -1;
@@ -383,11 +385,16 @@ export function useMessageKeys(
       const reduced = matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       const page = pageScroll();
       const to = page.top + target.getBoundingClientRect().top - edge;
+      aim.current = { to, left: Math.abs(page.top - to) };
       page.to(to, reduced ? "instant" : "smooth");
-      aim.current = { from: page.top, to };
     };
     addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
+    // Captured: the panel's scroll does not bubble.
+    addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      removeEventListener("keydown", onKey);
+      removeEventListener("scroll", onScroll, { capture: true });
+    };
   }, [body, top]);
   const close = useCallback(() => setReading(null), []);
   return { reading, close };

@@ -383,8 +383,8 @@ it("says why a transcript is not served, and when the session is gone", async ()
 it("goes on from the message k marked while the page still scrolls to it", async () => {
   // Five messages 100 px tall, the page scrolled to the last; the smooth
   // scroll each press starts has not moved yet when the next press comes.
-  Object.defineProperty(window, "scrollY", { configurable: true, value: 400 });
-  Object.defineProperty(window, "innerHeight", { configurable: true, value: 300 });
+  vi.stubGlobal("scrollY", 400);
+  vi.stubGlobal("innerHeight", 300);
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
   const rect = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
     this: Element,
@@ -424,6 +424,12 @@ it("goes on from the message k marked while the page still scrolls to it", async
     // Message 3 is above the view until the scroll arrives: k goes on from it.
     k();
     expect(marked()).toBe("Message 2");
+    // The reader scrolls away from it themselves: k reads from the view
+    // again, rather than going on to message 1.
+    vi.stubGlobal("scrollY", 1000);
+    window.dispatchEvent(new Event("scroll"));
+    k();
+    expect(marked()).toBe("Message 4");
   } finally {
     rect.mockRestore();
   }
