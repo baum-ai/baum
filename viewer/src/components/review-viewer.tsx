@@ -34,6 +34,7 @@ import {
   triageRisks,
 } from "../review-document";
 import type { Selection } from "../review-selection";
+import { useUrlState } from "../navigation";
 import { reviewVersionChanges } from "../review-versions";
 import { useConversationCollapsed } from "../use-conversation-collapsed";
 import { type ConversationTab, useConversationTab } from "../use-conversation-tab";
@@ -737,13 +738,21 @@ function ReviewWorkspace<F extends ReviewFile>({
   // and Risks stay open.
   const [sessionFocus, setSessionFocus] = useState<{ session: string; turn: number } | null>(null);
   // A session the host opens on a page of its own leaves the review there,
-  // however it was selected (a row, a quote of its prompt, a link).
-  const openSession = sessions?.open;
+  // however it was selected (a row, a quote of its prompt, a link), at the
+  // prompt a link named, whether through the URL or a prompt anchor.
+  const openSession = useRef(sessions?.open);
+  openSession.current = sessions?.open;
   const openedSession = selection.kind === "session" ? selection.id : null;
-  const openedTurn = sessionFocus?.session === openedSession ? sessionFocus?.turn : undefined;
+  const turnParam = useUrlState().search.get("turn");
+  const openedTurn =
+    sessionFocus?.session === openedSession
+      ? sessionFocus?.turn
+      : turnParam && /^\d+$/.test(turnParam)
+        ? Number(turnParam)
+        : undefined;
   useLayoutEffect(() => {
-    if (openedSession) openSession?.(openedSession, openedTurn);
-  }, [openSession, openedSession, openedTurn]);
+    if (openedSession) openSession.current?.(openedSession, openedTurn);
+  }, [openedSession, openedTurn]);
   const [folded, setFolded] = useState({
     changes: false,
     risks: false,

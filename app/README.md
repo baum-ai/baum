@@ -2000,9 +2000,11 @@ decisions), then the linked ones (`pullRequestSessions` in `src/review.tsx`).
 Opening a session there, from its row, a quote of its prompt or any other link
 to it, opens its transcript on the Sessions page (below) instead, at the prompt
 a link named (`&turn=<n>`), in the review's place in the history so Back and
-Escape return to the review; one of an agent the Sessions page does not know
-stays in the pane. A session the daemon no longer lists is read there as the
-Timeline reads it. A listed
+Escape return to the review. A linked session the daemon does not list goes
+there once the daemon answers that its transcript is on this computer (read
+from its agent's own store by its id), shown in the pane while it is asked;
+one from another computer, or of an agent the Sessions page does not know,
+stays in the pane. A listed
 session that is also linked shows as the listed one until it ends, and then
 as its linked row. "No agent sessions" shows only when there are none of
 either kind. The Summary keeps a "Sessions in progress" panel of the running

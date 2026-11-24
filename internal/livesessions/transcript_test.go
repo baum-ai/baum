@@ -197,12 +197,13 @@ func TestTranscriptIsReadOnlyFromTheAgentsOwnStore(t *testing.T) {
 	if f.renders.Load() != 0 {
 		t.Fatalf("%d transcripts were rendered", f.renders.Load())
 	}
-	// A session the tracker does not list is not found, whatever the disk has.
+	// Get serves only a session the tracker lists; the route reads one it
+	// does not from the agent's own store, and says when that has none.
 	if _, err := f.live.Get(context.Background(), "claude-code", "s1.jsonl"); !errors.Is(err, ErrNotTracked) {
 		t.Fatalf("untracked: %v", err)
 	}
-	if code, _, _ := get(t, f.live.Handler(), "/api/live-sessions/codex/s1/transcript"); code != http.StatusNotFound {
-		t.Fatalf("another agent's session: %d", code)
+	if code, body, raw := get(t, f.live.Handler(), "/api/live-sessions/codex/s1/transcript"); code != http.StatusOK || body.Available {
+		t.Fatalf("another agent's session: %d %s", code, raw)
 	}
 }
 
@@ -356,5 +357,18 @@ func TestTranscriptReadsAnUntrackedSession(t *testing.T) {
 	// A tracked session reads as the tracker has it.
 	if answer, err := f.live.Read(ctx, "claude-code", "s1", "", ""); err != nil || answer.Session.State == StateEnded {
 		t.Fatalf("tracked = %+v, %v", answer.Session, err)
+	}
+}
+
+func TestTranscriptRouteReadsASessionTheTrackerNoLongerLists(t *testing.T) {
+	f := newTranscriptFixture(t)
+	ended := filepath.Join(f.home, ".claude", "projects", "-work-demo", "ended-1.jsonl")
+	write(t, ended, claudeTurn("ended-1", 1, "Fix the retry", "Done."))
+	code, body, raw := get(t, f.live.Handler(), "/api/live-sessions/claude-code/ended-1/transcript")
+	if code != http.StatusOK || !body.Available || body.Live || body.Transcript == nil {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if strings.Contains(raw, f.home) {
+		t.Errorf("the answer carries the home directory: %s", raw)
 	}
 }

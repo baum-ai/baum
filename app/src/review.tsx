@@ -74,7 +74,7 @@ import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { useVersionLoader } from "./version-cache";
 import { LiveSessionCard, liveSessionLabel, transcriptHref } from "./sessions";
-import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
+import { parseLiveTranscript, TranscriptCard, transcriptPath } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
   PullRequestDecisionsPane,
@@ -196,6 +196,37 @@ const LIVE_AGENTS: Record<string, string> = {
   cursor: "cursor",
 };
 
+/** Whether a linked session's transcript is on this computer, by
+ *  `agent:id`, as the daemon answered; pending while it is being asked. */
+const onComputer = new Map<string, boolean | "pending">();
+
+/** Opens a linked session on its page when its transcript is on this
+ *  computer, which only the daemon knows: one linked from another computer,
+ *  such as a teammate's, stays in the pane. The first time, the pane shows
+ *  it while the daemon is asked, and the page replaces it once the answer
+ *  says the session is here and it is still the one open. */
+function openLinked(agent: string, id: string, focusTurn?: number): boolean {
+  const key = `${agent}:${id}`;
+  const href = transcriptHref({ agent, session_id: id }, focusTurn);
+  const known = onComputer.get(key);
+  if (known === true) {
+    redirect(href);
+    return true;
+  }
+  if (known !== undefined) return false;
+  onComputer.set(key, "pending");
+  const asked = location.href;
+  void request<unknown>(transcriptPath(agent, id, null))
+    .then((body) => {
+      const here = parseLiveTranscript(body)?.available === true;
+      onComputer.set(key, here);
+      if (here && location.href === asked) redirect(href);
+    })
+    // Asked again the next time it is opened.
+    .catch(() => onComputer.delete(key));
+  return false;
+}
+
 /** The pull request's Sessions group: one list of the sessions linked to it
  *  through its commits (`linked`) and the sessions the daemon lists on it
  *  (`listed`: working, waiting, or ended and still listed). A listed session
@@ -212,14 +243,16 @@ export function pullRequestSessions(
     hosted: listedSessionRows(listed, linked, decisions),
     // A session opens on its own page, where it can be continued.
     open: (id, focusTurn) => {
+      const listedAgent = listed.find((s) => s.session_id === id)?.agent;
+      if (listedAgent) {
+        redirect(transcriptHref({ agent: listedAgent, session_id: id }, focusTurn));
+        return true;
+      }
       const agent =
-        listed.find((s) => s.session_id === id)?.agent ??
-        (linked.status === "ready"
+        linked.status === "ready"
           ? LIVE_AGENTS[linked.sessions.find((s) => s.id === id)?.vendor ?? ""]
-          : undefined);
-      if (!agent) return false;
-      redirect(transcriptHref({ agent, session_id: id }, focusTurn));
-      return true;
+          : undefined;
+      return agent ? openLinked(agent, id, focusTurn) : false;
     },
     empty:
       "Sessions on this computer show here while they work on this pull request, and once one of their commits is in it.",
@@ -250,14 +283,8 @@ export function listedSessionRows(
       renderCard: (open) => (
         <LiveSessionCard session={s} open={open} Link={ViewerLink} decisions={decisions} />
       ),
-      renderPane: () => (
-        <>
-          <div className="pb-3">
-            <LiveSessionCard session={s} titled={false} Link={ViewerLink} decisions={decisions} />
-          </div>
-          <EmbeddedLiveTranscript session={s} />
-        </>
-      ),
+      // Opened, it leaves for its page on Sessions (`open` above).
+      renderPane: () => null,
     }));
 }
 /** The hosted PR page's shared viewer, with local sources for its slots. */

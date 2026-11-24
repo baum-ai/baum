@@ -161,7 +161,8 @@ export const peekHref = (s: Pick<LiveSession, "agent" | "session_id">) =>
  *  is named. */
 export const transcriptHref = (s: Pick<LiveSession, "agent" | "session_id">, turn?: number) =>
   appURL(
-    `?page=sessions&session=${encodeURIComponent(sessionKey(s))}${turn == null ? "" : `&turn=${turn}`}`,
+    `?page=sessions&session=${encodeURIComponent(sessionKey(s))}` +
+      (turn == null ? "" : `&turn=${turn}`),
   );
 
 export function Agent({ agent }: { agent: string }) {

@@ -6950,9 +6950,11 @@ replace it.
     This selects an existing TUI; it never resumes a second conversation.
 - **Transcripts.** `GET /api/live-sessions/{agent}/{id}/transcript`
   (`Transcripts`, mounted beside the list by the same `LocalAPI.Live`
-  provider) serves the transcript of a session the tracker lists, and only
-  those: any other agent and id is 404, whatever the disk holds. The file is
-  never named by the request. It is the `transcript_path` the session's
+  provider) serves the transcript of a session the tracker lists, and of
+  one it no longer lists (such as a pull request's session that ended days
+  ago) found by its id in the agent's own store, as `Transcripts.Read` finds
+  a panel conversation's; one found nowhere is `available: false`. The file
+  is never named by the request. It is the `transcript_path` the session's
   hooks last reported (kept in the tracker's entry, never served, and not in
   `live-sessions.json`), read only when, its symbolic links resolved
   (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular
