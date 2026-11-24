@@ -1061,7 +1061,7 @@ function SessionPanel({
             <QueuedList
               queued={queued}
               running={running}
-              working={queueing}
+              working={queueing ?? (sending ? "message" : null)}
               remove={(q) => void changeQueue(() => removeQueued(id, q), q)}
               sendNow={() => {
                 // Shown at once, as a sent message is.
