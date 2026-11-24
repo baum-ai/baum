@@ -6701,7 +6701,9 @@ replace it.
   a directory in no registered clone, or one whose clone is unavailable, is
   not tracked at all, except a session panel conversation's: `Tracker.Panel`
   (the console's `Owns`) names the conversation of a session by its id, or by
-  a conversation's empty directory, and such a session is listed
+  a conversation's empty directory (never a resumed conversation's, which is
+  the person's own, and a closed resumed conversation gives its session back
+  so it can be continued in a terminal again), and such a session is listed
   with no repository and `link_status` `panel` when its directory is in no
   clone. Every live session answer (`GET /api/live-sessions`, which the
   Sessions page reads) marks a panel session, in its empty directory or a
@@ -7177,14 +7179,15 @@ checkout of, whether baum created that worktree (`created_worktree`) and,
 separately, whether baum created its branch (`created_branch`; a branch baum
 did not create is the person's, and nothing baum cleans up may ever delete
 it), why a pull request's conversation got an empty directory instead
-(`directory_note`), the agent's session id,
-the pages it was opened and sent from (at most 20, no repeat in a row), its
+(`directory_note`), the agent's session id, whether the conversation
+resumed a session the person started elsewhere (`resumed`; its directory is
+the person's own), the pages it was opened and sent from (at most 20, no repeat in a row), its
 title (the first message's first line, at most 80 characters), created and
 updated times, state (`idle`, `running`, `failed` or `closed`), why the last
 turn failed or stopped, and the cost of its priced turns (`cost_partial` when
 a turn that started a session could not be priced, so the cost is a lower
 bound). Columns added later are added as the other relational stores add
-theirs (`created_branch` and `directory_note` already are). When
+theirs (`created_branch`, `directory_note` and `resumed` already are). When
 the service opens, a conversation a stopped daemon left `running` becomes
 `failed` with the reason that baum stopped while the agent answered.
 
@@ -7323,7 +7326,7 @@ routes answer as the local API does for a capability it lacks: a read with
 | Route | Does |
 | --- | --- |
 | `GET /api/console/conversations` | `{"conversations":[...]}`, newest first: `id`, `title`, `agent`, `model`, `mode`, `state`, `directory`, `directory_note`, `repository`, `pull_request`, `updated_at` and `session` (`agent:id`, once known) |
-| `POST /api/console/conversations` | opens one from `{"agent","model","mode","page","resume"}`, each optional (the panel's setting); 201 with the conversation. `resume` is a session of `agent` to continue, such as one that ended in the person's terminal: the conversation starts with that session id, so its first turn resumes it, in the directory its transcript recorded (`Transcripts.SessionDirectory`, found by id in the agent's own store), whatever `page` is; it is marked `resumed`, so `Owns` matches it by session only and the person's other sessions in that directory stay theirs. The open conversation already continuing that session is answered instead of a new one. A session with no transcript here, or whose directory is gone, is 400 with why |
+| `POST /api/console/conversations` | opens one from `{"agent","model","mode","page","resume"}`, each optional (the panel's setting); 201 with the conversation. `resume` is a session of `agent` to continue, such as one that ended in the person's terminal: the conversation starts with that session id, so its first turn resumes it, in the directory its transcript recorded (`Transcripts.SessionDirectory`, found by id in the agent's own store), whatever `page` is; it is marked `resumed`, so `Owns` matches it by session only and the person's other sessions in that directory stay theirs. The open conversation already continuing that session is answered instead of a new one (requests for one session are taken one at a time). The conversation uses the panel's model and access, as a new one does. A session the tracker lists as running, one whose transcript was written in the last minute (it may be running where no hook reported it), one with no transcript here, or one whose directory is gone, is 400 with why |
 | `GET /api/console/conversations/{id}` | every field of the conversation, its pages included, `session_key`, and `progress` (the running or last turn since the daemon started: `text`, `message`, `tool`, `session`, `state`, `cost_usd`) or null |
 | `GET /api/console/conversations/{id}/transcript` | the transcript of the session the conversation's agent reported, answered as `GET /api/live-sessions/{agent}/{id}/transcript` is (`?version=` included), read with `Transcripts.Read`: found by that session id in the agent's own session store, whether or not the tracker still lists it; nothing in the request names the file. Before the agent reported a session, or when its file is gone, `available: false` with why |
 | `POST /api/console/conversations/{id}/messages` | sends `{"text","page"}` (the page optional) as a turn; 202 with the conversation, running |

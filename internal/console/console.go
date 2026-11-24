@@ -413,6 +413,8 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	var placed placement
 	var err error
 	if request.Resume != "" {
+		// One at a time per session, so two requests make one conversation.
+		defer s.lockRepository("resume:" + request.Agent + ":" + request.Resume)()
 		if c, ok, err := s.resuming(request.Agent, request.Resume); err != nil || ok {
 			return c, err
 		}
@@ -474,6 +476,9 @@ func (s *Service) resumeDirectory(ctx context.Context, agentName, session string
 	dir, err := s.opts.SessionDirectory(ctx, agentName, session)
 	if err != nil {
 		return "", invalid("%s", err.Error())
+	}
+	if !filepath.IsAbs(dir) {
+		return "", invalid("The session's transcript does not say where it worked.")
 	}
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return "", invalid("The session worked in %s, which is no longer on this computer.", dir)
@@ -609,6 +614,7 @@ func (s *Service) Close(ctx context.Context, id string) (Conversation, error) {
 	if err := s.store.save(c); err != nil {
 		return Conversation{}, err
 	}
+	s.indexSession(c)
 	s.publish(Event{Conversation: id, Kind: EventState, State: c.State})
 	return c, nil
 }

@@ -12,8 +12,9 @@ import (
 // worktree, whether the person's or one baum added, is matched by session
 // only: the worktree is a checkout the person may work in too, and stays
 // after the conversation closes, so the person's own sessions there stay
-// theirs. So is one that resumed a session in the person's own directory. It reads an index kept in memory: a map lookup per directory above
-// cwd, under a lock no turn holds for long.
+// theirs. So is one that resumed a session in the person's own directory.
+// It reads an index kept in memory: a map lookup per directory above cwd,
+// under a lock no turn holds for long.
 func (s *Service) Owns(agent, id, cwd string) (string, bool) {
 	s.cmu.Lock()
 	defer s.cmu.Unlock()
@@ -64,7 +65,9 @@ func (s *Service) indexSession(c Conversation) {
 			delete(s.sessions, key)
 		}
 	}
-	if c.Session != "" {
+	// A closed conversation that resumed the person's own session gives it
+	// back: they may continue it in their terminal again.
+	if c.Session != "" && (!c.Resumed || c.State != StateClosed) {
 		s.sessions[agentcontext.SessionKey(c.Agent, c.Session)] = c.ID
 	}
 }

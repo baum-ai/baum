@@ -5,7 +5,9 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestCreateResumesASessionInTheDirectoryItWorkedIn(t *testing.T) {
@@ -78,5 +80,58 @@ func TestCreateRefusesASessionItCannotResume(t *testing.T) {
 	f := newFixture(t, nil)
 	if _, err := f.service.Create(context.Background(), CreateRequest{Agent: AgentClaudeCode, Resume: "s1"}); err == nil {
 		t.Error("resumed without a way to find the session")
+	}
+}
+
+func TestAClosedResumedConversationGivesItsSessionBack(t *testing.T) {
+	dir := resolveExisting(t.TempDir())
+	f := newFixture(t, func(o *Options) {
+		o.SessionDirectory = func(context.Context, string, string) (string, error) { return dir, nil }
+	})
+	ctx := context.Background()
+	first, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Resume: testSession})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.Close(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := f.service.Owns("claude-code", testSession, dir); ok {
+		t.Fatalf("a closed conversation still claims the session: %s", got)
+	}
+	// Continued again, the new conversation has it, after a restart too.
+	second, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Resume: testSession})
+	if err != nil || second.ID == first.ID {
+		t.Fatalf("%+v %v", second, err)
+	}
+	_ = f.service.CloseStore()
+	f.open()
+	if got, ok := f.service.Owns("claude-code", testSession, dir); !ok || got != second.ID {
+		t.Errorf("after a restart: %q %v", got, ok)
+	}
+}
+
+func TestTwoRequestsToContinueASessionMakeOneConversation(t *testing.T) {
+	dir := resolveExisting(t.TempDir())
+	f := newFixture(t, func(o *Options) {
+		o.SessionDirectory = func(context.Context, string, string) (string, error) {
+			time.Sleep(20 * time.Millisecond)
+			return dir, nil
+		}
+	})
+	var wg sync.WaitGroup
+	ids := make([]string, 2)
+	for i := range ids {
+		wg.Go(func() {
+			c, err := f.service.Create(context.Background(), CreateRequest{Agent: AgentClaudeCode, Resume: testSession})
+			if err != nil {
+				t.Error(err)
+			}
+			ids[i] = c.ID
+		})
+	}
+	wg.Wait()
+	if ids[0] != ids[1] {
+		t.Errorf("two conversations: %v", ids)
 	}
 }

@@ -2882,8 +2882,10 @@ or that the daemon no longer lists (such as a pull request's session opened
 from its review), offers **Continue in panel**: it opens a panel conversation
 that resumes that session in the directory it worked in
 (`POST api/console/conversations` with `agent` and `resume`), or the one
-already continuing it, and opens the panel on it; why it cannot (its
-transcript or its directory is gone) shows as a toast.
+already continuing it, and opens the panel on it, with the panel's model and
+access. Why it cannot (it is still running, its transcript or its directory
+is gone) shows as a toast. Closing that conversation gives the session back:
+it is no longer marked as the panel's.
 
 ## Review page
 

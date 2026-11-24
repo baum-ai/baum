@@ -671,6 +671,10 @@ func cursorRevision(store, id string, recordOnly bool) (string, error) {
 	return db.Revision(id)
 }
 
+// resumeQuiet is how long a session's transcript must have gone unwritten
+// before a session the tracker does not list as running can be resumed.
+const resumeQuiet = time.Minute
+
 // SessionDirectory is the directory the agent's session id worked in, as its
 // transcript recorded it near its start, so the session can be resumed
 // there. Only Claude Code and Codex sessions can be. An error is an
@@ -678,7 +682,10 @@ func cursorRevision(store, id string, recordOnly bool) (string, error) {
 func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 	path := ""
 	if t.Tracker != nil {
-		if _, tracked, ok := t.Tracker.Lookup(agent, id); ok {
+		if session, tracked, ok := t.Tracker.Lookup(agent, id); ok {
+			if session.State != StateEnded {
+				return "", unavailable("The session is still running. Continue it where it runs.")
+			}
 			path = tracked
 		}
 	}
@@ -688,6 +695,10 @@ func (t *Transcripts) SessionDirectory(agent, id string) (string, error) {
 	loc, err := Locate(t.home(), "", agent, id, path)
 	if err != nil {
 		return "", err
+	}
+	// One the tracker missed may still be running: its agent is writing it.
+	if info, err := os.Stat(loc.main); err == nil && t.now().Sub(info.ModTime()) < resumeQuiet {
+		return "", unavailable("The session was active moments ago. Continue it where it runs, or try again once it has ended.")
 	}
 	var dir string
 	if agent == AgentClaudeCode {

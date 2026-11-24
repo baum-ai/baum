@@ -378,12 +378,25 @@ func TestSessionDirectoryIsWhereTheTranscriptSaysTheSessionWorked(t *testing.T) 
 	// Tracked, and found by its id once the tracker no longer lists it.
 	ended := filepath.Join(f.home, ".claude", "projects", "-work-other", "ended-1.jsonl")
 	write(t, ended, `{"type":"user","cwd":"/work/other","sessionId":"ended-1","message":{"role":"user","content":"hi"}}`+"\n")
-	for id, want := range map[string]string{"s1": "/work/demo", "ended-1": "/work/other"} {
-		if dir, err := f.live.SessionDirectory(AgentClaudeCode, id); err != nil || dir != want {
-			t.Errorf("%s: %q %v", id, dir, err)
-		}
-	}
 	var missing *Unavailable
+	// Written moments ago, it may still be running where the tracker cannot see.
+	if err := os.Chtimes(ended, f.clock.now, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.live.SessionDirectory(AgentClaudeCode, "ended-1"); !errors.As(err, &missing) {
+		t.Errorf("a session written moments ago: %v", err)
+	}
+	quiet := f.clock.now.Add(-time.Hour)
+	if err := os.Chtimes(ended, quiet, quiet); err != nil {
+		t.Fatal(err)
+	}
+	if dir, err := f.live.SessionDirectory(AgentClaudeCode, "ended-1"); err != nil || dir != "/work/other" {
+		t.Errorf("ended-1: %q %v", dir, err)
+	}
+	// One the tracker lists as running is continued where it runs.
+	if _, err := f.live.SessionDirectory(AgentClaudeCode, "s1"); !errors.As(err, &missing) {
+		t.Errorf("a running session: %v", err)
+	}
 	for _, agent := range []string{AgentClaudeCode, AgentCursor} {
 		if _, err := f.live.SessionDirectory(agent, "nowhere"); !errors.As(err, &missing) {
 			t.Errorf("%s: %v", agent, err)
