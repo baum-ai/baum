@@ -37,7 +37,7 @@ for tool in node pnpm; do
   fi
 done
 
-if [ "$install" = true ] && pgrep -qx baum-desktop; then
+if [ "$install" = true ] && pgrep -qx baum; then
   echo "macos-local: quit baum first (tray: Quit and stop background reviews)" >&2
   exit 1
 fi

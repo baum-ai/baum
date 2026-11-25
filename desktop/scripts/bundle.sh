@@ -212,7 +212,7 @@ case "$platform" in
     ;;
   darwin-universal)
     # One architecture per call: Xcode 27's lipo takes no more.
-    for binary in MacOS/baum-desktop Resources/bin/baum; do
+    for binary in MacOS/baum Resources/bin/baum; do
       for arch in arm64 x86_64; do
         lipo "$app/baum.app/Contents/$binary" -verify_arch "$arch"
       done

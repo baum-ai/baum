@@ -232,8 +232,8 @@ pass env PATH="$work/crlf-tools:$PATH" MINISIGN="$work/crlf-tools/minisign" "$ma
 # macOS archive must hold the Electron app as the Tauri updater installs it.
 bridge=$work/bridge
 mkdir -p "$bridge/app/baum.app/Contents/MacOS" "$bridge/app/baum.app/Contents/Resources"
-echo exe >"$bridge/app/baum.app/Contents/MacOS/baum-desktop"
-chmod 0755 "$bridge/app/baum.app/Contents/MacOS/baum-desktop"
+echo exe >"$bridge/app/baum.app/Contents/MacOS/baum"
+chmod 0755 "$bridge/app/baum.app/Contents/MacOS/baum"
 # bridge_manifest VERSION PUB_DATE
 bridge_manifest() {
   jq -n --arg url "$base/baum-desktop-darwin-universal.app.tar.gz" --arg version "$1" --arg date "$2" \
@@ -245,10 +245,10 @@ fail "a macOS archive of the Tauri app" "it is not the Electron app" "$manifest"
 echo asar >"$bridge/app/baum.app/Contents/Resources/app.asar"
 tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" ./baum.app
 fail "an archive whose root is not baum.app" "outside a top-level baum.app" "$manifest" electron "$bridge"
-chmod 0644 "$bridge/app/baum.app/Contents/MacOS/baum-desktop"
+chmod 0644 "$bridge/app/baum.app/Contents/MacOS/baum"
 tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" baum.app
 fail "an archive whose executable lost its mode" "is not executable" "$manifest" electron "$bridge"
-chmod 0755 "$bridge/app/baum.app/Contents/MacOS/baum-desktop"
+chmod 0755 "$bridge/app/baum.app/Contents/MacOS/baum"
 tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" baum.app
 pass "$manifest" electron "$bridge"
 bridge_manifest 1.2 2026-11-25T10:00:00Z

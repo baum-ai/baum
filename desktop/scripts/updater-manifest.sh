@@ -35,7 +35,7 @@
 # parses them; the macOS archive holds a single baum.app at its root, as the
 # Tauri updater expects (it drops each entry's first path component and puts
 # the rest in place of the installed app), with Electron's
-# Contents/Resources/app.asar and an executable baum-desktop; the AppImage
+# Contents/Resources/app.asar and an executable baum; the AppImage
 # holds resources/app.asar. The Windows installer is not released and is
 # not checked.
 #
@@ -226,7 +226,7 @@ electron() {
             continue 2
           fi
         done <"$work/entries"
-        for entry in baum.app/Contents/Resources/app.asar baum.app/Contents/MacOS/baum-desktop; do
+        for entry in baum.app/Contents/Resources/app.asar baum.app/Contents/MacOS/baum; do
           if ! grep -qxF "$entry" "$work/entries"; then
             echo "FAIL $platform: $name has no $entry; it is not the Electron app" >&2
             status=1
@@ -234,8 +234,8 @@ electron() {
           fi
         done
         # The Tauri updater keeps the modes the archive gives.
-        if ! tar -tvzf "$file" baum.app/Contents/MacOS/baum-desktop 2>/dev/null | grep -q '^-..x'; then
-          echo "FAIL $platform: $name's baum.app/Contents/MacOS/baum-desktop is not executable" >&2
+        if ! tar -tvzf "$file" baum.app/Contents/MacOS/baum 2>/dev/null | grep -q '^-..x'; then
+          echo "FAIL $platform: $name's baum.app/Contents/MacOS/baum is not executable" >&2
           status=1
           continue
         fi

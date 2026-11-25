@@ -3107,7 +3107,12 @@ their bullets and numbers.
   api/tiles`). It reads sizes from the layout and from the frame's messages
   only, never animation frames, ResizeObserver or tight timers, so it works
   in a hidden window, and tells the daemon it is alive every 2 seconds while
-  it draws (reporting the job abandoned if its page goes away). Where the
+  it draws (reporting the job abandoned if its page goes away). A frame
+  with no `hello` after 5 seconds is sent a `ping`: one that neither answers
+  within 2 seconds nor finished loading is stuck in its script and is
+  reported as `hang` (Chromium runs the frame apart from the page, so the
+  page's heartbeat would not stop), after which the job draws no more
+  frames; one that answers is `no_hello`. Where the
   desktop shell declares `window.__BAUM_DESKTOP__.checkWindow`, the main
   page opens the shell's check window (`open_check_window`, which loads
   `?page=tile-check`, the runner alone) on a `tile_check` event and closes it

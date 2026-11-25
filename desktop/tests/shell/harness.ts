@@ -34,13 +34,16 @@ export interface Served {
   csp?: string;
   headers?: Record<string, string>;
   body?: string;
+  /** Keeps the response open and hands it over (an event stream) instead
+   *  of sending `body`. */
+  stream?: (response: http.ServerResponse) => void;
 }
 
 export type Route = (
   url: URL,
   body: string,
   headers: http.IncomingHttpHeaders,
-) => Served | undefined;
+) => Served | undefined | Promise<Served | undefined>;
 
 /** A small HTTP server on 127.0.0.1 that records every request it gets. */
 export class Server {
@@ -57,16 +60,24 @@ export class Server {
       req.on("data", (chunk: string) => {
         body += chunk;
       });
-      req.on("end", () => {
+      req.on("end", async () => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "127.0.0.1"}`);
         this.requests.push(`${req.method} ${url.host}${url.pathname}${url.search}`);
-        const served = this.route(url, body, req.headers) ?? { status: 404, body: "not found" };
+        const served = (await this.route(url, body, req.headers)) ?? {
+          status: 404,
+          body: "not found",
+        };
         res.statusCode = served.status ?? 200;
         res.setHeader("Content-Type", served.type ?? "text/html; charset=utf-8");
         res.setHeader("Cache-Control", "no-store");
         if (served.csp) res.setHeader("Content-Security-Policy", served.csp);
         for (const [name, value] of Object.entries(served.headers ?? {})) {
           res.setHeader(name, value);
+        }
+        if (served.stream) {
+          res.flushHeaders();
+          served.stream(res);
+          return;
         }
         res.end(served.body ?? "");
       });
@@ -118,7 +129,11 @@ export class MockDaemon extends Server {
     return this.beats.get(window) ?? [];
   }
 
-  #route(url: URL, body: string, headers: http.IncomingHttpHeaders): Served | undefined {
+  #route(
+    url: URL,
+    body: string,
+    headers: http.IncomingHttpHeaders,
+  ): Served | undefined | Promise<Served | undefined> {
     if (url.pathname === "/") return { status: 302, headers: { Location: NAMESPACE } };
     if (url.pathname === "/api/health")
       return { type: "application/json", body: '{"status":"ok"}' };

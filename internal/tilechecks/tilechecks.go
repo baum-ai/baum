@@ -9,7 +9,9 @@
 // answers with a report (Report). Claiming registers the candidate's frame
 // document, so the frame route serves it to the runner; a claimed job that
 // gets no report in time is a hang, which blocks the digest until the
-// daemon restarts (tileframes.Registry.MarkHung). With no runner, a check is
+// daemon restarts (tileframes.Registry.MarkHung), and so is a report of a
+// frame that stopped answering while the runner's page ran on (where the
+// engine draws frames in a process of their own). With no runner, a check is
 // unavailable.
 //
 // The page's first-show preflight (Preflight) runs a pair of a definition
@@ -749,10 +751,25 @@ func (c *Checker) Report(id string, report Report) error {
 		return nil
 	}
 	errs, warnings := classify(report.Problems, j.kinds)
+	// A runner that saw a frame stop answering while its own page kept
+	// running (Chromium draws a tile in a process of its own) reports the
+	// hang: it ends as one, as if its page had frozen. A runner could get
+	// the same by going quiet, so this gives it nothing new.
+	hang := slices.IndexFunc(report.Problems, func(p Problem) bool { return p.Code == CodeHang })
+	if hang >= 0 {
+		p := report.Problems[hang]
+		hung := problem(CodeHang, p.Message)
+		hung.Sample, hung.Face, hung.Size, hung.Theme = clip(p.Sample, maxField), clip(p.Face, maxField), clip(p.Size, maxField), clip(p.Theme, maxField)
+		errs = append([]Problem{hung}, errs...)
+		c.markHung(j)
+	}
 	j.errors = append(j.errors, errs...)
 	j.warnings = append(j.warnings, warnings...)
 	verdict := VerdictPass
-	if len(j.errors) > 0 {
+	switch {
+	case hang >= 0:
+		verdict = VerdictHang
+	case len(j.errors) > 0:
 		verdict = VerdictFail
 	}
 	result := c.result(j, verdict)
@@ -765,7 +782,29 @@ func (c *Checker) Report(id string, report Report) error {
 	}
 	result.Engine = clip(report.Engine, maxMessage)
 	c.finish(j, result)
+	if hang >= 0 {
+		c.announceWaiting()
+	}
 	return nil
+}
+
+// markHung blocks a job's digest from now on, by the frame route and every
+// later preflight, and tells the page, which closes the check window (and
+// the runaway renderer with it).
+func (c *Checker) markHung(j *job) {
+	c.frames.MarkHung(j.Digest)
+	c.publish(j.ID, StateHung)
+}
+
+// announceWaiting announces the jobs still waiting again after a hang: the
+// page closed the runner, and they need it back. Under the lock, so a job
+// claimed meanwhile is not announced queued after its running.
+func (c *Checker) announceWaiting() {
+	c.mu.Lock()
+	for _, w := range c.queue {
+		c.publish(w.ID, StateQueued)
+	}
+	c.mu.Unlock()
 }
 
 // hung ends a claimed job that got no report in time: its digest is
@@ -779,18 +818,10 @@ func (c *Checker) hung(j *job) {
 	c.running, c.freed = nil, time.Now()
 	c.poke()
 	c.mu.Unlock()
-	c.frames.MarkHung(j.Digest)
-	c.publish(j.ID, StateHung)
+	c.markHung(j)
 	j.errors = append(j.errors, problem(CodeHang, "The component never finished drawing, and the app stopped answering while it drew (an endless loop?)."))
 	c.finish(j, c.result(j, VerdictHang))
-	// The page closes a runner that hung; the jobs still waiting need it
-	// back, so they are announced again. Under the lock, so a job claimed
-	// meanwhile is not announced queued after its running.
-	c.mu.Lock()
-	for _, w := range c.queue {
-		c.publish(w.ID, StateQueued)
-	}
-	c.mu.Unlock()
+	c.announceWaiting()
 }
 
 // expire runs when a claimed job's hang timer fires: a job whose runner
