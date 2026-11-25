@@ -52,6 +52,7 @@ export function defaultMergeMethod(options: MergeOptions) {
 export function canMerge(entry: Entry) {
   return (
     !entry.historical &&
+    entry.pull_request.viewer_can_push !== false &&
     (entry.merge === "ready" || entry.merge === "blocked") &&
     entry.pull_request.state.toUpperCase() === "OPEN" &&
     !entry.pull_request.draft
