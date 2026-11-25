@@ -211,7 +211,7 @@ export function uncleanText(unclean: UncleanDirectory): string {
 
 /** The daemon's conversations, newest first, and whether it runs the panel
  *  at all; read when the app starts and again on each change. */
-function useConversations() {
+export function useConversations() {
   const [list, setList] = useState<ConversationSummary[]>([]);
   const [error, setError] = useState("");
   // Whether a read answered, or failed, at least once.
@@ -381,16 +381,19 @@ export function SessionPanelHost({
   page,
   title,
   liveTick,
+  conversations,
   go,
 }: {
   page: PageContext;
   title?: string;
   liveTick: number;
+  /** The daemon's conversations (`useConversations`), which the app reads
+   *  once for the panel and for what each pull request's rows count. */
+  conversations: ReturnType<typeof useConversations>;
   /** Goes to a page of the app, as its links do. */
   go: (href: string) => void;
 }) {
   const panel = useSessionPanel();
-  const conversations = useConversations();
   const settings = usePanelSettings();
   usePageReport(page, panel.available !== false);
   // The panel's key works anywhere, a text field included, so it is not one

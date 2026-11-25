@@ -5990,6 +5990,25 @@ kbd.key-hint {
   border-radius: 50%;
   background: var(--status-critical);
 }
+/* What happened on a pull request since its page was last open, counted in
+   the row's top right corner as a messaging app counts unread messages. */
+.upnext-unread {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--status-info);
+  color: var(--text-inverse);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+}
 .upnext-snoozed li {
   display: flex;
   align-items: center;

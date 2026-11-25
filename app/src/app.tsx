@@ -59,7 +59,8 @@ import {
   progressParts,
   type ReloadPart,
 } from "./reload-events";
-import { queueItems, UpNextPage, useUpNext } from "./up-next";
+import { queueItems, UpNextPage, upNextKey, useUpNext } from "./up-next";
+import { usePullActivity } from "./pr-activity";
 import {
   FilterBar,
   FilterButton,
@@ -121,6 +122,7 @@ import {
   publishConsoleResync,
   sessionPanel,
   SessionPanelHost,
+  useConversations,
   useSessionPanel,
 } from "./session-panel";
 import { SampleGuard } from "./sample";
@@ -976,6 +978,23 @@ function Workspace({ url }: { url: UrlState }) {
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
   const inbox = useUpNext(indexedEntries, live, jobs, revision > 0 && !error, groups);
+  // What happened on each pull request since its page was last open, which
+  // its row counts; the page open now has read all of it.
+  const conversations = useConversations();
+  const openGroup =
+    (page === "inbox" || page === "pulls") && groupId
+      ? groups.find((group) => group.id === groupId)
+      : undefined;
+  const activity = usePullActivity(
+    snapshot.entries,
+    conversations.loaded && !conversations.error ? conversations.list : null,
+    openGroup
+      ? openGroup.members.map((number) => upNextKey({ repository: openGroup.repository, number }))
+      : (page === "inbox" || page === "pulls") && selectedEntry
+        ? [upNextKey(selectedEntry.pull_request)]
+        : [],
+    revision > 0 && !error,
+  );
   // What the sidebar highlights is the page that shows the queue, with the
   // inbox the address names, when the daemon still has it.
   const railPage: Page =
@@ -2095,6 +2114,7 @@ function Workspace({ url }: { url: UrlState }) {
                   : undefined
               }
               entries={indexedEntries}
+              activity={activity}
               Link={LocalLink}
             />
           ) : page === "pulls" ? (
@@ -2460,6 +2480,7 @@ function Workspace({ url }: { url: UrlState }) {
             page={pageContext}
             title={pageTitle}
             liveTick={liveTick}
+            conversations={conversations}
             go={navigate}
           />
         </Profiled>

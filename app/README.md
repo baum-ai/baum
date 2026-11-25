@@ -920,7 +920,18 @@ The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
 done today, and draws a bar of cleared against cleared plus remaining. A row
 shows the title, then the kind, repository and reading estimate (or the
-agent's phase, "last fix failed" or "last fix changed nothing"), and a red dot at risk 5. With two or more
+agent's phase, "last fix failed" or "last fix changed nothing"), and a red dot at risk 5.
+A row's top right corner counts what happened on its pull request since its
+page was last open, as a messaging app counts unread messages
+(`src/pr-activity.ts`), and its tooltip says what: pushes, new review versions,
+more unresolved threads, a reviewer's approval, change request or comment on
+GitHub, finished turns of a session panel conversation about it, and any other
+update GitHub reports (`updated_at`) that none of those explains. The app counts
+each change between two reads of the index while its window is shown, so pushes
+made while it is hidden count once. A pull request first read counts nothing;
+opening its page in either list, or its group's page, clears it and reads what happens while it
+stays open. A group's row adds up its members'. The record, the latest 500
+pull requests changed or opened, is the `activity` ui-state. With two or more
 Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
 each pull request's merge options, merges each with GitHub's default method for
 the person at the head commit shown, one after another, and names any GitHub

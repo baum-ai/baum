@@ -14,13 +14,19 @@ import {
   resetSessionPanel,
   sessionPanel,
   SessionPanelButton,
-  SessionPanelHost,
+  SessionPanelHost as PanelHost,
   shown,
+  useConversations,
   useSessionPanel,
 } from "./session-panel";
 import { PreferencesProvider } from "./preferences";
 import { SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
+
+/** The host as the app mounts it, with the conversations it reads. */
+function SessionPanelHost(props: Omit<Parameters<typeof PanelHost>[0], "conversations">) {
+  return <PanelHost {...props} conversations={useConversations()} />;
+}
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({ ReviewViewer: () => null }));
 // The transcript is the viewer's; here it shows each prompt and its replies.
