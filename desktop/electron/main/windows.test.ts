@@ -24,10 +24,11 @@ describe("the app's windows", () => {
 
   it("grant notifications and clipboard writes to the app's origins only", () => {
     const app = (origin: string) => ["app://bundle", "http://127.0.0.1:4100"].includes(origin);
-    expect(permissionAllowed("notifications", "app://bundle/index.html", app)).toBe(true);
-    expect(permissionAllowed("clipboard-sanitized-write", "http://127.0.0.1:4100/s/x", app)).toBe(
-      true,
-    );
+    const main = { isMainFrame: true };
+    expect(permissionAllowed("notifications", "app://bundle/index.html", app, main)).toBe(true);
+    expect(
+      permissionAllowed("clipboard-sanitized-write", "http://127.0.0.1:4100/s/x", app, main),
+    ).toBe(true);
     for (const [permission, url] of [
       ["notifications", "http://127.0.0.1:4200/"],
       ["notifications", "https://example.com/"],
@@ -37,7 +38,37 @@ describe("the app's windows", () => {
       ["geolocation", "http://127.0.0.1:4100/"],
       ["clipboard-read", "http://127.0.0.1:4100/"],
     ] as const) {
-      expect(permissionAllowed(permission, url, app), `${permission} ${url}`).toBe(false);
+      expect(permissionAllowed(permission, url, app, main), `${permission} ${url}`).toBe(false);
     }
+  });
+
+  it("grant permissions to a main frame only", () => {
+    const app = (origin: string) => origin === "http://127.0.0.1:4100";
+    const url = "http://127.0.0.1:4100/s/x";
+    expect(permissionAllowed("notifications", url, app, { isMainFrame: false })).toBe(false);
+    expect(
+      permissionAllowed("notifications", url, app, {
+        isMainFrame: true,
+        embeddingOrigin: "http://127.0.0.1:4100",
+      }),
+    ).toBe(false);
+  });
+
+  it("check every origin Electron reports for the frame", () => {
+    const app = (origin: string) => origin === "http://127.0.0.1:4100";
+    const url = "http://127.0.0.1:4100/s/x";
+    const check = (...origins: (string | undefined)[]) =>
+      permissionAllowed("notifications", url, app, { isMainFrame: true, origins });
+    expect(check("http://127.0.0.1:4100", undefined)).toBe(true);
+    // Electron may report an origin as a URL with a trailing slash.
+    expect(check("http://127.0.0.1:4100/", "http://127.0.0.1:4100")).toBe(true);
+    expect(check("http://127.0.0.1:4100", "null")).toBe(false);
+    expect(check("null")).toBe(false);
+    expect(check("http://127.0.0.1:4100", "https://example.com")).toBe(false);
+    expect(check("")).toBe(false);
+    // A main frame whose own URL has an opaque origin.
+    expect(
+      permissionAllowed("notifications", "data:text/html,x", () => true, { isMainFrame: true }),
+    ).toBe(false);
   });
 });

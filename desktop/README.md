@@ -1071,6 +1071,14 @@ still being ported.
   command only from the main frame of the app's own windows, and only if
   `electron/main/commands.ts` allows it for the page's role.
 - The bundled screens are served from `dist/` as `app://bundle`.
+- Before each request that carries the credential, the app checks that the
+  daemon's process (the status's `pid`) still runs as the user. Once it has
+  gone, another user's process could take its loopback port, so the check
+  counts as failed without a request. A status without a `pid` is not
+  checked.
+- Only the main frame of a page on the app's own origins gets the
+  notification and clipboard-write permissions; frames inside a page, and
+  opaque origins, never do.
 - The app keeps Tauri's identifier (`com.usebaum.desktop`), so it uses the
   same `desktop.json`. Chromium's files go in `chromium/` under the same
   folder.
