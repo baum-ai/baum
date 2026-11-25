@@ -1,11 +1,13 @@
 // Opening links to other sites in the default browser. A page asks in one of
 // two ways: a request for a new window (`target="_blank"`, `window.open`),
 // which the navigation handler passes to `LinkOpener.open`, or the `open_link`
-// command, which the daemon's pages may call. Both take the same URLs
-// (`decideNewWindow`) and share one `LinkOpener`, so a page opens the browser
-// at most once a second however it asks.
+// command, which the daemon's pages and the setup screen may call. Both take
+// the same URLs (navigation.ts's `decideNewWindow`) and share the app's one
+// `LinkOpener`, so a page opens the browser at most once a second however it
+// asks.
 import { registerCommand } from "./commands.ts";
-import { decideNewWindow, OpenLimit, schemeAndHost } from "./outside-url.ts";
+import { errorMessage, log } from "./log.ts";
+import { decideNewWindow, OpenLimit, schemeAndHost } from "./navigation.ts";
 
 /** What a request to open a URL did. */
 export type Opened =
@@ -35,20 +37,16 @@ export class LinkOpener {
 
   /** Opens `url` in the default browser if it is a link to another site and
    *  no other link opened within the last second. */
-  open(url: URL): Opened {
+  open(link: string | URL): Opened {
+    const url = String(link);
     if (decideNewWindow(url) !== "open-in-browser") return "refused";
     if (!this.limit.allow(this.now())) {
-      if (this.deps.debug) {
-        console.error(
-          `baum desktop: dropped a second link to ${schemeAndHost(url)} within a second`,
-        );
-      }
+      if (this.deps.debug) log(`dropped a second link to ${schemeAndHost(url)} within a second`);
       return "dropped";
     }
-    const failed = (e: unknown) =>
-      console.error(`baum desktop: cannot open a link in the browser: ${String(e)}`);
+    const failed = (e: unknown) => log(`cannot open a link in the browser: ${errorMessage(e)}`);
     try {
-      Promise.resolve(this.deps.openExternal(url.href)).catch(failed);
+      Promise.resolve(this.deps.openExternal(new URL(url).href)).catch(failed);
     } catch (e) {
       failed(e);
     }
@@ -61,14 +59,10 @@ export class LinkOpener {
  *  link within a second is dropped without one. */
 export function registerLinkCommands(opener: LinkOpener): void {
   registerCommand("open_link", (args) => {
-    let url: URL;
-    try {
-      if (typeof args.url !== "string") throw new Error();
-      url = new URL(args.url);
-    } catch {
+    if (typeof args.url !== "string" || !URL.canParse(args.url)) {
       throw new Error("That is not a link.");
     }
-    if (opener.open(url) === "refused") {
+    if (opener.open(args.url) === "refused") {
       throw new Error("Only links to other web sites open in the browser.");
     }
   });

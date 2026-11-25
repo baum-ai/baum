@@ -218,4 +218,33 @@ describe("navigation", () => {
       expect(decideNewWindow(u), u).toBe("deny");
     }
   });
+
+  it("opens no link with a user name or password in the browser", () => {
+    for (const u of [
+      "http://127.0.0.1:4100@evil.example/",
+      "http://evil@127.0.0.1:4100/",
+      "http://user:pass@127.0.0.1:4100/s/abc/",
+      "https://user@github.com/",
+      "https://user:pass@github.com/",
+    ]) {
+      expect(decideNewWindow(u), u).toBe("deny");
+    }
+  });
+
+  it("counts only this machine's addresses as loopback", () => {
+    for (const u of [
+      "http://8.8.8.8/",
+      "http://128.0.0.1/",
+      "http://[2001:db8::1]/",
+      "http://[::2]/",
+      "http://[::ffff:8.8.8.8]/",
+      "http://localhost.evil/",
+      "http://notlocalhost/",
+    ]) {
+      expect(decideNewWindow(u), u).toBe("open-in-browser");
+    }
+    for (const u of ["http://127.255.0.3/", "http://[::1]/", "http://[::ffff:7f00:1]/"]) {
+      expect(decideNewWindow(u), u).toBe("deny");
+    }
+  });
 });

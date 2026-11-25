@@ -1,18 +1,12 @@
 // The app's windows and what their pages may do: the secure web preferences
 // every window gets, the registry the command guard reads, the navigation
 // guard of every frame, new-window requests and permission requests.
-import { performance } from "node:perf_hooks";
 import type { BrowserWindow, Session, WebContents, WebPreferences } from "electron";
 import { type Declaration, declarationArgument } from "../shared/contract.ts";
 import type { WindowKind } from "./bridge.ts";
-import { errorMessage, log } from "./log.ts";
-import {
-  type Decision,
-  decideNewWindow,
-  OpenLimit,
-  originOf,
-  schemeAndHost,
-} from "./navigation.ts";
+import type { LinkOpener } from "./links.ts";
+import { log } from "./log.ts";
+import { type Decision, originOf, schemeAndHost } from "./navigation.ts";
 
 /** Every window's web preferences: no Node in the page, the preload
  *  sandboxed, isolated from the page and in the main frame only, and no
@@ -54,21 +48,18 @@ export function windowOf(contents: WebContents): BrowserWindow | undefined {
   return kinds.get(contents.id)?.window;
 }
 
-const limit = new OpenLimit();
-let openExternal: (url: string) => Promise<void> = async () => {};
+let links: LinkOpener | null = null;
 
-export function setOpenExternal(open: (url: string) => Promise<void>): void {
-  openExternal = open;
+/** The app's one `LinkOpener`, which the `open_link` command shares, so a
+ *  page opens the browser at most once a second however it asks. */
+export function setLinkOpener(opener: LinkOpener): void {
+  links = opener;
 }
 
-/** Opens a link to another site in the default browser, at most once a
- *  second (`OpenLimit`). New-window requests come here; so will the
- *  `open_link` command (the links port, 3/7). Returns whether it opened. */
+/** Opens a link to another site in the default browser (links.ts). Returns
+ *  whether it opened. */
 export function openOutside(url: string): boolean {
-  if (decideNewWindow(url) !== "open-in-browser") return false;
-  if (!limit.allow(performance.now())) return false;
-  openExternal(url).catch((e) => log(`cannot open a link in the browser: ${errorMessage(e)}`));
-  return true;
+  return links?.open(url) === "browser";
 }
 
 export interface NavigationGuard {

@@ -19,6 +19,7 @@ import * as daemon from "./daemon.ts";
 import { SHELL } from "./declaration.ts";
 import { developmentDir, frontend, isSetupPage, SETUP_PAGE } from "./development.ts";
 import { startsHidden, claimSingleInstance, hideOnClose } from "./lifecycle.ts";
+import { LinkOpener, registerLinkCommands } from "./links.ts";
 import { errorMessage, log } from "./log.ts";
 import {
   BUNDLED_ORIGIN,
@@ -39,7 +40,7 @@ import {
   kindOf,
   registerAppWindow,
   securePreferences,
-  setOpenExternal,
+  setLinkOpener,
   windowOf,
 } from "./windows.ts";
 
@@ -140,7 +141,12 @@ function start(): void {
   serveAppScheme(protocol, join(app.getAppPath(), "dist"), () => setup.open);
   guardPermissions(session.defaultSession, isAppOrigin);
   guardFrameRequests(session.defaultSession);
-  setOpenExternal((url) => shell.openExternal(url));
+  const links = new LinkOpener({
+    openExternal: (url) => shell.openExternal(url),
+    debug: !app.isPackaged,
+  });
+  setLinkOpener(links);
+  registerLinkCommands(links);
   // Any web contents the app did not set up itself opens no window and
   // attaches no webview; the app's own windows replace the handler.
   app.on("web-contents-created", (_event, contents) => {

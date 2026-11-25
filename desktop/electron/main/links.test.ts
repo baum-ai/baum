@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearCommands, dispatch } from "./commands.ts";
 import { LinkOpener, registerLinkCommands } from "./links.ts";
-import { OPEN_INTERVAL_MS } from "./outside-url.ts";
+import { OPEN_INTERVAL } from "./navigation.ts";
 
 const url = (s: string) => new URL(s);
 
@@ -41,7 +41,7 @@ describe("links", () => {
     expect(links.open(link)).toBe("browser");
     expect(links.open(link)).toBe("dropped");
     // A refused URL neither opens nor counts.
-    state.now = OPEN_INTERVAL_MS;
+    state.now = OPEN_INTERVAL;
     expect(links.open(url("http://localhost/"))).toBe("refused");
     expect(links.open(link)).toBe("browser");
     expect(state.opened).toHaveLength(2);
