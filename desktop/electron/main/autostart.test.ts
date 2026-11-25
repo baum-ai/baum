@@ -195,10 +195,10 @@ describe("start at login", () => {
   }
 
   it("turns on and off on linux, and an AppImage names its own path", () => {
-    const { autostart, entry } = linux({ APPIMAGE: "/home/u/baum.AppImage" });
+    const { autostart, entry } = linux({ APPIMAGE: "/home/alice/baum.AppImage" });
     expect(autostart.enabled()).toBe(false);
     autostart.set(true);
-    expect(readFileSync(entry, "utf8")).toContain("Exec=/home/u/baum.AppImage --hidden\n");
+    expect(readFileSync(entry, "utf8")).toContain("Exec=/home/alice/baum.AppImage --hidden\n");
     expect(autostart.enabled()).toBe(true);
     autostart.set(false);
     expect(autostart.enabled()).toBe(false);
