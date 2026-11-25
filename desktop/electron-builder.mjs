@@ -42,6 +42,11 @@ export default {
     provider: "generic",
     url: "https://github.com/baum-ai/baum/releases/latest/download/",
   },
+  // The update files are latest*.yml for every version: a release candidate
+  // (1.2.3-rc.1) reads them from its own channel's feed (updater.ts), not
+  // from an rc-linux.yml electron-builder would otherwise name after the
+  // pre-release.
+  detectUpdateChannel: false,
   mac: {
     target: "dir",
     category: "public.app-category.developer-tools",
