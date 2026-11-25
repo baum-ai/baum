@@ -617,6 +617,59 @@ it("asks before closing a session while its agent works", async () => {
   await until(() => expect(calls.some((c) => c.path.endsWith("/close"))).toBe(true));
 });
 
+it("archives a session from a right click in the picker, asking before it loses work", async () => {
+  conversation = made({ title: "Done with it" });
+  sessionPanel.select("c1");
+  const discarding = (call: Call) =>
+    (call.body as { discard?: boolean } | undefined)?.discard === true;
+  answer = (call) => {
+    if (call.path !== "api/console/conversations/c1/archive") return undefined;
+    if (!discarding(call))
+      return Response.json(
+        {
+          code: "unclean_directory",
+          message: "Archiving removes this session's worktree.",
+          unclean: {
+            changed: 7,
+            paths: ["a.txt", "b.txt"],
+            branch: "baum/pr-7",
+            unpushed: 1,
+            worktree: true,
+          },
+        },
+        { status: 409 },
+      );
+    conversation = null;
+    return Response.json(made({ state: "closed", archived_at: new Date().toISOString() }));
+  };
+  await host(pr);
+  await act(async () => sessionPanel.show());
+  await until(() => expect(panel()!.textContent).toContain("Done with it"));
+  await act(async () => button("Sessions")!.click());
+  const choice = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((b) =>
+      b.textContent?.startsWith(label),
+    );
+  // The keyboard's menu key on the session opens what can be done with it.
+  await act(async () => {
+    choice("Done with it")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+  });
+  expect(choice("Close session")).toBeDefined();
+  expect(choice("New session")).toBeUndefined();
+  await act(async () => choice("Archive session")!.click());
+  await until(() => expect(document.querySelector("dialog[open]")).not.toBeNull());
+  expect(document.querySelector("dialog[open]")!.textContent).toContain(
+    "which holds 7 uncommitted changes and 1 commit on baum/pr-7 that no remote has. a.txt, b.txt and 5 more.",
+  );
+  await act(async () => button("Discard and archive")!.click());
+  await until(() =>
+    expect(calls.some((c) => c.path.endsWith("/archive") && discarding(c))).toBe(true),
+  );
+  await until(() => expect(panel()!.textContent).not.toContain("Done with it"));
+});
+
 const operation = (over: Partial<Proposal> = {}): Proposal => ({
   id: "p1",
   kind: "operation",

@@ -7184,10 +7184,11 @@ it), why a pull request's conversation got an empty directory instead
 the pages it was opened and sent from (at most 20, no repeat in a row), its
 title (the first message's first line, at most 80 characters), created and
 updated times, state (`idle`, `running`, `failed` or `closed`), why the last
-turn failed or stopped, and the cost of its priced turns (`cost_partial` when
+turn failed or stopped, the cost of its priced turns (`cost_partial` when
 a turn that started a session could not be priced, so the cost is a lower
-bound). Columns added later are added as the other relational stores add
-theirs (`created_branch` and `directory_note` already are). When
+bound) and when it was archived (`archived`, 0 while it is not). Columns added
+later are added as the other relational stores add theirs (`created_branch`,
+`directory_note` and `archived` already are). When
 the service opens, a conversation a stopped daemon left `running` becomes
 `failed` with the reason that baum stopped while the agent answered.
 
@@ -7231,6 +7232,37 @@ links were resolved when the conversation was indexed). A conversation in a
 pull request worktree, the person's or one baum added, is claimed by session
 id only: the worktree is a checkout the person works in too, and stays after
 the conversation closes, so their own sessions there stay theirs.
+
+`Archive` closes a conversation (as `Close` does), removes what baum made for
+it and marks it archived, so the list leaves it out; it can still be read by
+id. The agent's own session, in its agent's session store, is never touched.
+What goes: the conversation's empty directory, `sessions/<id>`; or a worktree
+baum added under `worktrees/<id>/` (whichever conversation added it), removed
+with `git worktree remove --force --force` in the registered clone that lists
+it (or, when git fails or no registered clone lists it, by removing the
+directory and then that worktree's own bookkeeping entry, never with
+`git worktree prune`, which would drop the person's worktrees on a drive not
+mounted now), together with its branch when the conversation that added it
+also created that branch (`git branch -D`). A worktree that was already the
+person's, a branch baum did not create and a worktree another conversation
+that is not archived works in (paths compared resolved) all stay; the last
+of those conversations to be archived removes it. Removing would lose work
+when the empty directory holds files, the worktree has changed, staged or
+untracked paths (`git status`, ignored files left out, never read from a
+repository above the worktree: `GIT_CEILING_DIRECTORIES`), its HEAD has
+commits no branch, tag, remote-tracking ref or `refs/baum/` ref has (made on
+a detached HEAD), the branch to be deleted has commits that no
+remote-tracking ref and no `refs/baum/` ref has, or any of that cannot be
+read: then `Archive` refuses (`UncleanError`, saying what and naming up to 20
+paths) and removes nothing, until it is asked again with `discard`. A
+conversation that is not running is checked before it is closed, so a
+refusal leaves it open for its agent to commit or push the work; it is closed
+once the archive goes ahead, and checked again then, in case a turn wrote
+more. A running one is closed first (the app asks), since its agent may still
+be writing. Archives and placements on one repository take turns, and
+`Create` holds the repository's turn until its conversation is saved, so a
+placement never picks a worktree being removed and an archive always sees a
+conversation placed in its worktree.
 
 Each conversation holds one `chat` MCP token, minted by the MCP server's
 `Registry` when it is created or, after a restart, on its next turn, bound
@@ -7276,7 +7308,7 @@ server; what its commands and hooks inherit follows the person's own
 
 Progress is published as `console` events, `{"conversation","kind","state"}`
 with the kind `created`, `state`, `session` (the agent named its session),
-`text` (at most once a second per conversation while the answer grows, since
+`archived`, `text` (at most once a second per conversation while the answer grows, since
 the event stream replays only its last 128 events), `finished` (with
 `cost_usd` when the turn could be priced) or `proposals` (the conversation's
 open proposals changed, from `Proposals.OnChange`: one was proposed, saved,
@@ -7314,7 +7346,8 @@ every other route; an empty body is accepted where a route takes none.
 Errors are `{"code","message"}`: 400 `invalid_request` or `invalid_page` (a
 page the MCP server would refuse), 404 `conversation_not_found` or
 `proposal_not_found`, 409 `busy`, `closed`, `not_current_page`, `stale`,
-`not_offered` or `conversation_closed`, 400 `wrong_kind` (confirming a change
+`not_offered`, `conversation_closed` or `unclean_directory` (with `unclean`:
+`changed`, `paths`, `branch`, `unpushed`, `unreadable`, `worktree`), 400 `wrong_kind` (confirming a change
 or saving an operation), 422 `refused` (the page's own refusal of a saved
 value or the operation route's), 503 `shutting_down`. A body over the bound
 (the message's 64 KiB and 64 KiB more) is 400 `invalid_request`, as the other
@@ -7325,13 +7358,14 @@ routes answer as the local API does for a capability it lacks: a read with
 
 | Route | Does |
 | --- | --- |
-| `GET /api/console/conversations` | `{"conversations":[...]}`, newest first: `id`, `title`, `agent`, `model`, `mode`, `state`, `directory`, `directory_note`, `repository`, `pull_request`, `updated_at` and `session` (`agent:id`, once known) |
+| `GET /api/console/conversations` | `{"conversations":[...]}`, newest first, archived ones left out: `id`, `title`, `agent`, `model`, `mode`, `state`, `directory`, `directory_note`, `repository`, `pull_request`, `updated_at` and `session` (`agent:id`, once known) |
 | `POST /api/console/conversations` | opens one from `{"agent","model","mode","page"}`, each optional (the panel's setting); 201 with the conversation |
 | `GET /api/console/conversations/{id}` | every field of the conversation, its pages included, `session_key`, and `progress` (the running or last turn since the daemon started: `text`, `message`, `tool`, `session`, `state`, `cost_usd`) or null |
 | `GET /api/console/conversations/{id}/transcript` | the transcript of the session the conversation's agent reported, answered as `GET /api/live-sessions/{agent}/{id}/transcript` is (`?version=` included), read with `Transcripts.Read`: found by that session id in the agent's own session store, whether or not the tracker still lists it; nothing in the request names the file. Before the agent reported a session, or when its file is gone, `available: false` with why |
 | `POST /api/console/conversations/{id}/messages` | sends `{"text","page"}` (the page optional) as a turn; 202 with the conversation, running |
 | `POST /api/console/conversations/{id}/cancel` | stops the running turn (none running is no error) and answers the conversation |
 | `POST /api/console/conversations/{id}/close` | closes it: stops its turn, revokes its token, drops its proposals |
+| `POST /api/console/conversations/{id}/archive` | closes it and removes what baum made for it (`Archive`); `{"discard":true}` removes it even when that loses work, which is otherwise 409 `unclean_directory`; answers the conversation with `archived_at` |
 | `PUT /api/console/page` | the page context the person has open (`SetPage`), for every open conversation's token |
 | `GET /api/console/conversations/{id}/proposals` | `{"proposals":[...]}`: each `agentcontext.Proposal` as the MCP server keeps it: `id`, `kind` (`diff` or `operation`), `page`, `target`, a change's `before`, `after` and `revision`, an operation's `operation` (`name`, `request`, `summary` with `action`, `details` and their `quoted`, `multiline` and `by_agent` markers, `model`, `effort`, `paid`, `irreversible`, and the summary's `revision`), and `context`; a colour theme proposal's `after` also carries `contrast_warnings` (the pairs under `themes.MinContrast`, added by the listing alone: the stored proposal is unchanged) |
 | `POST .../proposals/{proposal}/save` | saves a change with `{"value"}`, what the person typed (an agent environment variable's value), never the agent |

@@ -2761,10 +2761,19 @@ the panel instead.
 
 Its bar names the conversation (its first message, else "New session"),
 **Working** with the live dot while a turn runs, and **Sessions**, a menu of
-the conversations, newest first, with **New session** and **Close this
-session** (asked first while a turn runs, since closing stops it); a closed
-one can be reopened and read, not written to. The menu stays open while the
-transcript under it scrolls. Under it, on one line in small print:
+the conversations, newest first, with **New session**, **Close this session**
+and **Archive this session** (each asked first while a turn runs, since it
+stops it); a closed one can be reopened and read, not written to. A right
+click on any conversation in the menu (or the Menu key, Shift+F10 or ⌘. while
+it has the keys: a `MenuItem`'s `actions` in `src/context-menu.tsx`) replaces
+the menu with **Close session**, while it is open, and **Archive session**.
+Archiving takes it out of the menu and removes the empty folder or the
+worktree baum made for it, and the branch baum created (see "Session panel
+conversations" in `oss/ARCHITECTURE.md`); the agent's own session stays. When
+that would lose work (`409 unclean_directory`: changes, files or commits no
+remote has), a dialog says what, naming a few paths, and **Discard and
+archive** archives it anyway. Archiving the conversation shown goes to New
+session. The menu stays open while the transcript under it scrolls. Under it, on one line in small print:
 **Looking at**, the page the agent sees (the page context below, named by
 `pageLabel`, with a pull request's or group's own name); **Directory**, where
 the agent works (before it starts, a checkout of the pull request on a pull
