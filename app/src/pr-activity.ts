@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import type { Entry } from "./api";
 import type { ConversationSummary } from "./console-api";
 import { uiState, useUIState } from "./ui-state";
@@ -176,7 +176,8 @@ export function advance(
   }
   for (const [key, entry] of open) {
     const record = prs[key];
-    if (!record && !conversations) continue;
+    // A first sight waits for the panel's conversations and GitHub's details.
+    if (!record && (!conversations || entry.unresolved === null)) continue;
     const last = observe(entry, conversations, record?.last);
     const unread =
       viewing.includes(key) || !record ? {} : add(record.unread, changes(record.last, last));
@@ -194,6 +195,11 @@ export function advance(
   if (keys.length > KEEP)
     for (const key of keys.sort((a, b) => prs[b]!.at - prs[a]!.at).slice(KEEP)) delete prs[key];
   return { prs };
+}
+
+function onVisibility(change: () => void) {
+  document.addEventListener("visibilitychange", change);
+  return () => document.removeEventListener("visibilitychange", change);
 }
 
 const record = () => uiState<Stored>("api/ui-state/activity", () => ({ prs: {} }));
@@ -214,18 +220,19 @@ export function usePullActivity(
   // counted on by the next read, not by these again.
   const counted = useRef<unknown[]>([]);
   const page = viewing.join(" ");
+  const visible = useSyncExternalStore(onVisibility, () => !document.hidden);
   useEffect(() => {
-    if (!ready || !persistence.ready || document.hidden) return;
+    if (!ready || !persistence.ready || !visible) return;
     const reads = [entries, conversations, page];
     if (reads.every((read, i) => read === counted.current[i])) return;
     counted.current = reads;
     if (!advance(stored, entries, conversations, viewing, Date.now())) return;
-    persistence.update((previous) =>
-      previous === stored
-        ? (advance(previous, entries, conversations, viewing, Date.now()) ?? previous)
-        : previous,
+    // Each record keeps what it last saw with what it counted, so these reads
+    // added to a newer record count only what it has not.
+    persistence.update(
+      (previous) => advance(previous, entries, conversations, viewing, Date.now()) ?? previous,
     );
-  }, [ready, persistence.ready, stored, entries, conversations, page]);
+  }, [ready, persistence.ready, visible, stored, entries, conversations, page]);
   return (pr: Pick<Entry["pull_request"], "repository" | "number">): Activity | undefined => {
     const unread = stored.prs[upNextKey(pr)]?.unread;
     return activityCount(unread) > 0 ? unread : undefined;

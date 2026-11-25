@@ -82,6 +82,10 @@ it("counts an update on GitHub only when nothing else explains it", () => {
   ).toEqual({ reviews: 1 });
 });
 
+it("waits for GitHub's details before taking a pull request as it is", () => {
+  expect(advance({ prs: {} }, [entry({}, { unresolved: null })], [], [], 1)).toBeNull();
+});
+
 it("reads a pull request listed by several clones once", () => {
   const clones = [entry({}, { version_count: 3 }), entry({}, { version_count: 0 })];
   const stored = advance({ prs: {} }, clones, [], [], 1)!;
