@@ -1805,12 +1805,12 @@ untrusted:
   open windows or dialogs, submit forms, navigate the app's page or reach
   storage, and its own policy lets it load nothing.
 - **Where frames mount.** In a browser, always. In the desktop app only when
-  the shell declares, by a script it runs in the page before the page's own,
+  the shell declares, from its preload before the page's own scripts,
   `window.__BAUM_DESKTOP__ = { tileFrames: true }`: a shell says so once it
   refuses every navigation that is not to the daemon's own pages (only a
   request for a new window opens your browser) and once its commands are
   checked to be out of a sandboxed frame's reach. A shell without the
-  declaration (an older one, or the Tauri shell on Windows) mounts no
+  declaration (an older one) mounts no
   frame, and its custom tiles say they aren't available in
   this version of the desktop app yet. A frame cannot set the declaration:
   it cannot write the page's globals.
@@ -1863,8 +1863,8 @@ untrusted:
   floods or keeps taking the keyboard is unmounted and its tile says it
   couldn't load, in the host's own words; what the tile reported is shown
   apart, quoted, behind Details. A frame that navigates itself after it
-  drew is unmounted where the engine reports the navigation as a load (both
-  Chromium and WebKit do for the navigations the suite tries); one that
+  drew is unmounted where the engine reports the navigation as a load
+  (Chromium does for the navigations the suite tries); one that
   navigates before it drew never draws and is unmounted when its time runs
   out. That failure is about that frame only: nothing a frame sends marks
   its tile type, or any other tile, as broken. Only the daemon's own render
@@ -1876,8 +1876,7 @@ untrusted:
   draws.
 
 The browser suite (`app/custom-tile-tests/tile-frames.spec.ts`) runs hostile
-tiles on the real frame route in Chromium, and in WebKit with
-`just local_app::e2e-webkit`: every way out it tries (reading the page,
+tiles on the real frame route in Chromium: every way out it tries (reading the page,
 cookies, storage, caches and the shell's message handlers, top and parent
 navigation, `window.open`, dialogs, form submission, nested frames, fetch,
 XHR, WebSocket, EventSource, beacons, images, fonts, stylesheets and CSS
@@ -1885,10 +1884,10 @@ XHR, WebSocket, EventSource, beacons, images, fonts, stylesheets and CSS
 messages, a second hello, floods, taking the keyboard while the reader
 types elsewhere, navigating itself before and after it drew) is refused,
 the page stays as it was and a listening server on another port receives
-nothing. The Electron shell's harness (`desktop/tests/shell`, in CI) checks
+nothing. The desktop shell's harness (`desktop/tests/shell`, in CI) checks
 on Linux that a sandboxed frame reaches none of its commands, sees no
 declaration and can neither leave the app nor open the browser; the
-desktop shells are also checked by hand on each platform
+shell is also checked by hand on each platform
 (`desktop/tests/tile-frames-manual.md`).
 
 **What a tile is given.** The frame protocol gives a tile its own data, the
@@ -1904,22 +1903,20 @@ by the chat's agent.
 - A tile's author can learn what the tile is given, at low bandwidth: the
   browser may resolve or connect to hosts a tile names in its markup (DNS
   prefetch and preconnect) before any policy applies, and where the engine
-  offers WebRTC (Chromium, and WebKit outside WebKitGTK; macOS is
-  unverified), a peer connection can reach a server the policy does not
+  offers WebRTC (Chromium does), a peer connection can reach a server the policy does not
   govern. baum ships no script that tries to block these inside the frame: a
   fresh realm gets around such a script. It minimises what a tile receives
   instead.
-- **A tile in an endless loop freezes the app's window until the app is
-  closed**, where the engine runs the frame on the page's thread (the Tauri
-  shell; a browser in some runs), and nothing in the page can stop it; the next time the review is opened it
+- **A tile in an endless loop freezes the page until it is closed**, where
+  the engine runs the frame on the page's thread (a browser, in some runs),
+  and nothing in the page can stop it; the next time the review is opened it
   freezes again. In the browser suite a 1.5-second loop held the page for
-  its length in WebKit every time, and in Chromium in some runs and not
-  others. The host unmounts a frame that does not draw in time, but cannot
-  interrupt one that holds the thread. The Electron shell runs sandboxed
-  frames in a process apart from the page, so a looping tile there stalls
-  only the tiles that share its process, and the page keeps working. Where the desktop shell provides the
-  render check a window with its own renderer process (the Electron shell,
-  and the Tauri shell on Linux), that window takes the freeze instead (see "The render check" below). Elsewhere
+  its length in some runs and not others. The host unmounts a frame that
+  does not draw in time, but cannot interrupt one that holds the thread.
+  The desktop app runs sandboxed frames in a process apart from the page, so
+  a looping tile there stalls only the tiles that share its process, and the
+  page keeps working. The desktop app gives the render check a window with
+  its own renderer process, which takes the freeze instead (see "The render check" below). Elsewhere
   (a browser, a shell without one) the render check draws in the app's own
   page, so a
   candidate that loops freezes it, and the daemon then answers `hang` and
@@ -1953,8 +1950,8 @@ mistakes, not a security control: a tile can fake its `ready`, swallow its
 errors or behave differently later. What it does protect against is a
 freeze where it would hurt:
 
-- Where the desktop shell provides a check window (the Electron shell, and
-  the Tauri shell on Linux), the runner draws in that hidden window with its
+- In the desktop app, which provides a check window, the runner draws in that
+  hidden window with its
   own renderer process. While it
   draws, the runner tells the daemon it is alive every 2 seconds and as
   frames finish; a candidate that never finishes drawing freezes it, so
@@ -2456,42 +2453,35 @@ The window loads only its bundled screens and the attached daemon's
 loopback origin, and refuses every other navigation: other web hosts, other
 loopback servers and other schemes, and any address with a user name or
 password in it. A navigation never opens your browser or leaves the app. The
-Electron shell asks about every navigation of the page and of every frame in
+shell asks about every navigation of the page and of every frame in
 it (a frame navigating itself, a page setting a frame's address and a new
 frame alike) and tells the app only the destination, and it checks every
 frame load again at the network, so a load the events miss is refused too.
 `data:` and `blob:` frames are refused; `about:blank` and `about:srcdoc`
-frames load nothing and take the page's own origin and policy. In the Tauri
-shell (shipped until the bridge release) macOS and Linux ask about a
-navigation in any frame; on Windows only the page's own navigations, and the
-page's policy alone governs its frames. The daemon's pages limit frames to
-their own origin, which stops a frame's navigation elsewhere before the app
-is asked, but a page without that policy (the development server's) or an
-engine that asks first would let any frame through; if a navigation could
+frames load nothing and take the page's own origin and policy. The daemon's
+pages limit frames to their own origin, which stops a frame's navigation
+elsewhere before the app is asked, but a page without that policy (the
+development server's) would rely on the shell alone; if a navigation could
 open the browser, such a frame could open it at an address carrying data it
 read, as often as it liked. Links to other web hosts open in your default
 browser only as requests for a new window (`target="_blank"` links and
 `window.open`), or through the app's `open_link` command, which opens the
 same addresses and only from the page itself; no window ever opens. A
 sandboxed frame can make such a request only when its sandbox allows pop-ups,
-and a tile's frame does not: the Electron shell is not told which frame
-asked, so it relies on that. A page's script can make one at any time (on
-Linux the Tauri shell's webview allows one only while you interact with the
-page), so the app opens the browser at most once a second and drops the
+and a tile's frame does not: the shell is not told which frame
+asked, so it relies on that. A page's script can make one at any time, so
+the app opens the browser at most once a second and drops the
 rest. Setup opens GitHub's fixed device sign-in page itself, a few seconds
 after you start a sign-in.
 
 The daemon's pages can call a few of the app's commands, granted to the
 attached daemon's own origin in the main window and listed in
-`desktop/electron/main/commands.ts` (in the Tauri shell, to pages of
-`http://127.0.0.1` on any port, in `desktop/capabilities/daemon-pages.json`):
-the
-folder picker, reading and changing the `baum` command and the user-wide agent
+`desktop/electron/main/commands.ts`: the folder picker, reading and changing the `baum` command and the user-wide agent
 hooks (as Settings does), the window's zoom, and reading, checking for,
 installing and dismissing app updates (only an update the app has already
 downloaded and verified installs), opening and closing the tile check
 window, and opening a link to another web host in your browser (at most once
-a second). They can call no other command and no plugin. Only the page itself can call them: the Electron shell
+a second). They can call no other command and no plugin. Only the page itself can call them: the shell
 puts its command bridge in the page's main frame only and runs a command
 only when it comes from the main frame of one of its own command windows, so
 a frame embedded in the page, even one served from the daemon's origin,
@@ -2500,9 +2490,7 @@ CI) checks this with sandboxed frames trying every way to the bridge, and a
 person checks it on macOS and Windows. Its pages reach neither Node.js nor
 Electron. The shell declares to the page (`window.__BAUM_DESKTOP__.tileFrames`,
 set before the page's scripts and not replaceable) that it may embed frames
-of untrusted content from the daemon's origin. The Tauri shell injects its
-bridge into the main frame only on macOS and Linux, and into every frame on
-Windows, where it declares that the page must not embed such frames. The bundled connecting screen may only read the connection state and
+of untrusted content from the daemon's origin. The bundled connecting screen may only read the connection state and
 ask to reconnect. The bundled setup screen may also read what is installed and
 install or remove the `baum` command and the user-wide agent hooks; it does
 so only when you click the button for that change, and a change that would
@@ -2521,31 +2509,26 @@ your daemon. Turn it off in the tray or the window's Background menu, which
 removes the entry.
 
 The daemon's page checks a custom tile in a hidden second window, the tile
-check window (in the Electron shell on every platform; in the Tauri shell on
-Linux only), which runs in renderer processes of its own. It starts at the
+check window, which runs in renderer processes of its own. It starts at the
 attached daemon's check page and can load only pages of that daemon's
 origin, under the main window's navigation rules, opens no browser, and its
-page can call no app command. In the Electron shell it runs in a session of
+page can call no app command. It runs in a session of
 its own, in memory, into which the app copies the daemon's cookies before
 each load and which it empties when the window closes. A tile that never
 yields there stalls only that window, and closing it ends its processes.
 
-In the Electron shell a sandboxed tile frame runs in a renderer process
+A sandboxed tile frame runs in a renderer process
 apart from the page, so a tile that never yields no longer freezes the
 window: it stalls the tiles that share its process (the page's other
 sandboxed frames of the daemon's site), and the page keeps working. A
 script that never yields in the page itself, or in a frame of the page's
-own origin, still freezes the whole window, and so does any in the Tauri
-shell, which runs a page and its frames in one process; neither shell
-detects an unresponsive page. The tray, its menu and the daemon keep
+own origin, still freezes the whole window; the shell does not detect an
+unresponsive page. The tray, its menu and the daemon keep
 working, and quitting the app from the tray and opening it again loads the
 page anew. Your data is not at risk, but nothing stops a page from being
 unusable until then.
 
-In the Tauri shell, a navigation to an address the app's URL parser cannot
-read is allowed by the app's runtime without asking the app; the Electron
-shell refuses it. Such a navigation can never open your browser, and the
-page's own policy still applies to it.
+A navigation to an address the app's URL parser cannot read is refused.
 
 On first run, and from "Command Line and Hooks…" in its menu, the app
 installs its bundled `baum` as your `baum` command, because agent hooks run
@@ -2607,12 +2590,12 @@ gives no new control; directories that no longer exist are skipped.
 Besides loopback requests to the daemon, the app makes one kind of network
 request: a release build checks GitHub Releases for a newer version of
 baum-ai/baum when it starts and once a day (`BAUM_DESKTOP_UPDATES=0` turns
-this off). The check is a plain HTTPS download of `latest.json`; it carries
-no token or data of yours. The app installs an update only when the
-downloaded bundle carries a minisign signature from the release key built
-into the app, made for the version the manifest announces, so neither a
-changed bundle nor an older signed release served as a newer one is
-installed. It waits while the daemon runs a generation job and restarts only
+this off). The check is a plain HTTPS download of the release's update file
+(`latest-mac.yml` or `latest-linux.yml`); it carries no token or data of
+yours. The app installs an update only when the downloaded file carries a
+minisign signature from the release key built into the app, made for the
+version being installed, so neither a changed file nor an older signed
+release served as a newer one is installed. It waits while the daemon runs a generation job and restarts only
 after you confirm.
 
 The signing keys (the updater key, and Apple's and Windows' code signing
@@ -2625,5 +2608,5 @@ is on `main`. The jobs that use the environment build nothing: they sign
 bundles that an earlier job compiled without any secret, using Apple's and
 Microsoft's signing tools and a minisign binary pinned by checksum. The
 release workflow verifies every updater signature, version and download URL
-before it publishes the manifest, and the release stays a draft until it
+before it publishes the update files, and the release stays a draft until it
 has. See `desktop/README.md` for the jobs.
