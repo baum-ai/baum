@@ -4,6 +4,14 @@ One `## vX.Y.Z` section per release, newest first, written for users and
 without internal tracking identifiers. A release candidate's notes are its
 version's section: `v0.2.0-rc.1` and `v0.2.0` both use `## v0.2.0`.
 
+## Unreleased
+
+### Desktop app
+
+- The desktop app now runs on Electron instead of Tauri, with Chromium's engine and codecs on every platform. The Linux packages no longer need WebKitGTK or GStreamer.
+- Installed copies move to it with their next update, as with any release: the macOS app and the Linux AppImage replace themselves and keep their settings, setup, command line, menu entry and start at login. Saved view preferences in the app's pages, such as a folded inbox or the review's file grouping, go back to their defaults once. A deb install updates by installing the new deb.
+- Every update is still checked against baum's release signing key before it is installed.
+
 ## v0.2.0
 
 baum 0.2.0 makes the desktop app and daemon much lighter on an idle machine, reads the Codex sessions Codex has compressed, and adds custom prompts, inbox archiving and tighter links between reviews and code.
