@@ -1,3 +1,4 @@
+import { desktopShell, type DesktopWindow } from "../../desktop/native";
 import { useEffect, useState, useSyncExternalStore, type RefObject } from "react";
 
 /** What the custom tile host needs to know about where it runs: whether it
@@ -13,15 +14,14 @@ import { useEffect, useState, useSyncExternalStore, type RefObject } from "react
 type DesktopDeclaration = { tileFrames?: unknown };
 
 /** Whether the page may mount tile frames here: always in a browser; in a
- *  desktop shell (its bridge, `__TAURI_INTERNALS__`, is on the page) only
+ *  desktop shell (its bridge, `window.baumDesktop` in Electron or
+ *  `__TAURI_INTERNALS__` in Tauri, is on the page) only
  *  when the shell declares `window.__BAUM_DESKTOP__ = { tileFrames: true }`.
  *  A shell that declares nothing, or anything else, is an older or
  *  unchecked one (the Windows shell, until its separate check is done), and
  *  the page mounts no frame there. */
-export function framesAllowedHere(
-  win: Window & { __TAURI_INTERNALS__?: unknown; __BAUM_DESKTOP__?: unknown } = window,
-): boolean {
-  if (!win.__TAURI_INTERNALS__) return true;
+export function framesAllowedHere(win: DesktopWindow = window): boolean {
+  if (!desktopShell(win)) return true;
   const declared = win.__BAUM_DESKTOP__;
   if (typeof declared !== "object" || declared === null) return false;
   return (

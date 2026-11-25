@@ -137,14 +137,14 @@ describe("running a job", () => {
   });
 });
 
-describe("where checks draw", () => {
-  type Bridge = { __TAURI_INTERNALS__?: unknown };
+describe.each(["__TAURI_INTERNALS__", "baumDesktop"])("where checks draw under %s", (bridge) => {
+  type Bridge = Record<string, unknown>;
   afterEach(() => {
     vi.useRealTimers();
     setInPageRunner(null);
   });
   const shell = (declared: unknown, invoke: unknown = vi.fn(() => Promise.resolve())) =>
-    ({ __TAURI_INTERNALS__: { invoke }, __BAUM_DESKTOP__: declared }) as unknown as Window;
+    ({ [bridge]: { invoke }, __BAUM_DESKTOP__: declared }) as unknown as Window;
 
   it("uses the check window where the shell declares one", () => {
     expect(checkWindowHere(shell({ tileFrames: true, checkWindow: true }))).toBe(true);
@@ -171,8 +171,8 @@ describe("where checks draw", () => {
     vi.useFakeTimers();
     const invoke = vi.fn((_command: string, _args?: unknown) => Promise.resolve());
     const win = shell({ tileFrames: true, checkWindow: true }, invoke);
-    const previous = (window as Bridge).__TAURI_INTERNALS__;
-    (window as Bridge).__TAURI_INTERNALS__ = { invoke };
+    const previous = (window as unknown as Bridge)[bridge];
+    (window as unknown as Bridge)[bridge] = { invoke };
     try {
       const run = vi.fn();
       setInPageRunner(run);
@@ -194,7 +194,7 @@ describe("where checks draw", () => {
       expect(invoke).toHaveBeenLastCalledWith("close_check_window", undefined);
       expect(run).not.toHaveBeenCalled();
     } finally {
-      (window as Bridge).__TAURI_INTERNALS__ = previous;
+      (window as unknown as Bridge)[bridge] = previous;
     }
   });
 
@@ -205,8 +205,8 @@ describe("where checks draw", () => {
     vi.useFakeTimers();
     const invoke = vi.fn((_command: string, _args?: unknown) => Promise.resolve());
     const win = shell({ tileFrames: true, checkWindow: true }, invoke);
-    const previous = (window as Bridge).__TAURI_INTERNALS__;
-    (window as Bridge).__TAURI_INTERNALS__ = { invoke };
+    const previous = (window as unknown as Bridge)[bridge];
+    (window as unknown as Bridge)[bridge] = { invoke };
     const answer = (body: unknown) =>
       vi.fn((_url: string) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) }));
     try {
@@ -228,7 +228,7 @@ describe("where checks draw", () => {
       await checkWaitingJobs(win);
       expect(invoke).toHaveBeenCalledTimes(1);
     } finally {
-      (window as Bridge).__TAURI_INTERNALS__ = previous;
+      (window as unknown as Bridge)[bridge] = previous;
       vi.unstubAllGlobals();
       onTileCheckEvent({ id: "x", state: "hung" }, win);
     }

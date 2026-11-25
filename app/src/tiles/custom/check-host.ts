@@ -1,5 +1,5 @@
 import { appURL } from "../../api";
-import { invoke } from "../../desktop/native";
+import { desktopShell, invoke, type DesktopWindow } from "../../desktop/native";
 import { framesAllowedHere } from "./environment";
 
 /** Where the render check's runner draws (see "Render check" in
@@ -12,11 +12,9 @@ import { framesAllowedHere } from "./environment";
  *  the page; where they are not (a shell that declares no frames), nothing
  *  draws and the daemon answers `unavailable`. */
 
-type Shell = Window & { __TAURI_INTERNALS__?: unknown; __BAUM_DESKTOP__?: unknown };
-
 /** Whether the shell gives the render check a window of its own. */
-export function checkWindowHere(win: Shell = window): boolean {
-  if (!win.__TAURI_INTERNALS__) return false;
+export function checkWindowHere(win: DesktopWindow = window): boolean {
+  if (!desktopShell(win)) return false;
   const declared = win.__BAUM_DESKTOP__;
   return (
     typeof declared === "object" &&
@@ -28,7 +26,7 @@ export function checkWindowHere(win: Shell = window): boolean {
 }
 
 /** Whether the runner draws inside this page. */
-export function inPageChecksHere(win: Shell = window): boolean {
+export function inPageChecksHere(win: DesktopWindow = window): boolean {
   return !checkWindowHere(win) && framesAllowedHere(win);
 }
 
@@ -64,7 +62,7 @@ function closeWindow() {
 }
 
 /** What the main page does with a `tile_check` event. */
-export function onTileCheckEvent(raw: unknown, win: Shell = window) {
+export function onTileCheckEvent(raw: unknown, win: DesktopWindow = window) {
   let event: TileCheckEvent;
   try {
     event = (typeof raw === "string" ? JSON.parse(raw) : raw) as TileCheckEvent;
@@ -90,7 +88,7 @@ export function onTileCheckEvent(raw: unknown, win: Shell = window) {
  *  `tile_check` events to a new connection, so the page asks whether checks
  *  are waiting and treats them like a `queued` event (opening the check
  *  window, or drawing in the page). Nothing waiting does nothing. */
-export async function checkWaitingJobs(win: Shell = window) {
+export async function checkWaitingJobs(win: DesktopWindow = window) {
   if (!checkWindowHere(win) && !inPageChecksHere(win)) return;
   try {
     const response = await fetch(appURL("api/tile-checks/state"));

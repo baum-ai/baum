@@ -9,7 +9,7 @@ import {
 } from "react";
 import { request, type OrganizationAccess, type Repository } from "./api";
 import { OrganizationAccessNotice } from "./organization-access";
-import { invoke } from "./desktop/native";
+import { desktopShell, invoke } from "./desktop/native";
 import { displayPath, repositoryPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
 import { usePageRefreshAction } from "./shell";
@@ -116,7 +116,7 @@ export function cloneDirectory(parent: string, repository: string) {
 export const earlierNamesWarning = (names: string[]) => `Pointing to ${names.join(", ")}.`;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export function hasFolderPicker() {
-  return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  return Boolean(desktopShell());
 }
 
 /** What a repository without a local clone can do about it: `choose` a

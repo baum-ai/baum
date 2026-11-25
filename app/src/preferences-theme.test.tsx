@@ -39,6 +39,7 @@ afterEach(() => {
   node.remove();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  Reflect.deleteProperty(window, "baumDesktop");
 });
 
 let api!: ReturnType<typeof usePreferences>;
@@ -55,24 +56,32 @@ const mount = () =>
     ),
   );
 
-it("tells the desktop app the saved theme, but never a preview, and not twice", async () => {
-  const invoke = vi.fn(async () => undefined);
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
-  await mount();
-  expect(invoke).toHaveBeenCalledTimes(1);
-  expect(invoke).toHaveBeenCalledWith("save_theme", {
-    mode: "dark",
-    light: { base: "light", tokens: {} },
-    dark: { base: "dark", tokens: { "--color-paper": "#e8eef4" } },
-  });
-  await act(async () => api.setPreview({ ...dusk, id: "p", tokens: { "--color-paper": "#000" } }));
-  await act(async () => api.setPreview(null));
-  expect(invoke).toHaveBeenCalledTimes(1);
-  saved = { ...saved, theme: "light" };
-  await act(async () => void (await api.refresh()));
-  expect(invoke).toHaveBeenCalledTimes(2);
-  expect(invoke).toHaveBeenLastCalledWith("save_theme", expect.objectContaining({ mode: "light" }));
-});
+it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+  "tells the desktop app (%s) the saved theme, but never a preview, and not twice",
+  async (global) => {
+    const invoke = vi.fn(async () => undefined);
+    Object.defineProperty(window, global, { configurable: true, value: { invoke } });
+    await mount();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("save_theme", {
+      mode: "dark",
+      light: { base: "light", tokens: {} },
+      dark: { base: "dark", tokens: { "--color-paper": "#e8eef4" } },
+    });
+    await act(async () =>
+      api.setPreview({ ...dusk, id: "p", tokens: { "--color-paper": "#000" } }),
+    );
+    await act(async () => api.setPreview(null));
+    expect(invoke).toHaveBeenCalledTimes(1);
+    saved = { ...saved, theme: "light" };
+    await act(async () => void (await api.refresh()));
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenLastCalledWith(
+      "save_theme",
+      expect.objectContaining({ mode: "light" }),
+    );
+  },
+);
 
 it("sends nothing outside the desktop app", async () => {
   const invoke = vi.fn(async () => undefined);
