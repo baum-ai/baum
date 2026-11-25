@@ -94,6 +94,7 @@ const desktopJson = join(config, DESKTOP_JSON);
 app.setName(IDENTIFIER);
 app.setPath("userData", config);
 app.setPath("sessionData", sessionDataDir(config));
+app.setPath("crashDumps", join(sessionDataDir(config), "Crashpad"));
 // Before the first notification, or Windows toasts carry no app identity.
 if (process.platform === "win32") app.setAppUserModelId(IDENTIFIER);
 registerAppScheme(protocol);

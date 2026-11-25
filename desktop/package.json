@@ -6,6 +6,7 @@
   "license": "MIT",
   "type": "module",
   "main": "build/main.cjs",
+  "desktopName": "baum.desktop",
   "scripts": {
     "postinstall": "node electron/ensure-electron.mjs",
     "build": "node electron/build.mjs",
