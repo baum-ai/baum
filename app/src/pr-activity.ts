@@ -227,11 +227,16 @@ export function usePullActivity(
     if (reads.every((read, i) => read === counted.current[i])) return;
     counted.current = reads;
     if (!advance(stored, entries, conversations, viewing, Date.now())) return;
-    // Each record keeps what it last saw with what it counted, so these reads
-    // added to a newer record count only what it has not.
-    persistence.update(
-      (previous) => advance(previous, entries, conversations, viewing, Date.now()) ?? previous,
-    );
+    // Replayed onto a record another window saved meanwhile, these reads count
+    // only the pull requests it saw as these did: the others it read anew.
+    const seen = (prs: Stored["prs"], key: string) => JSON.stringify(prs[key]?.last);
+    persistence.update((previous) => {
+      const mine = entries.filter((entry) => {
+        const key = upNextKey(entry.pull_request);
+        return seen(previous.prs, key) === seen(stored.prs, key);
+      });
+      return advance(previous, mine, conversations, viewing, Date.now()) ?? previous;
+    });
   }, [ready, persistence.ready, visible, stored, entries, conversations, page]);
   return (pr: Pick<Entry["pull_request"], "repository" | "number">): Activity | undefined => {
     const unread = stored.prs[upNextKey(pr)]?.unread;
