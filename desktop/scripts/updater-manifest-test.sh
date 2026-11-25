@@ -232,7 +232,7 @@ pass env PATH="$work/crlf-tools:$PATH" MINISIGN="$work/crlf-tools/minisign" "$ma
 # Tauri updater installs it. (scripts/bridge-test.sh checks real AppImages.)
 bridge=$work/bridge
 mkdir -p "$bridge/app/baum.app/Contents/MacOS" "$bridge/app/baum.app/Contents/Resources"
-echo exe >"$bridge/app/baum.app/Contents/MacOS/baum-desktop"
+echo exe >"$bridge/app/baum.app/Contents/MacOS/baum"
 jq -n --arg url "$base/baum-desktop-darwin-universal.app.tar.gz" \
   '{version: "1.2.3", platforms: {"darwin-aarch64": {url: $url, signature: ""}}}' >"$bridge/latest.json"
 tar -czf "$bridge/baum-desktop-darwin-universal.app.tar.gz" -C "$bridge/app" baum.app

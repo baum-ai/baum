@@ -92,8 +92,8 @@ prepare() {
   extract "$dir/electron/$appimage" "$dir/mac/extract" resources/app.asar
   mkdir -p "$dir/mac/baum.app/Contents/MacOS" "$dir/mac/baum.app/Contents/Resources"
   cp "$dir/mac/extract/squashfs-root/resources/app.asar" "$dir/mac/baum.app/Contents/Resources/"
-  printf '#!/bin/sh\n' >"$dir/mac/baum.app/Contents/MacOS/baum-desktop"
-  chmod 0755 "$dir/mac/baum.app/Contents/MacOS/baum-desktop"
+  printf '#!/bin/sh\n' >"$dir/mac/baum.app/Contents/MacOS/baum"
+  chmod 0755 "$dir/mac/baum.app/Contents/MacOS/baum"
   tar -czf "$dir/release/baum-desktop-darwin-universal.app.tar.gz" -C "$dir/mac" baum.app
   "$here/scripts/updater-sign.sh" 1.2.3 "$dir/release/$appimage" "$dir/release/baum-desktop-darwin-universal.app.tar.gz"
   "$here/scripts/updater-manifest.sh" write 1.2.3 "$dir/release"

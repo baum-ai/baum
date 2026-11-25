@@ -346,7 +346,7 @@ describe("package types", () => {
     {
       name: "macOS app in Applications",
       platform: "darwin",
-      execPath: "/Applications/baum.app/Contents/MacOS/baum-desktop",
+      execPath: "/Applications/baum.app/Contents/MacOS/baum",
       kind: "mac",
       checks: true,
       installs: true,
@@ -354,8 +354,7 @@ describe("package types", () => {
     {
       name: "translocated macOS app",
       platform: "darwin",
-      execPath:
-        "/private/var/folders/x/T/AppTranslocation/ABC/d/baum.app/Contents/MacOS/baum-desktop",
+      execPath: "/private/var/folders/x/T/AppTranslocation/ABC/d/baum.app/Contents/MacOS/baum",
       kind: "mac",
       checks: true,
       installs: false,
@@ -363,7 +362,7 @@ describe("package types", () => {
     {
       name: "macOS app on its read-only disk image",
       platform: "darwin",
-      execPath: "/Volumes/baum/baum.app/Contents/MacOS/baum-desktop",
+      execPath: "/Volumes/baum/baum.app/Contents/MacOS/baum",
       writable: readOnly,
       kind: "mac",
       checks: true,

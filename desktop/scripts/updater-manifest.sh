@@ -33,7 +33,7 @@
 # "Bridge release" in README.md): the macOS archive holds a single baum.app
 # at its root, as the Tauri updater expects (it drops each entry's first path
 # component and puts the rest in place of the installed app), with Electron's
-# Contents/Resources/app.asar and the baum-desktop executable; the AppImage
+# Contents/Resources/app.asar and the baum executable; the AppImage
 # holds resources/app.asar. The Windows installer is not released and is
 # not checked.
 #
@@ -208,7 +208,7 @@ electron() {
             continue 2
           fi
         done <"$work/entries"
-        for entry in baum.app/Contents/Resources/app.asar baum.app/Contents/MacOS/baum-desktop; do
+        for entry in baum.app/Contents/Resources/app.asar baum.app/Contents/MacOS/baum; do
           if ! grep -qxF "$entry" "$work/entries"; then
             echo "FAIL $platform: $name has no $entry; it is not the Electron app" >&2
             status=1
