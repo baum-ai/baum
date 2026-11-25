@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import "./flow.css";
+import "./table.css";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { InlineMarkdown } from "@baum/viewer/components/markdown";
 import { type Column, Table } from "@baum/viewer/components/table";
@@ -126,9 +127,7 @@ function Box({
           </span>
         </>
       ) : null}
-      <InlineMarkdown className={cn("text-sm font-medium leading-snug", INK[tone])}>
-        {title}
-      </InlineMarkdown>
+      <InlineMarkdown className={cn("font-medium leading-snug", INK[tone])}>{title}</InlineMarkdown>
       {note ? (
         <InlineMarkdown className="text-xs leading-snug text-secondary">{note}</InlineMarkdown>
       ) : null}
@@ -658,7 +657,7 @@ function MessageLabel({ step, at }: { step: SequenceStep; at: number }) {
       <span className="min-w-0">
         <InlineMarkdown className="block">{step.text}</InlineMarkdown>
         {change === "changed" && step.was ? (
-          <del className="block text-sm text-tertiary">
+          <del className="block text-tertiary">
             <InlineMarkdown>{step.was}</InlineMarkdown>
           </del>
         ) : null}
@@ -836,7 +835,7 @@ function FlowKey({
         {entries}
       </ul>
       {toggle ? (
-        <Toggle checked={focused} onChange={onFocus} className="ml-auto text-sm">
+        <Toggle checked={focused} onChange={onFocus} className="ml-auto">
           Show only changes
         </Toggle>
       ) : null}
@@ -892,7 +891,7 @@ function SequenceKey({
         {entries}
       </ul>
       {toggle ? (
-        <Toggle checked={focused} onChange={onFocus} className="ml-auto text-sm">
+        <Toggle checked={focused} onChange={onFocus} className="ml-auto">
           Show only changes
         </Toggle>
       ) : null}
@@ -915,7 +914,7 @@ export function SequenceDiagram({ data }: { data: SequenceData }) {
         <div style={columns} className="grid">
           {data.actors.map((actor, at) => (
             <div key={at} className="flex justify-center px-1">
-              <InlineMarkdown className="max-w-full rounded-md border border-default bg-surface-card px-3 py-1 text-center text-sm font-semibold text-primary shadow-xs">
+              <InlineMarkdown className="max-w-full rounded-md border border-default bg-surface-card px-3 py-1 text-center font-semibold text-primary shadow-xs">
                 {actor}
               </InlineMarkdown>
             </div>
@@ -981,7 +980,7 @@ export function SequenceDiagram({ data }: { data: SequenceData }) {
                   {step.text}
                 </InlineMarkdown>
                 {change === "changed" && step.was ? (
-                  <del className="block text-sm text-tertiary">
+                  <del className="block text-tertiary">
                     <InlineMarkdown>{step.was}</InlineMarkdown>
                   </del>
                 ) : null}
@@ -1009,7 +1008,7 @@ export function validTable(data: unknown): data is TableData {
   );
 }
 
-type Row = { key: string; cells: TableCell[] };
+type Row = { key: string; cells: TableCell[]; changed: boolean };
 
 /** The rows a long table shows until it is opened: enough to read what it
  *  compares without it outweighing the section around it. */
@@ -1034,36 +1033,154 @@ function Cell({ cell }: { cell: TableCell }) {
   );
 }
 
+/** A cell's text, whether or not it changed. */
+const cellText = (cell: TableCell | undefined) =>
+  cell === undefined ? "" : typeof cell === "string" ? cell : cell.text;
+
+/** A short value read as a quantity: a number, with an optional unit
+ *  ("65,535 bytes", "250 milliseconds", "1,000 req/s", "$2.00", "≤ 5%"). */
+const QUANTITY = /^[~≈<>≤≥±+\-−]?\s?[$€£]?\d[\d,._]*(\s?[%A-Za-z/]{1,16})?$/;
+const isQuantity = (text: string) => text.length <= 28 && QUANTITY.test(text);
+/** A cell that stands for no value, which a number column may hold. */
+const PLACEHOLDER = /^(?:[-–—−]|n\/?a|tbd|none)$/i;
+
+/** How a column draws its cells: `label` (the first column, naming each
+ *  row), `quantity` (every cell a number, right-aligned in tabular figures),
+ *  `chips` (a few short values repeated down the column, each tinted with
+ *  its own colour) or plain text. */
+type ColumnKind = { kind: "label" | "quantity" | "text" } | { kind: "chips"; values: string[] };
+
+/** How many tints a column has, given in order of each value's first row. */
+const CHIP_TINTS = 4;
+
+function kindOf(data: TableData, position: number): ColumnKind {
+  if (position === 0 && data.columns.length > 1) return { kind: "label" };
+  const texts = data.rows.map((row) => cellText(row[position]).trim()).filter(Boolean);
+  if (texts.length === 0) return { kind: "text" };
+  const numbers = texts.filter((text) => !PLACEHOLDER.test(text));
+  if (numbers.length > 0 && numbers.every(isQuantity)) return { kind: "quantity" };
+  const values = [...new Set(texts)];
+  if (
+    texts.length >= 4 &&
+    values.length >= 2 &&
+    values.length <= CHIP_TINTS &&
+    values.length < texts.length &&
+    values.every((value) => value.length <= 32)
+  )
+    return { kind: "chips", values };
+  return { kind: "text" };
+}
+
+/** A repeated value, tinted so it reads apart from the column's other
+ *  values. */
+function Chip({ text, tint }: { text: string; tint: number }) {
+  return (
+    <span
+      className="table-tint rounded-sm px-1 py-px box-decoration-clone text-primary"
+      data-tint={tint}
+    >
+      <InlineMarkdown>{text}</InlineMarkdown>
+    </span>
+  );
+}
+
+const rowChanged = (cells: TableCell[]) =>
+  cells.some((cell) => typeof cell !== "string" && Boolean(cell.was));
+
 export function TableDiagram({ data }: { data: TableData }) {
   const [all, setAll] = useState(false);
-  const columns: Column<Row>[] = data.columns.map((column, position) => ({
-    key: `${position}-${column}`,
-    header: <InlineMarkdown>{column}</InlineMarkdown>,
-    cell: (row) => <Cell cell={row.cells[position] ?? ""} />,
-  }));
+  // Rows the pull request didn't change are faded while this is on.
+  const [focused, setFocused] = useState(false);
+  const kinds = data.columns.map((_, position) => kindOf(data, position));
+  const changed = data.rows.map(rowChanged);
+  const toggle = changed.some(Boolean) && changed.some((each) => !each);
+  const columns: Column<Row>[] = data.columns.map((column, position) => {
+    const kind = kinds[position] ?? { kind: "text" };
+    return {
+      key: `${position}-${column}`,
+      header: <InlineMarkdown className="font-bold text-primary">{column}</InlineMarkdown>,
+      align: kind.kind === "quantity" ? "right" : undefined,
+      className: cn(
+        kind.kind === "label" && "font-medium text-primary",
+        kind.kind === "text" && "text-secondary",
+      ),
+      cell: (row) => {
+        const cell = row.cells[position] ?? "";
+        const text = cellText(cell).trim();
+        const body =
+          kind.kind === "chips" && text && (typeof cell === "string" || !cell.was) ? (
+            <Chip text={text} tint={Math.max(0, kind.values.indexOf(text))} />
+          ) : kind.kind === "quantity" ? (
+            <span className="font-medium text-primary">
+              <Cell cell={cell} />
+            </span>
+          ) : (
+            <Cell cell={cell} />
+          );
+        if (position !== 0) return body;
+        // A changed row has the sequence's Changed pill and a bar at its
+        // left edge; while any row has, every label leaves room for the bar.
+        return (
+          <span className={cn("relative block", changed.some(Boolean) && "pl-3")}>
+            {row.changed ? (
+              <>
+                <ChangeBar change="changed" />
+                <span className="mb-1 block">
+                  <ChangePill change="changed" />
+                </span>
+              </>
+            ) : null}
+            {body}
+          </span>
+        );
+      },
+    };
+  });
   // Folding one or two rows saves nothing: a table folds only when it
   // hides at least three.
   const folds = data.rows.length > TABLE_ROWS_SHOWN + 2;
-  const rows = folds && !all ? data.rows.slice(0, TABLE_ROWS_SHOWN) : data.rows;
+  const rows = (folds && !all ? data.rows.slice(0, TABLE_ROWS_SHOWN) : data.rows).map(
+    (cells, position) => ({ key: String(position), cells, changed: changed[position] ?? false }),
+  );
   return (
     <div className="space-y-2">
       <Table
         columns={columns}
-        rows={rows.map((cells, position) => ({ key: String(position), cells }))}
+        rows={rows}
         rowKey={(row) => row.key}
+        rowClassName={(row) =>
+          cn("transition-opacity", focused && !row.changed && "opacity-35") || undefined
+        }
         density="compact"
         framed={false}
         minWidth={360}
       />
-      {folds ? (
-        <button
-          type="button"
-          aria-expanded={all}
-          onClick={() => setAll((shown) => !shown)}
-          className="text-base text-link hover:underline"
-        >
-          {all ? "Show fewer rows" : `Show all ${data.rows.length} rows`}
-        </button>
+      {folds || toggle ? (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {folds ? (
+            <button
+              type="button"
+              aria-expanded={all}
+              onClick={() => setAll((shown) => !shown)}
+              className="text-base text-link hover:underline"
+            >
+              {all ? "Show fewer rows" : `Show all ${data.rows.length} rows`}
+            </button>
+          ) : null}
+          {toggle ? (
+            <Toggle
+              checked={focused}
+              onChange={(on) => {
+                setFocused(on);
+                // A changed row may sit below the fold.
+                if (on) setAll(true);
+              }}
+              className="ml-auto"
+            >
+              Show only changes
+            </Toggle>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

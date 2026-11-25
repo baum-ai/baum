@@ -160,6 +160,9 @@ type Conversation struct {
 	// lower bound.
 	CostUSD     *float64 `json:"cost_usd,omitempty"`
 	CostPartial bool     `json:"cost_partial,omitempty"`
+	// ArchivedAt is when the person archived it (Archive): the list leaves
+	// it out, and what baum made for it is gone.
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 }
 
 // Defaults are what a conversation opens with when the request leaves them
@@ -400,6 +403,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	placed, err := s.place(ctx, id, request.Page)
 	if err != nil {
 		return Conversation{}, err
+	}
+	if placed.unlock != nil {
+		defer placed.unlock()
 	}
 	now := s.opts.Now().UTC()
 	c := Conversation{ID: id, Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,

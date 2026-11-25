@@ -171,6 +171,8 @@ test("a stack's page is its overview, each pull request opening its own review",
       await row.click();
       const panel = page.locator("article.upnext-panel");
       await expect(panel.getByRole("link", { name: "Open the stack" })).toBeVisible();
+      // Snooze, beside it, snoozes the whole stack.
+      await expect(panel.getByRole("button", { name: /^Snooze/ })).toBeVisible();
       await page.screenshot({
         path: `${shots}/inbox-panel-${width}-${scheme}.png`,
         animations: "disabled",
@@ -178,6 +180,8 @@ test("a stack's page is its overview, each pull request opening its own review",
       await panel.getByRole("link", { name: "Open the stack" }).click();
       const overview = page.locator('article[aria-label="Tiles in the review"]');
       await expect(overview.locator(".upnext-chip")).toHaveText("Stack");
+      // Snoozing is the Inbox's: the stack's own page does not offer it.
+      await expect(overview.getByRole("button", { name: /^Snooze/ })).toHaveCount(0);
       await expect(overview.locator(".upnext-risk")).toContainText("4 of 5");
       await expect(
         overview.locator(".upnext-risk").getByRole("link", {

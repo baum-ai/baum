@@ -494,8 +494,14 @@ export function Setup() {
         )}
         <footer className="setup-footer">
           <div className="actions">
-            {!done && button("refresh", "Check again", () => void run("refresh", refresh), "quiet")}
-            {step > 0 && button("back", "← Back", () => navigate(step - 1), "quiet")}
+            {!done &&
+              button(
+                "refresh",
+                "Check this computer again",
+                () => void run("refresh", refresh),
+                "secondary",
+              )}
+            {step > 0 && button("back", "← Back", () => navigate(step - 1), "secondary")}
             {button(
               "continue",
               step === last ? "Open baum →" : "Continue →",

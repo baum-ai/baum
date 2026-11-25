@@ -793,18 +793,31 @@ does when the window loses focus.
   embedded webview) and WKWebView (where wry leaves
   `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
   any time, so the app opens the browser at most once a second
-  (`navigation::OpenLimit`) and drops the rest. The app's pages open every
-  outside link with `target="_blank" rel="noreferrer"` (Markdown links
-  included) or `window.open`, and the app (`app/src/outside-links.ts`) turns a
-  person's click on a same-window link to another site into such a request,
-  so no link is dead. Setup
+  (`navigation::OpenLimit`) and drops the rest.
+- WKWebView asks the navigation handler about a `target="_blank"` click
+  before it asks for a new window, and wry passes the handler only the URL,
+  so the shell refuses the click as it would a frame's navigation and WebKit
+  never asks for the window. So the app opens links through the `open_link`
+  command instead (`src/links.rs`), which the daemon's pages and the setup
+  screen may call. It opens the same URLs as a new-window request, under the
+  same once-a-second limit, and Tauri's command bridge is in the page's main
+  frame only on macOS and Linux, so a frame cannot call it there. The shell
+  declares it as `openLinks: true` (below); the app
+  (`app/src/outside-links.ts`) then turns a person's click on any link to
+  another site, `target="_blank"` or not, into the command, and its own
+  `openExternal` calls it too. With an older shell, which does not declare
+  it, the app opens outside links as new-window requests and turns a click on
+  a same-window link into one, so no link is dead. Setup
   opens GitHub's device page a few seconds after a sign-in starts, when it can
   no longer ask for a window, through the `open` action of
   `github_connection`, which opens that fixed address whatever the page
   passes.
 - Before the page's own scripts run, the main window (and the check window,
   below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
-  replaced (`src/declaration.rs`), with two fields. `checkWindow` says whether
+  replaced (`src/declaration.rs`), with three fields. `openLinks` says
+  whether the page opens links to other sites with `open_link`; it is `true`
+  in the main window and `false` in the check window, which may call no
+  command. `checkWindow` says whether
   the page can open the tile check window; it is `true` on Linux only (see
   Tile check window). `tileFrames` says whether the page may embed
   sandboxed frames of untrusted content served from the daemon's origin. It
@@ -835,7 +848,8 @@ does when the window loses focus.
   opens the native save dialog for `<name>.baumtile.json` and writes the
   exported file only where the person chose, refusing a name that is not a
   tile type's or a file over 3 MiB, and `open_check_window` and
-  `close_check_window` (see Tile check window). They can call no other Tauri
+  `close_check_window` (see Tile check window), and `open_link` (see above).
+  They can call no other Tauri
   command or
   plugin.
   `withGlobalTauri` is off.
@@ -844,7 +858,7 @@ does when the window loses focus.
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
   `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
+  `save_review_settings` and `finish_setup`) and `open_link`. Both also allow `step_zoom`
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
   replacing a different baum also requires the confirmed path. Daemon pages
@@ -971,7 +985,7 @@ macOS, Ctrl+Shift+I on Windows) and, in its console:
 5. Click links to other sites as a person does: "Open on GitHub" in a pull
    request's menu, a link in a review's Markdown, the docs in the `?` menu, the
    release notes link of an update notice. Each opens the default browser,
-   once.
+   once, and a debug build logs no refused navigation for it.
 6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
    browser opens once at most.
 7. In setup's GitHub step (first run, with a fresh configuration directory),
@@ -1567,8 +1581,17 @@ login environment, installed agent CLIs, repository paths, credential agents or
 native desktop services faithfully by mounting a display socket. The launcher
 uses your real home directory and the shared host daemon, so installation and
 repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
-when set; otherwise it atomically refreshes `target/host-dev/bin/baum` from the
-freshly built sidecar and runs that copy. This gives installation a stable target
+when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
+(written by `scripts/sidecar.sh`) holds a content hash of the Go module under
+`oss/` (`scripts/sidecar-stamp.sh`: sources, `go:embed` files and the built
+viewer and local app, not the frontend sources or the desktop crate). If the
+binary or stamp is missing or the hash differs, it says why and rebuilds the
+sidecar in `oss-test` before launching; an unchanged checkout skips the build.
+It then atomically refreshes `target/host-dev/bin/baum` from the sidecar and
+runs that copy. The check runs once at start: after a `git pull` while the app
+runs, stop and rerun `just desktop::dev` to pick up daemon changes (the launcher
+prints the commit its daemon was built from). Set `BAUM_DESKTOP_DEV_SIDECAR_ONLY=1`
+to run only this check and stop before Vite and the app. This gives installation a stable target
 named `baum`, as the install-record validation requires; the platform-suffixed
 sidecar filename is only the build artifact. Existing daemons can finish using
 the previous executable after the copy is replaced.

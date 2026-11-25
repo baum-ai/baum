@@ -20,9 +20,11 @@ type Refs struct {
 	Files       map[string]bool
 	Sessions    map[string]SessionRef
 	Attachments map[string]bool
-	Checks      map[string]bool
-	Threads     map[string]bool
-	TileTypes   map[string]bool
+	// Videos are the attachments that are video clips.
+	Videos    map[string]bool
+	Checks    map[string]bool
+	Threads   map[string]bool
+	TileTypes map[string]bool
 	// order is the hunks in diff order.
 	order []string
 }
@@ -44,7 +46,7 @@ type SessionRef struct {
 }
 
 func newRefs() *Refs {
-	return &Refs{Hunks: map[string]HunkRef{}, Files: map[string]bool{}, Sessions: map[string]SessionRef{}, Attachments: map[string]bool{}, Checks: map[string]bool{}, Threads: map[string]bool{}}
+	return &Refs{Hunks: map[string]HunkRef{}, Files: map[string]bool{}, Sessions: map[string]SessionRef{}, Attachments: map[string]bool{}, Videos: map[string]bool{}, Checks: map[string]bool{}, Threads: map[string]bool{}}
 }
 
 // RefsOf returns what a document written from the bundle may cite.
@@ -73,6 +75,7 @@ func RefsOf(b *bundle.Bundle) *Refs {
 	}
 	for _, a := range b.Attachments {
 		r.Attachments[a.ID] = true
+		r.Videos[a.ID] = bundle.IsVideo(a.ContentType)
 	}
 	for _, c := range b.Checks {
 		r.Checks[c.ID] = true
@@ -104,7 +107,8 @@ func RefsOfIndex(index json.RawMessage) *Refs {
 			} `json:"events"`
 		} `json:"sessions"`
 		Attachments []struct {
-			ID string `json:"id"`
+			ID          string `json:"id"`
+			ContentType string `json:"content_type"`
 		} `json:"attachments"`
 		Checks []struct {
 			ID string `json:"id"`
@@ -133,6 +137,7 @@ func RefsOfIndex(index json.RawMessage) *Refs {
 	}
 	for _, a := range ix.Attachments {
 		r.Attachments[a.ID] = true
+		r.Videos[a.ID] = bundle.IsVideo(a.ContentType)
 	}
 	for _, c := range ix.Checks {
 		r.Checks[c.ID] = true

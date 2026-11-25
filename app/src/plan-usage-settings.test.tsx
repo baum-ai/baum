@@ -83,5 +83,54 @@ it("reports a failed save and keeps the choice as it was", async () => {
   act(() => input("codex").click());
   await flush();
   expect(host.querySelector('[role="alert"]')).toBeTruthy();
+  expect(host.querySelector('[role="alert"]')?.textContent).not.toContain("Error: ");
   expect(input("codex").checked).toBe(false);
+});
+
+it("disables only the switch being saved", async () => {
+  let release: () => void = () => {};
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") await new Promise<void>((r) => (release = r));
+      return new Response(JSON.stringify(plans()), { status: 200 });
+    }),
+  );
+  act(() => root.render(<PlanUsageSettings />));
+  await flush();
+  act(() => input("codex").click());
+  expect(input("codex").disabled).toBe(true);
+  expect(input("claude").disabled).toBe(false);
+  release();
+  await flush();
+  expect(input("codex").disabled).toBe(false);
+});
+
+it("lets the other provider save while one is pending", async () => {
+  const releases: (() => void)[] = [];
+  const puts: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        puts.push(String(init.body));
+        await new Promise<void>((r) => releases.push(r));
+      }
+      return new Response(JSON.stringify(plans()), { status: 200 });
+    }),
+  );
+  act(() => root.render(<PlanUsageSettings />));
+  await flush();
+  act(() => input("codex").click());
+  act(() => input("claude").click());
+  expect(puts).toEqual([
+    JSON.stringify({ provider: "codex", shown: true }),
+    JSON.stringify({ provider: "claude", shown: false }),
+  ]);
+  expect(input("codex").disabled).toBe(true);
+  expect(input("claude").disabled).toBe(true);
+  releases.forEach((release) => release());
+  await flush();
+  expect(input("codex").disabled).toBe(false);
+  expect(input("claude").disabled).toBe(false);
 });

@@ -4,6 +4,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { GitHubConnectionSection } from "./github-connection";
 import type { GitHubConnection } from "./api";
+import { openExternal } from "./outside-links";
+
+vi.mock("./outside-links", async (original) => ({
+  ...(await original<typeof import("./outside-links")>()),
+  openExternal: vi.fn(),
+}));
 
 const disconnected: GitHubConnection = {
   state: "disconnected",
@@ -67,12 +73,12 @@ async function click(label: string) {
   await act(async () => button!.click());
 }
 it("starts and cancels with namespaced JSON mutations; opens only the fixed GitHub URL", async () => {
-  const open = vi.fn();
-  vi.stubGlobal("open", open);
+  const open = vi.mocked(openExternal);
+  open.mockClear();
   await render();
   status = pending;
   await click("Sign in with GitHub");
-  expect(open).toHaveBeenCalledWith("https://github.com/login/device", "_blank", "noreferrer");
+  expect(open).toHaveBeenCalledWith("https://github.com/login/device");
   expect(node.textContent).toContain("ABCD-EFGH");
   expect(node.querySelector("a")!.href).toBe("https://github.com/login/device");
   expect(calls.at(-1)).toMatchObject({

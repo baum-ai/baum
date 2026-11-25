@@ -980,6 +980,13 @@ full-screen control fills the screen through the browser's Fullscreen API
 covers the window where the host does not grant it. Escape leaves full screen
 before it closes the viewer.
 
+An indexed attachment whose `content_type` is `video/…` (local desktop reviews
+only) draws as a muted `<video>` with native controls that loads only its
+metadata and plays when clicked, sized by its `width` and `height`, with no
+full-size dialog. A clip with neither a caption nor alt text is labelled by
+the description heading above it. A clip that fails to load is marked
+unavailable and can be retried like an image.
+
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and
 `local-transcript` parsers for the local server’s redacted answers.
@@ -999,7 +1006,7 @@ GitHub carries the leaving mark.
 
 On review pages, `]` toggles the right-hand Details/Activity pane: its saved
 fold on wide screens, or its sheet on narrow screens. Text fields and open
-dialogs keep the key. A host’s forced fold remains in force. Opening the pane
+dialogs keep the key. A host that keeps `]` for itself passes `sidePaneKey="Control+]"`, and the pane then takes Ctrl+] instead (the desktop app does). A host’s forced fold remains in force. Opening the pane
 with `]` focuses the pane itself, drawn without a ring, so it has the keys
 (as a click in it gives them): while it does, `h` and `l` step through its tabs
 (wrapping, as the arrows do on the strip), and from a focused tab move the focus with them, and Esc blurs the focus, giving the keys

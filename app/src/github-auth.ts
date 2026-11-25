@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request, type GitHubConnection } from "./api";
 import { useVisibleInterval } from "./visible-interval";
+import { openExternal } from "./outside-links";
 
 export const messages: Record<string, string> = {
   credential_store_unavailable: "Unlock your operating system credential store, then try again.",
@@ -164,7 +165,7 @@ export function useGitHubConnection(
   // Desktop setup delays opening GitHub so the code and copy result stay visible;
   // browser pages open inside the click to avoid popup blocking.
   const signIn = (options?: SignInOptions) => {
-    if (!delayedBrowser) open(DEVICE_URL, "_blank", "noreferrer");
+    if (!delayedBrowser) openExternal(DEVICE_URL);
     const started = action("start", options);
     const mine = actionSequence.current;
     if (delayedBrowser)

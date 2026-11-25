@@ -977,7 +977,11 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
-member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+member of their stack, offer Snooze too. A stack's or group's row offers
+Snooze in its panel, on `s` and in its menu: it snoozes every member the row
+shows, together, with one **Undo**; each is then listed under Snoozed and
+brought back on its own (one snoozed until it changes comes back when it is
+pushed to). Snoozed waiting PRs keep their
 waiting classification, so the same inbox filters apply before and after
 snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
@@ -1237,6 +1241,32 @@ goes, and what the removal does not touch keeps its text. The box lies
 under the tokens: a click anywhere but a × focuses it with the caret at the
 end, and the text shows until the focus leaves.
 
+**The sort** (`SortButton`, `src/sort-menu.tsx`; `src/pr-sort.ts`) sits
+right of the filter icon in an inbox's head and on Pull requests' tab bar,
+lit with a dot while a sort is in force. ⇧S opens or closes its menu from
+anywhere on the page. The menu lists the fields with a digit each: 1 Opened,
+2 Last activity, 3 Risk, 4 Review time, 5 Size (lines added and deleted),
+6 Repository, 7 Author and 8 Reviewed (when the latest review was written).
+A digit or a click adds the field as the next key, or turns it round if the
+sort has it already. Backspace drops the last key, Delete or the row's ×
+drops that field, j/k or the arrows with Enter
+or Space pick a field, and Esc or ⇧S closes the menu. A field is added in the
+direction most often wanted: Opened oldest first, Last activity and Reviewed
+newest first, Risk highest first, Review time and Size smallest first, and
+Repository and Author A to Z. A pull request without a value for a key (no
+score, no estimate, or an older daemon that sends no `created_at`) goes last
+whichever way the key runs. The sort orders rows **within** each section,
+and the sections stay: an inbox's Needs your eyes, Ready to merge, Hand to
+an agent, Waiting and Not waiting on you, and Pull requests' buckets.
+With no key each section keeps its own order, which also settles every tie. A
+review group or stack follows its first-ranked member. Snoozed and Done today
+keep their own order. The sort is written `opened,-risk` (`-` turns a key
+round; unknown keys are skipped). An inbox's sort is saved with the inbox
+(`sort`, see the [inboxes README](../internal/inboxes/README.md)) as it
+changes, with no draft. Pull requests' Open and Closed share one sort, and a
+saved tab has its own (`sort`), both in `ui/filters`. A tab saved from the
+page takes the page's sort.
+
 There is no whole-queue filter: the filter is always an inbox's own. **Create
 inbox** (below, and Command+Enter) is not offered at 20 inboxes or with an
 older daemon. In a saved inbox the menu starts from the
@@ -1262,7 +1292,7 @@ and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
 agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
 verdicts, **Snooze…** (which picks the row and opens its snooze choices), **Archive** and
-**Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
+**Open on GitHub**; on a group's row, **Open**, Show or Hide its pull requests and **Snooze…**; on a
 row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
@@ -2734,10 +2764,19 @@ the panel instead.
 
 Its bar names the conversation (its first message, else "New session"),
 **Working** with the live dot while a turn runs, and **Sessions**, a menu of
-the conversations, newest first, with **New session** and **Close this
-session** (asked first while a turn runs, since closing stops it); a closed
-one can be reopened and read, not written to. The menu stays open while the
-transcript under it scrolls. Under it, on one line in small print:
+the conversations, newest first, with **New session**, **Close this session**
+and **Archive this session** (each asked first while a turn runs, since it
+stops it); a closed one can be reopened and read, not written to. A right
+click on any conversation in the menu (or the Menu key, Shift+F10 or ⌘. while
+it has the keys: a `MenuItem`'s `actions` in `src/context-menu.tsx`) replaces
+the menu with **Close session**, while it is open, and **Archive session**.
+Archiving takes it out of the menu and removes the empty folder or the
+worktree baum made for it, and the branch baum created (see "Session panel
+conversations" in `oss/ARCHITECTURE.md`); the agent's own session stays. When
+that would lose work (`409 unclean_directory`: changes, files or commits no
+remote has), a dialog says what, naming a few paths, and **Discard and
+archive** archives it anyway. Archiving the conversation shown goes to New
+session. The menu stays open while the transcript under it scrolls. Under it, on one line in small print:
 **Looking at**, the page the agent sees (the page context below, named by
 `pageLabel`, with a pull request's or group's own name); **Directory**, where
 the agent works (before it starts, a checkout of the pull request on a pull
@@ -2775,8 +2814,11 @@ composer with why (`busy`, `closed`, `shutting_down`).
 The agent's proposals (`GET .../proposals`, read again on the conversation's
 `proposals` events) are cards under the transcript. A change (`diff`) shows
 what it saves against what is saved now (`Diff`, as a prompt's) as text: a
-prompt's `{text}` as its own lines, saying when it replaces or resets baum's
-default prompt, other plain fields as one line each; with **Save** and
+prompt's `{text}` as its own lines, against the text that runs now (the
+scope's own text, else the before's `inherited_text`: a repository's global
+prompt, else baum's default), saying when it gives a repository its own
+prompt, replaces baum's default or resets to the inherited text; other plain
+fields as one line each; with **Save** and
 **Dismiss**, and a field for the value the person types when the change needs
 one (an agent environment variable's), which never goes to the agent. An
 operation shows baum's summary: its action, its details, its model and effort,
@@ -2786,7 +2828,11 @@ as baum's words; one marked `by_agent` or `multiline` is shown whole,
 scrolling in its box (which the keys reach) rather than cut. Confirm sends the summary's revision on
 screen; a `409 operation_changed` replaces it with the new summary, says
 nothing ran and asks again. A proposal made on another page says so and links
-to it, and a `not_current_page` refusal says which page to open. A comment
+to it, and a `not_current_page` refusal says which page to open; a proposal
+under the `app` page (a colour theme, a theme choice or a prompt,
+`proposedPrompt`) is saved wherever the person is. A prompt's card is headed
+with its scope and id ("acme/web's prompt · review", "Global prompt · review")
+rather than the page it was proposed on. A comment
 for the pending review (`propose_review_comment`, a `…:review_comment` change,
 which replaces the earlier Ask's Add as comment) reads the pull request's
 pending review again once saved, so it shows in the review at once.
@@ -2935,7 +2981,8 @@ builds the rail's model (the sections and the file list) from it.
 - **Overview**, always in this order: the summary (`summary.text`), the risk
   (score, level and why: `risk_why`, or else the score's first reason) with
   the verdict inside its card when it has points (each linking to its
-  section), what it looks like (`overview.screenshots`), the main diagram
+  section), the description's clips of the change (`overview.videos`, under
+  Video), what it looks like (`overview.screenshots`), the main diagram
   (`overview.diagram`) under its title, and what was asked (`overview.intent`,
   else each linked session's first prompt), each linking to the prompt in its
   session.
@@ -2947,7 +2994,8 @@ builds the rail's model (the sections and the file list) from it.
   block, then its risks: prose at reading width, points as hairline lines that
   open to a detail and the files they cite, a note with a left rule, and tile
   blocks drawn bare by `ViewTileCard` `variant="bare"` under an uppercase
-  label; a table cell `{text, was}` strikes the old value, and a flow whose
+  label; a table cell `{text, was}` strikes the old value and marks its row
+  Changed, and a flow whose
   steps have `more` shows a step's detail below while the mouse is over it
   and makes them buttons that keep it open; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
@@ -2960,8 +3008,27 @@ builds the rail's model (the sections and the file list) from it.
   summary, steps, risks and tiles cite, quoted with when and who, each linking
   to its turn of the transcript) and **Docs** (its docs hunks). Code, Tests and
   Docs count files, Session quotes. The view is `section_view=<view>` beside
-  `section=`, and opening another section opens its Overview. The full
-  review's check callouts and line counts are not shown.
+  `section=`, and opening another section opens its Overview. From 64rem of
+  section width the Overview stands in a left column and the other views sit
+  beside it in a right column with their own row (no Overview tab), showing
+  the view asked for, else the first that has something; that column sticks
+  under the bar and scrolls on its own while the Overview scrolls. Its divider
+  resizes it (dragged, or with the arrow keys; the width is remembered, and
+  the Overview keeps at least 360px), and its chevron or `]` collapses it
+  to a strip so the Overview takes the section, until expanded again. It
+  starts collapsed until the reader first opens it, then stays as they left
+  it (`section-split.tsx`). Its code is drawn a frame after the section, as
+  work React can drop, so a big diff never holds the Overview back. An excerpt of code in the Overview (a
+  step's or a risk's file chip) opens in that column, expanding it if
+  collapsed, in the view that draws the file, scrolled to the first line
+  from the one it names, and the Overview stays where it was; a file the
+  section doesn't draw opens in Files changed as before. Opening a point's
+  row does the same for the first file it cites that the section draws,
+  while the column is open (`side-reveal.ts`); a collapsed column stays
+  collapsed. The keys (`j` and `k`) go through a points block row by row,
+  and `Enter` or `Space` opens the row they are on. A section with nothing but its
+  Overview keeps one column. The full review's check
+  callouts and line counts are not shown.
 - **Files changed** (`code-tab.tsx`) lists every changed file in a list beside
   the open file, under a switch, **Group files by**, with three modes. **Type**
   groups them as code, tests, docs, config and generated (folded, and a
@@ -2996,7 +3063,15 @@ builds the rail's model (the sections and the file list) from it.
   changed message's earlier text (`was`) struck through. A legend under the
   sequence explains only the marks it uses, apart from the pills, which say
   what they mean, and when some messages changed
-  and some did not, a "Show only changes" switch fades the rest. A code
+  and some did not, a "Show only changes" switch fades the rest. A table
+  sets its bold uppercase headers over its first column as row labels;
+  a column whose every cell is a number (`65,535 bytes`, `$2.00`) is
+  right-aligned in tabular figures (a dash or "n/a" among them is allowed),
+  and a column of two to four short values that repeat tints each value
+  with its own data colour (caramel and sage among them on dark paper). A
+  row with a changed cell has the Changed pill and bar on its first cell,
+  with the same "Show only changes" switch, which also unfolds a long
+  table. A code
   tile (`{hunk, lines}`) shows the text the host filled, else the hunk's lines
   in that range. Exhibits draw as the generic tiles do, and library and
   chat-made tiles (those with a `definition`) in their sandboxed frames. A tile being written, one that
@@ -3013,7 +3088,7 @@ builds the rail's model (the sections and the file list) from it.
   is taken at its first place) and do nothing at the first and last file
   (`ReviewPlaceSteps.item`, `listedFiles` in `places.tsx`); the grouping is one
   shared choice (`useFileGrouping`, `readFileGrouping` in `file-grouping.ts`).
-  Elsewhere they mark blocks as above. `]`
+  Elsewhere they mark blocks as above. Ctrl+]
   opens the side pane and gives it the keys (`h`/`l` move between its tabs). Escape and `u` leave the pull request. The session
   panel's focus names the tab: on the
   Overview `tab: overview`; on How it works `tab: sections` and the `section`
@@ -3029,6 +3104,10 @@ the document's native diagrams and tables, exhibits (code, prose, table and
 diagram source, `src/tiles/builtins/generic.tsx`), library tiles and tiles
 made in chat. Each stands on a section of How it works (or on Where this
 fits), or is the Overview's main diagram, and is as wide as its section.
+A prose exhibit's text stands on a faint wash behind a left rule, in a card
+or bare in a section's body, so it reads as an exhibit set apart from the
+section's own text (a note block has the rule but no wash); its lists keep
+their bullets and numbers.
 
 - **Custom tiles** (`src/tiles/custom/`) draw in sandboxed frames from the
   daemon's frame route: the title is the page's, the body is the tile's. A
@@ -3041,11 +3120,18 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   How it works, or the tile cited where it stands. Citations resolve against
   the shown version's review (its index, its sections, their risks and
   evidence) and the document's tiles (`tileSourceOf`, `src/tiles/types.ts`),
-  never by fetching. Frames follow the app's theme. A frame that doesn't
+  never by fetching. Frames follow the app's theme. Until its frame draws,
+  a tile's box shows three faint lines with a passing light band (still
+  under reduced motion) at the height the tile last drew at on that pull
+  request in this browser, else 240px (a tile's first show still moves to
+  its own height once it draws). The last heights of the latest 200 tiles
+  are kept (`baum.tileFrame.heights` in local storage), so a review opened
+  again starts at the right height. A frame that doesn't
   start, draw or behave says "This tile couldn't load" with Retry; a tile
   made with a newer kit says so; a desktop shell that has not declared
   `window.__BAUM_DESKTOP__ = { tileFrames: true }` shows custom tiles as not
-  available yet. The protocol, its checks and the states are in
+  available yet. These notes have the dashed box a native tile's
+  notes have (`Note`, `src/tiles/parts.tsx`). The protocol, its checks and the states are in
   `ARCHITECTURE.md` ("The app's host"); what a frame cannot reach is in
   `SECURITY.md` ("Custom tiles").
 - **Render check** (`src/tiles/custom/check-runner.tsx`). The daemon's render
@@ -3071,6 +3157,14 @@ fits), or is the Overview's main diagram, and is as wide as its section.
   once in that window, unless it already has. A tile that hung there says
   "This tile stopped responding when it was checked." instead of mounting;
   every other answer mounts it.
+- **Stored images** (`src/tiles/custom/images.ts`). A tile made in chat
+  holds each image the host stored for it as `baum-image:att_<id>` in its
+  data. Before the frame's `init`, the page reads each from `api/attachments/{id}`
+  (the review page's attachment address) and gives the frame the data with
+  the image as a `data:` URL in its place, the only image a frame's policy
+  admits; the box reads `loading` meanwhile, and an image that cannot be read
+  becomes an empty string. The render check's runner gets its job's data
+  with the images already inlined by the daemon.
 - **A tile's menu** (⋯, or a right click) offers Comment, Ask about this tile,
   **Save to library…** on a custom tile that is not baum's own (it opens the
   panel on the pull request about that tile with "Save this tile to my
@@ -3289,9 +3383,10 @@ sidebar order, stopping at the first and the last. Typing fields and dialogs kee
 Ctrl+K always opens Go to.
 Enter is drawn as ↵ in button shortcut hints.
 
-On PR and group review pages, `]` toggles the right-hand Details/Activity
-sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
-Opening it with `]` gives it the keys: `h` and `l` then step through Details,
+On PR and group review pages, Ctrl+] (`sidePaneKey`) toggles the right-hand
+Details/Activity sidebar, or its sheet on narrow windows; `]` by itself folds
+and opens the code beside a wide section's Overview. Both are listed in the
+review shortcut hints. Opening the sidebar with Ctrl+] gives it the keys: `h` and `l` then step through Details,
 Activity and Comments, until Esc (or a click in the review) gives them back.
 
 The page shortcut bar labels Shift+J/K as sections and lists only page actions;

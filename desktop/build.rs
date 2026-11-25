@@ -33,6 +33,7 @@ fn main() {
         "cancel_update",
         "dismiss_update_notice",
         "save_tile_type",
+        "open_link",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri build script");

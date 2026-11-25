@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -113,6 +116,39 @@ func TestEmptyLibrary(t *testing.T) {
 	mustCreate(t, s, change(t, "migrations", ""))
 	if err := db.QueryRow(`SELECT COUNT(*) FROM tile_types`).Scan(&n); err != nil || n != 1 {
 		t.Errorf("after a write: %d %v", n, err)
+	}
+}
+
+// The tile guide lists the names the check refuses, all of them and no
+// others, so the guide cannot send an agent looking for a type it can't add
+// or leave out one it can't use.
+func TestGuideListsTheReservedNames(t *testing.T) {
+	reserved := tilelibrary.ReservedNames()
+	for _, name := range reserved {
+		if err := tilelibrary.CheckName(name); err == nil {
+			t.Errorf("%q is reserved but CheckName allows it", name)
+		}
+	}
+	guide, err := os.ReadFile("../../tiles/kit/GUIDE.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for _, line := range strings.Split(string(guide), "\n") {
+		if !strings.HasPrefix(line, "Reserved names") {
+			continue
+		}
+		// The names end where the prefixes begin.
+		line, _, _ = strings.Cut(line, "A name also cannot start")
+		for _, m := range regexp.MustCompile("`([a-z][a-z0-9_]*)`").FindAllStringSubmatch(line, -1) {
+			listed = append(listed, m[1])
+		}
+	}
+	want, got := slices.Clone(reserved), slices.Clone(listed)
+	slices.Sort(want)
+	slices.Sort(got)
+	if !slices.Equal(want, got) {
+		t.Errorf("the check reserves %v; GUIDE.md lists %v", want, got)
 	}
 }
 

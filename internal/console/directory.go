@@ -28,6 +28,10 @@ type placement struct {
 	// note says why a pull request's conversation got an empty directory
 	// instead of a checkout.
 	note string
+	// unlock releases the repository's placement lock, held for a pull
+	// request's checkout until the conversation is saved (Create), so an
+	// archive never misses a conversation placed in the worktree it removes.
+	unlock func()
 }
 
 // place chooses the directory of a new conversation opened from page. On a
@@ -49,10 +53,11 @@ func (s *Service) place(ctx context.Context, id string, page *agentcontext.PageC
 		// worktree list in turn rather than racing for them.
 		unlock := s.lockRepository(repository)
 		placed, ok := s.placePull(ctx, id, repository, page.PullRequest)
-		unlock()
 		if ok {
+			placed.unlock = unlock
 			return placed, nil
 		}
+		unlock()
 		note = placed.note
 	}
 	dir := filepath.Join(s.root, "sessions", id)

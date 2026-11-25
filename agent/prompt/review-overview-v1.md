@@ -13,14 +13,15 @@ reply's schema is `schema-overview.json` in the run directory.
 - Each section's result: its title, gist, level, body and risks,
   or that it failed.
 - The tiles: each one's id, type, owner, title and state.
-- The attachments with their alt text and heading, and the linked sessions
-  by id; read their prompts with your tools.
+- The attachments with their type, alt text, heading and context, and the
+  linked sessions by id; read their prompts with your tools.
 
 ## What you write
 
 ```
 { summary, verdict: { decision, text, points: [ { text, section } ] },
-  risk_why, screenshots, diagram, intent: [ { session, prompt, asked, got } ] }
+  risk_why, screenshots, videos, diagram,
+  intent: [ { session, prompt, asked, got } ] }
 ```
 
 - `summary`: two or three sentences, at most 450 characters: what the pull
@@ -43,13 +44,21 @@ reply's schema is `schema-overview.json` in the run directory.
 - `risk_why`: one or two sentences, at most 260 characters: why the score
   is what it is, what could go wrong and what limits it. The page shows it
   under the risk score, which the host computes from the levels.
-- `screenshots`: up to three attachment ids that show what the change looks
-  like to a person (a screen, a page, terminal output). Never a diagram the
-  author drew when a tile shows the same. Empty when none does. An image's
-  `heading` is only the heading above where it sits in the description, and
-  uploaded images are often appended at its end: judge an image by its alt
-  text and by what the change does. When a change alters a screen and the
-  description has pictures of it, show them.
+- `screenshots`: up to three image attachment ids (`type` `image/*`) that
+  show what the change looks like to a person (a screen, a page, terminal
+  output). Never a diagram the author drew when a tile shows the same. Empty
+  when none does. An attachment's `heading` is only the heading above where
+  it sits in the description, and uploads are often appended at its end:
+  judge one by its alt text, its `context` (the description's text around
+  it, where it reads `[this]` and other media `[media]`; a caption may sit
+  above or below it, or in a table's header) and by what the change does.
+  When a change alters a screen and the description has pictures of it,
+  show them.
+- `videos`: the video clip attachment ids (`type` `video/*`, at most
+  three) that show the change. You cannot watch a clip; judge it by its
+  alt text, heading and `context`. An author records a clip to show the
+  change working, so include each clip of this pull request unless its
+  context shows it is about something else. Empty when there are none.
 - `diagram`: the id of the overview's main diagram when it is ready; else
   the id of the ready section tile that best shows the whole change; else
   null. The page shows it under the screenshots.

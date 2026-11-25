@@ -177,7 +177,7 @@ export function TileLibrarySection({
   );
   return (
     <section aria-labelledby="settings-tiles-heading" className="settings-section">
-      {head(importButton)}
+      {head(!type && library.types && library.types.length > 0 ? importButton : undefined)}
       {importing ? (
         <ImportDialog
           check={importing.check}
@@ -286,7 +286,9 @@ function TileTypeList({
                 <Badge size="compact">Custom</Badge>
                 {t.checked ? null : <NotChecked />}
               </h3>
-              <p className="tile-type-use">{t.use_when}</p>
+              <p className="tile-type-use" title={t.use_when}>
+                {t.use_when}
+              </p>
               <p className="tile-type-meta">
                 {originLabel(t.origin)} · {pinnedLabel(t.pinned)}
               </p>
@@ -434,7 +436,7 @@ function TileTypePane({
             </span>
           )}
         </Row>
-        <details className="tile-type-fill">
+        <details className="tile-type-fill settings-advanced">
           <summary>Fill instructions</summary>
           <p className="settings-row-detail">Given to the review agent when this type is filled.</p>
           <pre>{detail.fill}</pre>

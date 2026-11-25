@@ -9,6 +9,7 @@ import { MenuButton, useContextMenu, type MenuItem } from "../context-menu";
 import { TileBoundary } from "../tiles/boundary";
 import { isBuiltinType } from "../tiles/custom/library";
 import { useTileHost } from "../tiles/host";
+import { Note } from "../tiles/parts";
 import { tileFace } from "../tiles/registry";
 import type { TileContext } from "../tiles/types";
 import { BLOCK_LABEL, NATIVE } from "./native-tiles";
@@ -46,17 +47,6 @@ const captionOf = (data: unknown): string => {
   const caption = (data as { caption?: unknown } | null)?.caption;
   return typeof caption === "string" ? caption.trim() : "";
 };
-
-function Note({ children, alert = false }: { children: string; alert?: boolean }) {
-  return (
-    <p
-      role={alert ? "alert" : undefined}
-      className="rounded-md border border-dashed border-default px-3 py-2 text-base text-secondary"
-    >
-      {children}
-    </p>
-  );
-}
 
 /** The tile as the page draws it. baum.review/2 names a library or saved
  *  type by its own name (`schema_change`) and carries its definition: any

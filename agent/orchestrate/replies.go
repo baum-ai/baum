@@ -113,6 +113,7 @@ type overviewReply struct {
 	} `json:"verdict"`
 	RiskWhy     string   `json:"risk_why"`
 	Screenshots []string `json:"screenshots"`
+	Videos      []string `json:"videos"`
 	Diagram     *string  `json:"diagram"`
 	Intent      []struct {
 		Session string `json:"session"`
@@ -566,8 +567,13 @@ func checkOverview(reply []byte, f *facts, docSections []reviewv2.Section, tiles
 	out.Verdict = verdict
 	out.RiskWhy = c.text("/risk_why", o.RiskWhy, reviewv2.MaxRiskWhy, true)
 	for _, id := range o.Screenshots {
-		if f.images[id] && !slices.Contains(out.Overview.Screenshots, id) {
+		if f.images[id] && !f.refs.Videos[id] && !slices.Contains(out.Overview.Screenshots, id) {
 			out.Overview.Screenshots = append(out.Overview.Screenshots, id)
+		}
+	}
+	for _, id := range o.Videos {
+		if f.refs.Videos[id] && !slices.Contains(out.Overview.Videos, id) {
+			out.Overview.Videos = append(out.Overview.Videos, id)
 		}
 	}
 	if o.Diagram != nil && ready[*o.Diagram] {

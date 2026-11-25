@@ -169,7 +169,9 @@ func (s *Server) tileMakingTools() []Tool {
 		Description: "Runs the render check on a tile type you wrote, as the guide's section \"The render check\" describes, and waits for its result (up to 30 seconds): the definition (type, data_schema, html), up to 3 samples of your own and data, the tile's data for this pull request. " +
 			"Without drawing, it checks the definition and schema, lints the HTML, checks the samples and the data against the schema, and checks that every citation in data resolves to this pull request's review as the page shows it, and that data cites at least one hunk, file, prompt or session event of it. Then the app draws the data, your samples and two samples made from your schema at each size, in light and dark. " +
 			"The result's verdict is pass, fail (each problem with its code, message, sample, face, size and a fixed hint), hang (an endless loop: change the code) or unavailable (no window of the app could draw it: tell the person to open the baum app). A problem with what you sent is a fail, never an error: fix it and check again; each check is a round the pending card counts. " +
-			"Samples are synthetic: data with its own hunks and items, written for a made-up repository (acme/widgets), never this pull request's code. data is this pull request's: cite hunks by the ids the diff tool gives. It is masked for secrets before anything is kept. add_custom_tile adds a tile whose check passed with data.",
+			"Samples are synthetic: data with its own hunks and items, written for a made-up repository (acme/widgets), never this pull request's code. data is this pull request's: cite hunks by the ids the diff tool gives. It is masked for secrets before anything is kept. " +
+			"To show an image, such as a screenshot, never write its bytes or a base64 data: URL: save it to a file and, where data_schema has a string for the image (no pattern, maxLength at least 100), put {\"image_file\": the file's absolute path} in data. The host reads the file (PNG, JPEG, GIF or WebP, at most 40 MiB; at most 6 images a tile), downscales and stores it with this pull request's added tiles, and the frame gets the string as a data:image URL; it does not count against the data's size. Samples cannot name files. " +
+			"add_custom_tile adds a tile whose check passed with data.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` + draft + `,` +
 			`"type":{"type":"object","description":"The type, as type.json and fill.md hold it.","properties":{` +
 			`"name":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"},"title":{"type":"string","minLength":1,"maxLength":160},` +
@@ -180,7 +182,7 @@ func (s *Server) tileMakingTools() []Tool {
 			`"data_schema":{"type":"object","description":"The data schema, in the dialect of the guide's section 4."},` +
 			`"html":{"type":"string","minLength":1,"maxLength":262144,"description":"The component, tile.html: <style> and <script> only."},` +
 			`"samples":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"name":{"type":"string","maxLength":64},"data":{},"hunks":{"type":"object"},"items":{"type":"object"}},"required":["data"],"additionalProperties":false}},` +
-			`"data":{"type":"object","description":"The tile's data for this pull request, matching data_schema."}},` +
+			`"data":{"type":"object","description":"The tile's data for this pull request, matching data_schema; an image as {\"image_file\": an absolute path} in a string's place."}},` +
 			`"required":["type","data_schema","html"],"additionalProperties":false}`),
 		Edits: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {

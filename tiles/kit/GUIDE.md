@@ -45,13 +45,17 @@ my_type/
 
 | Field | Rule |
 |---|---|
-| `name` | `^[a-z][a-z0-9_]{0,63}$`. Not `custom` and not a built-in tile type (`overview`, `change`, `risks`, `evidence`, `intent`, `decisions`, `context`, `media`, `everything_else`, `prose`, `table`, `diagram`, `code`). |
+| `name` | `^[a-z][a-z0-9_]{0,63}$`. Not a reserved name (listed below the table). |
 | `title` | 1–160 characters. The card's heading. |
 | `use_when` | One line, at most 200 characters: `When …` names the trigger, `Not …` an exclusion. A model reads only this, the pull request's description and its file list to decide whether to fill the type, so be specific about what must be in the diff. |
 | `glance` | One line, at most 200 characters: what the glance shows. |
 | `sizes` | The widths the glance is made for, preferred first: `full`, `half`, `third`. List only sizes you checked. |
 | `kit` | `1`. The kit version the component uses. |
 | `applies_with` | Optional: the top-level arrays of the data that show what the type is for, such as `["items"]`. Data with all of them empty is refused as a fill: the filling model answers that the type does not apply instead of writing a tile that says "nothing". |
+
+Reserved names, which no type may have (the check refuses them): `custom`, `overview`, `change`, `risks`, `evidence`, `intent`, `decisions`, `context`, `media`, `everything_else`, `prose`, `table`, `diagram`, `code`, `flow`, `columns`, `sequence`, `images`, `schema_change`, `api_change`. A name also cannot start with `sec_`, `table_`, `code_`, `prose_`, `diagram_` or `library_`. Most of these are only reserved: `overview`, `change`, `risks`, `evidence`, `intent`, `decisions`, `context`, `media`, `everything_else`, `prose` and `diagram` belong to an older layout, and no tile of them can be added.
+
+Types you can add instead of writing one: add_tile adds `flow`, `columns`, `sequence`, `table`, `code` and `images` (screenshots and other image files, by path) with data you write (read tile_type for each one's data), and the library types `schema_change` and `api_change`.
 
 `fill.md` is at most 8000 characters, `review_checks.md` at most 1500. The
 host adds `digest` when it loads the type; never write it.
@@ -156,6 +160,28 @@ fill it as structured output and validating it is cheap.
   leave that name unused.
 
 Data is at most 64 KiB with at most 256 citations.
+
+**Images.** A tile draws an image from a string in its data that holds a
+`data:image/…` URL: `baum.html` takes one in `src`, and no other URL. Never
+write an image's bytes, or base64, into data yourself. Give the image a
+plain string in the schema (`{"type": ["string", "null"], "maxLength":
+20000}`: no `pattern`, and a `maxLength` of at least 100), and in the data
+for a pull request put `{"image_file": "/absolute/path/to/shot.png"}` in
+that string's place. The host reads the file (PNG, JPEG, GIF or WebP, at
+most 40 MiB), downscales it as it does a screenshot, stores it with the
+pull request's added tiles and keeps a short reference in the string; the
+frame gets the string as a `data:image/…` URL. A tile's data names at most
+6 images, 16 MiB together after downscaling (an image named twice counts
+twice), and they do not count against its 64 KiB. Samples cannot name files (section 8): leave their image
+strings `null`, or use a tiny `data:` URL. The edge samples fill an image
+string with text, so draw it only when it is an image:
+
+```js
+const image = (src, alt) =>
+  typeof src === "string" && src.startsWith("data:image/")
+    ? baum.html`<img class="shot" src=${src} alt=${alt}>`
+    : null;
+```
 
 ## 5. Citations
 
@@ -406,7 +432,8 @@ its sections. It works with four tools:
    - `html`: `tile.html`, at most 256 KiB;
    - `samples`: up to 3 of `samples/*.json`;
    - `data`: the tile's data for this pull request, citing its hunks by the
-     IDs the diff tool gives.
+     IDs the diff tool gives, with each image as `{"image_file": path}`
+     (section 4).
 
    With `data`, every citation must resolve to the review the page shows,
    and the data must cite at least one hunk, file, prompt or session event

@@ -1,6 +1,7 @@
 package uiserver
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -632,9 +633,20 @@ func (a LocalAPI) Handler() *LocalHandler {
 			apiError(w, err)
 			return
 		}
+		var content io.ReadSeeker = bytes.NewReader(image.Bytes)
+		if image.Path != "" {
+			file, err := os.Open(image.Path)
+			if err != nil {
+				apiError(w, err)
+				return
+			}
+			defer file.Close()
+			content = file
+		}
 		w.Header().Set("Content-Type", image.ContentType)
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-		_, _ = w.Write(image.Bytes)
+		// ServeContent answers range requests, which video playback makes.
+		http.ServeContent(w, r, "", time.Time{}, content)
 	})
 
 	return &LocalHandler{Handler: mux, documents: cache}
