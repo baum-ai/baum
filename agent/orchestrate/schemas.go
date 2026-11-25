@@ -103,8 +103,12 @@ func SectionSchema(types []string) []byte {
 		"title": nullable(text(160)), "text": nullable(text(1200)), "items": nullable(array(point, 1, reviewv2.MaxPoints)),
 		"tile": nullable(text(80)),
 	})
+	// keep answers a revised section with its previous body and risks, which
+	// the host takes; body and risks are then empty, so the schema lets the
+	// body be (checkSection asks for one otherwise).
 	return encode(object(obj{
-		"body": array(block, 1, reviewv2.MaxBlocks),
+		"keep": obj{"type": "boolean"},
+		"body": array(block, 0, reviewv2.MaxBlocks),
 		"risks": array(object(obj{
 			"id": obj{"type": "string", "pattern": "^rsk_[a-z0-9_]{1,60}$"}, "tier": enum(reviewv2.RiskTiers...),
 			"category": obj{"type": "string", "pattern": "^[a-z0-9_]{1,40}$"}, "text": text(1200), "cites": array(citeSchema(), 1, reviewv2.MaxCites),

@@ -42,7 +42,7 @@ test("live checks keep their rows aligned in the review Activity pane", async ({
 
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
-    if (width < 1280) await page.keyboard.press("]");
+    if (width < 1280) await page.keyboard.press("Control+]");
     await expect(checks).toBeVisible();
     const layout = await checks.evaluate((list) => {
       const bounds = list.getBoundingClientRect();
@@ -163,7 +163,7 @@ test("a failing check shows the end of its log, folded until asked for", async (
 
   // The same at a narrow width.
   await page.setViewportSize({ width: 390, height: 1000 });
-  await page.keyboard.press("]");
+  await page.keyboard.press("Control+]");
   await expect(log).toBeVisible();
   await copyAligned();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);

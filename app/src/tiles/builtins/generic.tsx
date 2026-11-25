@@ -36,6 +36,9 @@ const strings = (value: unknown) =>
 const PROSE_ELEMENTS = ["p", "strong", "em", "code", "ul", "ol", "li", "br", "a"];
 const PROSE_COMPONENTS: Components = {
   a: ({ children }) => <>{children}</>,
+  // Preflight takes lists' markers away; a prose tile's lists keep theirs.
+  ul: ({ node: _node, ...props }) => <ul {...props} className="list-disc space-y-1 pl-5" />,
+  ol: ({ node: _node, ...props }) => <ol {...props} className="list-decimal space-y-1 pl-5" />,
   code: ({ children }) => (
     <code className="rounded-xs bg-code-fill px-1 py-px font-mono text-base text-primary">
       {children}
@@ -58,11 +61,18 @@ export function ProseText({ text }: { text: string }) {
   );
 }
 
+/** A prose tile is an exhibit, not more of its section's text: it stands on
+ *  a faint wash behind a rule, in a card or bare in a section's body. */
 function ProseDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as ProseData;
   return (
     <div className="space-y-3">
-      <ProseText text={data.text} />
+      <div
+        data-prose-callout=""
+        className="max-w-[90ch] rounded-r-md border-l-2 border-strong bg-surface-wash px-4 py-3"
+      >
+        <ProseText text={data.text} />
+      </div>
       <AnchorChips document={ctx.review} anchors={data.anchors} />
     </div>
   );

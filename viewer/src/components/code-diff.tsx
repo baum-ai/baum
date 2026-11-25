@@ -76,6 +76,7 @@ function CodeDiffTable({
               ...hunk.lines.map((line, index) => (
                 <tr
                   key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
+                  data-new-line={line.newLine}
                   data-focus={line.focus ? "" : undefined}
                   className={cn(
                     "align-top",

@@ -89,6 +89,13 @@ const (
 	StatusReused  = "reused"
 )
 
+// The reasons of a section that ran from its previous version's text (its
+// hunks changed): written again from it, or kept as it was.
+const (
+	ReasonRevised = "revised from the previous version's text"
+	ReasonKept    = "kept the previous version's text"
+)
+
 // CompleteFunc completes an authored document into the stored one
 // (reviewv2.Complete).
 type CompleteFunc func(reviewv2.Document, reviewv2.CompleteInput) (reviewv2.Document, error)
@@ -137,9 +144,10 @@ type Run struct {
 	// Shell lets the calls run commands that read (agent.Request.Shell).
 	Shell bool
 	// Previous is the previous version's stored document, of either schema:
-	// the map keeps its sections' ids and titles, and a baum.review/2 one's
-	// unchanged sections are reused (reviewv2.ReusableSections). Nil has
-	// none.
+	// the map keeps its sections' ids and titles, its unchanged sections are
+	// reused (reviewv2.ReusableSections), and a section it wrote over other
+	// hunks, or a new ID over its code, is written from its text
+	// (reviewv2.RevisableSections). NoReuse does neither. Nil has none.
 	Previous []byte
 	NoReuse  bool
 	// Concurrency bounds the calls at once; zero is DefaultConcurrency.
@@ -177,8 +185,11 @@ type LevelOutcome struct {
 	// Seconds is the level's wall time, from its first call's start to its
 	// last call's end.
 	Seconds float64 `json:"seconds"`
-	// Ran, Failed, Reused and Skipped count its calls by status.
+	// Ran, Failed, Reused and Skipped count its calls by status. Kept and
+	// Revised count, among those that ran, the sections that kept or
+	// revised their previous text (ReasonKept, ReasonRevised).
 	Ran, Failed, Reused, Skipped int
+	Kept, Revised                int
 
 	started, ended time.Time
 }
@@ -491,6 +502,12 @@ func (o *orchestration) record(level, id, status, reason string) {
 	switch status {
 	case StatusRan:
 		l.Ran++
+		switch reason {
+		case ReasonKept:
+			l.Kept++
+		case ReasonRevised:
+			l.Revised++
+		}
 	case StatusFailed:
 		l.Failed++
 	case StatusReused:

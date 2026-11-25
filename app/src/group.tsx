@@ -41,7 +41,13 @@ import { ConfirmDialog, NameDialog } from "./group-dialogs";
 import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { StackOverview, type StackMember } from "./stack-overview";
 import { useVersionLoader } from "./version-cache";
-import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
+import {
+  openActiveBlock,
+  reviewKeyStep,
+  SIDE_PANE_KEY,
+  toggleActiveBlock,
+  useShortcuts,
+} from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { listedForGroup, useGroupRail, type RailMember } from "./group-rail";
 import { useLiveThreadsOf } from "./threads";
@@ -558,6 +564,7 @@ function GroupReviewPage({
   return (
     <>
       <ReviewViewer
+        sidePaneKey={SIDE_PANE_KEY}
         // A file a context chip names opens here, in a dialog over the page,
         // read at the stack's head from the group's own file route.
         openRepositoryFile={(reference) => {

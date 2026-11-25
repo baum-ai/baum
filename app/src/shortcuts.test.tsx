@@ -646,6 +646,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "v",
     "a",
     "]",
+    "Ctrl+]",
     "h",
     "l",
     "u",

@@ -21,6 +21,8 @@ import {
   selectionOf,
   sessionQuotes,
   shownSectionView,
+  sideSectionView,
+  viewOfPath,
   testNames,
   shownFile,
   tilesOn,
@@ -440,6 +442,23 @@ describe("a section's views", () => {
     expect(shownSectionView("tests", counts)).toBe("tests");
     expect(shownSectionView("session", counts)).toBe("overview");
     expect(shownSectionView(undefined, counts)).toBe("overview");
+  });
+
+  it("puts the view asked for beside the Overview, else the first that has something", () => {
+    const counts = of("sec_allowlist").counts;
+    expect(sideSectionView("tests", counts)).toBe("tests");
+    expect(sideSectionView("session", counts)).toBe("code");
+    expect(sideSectionView(undefined, counts)).toBe("code");
+    expect(sideSectionView("overview", { code: 0, tests: 0, session: 0, docs: 2 })).toBe("docs");
+    expect(sideSectionView(undefined, { code: 0, tests: 0, session: 0, docs: 0 })).toBeNull();
+  });
+
+  it("finds the view that draws a file of the section", () => {
+    const views = of("sec_allowlist");
+    expect(viewOfPath(views, "oss/internal/uiserver/remote.go")).toBe("code");
+    expect(viewOfPath(views, "oss/SECURITY.md")).toBe("docs");
+    expect(viewOfPath(views, views.tests.files[0]!.path)).toBe("tests");
+    expect(viewOfPath(views, "oss/elsewhere.go")).toBeNull();
   });
 });
 
