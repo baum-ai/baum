@@ -172,13 +172,17 @@ describe("zoom in Electron", () => {
     const store = new ZoomStore();
     store.set(1.25);
     installZoom(contents, store, "linux");
-    expect(calls.limits).toEqual([[1, 1]]);
     expect(calls.zoomFactors).toEqual([1.25]);
+    // Pinch zoom goes off once a page has a frame to set it on.
+    expect(calls.limits).toEqual([]);
+    emitter.emit("dom-ready");
+    expect(calls.limits).toEqual([[1, 1]]);
+    expect(calls.zoomFactors).toEqual([1.25, 1.25]);
 
     // A navigation may reset the zoom; Chromium's own zoom is put back.
     emitter.emit("did-start-loading");
     emitter.emit("zoom-changed", {}, "in");
-    expect(calls.zoomFactors).toEqual([1.25, 1.25, 1.25]);
+    expect(calls.zoomFactors).toEqual([1.25, 1.25, 1.25, 1.25]);
 
     let prevented = false;
     emitter.emit(

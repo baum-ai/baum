@@ -29,11 +29,17 @@ export function installZoom(
   platform: NodeJS.Platform = process.platform,
 ): void {
   const reapply = () => applyZoom(contents, store.level());
-  Promise.resolve(contents.setVisualZoomLevelLimits(1, 1)).catch((e: unknown) => {
-    console.error(`baum desktop: cannot turn off pinch zoom: ${String(e)}`);
-  });
+  // Needs a frame, which a window that has not loaded yet lacks: set for each
+  // page once its document exists.
+  const noPinch = () =>
+    Promise.resolve(contents.setVisualZoomLevelLimits(1, 1)).catch((e: unknown) => {
+      console.error(`baum desktop: cannot turn off pinch zoom: ${String(e)}`);
+    });
   contents.on("did-start-loading", reapply);
-  contents.on("dom-ready", reapply);
+  contents.on("dom-ready", () => {
+    reapply();
+    void noPinch();
+  });
   // Ctrl with the mouse wheel zooms Chromium's own level; put ours back.
   contents.on("zoom-changed", reapply);
   contents.on("before-input-event", (event, input) => {
