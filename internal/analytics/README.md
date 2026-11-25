@@ -32,7 +32,7 @@ prompt, message, tool input or output, or file path is stored.
   Codex store once for all clones, and unchanged rollouts are not reopened. Sessions last written
   more than 90 days ago are skipped, and their entries dropped.
 - The index format version invalidates derived evidence after parser changes,
-  including Codex code-mode command extraction.
+  including Codex code-mode command extraction and daemon recovery.
 - An entry is keyed by its files' sizes and modification times (a digest for
   Cursor's generated tree), so a refresh reads only what changed. Files that
   are gone, and the entries of unregistered clones, are dropped; a clone that
