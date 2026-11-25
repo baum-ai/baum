@@ -8,7 +8,7 @@ import (
 
 func TestAuthoredCommitsListsOneAuthorsBranchCommitsOnce(t *testing.T) {
 	f := newFixture(t)
-	git(t, f.dir, "config", "user.email", "test@example.com")
+	git(t, f.dir, "config", "user.email", "Test@Example.com")
 	// A commit on two branches is listed once; another author's is not; a
 	// merge is not.
 	git(t, f.dir, "branch", "copy", "feature")
@@ -20,7 +20,7 @@ func TestAuthoredCommitsListsOneAuthorsBranchCommitsOnce(t *testing.T) {
 
 	r := open(t, f.dir, Options{})
 	email, err := r.UserEmail(context.Background())
-	if err != nil || email != "test@example.com" {
+	if err != nil || email != "Test@Example.com" {
 		t.Fatalf("email = %q, %v", email, err)
 	}
 	commits, err := r.AuthoredCommits(context.Background(), time.Now().Add(-time.Hour), email)
