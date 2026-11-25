@@ -731,6 +731,37 @@ describe("a section's body", () => {
     expect(section.body).toEqual([{ type: "points", items: [{ text: "Kept", cites: [] }] }]);
   });
 
+  it("keeps a point's tone and a note's kind it knows, and drops the rest", () => {
+    const section = read({
+      body: [
+        {
+          type: "points",
+          items: [
+            { text: "Good", tone: "good" },
+            { text: "Plain", tone: "plain" },
+            { text: "Loud", tone: "loud" },
+          ],
+        },
+        { type: "note", kind: "caveat", text: "Careful." },
+        { type: "note", kind: "rant", text: "Hm." },
+        { type: "prose", kind: "caveat", text: "Prose." },
+      ],
+    });
+    expect(section.body).toEqual([
+      {
+        type: "points",
+        items: [
+          { text: "Good", tone: "good", cites: [] },
+          { text: "Plain", cites: [] },
+          { text: "Loud", cites: [] },
+        ],
+      },
+      { type: "note", kind: "caveat", text: "Careful." },
+      { type: "note", text: "Hm." },
+      { type: "prose", text: "Prose." },
+    ]);
+  });
+
   it("places a tile no body placed after the blocks", () => {
     const tiles = [tile("dg_a", "sec_a"), tile("dg_b", "sec_b"), tile("dg_c", "sec_a")];
     expect(read({ body: [{ type: "prose", text: "What it does." }] }, tiles).body).toEqual([

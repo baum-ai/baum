@@ -51,7 +51,7 @@ named in the input; it is in the run directory.
 
 ```
 { keep,
-  body: [ { type, title, text, items: [ { text, more, cites } ], tile } ],
+  body: [ { type, title, kind, text, items: [ { text, more, tone, cites } ], tile } ],
   risks: [ { id, tier, category, text, cites } ],
   tiles: [ { id, shows, cites, drop, reason } ], propose }
 ```
@@ -77,9 +77,17 @@ null):
   characters, with what decides it in bold ("A confirmed check lasts
   **10 minutes**"); `more` (optional, at most 450 characters) is the detail
   the page shows when the line is opened; `cites` are the hunks or files
-  the line rests on, which open with it.
-- `note`: `text`, one or two sentences, at most 240 characters. One aside:
-  an exception, what stays the same, a caveat.
+  the line rests on, which open with it. `tone` (optional) colours the
+  line's marker so a list reads at a glance: `new` (the change adds it),
+  `good` (works or is allowed), `bad` (fails or is refused), `muted`
+  (outside this change) or `missing` (does not exist yet). Leave it null
+  for a plain line, and give tones only when lines differ in what they
+  mean, not to decorate every line.
+- `note`: `text`, one or two sentences, at most 240 characters. One aside,
+  with its `kind` (optional) drawn as an icon: `caveat` (an exception or a
+  limit a reviewer must keep in mind), `decision` (a choice made on
+  purpose, and why), `unchanged` (what stays the same) or `follow_up`
+  (work deliberately left for later). Null is a plain aside.
 - `tile`: `tile`, the ID of one of your section's tiles (planned or
   proposed); the page draws the tile there, under its own title. A tile you
   keep but do not place goes after your blocks.

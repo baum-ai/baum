@@ -846,8 +846,8 @@ func TestRevisionRechecksOnce(t *testing.T) {
 	f := fullFake()
 	previous := retrySection([]string{hunkA, hunkGone}, hunkGone)
 	stale := strings.Replace(f.replies["section-sec-retry"](1),
-		`{"text":"A failed handler schedules a **retry**.","more":null,"cites":[{"type":"hunk","id":"`+hunkA+`"`,
-		`{"text":"Defaults are **5 attempts**.","more":null,"cites":[{"type":"hunk","id":"`+hunkB+`"`, 1)
+		`{"text":"A failed handler schedules a **retry**.","more":null,"tone":"new","cites":[{"type":"hunk","id":"`+hunkA+`"`,
+		`{"text":"Defaults are **5 attempts**.","more":null,"tone":"new","cites":[{"type":"hunk","id":"`+hunkB+`"`, 1)
 	f.reply("section-sec-retry", stale)
 	run, calls := revisedRun(t, f, previousDoc(t, previous))
 	run.Budgets.MaxRepairAttempts = 2

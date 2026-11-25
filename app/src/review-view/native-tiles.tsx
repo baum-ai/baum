@@ -23,6 +23,7 @@ import type {
   TableData,
   Tone,
 } from "./model";
+import { toneOf } from "./document";
 import { isRecord, isString } from "../tiles/types";
 
 /** The diagrams and tables the view call writes, drawn by the page itself:
@@ -60,10 +61,6 @@ const LABEL_INK: Record<Tone, string> = {
   muted: "text-tertiary",
   missing: "text-status-critical",
 };
-
-const TONES = new Set<string>(["plain", "new", "good", "bad", "muted", "missing"]);
-const toneOf = (tone: unknown): Tone =>
-  isString(tone) && TONES.has(tone) ? (tone as Tone) : "plain";
 
 /** The small uppercase label above a block of a section's body (a tile's
  *  title in the bare variant too), and above a flow's lane. */
@@ -749,7 +746,7 @@ function Message({ step, at, names }: { step: SequenceStep; at: number; names: s
 
 /** What a message's colour means, for the tones a legend explains (`new`
  *  reads as added, `plain` needs no words). */
-const TONE_MEANS: Partial<Record<Tone, string>> = {
+export const TONE_MEANS: Partial<Record<Tone, string>> = {
   good: "works or is allowed",
   bad: "fails or is refused",
   muted: "outside this change",

@@ -47,7 +47,7 @@
           {"text": "Each attempt waits **twice** as long as the one before.", "more": "The doubling stops at the largest wait the policy allows.", "cites": [{"type": "hunk", "id": "h_a00000000001", "lines": [11, 12]}, {"type": "hunk", "id": "h_a00000000003"}]}
         ]},
         {"type": "tile", "tile": "tl_wait_code"},
-        {"type": "note", "text": "Deliveries already queued keep the wait they had."},
+        {"type": "note", "kind": "unchanged", "text": "Deliveries already queued keep the wait they had."},
         {"type": "tile", "tile": "tl_error_paths"},
         {"type": "tile", "tile": "tl_missing"}
       ],
@@ -68,8 +68,8 @@
       "body": [
         {"type": "prose", "text": "A retryable error now schedules a retry. Any other error is returned as before."},
         {"type": "points", "items": [
-          {"text": "**Retryable errors wait.** A retryable error schedules the delivery again under the policy.", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [40, 42]}]},
-          {"text": "**Other errors return.** Any other error is returned to the caller at once.", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [43, 44]}, {"type": "session_event", "session": "11111111-2222-3333-4444-555555555555", "event": "ev_tests"}]}
+          {"text": "**Retryable errors wait.** A retryable error schedules the delivery again under the policy.", "tone": "new", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [40, 42]}]},
+          {"text": "**Other errors return.** Any other error is returned to the caller at once.", "tone": "muted", "cites": [{"type": "hunk", "id": "h_a00000000002", "lines": [43, 44]}, {"type": "session_event", "session": "11111111-2222-3333-4444-555555555555", "event": "ev_tests"}]}
         ]}
       ],
       "risks": []
