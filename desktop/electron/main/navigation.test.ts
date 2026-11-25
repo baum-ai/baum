@@ -1,0 +1,221 @@
+// The tests of src/navigation.rs, for the Electron shell's bundled origin
+// (`app://bundle` in place of `tauri://localhost`).
+import { describe, expect, it } from "vitest";
+import {
+  BUNDLED_SCREEN,
+  bundledUrl,
+  decide,
+  decideNewWindow,
+  isTrayPanel,
+  OPEN_INTERVAL,
+  OpenLimit,
+  originOf,
+  schemeAndHost,
+} from "./navigation.ts";
+
+const daemon = "http://127.0.0.1:4100";
+
+describe("navigation", () => {
+  it("the tray panel loads only its bundled page", () => {
+    expect(isTrayPanel(bundledUrl("/tray.html"))).toBe(true);
+    for (const other of [
+      BUNDLED_SCREEN,
+      "http://127.0.0.1:4100/tray.html",
+      "https://example.com/tray.html",
+      "app://elsewhere/tray.html",
+      "app://bundle:1/tray.html",
+      "app://user@bundle/tray.html",
+    ]) {
+      expect(isTrayPanel(other), other).toBe(false);
+    }
+  });
+
+  it("gives the bundled pages their own origin", () => {
+    expect(originOf(new URL(bundledUrl("/tray.html")))).toBe("app://bundle");
+    expect(originOf(new URL("http://127.0.0.1:4100/x"))).toBe(daemon);
+    expect(originOf(new URL("app://bundle:9/x"))).toBe("null");
+  });
+
+  it("allows the bundled screen and the daemon", () => {
+    expect(decide(BUNDLED_SCREEN, null, false)).toBe("allow");
+    for (const u of ["http://127.0.0.1:4100/#token=x", "http://127.0.0.1:4100/s/abc/?page=jobs"]) {
+      expect(decide(u, daemon, false), u).toBe("allow");
+    }
+  });
+
+  // A navigation never opens the browser, whichever frame it comes from:
+  // links to other sites are refused in place.
+  it("refuses navigations to other sites", () => {
+    for (const u of [
+      "https://github.com/acme/widgets/pull/7",
+      "http://example.com/",
+      "https://attacker.example/?d=secret",
+      "https://github.com/login/device",
+    ]) {
+      expect(decide(u, daemon, false), u).toBe("deny");
+      expect(decide(u, null, true), u).toBe("deny");
+    }
+  });
+
+  it("refuses other local servers and schemes", () => {
+    for (const u of [
+      "about:blank",
+      "about:srcdoc",
+      "blob:http://127.0.0.1:4100/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+      "blob:null/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+      "tel:+15555550100",
+      "http://127.0.0.1:4200/",
+      "https://127.0.0.1:4100/",
+      "http://localhost:4100/",
+      "http://app.localhost/",
+      "http://[::1]:4100/",
+      "http://[::ffff:127.0.0.1]:8080/",
+      "http://[::ffff:7f00:1]:4100/",
+      "http://[::ffff:0.0.0.0]:4100/",
+      "http://0.0.0.0:4100/",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "data:text/html,hi",
+      "app://elsewhere/",
+      "mailto:someone@example.com",
+      "not a url",
+    ]) {
+      expect(decide(u, daemon, false), u).toBe("deny");
+    }
+  });
+
+  it("the setup screen loads only while it shows", () => {
+    expect(decide(bundledUrl("/setup.html"), null, true)).toBe("allow");
+    expect(decide(bundledUrl("/setup.html"), null, false)).toBe("deny");
+    expect(decide(BUNDLED_SCREEN, null, false)).toBe("allow");
+    expect(decide(bundledUrl("/"), null, false)).toBe("allow");
+    // Other spellings an asset server could map to a page, and other files.
+    for (const path of [
+      "/setup",
+      "/setup.html/",
+      "/setup%2Ehtml",
+      "/setup%2ehtml",
+      "/%73etup.html",
+      "/index",
+      "/index.html/",
+      "/screen.js",
+      "/tray.html",
+    ]) {
+      for (const open of [false, true]) {
+        expect(decide(bundledUrl(path), null, open), path).toBe("deny");
+      }
+    }
+  });
+
+  it("without a daemon, loopback is refused", () => {
+    expect(decide("http://127.0.0.1:4100/", null, false)).toBe("deny");
+  });
+
+  it("refuses addresses with a user name or password", () => {
+    for (const u of [
+      "http://127.0.0.1:4100@evil.example/",
+      "http://evil@127.0.0.1:4100/",
+      "http://user:pass@127.0.0.1:4100/s/abc/",
+      "app://user@bundle/index.html",
+    ]) {
+      expect(decide(u, daemon, true), u).toBe("deny");
+      expect(decideNewWindow(u), u).toBe("deny");
+    }
+    expect(decideNewWindow("https://user@github.com/")).toBe("deny");
+  });
+
+  // Other spellings of 127.0.0.1 parse to it, as the browser reads them, so
+  // they are the daemon's own origin. An IPv4-mapped IPv6 address is another
+  // host.
+  it("spellings of the daemon address are its origin", () => {
+    for (const u of [
+      "http://2130706433:4100/",
+      "http://0x7f000001:4100/",
+      "http://0177.0.0.1:4100/",
+      "http://127.1:4100/",
+    ]) {
+      expect(new URL(u).hostname, u).toBe("127.0.0.1");
+      expect(decide(u, daemon, false), u).toBe("allow");
+    }
+    expect(decide("http://[::ffff:127.0.0.1]:4100/", daemon, false)).toBe("deny");
+  });
+
+  // The bundled origin exactly, with the parsed path: dot-segments resolve
+  // before the check, and a query or fragment does not change the page.
+  it("decides bundled pages by origin and resolved path", () => {
+    expect(decide("app://bundle/a/../index.html", null, false)).toBe("allow");
+    expect(decide("app://bundle/a/../setup.html", null, false)).toBe("deny");
+    expect(decide("app://bundle/a/../setup.html", null, true)).toBe("allow");
+    expect(decide("app://bundle/index.html?x=1#y", null, false)).toBe("allow");
+    expect(decide("app://bundle/screen.js?x=/index.html", null, false)).toBe("deny");
+    for (const u of [
+      "app://bundle:1234/index.html",
+      "app://user@bundle/index.html",
+      "app://bundle.evil/index.html",
+    ]) {
+      expect(decide(u, null, true), u).toBe("deny");
+    }
+  });
+
+  it("opens the browser at most once a second", () => {
+    const start = 10_000;
+    const limit = new OpenLimit();
+    expect(limit.allow(start)).toBe(true);
+    expect(limit.allow(start)).toBe(false);
+    expect(limit.allow(start + 999)).toBe(false);
+    expect(limit.allow(start + OPEN_INTERVAL)).toBe(true);
+    expect(limit.allow(start + OPEN_INTERVAL + 500)).toBe(false);
+    expect(limit.allow(start + 5000)).toBe(true);
+  });
+
+  it("logs a refused navigation without path or query", () => {
+    for (const [u, logged] of [
+      ["https://attacker.example/s/ns/?d=secret#x", "https://attacker.example"],
+      ["http://127.0.0.1:4200/s/ns/?token=x", "http://127.0.0.1"],
+      ["about:blank", "about:"],
+      ["data:text/html,secret", "data:"],
+      ["mailto:a@example.com?body=secret", "mailto:"],
+    ] as const) {
+      expect(schemeAndHost(u), u).toBe(logged);
+    }
+  });
+
+  // The app's links to other sites ask for a new window, which opens the
+  // browser; no window ever opens, and nothing else leaves the app.
+  it("never opens a new window", () => {
+    for (const u of [
+      "https://github.com/",
+      "https://github.com/acme/widgets/pull/7#discussion_r1",
+      "http://example.com/",
+      "https://docs.usebaum.com/",
+    ]) {
+      expect(decideNewWindow(u), u).toBe("open-in-browser");
+    }
+    expect(decideNewWindow(BUNDLED_SCREEN)).toBe("deny");
+    for (const u of [
+      "http://127.0.0.1:4100/",
+      "http://localhost:4100/",
+      "http://[::1]:4100/",
+      "about:blank",
+      "about:srcdoc",
+      "data:text/html,hi",
+      "blob:http://127.0.0.1:4100/7d3c1a52-6f0e-4d7e-9a43-1f0b4c2b1e11",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "mailto:someone@example.com",
+      "tel:+15555550100",
+      "app://bundle/setup.html",
+      "http://2130706433/",
+      "http://127.1/",
+      "http://0x7f000001/",
+      "http://LOCALHOST./",
+      "http://foo.localhost./",
+      "http://[::ffff:127.0.0.1]/",
+      "http://0.0.0.0/",
+      "http://[::]/",
+      "not a url",
+    ]) {
+      expect(decideNewWindow(u), u).toBe("deny");
+    }
+  });
+});
