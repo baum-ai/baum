@@ -320,12 +320,25 @@ export function useMessageKeys(
   top: RefObject<HTMLElement | null>,
 ) {
   const current = useRef<HTMLElement | null>(null);
+  // Where the last j or k is scrolling the page to, and how far it still
+  // is: until the page gets there, the marked message counts as shown, so
+  // the next press goes on from it rather than from what the scroll has not
+  // reached yet. Arriving, or a scroll away from it (the reader's own, or
+  // the page stopping short at its end), forgets it.
+  const aim = useRef<{ to: number; left: number } | null>(null);
   const [reading, setReading] = useState<HTMLElement | null>(null);
   useEffect(() => {
     const mark = (target: HTMLElement) => {
+      if (target !== current.current) aim.current = null;
       current.current?.classList.remove("local-message-current");
       target.classList.add("local-message-current");
       current.current = target;
+    };
+    const onScroll = () => {
+      const scroll = aim.current;
+      if (!scroll) return;
+      const left = Math.abs(pageScroll().top - scroll.to);
+      aim.current = left <= 1 || left > scroll.left + 1 ? null : { to: scroll.to, left };
     };
     const onKey = (event: KeyboardEvent) => {
       if (!["j", "k", " ", "Enter"].includes(event.key)) return;
@@ -336,8 +349,9 @@ export function useMessageKeys(
       const marked = current.current;
       const shown =
         marked?.isConnected &&
-        marked.getBoundingClientRect().bottom > edge &&
-        marked.getBoundingClientRect().top < innerHeight;
+        (aim.current !== null ||
+          (marked.getBoundingClientRect().bottom > edge &&
+            marked.getBoundingClientRect().top < innerHeight));
       const at = shown ? messages.indexOf(marked) : -1;
       if (event.key === " " || event.key === "Enter") {
         const target =
@@ -370,10 +384,17 @@ export function useMessageKeys(
       mark(target);
       const reduced = matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
       const page = pageScroll();
-      page.to(page.top + target.getBoundingClientRect().top - edge, reduced ? "instant" : "smooth");
+      const to = page.top + target.getBoundingClientRect().top - edge;
+      aim.current = { to, left: Math.abs(page.top - to) };
+      page.to(to, reduced ? "instant" : "smooth");
     };
     addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
+    // Captured: the panel's scroll does not bubble.
+    addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => {
+      removeEventListener("keydown", onKey);
+      removeEventListener("scroll", onScroll, { capture: true });
+    };
   }, [body, top]);
   const close = useCallback(() => setReading(null), []);
   return { reading, close };

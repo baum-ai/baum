@@ -2364,7 +2364,8 @@ with it as thumbnails that open full size; the agent named once per turn; its
 messages on the way to its reply folded under "N progress updates"; its reply
 in full, set as long text (headings, quieter code, spaced lists and tables). j
 and k move a message at a time (prompts and replies, passing over the progress
-updates), Space shows all of the marked one or less again, and Enter opens it
+updates; pressed again before the page has scrolled to the marked one, they
+go on from it, as Space and Enter act on it), Space shows all of the marked one or less again, and Enter opens it
 on its own, nearly the window's size, where j and k scroll it and Escape closes
 it. It reads
 `GET api/live-sessions/{agent}/{id}/transcript` (see "Live sessions" in
