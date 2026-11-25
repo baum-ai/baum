@@ -140,7 +140,8 @@ it("will not merge when the head moved since the inbox was read", async () => {
 });
 
 it("offers Merge on rows GitHub can merge, not on a conflict, and opens the dialog from the row", async () => {
-  const rows = [entry(1), entry(2, "blocked"), entry(3, "conflict")];
+  const rows = [entry(1), entry(2, "blocked"), entry(3, "conflict"), entry(4)];
+  rows[3]!.pull_request.viewer_can_push = false;
   await act(async () =>
     root.render(
       <Inbox
@@ -160,6 +161,8 @@ it("offers Merge on rows GitHub can merge, not on a conflict, and opens the dial
     act(async () =>
       node.querySelector<HTMLButtonElement>(`button[aria-label="Actions for ${name}"]`)!.click(),
     );
+  await openActions("acme/demo #4");
+  expect(choices()).toHaveLength(0);
   await openActions("acme/demo #3");
   expect(choices()).toHaveLength(0);
   // Blocked (failing checks, missing reviews) is the person's call.

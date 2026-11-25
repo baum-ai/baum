@@ -77,6 +77,7 @@ func TestCountsWhatTheInboxLists(t *testing.T) {
 	one(t, 1, mine(1, func(e *reviewindex.Entry) { e.Merge = "ready" }))
 	one(t, 0, mine(1, func(e *reviewindex.Entry) { e.Merge, e.PullRequest.Draft = "ready", true }))
 	one(t, 0, mine(1, func(e *reviewindex.Entry) { e.Merge, e.Checks = "ready", "running" }))
+	one(t, 0, mine(1, func(e *reviewindex.Entry) { e.Merge, e.PullRequest.ViewerCanPush = "ready", new(false) }))
 	// To update: behind, pushable, not a draft or a fork.
 	one(t, 1, mine(1, func(e *reviewindex.Entry) { e.PullRequest.Behind, e.PullRequest.ViewerCanPush = true, &yes }))
 	one(t, 0, mine(1, func(e *reviewindex.Entry) { e.PullRequest.Behind = true }))

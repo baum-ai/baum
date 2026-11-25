@@ -639,7 +639,7 @@ beside its Transcript): the notice goes and the run joins the fix runs below,
 remembered in this browser (`useDismissedFixes`, the 50 latest). A running
 fix's notice cannot be dismissed.
 
-Merging: an open pull request, not a draft, that GitHub can merge (Merge state
+Merging: when GitHub reports read-only access to the base repository, baum leaves merging to its maintainers. Otherwise an open pull request, not a draft, that GitHub can merge (Merge state
 Ready or Blocked, that is without a conflict) shows a
 Merge button in the PR page header, **Merge…** in its Pull requests row's
 menu, and the Inbox card's action. It opens a confirmation dialog
@@ -1437,7 +1437,7 @@ dot before the title (see above), with agent sessions in progress under it. Inco
 colour. Collapsible groups say who acts next, with each row in one group:
 Review requested; the person's own pull requests as Needs changes (changes
 requested, failing checks or a conflict), Ready to merge (GitHub's merge state
-is ready) and Your pull requests (the rest); Other pull requests; and Saved
+is ready and the person can act on it) and Your pull requests (the rest); Other pull requests; and Saved
 history. Its tabs are **Open**, every open pull request, then the saved tabs,
 then **Closed** (`filter=history`), the saved reviews of pull requests closed,
 merged or no longer listed, always last; a tab with nothing in it is dimmed,
