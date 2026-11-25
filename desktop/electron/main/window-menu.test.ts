@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { isMenuId, submenu } from "./notifications/index.ts";
 import { defaultSettings } from "./notifications/settings.ts";
 import { route } from "./tray.ts";
-import { hasWindowMenu, windowMenuTemplate } from "./window-menu.ts";
+import { hasWindowMenu, trayNotifications, windowMenuTemplate } from "./window-menu.ts";
 
 function template(login = false) {
   const kinds = defaultSettings().kinds;
@@ -96,5 +96,22 @@ describe("the window's menu bar", () => {
       "login",
       "notification",
     ]);
+  });
+
+  it("holds the same Notifications toggles as the tray menu", () => {
+    const kinds = defaultSettings().kinds;
+    kinds.conflict = false;
+    const tray = trayNotifications(submenu(kinds));
+    expect(tray).toMatchObject({ kind: "submenu", id: "notifications", label: "Notifications" });
+    const items = tray.kind === "submenu" ? tray.items : [];
+    expect(items).toHaveLength(Object.keys(kinds).length);
+    expect(items.find((i) => i.id === "notifications:conflict")).toEqual({
+      kind: "check",
+      id: "notifications:conflict",
+      label: "My pull request: merge conflict",
+      enabled: true,
+      checked: false,
+    });
+    expect(items.every((i) => isMenuId(i.id))).toBe(true);
   });
 });

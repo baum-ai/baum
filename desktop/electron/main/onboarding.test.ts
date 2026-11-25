@@ -405,6 +405,22 @@ describe.skipIf(!unix)("the setup commands", () => {
     );
   });
 
+  // setup.ts's tests, from before the onboarding port decided the first page.
+  it("opens on the connecting screen once setup is finished or baum cannot run", () => {
+    const root = tempDir("first-page");
+    const settings = join(root, "config", FILE);
+    mkdirSync(join(root, "config"), { recursive: true });
+    const misplaced = registerSetupCommands(deps(root, { misplaced: () => "on a disk image" }));
+    expect(misplaced.start()).toBe(CONNECTING_PAGE);
+    expect(misplaced.isOpen()).toBe(false);
+    clearCommands();
+    writeFileSync(settings, JSON.stringify({ setup: { onboarded: "yes" } }));
+    expect(registerSetupCommands(deps(root)).start()).toBe(SETUP_PAGE);
+    clearCommands();
+    writeFileSync(settings, JSON.stringify({ setup: { onboarded: true, commands: [] } }));
+    expect(registerSetupCommands(deps(root)).start()).toBe(CONNECTING_PAGE);
+  });
+
   it("runs an AppImage's baum from its copy, without the mount on the PATH", () => {
     const root = tempDir("appimage");
     const appdir = join(root, "mount");

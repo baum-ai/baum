@@ -13,6 +13,7 @@ import {
   WIDTH,
 } from "./panel.ts";
 import type { TrayController } from "./tray.ts";
+import { securePreferences } from "./windows.ts";
 
 /** The bundled page the window loads. */
 export const PANEL_URL = "app://bundle/tray.html";
@@ -50,12 +51,9 @@ export function createPanel(options: PanelOptions = {}): PanelWindow {
     fullscreenable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    webPreferences: {
-      preload: options.preload ?? join(__dirname, "preload.cjs"),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-    },
+    // The panel's page declares nothing (no tile frames, links or check
+    // window).
+    webPreferences: securePreferences(options.preload ?? join(__dirname, "preload.cjs"), null),
   });
   window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   // The panel shows its bundled page and nothing else.

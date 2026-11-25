@@ -8,11 +8,12 @@
 // The template is plain data built from the saved settings, which are the
 // only copy of the state: every click goes to `onClick` (the tray's one menu
 // router), and the menu is built again after a toggle so it shows what was
-// saved rather than what the click flipped.
+// saved rather than what the click flipped. The tray menu holds the same
+// Notifications toggles (`trayNotifications`).
 import type { MenuItemConstructorOptions } from "electron";
 import type { MenuSubmenu } from "./notifications/index.ts";
 import { MENU_LABEL } from "./onboarding.ts";
-import { MENU_LOGIN, MENU_REPORT, SETUP_MENU_ID } from "./tray.ts";
+import { MENU_LOGIN, MENU_REPORT, type MenuItemSpec, SETUP_MENU_ID } from "./tray.ts";
 
 export interface WindowMenuState {
   /** Whether start at login is on. */
@@ -71,6 +72,24 @@ export function windowMenuTemplate(state: WindowMenuState): MenuItemConstructorO
       ),
     },
   ];
+}
+
+/** The Notifications toggles as the tray menu holds them, from the same
+ *  saved settings as the menu bar's. */
+export function trayNotifications(notifications: MenuSubmenu): MenuItemSpec {
+  return {
+    kind: "submenu",
+    id: notifications.id,
+    label: notifications.label,
+    enabled: true,
+    items: notifications.items.map((entry) => ({
+      kind: "check",
+      id: entry.id,
+      label: entry.label,
+      enabled: true,
+      checked: entry.checked,
+    })),
+  };
 }
 
 /** Whether this platform gets a menu bar. */
