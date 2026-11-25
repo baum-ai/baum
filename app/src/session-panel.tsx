@@ -220,7 +220,9 @@ export function useConversations() {
     try {
       const answer = await listConversations();
       sessionPanel.setAvailable(answer !== null);
-      setList(answer ?? []);
+      const next = answer ?? [];
+      // An unchanged list keeps its value, so nothing renders again for it.
+      setList((list) => (JSON.stringify(list) === JSON.stringify(next) ? list : next));
       setError("");
     } catch (e) {
       // A daemon too old for the panel answers 404: it has none.

@@ -981,19 +981,19 @@ function Workspace({ url }: { url: UrlState }) {
   // What happened on each pull request since its page was last open, which
   // its row counts; the page open now has read all of it.
   const conversations = useConversations();
-  const openGroup =
-    (page === "inbox" || page === "pulls") && groupId
-      ? groups.find((group) => group.id === groupId)
-      : undefined;
+  // Pull requests are counted on the pages that show them: counting compares
+  // reads, so what changes meanwhile is counted on coming back.
+  const pullPage = page === "inbox" || page === "pulls";
+  const openGroup = pullPage && groupId ? groups.find((group) => group.id === groupId) : undefined;
   const activity = usePullActivity(
     snapshot.entries,
     conversations.loaded && !conversations.error ? conversations.list : null,
     openGroup
       ? openGroup.members.map((number) => upNextKey({ repository: openGroup.repository, number }))
-      : (page === "inbox" || page === "pulls") && selectedEntry
+      : pullPage && selectedEntry
         ? [upNextKey(selectedEntry.pull_request)]
         : [],
-    revision > 0 && !error,
+    pullPage && revision > 0 && !error,
   );
   // What the sidebar highlights is the page that shows the queue, with the
   // inbox the address names, when the daemon still has it.
