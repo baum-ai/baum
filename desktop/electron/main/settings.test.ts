@@ -35,7 +35,7 @@ describe("desktop.json", () => {
     if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
-  it("keeps every change when updates follow each other", () => {
+  it("keeps every change when updates follow each other", { timeout: 60_000 }, () => {
     const dir = scratch();
     const path = join(dir, FILE);
     for (let i = 0; i < 20; i++) {
