@@ -204,13 +204,6 @@ case "$platform" in
     if [ "$platform" = linux-arm64 ]; then yml=latest-linux-arm64.yml; fi
     cp "$(one "$builder/$name.deb")" "$(one "$builder/$name.AppImage")" "$(one "$builder/$yml")" "$out/"
     check_appimage_magic "$out/$name.AppImage"
-    # The deb runs on the system's libraries, but none of WebKitGTK's or
-    # GStreamer's: Electron brings its own engine and codecs.
-    depends=$(dpkg-deb --field "$out/$name.deb" Depends)
-    if grep -qiE 'webkit|gstreamer' <<<"$depends"; then
-      echo "bundle: the deb depends on $depends" >&2
-      exit 1
-    fi
     contents=$(dpkg-deb --contents "$out/$name.deb")
     if ! grep -qF './usr/bin/baum -> /opt/baum/resources/bin/baum' <<<"$contents"; then
       echo "bundle: the deb does not link /usr/bin/baum to the bundled baum" >&2

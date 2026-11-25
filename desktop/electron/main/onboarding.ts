@@ -501,7 +501,7 @@ export function repositoryRequest(
   }
 }
 
-/** One change at a time, as the Rust shell's busy mutex. */
+/** One change at a time. */
 class Lock {
   private tail: Promise<unknown> = Promise.resolve();
 

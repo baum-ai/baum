@@ -1,6 +1,6 @@
 // The adapters between the modules that talk to the attached daemon. Each
-// port took the daemon in the shape its Rust original had; this file is the
-// one place that fits them together, so none of them is rewritten:
+// takes the daemon in a shape of its own; this file is the one place that
+// fits them together:
 //
 // - daemon.ts hands out a `Launch` whose URL is a method; client.ts and
 //   events.ts read `{ url: URL, bearer() }` (`clientLaunch`).
@@ -104,7 +104,7 @@ export class EventFeed {
 }
 
 /** A request whose answer must have one of `ok`'s statuses; resolves to the
- *  body, as the Rust client's `get` did. */
+ *  body. */
 async function body(
   launch: client.Launch,
   method: string,

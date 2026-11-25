@@ -197,8 +197,7 @@ describe("setup", () => {
     expect(again.left).toEqual([]);
   });
 
-  // The Rust test also checked that navigation allows the bundled page;
-  // that rule belongs to the navigation port.
+  // That navigation allows the bundled page is navigation.test.ts's.
   it("bundles the setup page", () => {
     expect(SETUP_PAGE).toBe("setup.html");
     expect(CONNECTING_PAGE).toBe("index.html");

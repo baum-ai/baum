@@ -1,7 +1,6 @@
-// Paths as Rust's std::path treats them, which the setup code was written
-// against: two paths are equal when their components are (so `/a//b/` is
-// `/a/b`), `starts_with` matches whole components, and `..` is never
-// resolved. Unix paths split on `/`; Windows ones on `/` and `\`.
+// Paths as the setup code compares them: two paths are equal when their
+// components are (so `/a//b/` is `/a/b`), `starts_with` matches whole
+// components, and `..` is never resolved. Unix paths split on `/`; Windows ones on `/` and `\`.
 import { realpathSync } from "node:fs";
 
 export type Platform = NodeJS.Platform;

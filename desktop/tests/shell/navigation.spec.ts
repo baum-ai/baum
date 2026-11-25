@@ -1,10 +1,9 @@
 // No frame of a daemon page can make the Electron shell call a command, see
 // its declaration, leave the app or open the browser, and the page's own
-// links and commands still work (README "Checking navigation"; the port of
-// the WebKitGTK harness's tests/navigation/check.mjs). The mock daemon
-// serves each case's page with the daemon's Content-Security-Policy or with
-// none, as Vite's development server sends none, so nothing but the shell
-// stops a frame. Clicks are real pointer input.
+// links and commands still work (README "Checking navigation"). The mock
+// daemon serves each case's page with the daemon's Content-Security-Policy
+// or with none, as Vite's development server sends none, so nothing but the
+// shell stops a frame. Clicks are real pointer input.
 import { expect, test } from "@playwright/test";
 import {
   BIG,
@@ -142,12 +141,7 @@ for (const [name, frameCsp] of [
     for (const key of ["parent.baumDesktop", "top.__BAUM_DESKTOP__", "parent invoke"]) {
       expect(report[key], key).toMatch(/^throws SecurityError/);
     }
-    for (const key of [
-      "require",
-      "process",
-      "ipcRenderer",
-      "electron",
-    ]) {
+    for (const key of ["require", "process", "ipcRenderer", "electron"]) {
       expect(report[key], key).toBe("undefined");
     }
 

@@ -22,7 +22,7 @@
 type Json = Record<string, unknown>;
 
 /** Parses a JSON object. The parse functions throw an Error whose message
- *  names what could not be read, where the Rust shell returned `Err`. */
+ *  names what could not be read. */
 function parseObject(body: string, what: string): Json {
   let value: unknown;
   try {
@@ -518,7 +518,7 @@ export function parseLive(body: string): NeedsYou[] {
       needs: { key: `${row.agent}:${row.sessionId}`, title, detail },
     });
   }
-  // A wait with no known start sorts first, as an absent value does in Rust.
+  // A wait with no known start sorts first.
   waiting.sort((a, b) => {
     if (a.since !== b.since) {
       if (a.since === null) return -1;

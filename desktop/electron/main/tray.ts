@@ -68,7 +68,7 @@ export const HOST_CHECK_TIMEOUT = 1_000;
  *  may start after the app does. */
 export const HOST_WAIT = 10_000;
 
-// The daemon's request deadlines, as the Rust client set them.
+// The daemon's request deadlines.
 export const POLL_TIMEOUT = 5_000;
 /** Diagnostics run the doctor's checks; the daemon gives them up to 45 s. */
 export const DIAGNOSTICS_TIMEOUT = 50_000;
@@ -98,7 +98,7 @@ export const NO_TRAY_PROMPT =
 
 /** The daemon's app API over loopback HTTP. Each call resolves with the
  *  response body of a successful answer (200, or 202 for the catch-up) and
- *  rejects with an Error otherwise, as the Rust client's `get` did.
+ *  rejects with an Error otherwise.
  *  `timeoutMs` is the deadline per read and write. */
 export interface DaemonApi {
   get(path: string, timeoutMs?: number): Promise<string>;

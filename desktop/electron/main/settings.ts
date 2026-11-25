@@ -1,7 +1,7 @@
 // desktop.json, the native settings that stay available before the daemon
 // starts. Every read and write is synchronous, so a change reads the latest
 // document and replaces one section within one turn of the event loop: no
-// other change can interleave, which is what the Rust shell's lock ensured.
+// other change can interleave.
 import {
   closeSync,
   fsyncSync,

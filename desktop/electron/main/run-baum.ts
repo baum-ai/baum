@@ -101,7 +101,7 @@ export function runBaum(
   });
 }
 
-/** A stream's lines once it ends, as Rust's `BufRead::lines`: split at
+/** A stream's lines once it ends: split at
  *  `\n`, a trailing `\r` dropped, stopping at the first line that is not
  *  UTF-8. `within` gives up after a while with no lines, and closes it. */
 function lines(stream: Readable): { within(ms: number): Promise<string[]> } {
