@@ -13,10 +13,11 @@ import {
   WIDTH,
 } from "./panel.ts";
 import type { TrayController } from "./tray.ts";
+import { TRAY_PANEL_URL } from "./navigation.ts";
 import { securePreferences } from "./windows.ts";
 
-/** The bundled page the window loads. */
-export const PANEL_URL = "app://bundle/tray.html";
+/** The page the window loads, on the tray's own origin. */
+export const PANEL_URL = TRAY_PANEL_URL;
 
 export interface PanelWindow {
   /** The window, for the guard that resolves a caller's role. `undefined`

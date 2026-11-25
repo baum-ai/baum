@@ -1153,7 +1153,7 @@ The updater is still being ported.
 - Every command goes over one IPC channel. `electron/main/bridge.ts` runs a
   command only from the main frame of the app's own windows, and only if
   `electron/main/commands.ts` allows it for the page's role.
-- The bundled screens are served from `dist/` as `app://bundle`.
+- The bundled screens are served from `dist/` as `app://bundle`. The tray panel has its own origin, `app://tray`, so the window's zoom does not scale it.
 - The app keeps Tauri's identifier (`com.usebaum.desktop`), so it uses the
   same `desktop.json`. Chromium's files go in `chromium/` under the same
   folder.
