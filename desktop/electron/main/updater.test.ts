@@ -243,7 +243,7 @@ describe("configuration", () => {
     const appImage = {
       platform: "linux" as const,
       execPath: "/tmp/.mount_baumXYZ/usr/bin/baum-desktop",
-      env: { APPIMAGE: "/home/me/Apps/baum.AppImage", APPDIR: "/tmp/.mount_baumXYZ" },
+      env: { APPIMAGE: "/home/alice/Apps/baum.AppImage", APPDIR: "/tmp/.mount_baumXYZ" },
       writable,
     };
     expect(copyInstalls(appImage)).toBe(true);
@@ -258,7 +258,7 @@ describe("configuration", () => {
         },
       }),
     ).toBe(false);
-    expect(dirs).toEqual(["/home/me/Apps"]);
+    expect(dirs).toEqual(["/home/alice/Apps"]);
     // A deb, or variables inherited from another AppImage.
     expect(copyInstalls({ ...appImage, env: {} })).toBe(false);
     expect(copyInstalls({ ...appImage, env: { APPIMAGE: appImage.env.APPIMAGE } })).toBe(false);
