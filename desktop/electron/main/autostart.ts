@@ -22,6 +22,7 @@ import {
   writeSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, parse } from "node:path";
+import { windowsSystemProgram } from "./path-rules.ts";
 
 /** The argument the login entry passes: start without showing the window. */
 export const HIDDEN_FLAG = "--hidden";
@@ -55,8 +56,14 @@ export interface AutostartDeps {
   reg?: Reg;
 }
 
+/** The system's `reg.exe`, by its full path: a bare name is searched for in
+ *  the working directory first. */
+export function regPath(env: Env): string {
+  return windowsSystemProgram(env, "reg.exe");
+}
+
 export function runReg(args: string[]): { ok: boolean; stdout: string } {
-  const result = spawnSync("reg.exe", args, {
+  const result = spawnSync(regPath(process.env), args, {
     stdio: ["ignore", "pipe", "ignore"],
     windowsHide: true,
     encoding: "utf8",

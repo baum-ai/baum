@@ -12,7 +12,7 @@
 //   routes in their own spelling (`noticeRoute`).
 import { inspect } from "node:util";
 import * as client from "./client.ts";
-import type { Launch } from "./daemon.ts";
+import { type Launch, stillOurs } from "./daemon.ts";
 import { appUrl, Endpoint, type SseEvent } from "./events.ts";
 import type { Route as NoticeRoute } from "./notifications/index.ts";
 import type { Daemon, DaemonEvent, Route as TrayRoute, StreamHandlers } from "./tray.ts";
@@ -32,6 +32,10 @@ class ClientLaunch implements client.Launch {
 
   bearer(): string {
     return this.#launch.bearer();
+  }
+
+  running(): boolean {
+    return stillOurs(this.#launch);
   }
 
   toJSON(): object {

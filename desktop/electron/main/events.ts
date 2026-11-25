@@ -8,7 +8,9 @@
 // `/api/health`; it has no read-only or events-only scope. The app sends it
 // only in an `Authorization` header to the two routes it uses: `GET
 // /api/events` (read-only) and `POST /api/auth/exchange` (to learn the app
-// path for a click). It never goes in a URL, a log line or a page.
+// path for a click). It never goes in a URL, a log line or a page, and is
+// not sent at all once the daemon's process has gone (`Endpoint.running`):
+// another process may then hold its port.
 //
 // API:
 //   Endpoint.fromLaunch(launch) / Endpoint.create(host, port, token) -> a
@@ -25,7 +27,7 @@
 //   backoff(attempt), NO_HISTORY, READ_TIMEOUT_MS.
 import { type ClientRequest, request as httpRequest } from "node:http";
 import { inspect } from "node:util";
-import { address, type Launch } from "./client.ts";
+import { address, DAEMON_GONE, type Launch } from "./client.ts";
 
 /** The daemon pings every 20 s. A stream silent for this long is dead. */
 export const READ_TIMEOUT_MS = 70_000;
@@ -51,21 +53,41 @@ export class Endpoint {
   readonly host: string;
   readonly port: number;
   readonly #token: string;
+  readonly #running: () => boolean;
 
-  private constructor(authority: string, host: string, port: number, token: string) {
+  private constructor(
+    authority: string,
+    host: string,
+    port: number,
+    token: string,
+    running: () => boolean,
+  ) {
     this.authority = authority;
     this.host = host;
     this.port = port;
     this.#token = token;
+    this.#running = running;
   }
 
   static fromLaunch(launch: Launch): Endpoint | null {
     const { url } = launch;
     if (url.port === "" || !url.hash.startsWith("#token=")) return null;
-    return Endpoint.create(url.hostname, Number(url.port), url.hash.slice("#token=".length));
+    return Endpoint.create(
+      url.hostname,
+      Number(url.port),
+      url.hash.slice("#token=".length),
+      () => launch.running?.() ?? true,
+    );
   }
 
-  static create(host: string, port: number, token: string): Endpoint | null {
+  /** `running` tells whether the daemon's process still runs; nothing
+   *  carrying the credential is sent once it has gone. */
+  static create(
+    host: string,
+    port: number,
+    token: string,
+    running: () => boolean = () => true,
+  ): Endpoint | null {
     let url: URL;
     try {
       url = new URL(`http://${host}:${port}/`);
@@ -75,7 +97,12 @@ export class Endpoint {
     const addr = address(url);
     // The credential is only ever sent to this machine.
     if (addr === null || !isLoopback(addr.host)) return null;
-    return new Endpoint(addr.authority, addr.host, addr.port, token);
+    return new Endpoint(addr.authority, addr.host, addr.port, token, running);
+  }
+
+  /** Whether the credential may still be sent: the daemon's process runs. */
+  running(): boolean {
+    return this.#running();
   }
 
   get origin(): string {
@@ -155,6 +182,7 @@ export function stream(
   control: Control,
   onItem: (item: StreamItem) => void,
 ): Promise<void> {
+  if (!endpoint.running()) return Promise.reject(new Error(DAEMON_GONE));
   return new Promise((resolve, reject) => {
     let done = false;
     const req = httpRequest({
@@ -299,6 +327,7 @@ export function stream(
  *  session cookie is scoped to it; the exchange hands out the path again and
  *  changes nothing else. */
 export function appUrl(endpoint: Endpoint): Promise<URL> {
+  if (!endpoint.running()) return Promise.reject(new Error(DAEMON_GONE));
   const body = Buffer.from(JSON.stringify({ token: endpoint.bearer() }), "utf8");
   return new Promise((resolve, reject) => {
     let done = false;

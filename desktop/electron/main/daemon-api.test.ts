@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { inspect } from "node:util";
@@ -16,7 +17,7 @@ afterEach(() => {
 function launchOn(port: number): Launch {
   return new Launch(`http://127.0.0.1:${port}/#token=${TOKEN}`, TOKEN, {
     version: "1",
-    pid: 1,
+    pid: process.pid,
     app: null,
     state: "/state",
   });
@@ -147,6 +148,21 @@ describe("the notifications' app path", () => {
     const url = await appUrlOf(clientLaunch(launchOn(port)));
     expect(url.href).toBe(`http://127.0.0.1:${port}/s/secret/`);
     expect(seen[0]?.url).toBe("/api/auth/exchange");
+  });
+
+  it("is not asked of a daemon whose process has gone", async () => {
+    const { port, seen } = await serve(() => [200, '{"path":"/s/secret/"}']);
+    const exited = spawnSync("true").pid;
+    const launch = new Launch(`http://127.0.0.1:${port}/#token=${TOKEN}`, TOKEN, {
+      version: "1",
+      pid: exited,
+      app: null,
+      state: "/state",
+    });
+    expect(clientLaunch(launch).running?.()).toBe(false);
+    await expect(appUrlOf(clientLaunch(launch))).rejects.toThrow("the baum daemon has stopped");
+    expect(seen).toHaveLength(0);
+    expect(clientLaunch(launchOn(port)).running?.()).toBe(true);
   });
 
   it("is an error without a daemon", async () => {
