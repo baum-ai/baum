@@ -280,6 +280,7 @@ const BARE: ReviewV2 = {
   },
   overview: {
     screenshots: [],
+    videos: [],
     diagram: "dg_shape",
     intent: [
       {

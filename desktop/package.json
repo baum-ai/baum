@@ -1,0 +1,33 @@
+{
+  "name": "@baum/desktop",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The baum desktop app: an Electron shell around the user's baum daemon.",
+  "license": "MIT",
+  "type": "module",
+  "main": "build/main.cjs",
+  "desktopName": "baum.desktop",
+  "scripts": {
+    "postinstall": "node electron/ensure-electron.mjs",
+    "build": "node electron/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "test:unit": "vitest run",
+    "test:shell": "xvfb-run -a -s \"-screen 0 1400x1000x24\" playwright test --config tests/shell/playwright.config.ts",
+    "check": "pnpm format:check && pnpm typecheck && pnpm test:unit"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.4",
+    "@playwright/test": "^1.62.0",
+    "@types/node": "24.13.2",
+    "electron": "45.5.0",
+    "electron-builder": "26.18.1",
+    "esbuild": "0.28.2",
+    "typescript": "~6.0.2",
+    "vitest": "4.1.12"
+  }
+}

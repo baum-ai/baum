@@ -277,7 +277,7 @@ describe("the Overview", () => {
     const bare: ReviewV2 = {
       ...REVIEW_1303,
       summary: { ...REVIEW_1303.summary, verdict: null, risk_why: "" },
-      overview: { screenshots: [], diagram: null, intent: [] },
+      overview: { screenshots: [], videos: [], diagram: null, intent: [] },
       tiles: [],
     };
     const container = await page("", review1303(bare));
@@ -858,7 +858,10 @@ describe("the native tiles", () => {
       data: { text: "Phones can't reach a laptop behind NAT.", anchors: [] },
     });
     expect(container.querySelector("h3")?.textContent).toBe("Why a relay");
-    expect(container.textContent).toContain("Phones can't reach a laptop behind NAT.");
+    // Set apart from the section's own text, on its wash behind a rule.
+    expect(container.querySelector("[data-prose-callout]")?.textContent).toBe(
+      "Phones can't reach a laptop behind NAT.",
+    );
   });
 
   it("draws an added images tile from the images the index lists", async () => {
@@ -1094,8 +1097,15 @@ describe("a section's body", () => {
     ].map((part) => text.indexOf(part));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect(order).toEqual(order.toSorted((a, b) => a - b));
-    // Each block is one the keys move between.
-    expect(body.querySelectorAll("[data-review-block]")).toHaveLength(5);
+    // The keys stop at each block holding no block of its own: a points
+    // block's rows rather than the list.
+    const stops = [...body.querySelectorAll<HTMLElement>("[data-review-block]")].filter(
+      (block) => !block.querySelector("[data-review-block]"),
+    );
+    const points = [...body.querySelectorAll('[data-block="points"] [data-point]')];
+    expect(points.length).toBeGreaterThan(0);
+    expect(stops).toHaveLength(3 + points.length);
+    expect(points.every((point) => stops.includes(point as HTMLElement))).toBe(true);
   });
 
   it("draws prose and a note as inline markdown", async () => {

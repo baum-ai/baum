@@ -137,6 +137,17 @@ func (p Plan) runChain(ctx context.Context, runner *Runner, u unit, halted func(
 				}
 				if b.Previous != nil {
 					rev.PreviousVersion = b.Previous.Version
+				} else {
+					// A generator may carry the version outside the bundle; the
+					// document's own header has it.
+					var header struct {
+						Review struct {
+							Version int `json:"version"`
+						} `json:"review"`
+					}
+					if json.Unmarshal(handed, &header) == nil {
+						rev.PreviousVersion = header.Review.Version
+					}
 				}
 				fitted, err := c.Refit(ctx, b, caps, redactor)
 				if err != nil {
