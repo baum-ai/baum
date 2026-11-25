@@ -6228,9 +6228,6 @@ a.upnext-done-text:hover {
   flex-wrap: wrap;
   gap: 8px;
 }
-.upnext-snooze {
-  position: relative;
-}
 .upnext-menu {
   position: absolute;
   z-index: 3;
@@ -6239,7 +6236,9 @@ a.upnext-done-text:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 260px;
+  width: min(260px, calc(100vw - 8px));
+  max-height: calc(100vh - 8px);
+  overflow: auto;
   padding: 6px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
@@ -6256,6 +6255,8 @@ a.upnext-done-text:hover {
   border-radius: var(--radius-sm);
   background: transparent;
   font-size: var(--text-base);
+  color: var(--text-primary);
+  cursor: pointer;
   text-align: left;
 }
 .upnext-menu-key {
@@ -6927,8 +6928,18 @@ a.upnext-done-text:hover {
   position: fixed;
   left: 50%;
 }
-/* A narrow window stacks the list over the panel and scrolls them as one. */
-@container (width < 760px) {
+/* A narrower queue leaves room to read its selection at the smallest
+   desktop window. */
+@container (560px <= width < 760px) {
+  .upnext-list {
+    flex-basis: 40%;
+  }
+  .upnext-list-title {
+    gap: 4px;
+  }
+}
+/* A very narrow view stacks the panes and scrolls them as one. */
+@container (width < 560px) {
   .upnext-page {
     flex-direction: column;
     overflow: auto;
@@ -6942,6 +6953,8 @@ a.upnext-done-text:hover {
   .upnext-detail {
     overflow: visible;
   }
+}
+@container (width < 760px) {
   .upnext-panel {
     padding: 24px 20px 60px;
   }
