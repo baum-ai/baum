@@ -4,16 +4,20 @@
 #
 #   scripts/macos-finalize.sh APP_TAR VERSION OUT
 #
-# It runs only Apple's tools (codesign, notarytool, stapler, hdiutil, spctl)
-# and tar, never the build, so the release runs it in a job that holds the
-# Apple secrets and compiles nothing. OUT receives
+# It runs only Apple's tools (codesign, notarytool, stapler, hdiutil, spctl,
+# ditto), tar and scripts/update-yml.mjs (Node.js, no dependencies), never the
+# build, so the release runs it in a job that holds the Apple secrets and
+# compiles nothing. OUT receives
 #
 #   baum-desktop-darwin-universal[-unsigned|-unnotarized].dmg
+#   baum-desktop-darwin-universal[-unsigned|-unnotarized].zip
 #   baum-desktop-darwin-universal[-unsigned|-unnotarized].app.tar.gz
+#   latest-mac.yml
 #
-# the second being what the updater installs (sign it with
-# scripts/updater-sign.sh). The suffix marks a bundle Gatekeeper will not
-# trust as downloaded.
+# The zip is what electron-updater installs, and latest-mac.yml describes it;
+# the .app.tar.gz is the same app in the archive the Tauri updater installs.
+# Sign both with scripts/updater-sign.sh. The suffix marks a bundle
+# Gatekeeper will not trust as downloaded.
 #
 #   APPLE_SIGNING_IDENTITY
 #       a Developer ID Application identity in a keychain on the search list;
@@ -22,8 +26,11 @@
 #   or APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
 #       notarise and staple the app and the disk image (needs the identity)
 #
-# Every executable is signed with the hardened runtime and no entitlements,
-# so there is no App Sandbox.
+# Every Mach-O file and nested bundle is signed inside out (the deepest
+# first, as @electron/osx-sign does), then the app, with the hardened runtime
+# and macos/entitlements.plist, which allows the JIT V8 needs and nothing
+# else; there is no App Sandbox. Ad hoc signing leaves the hardened runtime
+# off: its library validation would refuse Electron's ad hoc signed framework.
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
@@ -62,8 +69,10 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 # The archive came from a job that ran third-party build code: accept only
-# regular files and directories inside baum.app/, so extracting it cannot
-# write anywhere else or plant a link.
+# regular files, directories and symbolic links inside baum.app/, so
+# extracting it cannot write anywhere else. Electron's frameworks need their
+# links; tar does not extract through one, and every link is checked below
+# to stay inside the app.
 names=$(tar -tf "$app_tar")
 types=$(tar -tvf "$app_tar" | cut -c1)
 if [ "$(wc -l <<<"$names")" -ne "$(wc -l <<<"$types")" ]; then
@@ -72,9 +81,9 @@ if [ "$(wc -l <<<"$names")" -ne "$(wc -l <<<"$types")" ]; then
 fi
 while IFS=$'\t' read -r type entry; do
   case "$type" in
-    - | d) ;;
+    - | d | l) ;;
     *)
-      echo "macos-finalize: $app_tar holds $entry, which is not a regular file or directory" >&2
+      echo "macos-finalize: $app_tar holds $entry, which is not a regular file, directory or link" >&2
       exit 1
       ;;
   esac
@@ -95,8 +104,18 @@ done < <(paste <(printf '%s\n' "$types") <(printf '%s\n' "$names"))
 
 tar -xf "$app_tar" -C "$work"
 app=$work/baum.app
+# A link may only point within the app: relative, without "..".
+while IFS= read -r -d '' link; do
+  target=$(readlink "$link")
+  case "/$target/" in
+    //* | */../*)
+      echo "macos-finalize: ${link#"$work/"} links to $target, outside the app" >&2
+      exit 1
+      ;;
+  esac
+done < <(find "$app" -type l -print0)
 main=$app/Contents/MacOS/baum-desktop
-sidecar=$app/Contents/MacOS/baum
+sidecar=$app/Contents/Resources/bin/baum
 # One architecture per call: Xcode 27's lipo takes no more.
 for binary in "$main" "$sidecar"; do
   for arch in arm64 x86_64; do
@@ -124,22 +143,51 @@ notarize_file() {
   echo "notarised $(basename "$file")"
 }
 
-# Inside out: the bundled baum, then the app, which signs its main executable.
+# What to sign, deepest first: every Mach-O file (Electron's framework
+# binaries and dylibs, the helpers' executables, crashpad, Squirrel's ShipIt,
+# the bundled baum) and every nested .app and .framework bundle; then the app
+# itself, which signs its main executable.
+signables=()
+while IFS= read -r -d '' path; do
+  if [ -d "$path" ] || file -b "$path" | grep -q '^Mach-O'; then
+    signables+=("$path")
+  fi
+done < <(find "$app/Contents" \( -type d \( -name '*.app' -o -name '*.framework' \) -o -type f \) -print0)
+ordered=()
+while IFS=$'\t' read -r _ path; do
+  ordered+=("$path")
+done < <(for path in "${signables[@]}"; do
+  slashes=${path//[^\/]/}
+  printf '%d\t%s\n' "${#slashes}" "$path"
+done | sort -s -t $'\t' -k1,1nr)
+listed=$(printf '%s\n' "${ordered[@]}")
+for required in "$main" "$sidecar" "$app/Contents/Frameworks/Electron Framework.framework" \
+  "$app/Contents/Frameworks/baum Helper.app"; do
+  if ! grep -qxF "$required" <<<"$listed"; then
+    echo "macos-finalize: ${required#"$work/"} is not among what is signed" >&2
+    exit 1
+  fi
+done
+
+entitlements=$(cd "$(dirname "$0")/.." && pwd)/macos/entitlements.plist
 if [ -n "$identity" ]; then
-  codesign --force --options runtime --timestamp --sign "$identity" "$sidecar"
-  codesign --force --options runtime --timestamp --sign "$identity" "$app"
+  for path in "${ordered[@]}" "$app"; do
+    codesign --force --options runtime --timestamp --entitlements "$entitlements" \
+      --sign "$identity" "$path"
+  done
   codesign --verify --strict --deep --verbose=2 "$app"
-  for binary in "$main" "$sidecar"; do
-    details=$(codesign --display --verbose=4 "$binary" 2>&1)
+  for path in "${ordered[@]}" "$app"; do
+    details=$(codesign --display --verbose=4 "$path" 2>&1)
     if ! grep -q '^Authority=Developer ID Application' <<<"$details" ||
       ! grep -q 'flags=.*runtime' <<<"$details"; then
-      echo "macos-finalize: $binary is not signed with a Developer ID and the hardened runtime" >&2
+      echo "macos-finalize: ${path#"$work/"} is not signed with a Developer ID and the hardened runtime" >&2
       exit 1
     fi
   done
 else
-  codesign --force --sign - "$sidecar"
-  codesign --force --sign - "$app"
+  for path in "${ordered[@]}" "$app"; do
+    codesign --force --sign - "$path"
+  done
   codesign --verify --strict --deep "$app"
 fi
 
@@ -191,7 +239,7 @@ hdiutil_retry() {
 # as the mounted volume's icon.
 desktop=$(cd "$(dirname "$0")/.." && pwd)
 mkdir "$work/dmg"
-cp -R "$app" "$work/dmg/"
+ditto "$app" "$work/dmg/baum.app"
 ln -s /Applications "$work/dmg/Applications"
 cp "$desktop/macos/dmg.DS_Store" "$work/dmg/.DS_Store"
 cp "$desktop/macos/dmg-background.tiff" "$work/dmg/.background.tiff"
@@ -219,8 +267,14 @@ if [ "$notarize" = true ]; then
   spctl --assess --type open --context context:primary-signature --verbose=2 "$out/$name.dmg"
 fi
 
-# What the updater installs: the app at the root of a gzipped tar, as the
-# Tauri bundler makes it, without macOS metadata files.
+# What electron-updater installs (Squirrel.Mac): the stapled app in a zip,
+# with its links, as electron-builder makes it; latest-mac.yml gives its
+# SHA-512 and size.
+ditto -c -k --sequesterRsrc --keepParent "$app" "$out/$name.zip"
+node "$(dirname "$0")/update-yml.mjs" write "$version" "$out" latest-mac.yml "$name.zip" >/dev/null
+
+# What the Tauri updater installs: the app at the root of a gzipped tar, as
+# the Tauri bundler makes it, without macOS metadata files.
 COPYFILE_DISABLE=1 tar --no-mac-metadata -czf "$out/$name.app.tar.gz" -C "$work" baum.app
 
 developer_id=no

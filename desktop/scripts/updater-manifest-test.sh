@@ -187,6 +187,22 @@ if [ "$(jq -j '.platforms["linux-aarch64"].url' "$dir/latest.json")" != "$base/b
   status=1
 fi
 
+# Every file electron-updater's latest*.yml lists must carry a signature of
+# the release key for the version.
+zip=$dir/baum-desktop-darwin-universal.zip
+head -c 4096 /dev/urandom >"$zip"
+fail "an update file without a signature" "has no updater signature" "$manifest" signed 1.2.3 "$zip"
+sign "$release_key" "release password" 1.2.3 "$zip"
+pass "$manifest" signed 1.2.3 "$zip" "$dir/baum-desktop-linux-amd64.AppImage"
+fail "an update file signed for another version" "not version 1.2.4" "$manifest" signed 1.2.4 "$zip"
+cp "$zip.sig" "$work/zip.sig"
+cp "$dir/baum-desktop-linux-amd64.AppImage.sig" "$zip.sig"
+fail "an update file with another file's signature" "does not verify" "$manifest" signed 1.2.3 "$zip"
+cp "$work/zip.sig" "$zip.sig"
+echo tampered >>"$zip"
+fail "a tampered update file" "does not verify" "$manifest" signed 1.2.3 "$zip"
+rm "$zip" "$zip.sig"
+
 # Reproduce native Windows tool output on Unix too.
 mkdir "$work/crlf-tools"
 export BAUM_TEST_REAL_JQ BAUM_TEST_REAL_MINISIGN
