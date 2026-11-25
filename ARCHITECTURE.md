@@ -1485,7 +1485,10 @@ message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
 An `init` with `check` (sent only by the render check's runner) settles on
 the frame's fonts and a message turn instead of two animation frames, since
 a hidden window runs none, and the runner may then send `measure`, which a
-detail answers with a `resize` of its height, changed or not.
+detail answers with a `resize` of its height, changed or not. The runner
+may also send `ping` to a frame that has not said `hello`; the bootstrap
+answers `pong` from its message listener, which a frame whose script never
+yields cannot run.
 The optional `tokens` (`{"--token": "colour"}`) are a custom colour theme's
 overrides: the bootstrap sets each on the frame's root element and a later
 `theme` message replaces them (tokens it omits are removed, so omitting
@@ -1732,7 +1735,9 @@ definition was not valid; an expired or unknown ID is refused as unknown.
   /api/tile-checks/{id}/alive` every 2 s and as frames finish (`Alive`). A
   claimed job with neither a report nor a sign of life for 10 s, or still
   running 10 s plus 3 s per frame of its matrix after it was claimed, is
-  `hang`: the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
+  `hang`, and so is a job whose report holds a `hang` problem (a frame the
+  runner found unresponsive while its own page ran on, below; a runner
+  could get the same by going quiet): the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
   until it restarts), publishes `hung`, and announces each check still
   waiting as `queued` again, so a page that closed a hung runner brings one
   back. A candidate whose digest is already hung answers `hang` at once. A
@@ -1764,8 +1769,16 @@ and protocol, in a `position: fixed` container inside the viewport at
 `opacity: 0`, at most 8 at a time: the data (when given), each sample,
 `minimal` and `maximal`, as glances at each declared size in the guide's
 boxes (third 310×164, half 488×180, full 1022×116) and details at 720 and
-360px, and the data also in the dark theme. It reports `no_hello` (5 s),
-`timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
+360px, and the data also in the dark theme. A frame with no `hello` after
+5 s is sent a `ping`: one that answers `pong` within 2 s, or whose document
+loaded (no kit in it), is `no_hello`; one that does neither is stuck in a
+script that never yields and is `hang`, after which the runner starts no
+more frames and reports. Where the engine draws sandboxed frames in a
+process of their own (Chromium, so the Electron shell's check window and
+Chrome) that loop leaves the runner's page running, its heartbeat
+included, so only this probe catches it; where frames share the page's
+process (WebKit) the whole page stalls and the daemon's hang timer does. It
+also reports `timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
 `render_failed`, `empty`, `overflow_glance`, `overflow_x`,
 `unresolved_citation` and `slow` from the ready metrics, and `layout_loop`
 when a detail set to the height it asks for keeps growing by the same

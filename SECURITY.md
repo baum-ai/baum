@@ -1957,12 +1957,17 @@ freeze where it would hurt:
   the Tauri shell on Linux), the runner draws in that hidden window with its
   own renderer process. While it
   draws, the runner tells the daemon it is alive every 2 seconds and as
-  frames finish; a candidate that never finishes drawing freezes it, so
-  after 10 s without a sign of life (or past a limit scaled by the frames
-  the check draws) the daemon answers `hang`, marks the type's digest hung
-  (the frame route then refuses it until the daemon restarts) and tells the
-  main page, which has the shell close the window, ending its process and
-  the loop. The main window is not affected.
+  frames finish. Where frames share the page's process (WebKitGTK), a
+  candidate that never finishes drawing freezes the runner, so after 10 s
+  without a sign of life (or past a limit scaled by the frames the check
+  draws) the daemon answers `hang`. Chromium runs the candidate's frames in
+  a process apart from the check page, so the runner keeps running: a frame
+  that has not said hello within 5 seconds is pinged, and one that neither
+  answers within 2 seconds nor finished loading is stuck in its script, and
+  the runner reports `hang`. Either way the daemon marks the type's digest
+  hung (the frame route then refuses it until the daemon restarts) and
+  tells the main page, which has the shell close the window, ending its
+  processes and the loop. The main window is not affected.
 - Where that window exists, the first time the app shows a custom tile that is not of a
   built-in type, with data it has not drawn before, it first draws that
   pair in the check window (the first-show preflight). A pair that hangs
@@ -1978,8 +1983,10 @@ freeze where it would hurt:
   serves that by digest), its samples and their citations' payloads, and
   never more than the page itself would give the frame. The `tile_check`
   event names a check's ID and state only.
-- Only the daemon marks a digest hung, from its own timer: no message from a
-  frame or a runner can. A runner whose page goes away mid-check reports the
+- No message from a frame marks a digest hung. The daemon does, from its
+  own timer or from a runner's report of a hang, which the runner makes
+  only from a frame's silence; a runner could get the same by going quiet,
+  so the report gives it nothing new. A runner whose page goes away mid-check reports the
   job abandoned, which ends it unavailable without blocking the type, and a
   long poll whose client left puts its job back.
 

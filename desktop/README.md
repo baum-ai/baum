@@ -960,6 +960,23 @@ open another site. It also fails unless the main window's own tile runs in
 a process apart from its page, and a tile spinning in the main window
 leaves the page's heartbeat running.
 
+Because Chromium runs a tile's frame apart from the check page, a tile that
+loops before it says hello leaves the check page running: the daemon's
+missing-heartbeat timer never fires, and the runner itself reports the
+hang (a frame with no hello in 5 s that does not answer the kit's `ping`
+within 2 s and never finished loading; see "Render check" in
+`oss/ARCHITECTURE.md`). `tests/shell/check-runner.spec.ts` checks that path
+end to end with the app's own check host and runner, bundled from
+`oss/app/src` with React and `api.ts` stubbed, and the kit's real bootstrap
+in the frame: the main page opens the check window on a `tile_check` event,
+the runner claims the job from the mock daemon and draws a frame that
+spins, and the spec fails unless the frame runs in a process apart from the
+check page, the check page's heartbeat keeps running while it spins, the
+report reaching the mock holds `hang` (not `no_hello` or `timeout`), the
+`hung` the mock then sends closes the check window, the spinning process's
+CPU use drops within 2 seconds of the report and the process is gone, and
+the main window's 100 ms heartbeat never stops for a second.
+
 On macOS and Windows a person checks, before a release that changes the
 check window, with an unpackaged app started with
 `--remote-debugging-port=9222` and the main window's page inspected from
