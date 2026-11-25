@@ -355,7 +355,7 @@ export function Tour({ close }: { close: () => void }) {
             {stop.welcome ? null : <Stumpy size={28} />}
             <h2 id="tour-title">{stop.title}</h2>
           </div>
-          <p ref={copy} tabIndex={copyScrollable ? 0 : undefined}>
+          <p key={index} ref={copy} tabIndex={copyScrollable ? 0 : undefined}>
             {stop.body}
           </p>
           <div className="tour-foot">

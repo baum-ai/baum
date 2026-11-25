@@ -175,7 +175,9 @@ test("the welcome and its actions fit when the window is zoomed in", async ({ pa
   await page.keyboard.press("End");
   await expect.poll(() => copy.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("dialog", { name: "Timeline" })).toBeVisible();
+  const timeline = page.getByRole("dialog", { name: "Timeline" });
+  await expect(timeline).toBeVisible();
+  expect(await timeline.locator("p").evaluate((element) => element.scrollTop)).toBe(0);
 });
 
 test("with no pull requests of its own, the tour shows the sample project", async ({ page }) => {
