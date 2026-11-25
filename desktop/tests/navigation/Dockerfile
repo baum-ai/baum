@@ -1,4 +1,4 @@
-# The desktop build image (oss/desktop/Dockerfile) with a virtual display,
+# The Tauri desktop image (tauri.Dockerfile) with a virtual display,
 # a mouse driver and Node.js, for `just desktop::navigation-check`.
 ARG DESKTOP_IMAGE=baum-desktop-build
 

@@ -1,4 +1,4 @@
-# The desktop image (Dockerfile, the desktop-test service's) plus what an
+# The Tauri desktop image (tauri.Dockerfile, the desktop-test service's) plus what an
 # isolated app needs to work like an installed one: a Secret Service for its
 # credential store (gnome-keyring on a D-Bus session), git and ssh for the
 # daemon's repository work, and sqlite3 to copy the host's data. Used by
