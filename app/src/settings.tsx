@@ -9,6 +9,7 @@ import { PlanUsageSettings } from "./plan-usage-settings";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentType,
@@ -50,6 +51,7 @@ import {
   type GitHubConnection,
   type Repository,
   type DiagnosticReport,
+  type IssueParts,
   type DecisionSettings,
   type PromptEntry,
   type RepositoryPromptEntry,
@@ -123,6 +125,7 @@ import {
 } from "./desktop/setup-model";
 import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
+import { ReportProblemDialog } from "./report-problem";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
 import { AppearanceSection } from "./settings-appearance";
@@ -2846,32 +2849,52 @@ function DiagnosticsDialog({
   close: () => void;
   onReport: (report: DiagnosticReport | null) => void;
 }) {
-  const dialog = useModal();
+  const [problem, setProblem] = useState<{ parts: IssueParts | null } | null>(null);
+  const reportOpener = useRef<HTMLButtonElement>(null);
+  const dialog = useModal(problem === null);
   const title = useRef<HTMLHeadingElement>(null);
   // Open on the title rather than on the close control, the first button.
   useEffect(() => title.current?.focus({ preventScroll: true }), []);
+  // The report replaces Diagnostics in the top layer while it is open.
+  // Return to its trigger when the Diagnostics dialog opens again.
+  useLayoutEffect(() => {
+    if (problem !== null) return;
+    reportOpener.current?.focus({ preventScroll: true });
+    reportOpener.current = null;
+  }, [problem]);
   return (
-    <dialog
-      ref={dialog}
-      onCancel={close}
-      aria-labelledby="diagnostics-dialog-title"
-      className={dialogClassName({ size: "wide" })}
-    >
-      <DialogHeader aside={<CloseButton onClick={close} />}>
-        <DialogTitle
-          ref={title}
-          id="diagnostics-dialog-title"
-          tabIndex={-1}
-          className="outline-none"
-        >
-          Check this computer
-        </DialogTitle>
-        <DialogDetail>
-          What baum needs here, what it found, and how to fix each problem.
-        </DialogDetail>
-      </DialogHeader>
-      <DiagnosticsSection onReport={onReport} />
-    </dialog>
+    <>
+      <dialog
+        ref={dialog}
+        onCancel={close}
+        aria-labelledby="diagnostics-dialog-title"
+        className={dialogClassName({ size: "wide" })}
+      >
+        <DialogHeader aside={<CloseButton onClick={close} />}>
+          <DialogTitle
+            ref={title}
+            id="diagnostics-dialog-title"
+            tabIndex={-1}
+            className="outline-none"
+          >
+            Check this computer
+          </DialogTitle>
+          <DialogDetail>
+            What baum needs here, what it found, and how to fix each problem.
+          </DialogDetail>
+        </DialogHeader>
+        <DiagnosticsSection
+          onReport={onReport}
+          onProblem={(parts, opener) => {
+            reportOpener.current = opener;
+            setProblem({ parts });
+          }}
+        />
+      </dialog>
+      {problem ? (
+        <ReportProblemDialog parts={problem.parts} close={() => setProblem(null)} />
+      ) : null}
+    </>
   );
 }
 

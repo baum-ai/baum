@@ -1117,7 +1117,10 @@ A Help button at the right of the sidebar's baum title opens a help menu
 Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
 what happened, what to attach with a preview, then **Open issue**, which opens
 a new issue in baum-ai/baum on GitHub; see the
-[desktop README](../desktop/README.md#report-a-problem)), and **Open the docs** opens https://docs.usebaum.com/ in a new
+[desktop README](../desktop/README.md#report-a-problem)). The report form scrolls
+above its actions in short windows. Opening it from Diagnostics temporarily
+replaces that dialog and returns focus to its **Report a problem** button when
+the form closes. **Open the docs** opens https://docs.usebaum.com/ in a new
 window (the desktop app hands it to the browser). The `?` key opens the same
 menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
 the sheet open `?` hides it. Opened by the key, the menu gives the keys back to

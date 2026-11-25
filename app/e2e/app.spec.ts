@@ -27,6 +27,39 @@ async function launchURL(): Promise<string> {
   throw new Error("the daemon did not publish its credential");
 }
 
+test("the short report dialog shows its actions and restores focus to Diagnostics", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto(await launchURL());
+  await openSettings(page, "This computer");
+
+  const check = page.getByRole("button", { name: "Check this computer", exact: true });
+  await check.focus();
+  await check.press("Enter");
+  const diagnostics = page.getByRole("dialog", { name: "Check this computer" });
+  const report = diagnostics.getByRole("button", { name: "Report a problem" });
+  await report.focus();
+  await report.press("Enter");
+
+  const dialog = page.getByRole("dialog", { name: "Report a problem" });
+  await expect(dialog.getByRole("textbox", { name: "What happened?" })).toBeFocused();
+  await expect(page.locator("dialog[open]")).toHaveCount(1);
+  const { y, height } = (await dialog.boundingBox())!;
+  expect(y).toBeGreaterThan(0);
+  expect(y + height / 2).toBeCloseTo(240, 0);
+  await dialog.getByRole("button", { name: "All diagnostics" }).click();
+  await expect(dialog.getByLabel("What is attached")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeInViewport({ ratio: 1 });
+  await expect(dialog.getByRole("button", { name: "Open issue" })).toBeInViewport({ ratio: 1 });
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(report).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(check).toBeFocused();
+});
+
 test("PR decisions share filtered results and distinguish pending relevance from an empty result", async ({
   page,
 }) => {
