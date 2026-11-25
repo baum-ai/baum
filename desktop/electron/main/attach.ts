@@ -188,7 +188,10 @@ export class Attacher {
   /** Checks the attached daemon until it stops answering or a newer attempt
    *  replaces this one. A daemon replaced by a newer one rejects the old
    *  credential, or stops answering while the new daemon's credential names
-   *  another port; either way the app attaches to the new daemon. */
+   *  another port; either way the app attaches to the new daemon. A check
+   *  of a daemon whose process has gone fails without a request
+   *  (`daemon.health`), so the credential never reaches another process
+   *  that took its port. */
   async #watch(attempt: number, launch: Launch, why: Attach): Promise<void> {
     const deps = this.#deps;
     let failures = 0;
@@ -248,7 +251,9 @@ export class Attacher {
     }
   }
 
-  /** Whether the credential file now names a different daemon that answers. */
+  /** Whether the credential file now names a different daemon that answers.
+   *  Every daemon writes a new credential, usually on another port; a new
+   *  one that got the same port back still has a new token. */
   async #replacedElsewhere(launch: Launch): Promise<boolean> {
     let current: Launch;
     try {
@@ -256,7 +261,8 @@ export class Attacher {
     } catch {
       return false;
     }
-    return current.origin !== launch.origin && (await this.#deps.health(current)) === "ok";
+    const other = current.origin !== launch.origin || current.bearer() !== launch.bearer();
+    return other && (await this.#deps.health(current)) === "ok";
   }
 
   #fail(attempt: number, failure: Failure): void {

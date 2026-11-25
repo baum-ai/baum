@@ -1218,6 +1218,14 @@ the Electron shell:
   command only from the main frame of the app's own windows, and only if
   `electron/main/commands.ts` allows it for the page's role.
 - The bundled screens are served from `dist/` as `app://bundle`. The tray panel has its own origin, `app://tray`, so the window's zoom does not scale it.
+- Before each request that carries the credential, the app checks that the
+  daemon's process (the status's `pid`) still runs as the user. Once it has
+  gone, another user's process could take its loopback port, so the check
+  counts as failed without a request. A status without a `pid` is not
+  checked.
+- Only the main frame of a page on the app's own origins gets the
+  notification and clipboard-write permissions; frames inside a page, and
+  opaque origins, never do.
 - The app keeps Tauri's identifier (`com.usebaum.desktop`), so it uses the
   same `desktop.json`. Chromium's files go in `chromium/` under the same
   folder.
@@ -2137,7 +2145,10 @@ tools installed after the app or the agent started are found.
   rejected.
 - `scripts/bundle.sh`, on every bundle: the bundled `baum` is the one given,
   executable and outside the asar; Electron's ffmpeg is the only one; the
-  AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
+  executable's Electron fuses are those `electron-builder.mjs` sets
+  (`scripts/check-fuses.mjs`: no `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` or
+  `--inspect`, code only from an `app.asar` it validates on macOS and
+  Windows, no extra `file://` privileges); the AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
   and links `/usr/bin/baum`; the update file matches the bundles.
 - The release runs the same verification on the real bundles before
   anything is attached, and the app verifies each download again.

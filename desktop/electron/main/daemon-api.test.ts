@@ -1,4 +1,5 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ afterEach(() => {
 function launchOn(port: number): Launch {
   return new Launch(`http://127.0.0.1:${port}/#token=${TOKEN}`, TOKEN, {
     version: "1",
-    pid: 1,
+    pid: process.pid,
     app: null,
     state: "/state",
   });
@@ -159,6 +160,21 @@ describe("the notifications' app path", () => {
     expect(seen[0]?.url).toBe("/api/auth/exchange");
   });
 
+  it("is not asked of a daemon whose process has gone", async () => {
+    const { port, seen } = await serve(() => [200, '{"path":"/s/secret/"}']);
+    const exited = spawnSync("true").pid;
+    const launch = new Launch(`http://127.0.0.1:${port}/#token=${TOKEN}`, TOKEN, {
+      version: "1",
+      pid: exited,
+      app: null,
+      state: "/state",
+    });
+    expect(clientLaunch(launch).running?.()).toBe(false);
+    await expect(appUrlOf(clientLaunch(launch))).rejects.toThrow("the baum daemon has stopped");
+    expect(seen).toHaveLength(0);
+    expect(clientLaunch(launchOn(port)).running?.()).toBe(true);
+  });
+
   it("is an error without a daemon", async () => {
     await expect(appUrlOf(null)).rejects.toThrow("not attached");
   });
@@ -205,6 +221,21 @@ describe("the jobs an update waits for", () => {
     );
     await expect(runningJobs(cli)).resolves.toBe(2);
     expect(seen.map((s) => [s.url, s.auth])).toEqual([["/api/jobs", `Bearer ${TOKEN}`]]);
+  });
+
+  it("is 0, asking nothing, when the daemon's process has gone", async () => {
+    const { port, seen } = await serve(() => [200, '{"jobs":[]}']);
+    const dir = scratch();
+    const credential = join(dir, "credential.json");
+    writeFileSync(credential, JSON.stringify({ url: `http://127.0.0.1:${port}/#token=${TOKEN}` }));
+    chmodSync(credential, 0o600);
+    const exited = spawnSync("true").pid;
+    const cli = fakeCli(dir, `echo '{"pid":${exited},"state":"${dir}"}'`);
+    await expect(runningJobs(cli)).resolves.toBe(0);
+    expect(seen).toEqual([]);
+    const alive = fakeCli(dir, `echo '{"pid":${process.pid},"state":"${dir}"}'`);
+    await expect(runningJobs(alive)).resolves.toBe(0);
+    expect(seen).toHaveLength(1);
   });
 
   it("is 0 when no daemon runs", async () => {

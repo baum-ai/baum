@@ -158,6 +158,16 @@ while IFS= read -r -d '' library; do
 done < <(find "$app" \( -iname '*ffmpeg*' -o -iname 'libav*' -o -iname 'avcodec*' -o -iname 'avformat*' \
   -o -iname 'libgst*' \) \( -type f -o -type l \) -print0)
 
+# The Electron fuses electron-builder.mjs sets (no ELECTRON_RUN_AS_NODE,
+# NODE_OPTIONS or --inspect; code only from app.asar) are flipped in the
+# executable.
+case "$platform" in
+  linux-*) executable="$app/baum-desktop" ;;
+  darwin-universal) executable="$app/baum.app" ;;
+  windows-amd64) executable="$app/baum.exe" ;;
+esac
+node scripts/check-fuses.mjs "$executable"
+
 if [ "$dir_only" = true ]; then
   echo "bundle: $platform $version unpacked in $app (unsigned)"
   exit 0

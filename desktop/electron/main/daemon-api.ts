@@ -13,7 +13,7 @@
 // - The updater asks how many jobs run (`runningJobs`).
 import { inspect } from "node:util";
 import * as client from "./client.ts";
-import { type Launch, parseStatus, readCredential, run } from "./daemon.ts";
+import { type Launch, parseStatus, readCredential, run, stillOurs } from "./daemon.ts";
 import { parseJobs } from "./status.ts";
 import { appUrl, Endpoint, type SseEvent } from "./events.ts";
 import type { Route as NoticeRoute } from "./notifications/index.ts";
@@ -34,6 +34,10 @@ class ClientLaunch implements client.Launch {
 
   bearer(): string {
     return this.#launch.bearer();
+  }
+
+  running(): boolean {
+    return stillOurs(this.#launch);
   }
 
   toJSON(): object {
@@ -170,6 +174,11 @@ export async function runningJobs(cli: string, timeout = STATUS_TIMEOUT): Promis
   } catch {
     return 0;
   }
-  const launch = clientLaunch(readCredential(parseStatus(stdout).state));
-  return parseJobs((await client.jobs(launch)).toString("utf8")).running;
+  const status = parseStatus(stdout);
+  const launch = readCredential(status.state);
+  // A daemon that exited since runs nothing, and another process may hold
+  // its port: the credential goes only to a daemon still running.
+  launch.status = status;
+  if (!stillOurs(launch)) return 0;
+  return parseJobs((await client.jobs(clientLaunch(launch))).toString("utf8")).running;
 }
