@@ -17,6 +17,18 @@ import (
 // named no commit. The first commit is at 10:30.
 func (f Fixture) AddEditor(t *testing.T, id, hour string, files ...string) {
 	t.Helper()
+	f.addEditor(t, id, hour, "", files)
+}
+
+// AddEditorCommitting is AddEditor for a session that then ran git commit,
+// whose output names commitOID, so it created that commit.
+func (f Fixture) AddEditorCommitting(t *testing.T, id, hour, commitOID string, files ...string) {
+	t.Helper()
+	f.addEditor(t, id, hour, commitOID, files)
+}
+
+func (f Fixture) addEditor(t *testing.T, id, hour, commitOID string, files []string) {
+	t.Helper()
 	const usage = `{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"service_tier":"standard"}`
 	common := func(kind, uuid, parent, at string) string {
 		return fmt.Sprintf(`"cwd":%q,"gitBranch":"feature","isSidechain":false,"sessionId":%q,"type":%q,"uuid":%q,"parentUuid":%s,"timestamp":%q`,
@@ -27,6 +39,10 @@ func (f Fixture) AddEditor(t *testing.T, id, hour string, files ...string) {
 		uses = append(uses, fmt.Sprintf(`{"type":"tool_use","id":"toolu_%d","name":"Edit","input":{"file_path":%q,"old_string":"","new_string":"x"}}`,
 			i, filepath.Join(f.Repo, file)))
 		results = append(results, fmt.Sprintf(`{"tool_use_id":"toolu_%d","type":"tool_result","content":"edited"}`, i))
+	}
+	if commitOID != "" {
+		uses = append(uses, `{"type":"tool_use","id":"toolu_commit","name":"Bash","input":{"command":"git commit -m 'Edit files'"}}`)
+		results = append(results, fmt.Sprintf(`{"tool_use_id":"toolu_commit","type":"tool_result","content":"[feature %s] Edit files"}`, commitOID[:7]))
 	}
 	lines := []string{
 		`{` + common("user", "u-1", "null", "2026-07-01T"+hour+":10:00.000Z") + `,"promptId":"p-1","message":{"role":"user","content":"edit files"}}`,
@@ -65,6 +81,21 @@ func (f Fixture) AddCheckpointEditing(t *testing.T, path string) {
 		text = strings.ReplaceAll(text, "2026-07-26T15:53:", "2026-07-01T10:16:")
 		return strings.ReplaceAll(text, `"name":"Read","input":{"file_path":"/repo/parse.go"}`,
 			`"name":"Edit","input":{"file_path":"/repo/`+path+`","old_string":"a","new_string":"b"}`)
+	})
+}
+
+// AddCheckpointCommitting is AddCheckpoint with the checkpoint's first
+// session running git commit, whose output names commitOID, instead of only
+// reading a file, so it created that commit.
+func (f Fixture) AddCheckpointCommitting(t *testing.T, commitOID string) {
+	t.Helper()
+	f.addCheckpoint(t, CheckpointID, func(text string) string {
+		text = strings.ReplaceAll(text, "2026-07-26T15:52:", "2026-07-01T10:15:")
+		text = strings.ReplaceAll(text, "2026-07-26T15:53:", "2026-07-01T10:16:")
+		text = strings.ReplaceAll(text, `"name":"Read","input":{"file_path":"/repo/parse.go"}`,
+			`"name":"Bash","input":{"command":"git commit -m 'Add the feature'"}`)
+		return strings.ReplaceAll(text, `"tool_use_id":"tool-0","content":"package parser"`,
+			`"tool_use_id":"tool-0","content":"[feature `+commitOID[:7]+`] Add the feature"`)
 	})
 }
 

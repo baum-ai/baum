@@ -141,8 +141,8 @@ type Commit struct {
 // Link is one session matched to a commit.
 type Link struct {
 	Session string `json:"session"`
-	// Method is the independent evidence that matched: commit_ref for commit
-	// creation or files_overlap for inferred contribution.
+	// Method is the evidence that matched: commit_ref, a recorded creation of
+	// the commit.
 	Method     string  `json:"method"`
 	Confidence float64 `json:"confidence"`
 }

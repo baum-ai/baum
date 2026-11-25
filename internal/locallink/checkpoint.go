@@ -150,113 +150,26 @@ func warnMissing(warn io.Writer, ids []string, recorded map[string][]string, loc
 		strings.Join(missing, ", "), hint)
 }
 
-// commitEdges requires independent evidence for every matched session. The
-// checkpoint reader adds candidate transcripts before this runs; membership
-// never gives a candidate precedence over an equally plausible contributor.
+// commitEdges links every session that recorded creating the commit
+// (commit_ref): a hook, reflog or transcript creation that the loaders put in
+// its commit refs. The checkpoint reader adds candidate transcripts before
+// this runs; membership alone links nothing.
 func commitEdges(commit linkage.EnrichedCommit, candidates []linkage.RunCandidate, cfg linkage.Config) ([]linkage.Edge, error) {
-	byID := make(map[string]linkage.RunCandidate, len(candidates))
-	for _, candidate := range candidates {
-		byID[candidate.RunID] = candidate
-	}
 	if cfg.ExcludeMergeCommits && commit.IsMerge {
 		return nil, nil
 	}
-	// Sharing the parent SHA is common for concurrent sessions. It cannot
-	// independently validate checkpoint membership or establish contribution.
-	cfg.EnabledMatchSteps = slices.DeleteFunc(slices.Clone(cfg.EnabledMatchSteps), func(id string) bool {
-		return id == steps.StartCommitStepID
-	})
-	linked, explained := map[string]bool{}, map[string]bool{}
+	// Editing the same files is not evidence: it linked colleagues' commits to
+	// sessions here that edited those files too.
 	var edges []linkage.Edge
 	for _, candidate := range candidates {
 		result := (steps.CommitRefStep{}).Apply(commit, []linkage.RunCandidate{candidate}, cfg)
 		for _, edge := range result.Edges {
 			if edge.Status == linkage.StatusMatched {
 				edges = append(edges, edge)
-				linked[edge.RunID] = true
-				for _, path := range steps.ExplainedFiles(commit, candidate) {
-					explained[path] = true
-				}
 			}
 		}
 	}
-	matched, err := matchRemaining(commit, candidates, byID, linked, explained, cfg)
-	if err != nil {
-		return nil, err
-	}
-	edges = append(edges, matched...)
-	return dropSupersededGuesses(edges), nil
-}
-
-// matchRemaining runs the matcher over unlinked sessions until the changed
-// paths are explained, the file-link cap is reached, or no candidate matches.
-func matchRemaining(
-	commit linkage.EnrichedCommit, candidates []linkage.RunCandidate, byID map[string]linkage.RunCandidate,
-	linked, explained map[string]bool, cfg linkage.Config,
-) ([]linkage.Edge, error) {
-	wanted := countDistinct(commit.FilesTouched)
-	limit := cfg.FilesOverlapMaxLinksPerCommit
-	links := 0
-	var matched []linkage.Edge
-	for {
-		if limit > 0 && links >= limit {
-			return matched, nil
-		}
-		if wanted > 0 && len(explained) >= wanted {
-			return matched, nil
-		}
-		pool := make([]linkage.RunCandidate, 0, len(candidates))
-		for _, candidate := range candidates {
-			if !linked[candidate.RunID] {
-				pool = append(pool, candidate)
-			}
-		}
-		edges, err := linkage.MatchCommit(commit, pool, cfg, steps.Default())
-		if err != nil {
-			return nil, err
-		}
-		if len(edges) == 0 || edges[0].Status != linkage.StatusMatched {
-			return matched, nil
-		}
-		// Equal file scores cannot distinguish concurrent sessions working on
-		// the same paths. Keep them as candidates for later adjudication rather
-		// than crediting all of them or picking one by ID.
-		if len(edges) > 1 {
-			return matched, nil
-		}
-		for _, edge := range edges {
-			linked[edge.RunID] = true
-			if edge.Method == linkage.MethodFilesOverlap {
-				links++
-			}
-			for _, path := range steps.ExplainedFiles(commit, byID[edge.RunID]) {
-				explained[path] = true
-			}
-		}
-		matched = append(matched, edges...)
-	}
-}
-
-// dropSupersededGuesses is the hosted resolver's: once a commit has a matched
-// edge at or above the review confidence, matched edges below it go.
-func dropSupersededGuesses(edges []linkage.Edge) []linkage.Edge {
-	settled := slices.ContainsFunc(edges, func(edge linkage.Edge) bool {
-		return edge.Status == linkage.StatusMatched && edge.Confidence >= linkage.ReviewConfidence
-	})
-	if !settled {
-		return edges
-	}
-	return slices.DeleteFunc(edges, func(edge linkage.Edge) bool {
-		return edge.Status == linkage.StatusMatched && edge.Confidence < linkage.ReviewConfidence
-	})
-}
-
-func countDistinct(paths []string) int {
-	seen := make(map[string]bool, len(paths))
-	for _, path := range paths {
-		seen[path] = true
-	}
-	return len(seen)
+	return edges, nil
 }
 
 func warnf(w io.Writer, format string, args ...any) {
