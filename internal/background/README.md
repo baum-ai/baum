@@ -91,7 +91,9 @@ A repository's state (`GET /api/background`) records its last success, its
 next refresh and the error of the last pass: `discovery_unavailable`,
 `discovery_timeout` (the poll ran out of time), `rate_limited`,
 `metadata_unavailable`, `store_unreadable` or `cache_unavailable`. A failed
-poll backs off exponentially, for at most 15 minutes. A settling poll is due
+poll is tried again after `quickRetries` (5, 15 and 30 seconds), since most
+failures are a moment's, then backs off from the interval, doubling, for at
+most 15 minutes. A settling poll is due
 when discovery says.
 
 The daemon routes pass callbacks through the index watcher's content check.
