@@ -111,6 +111,13 @@ export function MergeDialog({
   useEffect(() => {
     if (options) focusMethod(defaultMergeMethod(options));
   }, [options]);
+  // Disabling the methods and the button while a merge runs drops the focus
+  // out of the dialog. When GitHub refuses, the chosen method takes it back so
+  // Enter retries.
+  useEffect(() => {
+    if (merging || !options || dialog.current?.contains(document.activeElement)) return;
+    focusMethod(method);
+  }, [merging]);
   const merge = async () => {
     setMerging(true);
     setError("");

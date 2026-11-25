@@ -75,6 +75,8 @@ beforeEach(() => {
     mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.includes("api/prs/merge-options")) return Response.json(optionsAnswer);
       posts.push(JSON.parse(String(init?.body)));
+      // A browser drops the focus from the methods it disables while merging.
+      (document.activeElement as HTMLElement | null)?.blur();
       return mergeAnswer;
     }),
   );
@@ -129,6 +131,28 @@ it("shows GitHub's refusal in the dialog and stays open", async () => {
   expect(merged).not.toHaveBeenCalled();
   expect(close).not.toHaveBeenCalled();
   expect(button("Merge pull request").disabled).toBe(false);
+});
+
+it("retries with Enter after GitHub refuses the merge", async () => {
+  mergeAnswer = Response.json(
+    { code: "github_failed", message: "Something went wrong while executing your query." },
+    { status: 502 },
+  );
+  const close = vi.fn();
+  await render(async () => {}, close);
+  const enter = () =>
+    act(async () => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+  await enter();
+  expect(node.textContent).toContain("Something went wrong");
+  expect(document.activeElement).toBe(node.querySelector('input[value="SQUASH"]'));
+  mergeAnswer = Response.json({ merged: true });
+  await enter();
+  expect(posts).toHaveLength(2);
+  expect(close).toHaveBeenCalledOnce();
 });
 
 it("will not merge when the head moved since the inbox was read", async () => {
