@@ -114,7 +114,7 @@ while IFS= read -r -d '' link; do
       ;;
   esac
 done < <(find "$app" -type l -print0)
-main=$app/Contents/MacOS/baum-desktop
+main=$app/Contents/MacOS/baum
 sidecar=$app/Contents/Resources/bin/baum
 # One architecture per call: Xcode 27's lipo takes no more.
 for binary in "$main" "$sidecar"; do

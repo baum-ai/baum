@@ -10,7 +10,6 @@ const here = fileURLToPath(new URL(".", import.meta.url));
 export default {
   appId: "com.usebaum.desktop",
   productName: "baum",
-  executableName: "baum-desktop",
   copyright: "Copyright (c) 2026 Baum AI Ltd",
   // The package's metadata as the bundles show it (the deb needs a homepage
   // and a maintainer); bundle.sh adds the version.
@@ -70,6 +69,14 @@ export default {
     ],
   },
   linux: {
+    // Only Linux: electron-builder derives the macOS bundle's name from the
+    // top-level executableName, so setting it there would name the app
+    // baum-desktop.app. macOS keeps baum.app (Contents/MacOS/baum, helpers
+    // "baum Helper*.app", so an update replaces the Tauri app's
+    // /Applications/baum.app) and Windows gets baum.exe from productName. The
+    // mac executable Contents/MacOS/baum is not the bundled CLI at
+    // Contents/Resources/bin/baum, so the two names do not clash.
+    executableName: "baum-desktop",
     category: "Development",
     icon: "icons/icon.png",
     synopsis: "Keep up with what your coding agents build",
