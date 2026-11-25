@@ -119,17 +119,17 @@ icons:
     {{ heavy }} --workdir /oss/app ui-test node ../desktop/scripts/prepare-icons.mjs
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 target/icon-source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 target/tray-$s.svg -o icons/tray/$s.png; done'
 
-# Run the native desktop on the Linux or macOS host, with Vite hot reload in Docker
-dev: frontend
+# Run the Electron app on the Linux or macOS host, with its build and Vite hot
+# reload in Docker
+dev: frontend electron-cache
     sh {{ source_directory() }}/scripts/dev.sh
 
 # Run the app on this Wayland display, with the container's own home and daemon
-run: frontend sidecar
+run: frontend sidecar electron-cache
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps \
         -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" \
-        -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 -e GDK_BACKEND=wayland \
-        -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-        desktop-test cargo run --locked
+        -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=wayland-0 \
+        desktop-electron sh -c 'pnpm build && exec pnpm exec electron . --ozone-platform=wayland'
 
 # Run the app with its own home, keyring and daemon beside the installed one,
 # one per name (scripts/isolated.sh; --copy-data copies this machine's data,

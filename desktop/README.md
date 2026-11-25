@@ -1107,13 +1107,13 @@ with `baum daemon stop`.
 
 `just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
 Desktop check, test, build, bundle, run and dev recipes build that frontend first.
-The Electron app's builds, bundles and isolated runs (`isolated`, `profile`)
-happen in the `desktop-electron` Docker service (`Dockerfile`) or the
-`desktop-isolated` service built on it. The Tauri shell's Rust builds and
-checks (`check`, `test`, `run`, `dev`) run in the `desktop-test` service
-(`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development packages, and
-the Tauri CLI) until that shell is removed. The bundled binary is built in
-`oss-test`. From the repository root:
+The Electron app's builds, bundles and runs (`run`, `isolated`, `profile`, and
+the build half of `dev`) happen in the `desktop-electron` Docker service
+(`Dockerfile`) or the `desktop-isolated` service built on it. The Tauri
+shell's Rust builds and checks (`check`, `test`) run in the `desktop-test`
+service (`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development
+packages, and the Tauri CLI) until that shell is removed. The bundled binary
+is built in `oss-test`. From the repository root:
 
 ```sh
 just desktop::check         # cargo fmt --check, clippy -D warnings, tests, updater-test
@@ -1128,7 +1128,7 @@ just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
 just desktop::profile       # time a scripted journey in the headless app (see Profiling)
-just desktop::dev           # native host app, with Vite hot reload in Docker
+just desktop::dev           # the app on the host, with its build and Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
 
@@ -1486,18 +1486,40 @@ icon (`icons/icon.icns`) as its volume icon. The window layout is
 regenerate both in Docker with `just desktop::dmg-layout` after changing
 `scripts/dmg-layout.py`.
 
-`run` starts the container's own daemon in the container's home directory,
-not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
-bundled one.
+`run` bundles the main process (`pnpm build`) and runs `electron .` in the
+`desktop-electron` service, on this Wayland session's display
+(`--ozone-platform=wayland`, with the socket mounted). It starts the
+container's own daemon in the container's home directory, not yours. Set
+`BAUM_DESKTOP_BAUM` to run a different `baum` binary than the bundled one.
 
 For UI work and host integration, use `just desktop::dev` on macOS, or on Linux
 in a Wayland or X11 session. Vite, dependencies and generated frontend code stay in
 Docker; the CLI sidecar is built in `oss-test` for the host's target (Go
-cross-compiles it without cgo). The native Rust app is compiled
-and run on the host, with separate output in `target/host-dev`. This is an
-intentional host execution exception: a container cannot resolve the host user's
-login environment, installed agent CLIs, repository paths, credential agents or
-native desktop services faithfully by mounting a display socket. The launcher
+cross-compiles it without cgo), and the app's main process and preload are
+bundled in `desktop-electron` (`pnpm build`, into `build/`). Only the
+Electron binary runs on the host, on the unpackaged app in `oss/desktop`.
+This is an intentional host execution exception: a container cannot resolve
+the host user's login environment, installed agent CLIs, repository paths,
+credential agents or native desktop services faithfully by mounting a
+display socket.
+
+The host needs no Node.js and installs no npm packages. Electron's binary is
+platform-specific and `node_modules` lives in a Docker volume holding the
+Linux one, so the same `desktop-electron` run also downloads the Electron
+release for the host's platform and architecture
+(`scripts/host-electron.mjs`): the version the lockfile pins, through the
+`@electron/get` the electron package installs itself with, checked against
+the checksums that package ships, into the shared Electron download cache
+(`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/electron`). The host then unpacks
+it once per version into `electron-host/v<version>-<platform>-<arch>/` beside
+it (`unzip` on Linux, which the host needs; `ditto` on macOS) and runs it.
+A host `pnpm install` would run every package's install scripts on the host
+and could not share the Docker volume's `node_modules`; `npx electron` would
+need Node.js on the host and resolve the version apart from the lockfile.
+On Linux the downloaded Electron sandboxes its renderers with user
+namespaces; where they are restricted (Ubuntu 24.04's AppArmor default), it
+exits at start, and `ELECTRON_DISABLE_SANDBOX=1 just desktop::dev` runs it
+without that sandbox, for development only. The launcher
 uses your real home directory and the shared host daemon, so installation and
 repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
 when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
@@ -1515,12 +1537,9 @@ named `baum`, as the install-record validation requires; the platform-suffixed
 sidecar filename is only the build artifact. Existing daemons can finish using
 the previous executable after the copy is replaced.
 
-The host needs Rust (at least the version in `Cargo.toml`), a C toolchain,
-pkg-config and the Tauri GTK/WebKit development libraries. On Debian/Ubuntu,
-install `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev
-libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev`. On macOS,
-Rust and the Xcode command line tools are enough. Docker continues to own checks
-and release builds.
+The host needs Docker, and on Linux `unzip` and the libraries Electron
+loads (GTK 3, NSS, libnotify and a few X libraries, which a desktop session
+has). Docker continues to own checks and release builds.
 
 On Linux, Vite runs with host networking (`desktop-dev-frontend`) and shares the
 host's loopback with the app and the daemon. Docker Desktop on macOS has no
@@ -1530,24 +1549,26 @@ keeping the daemon's own `Host` header, which it requires. Windows is not
 supported.
 
 Saving React components or CSS in `oss/app` or `oss/viewer` refreshes the window,
-including the setup screen. Native Rust and connecting screen changes require
-restarting the command. Ctrl-C removes the Vite container and its private shared directory;
+including the setup screen. Changes to the shell (`electron/`) and the
+connecting screen require restarting the command. Ctrl-C removes the Vite container and its private shared directory;
 the host daemon continues running, just as when the normal desktop app closes.
 A second Vite, such as another worktree's, can serve the same daemon beside
 it with `BAUM_DESKTOP_DEV_PORT` set to another port; open it in a browser with
 the launch URL from the daemon's `credential.json`.
 
-Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
-on port 1420. The private directory shares only the daemon origin with Vite,
+Only an unpackaged app with `BAUM_DESKTOP_DEV_DIR` set
+(`electron/main/development.ts`) uses the development frontend on port 1420. The private directory shares only the daemon origin with Vite,
 never its launch capability. Vite uses Docker host networking and binds only
 `127.0.0.1`, allowing the host window and the container proxy to reach the host
 daemon without exposing a development port beyond loopback. It proxies the normal
 login exchange and namespaced API, including event streams, rewriting the expected
 development Origin for CSRF validation. The setup screen also loads from Vite,
-at `http://localhost:1420/setup.html`. Tauri grants commands by origin, not
-path, so setup uses `localhost` while the daemon's pages use `127.0.0.1`; a
-capability added at runtime grants only the `localhost` origin the setup
-commands, and the window may navigate only to the setup page there. Release builds ignore the override.
+at `http://localhost:1420/setup.html`. The bridge grants setup commands by
+origin, so setup uses `localhost` while the daemon's pages use `127.0.0.1`:
+under development only, it grants the setup commands to that page on the
+`localhost` origin while setup shows (`electron/main/bridge.ts`), and the
+window may navigate only to the setup page there. A packaged app ignores the
+override.
 
 Tauri expects the bundled binary at `binaries/baum-<target triple>`, which
 `scripts/sidecar.sh` builds (run it from the module root; it takes the triple
