@@ -4,34 +4,73 @@
 // bundled screen (setup on first run, else the connecting screen), attaches
 // to the daemon (starting it if needed) and loads it, and returns to the
 // connecting screen with the daemon's recent log when the daemon cannot be
-// reached. Closing the window hides it; quitting leaves the daemon running.
+// reached. Closing the window hides it into the tray; quitting leaves the
+// daemon running.
 //
-// The rest of the Tauri shell is ported in parallel and plugs in where the
-// comments marked "wired in N/7" say.
+// `start` sets the app up in the order main.rs's `setup` did: notifications
+// before the tray, whose menus hold their toggles; zoom and theme; the tray,
+// its menus and start at login; the applications menu entry; setup, which
+// decides the first page and keeps the stable copy of baum; the main window
+// and the tray panel; then attaching.
 import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { app, BrowserWindow, ipcMain, protocol, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  protocol,
+  session,
+  shell,
+} from "electron";
+import { THEME_CHANNEL } from "../shared/contract.ts";
 import { type AttachHooks, Attacher, HealthPause } from "./attach.ts";
+import { createAutostart } from "./autostart.ts";
 import { type BridgeState, DEVELOPMENT_SETUP_ORIGIN, installBridge } from "./bridge.ts";
+import * as client from "./client.ts";
 import { registerCommand } from "./commands.ts";
 import * as daemon from "./daemon.ts";
+import { appUrlOf, clientLaunch, EventFeed, noticeRoute, trayDaemon } from "./daemon-api.ts";
 import { SHELL } from "./declaration.ts";
-import { developmentDir, frontend, isSetupPage, SETUP_PAGE } from "./development.ts";
-import { startsHidden, claimSingleInstance, hideOnClose } from "./lifecycle.ts";
+import { developmentDir, frontend, isSetupPage, setupPage } from "./development.ts";
+import { EventStreamReader } from "./events.ts";
+import {
+  claimSingleInstance,
+  hideOnClose,
+  lifecycleHooks,
+  showWindow,
+  startsHidden,
+} from "./lifecycle.ts";
+import { LinkOpener, registerLinkCommands } from "./links.ts";
 import { errorMessage, log } from "./log.ts";
+import { refresh as refreshMenuEntry } from "./menu-entry.ts";
 import {
   BUNDLED_ORIGIN,
+  TRAY_ORIGIN,
   BUNDLED_SCREEN,
   bundledUrl,
   decide,
   isBundled,
+  isTrayPanel,
   schemeAndHost,
 } from "./navigation.ts";
+import { ElectronPlatform } from "./notifications/electron.ts";
+import { isMenuId, NotificationService } from "./notifications/index.ts";
+import * as onboarding from "./onboarding.ts";
+import { createPanel, type PanelWindow, registerPanel } from "./panel-electron.ts";
 import { configDir, IDENTIFIER, localDataDir, sessionDataDir } from "./paths.ts";
 import { registerAppScheme, serveAppScheme } from "./protocol.ts";
+import { Quitter, STOP_TIMEOUT } from "./quit.ts";
+import type { AppProcess } from "./run-baum.ts";
 import { FILE as DESKTOP_JSON } from "./settings.ts";
-import { initialPage, onboarded, SetupScreen } from "./setup.ts";
+import { registerThemeCommands, ThemeStore, themeBootstrap } from "./theme.ts";
+import { registerTileFileCommands } from "./tile-files.ts";
+import { closeAction, type TrayController } from "./tray.ts";
+import { startTray } from "./tray-electron.ts";
+import { hasWindowMenu, trayNotifications, windowMenuTemplate } from "./window-menu.ts";
 import {
   guardFrameRequests,
   guardNavigation,
@@ -39,18 +78,22 @@ import {
   kindOf,
   registerAppWindow,
   securePreferences,
-  setOpenExternal,
+  setLinkOpener,
   windowOf,
 } from "./windows.ts";
+import { registerZoomCommands, ZoomStore } from "./zoom.ts";
+import { applyZoom, installZoom } from "./zoom-electron.ts";
 
 // Before the app is ready: the identity and the directories Tauri used, so
 // desktop.json, the stable copy of baum and start at login stay where they
 // are; Chromium's own files go in a folder of their own.
 const platform = { platform: process.platform, env: process.env, home: homedir() };
 const config = configDir(platform);
+const desktopJson = join(config, DESKTOP_JSON);
 app.setName(IDENTIFIER);
 app.setPath("userData", config);
 app.setPath("sessionData", sessionDataDir(config));
+// Before the first notification, or Windows toasts carry no app identity.
 if (process.platform === "win32") app.setAppUserModelId(IDENTIFIER);
 registerAppScheme(protocol);
 
@@ -58,8 +101,16 @@ const development = developmentDir(process.env, app.isPackaged);
 // Start at login runs the app with this flag: the app attaches to the
 // daemon (starting it) without showing the window.
 const hidden = startsHidden(process.argv);
-const setup = new SetupScreen();
+const thisApp: AppProcess = {
+  platform: process.platform,
+  env: process.env,
+  execPath: process.execPath,
+};
+/** Where the stable copy of baum and the menu entry's icon go. */
+const LOCAL_DATA_DIR = localDataDir(platform);
 let main: BrowserWindow | null = null;
+/** The daemon the app is attached to, whether or not the window shows it. */
+let attached: daemon.Launch | null = null;
 
 const cli: daemon.Cli = {
   override: process.env.BAUM_DESKTOP_BAUM || undefined,
@@ -72,24 +123,50 @@ const cli: daemon.Cli = {
     resources: process.resourcesPath,
     appPath: app.getAppPath(),
   }),
-  // wired in 3/7: install. Where the app keeps a stable copy of baum (an
-  // AppImage, Windows: `<localDataDir>/bin/baum`), install.rs's
-  // `refresh_copy` refreshes it and returns its path here.
+  // Set once setup has started: the stable copy where the app keeps one.
   stable: undefined,
 };
-/** Where the stable copy of baum goes (3/7: install). */
-export const LOCAL_DATA_DIR = localDataDir(platform);
 
-/** The pause between health checks. wired in 3/7: events. The event stream
- *  calls `healthPause.setStreamUp(up)` as it opens and closes, and
- *  `healthPause.wake()` to check at once. */
-export const healthPause = new HealthPause();
+/** The pause between health checks: 30 seconds while the event stream is
+ *  open, 5 otherwise. */
+const healthPause = new HealthPause();
 
-/** What the rest of the app does as the attachment changes. wired in 3/7:
- *  tray (`connecting`, `attached`, `detached`) and notifications
- *  (`pageAttached`); 4/7: the check window closes on `connecting` and
- *  `detached`. */
-export const attachHooks: AttachHooks = {};
+/** What the rest of the app does as the attachment changes; set in `start`.
+ *  4/7: the check window closes on `connecting` and `detached`. */
+const attachHooks: AttachHooks = {};
+
+/** First-run setup and "Command Line and Hooks…": the first page, the setup
+ *  screen's commands, and the stable copy of baum every baum the app runs
+ *  is. */
+const setup = onboarding.registerSetupCommands<client.Launch>({
+  app: thisApp,
+  home: homedir(),
+  settingsFile: desktopJson,
+  localDataDir: LOCAL_DATA_DIR,
+  bundledCli: cli.bundled,
+  misplaced: () => daemon.misplaced(cli),
+  launch: () => (attached === null ? null : clientLaunch(attached)),
+  client: { request: client.request, catchUp: client.catchUp },
+  chooseFolder: async (title) => {
+    const options: Electron.OpenDialogOptions = {
+      title,
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const chosen = main
+      ? await dialog.showOpenDialog(main, options)
+      : await dialog.showOpenDialog(options);
+    return chosen.canceled ? null : (chosen.filePaths[0] ?? null);
+  },
+  openExternal: (url) => {
+    shell.openExternal(url).catch((e) => log(`cannot open the browser: ${errorMessage(e)}`));
+  },
+  // finish_setup: back to the connecting screen, and attach again, which now
+  // opens the daemon's inbox.
+  leaveSetup: () => {
+    main?.loadURL(BUNDLED_SCREEN).catch((e) => log(`cannot leave setup: ${errorMessage(e)}`));
+    void attacher.connect();
+  },
+});
 
 const attacher = new Attacher({
   misplaced: () => daemon.misplaced(cli),
@@ -99,7 +176,7 @@ const attacher = new Attacher({
   readCredential: daemon.readCredential,
   logTail: daemon.logTail,
   frontend: (launch) => frontend(launch, development),
-  setupOpen: () => setup.open,
+  setupOpen: () => setup.isOpen(),
   load: (url) => {
     // The error names the URL; the log redacts its token.
     main?.loadURL(url).catch((e) => log(`cannot load the baum daemon: ${errorMessage(e)}`));
@@ -114,7 +191,7 @@ const attacher = new Attacher({
 /** Returns the window to the bundled screen unless it is already there. The
  *  setup screen stays while it shows: attaching waits until setup ends. */
 function showScreen(): void {
-  if (setup.open || !main || main.isDestroyed()) return;
+  if (setup.isOpen() || !main || main.isDestroyed()) return;
   const current = main.webContents.getURL();
   // No URL yet: the first screen, always a bundled one, is still loading.
   if (current === "") return;
@@ -127,20 +204,76 @@ function showScreen(): void {
   }
 }
 
+/** Where the setup screen loads from: Vite's copy under `desktop::dev`. */
+function setupUrl(): string {
+  return setupPage(development) ?? bundledUrl(`/${onboarding.SETUP_PAGE}`);
+}
+
+/** "Command Line and Hooks…": reopens the setup screen in the window. */
+function showSetup(): void {
+  if (!main || main.isDestroyed()) return;
+  setup.markOpen();
+  showWindow(main);
+  main.loadURL(setupUrl()).catch((e) => log(`cannot show setup: ${errorMessage(e)}`));
+}
+
 /** The origins whose pages may ask for notifications and clipboard writes. */
 function isAppOrigin(origin: string): boolean {
   return (
     origin === BUNDLED_ORIGIN ||
+    origin === TRAY_ORIGIN ||
     origin === attacher.daemon() ||
     (development !== null && origin === DEVELOPMENT_SETUP_ORIGIN)
   );
 }
 
+/** A non-blocking error dialog (lifecycle.rs's `message`). */
+function message(title: string, text: string): void {
+  const options: Electron.MessageBoxOptions = {
+    type: "error",
+    title,
+    message: title,
+    detail: text,
+  };
+  const shown = main ? dialog.showMessageBox(main, options) : dialog.showMessageBox(options);
+  shown.catch((e) => log(`cannot show a message: ${errorMessage(e)}`));
+}
+
+/** A warning with `yes` and Cancel; resolves whether the person chose `yes`. */
+async function confirm(title: string, text: string, yes: string): Promise<boolean> {
+  const options: Electron.MessageBoxOptions = {
+    type: "warning",
+    title,
+    message: title,
+    detail: text,
+    buttons: [yes, "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+  };
+  const answer = main
+    ? await dialog.showMessageBox(main, options)
+    : await dialog.showMessageBox(options);
+  return answer.response === 0;
+}
+
 function start(): void {
-  serveAppScheme(protocol, join(app.getAppPath(), "dist"), () => setup.open);
+  serveAppScheme(protocol, join(app.getAppPath(), "dist"), () => setup.isOpen());
   guardPermissions(session.defaultSession, isAppOrigin);
   guardFrameRequests(session.defaultSession);
-  setOpenExternal((url) => shell.openExternal(url));
+  // `open_link` and every new-window request share this one opener.
+  const links = new LinkOpener({
+    openExternal: (url) => {
+      if (process.env.BAUM_DESKTOP_LOG_LINKS && !app.isPackaged) {
+        // Development checks under a virtual display have no browser.
+        log(`would open ${schemeAndHost(url)} in the browser`);
+        return;
+      }
+      return shell.openExternal(url);
+    },
+    debug: !app.isPackaged,
+  });
+  setLinkOpener(links);
+  registerLinkCommands(links);
   // Any web contents the app did not set up itself opens no window and
   // attaches no webview; the app's own windows replace the handler.
   app.on("web-contents-created", (_event, contents) => {
@@ -151,7 +284,7 @@ function start(): void {
     kindOf,
     windowOf,
     daemon: () => attacher.daemon(),
-    setupOpen: () => setup.open,
+    setupOpen: () => setup.isOpen(),
     development: development !== null,
   };
   installBridge(ipcMain, state);
@@ -162,16 +295,178 @@ function start(): void {
     void attacher.connect();
     return null;
   });
-  // wired in 3/7: onboarding (setup commands, finish_setup closes
-  // `setup.open` and calls `attacher.connect()`), links (`open_link` through
-  // windows.openOutside), zoom, theme (and their scripts in the main
-  // window), tile_files, notifications, autostart, menu_entry, the tray and
-  // its panel (registerAppWindow(panel, "tray-panel"), guardNavigation with
-  // navigation.isTrayPanel); 4/7: the check window; later: the updater.
+  registerTileFileCommands({
+    chooseSavePath: async ({ title, defaultName, filters }) => {
+      const options: Electron.SaveDialogOptions = { title, defaultPath: defaultName, filters };
+      const chosen = main
+        ? await dialog.showSaveDialog(main, options)
+        : await dialog.showSaveDialog(options);
+      return chosen.canceled || !chosen.filePath ? null : chosen.filePath;
+    },
+  });
 
-  const page = initialPage(onboarded(join(config, DESKTOP_JSON)), daemon.misplaced(cli) !== null);
-  setup.open = page === "/setup.html";
-  const url = setup.open && development !== null ? SETUP_PAGE : bundledUrl(page);
+  // Notifications, before the tray, whose menus hold their toggles. A click
+  // opens its page where the window shows the app.
+  const notifications = new NotificationService({
+    configDir: config,
+    platform: new ElectronPlatform(),
+    client: { appUrl: () => appUrlOf(attached === null ? null : clientLaunch(attached)) },
+    openInWindow: (path) => {
+      const origin = attacher.daemon();
+      if (!main || main.isDestroyed() || origin === null) return;
+      showWindow(main);
+      // The setup screen stays until the person leaves it.
+      if (setup.isOpen()) return;
+      main
+        .loadURL(`${origin}${path}`)
+        .catch((e) => log(`cannot open the page: ${errorMessage(e)}`));
+    },
+  });
+
+  // Zoom and theme. The preload asks for the theme before the first paint
+  // of every page in the app's windows; any other web contents gets nothing.
+  const zoom = new ZoomStore(desktopJson);
+  registerZoomCommands({
+    store: zoom,
+    apply: (window, level) => {
+      if (window instanceof BrowserWindow) applyZoom(window.webContents, level);
+    },
+  });
+  const themes = new ThemeStore(desktopJson);
+  registerThemeCommands(themes);
+  ipcMain.on(THEME_CHANNEL, (event) => {
+    event.returnValue =
+      kindOf(event.sender) && event.senderFrame?.parent === null
+        ? themeBootstrap(themes.get(), nativeTheme.shouldUseDarkColors)
+        : null;
+  });
+
+  // The tray, its menus and start at login. Start at login is rewritten so
+  // it names this executable.
+  const autostart = createAutostart({
+    platform: process.platform,
+    env: process.env,
+    home: homedir(),
+    exe: process.execPath,
+    isPackaged: app.isPackaged,
+    misplaced: daemon.misplaced(cli) !== null,
+  });
+  autostart.refresh();
+  const quitter = new Quitter({
+    jobCounts: () => tray.jobCounts(),
+    confirm,
+    misplaced: () => daemon.misplaced(cli),
+    stopDaemon: async () => {
+      await daemon.run(await daemon.cliPath(cli), ["daemon", "stop"], STOP_TIMEOUT);
+    },
+    exit: () => app.quit(),
+  });
+  // The window's menu bar (macOS only), built again from the saved settings
+  // after each toggle.
+  const windowMenu = (): void => {
+    if (!hasWindowMenu(process.platform)) return Menu.setApplicationMenu(null);
+    const template = windowMenuTemplate({
+      login: autostart.enabled(),
+      notifications: notifications.menu(),
+      onClick: (id) => tray.onMenu(id),
+    });
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  };
+  let panel: PanelWindow | undefined;
+  const tray: TrayController = startTray({
+    host: {
+      showWindow: () => showWindow(main),
+      openRoute: (route) => notifications.open(noticeRoute(route)),
+      showSetup,
+      quit: () => quitter.quit(),
+      quitAndStop: () => void quitter.quitAndStop(),
+      message,
+      openUrl: (url) => shell.openExternal(url),
+      isNotificationId: isMenuId,
+      onNotificationMenu: (id) => {
+        notifications.onMenu(id);
+        windowMenu();
+        tray.refresh();
+      },
+      notificationsSubmenu: () => trayNotifications(notifications.menu()),
+      detachNotifications: () => notifications.detach(),
+      // Notices reach the notifications from the event stream itself.
+      handleEvent: () => {},
+      autostart: {
+        enabled: () => autostart.enabled(),
+        set: (on) => {
+          try {
+            autostart.set(on);
+          } finally {
+            windowMenu();
+          }
+        },
+      },
+    },
+    // macOS and Windows: a left click opens the panel.
+    onClick: (icon) => panel?.toggle(icon),
+  });
+  windowMenu();
+
+  // The one event stream: it wakes the tray, carries the notices, and while
+  // it is open the daemon is checked every 30 seconds instead of every 5.
+  const feed = new EventFeed();
+  const events = new EventStreamReader({
+    onOpen: () => {
+      if (!app.isPackaged) log("the event stream is open; checking the daemon every 30 s");
+      feed.opened();
+      healthPause.setStreamUp(true);
+    },
+    onClosed: () => {
+      if (!app.isPackaged) log("the event stream closed; checking the daemon every 5 s");
+      feed.closed();
+      healthPause.setStreamUp(false);
+    },
+    onChange: (event) => feed.change(event),
+    onNotice: (_endpoint, event) => {
+      notifications
+        .handleNotice(event.data)
+        .catch((e) => log(`cannot show a notification: ${errorMessage(e)}`));
+    },
+  });
+  attachHooks.connecting = () => {
+    attached = null;
+    events.detach();
+    tray.connecting();
+  };
+  attachHooks.attached = (launch) => {
+    attached = launch;
+    const forClient = clientLaunch(launch);
+    events.attach(forClient);
+    tray.attached(trayDaemon(forClient, feed));
+  };
+  attachHooks.pageAttached = (_launch, page) => notifications.attach(page);
+  attachHooks.detached = () => {
+    attached = null;
+    events.detach();
+    tray.detached();
+  };
+  app.on("will-quit", () => {
+    events.close();
+    tray.stop();
+  });
+
+  // The AppImage's applications menu entry.
+  if (process.platform === "linux") {
+    refreshMenuEntry({
+      isPackaged: app.isPackaged,
+      env: process.env,
+      home: homedir(),
+      exe: process.execPath,
+      dataDir: LOCAL_DATA_DIR,
+    });
+  }
+
+  // Setup decides the first page, and from now on the app runs its stable
+  // copy of baum where it keeps one (refreshed from the bundled one first).
+  const page = setup.start();
+  if (setup.managedCopy() !== null) cli.stable = async () => setup.cliPath();
+  const url = page === onboarding.SETUP_PAGE ? setupUrl() : bundledUrl(`/${page}`);
 
   main = new BrowserWindow({
     title: "baum",
@@ -182,20 +477,68 @@ function start(): void {
     show: !hidden,
     webPreferences: securePreferences(join(__dirname, "preload.cjs"), SHELL),
   });
-  registerAppWindow(main, "main");
-  guardNavigation(main.webContents, {
+  const window = main;
+  registerAppWindow(window, "main");
+  guardNavigation(window.webContents, {
     decide: (to) =>
-      setup.open && isSetupPage(to, development)
+      setup.isOpen() && isSetupPage(to, development)
         ? "allow"
-        : decide(to, attacher.daemon(), setup.open),
+        : decide(to, attacher.daemon(), setup.isOpen()),
     newWindows: true,
     logRefusals: !app.isPackaged,
   });
-  hideOnClose(main);
-  screenshots(main);
-  main.loadURL(url).catch((e) => log(`cannot show the first screen: ${errorMessage(e)}`));
-  // wired in 3/7: tray. A hidden start shows the window after all if no
-  // tray appears.
+  installZoom(window.webContents, zoom);
+  hideOnClose(window);
+  // With no tray to reopen a hidden window, closing it asks to quit instead.
+  lifecycleHooks.onClose = (closing) => {
+    void tray.available().then((available) => {
+      if (closeAction(available) === "hide") return closing.hide();
+      log("no tray could reopen the window; asking whether to quit");
+      void quitter.confirmQuit();
+    });
+  };
+  lifecycleHooks.windowSeen = () => tray.windowSeen();
+  // The notifications skip a toast about the page the window shows while it
+  // has focus.
+  const focused = () =>
+    notifications.setFocusedPage(
+      !window.isDestroyed() && window.isVisible() && window.isFocused() && !window.isMinimized()
+        ? window.webContents.getURL()
+        : null,
+    );
+  window.on("focus", focused);
+  window.on("blur", focused);
+  window.on("show", focused);
+  window.on("hide", focused);
+  window.on("minimize", focused);
+  window.on("restore", focused);
+  window.webContents.on("did-navigate", focused);
+  window.webContents.on("did-navigate-in-page", focused);
+  screenshots(window);
+  window.loadURL(url).catch((e) => log(`cannot show the first screen: ${errorMessage(e)}`));
+
+  // The panel is a convenience: the menu still works without it.
+  try {
+    panel = createPanel({ preload: join(__dirname, "preload.cjs") });
+    if (panel.window) {
+      registerAppWindow(panel.window, "tray-panel");
+      guardNavigation(panel.window.webContents, {
+        decide: (to) => (isTrayPanel(to) ? "allow" : "deny"),
+        newWindows: false,
+        logRefusals: !app.isPackaged,
+      });
+    }
+  } catch (e) {
+    log(`no tray panel: ${errorMessage(e)}`);
+    panel = undefined;
+  }
+  registerPanel(
+    tray,
+    panel ?? { window: undefined, toggle: () => {}, hide: () => {}, setHeight: () => {} },
+  );
+
+  // A hidden start shows the window after all if no tray appears.
+  void tray.watchHost(hidden);
   void attacher.connect();
 }
 

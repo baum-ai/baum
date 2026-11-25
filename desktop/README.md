@@ -1058,11 +1058,23 @@ the Electron shell:
 - Opens the main window on the setup screen or the connecting screen.
 - Attaches to the daemon as described in "Attaching to the daemon", and
   loads the daemon's pages.
-- Hides the window when it is closed, and keeps a single instance.
+- Hides the window when it is closed, and keeps a single instance. Where no
+  tray is showing, closing the window asks "Quit baum?" instead.
 - Applies the rules in "What pages may do".
+- Runs first-run setup and "Command Line and Hooks…", and runs the stable
+  copy of `baum` where the app keeps one.
+- Shows the tray, its menu and, on macOS and Windows, its panel. On macOS it
+  also sets the window's menu bar; on Linux and Windows the window has none.
+- Reads the daemon's event stream once, for the tray, the notifications and
+  the health check, which waits 30 seconds while the stream is open.
+- Shows notifications, with their toggles in both menus.
+- Zooms with the shortcuts and Settings, and applies the saved theme before
+  the first paint. The preload asks the main process for the theme.
+- Opens links to other sites in the browser, at most once a second.
+- Saves tile type files, keeps start at login and the AppImage's menu entry
+  current, and quits with or without stopping background reviews.
 
-The tray, notifications, setup commands and the other native features are
-still being ported.
+The check window and the updater are still being ported.
 
 - `electron/main/` runs in Node.js in the main process.
 - `electron/preload/` runs sandboxed in each window's main frame. It exposes
@@ -1070,7 +1082,7 @@ still being ported.
 - Every command goes over one IPC channel. `electron/main/bridge.ts` runs a
   command only from the main frame of the app's own windows, and only if
   `electron/main/commands.ts` allows it for the page's role.
-- The bundled screens are served from `dist/` as `app://bundle`.
+- The bundled screens are served from `dist/` as `app://bundle`. The tray panel has its own origin, `app://tray`, so the window's zoom does not scale it.
 - Before each request that carries the credential, the app checks that the
   daemon's process (the status's `pid`) still runs as the user. Once it has
   gone, another user's process could take its loopback port, so the check
@@ -1104,8 +1116,9 @@ BAUM_OP_RUN=0 ./dev-compose.sh run --rm --no-deps desktop-electron sh -c \
 ```
 
 `BAUM_DESKTOP_SCREENSHOT` applies only to an unpackaged app. It saves what the
-window shows a few seconds after each page load. Stop the daemon afterwards
-with `baum daemon stop`.
+window shows a few seconds after each page load. `BAUM_DESKTOP_LOG_LINKS=1`,
+also only for an unpackaged app, logs the links the app would open instead of
+opening a browser. Stop the daemon afterwards with `baum daemon stop`.
 
 ## Development
 

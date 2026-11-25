@@ -11,15 +11,21 @@ import {
   OpenLimit,
   originOf,
   schemeAndHost,
+  TRAY_PANEL_URL,
 } from "./navigation.ts";
 
 const daemon = "http://127.0.0.1:4100";
 
 describe("navigation", () => {
-  it("the tray panel loads only its bundled page", () => {
-    expect(isTrayPanel(bundledUrl("/tray.html"))).toBe(true);
+  it("the tray panel loads only its own page", () => {
+    expect(isTrayPanel(TRAY_PANEL_URL)).toBe(true);
     for (const other of [
       BUNDLED_SCREEN,
+      bundledUrl("/tray.html"),
+      "app://tray/index.html",
+      "app://tray/tray.html/",
+      "app://tray:1/tray.html",
+      "app://user@tray/tray.html",
       "http://127.0.0.1:4100/tray.html",
       "https://example.com/tray.html",
       "app://elsewhere/tray.html",
@@ -31,9 +37,23 @@ describe("navigation", () => {
   });
 
   it("gives the bundled pages their own origin", () => {
-    expect(originOf(new URL(bundledUrl("/tray.html")))).toBe("app://bundle");
+    expect(originOf(new URL(bundledUrl("/index.html")))).toBe("app://bundle");
+    expect(originOf(new URL(TRAY_PANEL_URL))).toBe("app://tray");
     expect(originOf(new URL("http://127.0.0.1:4100/x"))).toBe(daemon);
     expect(originOf(new URL("app://bundle:9/x"))).toBe("null");
+  });
+
+  it("keeps the tray panel on an origin no bundled screen shares, so zoom is per window", () => {
+    const panel = originOf(new URL(TRAY_PANEL_URL));
+    for (const path of ["/", "/index.html", "/setup.html"]) {
+      expect(originOf(new URL(bundledUrl(path))), path).not.toBe(panel);
+    }
+    expect(originOf(new URL(BUNDLED_SCREEN))).not.toBe(panel);
+  });
+
+  it("refuses the tray panel in the main window", () => {
+    expect(decide(TRAY_PANEL_URL, null, true)).toBe("deny");
+    expect(decide("app://tray/", null, true)).toBe("deny");
   });
 
   it("allows the bundled screen and the daemon", () => {
@@ -215,6 +235,35 @@ describe("navigation", () => {
       "http://[::]/",
       "not a url",
     ]) {
+      expect(decideNewWindow(u), u).toBe("deny");
+    }
+  });
+
+  it("opens no link with a user name or password in the browser", () => {
+    for (const u of [
+      "http://127.0.0.1:4100@evil.example/",
+      "http://evil@127.0.0.1:4100/",
+      "http://user:pass@127.0.0.1:4100/s/abc/",
+      "https://user@github.com/",
+      "https://user:pass@github.com/",
+    ]) {
+      expect(decideNewWindow(u), u).toBe("deny");
+    }
+  });
+
+  it("counts only this machine's addresses as loopback", () => {
+    for (const u of [
+      "http://8.8.8.8/",
+      "http://128.0.0.1/",
+      "http://[2001:db8::1]/",
+      "http://[::2]/",
+      "http://[::ffff:8.8.8.8]/",
+      "http://localhost.evil/",
+      "http://notlocalhost/",
+    ]) {
+      expect(decideNewWindow(u), u).toBe("open-in-browser");
+    }
+    for (const u of ["http://127.255.0.3/", "http://[::1]/", "http://[::ffff:7f00:1]/"]) {
       expect(decideNewWindow(u), u).toBe("deny");
     }
   });

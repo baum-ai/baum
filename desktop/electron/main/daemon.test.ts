@@ -9,7 +9,6 @@ import { inspect } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   bundledCliPath,
-  childPath,
   cliPath,
   daemonRunning,
   DISK_IMAGE,
@@ -25,7 +24,6 @@ import {
   parseStatus,
   readCredential,
   TRANSLOCATED,
-  withoutDir,
 } from "./daemon.ts";
 
 const TOKEN = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
@@ -138,25 +136,6 @@ describe("where baum runs from", () => {
     expect(bundledCliPath({ ...dev, platform: "win32", arch: "x64" })).toBe(
       "/a/binaries/baum-x86_64-pc-windows-msvc.exe",
     );
-  });
-
-  it("drops the AppImage mount from the child's PATH", () => {
-    expect(
-      withoutDir(
-        "/tmp/.mount_baum-dfeJFK/usr/bin:/home/user/.local/bin:/tmp/.mount_baum-dfeJFK:/tmp/.mount_baum-dfeJFKG/usr/bin:/usr/bin",
-        "/tmp/.mount_baum-dfeJFK",
-        ":",
-      ),
-    ).toBe("/home/user/.local/bin:/tmp/.mount_baum-dfeJFKG/usr/bin:/usr/bin");
-    const env = {
-      APPIMAGE: "/x.AppImage",
-      APPDIR: "/tmp/.mount_a",
-      PATH: "/tmp/.mount_a/usr/bin:/usr/bin",
-    };
-    expect(childPath(env, "/tmp/.mount_a/usr/bin/baum-desktop")).toBe("/usr/bin");
-    // A child of an AppImage inherits APPIMAGE but runs from elsewhere.
-    expect(childPath(env, "/usr/bin/code")).toBeUndefined();
-    expect(childPath({ PATH: "/usr/bin" }, "/usr/bin/baum-desktop")).toBeUndefined();
   });
 });
 

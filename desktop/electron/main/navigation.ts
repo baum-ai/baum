@@ -11,6 +11,14 @@ export const BUNDLED_SCHEME = "app";
 export const BUNDLED_HOST = "bundle";
 export const BUNDLED_ORIGIN = `${BUNDLED_SCHEME}://${BUNDLED_HOST}`;
 
+/** The tray panel's own origin, `app://tray`, serving only `/tray.html` and
+ *  its assets. Chromium shares page zoom between pages of one origin, so the
+ *  panel is apart from the bundled screens: the window's zoom leaves it
+ *  alone. */
+export const TRAY_HOST = "tray";
+export const TRAY_ORIGIN = `${BUNDLED_SCHEME}://${TRAY_HOST}`;
+export const TRAY_PANEL_URL = `${TRAY_ORIGIN}/tray.html`;
+
 export type Decision = "allow" | "deny";
 export type NewWindow = "open-in-browser" | "deny";
 
@@ -89,10 +97,18 @@ export function decide(raw: string, daemon: string | null, setupOpen: boolean): 
   return "deny";
 }
 
-/** The tray panel's window loads its bundled page and nothing else. */
+/** The tray panel's window loads its own page and nothing else: the tray
+ *  origin exactly (no port, no user name) at `/tray.html`. */
 export function isTrayPanel(raw: string): boolean {
   const url = parse(raw);
-  return url !== null && isBundled(url) && url.pathname === "/tray.html";
+  return (
+    url !== null &&
+    url.protocol === `${BUNDLED_SCHEME}:` &&
+    url.hostname === TRAY_HOST &&
+    url.port === "" &&
+    !hasUserinfo(url) &&
+    url.pathname === "/tray.html"
+  );
 }
 
 /** A URL as the log shows it: its scheme and host only, since a path or

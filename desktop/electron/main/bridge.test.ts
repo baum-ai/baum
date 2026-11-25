@@ -56,11 +56,18 @@ describe("role resolution", () => {
   });
 
   it("gives the tray panel its role only at its page in its window", () => {
-    expect(resolveRole({ ...main("app://bundle/tray.html"), window: "tray-panel" })).toBe(
+    expect(resolveRole({ ...main("app://tray/tray.html"), window: "tray-panel" })).toBe(
       "tray-panel",
     );
+    expect(resolveRole(main("app://tray/tray.html"))).toBeNull();
+    expect(resolveRole({ ...main("app://bundle/tray.html"), window: "tray-panel" })).toBeNull();
     expect(resolveRole(main("app://bundle/tray.html"))).toBeNull();
-    for (const url of ["app://bundle/index.html", "app://bundle/setup.html", daemon]) {
+    for (const url of [
+      "app://tray/index.html",
+      "app://bundle/index.html",
+      "app://bundle/setup.html",
+      daemon,
+    ]) {
       expect(resolveRole({ ...main(url, { setupOpen: true }), window: "tray-panel" }), url).toBe(
         null,
       );

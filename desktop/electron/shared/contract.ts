@@ -56,3 +56,42 @@ export function parseDeclaration(argv: readonly string[]): Declaration | null {
     openLinks: record.openLinks as boolean,
   };
 }
+
+/** The channel the preload asks, synchronously and before the page's first
+ *  paint, for the theme the native screens apply (main/theme.ts). */
+export const THEME_CHANNEL = "baum:theme";
+
+/** What a page applies before its first paint, as `applyTheme` in the app
+ *  does: the `data-theme` and `color-scheme` base and the inline tokens. */
+export interface ThemeBootstrap {
+  base: "light" | "dark";
+  tokens: Record<string, string>;
+}
+
+/** The main process's answer on `THEME_CHANNEL`, or null when it is not a
+ *  theme (a page the app does not own is answered null). */
+export function parseThemeBootstrap(value: unknown): ThemeBootstrap | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { base, tokens } = value as Record<string, unknown>;
+  if (base !== "light" && base !== "dark") return null;
+  if (typeof tokens !== "object" || tokens === null || Array.isArray(tokens)) return null;
+  const out: Record<string, string> = {};
+  for (const [name, token] of Object.entries(tokens)) {
+    if (typeof token === "string") out[name] = token;
+  }
+  return { base, tokens: out };
+}
+
+/** The parts of the document element a bootstrap sets. */
+export interface ThemeRoot {
+  dataset: Record<string, string | undefined>;
+  style: { colorScheme: string; setProperty(name: string, value: string): void };
+}
+
+/** Applies a bootstrap to the document element. The values are set as data
+ *  through the DOM, never parsed as script or markup. */
+export function applyThemeBootstrap(root: ThemeRoot, bootstrap: ThemeBootstrap): void {
+  root.dataset.theme = bootstrap.base;
+  root.style.colorScheme = bootstrap.base;
+  for (const [name, value] of Object.entries(bootstrap.tokens)) root.style.setProperty(name, value);
+}
