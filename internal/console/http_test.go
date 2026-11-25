@@ -411,3 +411,31 @@ func held(t *testing.T, conversation map[string]any) string {
 	id, _ := list[0].(map[string]any)["id"].(string)
 	return id
 }
+
+// The archive route names the work an archive would lose in a 409, archives
+// with discard, and the list leaves the conversation out.
+func TestArchiveRoute(t *testing.T) {
+	r := newRoutes(t)
+	created := r.call(t, "POST", "/api/console/conversations", map[string]any{}, http.StatusCreated)
+	id, _ := created["id"].(string)
+	dir, _ := created["directory"].(string)
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refused := r.call(t, "POST", "/api/console/conversations/"+id+"/archive", nil, http.StatusConflict)
+	unclean, _ := refused["unclean"].(map[string]any)
+	if code(refused) != "unclean_directory" || unclean["changed"] != float64(1) || refused["message"] == "" {
+		t.Fatalf("refused %v", refused)
+	}
+	archived := r.call(t, "POST", "/api/console/conversations/"+id+"/archive", map[string]any{"discard": true}, http.StatusOK)
+	if archived["archived_at"] == nil || archived["state"] != StateClosed {
+		t.Fatalf("archived %v", archived)
+	}
+	list := r.call(t, "GET", "/api/console/conversations", nil, http.StatusOK)
+	if got, _ := list["conversations"].([]any); len(got) != 0 {
+		t.Fatalf("listed %v", got)
+	}
+	if answer := r.call(t, "POST", "/api/console/conversations/missing/archive", nil, http.StatusNotFound); code(answer) != "conversation_not_found" {
+		t.Fatalf("missing: %v", answer)
+	}
+}

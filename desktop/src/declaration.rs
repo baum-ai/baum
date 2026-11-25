@@ -38,14 +38,15 @@ pub const TILE_FRAMES: bool = true;
 /// frame (`sandbox="allow-scripts"`) served from the daemon's origin that
 /// tries every way to call an app command (`__TAURI_INTERNALS__.invoke`,
 /// `window.chrome.webview.postMessage`, `fetch` to `http://ipc.localhost`)
-/// and confirm that no command runs, as `just desktop::navigation-check`
-/// does for WebKitGTK.
+/// and confirm that no command runs, as the WebKitGTK harness did (in git
+/// history under tests/navigation; tests/shell checks the Electron shell).
 #[cfg(windows)]
 pub const TILE_FRAMES: bool = false;
 
 /// Whether the page may open the tile check window (`check_window`), a
 /// hidden second window for render checks of custom tiles. On Linux it was
-/// checked under WebKitGTK (`just desktop::check-window-check`): the window
+/// checked under WebKitGTK (the harness in git history under
+/// tests/check-window; tests/shell checks the Electron shell): the window
 /// gets its own web process, a page spinning in it leaves the main window's
 /// timers running, and ending its web process before destroying the window
 /// stops the spin at once.
@@ -55,8 +56,8 @@ pub const CHECK_WINDOW: bool = true;
 /// Off on macOS until checked there; the app then runs its checks in the main
 /// window. WKWebView likely gives the window its own web content process, but
 /// it has no public call to end one: destroying the window may leave a
-/// spinning process running. Before turning this on, run on a Mac what
-/// `just desktop::check-window-check` does: that the window's page runs in a
+/// spinning process running. Before turning this on, run on a Mac what the
+/// WebKitGTK check-window harness did: that the window's page runs in a
 /// web content process other than the main window's (Activity Monitor), that
 /// a frame spinning in it leaves the main window responsive, that
 /// `close_check_window` ends that process's CPU use within a second, that a

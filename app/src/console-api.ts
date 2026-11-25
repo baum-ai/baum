@@ -60,6 +60,8 @@ export type Conversation = ConversationSummary & {
    *  next turn once it answers, or wait for the person when it stopped or
    *  failed. Absent from an older daemon. */
   queued?: QueuedMessage[];
+  /** When it was archived: the list leaves it out. */
+  archived_at?: string;
 };
 
 /** A message waiting for the running turn to end. */
@@ -67,6 +69,23 @@ export type QueuedMessage = {
   id: string;
   text: string;
   queued_at: string;
+};
+
+/** The work an archive would lose, which the daemon refuses it over until
+ *  it is told to discard it (`unclean_directory`). */
+export type UncleanDirectory = {
+  /** Changed or untracked paths in a worktree, or files in the empty
+   *  directory baum made; `paths` names the first of them. */
+  changed: number;
+  paths?: string[];
+  /** Commits on the branch baum created that no remote has. */
+  branch?: string;
+  unpushed?: number;
+  /** Commits only the worktree's detached HEAD holds. */
+  detached?: number;
+  /** Why what it holds could not be read. */
+  unreadable?: string;
+  worktree: boolean;
 };
 
 /** A labelled part of an operation's summary. `quoted` text is not baum's
@@ -166,6 +185,21 @@ export function stopTurn(id: string): Promise<Conversation> {
 
 export function closeConversation(id: string): Promise<Conversation> {
   return request(`${conversationPath(id)}/close`, {});
+}
+
+/** Closes the conversation and removes what baum made for it: the empty
+ *  directory, or the worktree it added and the branch it created. Refused
+ *  with `unclean_directory` (a LocalRequestError whose body holds the
+ *  `unclean` work) while that would lose work, unless `discard` is set. */
+export function archiveConversation(id: string, discard = false): Promise<Conversation> {
+  return request(`${conversationPath(id)}/archive`, discard ? { discard } : {});
+}
+
+/** The work a refused archive would have lost, or null for another error. */
+export function uncleanDirectory(error: unknown): UncleanDirectory | null {
+  if (!(error instanceof LocalRequestError) || error.code !== "unclean_directory") return null;
+  const unclean = (error.body as { unclean?: UncleanDirectory } | undefined)?.unclean;
+  return unclean && typeof unclean.changed === "number" ? unclean : null;
 }
 
 /** Tells the daemon the page the person has open. */

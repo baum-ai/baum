@@ -172,6 +172,9 @@ type Conversation struct {
 	// (SendQueued), sends another message (which they go before) or removes
 	// them.
 	Queued []Queued `json:"queued"`
+	// ArchivedAt is when the person archived it (Archive): the list leaves
+	// it out, and what baum made for it is gone.
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 }
 
 // Queued is a message waiting for the running turn to end.
@@ -421,6 +424,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	placed, err := s.place(ctx, id, request.Page)
 	if err != nil {
 		return Conversation{}, err
+	}
+	if placed.unlock != nil {
+		defer placed.unlock()
 	}
 	now := s.opts.Now().UTC()
 	c := Conversation{ID: id, Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,

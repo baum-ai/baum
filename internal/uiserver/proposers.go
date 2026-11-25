@@ -238,7 +238,6 @@ var settingsTargetSections = []struct{ prefix, section string }{
 	{agentcontext.TargetJobConcurrency, "computer"},
 	{agentcontext.TargetCodexApprovals, "computer"},
 	{agentcontext.TargetAgentEnv, "computer"},
-	{agentcontext.TargetPrompt, "prompts"},
 	{agentcontext.TargetTileType, agentcontext.SectionTiles},
 }
 
@@ -295,9 +294,8 @@ func (p *Proposers) settingsTarget(page agentcontext.PageContext, name string) (
 		return p.agentEnvTarget(strings.TrimPrefix(name, agentcontext.TargetAgentEnv)), nil
 	case strings.HasPrefix(name, agentcontext.TargetTileType):
 		return p.tileTypeTarget(strings.TrimPrefix(name, agentcontext.TargetTileType))
-	default:
-		return p.promptTarget(repos.GlobalPrompts, strings.TrimPrefix(name, agentcontext.TargetPrompt))
 	}
+	return nil, fmt.Errorf("Settings has no setting %q that takes proposals", name)
 }
 
 // prefsTarget is a target kept in the registry's preferences: value and
@@ -335,8 +333,9 @@ func (p *Proposers) prefsTarget(value, state func(repos.Preferences) any, valida
 }
 
 // anywhereTarget resolves the targets proposed under
-// agentcontext.ProposalAnywhere, which is not a page: the colour theme and
-// the choice of theme.
+// agentcontext.ProposalAnywhere, which is not a page: the colour theme, the
+// choice of theme, and the prompts, global (TargetPrompt+id) or a
+// repository's (RepositoryTarget(repository, TargetPrompt+id)).
 func (p *Proposers) anywhereTarget(_ agentcontext.PageContext, name string) (*target, error) {
 	switch name {
 	case agentcontext.TargetTheme:
@@ -344,7 +343,14 @@ func (p *Proposers) anywhereTarget(_ agentcontext.PageContext, name string) (*ta
 	case agentcontext.TargetThemeChoice:
 		return p.themeChoiceTarget(), nil
 	}
-	return nil, fmt.Errorf("only a colour theme is proposed from any page; %q is a change to a page", name)
+	scope, what := repos.GlobalPrompts, name
+	if repository, rest, ok := agentcontext.ParseRepositoryTarget(name); ok {
+		scope, what = repository, rest
+	}
+	if id, ok := strings.CutPrefix(what, agentcontext.TargetPrompt); ok && id != "" {
+		return p.promptTarget(scope, id)
+	}
+	return nil, fmt.Errorf("only a colour theme or a prompt is proposed from any page; %q is a change to a page", name)
 }
 
 // themeChange is a theme proposal's After. ThemeID, when set, names the
