@@ -1555,6 +1555,140 @@ requests and the inboxes and Pull requests stay empty: `jk` skips, and
 sessions are recorded as ended, so in `session-panel` nothing streams: it
 measures the panel open on an ended conversation, and the summary says so.
 
+#### Comparing with a baseline
+
+`--baseline REF` says whether this checkout is faster or slower than REF
+(a commit, branch or tag), for people and agents who keep a change only if
+it helps:
+
+```sh
+just desktop::profile cold-start --baseline origin/main
+just desktop::profile jk --baseline HEAD~1 --runs 12
+just desktop::profile review --baseline origin/main --metric long_frame_total
+```
+
+Both sides are this checkout's runner and scenarios, so the journey is the
+same; only the app under test differs. The baseline's app is its profiling
+frontend, viewer, sidecar and the Electron shell's main process bundled
+(`pnpm build`), all built from REF by REF's own recipes in a worktree that
+comparisons share,
+`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/profile-baselines/worktree`, and
+kept by commit beside it, so comparing against the same commit again
+builds nothing. The three most recent stay, and any a running comparison
+uses. The shell is built per side because its connecting screen and
+commands are part of what cold start measures; Electron itself is this
+checkout's on both sides (the container's `node_modules`), so a change of
+Electron's version does not show. A REF from before the profiling runner
+has no `__baumPerf.progress()` to drive, and one from before the Electron
+app cannot be built or run as this checkout's is, so the comparison stops
+before building, saying so.
+
+Each side runs in its own headless instance, `NAME-head` and `NAME-base`
+(`profile-head` and `profile-base` by default): two containers, each with
+its own daemon, which keeps running between launches as it does for a
+user. One comparison runs per name; a second with the same name is
+refused, so give concurrent ones their own `--name`. Their homes are
+emptied, but for the Claude Code they installed (`~/.local/bin/claude` and
+`~/.local/share/claude`), and seeded afresh with the same seed
+(`--seed-data=SEED`, 1 by default) at the same path, both by this
+checkout's generator, since the dataset a seed gives changes between
+commits. So both start from the same data and from no cache; the runners
+check that the datasets' digests match before the first run. A home of its
+own per side means one version's daemon never migrates or caches what the
+other then reads. `--copy-data` and `--workspace` do not apply.
+
+Since the baseline's daemon opens data this checkout wrote, it must read
+this checkout's store schemas. A baseline whose application database
+(`internal/appdb`) is an older schema is refused before building; one whose
+other stores cannot read the data fails to launch, and the failure quotes
+the daemon and says so. Compare against a ref with the same schemas, such
+as a commit after the migration.
+
+The runners take turns through files in the comparison's directory: each
+side's warm-up, then the runs in pairs whose order alternates (head then
+base, base then head, ...), so drift from other work on the machine, and
+any advantage of going first or second, falls on both sides alike. From
+the first warm-up on, `profile.sh` freezes the waiting side's container
+(`docker pause`) and thaws it before its own turn, which starts only once
+the other side is frozen; a side is frozen only after it handed the turn
+on, so never inside a run. Without that, work the waiting side's daemon,
+app or compositor does in the background would slow the other side's runs,
+and a change that added background work would look faster. What a side
+does in the background still slows its own runs, which is the cost a
+person would see. Ctrl-C stops both instances and thaws them.
+
+Before the first warm-up, and before every run, the runner waits until its
+container has been quiet for a second (under a tenth of a CPU in each
+quarter second; at most 5 minutes before the first, 15 s before a run). A
+new home's daemon works through its clones after it starts, and frozen it
+only gets on with that in its own turns, so that work can ride along in a
+side's first runs; a side just thawed also catches up on what came due.
+In one comparison on a loaded machine (load average 5.7), the first seven
+runs used about 16 s of container CPU each against 9 s for the rest, for
+the same journey, and the spread of `jk`'s `interaction_median` grew from
+about 2 ms (interquartile range) to 23 ms. Each run records the load
+average as it began, the time it waited and its container's CPU
+(`conditions` in `metrics.json`), and the summary warns when the machine
+was busy or a side's runs did uneven work. `BAUM_PROFILE_PAUSE=0` and
+`BAUM_PROFILE_SETTLE=0` turn pausing and settling off, to measure what
+each does; they are diagnostic, not settings.
+
+`--runs N` is the runs a side, 8 by default. Single cold starts on a
+loaded machine vary from 680 to 970 ms, while medians of five agree within
+about 3%. How many runs the test below needs depends on how many metrics
+a scenario reports: with five a side the smallest possible p is 0.008,
+which passes Holm's adjustment only when six or fewer other metrics are
+tested, and the scenarios test 7 (jk) to 16 (cold-start), so then only
+the headline can reach a verdict (the summary says so). Eight lets every
+metric reach one on a clear change; more find smaller ones. On a quiet
+machine, A/A comparisons of `jk` varied `interaction_median` by about
+1.8 ms (standard deviation), so 8 runs a side detect a 3.5 ms change of it
+four times in five and 12 runs a 3 ms change; with the uneven work above
+the same took 25 and 15 ms. When the summary warns of a busy machine or
+uneven work, run again rather than add runs.
+
+The verdict per metric: the two-sided Mann-Whitney U test, exact (every
+way to split the pooled runs into the two groups, ties at their mean rank),
+which assumes no distribution and, with few runs, cannot give a small p:
+three runs a side never show a change. The scenario's headline metric (or
+`--metric`) is tested on its own at p < 0.05; the others together, with
+Holm's adjustment at 0.05. A change must also move the median at least
+2 ms (1 for counts) and 2%, or it is called negligible. Counts that are the
+same in every run of each side (presses, rows, requests, DOM nodes) are
+compared as they are: a difference there is no noise but a journey or work
+that differs, and the summary lists it first after the headline.
+
+When nothing changed, about one comparison in ten still flags some metric
+(the headline about one in twenty, a wrong "faster" one in forty; the
+others, together, about one in twenty). So decide on the headline, and run
+a comparison again before keeping a change it calls faster.
+
+| Scenario | Headline |
+| --- | --- |
+| `cold-start` | `launch_to_content` |
+| `jk` | `interaction_median` |
+| `review` | `open_content` |
+| `filter` | `keystroke_median` |
+| `switch-inboxes` | `switch_content_median` |
+| `session-panel` | `open_duration` |
+| `pages` | none yet: a comparison needs `--metric` |
+
+A comparison goes to `target/profile/<scenario>-vs-<commit>-<time>/`:
+
+- `summary.md`: the verdict first (the headline, counts that differ, then
+  each other metric that changed, and whether the runs could show a change
+  at all), then every metric's median and range on both sides, the change,
+  p and the verdict, and both bundles' sizes.
+- `metrics.json`: every run's metrics with its side and its place in the
+  order, and each metric's comparison.
+- `head/` and `base/`: each side's own profile, as above.
+
+What a comparison cannot tell: both sides share the machine and its load
+(interleaving spreads it, it does not remove it); a frozen side thaws with
+its timers due, which fire before its run's page loads; and a change
+smaller than the floor, or than the runs' spread, shows as within noise
+rather than as no change.
+
 #### CPU profiles
 
 The runs say what is slow (interactions, frames, renders); the CPU profile
