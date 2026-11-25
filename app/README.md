@@ -2766,8 +2766,9 @@ line: taking the keys, the panel marks the latest message in view; `↑` with
 the caret at the composer's very start leaves it for the session as `Esc`
 does, and `j` past the last message, or `↓` at the session's end, goes back
 to it.
-Opened, its composer
-takes the keys; hidden, they go back to what had them before. The daemon's
+The composer grows with its text, re-measured as the panel's width changes,
+up to a quarter of the window (12rem at most), then scrolls. Opened, its
+composer takes the keys; hidden, they go back to what had them before. The daemon's
 routes are under `/api/console/` (see "Session panel conversations" in
 `oss/ARCHITECTURE.md`; `src/console-api.ts`).
 
