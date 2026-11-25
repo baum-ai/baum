@@ -8,6 +8,7 @@ import {
 } from "./check-host";
 import {
   AT_ONCE,
+  drawFrame,
   heartbeat,
   matrix,
   measured,
@@ -15,7 +16,7 @@ import {
   type CheckJob,
   type FrameSpec,
 } from "./check-runner";
-import type { ReadyMetrics } from "./protocol";
+import { HELLO_TIMEOUT, PING_TIMEOUT, PROTOCOL, type ReadyMetrics } from "./protocol";
 
 const job = (fields: Partial<CheckJob> = {}): CheckJob => ({
   id: "chk_1",
@@ -134,6 +135,94 @@ describe("running a job", () => {
     expect(result.runs).toHaveLength(matrix(job()).length);
     expect(new Set(result.problems.map((p) => p.sample))).toEqual(new Set(["example", "minimal"]));
     expect(result.problems[0]).toMatchObject({ code: "unresolved_citation", face: "glance" });
+  });
+});
+
+describe("a frame that never says hello", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.replaceChildren();
+  });
+  const spec: FrameSpec = {
+    sample: { name: "data", kind: "data", data: {} },
+    face: "glance",
+    size: "half",
+    theme: "light",
+    width: 488,
+    height: 180,
+  };
+  /** Draws one frame whose window answers a ping as `answer` says, and
+   *  returns its problems' codes and what the page sent it. */
+  async function silent({ pong = false, loaded = false } = {}) {
+    vi.useFakeTimers();
+    const sent: unknown[] = [];
+    // The frame's window as the runner holds it, taken as it is appended.
+    const stage = document.createElement("div");
+    document.body.append(stage);
+    let iframe: HTMLIFrameElement | undefined;
+    stage.append = (node) => {
+      HTMLElement.prototype.append.call(stage, node);
+      iframe = node as HTMLIFrameElement;
+      const target = iframe.contentWindow!;
+      target.postMessage = ((message: unknown) => {
+        sent.push(message);
+        if (pong && (message as { kind?: string }).kind === "ping")
+          window.dispatchEvent(
+            new MessageEvent("message", {
+              data: { protocol: PROTOCOL, kind: "pong" },
+              source: target,
+              origin: "null",
+            }),
+          );
+      }) as Window["postMessage"];
+    };
+    const drawing = drawFrame(stage, spec, job(), {});
+    if (loaded) iframe!.dispatchEvent(new Event("load"));
+    await vi.advanceTimersByTimeAsync(HELLO_TIMEOUT + PING_TIMEOUT + 100);
+    const outcome = await drawing;
+    return { codes: outcome.problems.map((p) => p.code), sent };
+  }
+
+  it("is a hang when it does not answer a ping: its script never yields", async () => {
+    const { codes, sent } = await silent();
+    expect(sent).toEqual([{ protocol: PROTOCOL, kind: "ping" }]);
+    expect(codes).toEqual(["hang"]);
+    expect(document.body.querySelector("iframe")).toBeNull();
+  });
+
+  it("only never started when it answers", async () => {
+    expect((await silent({ pong: true })).codes).toEqual(["no_hello"]);
+  });
+
+  it("only never started when its document loaded without the kit", async () => {
+    expect((await silent({ loaded: true })).codes).toEqual(["no_hello"]);
+  });
+});
+
+describe("a job with a hang", () => {
+  it("draws no more frames once one hung", async () => {
+    let drawn = 0;
+    const draw = async (_stage: HTMLElement, spec: FrameSpec) => {
+      drawn++;
+      return {
+        problems: [{ code: "hang", message: "x" }],
+        run: {
+          sample: spec.sample.name,
+          face: spec.face,
+          size: spec.size,
+          theme: spec.theme,
+          width: spec.width,
+          height: spec.height,
+          ready_ms: 0,
+          content_height: 0,
+          text_chars: 0,
+        },
+      };
+    };
+    const result = await runJob(job({ context: null }), document.body, draw);
+    // The frames already drawing finish; none starts after.
+    expect(drawn).toBe(AT_ONCE);
+    expect(result.problems.every((p) => p.code === "hang")).toBe(true);
   });
 });
 

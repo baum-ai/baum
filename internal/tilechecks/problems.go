@@ -6,8 +6,9 @@ import (
 )
 
 // The problem codes a result can hold. The daemon finds the first five
-// before anything is drawn; the check runner reports the rest, except hang,
-// which is the daemon's own.
+// before anything is drawn; the check runner reports the rest. Hang is the
+// daemon's when the runner goes quiet, and the runner's when a frame stops
+// answering while its page runs on; Report ends either as a hang.
 const (
 	CodeDefinitionInvalid  = "definition_invalid"
 	CodeDataSchemaInvalid  = "data_schema_invalid"
@@ -126,7 +127,8 @@ func clip(text string, most int) string {
 // card's fade covers it; an unresolved citation counts for the data and the
 // author's samples only, since an edge sample's citations need not resolve;
 // everything else is an error. Codes the check does not know are dropped,
-// and each problem gets its code's hint.
+// and so is hang, which Report handles itself; each problem gets its code's
+// hint.
 func classify(reported []Problem, kinds map[string]string) (errors, warnings []Problem) {
 	for _, p := range reported {
 		hint, known := Hints[p.Code]
