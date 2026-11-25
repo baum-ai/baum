@@ -3680,7 +3680,7 @@ address or session store path; a linked session's transcript is its own route
 `sessions` holds only sessions with at least one matched commit, ordered by when
 their transcript or checkpoint was last modified, oldest first; `commits` holds every commit of the pull request, oldest first, with `links`
 empty for a commit no session matched. `links` are ordered by confidence;
-`method` is `commit_ref` (creation evidence) or `files_overlap` (inferred contribution), and `source` is
+`method` is `commit_ref` (a recorded creation of the commit), and `source` is
 the store (`claude_code`, `codex`, `cursor` or `entire`), which differs from
 `vendor` for a session an Entire checkpoint recorded. A pull request none of
 whose commits match still answers `available` with `"sessions": []`. A subject

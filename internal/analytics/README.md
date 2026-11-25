@@ -100,7 +100,7 @@ agent-written when an indexed session of the repository recorded creating it
 (the matcher's `commit_ref` evidence), it carries an `Entire-Checkpoint`
 trailer, or a `Co-Authored-By` trailer names an agent by address
 (`locallink.CoauthoredAgents`); each commit counts once, under the strongest.
-The heuristic file-overlap match is not used, so the share is a floor. Under an
+Editing a commit's files does not count, so the share is a floor. Under an
 agent filter only that agent's sessions and trailers count; a checkpoint names
 no agent, so its commit stays in the denominator only. A clone without
 `user.email`, or that git cannot read, is named in `reasons`. Commit lists are

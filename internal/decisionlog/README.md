@@ -357,8 +357,9 @@ minutes.
 
 The commits are linked to the sessions on this machine with the local
 linkage of the review page (`locallink.LinkCommits`: checkpoint candidate discovery followed by
-independent creation or edit evidence; generation runs left out), and their links replace the ones
-they had:
+a recorded creation of each commit; generation runs left out), and their links replace the ones
+they had. Opening the store drops the edit-overlap (`files_overlap`) links earlier versions stored,
+marking the features they placed sessions in:
 
 - each run, the commits just recorded, made in the last 7 days (hosted looks
   back a day; a laptop may be off for days);
