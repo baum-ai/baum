@@ -5,9 +5,9 @@
 // app credential and the logs. This module only runs that command, reads the
 // credential and checks the daemon still answers.
 import { spawn } from "node:child_process";
-import { lstatSync, readFileSync } from "node:fs";
+import { accessSync, constants, lstatSync, readFileSync } from "node:fs";
 import { request } from "node:http";
-import { delimiter, isAbsolute, join, relative } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative } from "node:path";
 import type { Readable } from "node:stream";
 import { inspect } from "node:util";
 
@@ -88,14 +88,29 @@ export const TRANSLOCATED =
  *  macOS disk image is read-only and goes away when it is ejected: a daemon
  *  started from one keeps running without its executable and stops
  *  answering, and no other client replaces it. App Translocation runs a
- *  quarantined app from a random read-only mount that also goes away. The
- *  Tauri shell asked statfs whether the volume was read-only; Node cannot,
- *  so this checks the paths those mounts have. */
-export function misplacedMessage(exe: string, platform: NodeJS.Platform): string | null {
+ *  quarantined app from a random read-only mount that also goes away. An app
+ *  on a writable external volume is fine, so only a read-only one counts. */
+export function misplacedMessage(
+  exe: string,
+  platform: NodeJS.Platform,
+  readOnly: (path: string) => boolean = onReadOnlyVolume,
+): string | null {
   if (platform !== "darwin") return null;
   if (exe.includes("/AppTranslocation/")) return TRANSLOCATED;
-  if (exe.startsWith("/Volumes/")) return DISK_IMAGE;
+  if (readOnly(exe)) return DISK_IMAGE;
   return null;
+}
+
+/** Whether `path` is on a read-only file system. The Tauri shell read the
+ *  mount's flags with statfs, which Node does not expose; asking for write
+ *  access answers EROFS on a read-only mount whatever the file's mode. */
+export function onReadOnlyVolume(path: string): boolean {
+  try {
+    accessSync(dirname(path), constants.W_OK);
+    return false;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EROFS";
+  }
 }
 
 /** The target triple the sidecar build names the development binary after
@@ -146,12 +161,14 @@ export interface Cli {
    *  binary. A copy that could not be made is an error the connecting screen
    *  shows, never a fall back to the binary that would vanish. */
   stable?: () => Promise<string>;
+  /** Tests only: whether a path is on a read-only volume. */
+  readOnly?: (path: string) => boolean;
 }
 
 /** The app cannot run baum from where it is, or null when it can. */
 export function misplaced(cli: Cli): string | null {
   if (cli.override) return null;
-  return misplacedMessage(cli.exe, cli.platform);
+  return misplacedMessage(cli.exe, cli.platform, cli.readOnly);
 }
 
 /** The `baum` binary the app runs: `BAUM_DESKTOP_BAUM` while developing,

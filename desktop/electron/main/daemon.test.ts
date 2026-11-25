@@ -20,6 +20,7 @@ import {
   logTail,
   misplaced,
   misplacedMessage,
+  onReadOnlyVolume,
   parseStatus,
   readCredential,
   TRANSLOCATED,
@@ -59,13 +60,31 @@ afterEach(() => {
 });
 
 describe("where baum runs from", () => {
-  it("a writable app runs baum", () => {
-    expect(misplacedMessage("/Applications/baum.app/Contents/MacOS/baum", "darwin")).toBeNull();
-    expect(misplacedMessage("/Volumes/baum/baum.app/Contents/MacOS/baum", "linux")).toBeNull();
+  const image = (path: string) => path.startsWith("/Volumes/baum/");
+
+  it("a writable app runs baum, on an external volume too", () => {
+    expect(
+      misplacedMessage("/Applications/baum.app/Contents/MacOS/baum", "darwin", image),
+    ).toBeNull();
+    expect(
+      misplacedMessage(
+        "/Volumes/External/Applications/baum.app/Contents/MacOS/baum",
+        "darwin",
+        image,
+      ),
+    ).toBeNull();
+    expect(
+      misplacedMessage("/Volumes/baum/baum.app/Contents/MacOS/baum", "linux", image),
+    ).toBeNull();
+  });
+
+  it("only a read-only file system counts as read-only", () => {
+    expect(onReadOnlyVolume(join(tmpdir(), "baum"))).toBe(false);
+    expect(onReadOnlyVolume("/no/such/dir/baum")).toBe(false);
   });
 
   it("a disk image or a translocated app asks to move the app", () => {
-    expect(misplacedMessage("/Volumes/baum/baum.app/Contents/MacOS/baum", "darwin")).toBe(
+    expect(misplacedMessage("/Volumes/baum/baum.app/Contents/MacOS/baum", "darwin", image)).toBe(
       DISK_IMAGE,
     );
     expect(
@@ -82,6 +101,7 @@ describe("where baum runs from", () => {
       exe: "/Volumes/baum/baum.app/Contents/MacOS/baum",
       platform: "darwin" as const,
       bundled: "/bundled",
+      readOnly: image,
     };
     expect(misplaced(cli)).toBeNull();
     expect(await cliPath(cli)).toBe("/dev/baum");

@@ -37,7 +37,8 @@ export type Attach = "first" | "replacement";
  *  once. */
 export class HealthPause {
   #streamUp = false;
-  #wake: (() => void) | null = null;
+  /** The pauses still waiting; each removes itself when it ends. */
+  readonly #pending = new Set<() => void>();
 
   setStreamUp(up: boolean): void {
     this.#streamUp = up;
@@ -45,24 +46,26 @@ export class HealthPause {
   }
 
   wake(): void {
-    const wake = this.#wake;
-    this.#wake = null;
-    wake?.();
+    const pending = [...this.#pending];
+    this.#pending.clear();
+    for (const done of pending) done();
+  }
+
+  /** Tests only. */
+  get waiting(): number {
+    return this.#pending.size;
   }
 
   pause(): Promise<void> {
     const ms = this.#streamUp ? HEALTH_INTERVAL_STREAMING : HEALTH_INTERVAL;
     return new Promise((resolve) => {
-      const timer = setTimeout(done, ms);
-      const previous = this.#wake;
-      function done() {
+      const done = () => {
         clearTimeout(timer);
+        this.#pending.delete(done);
         resolve();
-      }
-      this.#wake = () => {
-        previous?.();
-        done();
       };
+      const timer = setTimeout(done, ms);
+      this.#pending.add(done);
     });
   }
 }

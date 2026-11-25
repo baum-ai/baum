@@ -2,24 +2,24 @@ import { describe, expect, it } from "vitest";
 import { configDir, localDataDir, sessionDataDir } from "./paths.ts";
 
 // The tests run on Linux, so Windows paths are checked by their last parts.
-const home = "/home/ada";
+const home = "/home/alice";
 
 describe("the app's directories", () => {
   it("are Tauri's on Linux, honouring absolute XDG variables", () => {
     const linux = { platform: "linux" as const, env: {}, home };
-    expect(configDir(linux)).toBe("/home/ada/.config/com.usebaum.desktop");
-    expect(localDataDir(linux)).toBe("/home/ada/.local/share/com.usebaum.desktop");
+    expect(configDir(linux)).toBe("/home/alice/.config/com.usebaum.desktop");
+    expect(localDataDir(linux)).toBe("/home/alice/.local/share/com.usebaum.desktop");
     const xdg = { ...linux, env: { XDG_CONFIG_HOME: "/x/config", XDG_DATA_HOME: "/x/data" } };
     expect(configDir(xdg)).toBe("/x/config/com.usebaum.desktop");
     expect(localDataDir(xdg)).toBe("/x/data/com.usebaum.desktop");
     const relative = { ...linux, env: { XDG_CONFIG_HOME: "config", XDG_DATA_HOME: "" } };
-    expect(configDir(relative)).toBe("/home/ada/.config/com.usebaum.desktop");
-    expect(localDataDir(relative)).toBe("/home/ada/.local/share/com.usebaum.desktop");
+    expect(configDir(relative)).toBe("/home/alice/.config/com.usebaum.desktop");
+    expect(localDataDir(relative)).toBe("/home/alice/.local/share/com.usebaum.desktop");
   });
 
   it("are Tauri's on macOS", () => {
     const mac = { platform: "darwin" as const, env: { XDG_DATA_HOME: "/ignored" }, home };
-    const support = "/home/ada/Library/Application Support/com.usebaum.desktop";
+    const support = "/home/alice/Library/Application Support/com.usebaum.desktop";
     expect(configDir(mac)).toBe(support);
     expect(localDataDir(mac)).toBe(support);
   });

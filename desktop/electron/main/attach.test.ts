@@ -228,4 +228,24 @@ describe("the health pause", () => {
       vi.useRealTimers();
     }
   });
+
+  it("keeps nothing of pauses that ended", async () => {
+    vi.useFakeTimers();
+    try {
+      const pause = new HealthPause();
+      for (let i = 0; i < 100; i++) {
+        const ended = pause.pause();
+        await vi.advanceTimersByTimeAsync(HEALTH_INTERVAL);
+        await ended;
+      }
+      expect(pause.waiting).toBe(0);
+      void pause.pause();
+      void pause.pause();
+      expect(pause.waiting).toBe(2);
+      pause.wake();
+      expect(pause.waiting).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
