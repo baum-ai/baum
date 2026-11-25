@@ -124,10 +124,12 @@ li:not([aria-current]) > .step-link:hover:not(:disabled) {
   margin-top: 4px;
 }
 .setup-content {
+  --setup-top: 68px;
+  --setup-gutter: 48px;
   position: relative;
   isolation: isolate;
   width: min(100%, 720px);
-  padding: 68px 48px 32px;
+  padding: var(--setup-top) var(--setup-gutter) 32px;
   text-align: left;
   align-self: center;
 }
@@ -254,6 +256,9 @@ summary:focus-visible {
 }
 .setup-footer .actions {
   justify-content: flex-end;
+}
+.setup-navigation {
+  display: contents;
 }
 #refresh {
   margin-right: auto;
@@ -424,13 +429,48 @@ input {
     padding: 28px 20px;
   }
   .setup-content {
-    padding: 40px 24px;
+    --setup-top: 40px;
+    --setup-gutter: 24px;
+    padding-bottom: 40px;
   }
   .setup-content h1 {
     font-size: var(--text-3xl);
   }
   .setup-card {
     padding: 20px;
+  }
+}
+/* Keep navigation in its own row so it cannot cover focused form controls. */
+@media (max-height: 600px) {
+  .onboarding {
+    height: 100vh;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .setup-rail,
+  .setup-scroll {
+    overflow-y: auto;
+  }
+  .setup-content {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-self: stretch;
+    padding: 0;
+  }
+  .setup-scroll {
+    position: relative;
+    isolation: isolate;
+    padding: var(--setup-top) var(--setup-gutter) 8px;
+  }
+  .setup-footer {
+    margin-top: 0;
+    padding: 12px var(--setup-gutter) 16px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .setup-navigation {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

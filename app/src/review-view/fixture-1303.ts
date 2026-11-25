@@ -1,7 +1,15 @@
 import type { Anchor, ReviewDocument, Section } from "@baum/viewer/review-document";
 import example from "../../../schema/review-example.json" with { type: "json" };
 import { chromeOf } from "./chrome";
-import { parseReviewV2, REVIEW_V2, type ReviewV2, type V2Risk, type V2Section } from "./document";
+import {
+  parseReviewV2,
+  REVIEW_V2,
+  type ReviewV2,
+  type V2Block,
+  type V2Point,
+  type V2Risk,
+  type V2Section,
+} from "./document";
 import { bodyOfSteps } from "./from-v1";
 import { HUNKS } from "./fixture-1303-hunks";
 import { withReview } from "./model";
@@ -62,6 +70,36 @@ function section(
       open_findings: 0,
       ...extra,
     },
+  };
+}
+
+/** A section whose points carry tones and whose body ends with notes of a
+ *  kind, as a section agent writes them. */
+function marked(
+  base: V2Section,
+  tones: V2Point["tone"][],
+  more: V2Point[],
+  notes: V2Block[],
+): V2Section {
+  return {
+    ...base,
+    body: [
+      ...base.body.map((block) =>
+        block.type === "points"
+          ? {
+              ...block,
+              items: [
+                ...block.items.map((point, at) => ({
+                  ...point,
+                  ...(tones[at] ? { tone: tones[at] } : {}),
+                })),
+                ...more,
+              ],
+            }
+          : block,
+      ),
+      ...notes,
+    ],
   };
 }
 
@@ -128,22 +166,50 @@ const SECTIONS: V2Section[] = [
     ],
     { review_score: 3 },
   ),
-  section(
-    "sec_encryption",
-    "Encryption",
-    "The relay never sees the keys.",
-    "Phone and daemon run a Noise IK handshake that the relay isn't part of. A phone is known by its key, and a message that fails to decrypt ends the session.",
-    ["h_session"],
+  marked(
+    section(
+      "sec_encryption",
+      "Encryption",
+      "The relay never sees the keys.",
+      "Phone and daemon run a Noise IK handshake that the relay isn't part of. A phone is known by its key, and a message that fails to decrypt ends the session.",
+      ["h_session"],
+      [
+        step(
+          "bhv_known_keys",
+          "Phones are known by their key",
+          "An unknown key without a live pairing code gets nothing back.",
+          [hunk("h_session")],
+        ),
+      ],
+      [],
+      { review_score: 3 },
+    ),
+    ["good"],
     [
-      step(
-        "bhv_known_keys",
-        "Phones are known by their key",
-        "An unknown key without a live pairing code gets nothing back.",
-        [hunk("h_session")],
-      ),
+      {
+        text: "**A message that fails to decrypt** ends the session.",
+        tone: "bad",
+        cites: [hunk("h_session")],
+      },
+      { text: "The relay's own TLS is **as before**.", tone: "muted", cites: [] },
     ],
-    [],
-    { review_score: 3 },
+    [
+      {
+        type: "note",
+        kind: "decision",
+        text: "Noise IK rather than TLS to the relay, so the relay never holds a key.",
+      },
+      {
+        type: "note",
+        kind: "caveat",
+        text: "A phone paired before this change has to be **paired again**.",
+      },
+      {
+        type: "note",
+        kind: "follow_up",
+        text: "Rotating a paired phone's key is left for a later change.",
+      },
+    ],
   ),
   section(
     "sec_requests",

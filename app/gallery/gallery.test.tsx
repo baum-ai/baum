@@ -159,7 +159,7 @@ function boundsProblems(sample: (typeof SAMPLES)[number]): string[] {
       if (lane.from !== undefined && (at === 0 || lane.from > (lanes[0]?.steps.length ?? 0)))
         out.push(`lane ${at} branches off a step that isn't there`);
   }
-  if (type === "table") {
+  if (type === "table" || (type === "columns" && "rows" in (data as object))) {
     const { columns, rows } = data as { columns: unknown[]; rows: unknown[][] };
     for (const [at, row] of rows.entries())
       if (row.length !== columns.length) out.push(`row ${at} isn't as long as the columns`);

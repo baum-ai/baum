@@ -10,6 +10,7 @@ import {
 import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
 import { parseSort, sortBy } from "./pr-sort";
 import { SortButton } from "./sort-menu";
+import { useTopLayer } from "./top-layer";
 import {
   Fragment,
   useEffect,
@@ -22,6 +23,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { createPortal } from "react-dom";
 import { formatCount } from "@baum/viewer/components/format";
 import { type Activity, activityCount, activityText, sumActivity } from "./pr-activity";
 import {
@@ -1014,13 +1016,19 @@ export function ColourSwatches({
   color: current,
   pick,
   className,
+  raised = false,
 }: {
   color: InboxColor;
   pick: (color: InboxColor) => void;
   className?: string;
+  /** Drawn as a menu over the page, in the top layer (`useTopLayer`). */
+  raised?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useTopLayer(ref, raised);
   return (
     <div
+      ref={ref}
       role="radiogroup"
       aria-label="Colour"
       className={className ? `inbox-swatches ${className}` : "inbox-swatches"}
@@ -1082,6 +1090,7 @@ function InboxHeadEdit({
           <ColourSwatches
             color={inbox.color}
             className="inbox-head-swatches"
+            raised
             pick={(color) => {
               colours.close();
               if (color !== inbox.color) update({ color });
@@ -2006,7 +2015,7 @@ export function UpNextPage({
           />
           <KeyBar place="inbox" className="upnext-keys" />
         </div>
-        <div ref={detail} className="upnext-detail">
+        <div key={line?.key} ref={detail} className="upnext-detail">
           {loading ? (
             <div className="upnext-panel">
               <LoadingStatus block>Loading your inbox…</LoadingStatus>
@@ -3032,19 +3041,44 @@ function SnoozeMenu({
   snooze: (until: SnoozeEnd) => void;
   now: number;
 }) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuFocus = useMenuFocus(menu, () => setMenu(false));
+  const trigger = useRef<HTMLButtonElement>(null);
+  const { ref: popup, onKeyDown } = useMenuFocus(menu, () => setMenu(false));
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const anchor = trigger.current;
+    const panel = popup.current;
+    const floating = panel?.parentElement;
+    if (!anchor || !panel || !floating) return;
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const height = panel.offsetHeight;
+      const gap = panel.offsetTop;
+      const below = rect.bottom + gap;
+      const top = below + height <= window.innerHeight - 4 ? below : rect.top - height - gap;
+      floating.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - panel.offsetWidth - 4))}px`;
+      floating.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4)) - gap}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [menu, popup]);
   useEffect(() => {
     if (!menu) return;
     const close = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenu(false);
+      const target = event.target as Node;
+      if (!trigger.current?.contains(target) && !popup.current?.contains(target)) setMenu(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
-  }, [menu]);
+  }, [menu, popup]);
   return (
-    <div className="upnext-snooze" ref={menuRef}>
+    <>
       <button
+        ref={trigger}
         type="button"
         className={cn("upnext-secondary", SECONDARY)}
         aria-haspopup="menu"
@@ -3057,23 +3091,34 @@ function SnoozeMenu({
           s
         </kbd>
       </button>
-      {menu ? (
-        <div role="menu" className="upnext-menu" {...menuFocus}>
-          {options.map((option, index) => (
-            <button
-              key={option.label}
-              type="button"
-              role="menuitem"
-              onClick={() => snooze(option.until)}
-            >
-              <span className="upnext-menu-key">{index + 1}</span>
-              <span className="upnext-menu-label">{option.label}</span>
-              <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
+      {menu
+        ? createPortal(
+            <div className="fixed top-0 left-0 z-30">
+              <div
+                role="menu"
+                aria-label="Snooze"
+                className="upnext-menu"
+                ref={popup}
+                onKeyDown={onKeyDown}
+              >
+                {options.map((option, index) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => snooze(option.until)}
+                  >
+                    <span className="upnext-menu-key">{index + 1}</span>
+                    <span className="upnext-menu-label">{option.label}</span>
+                    <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }
 

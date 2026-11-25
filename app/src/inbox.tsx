@@ -55,7 +55,7 @@ import { ListSection, type ListTone } from "./list";
 import { ListPagination, useListPage } from "./list-pagination";
 import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { canMerge, MergeDialog } from "./merge";
+import { canMerge, MergeDialog, readyToMerge } from "./merge";
 import { groupDotState, ReviewDot, reviewDotState } from "./review-dot";
 import {
   GITHUB_KEY_LABEL,
@@ -156,7 +156,7 @@ export function inboxGroups(
   const own = (row: Entry) =>
     row.review === "changes_requested" || row.checks === "failing" || row.merge === "conflict"
       ? 1
-      : row.merge === "ready"
+      : readyToMerge(row)
         ? 2
         : 3;
   const bucket = (row: Entry) =>

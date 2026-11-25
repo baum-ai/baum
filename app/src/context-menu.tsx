@@ -1,4 +1,5 @@
 import { MAC } from "./shortcuts";
+import { useTopLayer } from "./top-layer";
 import {
   useEffect,
   useId,
@@ -34,7 +35,8 @@ export type MenuItem = {
   note?: string;
   /** What can be done with the choice itself (a session in a picker): a
    *  right click on it, or the Menu key, Shift+F10 or ⌘. while it has the
-   *  keys, shows these in place of the menu. */
+   *  keys, shows these in a menu of their own over it, the list staying open
+   *  under them. */
   actions?: () => MenuItem[];
 };
 
@@ -51,9 +53,22 @@ type Open = {
   /** Where the keys go back to when it closes, when not to `anchor`: a menu
    *  a shortcut opened gives them back to where they were. */
   returnTo?: Element | null;
-  /** Counts the menus a choice's actions replaced it with, so each is a
-   *  menu of its own. */
-  nested?: number;
+  /** The actions of one of its choices, open over it. */
+  actions?: Actions;
+};
+
+/** A choice's actions, open over the menu that holds the choice. */
+type Actions = {
+  x: number;
+  y: number;
+  items: MenuItem[];
+  label: string;
+  /** The choice they are for: Escape gives it the keys back. */
+  choice: HTMLElement;
+  /** What opened the menu under them: picking one gives it the keys. */
+  opener: Element | null;
+  /** Counts the actions opened, so each is a menu of its own. */
+  count: number;
 };
 
 /** The key that opens the menu of what has the keys, as the app's own
@@ -87,6 +102,7 @@ function moveMenuFocus(event: KeyboardEvent): boolean {
 export function useMenuFocus(open: boolean, close: () => void) {
   const ref = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
+  useTopLayer(ref, open);
   useLayoutEffect(() => {
     if (!open) return;
     opener.current = document.activeElement;
@@ -142,18 +158,45 @@ export function useContextMenu() {
     const rect = anchor.getBoundingClientRect();
     setState({ x: rect.right, y: rect.bottom + 4, items, label, anchor, last, returnTo });
   };
-  // A choice's actions replace the menu where they were asked for; the keys
-  // still go back to what opened the first.
-  const nest = (x: number, y: number, items: MenuItem[], label: string, returnTo: Element | null) =>
-    setState((was) => ({ x, y, items, label, returnTo, nested: (was?.nested ?? 0) + 1 }));
+  // A choice's actions open over the menu where they were asked for, which
+  // stays open under them.
+  const nest = (actions: Omit<Actions, "count">) =>
+    setState((was) =>
+      was ? { ...was, actions: { ...actions, count: (was.actions?.count ?? 0) + 1 } } : was,
+    );
+  const closeAll = () => setState(null);
+  const closeActions = () => setState((was) => (was ? { ...was, actions: undefined } : was));
+  const { actions, ...list } = state ?? {};
   const menu = state ? (
-    <ContextMenu
-      key={state.nested ?? 0}
-      {...state}
-      id={id}
-      close={() => setState(null)}
-      nest={nest}
-    />
+    <>
+      <ContextMenu
+        {...(list as Omit<Open, "actions">)}
+        id={id}
+        group={id}
+        close={closeAll}
+        closeAll={closeAll}
+        covered={actions !== undefined}
+        nest={nest}
+      />
+      {actions ? (
+        <ContextMenu
+          key={actions.count}
+          x={actions.x}
+          y={actions.y}
+          items={actions.items}
+          label={actions.label}
+          returnTo={actions.choice}
+          onList
+          picked={actions.opener}
+          over={state.anchor}
+          id={`${id}-actions`}
+          group={id}
+          close={closeActions}
+          closeAll={closeAll}
+          nest={nest}
+        />
+      ) : null}
+    </>
   ) : null;
   return { open, openFrom, menu, id, anchor: state?.anchor ?? null };
 }
@@ -263,26 +306,50 @@ function ContextMenu({
   anchor,
   last,
   returnTo,
+  picked,
+  over,
   id,
+  group,
   close,
+  closeAll,
+  covered = false,
+  onList = false,
   nest,
-}: Open & {
+}: Omit<Open, "actions"> & {
   id: string;
+  /** Names the menu and the actions open over it alike, so a click in one
+   *  is not a click outside the other. */
+  group: string;
+  /** Closes this menu: a choice's actions close and leave its list open. */
   close: () => void;
-  nest: (x: number, y: number, items: MenuItem[], label: string, returnTo: Element | null) => void;
+  /** Closes this menu and the one under or over it. */
+  closeAll: () => void;
+  /** Whether a choice's actions are open over it: they have the keys. */
+  covered?: boolean;
+  /** Whether it is a choice's actions, open over the list that holds it. */
+  onList?: boolean;
+  /** Where the keys go when a choice is picked, when not where they go when
+   *  it closes: the actions of a choice give them to what opened its list. */
+  picked?: Element | null;
+  /** For a choice's actions, the button the list under them hangs from. */
+  over?: HTMLElement;
+  nest: (actions: Omit<Actions, "count">) => void;
 }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState({ left: x, top: y });
   // What had the keys before the menu took them, given back when it closes.
   const [opener] = useState(() => returnTo ?? anchor ?? document.activeElement);
-  const giveBack = () => {
-    if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+  const giveTo = (element: Element | null | undefined) => {
+    if (element instanceof HTMLElement && element.isConnected) element.focus();
   };
+  const giveBack = () => giveTo(opener);
   const dismiss = () => {
     close();
     giveBack();
   };
   const choices = () => [...(ref.current?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
+  // Raised again when it moves to another target, over what opened since.
+  useTopLayer(ref, `${x},${y}`);
   // Kept inside the window, measured before it is painted: under its button,
   // its right edge on the button's, or above the button when there is no
   // room below.
@@ -300,19 +367,38 @@ function ContextMenu({
     const list = choices();
     (last ? list[list.length - 1] : list[0])?.focus();
   }, [x, y]);
-  // Set once a choice's actions replaced the menu: until its listeners go,
-  // what the new menu does (taking the keys) must not close it.
-  const replaced = useRef(false);
-  // A click elsewhere, a scroll or the window losing focus closes it.
+  // A click elsewhere, a scroll or the window losing focus closes it, and
+  // the menu under or over it.
   useEffect(() => {
-    const shut = () => {
-      if (!replaced.current) close();
-    };
+    const shut = closeAll;
     const outside = (event: PointerEvent) => {
       const target = event.target as Node;
       if (ref.current?.contains(target)) return;
+      // A click in the list under a choice's actions closes only them; one in
+      // the actions leaves their list open.
+      if (target instanceof Element && target.closest(`[data-menu-group="${group}"]`)) {
+        if (onList) {
+          close();
+          // The click that follows only dismissed the actions: it must not
+          // also pick the choice under it.
+          const swallow = (click: Event) => {
+            click.preventDefault();
+            click.stopImmediatePropagation();
+          };
+          document.addEventListener("click", swallow, { capture: true, once: true });
+          // A press that ends in no click (a drag off it) leaves the next
+          // click alone.
+          document.addEventListener(
+            "pointerdown",
+            () => document.removeEventListener("click", swallow, true),
+            { capture: true, once: true },
+          );
+        }
+        return;
+      }
+      const button = anchor ?? over;
       // Its own button toggles it: the click that follows leaves it closed.
-      if (anchor?.contains(target)) anchor.dataset.closing = "";
+      if (button?.contains(target)) button.dataset.closing = "";
       shut();
     };
     // A menu hung under its button closes only when what scrolled moves the
@@ -320,7 +406,8 @@ function ContextMenu({
     // as the session panel's transcript following its agent, leaves it open.
     const scrolled = (event: Event) => {
       const target = event.target;
-      if (anchor && target instanceof Element && !target.contains(anchor)) return;
+      const button = anchor ?? over;
+      if (button && target instanceof Element && !target.contains(button)) return;
       shut();
     };
     document.addEventListener("pointerdown", outside, true);
@@ -333,12 +420,12 @@ function ContextMenu({
       window.removeEventListener("resize", shut);
       window.removeEventListener("blur", shut);
     };
-  }, [close, anchor]);
+  }, [close, closeAll, anchor, over, group, onList]);
   // Escape closes it wherever the keys are, and does nothing else: the page's
   // own Escape (clearing its row) waits for the next one.
   useEffect(() => {
     const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || replaced.current) return;
+      if (event.key !== "Escape" || covered) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       dismiss();
@@ -393,7 +480,8 @@ function ContextMenu({
       ref={ref}
       id={id}
       aria-label={label ? `Actions for ${label}` : "Actions"}
-      className="context-menu fixed z-50 w-max max-w-[320px] min-w-[200px]"
+      className="context-menu fixed w-max max-w-[320px] min-w-[200px]"
+      data-menu-group={group}
       style={{ left: at.left, top: at.top }}
       onKeyDown={keys}
       onContextMenu={(event) => {
@@ -409,8 +497,7 @@ function ContextMenu({
           x = rect.left + 12;
           y = rect.bottom;
         }
-        replaced.current = true;
-        nest(x, y, actions, item.label, opener);
+        nest({ x, y, items: actions, label: item.label, choice, opener: picked ?? opener });
       }}
     >
       {items.map((item, index) => (
@@ -422,8 +509,8 @@ function ContextMenu({
           select={() => {
             // The keys go back to the row first, so a dialog the choice
             // opens takes them from there and gives them back to it.
-            close();
-            giveBack();
+            closeAll();
+            giveTo(picked ?? opener);
             item.onSelect();
           }}
         />

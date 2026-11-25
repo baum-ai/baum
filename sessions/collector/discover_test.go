@@ -173,6 +173,38 @@ func TestFindSessionsPreviousPaths(t *testing.T) {
 	}
 }
 
+// A session in a checkout under a checkout parent, gone since, belongs to the
+// repository, and its checkout is where it started, not the parent.
+func TestFindSessionsCheckoutParents(t *testing.T) {
+	fx := newFixture(t)
+	parent := filepath.Join(filepath.Dir(fx.claudeDir), "fixes", "clone")
+	claude := filepath.Join(parent, "job1", "checkout")
+	codex := filepath.Join(parent, "job2", "checkout")
+	const claudeID = "99999999-0000-4000-8000-000000000009"
+	writeFile(t, filepath.Join(fx.claudeDir, claudecode.EncodeProjectDir(claude), claudeID+".jsonl"), claudeTranscript(claudeID, claude))
+	writeFile(t, filepath.Join(fx.codexDir, "2026", "07", "04", "rollout-2026-07-04T10-00-00-codex-fix.jsonl"), codexRollout("codex-fix", codex))
+	opts := fx.options()
+	opts.CheckoutParents = []string{parent}
+	sessions, _, err := FindSessions(fx.repo, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{claudeID: claude, "codex-fix": codex}
+	for _, s := range sessions {
+		checkout, ok := want[s.SessionID]
+		if !ok {
+			continue
+		}
+		delete(want, s.SessionID)
+		if s.RepoRoot != parent || s.WorktreeRoot != checkout {
+			t.Errorf("session %s roots = %q, %q; want %q, %q", s.SessionID, s.RepoRoot, s.WorktreeRoot, parent, checkout)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("sessions in the fixes' checkouts not found: %v", want)
+	}
+}
+
 func TestFindSessionsIncludesCursorTreesAtPreviousPath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		// The fixture store records POSIX workspace paths, which no drive-rooted

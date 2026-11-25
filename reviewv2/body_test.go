@@ -2,6 +2,9 @@ package reviewv2
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -157,6 +160,55 @@ func TestCheckBodyCutsAndCaps(t *testing.T) {
 	}
 	if none, _ := CheckBody([]Block{{Type: BlockProse}}, refs); len(none) != 0 {
 		t.Errorf("an empty body was filled: %+v", none)
+	}
+}
+
+// A point keeps a tone other than plain and a note a kind it knows; any
+// other value is dropped, and a kind on another block is not kept.
+func TestCheckBodyKeepsToneAndKind(t *testing.T) {
+	body := []Block{
+		{Type: BlockPoints, Items: []Point{{Text: "Good.", Tone: "good"}, {Text: "Plain.", Tone: "plain"}, {Text: "Odd.", Tone: "loud"}}},
+		{Type: BlockNote, Kind: "caveat", Text: "Careful."},
+		{Type: BlockNote, Kind: "rant", Text: "Hm."},
+		{Type: BlockProse, Kind: "caveat", Text: "Prose."},
+	}
+	got, _ := CheckBody(body, nil)
+	if tones := []string{got[0].Items[0].Tone, got[0].Items[1].Tone, got[0].Items[2].Tone}; !slices.Equal(tones, []string{"good", "", ""}) {
+		t.Errorf("tones = %v", tones)
+	}
+	if got[1].Kind != "caveat" || got[2].Kind != "" || got[3].Kind != "" {
+		t.Errorf("kinds = %q %q %q", got[1].Kind, got[2].Kind, got[3].Kind)
+	}
+}
+
+// review-2.json lists the same point tones and note kinds as the host keeps.
+func TestSchemaListsToneAndKind(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "schema", "review-2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Defs struct {
+			Block struct {
+				Properties struct {
+					Kind  struct{ Enum []string } `json:"kind"`
+					Items struct {
+						Items struct {
+							Properties struct {
+								Tone struct{ Enum []string } `json:"tone"`
+							} `json:"properties"`
+						} `json:"items"`
+					} `json:"items"`
+				} `json:"properties"`
+			} `json:"v2Block"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	props := schema.Defs.Block.Properties
+	if !slices.Equal(props.Kind.Enum, NoteKinds) || !slices.Equal(props.Items.Items.Properties.Tone.Enum, PointTones) {
+		t.Errorf("kinds %v, tones %v", props.Kind.Enum, props.Items.Items.Properties.Tone.Enum)
 	}
 }
 

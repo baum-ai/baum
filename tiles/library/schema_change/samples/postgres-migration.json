@@ -135,6 +135,14 @@
             "note": "Backfilled from owner_email"
           },
           {
+            "name": "owner_email",
+            "change": "unchanged",
+            "before": "TEXT NOT NULL",
+            "after": "TEXT NOT NULL",
+            "destructive": false,
+            "note": "The backfill copies it into billing_email"
+          },
+          {
             "name": "plan",
             "change": "altered",
             "before": "TEXT",

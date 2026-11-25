@@ -51,25 +51,27 @@ describe("the tile route's pending cards", () => {
     expect(parseDrafts(undefined)).toEqual([]);
   });
 
-  it("stands each card on its section, or on the first listed one", () => {
+  it("stands each card on its section, the Overview, or the first listed one", () => {
     const drafts = [
       card({ tile: "draft_1", section: "sec_b" }),
       card({ tile: "draft_2", section: "context" }),
       card({ tile: "draft_3", section: "sec_gone" }),
       card({ tile: "draft_4" }),
+      card({ tile: "draft_5", section: "overview" }),
     ];
     const listed = ["context", "sec_a", "sec_b"];
     const on = (section: string) => draftsOn(drafts, section, listed).map((d) => d.tile);
-    expect(on("context")).toEqual(["draft_2", "draft_3", "draft_4"]);
+    expect(on("context")).toEqual(["draft_2", "draft_3"]);
     expect(on("sec_a")).toEqual([]);
     expect(on("sec_b")).toEqual(["draft_1"]);
+    // A card naming no section stands on the Overview, as its tile will.
+    expect(on("overview")).toEqual(["draft_4", "draft_5"]);
     // Without Where this fits listed, every card for a section not listed
     // stands on the first section.
     expect(draftsOn(drafts, "sec_a", ["sec_a"]).map((d) => d.tile)).toEqual([
       "draft_1",
       "draft_2",
       "draft_3",
-      "draft_4",
     ]);
   });
 });

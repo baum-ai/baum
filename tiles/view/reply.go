@@ -10,7 +10,8 @@ import (
 
 // ReplyDiagram is a native tile as a model writes it: the fields of
 // its type are set, the others absent. Columns is a columns tile's columns
-// (objects) or a table's headings (strings).
+// (objects) or a table's headings (strings), and Rows a columns tile's
+// compared items or a table's cells.
 type ReplyDiagram struct {
 	ID      string          `json:"id"`
 	Type    string          `json:"type"`
@@ -21,7 +22,7 @@ type ReplyDiagram struct {
 	Columns json.RawMessage `json:"columns,omitempty"`
 	Actors  []string        `json:"actors,omitempty"`
 	Steps   []replySeqStep  `json:"steps,omitempty"`
-	Rows    [][]Cell        `json:"rows,omitempty"`
+	Rows    json.RawMessage `json:"rows,omitempty"`
 }
 
 type replyLane struct {
@@ -120,16 +121,16 @@ func diagramSchema(kind string) string {
               }
             }}`, MaxLanes, nullable(MaxLaneLabel), MaxLaneSteps, MaxLaneSteps, moreRequired, text(MaxStepTitle), nullable(MaxNote), moreProperty, tone), `"lanes"`)
 	case TypeColumns:
+		item := fmt.Sprintf(`{"type": "object", "additionalProperties": false, "required": ["title", "note"], "properties": {"title": %s, "note": %s}}`, text(MaxItemTitle), nullable(MaxNote))
 		return diagram(fmt.Sprintf(`"columns": {"type": "array", "minItems": %d, "maxItems": %d, "items": {
               "type": "object", "additionalProperties": false, "required": ["label", "tone", "items"],
               "properties": {
                 "label": %s, "tone": %s,
-                "items": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
-                  "type": "object", "additionalProperties": false, "required": ["title", "note"],
-                  "properties": {"title": %s, "note": %s}
-                }}
+                "items": {"type": ["array", "null"], "minItems": 1, "maxItems": %d, "items": %s, "description": "The column's list; null when rows compare the columns."}
               }
-            }}`, MinColumns, MaxColumns, text(MaxColumnLabel), tone, MaxColumnItems, text(MaxItemTitle), nullable(MaxNote)), `"columns"`)
+            }},
+            "rows": {"type": ["array", "null"], "description": "When the columns are states of one thing (before and after), the items compared one row at a time: one item per column, the same item in each state, null where a column has none; then every column's items are null. Null for lists of different things.", "minItems": 1, "maxItems": %d, "items": {"type": "array", "minItems": %d, "maxItems": %d, "items": {"anyOf": [%s, {"type": "null"}]}}}`,
+			MinColumns, MaxColumns, text(MaxColumnLabel), tone, MaxColumnItems, item, MaxColumnItems, MinColumns, MaxColumns, item), `"columns", "rows"`)
 	case TypeSequence:
 		return diagram(fmt.Sprintf(`"actors": {"type": "array", "minItems": %d, "maxItems": %d, "items": %s},
             "steps": {"type": "array", "minItems": 1, "maxItems": %d, "items": {
@@ -211,11 +212,24 @@ func diagramData(d ReplyDiagram) (any, bool) {
 		}
 		out := ColumnsData{Caption: caption, Source: source}
 		for _, c := range columns {
-			column := Column{Label: c.Label, Tone: str(c.Tone), Items: []ColumnItem{}}
+			column := Column{Label: c.Label, Tone: str(c.Tone)}
 			for _, item := range c.Items {
 				column.Items = append(column.Items, ColumnItem{Title: item.Title, Note: str(item.Note)})
 			}
 			out.Columns = append(out.Columns, column)
+		}
+		var rows [][]*replyItem
+		if len(d.Rows) > 0 && json.Unmarshal(d.Rows, &rows) != nil {
+			return nil, false
+		}
+		for _, r := range rows {
+			row := make([]*ColumnItem, len(r))
+			for i, item := range r {
+				if item != nil {
+					row[i] = &ColumnItem{Title: item.Title, Note: str(item.Note)}
+				}
+			}
+			out.Rows = append(out.Rows, row)
 		}
 		return out, true
 	case TypeSequence:
@@ -229,10 +243,12 @@ func diagramData(d ReplyDiagram) (any, bool) {
 		return out, true
 	case TypeTable:
 		var headings []string
-		if json.Unmarshal(d.Columns, &headings) != nil || len(headings) == 0 || len(d.Rows) == 0 {
+		var rows [][]Cell
+		if json.Unmarshal(d.Columns, &headings) != nil || len(headings) == 0 ||
+			json.Unmarshal(d.Rows, &rows) != nil || len(rows) == 0 {
 			return nil, false
 		}
-		return TableData{Caption: caption, Source: source, Columns: headings, Rows: d.Rows}, true
+		return TableData{Caption: caption, Source: source, Columns: headings, Rows: rows}, true
 	}
 	return nil, true
 }

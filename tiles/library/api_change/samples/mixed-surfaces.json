@@ -38,7 +38,15 @@
         "name": "schema/widget-1.json",
         "change": "changed",
         "auth": null,
-        "request": [],
+        "request": [
+          {
+            "field": "name",
+            "change": "unchanged",
+            "before": "string, 1–80 characters",
+            "after": "string, 1–80 characters",
+            "required": true
+          }
+        ],
         "response": [
           {
             "field": "tags",

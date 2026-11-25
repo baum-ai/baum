@@ -27,6 +27,39 @@ async function launchURL(): Promise<string> {
   throw new Error("the daemon did not publish its credential");
 }
 
+test("the short report dialog shows its actions and restores focus to Diagnostics", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto(await launchURL());
+  await openSettings(page, "This computer");
+
+  const check = page.getByRole("button", { name: "Check this computer", exact: true });
+  await check.focus();
+  await check.press("Enter");
+  const diagnostics = page.getByRole("dialog", { name: "Check this computer" });
+  const report = diagnostics.getByRole("button", { name: "Report a problem" });
+  await report.focus();
+  await report.press("Enter");
+
+  const dialog = page.getByRole("dialog", { name: "Report a problem" });
+  await expect(dialog.getByRole("textbox", { name: "What happened?" })).toBeFocused();
+  await expect(page.locator("dialog[open]")).toHaveCount(1);
+  const { y, height } = (await dialog.boundingBox())!;
+  expect(y).toBeGreaterThan(0);
+  expect(y + height / 2).toBeCloseTo(240, 0);
+  await dialog.getByRole("button", { name: "All diagnostics" }).click();
+  await expect(dialog.getByLabel("What is attached")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeInViewport({ ratio: 1 });
+  await expect(dialog.getByRole("button", { name: "Open issue" })).toBeInViewport({ ratio: 1 });
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(report).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(check).toBeFocused();
+});
+
 test("PR decisions share filtered results and distinguish pending relevance from an empty result", async ({
   page,
 }) => {
@@ -518,6 +551,59 @@ test("a session's transcript opens from the Sessions page and grows without a re
   });
   await page.keyboard.press("u");
   await expect(page.getByRole("region", { name: "Ended recently", exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test("a long session's transcript renders its earlier turns as the reader scrolls up to them", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const marker = join(process.env.BAUM_APP_STATE_DIR ?? "", "live-transcript");
+  const turns = Array.from({ length: 400 }, (_, i) => `Long session turn ${i + 1}`);
+  await writeFile(marker, `running\n${turns.join("\n")}\n`);
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
+  const runningNow = page.getByRole("region", { name: "Running now", exact: true });
+  const title = runningNow.getByRole("link", { name: /^Open transcript/ });
+  await expect(title).toBeVisible({ timeout: 10000 });
+  // Opened at its address: the card may still show the session's last reply.
+  await page.goto(new URL((await title.getAttribute("href")) ?? "", page.url()).href);
+  const transcript = page.getByRole("region", { name: "Transcript", exact: true });
+  const turn = (n: number) => transcript.getByText(`Long session turn ${n}`, { exact: true });
+  // Opened at its end, it has its latest turns and not its first.
+  await expect(turn(400)).toBeVisible();
+  const earlier = transcript.getByRole("button", { name: /^Show \d+ earlier turns$/ });
+  await expect(earlier).toBeVisible();
+  await expect(turn(1)).toHaveCount(0);
+  // Scrolled to the top of what it has, the turns above come in and the
+  // turn the reader was at stays where it was.
+  const main = page.locator(".local-main");
+  for (let i = 0; i < 10 && (await earlier.count()); i++) {
+    const before = await earlier.textContent();
+    // In one task, so the turns above cannot come in between: scrolled to
+    // the top, where its first turn is.
+    const top = await main.evaluate((m) => {
+      m.scrollTop = 0;
+      const first = m.querySelector('[aria-label="Transcript"] ol > li');
+      first?.setAttribute("data-kept", "");
+      // Its content: a turn's padding changes once it is no longer first.
+      return (first?.firstElementChild ?? first)?.getBoundingClientRect().top ?? Number.NaN;
+    });
+    // The button names the turns still to come, and goes with the last.
+    await expect
+      .poll(async () => ((await earlier.count()) ? await earlier.textContent() : null))
+      .not.toBe(before);
+    const kept = transcript.locator("ol > li[data-kept]");
+    const now = await kept.evaluate(
+      (li) => (li.firstElementChild ?? li).getBoundingClientRect().top,
+    );
+    expect(Math.abs(now - top)).toBeLessThan(4);
+    await kept.evaluate((li) => li.removeAttribute("data-kept"));
+  }
+  await expect(turn(1)).toBeAttached();
+  await expect(earlier).toHaveCount(0);
+  await writeFile(marker, `ended\n${turns.join("\n")}\n`);
   expect(errors).toEqual([]);
 });
 

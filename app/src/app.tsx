@@ -1224,9 +1224,13 @@ function Workspace({ url }: { url: UrlState }) {
   });
   // One notice for every repository GitHub could not refresh, whichever
   // refresh failed: the cause and the fix are usually the same connection.
+  // One pull request's details failing to read is not the repository failing
+  // to refresh: that read backs off on its own while the polls go on.
   const unsynced = [
     ...new Set([
-      ...background.filter((s) => s.error).map((s) => s.repository),
+      ...background
+        .filter((s) => s.error && s.error !== "metadata_unavailable")
+        .map((s) => s.repository),
       ...rates.filter((r) => r.error).map((r) => r.repository),
     ]),
   ];

@@ -204,7 +204,7 @@ it("stays open while a box beside its button scrolls, and closes when its button
   beside.remove();
 });
 
-it("replaces the menu with a choice's actions on the actions key or a right click", async () => {
+it("opens a choice's actions over its menu on the actions key or a right click", async () => {
   const end = vi.fn();
   const sessions: MenuItem[] = [
     { label: "New session", onSelect: () => undefined },
@@ -214,6 +214,9 @@ it("replaces the menu with a choice's actions on the actions key or a right clic
       actions: () => [{ label: "Archive session", danger: true, onSelect: end }],
     },
   ];
+  const menus = () => [...document.querySelectorAll<HTMLElement>('[role="menu"]')];
+  const labels = (menu: HTMLElement) =>
+    [...menu.querySelectorAll(".context-menu-label")].map((label) => label.textContent);
   await render(sessions);
   await act(async () => button().click());
   await key("ArrowDown");
@@ -221,20 +224,62 @@ it("replaces the menu with a choice's actions on the actions key or a right clic
   // The menu keeps its keys from the page, so it handles the actions key
   // itself.
   await key(".", document.activeElement!, true);
-  expect(choices().map((c) => c.querySelector(".context-menu-label")?.textContent)).toEqual([
-    "Archive session",
-  ]);
-  expect(menu()!.getAttribute("aria-label")).toBe("Actions for Old session");
+  // The list stays open under the actions.
+  expect(menus().map(labels)).toEqual([["New session", "Old session"], ["Archive session"]]);
+  expect(menus()[1]!.getAttribute("aria-label")).toBe("Actions for Old session");
   expect(focused()).toBe("Archive session");
+  // Escape closes only the actions, giving the keys back to their choice.
+  await key("Escape");
+  expect(menus().map(labels)).toEqual([["New session", "Old session"]]);
+  expect(focused()).toBe("Old session");
+
+  // A right click on the choice opens them too; a click on the list under
+  // them closes only them. The press gives the choice the keys first, as a
+  // browser does.
+  const right = async () =>
+    act(async () => {
+      choices()[1]!.focus();
+      choices()[1]!.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 50,
+          clientY: 60,
+        }),
+      );
+    });
+  await right();
+  expect(menus()).toHaveLength(2);
+  await act(async () => {
+    choices()[0]!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    choices()[0]!.focus();
+  });
+  expect(menus().map(labels)).toEqual([["New session", "Old session"]]);
+  // The click that follows the press only dismissed them: it picks nothing.
   await act(async () => choices()[0]!.click());
+  expect(menus().map(labels)).toEqual([["New session", "Old session"]]);
+  expect(end).not.toHaveBeenCalled();
+
+  // Picking an action closes both and gives the keys to the list's button.
+  await right();
+  await act(async () => menus()[1]!.querySelector<HTMLElement>("[role^=menuitem]")!.click());
   expect(end).toHaveBeenCalledOnce();
-  expect(menu()).toBeNull();
+  expect(menus()).toHaveLength(0);
   expect(document.activeElement).toBe(button());
+
+  // A click outside both closes both.
+  await act(async () => button().click());
+  await right();
+  await act(async () => {
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  });
+  expect(menus()).toHaveLength(0);
 
   // A choice with no actions keeps the menu.
   await act(async () => button().click());
   await key(".", document.activeElement!, true);
   expect(focused()).toBe("New session");
+  expect(menus()).toHaveLength(1);
 });
 
 it("opens the same menu on a right click on the row", async () => {

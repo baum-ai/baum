@@ -13,6 +13,7 @@ import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
 import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
+import { ColumnsDiagram, comparedText, wordDiff } from "./native-tiles";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
@@ -406,7 +407,7 @@ describe("a section's views", () => {
     expect(viewTab(empty, "Overview").getAttribute("aria-selected")).toBe("true");
   });
 
-  it("draws the section's code with its own notes, generated files folded at the end", async () => {
+  it("draws the section's code with nothing under its hunks, generated files folded at the end", async () => {
     const container = await page("pane=section&section=sec_allowlist&section_view=code");
     const code = viewPanel(container);
     expect(
@@ -414,11 +415,8 @@ describe("a section's views", () => {
         each.getAttribute("aria-label"),
       ),
     ).toEqual(["oss/internal/uiserver/remote.go diff"]);
-    const notes = [...code.querySelectorAll<HTMLElement>('ul[aria-label="Notes"] li')];
-    expect(notes.map((note) => note.dataset.note)).toEqual(["step", "risk", "step"]);
-    // A note leads back to the section's Overview, at the risk it names.
-    await click(button(notes[1]!, "In Overview"));
-    expect([search.get("pane"), search.get("risk_id")]).toEqual(["risk", "rsk_always_allow"]);
+    // The section's steps and risks are in its Overview, not repeated under the code.
+    expect(code.textContent).not.toContain("Always allow");
     act(() => root?.unmount());
     const deps = await page("pane=section&section=sec_deps&section_view=code");
     const generated = viewPanel(deps);
@@ -427,7 +425,7 @@ describe("a section's views", () => {
     expect(generated.querySelector('[aria-label="oss/go.sum diff"]')).not.toBeNull();
   });
 
-  it("names the tests the section's test hunks add, above their diffs", async () => {
+  it("heads each test file's diff with its tests and helpers, a row opening its line", async () => {
     const document = review1303();
     const hunk = document.index.hunks.find((each) => each.id === "h_remote_test")!;
     hunk.diff!.lines = [
@@ -435,14 +433,51 @@ describe("a section's views", () => {
       { kind: "add", text: "func TestRemoteRoutesCoverLocalAPI(t *testing.T) {", new_line: 21 },
       { kind: "add", text: "}", new_line: 22 },
     ];
+    const path = "oss/internal/uiserver/remote_test.go";
     const container = await page("pane=section&section=sec_allowlist&section_view=tests", document);
-    const names = viewPanel(container).querySelector('[aria-label="Tests added or changed"]');
-    expect(names?.textContent).toContain("TestRemoteRoutesCoverLocalAPI");
-    // The fixture's own hunk adds no test, so it lists none.
-    act(() => root?.unmount());
-    const plain = await page("pane=section&section=sec_allowlist&section_view=tests");
-    expect(viewPanel(plain).querySelector('[aria-label="Tests added or changed"]')).toBeNull();
-    expect(viewPanel(plain).querySelector('[aria-label$=" diff"]')).not.toBeNull();
+    const panel = viewPanel(container);
+    expect(panel.querySelector('[aria-label="Test changes"]')?.textContent).toBe("Tests: 1 added");
+    const file = panel.querySelector<HTMLElement>(`[aria-label="${path} diff"]`)!;
+    // The list sits in the file's own diff, above its code.
+    const tests = file.querySelector<HTMLElement>(`[aria-label="Tests in ${path}"]`)!;
+    expect(tests.textContent).toContain("TestRemoteRoutesCoverLocalAPI");
+    expect(tests.compareDocumentPosition(file.querySelector("table")!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // What the file changes beside its tests is listed under them.
+    expect(file.querySelector(`[aria-label="Helpers in ${path}"]`)?.textContent).toContain(
+      "imports",
+    );
+    const original = Element.prototype.scrollIntoView;
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      await click(button(tests, "TestRemoteRoutesCoverLocalAPI"));
+      const row = scroll.mock.contexts[0] as HTMLElement;
+      expect(row.closest(`[aria-label="${path} diff"]`)).not.toBeNull();
+      expect(row.dataset.newLine).toBe("21");
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("folds a file's long list of tests to its first few", async () => {
+    const document = review1303();
+    const hunk = document.index.hunks.find((each) => each.id === "h_remote_test")!;
+    hunk.diff!.lines = [
+      ...hunk.diff!.lines,
+      ...Array.from({ length: 10 }, (_, at) => [
+        { kind: "add" as const, text: `func TestCase${at}(t *testing.T) {`, new_line: 21 + at * 2 },
+        { kind: "add" as const, text: "}", new_line: 22 + at * 2 },
+      ]).flat(),
+    ];
+    const path = "oss/internal/uiserver/remote_test.go";
+    const container = await page("pane=section&section=sec_allowlist&section_view=tests", document);
+    const rows = () =>
+      viewPanel(container).querySelectorAll(`[aria-label="Tests in ${path}"] li`).length;
+    expect(rows()).toBe(5);
+    await click(button(viewPanel(container), "Show 5 more tests"));
+    expect(rows()).toBe(10);
   });
 
   it("quotes the prompts and events the section cites, linking to their turns", async () => {
@@ -579,7 +614,7 @@ describe("Code", () => {
     );
   });
 
-  it("pins notes to the hunks they cite, each linking to its section", async () => {
+  it("names where a file is explained in its header, with nothing under its hunks", async () => {
     const container = await page(
       "pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go",
     );
@@ -587,11 +622,10 @@ describe("Code", () => {
     // The diff's header names the file once, with where it is explained.
     expect(file.querySelector("h2")).toBeNull();
     expect(file.querySelector("article header")?.textContent).toContain("Explained in");
-    const notes = [...file.querySelectorAll<HTMLElement>('ul[aria-label="Notes"] li')];
-    expect(notes.map((note) => note.dataset.note)).toEqual(["step", "risk", "step"]);
-    expect(notes[0]?.textContent).toContain("Deny by default");
-    await click(button(notes[1]!, "What a phone can do"));
-    expect([search.get("pane"), search.get("risk_id")]).toEqual(["risk", "rsk_always_allow"]);
+    expect(file.textContent).not.toContain("Deny by default");
+    expect(file.textContent).not.toContain("Always allow");
+    await click(button(file, "What a phone can do"));
+    expect([search.get("pane"), search.get("section")]).toEqual(["section", "sec_allowlist"]);
   });
 
   it("says when a hunk's code isn't in the review", async () => {
@@ -720,6 +754,160 @@ describe("the native tiles", () => {
       "A phone can't",
     ]);
     expect(columns[1]?.querySelectorAll("li")).toHaveLength(3);
+    expect(columns[1]?.querySelector("h4")?.textContent).toBe("A phone can't3 items");
+  });
+
+  it("marks the items columns share and points from how it was to how it is", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [
+            {
+              label: "Before",
+              tone: "muted",
+              items: [{ title: "Retry" }, { title: "Opens a dialog" }],
+            },
+            {
+              label: "After",
+              tone: "good",
+              items: [{ title: " retry" }, { title: "Plays in place" }],
+            },
+          ],
+        }}
+      />,
+    );
+    const same = [...container.querySelectorAll("li[data-same]")].map((li) => li.textContent);
+    expect(same).toEqual(["Retry", " retry"]);
+    expect(container.textContent).toContain("also in another column");
+    expect(container.textContent).toContain("→");
+  });
+
+  it("lines compared rows up, marks the words that differ and folds the rest on request", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [
+            { label: "Still image", tone: "muted" },
+            { label: "Clip", tone: "new" },
+          ],
+          rows: [
+            [
+              { title: "Failure says Image unavailable" },
+              { title: "Failure says Video unavailable" },
+            ],
+            [{ title: "Retry takes focus" }, { title: "Retry takes focus" }],
+            [null, { title: "Plays in place" }],
+            [{ title: "Opens full size" }, null],
+          ],
+        }}
+      />,
+    );
+    const rows = () => [...container.querySelectorAll<HTMLElement>("ol > li")];
+    expect(rows()).toHaveLength(4);
+    expect(rows().map((row) => row.dataset.same === "true")).toEqual([false, true, false, false]);
+    const marks = [...rows()[0]!.querySelectorAll<HTMLElement>("[data-mark]")].map((mark) => [
+      mark.dataset.mark,
+      mark.textContent,
+    ]);
+    expect(marks).toEqual([
+      ["removed", "Image"],
+      ["added", "Video"],
+    ]);
+    expect(
+      [...container.querySelectorAll("[data-change]")].map((cell) => cell.textContent?.slice(0, 7)),
+    ).toEqual(["Changed", "NewPlay", "Removed"]);
+    const toggle = container.querySelector<HTMLElement>('[role="switch"], input[type="checkbox"]')!;
+    await act(async () => toggle.click());
+    expect(rows()).toHaveLength(3);
+    expect(container.textContent).not.toContain("Retry takes focus");
+  });
+
+  it("marks words only between texts mostly alike", () => {
+    const marked = (was: string, now: string) =>
+      wordDiff(was, now)
+        .now.filter((piece) => piece.mark)
+        .map((piece) => piece.tokens.join(""));
+    expect(marked("Long table folded", "Long table unfolded")).toEqual(["unfolded"]);
+    expect(marked("Retry reloads the image", "Retry reloads the clip now")).toEqual(["clip now"]);
+    expect(marked("A dialog shows the image larger", "The clip plays in its own box")).toEqual([]);
+  });
+
+  it("draws compared text plain, with code, keeping identifiers and operators", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [{ label: "Off" }, { label: "On" }],
+          rows: [
+            [{ title: "Reads *cached rows* fast" }, { title: "Reads *cached data* `fast`" }],
+            [{ title: "limit 5 > max" }, { title: "limit 10 > max" }],
+          ],
+        }}
+      />,
+    );
+    const cells = (row: number) =>
+      [
+        ...container
+          .querySelectorAll("ol > li")
+          [row]!.querySelectorAll("[data-change], [class*='rounded-md']"),
+      ].map((cell) => cell.querySelector(".font-medium")?.textContent);
+    expect(cells(0)).toEqual(["Reads cached rows fast", "Reads cached data fast"]);
+    expect(container.querySelector("ins code")?.textContent).toBe("fast");
+    expect(cells(1)).toEqual(["limit 5 > max", "limit 10 > max"]);
+    expect(container.querySelector("em")).toBeNull();
+  });
+
+  it("takes italics out of compared text but not identifiers or globs", () => {
+    expect(comparedText("a *cached* _hot_ row")).toBe("a cached hot row");
+    expect(comparedText("__init__ snake_case *.go `*x*`")).toBe("__init__ snake_case *.go `*x*`");
+    expect(comparedText("*a*, *b*. (_c_)")).toBe("a, b. (c)");
+    for (const kept of [
+      "src/*/foo/*.ts",
+      "*.go,*.ts",
+      "(*.go|*.ts)",
+      "https://x.com/_next_/static",
+      "a*b*c",
+      "_x_y",
+      "2 * 3 * 4",
+    ])
+      expect(comparedText(kept)).toBe(kept);
+  });
+
+  it("leaves the Changed pill out when every compared row differs", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [{ label: "Off" }, { label: "On", tone: "new" }],
+          rows: [
+            [{ title: "Long table folded" }, { title: "Long table unfolded" }],
+            [null, { title: "Rows fade" }],
+          ],
+        }}
+      />,
+    );
+    expect(
+      [...container.querySelectorAll("[data-change]")].map((cell) => cell.textContent),
+    ).toEqual(["NewRows fade"]);
+    expect(container.querySelector('[role="switch"]')).toBeNull();
+  });
+
+  it("draws no arrow or shared mark between unrelated lists", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [
+            { label: "Accepted", tone: "good", items: [{ title: "MP4" }] },
+            { label: "Refused", tone: "bad", items: [{ title: "GIF" }] },
+          ],
+        }}
+      />,
+    );
+    expect(container.querySelector("li[data-same]")).toBeNull();
+    expect(container.textContent).not.toContain("→");
   });
 
   it("draws a sequence as arrows between actors and as a list for a narrow pane", async () => {
@@ -1143,6 +1331,29 @@ describe("a section's body", () => {
     expect(rows[0]!.textContent).not.toContain("The secret expires");
     // A point with nothing behind it is not a button.
     expect(rows[1]!.querySelector("button")).toBeNull();
+  });
+
+  it("leaves the points of a block without tones unmarked, and a note without a kind plain", async () => {
+    const body = await bodyOf();
+    expect(body.querySelectorAll("[data-point] [data-mark]")).toHaveLength(0);
+    expect(body.querySelector("[data-point][data-tone]")).toBeNull();
+    expect(body.querySelector("[data-kind]")).toBeNull();
+  });
+
+  it("marks each point of a block with tones, and draws a note's kind with its icon", async () => {
+    const container = await page("pane=section&section=sec_encryption");
+    const body = panel(container).querySelector<HTMLElement>("[data-section-body]")!;
+    const rows = [...body.querySelectorAll<HTMLElement>("[data-point]")];
+    expect(rows.map((row) => row.dataset.tone ?? "plain")).toEqual(["good", "bad", "muted"]);
+    // Every line leads with a marker, and a toned one says what it means.
+    for (const row of rows) expect(row.querySelectorAll("[data-mark]")).toHaveLength(1);
+    expect(rows[1]!.querySelector(".sr-only")?.textContent).toBe("fails or is refused: ");
+    const notes = [...body.querySelectorAll<HTMLElement>('[data-block="note"] [data-kind]')];
+    expect(notes.map((note) => note.dataset.kind)).toEqual(["decision", "caveat", "follow_up"]);
+    expect(notes[0]!.querySelector("svg")).not.toBeNull();
+    expect(notes[0]!.textContent).toBe(
+      "Decision. Noise IK rather than TLS to the relay, so the relay never holds a key.",
+    );
   });
 
   it("draws a section's prose and points blocks", async () => {

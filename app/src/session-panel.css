@@ -392,8 +392,7 @@
   background: var(--surface-card);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  resize: vertical;
-  field-sizing: content;
+  resize: none;
 }
 .session-panel-compose textarea:focus-visible {
   outline: 2px solid var(--border-focus);

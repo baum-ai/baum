@@ -59,6 +59,7 @@ const PLACES = [
   ["context", "&pane=section&section=context"],
   ["encryption", "&pane=section&section=sec_encryption"],
   ["section-code", "&pane=section&section=sec_allowlist&section_view=code"],
+  ["section-tests", "&pane=section&section=sec_allowlist&section_view=tests"],
   ["section-session", "&pane=section&section=sec_relay&section_view=session"],
   ["code", "&pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go"],
 ] as const;
@@ -432,6 +433,33 @@ test("tiles being made stand on their sections as pending cards", async ({ page 
   await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
 });
 
+test("the Overview shows the tiles added to it and the cards of those being made", async ({
+  page,
+}) => {
+  const added = {
+    id: "added_images_0a1b2c3d4e",
+    type: "prose",
+    owner: "overview",
+    title: "Screens after the change",
+    state: "ready" as const,
+    cites: [],
+    data: { text: "The Tests view lists each test by name.", anchors: [] },
+    added: true,
+    from: 1,
+  };
+  const document = { ...REVIEW_1303, tiles: [...REVIEW_1303.tiles, added] };
+  const drafts = [{ tile: "draft_1", title: "Retry timeline", phase: "writing" }];
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7, { document, drafts });
+  const tile = page.locator(`[role="figure"][data-tile="${added.id}"]`);
+  await expect(tile.getByRole("heading", { name: "Screens after the change" })).toBeVisible();
+  await expect(page.locator('[data-tile-draft="draft_1"]')).toContainText("Retry timeline");
+  // Neither stands on a section of How it works.
+  await open(page, `${PR7}&pane=section&section=context`, { document, drafts });
+  await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
+  await expect(page.locator(`[data-tile="${added.id}"]`)).toHaveCount(0);
+});
+
 /** A session at work on #7 and two decisions it made, as the daemon lists
  *  them, so the side pane has Sessions, Commits and Decisions. */
 async function withSessionWork(page: Page) {
@@ -551,6 +579,48 @@ test("Files changed names the open file once, in its diff's header", async ({ pa
   ).toContainText("Explained in");
   await expect(file.getByText("oss/internal/uiserver/remote.go", { exact: true })).toHaveCount(1);
 });
+
+for (const [width, height] of [
+  [1280, 860],
+  [720, 480],
+] as const) {
+  test(`Files changed reveals the selected diff at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: width === 720 ? "dark" : "light" });
+    await open(page, `${PR7}&pane=tile&tile=code`);
+    const files = page.getByRole("navigation", { name: "Changed files" });
+    const path = "oss/internal/uiserver/remote.go";
+    await files
+      .getByRole("button", { name: /^remote\.go/ })
+      .first()
+      .click();
+    const diff = page.getByRole("article", { name: `${path} diff` });
+    const header = diff.getByText(path, { exact: true });
+    await expect(header).toBeVisible();
+    if (SHOTS) {
+      mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({
+        path: join(SHOTS, `file-selected-${width}.png`),
+        animations: "disabled",
+      });
+    }
+    await expect(header).toBeInViewport();
+    await page.keyboard.press("j");
+    await expect(diff).toHaveCount(0);
+    await page.keyboard.press("k");
+    await expect(header).toBeInViewport();
+    await expect(page).toHaveURL(/tile_item=oss%2Finternal%2Fuiserver%2Fremote\.go/);
+
+    // A row lower in the scrollable list still opens a diff in view.
+    await files
+      .getByRole("button", { name: /^remote_test\.go/ })
+      .first()
+      .click();
+    const laterPath = "oss/internal/uiserver/remote_test.go";
+    const laterDiff = page.getByRole("article", { name: `${laterPath} diff` });
+    await expect(laterDiff.getByText(laterPath, { exact: true })).toBeInViewport();
+  });
+}
 
 test("every pull request opens on the rail, with no setting to choose a page", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

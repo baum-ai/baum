@@ -16,11 +16,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: var(--space-8);
   }
-  .mark {
+  /* The glance's pills share one width, so the kinds after them line up. */
+  .lead {
     flex: none;
-    width: 1ch;
-    text-align: center;
-    font-weight: 600;
+    width: 5.5rem;
   }
   .kind {
     flex: none;
@@ -48,16 +47,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .kit-table .mark {
-    width: 1ch;
-    padding-right: 0;
-  }
   .kit-table .ident {
     white-space: nowrap;
+  }
+  .pills {
+    display: flex;
+    margin-bottom: var(--space-1);
+  }
+  .required {
+    display: block;
   }
   .kit-table .code {
     min-width: 9rem;
     overflow-wrap: break-word;
+  }
+  /* With "Show only changes" on, the last row left shown ends the table. */
+  .kit-table tbody tr:not([hidden]):not(:has(~ tr:not([hidden]))) > td {
+    border-bottom: 0;
   }
   /* On a phone the columns share what there is and wrap, and the glance
      lists its rows in one column so a name keeps its room. */
@@ -65,17 +71,22 @@
     .glance-rows.across {
       grid-template-columns: minmax(0, 1fr);
     }
-    .kit-table .code,
-    .kit-table .note {
+    .kit-table .code {
       min-width: 0;
     }
   }
 </style>
 <script>
-  const MARK = { added: "+", changed: "~", deprecated: "~", removed: "−" };
-  const MARK_CLASS = { added: "kit-added", changed: "kit-muted", deprecated: "kit-muted", removed: "kit-removed" };
+  // What a change is, as the review's diagrams mark it: a pill's words and tone.
+  const PILL = {
+    added: ["New", "info"],
+    changed: ["Changed", "caution"],
+    deprecated: ["Deprecated", "caution"],
+    removed: ["Removed", "critical"],
+  };
+  const BREAKING = ["Breaking", "critical"];
+  const pill = ([label, tone]) => baum.html`<span class="kit-pill" data-tone=${tone}>${label}</span>`;
   const ORDER = { removed: 0, changed: 1, deprecated: 2, added: 3 };
-  const ROW_TONE = { added: "positive", removed: "critical", changed: "caution" };
   const SURFACE = {
     http: "HTTP",
     rpc: "RPC",
@@ -142,10 +153,9 @@
 
   function glanceRow(e) {
     return baum.html`<li>
-      <span class=${["mark", "kit-mono", MARK_CLASS[e.change]]} title=${e.change}>${MARK[e.change]}</span>
+      <span class="lead">${pill(e.breaking ? BREAKING : PILL[e.change])}</span>
       <span class="kit-tag kit-mono kind">${kind(e)}</span>
       ${path(e.name)}
-      ${e.breaking ? baum.html`<span class="kit-dot" data-tone="critical" title="Breaking"></span>` : null}
     </li>`;
   }
 
@@ -201,7 +211,7 @@
     const node = baum.html`<div class="kit-glance">
       <div class="kit-row" data-wrap="no" data-align="start">
         ${lede(endpoints)}
-        ${breaking ? baum.html`<span class="kit-badge" data-tone="critical">${breaking} breaking</span>` : null}
+        ${breaking ? pill([`${breaking} breaking`, "critical"]) : null}
       </div>
       <ul class=${["kit-list", "glance-rows", size === "full" ? "across" : null]} data-gap="1">
         ${rows}
@@ -219,11 +229,35 @@
     return baum.html`<span class="kit-row" data-gap="1">${list.map((citation) => baum.cite(citation))}</span>`;
   }
 
-  /** A type before and after: the old one struck through. */
-  function retype(before, after) {
-    if (before && after) return baum.html`<s class="kit-subtle">${before}</s> → ${after}`;
-    if (before) return baum.html`<s class="kit-subtle">${before}</s>`;
-    return after ?? "—";
+  const REQUIRED = { true: "required", false: "optional" };
+
+  /** A field's row: what changed on a pill over its name, its type before
+   *  and after with the words that differ marked. A field listed only
+   *  beside the changes, with its type as it was, is drawn quieter and
+   *  marked so "Show only changes" can hide it. */
+  function fieldRow(row, added) {
+    const required = REQUIRED[row.required] ? baum.html`<span class="kit-small kit-subtle required">${REQUIRED[row.required]}</span>` : null;
+    if (added) {
+      return baum.html`<tr>
+        <td class="ident"><span class="kit-mono">${row.field}</span>${required}</td>
+        <td class="kit-mono code">${row.after ?? row.before ?? "—"}</td>
+      </tr>`;
+    }
+    const words = baum.compare(row.before ?? "", row.after ?? "");
+    // Only a field listed as unchanged is drawn quieter, and only when its
+    // type is: one marked changed may have changed what the type does not
+    // show (whether it is required). One listed as unchanged whose type
+    // differs is drawn as the change it is.
+    const same = row.change === "unchanged" && row.before !== null && row.after !== null && words.same;
+    const change = row.change === "unchanged" ? "changed" : row.change;
+    return baum.html`<tr data-same=${same ? "" : null} class=${same ? "kit-muted" : null}>
+      <td class="ident">
+        ${same ? null : baum.html`<span class="pills">${pill(PILL[change])}</span>`}
+        <span class="kit-mono">${row.field}</span>${required}
+      </td>
+      <td class="kit-mono code">${row.before === null ? "—" : words.was}</td>
+      <td class="kit-mono code">${row.after === null ? "—" : words.now}</td>
+    </tr>`;
   }
 
   function fieldTable(title, rows, added) {
@@ -231,20 +265,30 @@
     return baum.html`<div class="kit-scroll">
       <table class="kit-table">
         <thead>
-          <tr>${added ? null : baum.html`<th class="mark"></th>`}<th>${title}</th><th>Type</th><th>Required</th></tr>
+          <tr>${added ? baum.html`<th>${title}</th><th>Type</th>` : baum.html`<th>${title}</th><th>Before</th><th>After</th>`}</tr>
         </thead>
         <tbody>
-          ${rows.map(
-            (row) => baum.html`<tr data-tone=${added ? null : ROW_TONE[row.change]}>
-              ${added ? null : baum.html`<td class=${["mark", "kit-mono", MARK_CLASS[row.change]]} title=${row.change}>${MARK[row.change]}</td>`}
-              <td class="kit-mono ident">${row.field}</td>
-              <td class="kit-mono code">${retype(row.before, row.after)}</td>
-              <td>${row.required === true ? "yes" : row.required === false ? "no" : "—"}</td>
-            </tr>`,
-          )}
+          ${rows.map((row) => fieldRow(row, added))}
         </tbody>
       </table>
     </div>`;
+  }
+
+  /** "Show only changes": a switch that hides the rows marked the same,
+   *  and a table of nothing else, offered when some rows are and some are
+   *  not. */
+  function onlyChanges(node) {
+    if (!node.querySelector("tr[data-same]") || !node.querySelector("tbody > tr:not([data-same])")) return;
+    const rows = [...node.querySelectorAll("tr[data-same]")];
+    for (const table of node.querySelectorAll(".kit-scroll")) {
+      if (!table.querySelector("tbody > tr:not([data-same])")) rows.push(table);
+    }
+    const control = baum.html`<label class="kit-switch"><input type="checkbox" role="switch">Show only changes</label>`;
+    const input = control.querySelector("input");
+    input.addEventListener("change", () => {
+      for (const row of rows) row.hidden = input.checked;
+    });
+    node.querySelector(".switch-slot").append(control);
   }
 
   function errorList(errors) {
@@ -252,7 +296,7 @@
     return baum.html`<ul class="kit-list" data-gap="1">
       ${errors.map(
         (error) => baum.html`<li>
-          <span class=${["mark", "kit-mono", MARK_CLASS[error.change]]}>${MARK[error.change]}</span>
+          ${pill(PILL[error.change])}
           <span class="kit-tag kit-mono clip" title=${error.code}>${error.code}</span>
           <span class="kit-muted kit-grow">${error.meaning ?? ""}</span>
         </li>`,
@@ -266,8 +310,8 @@
       <div class="kit-row">
         <span class="kit-tag kit-mono">${kind(e)}</span>
         <span class="kit-mono kit-strong kit-break kit-grow">${e.name}</span>
-        <span class="kit-tag">${e.change}</span>
-        ${e.breaking ? baum.html`<span class="kit-badge" data-tone="critical">Breaking</span>` : null}
+        ${pill(PILL[e.change])}
+        ${e.breaking ? pill(BREAKING) : null}
       </div>
       ${e.breaking_reason ? baum.html`<div class="kit-callout" data-tone="critical">${baum.md(e.breaking_reason, { inline: true })}</div>` : null}
       ${e.auth ? baum.html`<dl class="kit-facts kit-small"><dt>Auth</dt><dd>${e.auth}</dd></dl>` : null}
@@ -313,12 +357,11 @@
     const endpoints = sorted(data.endpoints);
     const breaking = endpoints.filter((e) => e.breaking);
     const open = opener();
-    return baum.html`<div class="kit-stack" data-gap="6">
-      <div class="kit-stack" data-gap="3">
-        <div class="kit-row">
-          ${lede(endpoints)}
-          ${breaking.length ? baum.html`<span class="kit-badge" data-tone="critical">${breaking.length} breaking</span>` : null}
-        </div>
+    const node = baum.html`<div class="kit-stack" data-gap="6">
+      <div class="kit-row">
+        ${lede(endpoints)}
+        ${breaking.length ? pill([`${breaking.length} breaking`, "critical"]) : null}
+        <span class="switch-slot"></span>
       </div>
       ${data.related && data.related.length
         ? section("Related", baum.html`<div class="kit-row">${data.related.map((ref) => baum.cite(ref))}</div>`)
@@ -326,6 +369,8 @@
       ${section("Entry points", baum.html`<div class="kit-stack">${endpoints.map((e, i) => endpointCard(e, open(e.cites[0], i < 3 || e.breaking)))}</div>`)}
       ${callerList(data)}
     </div>`;
+    onlyChanges(node);
+    return node;
   }
 
   baum.tile({ glance, detail });
