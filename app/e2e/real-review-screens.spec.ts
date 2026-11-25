@@ -84,7 +84,7 @@ export const STATES: State[] = [
   },
   {
     // The first section's Code view, and then its Tests view when it has
-    // tests: the section's own hunks with their notes.
+    // tests: the section's own hunks.
     name: "section-code",
     views: ["tiles"],
     open: async ({ page, address, firstSection }) => {

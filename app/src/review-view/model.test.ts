@@ -13,7 +13,6 @@ import {
   groupFiles,
   intentRows,
   listedSections,
-  notesByHunk,
   placeOf,
   reviewOf,
   riskSummary,
@@ -23,7 +22,8 @@ import {
   shownSectionView,
   sideSectionView,
   viewOfPath,
-  testNames,
+  testOutline,
+  type TestOutlineItem,
   shownFile,
   tilesOn,
   viewFiles,
@@ -328,47 +328,6 @@ describe("the Code tab", () => {
     expect(shownFile(files, "missing.go")?.path).toBe("oss/internal/uiserver/remote.go");
     expect(shownFile(files, null)?.path).toBe("oss/internal/uiserver/remote.go");
   });
-
-  it("pins each behaviour step and open risk to the hunks it cites", () => {
-    const notes = notesByHunk(REVIEW);
-    expect(notes.get("h_routes")).toEqual([
-      {
-        kind: "step",
-        id: "sec_allowlist-b1-p0",
-        section: "sec_allowlist",
-        sectionTitle: "What a phone can do",
-        text: "Deny by default.",
-      },
-      {
-        kind: "risk",
-        id: "rsk_always_allow",
-        section: "sec_allowlist",
-        sectionTitle: "What a phone can do",
-        text: "A phone can answer an agent's permission request with Always allow, which changes that agent's settings for good.",
-        tier: "high",
-      },
-    ]);
-    expect(notes.get("h_gosum")).toBeUndefined();
-  });
-
-  it("leaves a mitigated risk and an obsolete section's notes out", () => {
-    const review = {
-      ...REVIEW,
-      sections: REVIEW.sections.map((section) =>
-        section.id === "sec_allowlist"
-          ? {
-              ...section,
-              risks: section.risks.map((risk) => ({ ...risk, state: "mitigated" as const })),
-            }
-          : section.id === "sec_pairing"
-            ? { ...section, derived: { ...section.derived, state: "stale" as const } }
-            : section,
-      ),
-    };
-    const notes = notesByHunk(review);
-    expect(notes.get("h_routes")?.map((note) => note.kind)).toEqual(["step"]);
-    expect(notes.get("h_pairing")).toBeUndefined();
-  });
 });
 
 describe("the overview's fallbacks", () => {
@@ -484,93 +443,182 @@ const testHunk = (
 });
 
 describe("the tests a section's hunks add or change", () => {
-  it("names Go tests added, and those whose body changes", () => {
-    expect(
-      testNames([
-        testHunk("a/x_test.go", [
-          ["context", "func TestOld(t *testing.T) {"],
-          ["context", "\tif got := f(); got != 1 {"],
-          ["remove", "\t\tt.Fatal(got)"],
-          ["add", '\t\tt.Fatalf("got %d", got)'],
-          ["context", "\t}"],
-          ["context", "}"],
-          ["context", ""],
-          ["context", "func TestUntouched(t *testing.T) {"],
-          ["context", "}"],
-          ["add", ""],
-          ["add", "// TestNew checks the new path."],
-          ["add", "func TestNew(t *testing.T) {"],
-          ["add", "\tt.Parallel()"],
-          ["add", "}"],
-          ["add", "func BenchmarkNew(b *testing.B) {}"],
-          ["add", "func (s *suite) TestMethod() {}"],
-        ]),
+  const items = (hunks: IndexedHunk[]) => testOutline([{ path: hunks[0]!.path, hunks }])[0]!.items;
+  const brief = (list: TestOutlineItem[] | null) =>
+    list?.map(({ kind, name, change, additions, deletions, was }) => [
+      kind,
+      name,
+      change,
+      additions,
+      deletions,
+      ...(was ? [was] : []),
+    ]);
+
+  it("outlines Go tests added, changed, renamed and removed, then helpers", () => {
+    const outline = items([
+      testHunk("a/x_test.go", [
+        ["context", "import ("],
+        ["add", '\t"slices"'],
+        ["context", ")"],
+        ["context", ""],
+        ["remove", "func TestOldName(t *testing.T) {"],
+        ["add", "// TestFreshName checks the new path."],
+        ["add", "func TestFreshName(t *testing.T) {"],
+        ["context", "\tstart := 1"],
+        ["remove", "\tcheck(t, start)"],
+        ["add", "\tverify(t, start)"],
+        ["context", "}"],
+        ["context", ""],
+        ["context", "func TestKept(t *testing.T) {"],
+        ["remove", "\tt.Fatal(got)"],
+        ["add", '\tt.Fatalf("got %d", got)'],
+        ["context", "}"],
+        ["remove", "func TestReadOnlyCheckpointKeepsOutsideEditor(t *testing.T) {"],
+        ["remove", "\tconst editor = 1"],
+        ["add", "func TestReadOnlyCheckpointKeepsOutsideCreator(t *testing.T) {"],
+        ["add", "\tconst creator = 1"],
+        ["context", "}"],
+        ["remove", "func TestGone(t *testing.T) {"],
+        ["remove", "\tt.Skip()"],
+        ["remove", "}"],
+        ["add", "func TestBrandNew(t *testing.T) {"],
+        ["add", "}"],
+        ["add", "func (f Fixture) AddCommitting(t *testing.T) {"],
+        ["add", "\tf.add(t)"],
+        ["add", "}"],
+        ["context", "func TestUntouched(t *testing.T) {"],
+        ["context", "}"],
       ]),
-    ).toEqual(["TestOld", "TestNew", "BenchmarkNew"]);
+    ]);
+    expect(brief(outline)).toEqual([
+      // Renamed where Git lines one test up in another's place, or the names
+      // are alike; else a removal beside an addition.
+      ["test", "TestFreshName", "renamed", 3, 2, "TestOldName"],
+      ["test", "TestKept", "changed", 1, 1],
+      [
+        "test",
+        "TestReadOnlyCheckpointKeepsOutsideCreator",
+        "renamed",
+        2,
+        2,
+        "TestReadOnlyCheckpointKeepsOutsideEditor",
+      ],
+      ["test", "TestGone", "removed", 0, 3],
+      ["test", "TestBrandNew", "added", 2, 0],
+      ["helper", "imports", "changed", 1, 0],
+      ["helper", "Fixture.AddCommitting", "added", 3, 0],
+    ]);
+    // Each opens at its declaration, on the side of the diff that has it.
+    expect(outline?.find((item) => item.name === "TestFreshName")?.at).toEqual({
+      side: "new",
+      line: 7,
+    });
+    expect(outline?.find((item) => item.name === "TestGone")?.at).toEqual({
+      side: "old",
+      line: 22,
+    });
   });
 
-  it("reads a Go hunk inside a test from its header", () => {
+  it("renames a test rewritten under a new name, with the lines a later hunk names by the old one", () => {
     expect(
-      testNames([
-        testHunk(
-          "a/x_test.go",
-          [
-            ["context", "\twant := 2"],
-            ["add", "\tcheck(t, want)"],
-          ],
-          "@@ -10,2 +10,3 @@ func TestHeader(t *testing.T) {",
-        ),
-      ]),
-    ).toEqual(["TestHeader"]);
+      brief(
+        items([
+          testHunk("a/x_test.go", [
+            ["remove", "func TestOld(t *testing.T) {"],
+            ["add", "func TestNew(t *testing.T) {"],
+            ["context", "\tx := 1"],
+          ]),
+          testHunk(
+            "a/x_test.go",
+            [
+              ["context", "\ty := 2"],
+              ["remove", "\tcheck(x, y)"],
+              ["add", "\tverify(x, y)"],
+            ],
+            "@@ -20,3 +20,3 @@ func TestOld(t *testing.T) {",
+          ),
+        ]),
+      ),
+    ).toEqual([["test", "TestNew", "renamed", 2, 2, "TestOld"]]);
   });
 
-  it("names it and test calls in JavaScript and TypeScript", () => {
+  it("outlines JavaScript and TypeScript tests, helpers and setup", () => {
     expect(
-      testNames([
-        testHunk("app/x.test.tsx", [
-          ["context", 'describe("the page", () => {'],
-          ["add", '  it("draws the row", () => {'],
-          ["add", "    expect(1).toBe(1);"],
-          ["add", "  });"],
-          ["context", "  it('keeps its place', async () => {"],
-          ["remove", "    await old();"],
-          ["add", "    await next();"],
-          ["context", "  });"],
-          ["context", '  it("is left alone", () => {});'],
-          ["add", '  test.skip("is skipped for now", () => {});'],
-          ["context", "});"],
+      brief(
+        items([
+          testHunk("app/x.test.tsx", [
+            ["add", 'import { draw } from "./draw";'],
+            ["context", 'describe("the page", () => {'],
+            ["add", "  beforeEach(() => reset());"],
+            ["add", '  it("draws the row", () => {'],
+            ["add", "    expect(1).toBe(1);"],
+            ["add", "  });"],
+            ["context", "  it('keeps its place', async () => {"],
+            ["remove", "    await old();"],
+            ["add", "    await next();"],
+            ["context", "  });"],
+            ["context", '  it("is left alone", () => {});'],
+            ["add", '  test.skip("is skipped for now", () => {});'],
+            ["context", "});"],
+            ["add", "function rows() {"],
+            ["add", "  return [];"],
+            ["add", "}"],
+          ]),
         ]),
-        testHunk("e2e/x.spec.ts", [
-          ["add", 'test.skip(!process.env.SHOTS, "pictures on request");'],
-          ["add", 'test("a picture", async ({ page }) => {'],
-          ["add", "  await page.goto('/');"],
-          ["add", "});"],
+      ),
+    ).toEqual([
+      ["test", "draws the row", "added", 3, 0],
+      ["test", "keeps its place", "changed", 1, 1],
+      ["test", "is skipped for now", "added", 1, 0],
+      ["helper", "rows", "added", 3, 0],
+      ["other", "Other lines", "changed", 2, 0],
+    ]);
+    expect(
+      brief(
+        items([
+          testHunk("e2e/x.spec.ts", [
+            ["add", 'test.skip(!process.env.SHOTS, "pictures on request");'],
+            ["add", 'test("a picture", async ({ page }) => {'],
+            ["add", "  await page.goto('/');"],
+            ["add", "});"],
+          ]),
         ]),
-      ]),
-    ).toEqual(["draws the row", "keeps its place", "is skipped for now", "a picture"]);
+      ),
+    ).toEqual([
+      ["test", "a picture", "added", 3, 0],
+      ["other", "Other lines", "changed", 1, 0],
+    ]);
   });
 
-  it("is empty when the hunks change no test, and ignores data files", () => {
+  it("names each file with its change and line counts; data files have no items", () => {
+    const outline = testOutline([
+      {
+        path: "a/x_test.go",
+        // The package clause is no item.
+        hunks: [
+          testHunk("a/x_test.go", [
+            ["add", "package a"],
+            ["add", "var cases = 3"],
+          ]),
+        ],
+      },
+      {
+        path: "a/testdata/golden.json",
+        hunks: [{ ...testHunk("a/testdata/golden.json", [["add", "{}"]]), change: "added" }],
+      },
+    ]);
     expect(
-      testNames([
-        testHunk("a/x_test.go", [
-          ["add", "package a"],
-          ["add", "import ("],
-          ["add", '\t"testing"'],
-          ["add", ")"],
-          ["add", "func helper() int {"],
-          ["add", "\treturn 1"],
-          ["add", "}"],
-        ]),
-        testHunk("a/testdata/golden.json", [["add", '  "it": "test(\\"x\\", ...)"']]),
-      ]),
-    ).toEqual([]);
+      outline.map(({ path, change, additions, items }) => [path, change, additions, items]),
+    ).toEqual([
+      ["a/x_test.go", "modified", 2, [expect.objectContaining({ name: "var cases" })]],
+      ["a/testdata/golden.json", "added", 1, []],
+    ]);
   });
 
-  it("gives up rather than guess", () => {
+  it("leaves a file's items unread rather than guess", () => {
     // A change inside a block that opens above the hunk.
     expect(
-      testNames([
+      items([
         testHunk("a/x_test.go", [
           ["context", "\twant := 2"],
           ["add", "\tcheck(t, want)"],
@@ -578,7 +626,7 @@ describe("the tests a section's hunks add or change", () => {
       ]),
     ).toBeNull();
     expect(
-      testNames([
+      items([
         testHunk(
           "app/x.test.ts",
           [
@@ -591,14 +639,14 @@ describe("the tests a section's hunks add or change", () => {
     ).toBeNull();
     // Names built at run time.
     expect(
-      testNames([testHunk("app/x.test.ts", [["add", 'it.each(cases)("reads %s", (c) => {']])]),
+      items([testHunk("app/x.test.ts", [["add", 'it.each(cases)("reads %s", (c) => {']])]),
     ).toBeNull();
     expect(
-      testNames([testHunk("app/x.test.ts", [["add", "test(`reads ${kind}`, () => {"]])]),
+      items([testHunk("app/x.test.ts", [["add", "test(`reads ${kind}`, () => {"]])]),
     ).toBeNull();
     // Another language, or a hunk whose code isn't in the review.
-    expect(testNames([testHunk("tests/test_x.py", [["add", "def test_x():"]])])).toBeNull();
-    expect(testNames([{ ...testHunk("a/x_test.go", []), diff: undefined }])).toBeNull();
+    expect(items([testHunk("tests/test_x.py", [["add", "def test_x():"]])])).toBeNull();
+    expect(items([{ ...testHunk("a/x_test.go", []), diff: undefined }])).toBeNull();
   });
 });
 
@@ -846,9 +894,6 @@ describe("a section's body", () => {
         "steps" in block ? (block.steps as { id: string }[]).map((step) => step.id) : [],
       ),
     ).toEqual(["sec_a-b1-p0", "step_old"]);
-    expect(notesByHunk(review).get("h_routes")).toMatchObject([
-      { kind: "step", id: "sec_a-b1-p0", text: "Does a thing." },
-    ]);
     expect(listedSections(review).find((entry) => entry.id === "sec_a")?.line).toBe("Lead prose.");
   });
 });

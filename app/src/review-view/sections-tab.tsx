@@ -184,8 +184,6 @@ function SectionBody({
   const viewBody = (value: Exclude<SectionView, "overview">, reveal?: Reveal | null) => (
     <SectionViewBody
       document={document}
-      review={review}
-      section={section.id}
       shown={value}
       views={views}
       context={context}
