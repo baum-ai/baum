@@ -3040,8 +3040,10 @@ builds the rail's model (the sections and the file list) from it.
   and `Enter` or `Space` opens the row they are on. A section with nothing but its
   Overview keeps one column. The full review's check
   callouts and line counts are not shown.
-- **Files changed** (`code-tab.tsx`) lists every changed file in a list beside
-  the open file, under a switch, **Group files by**, with three modes. **Type**
+- **Files changed** (`code-tab.tsx`) lists every changed file beside the open
+  file, or above it when the review pane is narrow. The list scrolls on its own
+  in smaller panes so opening a file keeps its diff in view. **Group files by**
+  has three modes. **Type**
   groups them as code, tests, docs, config and generated (folded, and a
   generated file's diff waits for Show the diff). **Folder** groups them by
   directory, a directory with no file of its own and one directory joined to it
