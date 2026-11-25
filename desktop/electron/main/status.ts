@@ -38,9 +38,8 @@ function isObject(value: unknown): value is Json {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// The field readers are as strict as serde's derive was: a field of the
-// wrong type fails the row, and a missing field takes its default only where
-// the Rust struct had one.
+// The field readers are strict: a field of the wrong type fails the row, and
+// a missing field takes its default only where the reader is given one.
 function text(o: Json, key: string, fallback?: string): string {
   const v = o[key];
   if (v === undefined && fallback !== undefined) return fallback;

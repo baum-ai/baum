@@ -1,4 +1,4 @@
-// The tests of src/daemon.rs, run against a fake baum written as a shell
+// The tests of daemon.ts, run against a fake baum written as a shell
 // script (the checks run on Linux).
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";

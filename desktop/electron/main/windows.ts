@@ -78,7 +78,7 @@ const guards = new Map<number, Pick<NavigationGuard, "decide" | "logRefusals">>(
  *  frame's `src` and a new frame alike (tests/shell shows both refusing on
  *  their own), so a load the events miss is still refused. Loads that never
  *  reach the network (`about:blank`, `data:`, `blob:`) stay with the page's
- *  `frame-src`, as on Windows in the Tauri shell. */
+ *  `frame-src`. */
 export function guardFrameRequests(session: Session): void {
   session.webRequest.onBeforeRequest((details, callback) => {
     const frame = details.resourceType === "mainFrame" || details.resourceType === "subFrame";

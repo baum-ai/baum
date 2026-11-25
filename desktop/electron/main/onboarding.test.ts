@@ -229,7 +229,7 @@ describe("setup", () => {
     expect(() => lastJson([], readHooks)).toThrow();
   });
 
-  it("writes hooks and review settings as serde did", () => {
+  it("writes hooks and review settings in the shape the app reads back", () => {
     const hooks = readHooks({
       agents: [
         { agent: "codex", name: "Codex", plugin: "baum@baum", cli_version: "0.166", extra: 1 },

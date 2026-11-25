@@ -1,5 +1,4 @@
-// When the app's window hides and shows (src/lifecycle.rs in the Tauri
-// shell). The daemon outlives the app: closing the window hides it, so
+// When the app's window hides and shows. The daemon outlives the app: closing the window hides it, so
 // reopening it shows the same page in the same state, and quitting ends
 // only the app. A second launch, and on macOS the Dock icon, show the window
 // again. The tray port (3/7) adds the tray's Open, Quit and "Quit and stop
@@ -8,7 +7,7 @@
 import type { App, BrowserWindow } from "electron";
 
 /** The flag start at login runs the app with: it attaches to the daemon
- *  without showing the window (autostart.rs's `HIDDEN_FLAG`). */
+ *  without showing the window. */
 export const HIDDEN_FLAG = "--hidden";
 
 export function startsHidden(argv: readonly string[]): boolean {

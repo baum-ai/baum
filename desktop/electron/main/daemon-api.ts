@@ -160,9 +160,9 @@ export function noticeRoute(route: TrayRoute): NoticeRoute {
 export const STATUS_TIMEOUT = 10_000;
 
 /** How many generation jobs the user's daemon runs, which an update waits
- *  for (daemon.rs's `running_jobs`): `baum daemon status --json` names the
- *  daemon's state directory, whose credential reaches `GET /api/jobs`. 0
- *  when no daemon runs; rejects when one runs but cannot be asked. */
+ *  for: `baum daemon status --json` names the daemon's state
+ *  directory, whose credential reaches `GET /api/jobs`. 0 when no daemon
+ *  runs; rejects when one runs but cannot be asked. */
 export async function runningJobs(cli: string, timeout = STATUS_TIMEOUT): Promise<number> {
   let stdout: string[];
   try {

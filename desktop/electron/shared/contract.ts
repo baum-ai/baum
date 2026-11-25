@@ -8,8 +8,8 @@
 export const INVOKE_CHANNEL = "baum:invoke";
 
 /** The answer to an invoke. A refused or failed command carries only its
- *  message, which the preload rejects with as a string, as Tauri's bridge
- *  did, so the page's error handling sees the same value in both shells. */
+ *  message, which the preload rejects with as a string, as a string,
+ *  which is what the frontend's (oss/app) error handling expects. */
 export type InvokeResult = { ok: true; value: unknown } | { ok: false; error: string };
 
 /** What the shell tells the page in its main window, before the page's own

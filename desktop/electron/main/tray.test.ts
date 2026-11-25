@@ -248,9 +248,8 @@ describe("menu", () => {
     });
   });
 
-  // The Tauri build had one listener for every menu, because a second would
-  // run each click twice. Here every item's click goes to the one handler the
-  // template is built with, so a click is handled once.
+  // Every item's click goes to the one handler the template is built with, so
+  // a click is handled once, however many menus hold it.
   it("sends every click, in the menu and in submenus, to the one handler", () => {
     const submenu: MenuItemSpec = {
       kind: "submenu",

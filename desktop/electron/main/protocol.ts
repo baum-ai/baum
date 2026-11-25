@@ -5,8 +5,8 @@
 // through each other. `app://tray` serves only the tray panel (`/tray.html`)
 // and its assets: its own origin keeps the window's zoom off the panel. Every
 // other path, host, spelling of a page (`/setup`, `/setup.html/`) and any
-// percent-encoding included, is not found. HTML responses carry the content security policy
-// the Tauri shell set, with no `connect-src`: commands go over IPC.
+// percent-encoding included, is not found. HTML responses carry a content
+// security policy with no `connect-src`: commands go over IPC.
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { Protocol } from "electron";

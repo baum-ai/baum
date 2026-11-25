@@ -1,6 +1,7 @@
-// Reads JSON the way the Rust shell's serde types did: unknown fields are
-// ignored, a `#[serde(default)]` field may be missing but not null, an
-// Option may be missing or null, and a wrong type is an error.
+// Reads JSON strictly, in the shape of the files and daemon answers it reads:
+// unknown fields are ignored, a field with a default may be missing but not
+// null, an optional field may be missing or null, and a wrong type is an
+// error.
 
 export type Fields = Record<string, unknown>;
 

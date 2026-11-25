@@ -1,8 +1,8 @@
 // The commands pages may call through the preload bridge, and which pages may
-// call which. This table replaces Tauri's capability files: a call reaches a
-// handler only from the main frame of one of the app's own windows, from an
-// origin and role the guard (bridge.ts) resolved, and only for a command the
-// role lists here. Handlers never see the raw IPC event.
+// call which: a call reaches a handler only from the main frame of one of the
+// app's own windows, from an origin and role the guard (bridge.ts) resolved,
+// and only for a command the role lists here. Handlers never see the raw IPC
+// event.
 
 export type Role = "connecting-screen" | "setup-screen" | "daemon-pages" | "tray-panel";
 
@@ -69,7 +69,8 @@ export function allows(role: Role, name: CommandName): boolean {
 }
 
 /** Runs a command the guard has let through. Errors reach the page as a
- *  rejected promise with the error's message, as Tauri's did. */
+ *  rejected promise with the error's message, as the frontend (oss/app)
+ *  expects. */
 export async function dispatch(
   name: CommandName,
   args: Record<string, unknown>,

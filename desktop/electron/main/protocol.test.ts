@@ -102,7 +102,7 @@ describe("the app scheme", () => {
     }
   });
 
-  it("names its content types and keeps Tauri's policy without connect-src", () => {
+  it("names its content types and keeps its policy without connect-src", () => {
     expect(contentType("index.html")).toBe("text/html; charset=utf-8");
     expect(contentType("assets/a.js")).toBe("text/javascript; charset=utf-8");
     expect(contentType("assets/a.woff2")).toBe("font/woff2");

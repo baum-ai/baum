@@ -1,4 +1,4 @@
-// The tests of src/lifecycle.rs's quitting, and of the flow around them.
+// The tests of quit.ts, and of the flow around them.
 import { describe, expect, it } from "vitest";
 import { Failure } from "./daemon.ts";
 import { type QuitDeps, Quitter, stopConfirmation, stopFailureText, stopPrompt } from "./quit.ts";

@@ -41,20 +41,20 @@ const LOGIN_PATH_TIMEOUT = 30_000;
 const HOOKS_TIMEOUT = 240_000;
 /** Starting a GitHub sign-in asks GitHub for a device code. */
 const GITHUB_TIMEOUT = 45_000;
-/** client.rs's POLL_TIMEOUT. */
+/** How long one poll of the daemon may take. */
 const POLL_TIMEOUT = 5_000;
 const REPOSITORIES_TIMEOUT = 130_000;
 /** Where a GitHub sign-in's code is entered. Fixed rather than the daemon's
  *  verification URL, as on the setup screen. */
 const GITHUB_DEVICE_PAGE = "https://github.com/login/device";
 
-/** A daemon response, as client.rs's `Response`. */
+/** A daemon response. */
 export interface DaemonResponse {
   status: number;
   body: Uint8Array;
 }
 
-/** The loopback client to the attached daemon (client.rs). `L` is the
+/** The loopback client to the attached daemon `L` is the
  *  launch the daemon port hands out (its URL and capability). */
 export interface DaemonClient<L> {
   /** One request with a deadline; rejects when the daemon cannot be reached. */
@@ -75,14 +75,14 @@ export interface SetupDeps<L> {
   home: string;
   /** desktop.json in the app's configuration directory. */
   settingsFile: string;
-  /** Tauri's app_local_data_dir: `~/.local/share/com.usebaum.desktop`,
+  /** The local data directory the Tauri app used, which a copy that updated
+   *  from it keeps: `~/.local/share/com.usebaum.desktop`,
    *  `~/Library/Application Support/com.usebaum.desktop` or
    *  `%LOCALAPPDATA%\com.usebaum.desktop`. */
   localDataDir: string;
   /** The baum bundled next to the app's executable. */
   bundledCli: string;
-  /** Why the app cannot run baum from where it is installed (daemon.rs's
-   *  `misplaced`), if it cannot. */
+  /** Why the app cannot run baum from where it is installed, if it cannot. */
   misplaced(): string | null;
   /** The daemon the app is attached to, once it is. */
   launch(): L | null;
@@ -133,7 +133,7 @@ export function readFrom(path: string): Saved {
   }
 }
 
-/** Replaces the section with the changed record, as serde wrote it. */
+/** Replaces the section with the changed record, in the shape the daemon and the app read back. */
 export function updateAt(path: string, change: (saved: Saved) => void): void {
   try {
     updateSection(path, "setup", (section) => {
@@ -211,7 +211,7 @@ export interface Hooks {
   error: string | null;
 }
 
-/** As serde wrote it: the optional CLI details are left out when unknown. */
+/** The optional CLI details are left out when unknown. */
 export interface AgentHooks {
   trust: { state: string } | null;
   agent: string;
@@ -238,7 +238,7 @@ export interface AgentHooks {
   error: string | null;
 }
 
-/** A field serde leaves out when it is None. */
+/** A field that is left out when it is null. */
 function present<K extends string, V>(key: K, value: V | null): { [k in K]?: V } {
   return (value === null ? {} : { [key]: value }) as { [k in K]?: V };
 }
@@ -516,7 +516,7 @@ function text(body: Uint8Array): string {
   return Buffer.from(body).toString("utf8");
 }
 
-/** A command argument as Tauri deserialized it. */
+/** A command argument as the frontend sends it. */
 class Args {
   constructor(
     private readonly command: CommandName,
@@ -638,7 +638,7 @@ export class Setup<L> {
     this.open = true;
   }
 
-  /** The `baum` binary the app runs (daemon.rs's `cli_path`):
+  /** The `baum` binary the app runs:
    *  `BAUM_DESKTOP_BAUM` while developing, else the stable copy where the
    *  app keeps one (refreshed first; a copy that cannot be made is an error,
    *  never a fall back to the binary that would vanish), else the one
@@ -977,7 +977,7 @@ export class Setup<L> {
         ),
       github_connection: (a) =>
         this.githubConnection(args("github_connection", a).optionalString("action")),
-      // Tauri took this command's arguments in snake_case.
+      // The frontend (oss/app) sends this command's arguments in snake_case.
       repositories: (a) => {
         const r = args("repositories", a);
         return this.repositories(

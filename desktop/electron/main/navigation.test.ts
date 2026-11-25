@@ -1,5 +1,4 @@
-// The tests of src/navigation.rs, for the Electron shell's bundled origin
-// (`app://bundle` in place of `tauri://localhost`).
+// The tests of navigation.ts, for the bundled origin (`app://bundle`).
 import { describe, expect, it } from "vitest";
 import {
   BUNDLED_SCREEN,

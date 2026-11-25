@@ -1,5 +1,5 @@
 // The baum desktop app's Electron shell: a window onto the user's
-// `baum daemon` (src/main.rs in the Tauri shell). The shell adds no review
+// `baum daemon`. The shell adds no review
 // features; the daemon serves the application. The window starts on a
 // bundled screen (setup on first run, else the connecting screen), attaches
 // to the daemon (starting it if needed) and loads it, and returns to the
@@ -7,7 +7,7 @@
 // reached. Closing the window hides it into the tray; quitting leaves the
 // daemon running.
 //
-// `start` sets the app up in the order main.rs's `setup` did: notifications
+// `start` sets the app up in this order: notifications
 // before the tray, whose menus hold their toggles; zoom and theme; the tray,
 // its menus and start at login; the applications menu entry; setup, which
 // decides the first page and keeps the stable copy of baum; the main window
@@ -94,9 +94,9 @@ import {
 import { registerZoomCommands, ZoomStore } from "./zoom.ts";
 import { applyZoom, installZoom } from "./zoom-electron.ts";
 
-// Before the app is ready: the identity and the directories Tauri used, so
-// desktop.json, the stable copy of baum and start at login stay where they
-// are; Chromium's own files go in a folder of their own.
+// Before the app is ready: the identity and the directories the Tauri app
+// used, so a copy that updated from it keeps its desktop.json, stable baum and
+// start at login; Chromium's own files go in a folder of their own.
 const platform = { platform: process.platform, env: process.env, home: homedir() };
 const config = configDir(platform);
 const desktopJson = join(config, DESKTOP_JSON);
@@ -238,7 +238,7 @@ function isAppOrigin(origin: string): boolean {
   );
 }
 
-/** A non-blocking error dialog (lifecycle.rs's `message`). */
+/** A non-blocking error dialog. */
 function message(title: string, text: string): void {
   const options: Electron.MessageBoxOptions = {
     type: "error",

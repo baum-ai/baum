@@ -1,5 +1,5 @@
 // Attaching the main window to the daemon (`connect`, `watch` and
-// `await_replacement` in the Tauri shell's main.rs). The window starts on the
+// `await_replacement`). The window starts on the
 // bundled connecting screen, attaches to the daemon (starting it if needed)
 // and loads it, and returns to that screen with the daemon's recent log when
 // the daemon cannot be reached. The app never restarts the daemon on its
@@ -17,7 +17,7 @@ export const HEALTH_INTERVAL_STREAMING = 30_000;
 export const HEALTH_FAILURES = 3;
 
 /** What the connecting screen shows: the `connection` command's answer, in
- *  the shape of the Tauri shell's serde output. */
+ *  the shape the connecting screen reads. */
 export type Connection =
   | { phase: "connecting" }
   | { phase: "connected" }
