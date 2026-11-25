@@ -71,6 +71,7 @@ function CodeDiffTable({
             ...hunk.lines.map((line, index) => (
               <tr
                 key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
+                data-new-line={line.newLine}
                 className={cn("align-top", lineStyle[line.kind])}
               >
                 <td className="w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">

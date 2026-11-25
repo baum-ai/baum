@@ -1,12 +1,13 @@
 name: Desktop bundles
 
-# Builds the desktop app's bundles, unsigned, on each platform with
-# desktop/scripts/bundle.sh and uploads them as the artifact
-# desktop-<platform>. Check calls it on pull requests and main for snapshots;
-# Release calls it on a version tag with the bundled baum binaries goreleaser
-# built. This workflow takes no secrets: compiling runs hundreds of crates'
-# build scripts and the bundler's downloads, so signing happens later, in
-# Release jobs that build nothing. See desktop/README.md.
+# Builds the Electron desktop app's bundles, unsigned, on each platform with
+# desktop/scripts/bundle.sh (electron-builder) and uploads them as the
+# artifact desktop-<platform>. Check calls it on pull requests and main for
+# snapshots; Release calls it on a version tag with the bundled baum binaries
+# goreleaser built. This workflow takes no secrets: building runs npm
+# packages' code and electron-builder's downloads (Electron, the AppImage
+# runtime, fpm, NSIS), so signing happens later, in Release jobs that build
+# nothing. See desktop/README.md.
 
 on:
   workflow_call:
@@ -147,43 +148,30 @@ jobs:
           lipo -create -output baum-universal-apple-darwin baum-aarch64-apple-darwin baum-x86_64-apple-darwin
           lipo baum-universal-apple-darwin -verify_arch arm64 x86_64
 
-      - name: Set up Rust
-        if: runner.os != 'Linux'
-        run: |
-          rustup toolchain install 1.99.1 --profile minimal
-          rustup default 1.99.1
-          if [ "$PLATFORM" = darwin-universal ]; then
-            rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          fi
-
-      # Snapshots reuse the Tauri CLI; release builds compile it afresh.
-      - name: Cache the Tauri CLI
-        if: runner.os != 'Linux' && inputs.cli-artifact == ''
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cargo/bin/cargo-tauri*
-          key: tauri-cli-2.12.3-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Install the Tauri CLI
-        if: runner.os != 'Linux'
-        run: |
-          if ! cargo tauri --version 2>/dev/null | grep -qx 'tauri-cli 2.12.3'; then
-            cargo install --locked tauri-cli --version 2.12.3
-          fi
-
-      # Snapshots reuse the compiled dependencies of the last snapshot for
-      # the platform and Linux build image; release builds compile everything
-      # afresh. Keep native output from the old Ubuntu 22.04 image separate.
-      - name: Cache the Rust build output
+      # Snapshots reuse the pnpm store and Electron's and electron-builder's
+      # downloads (each checked against its checksum when used); release
+      # builds download everything afresh. On Linux the image's caches are
+      # mounted from these directories.
+      - name: Cache the desktop downloads
         if: inputs.cli-artifact == ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            desktop/target/*/release/build
-            desktop/target/*/release/deps
-            desktop/target/*/release/.fingerprint
-          key: desktop-bundle-noble-${{ matrix.platform }}-${{ hashFiles('desktop/Dockerfile') }}-${{ hashFiles('desktop/Cargo.lock') }}
-          restore-keys: desktop-bundle-noble-${{ matrix.platform }}-${{ hashFiles('desktop/Dockerfile') }}-
+            ${{ runner.temp }}/desktop-cache
+          key: desktop-downloads-${{ matrix.platform }}-${{ hashFiles('desktop/pnpm-lock.yaml') }}
+          restore-keys: desktop-downloads-${{ matrix.platform }}-
+
+      - name: Use the download caches
+        run: |
+          cache=$RUNNER_TEMP/desktop-cache
+          mkdir -p "$cache/pnpm-store" "$cache/electron" "$cache/electron-builder"
+          {
+            echo "DESKTOP_CACHE=$cache"
+            echo "PNPM_STORE_DIR=$cache/pnpm-store"
+            echo "ELECTRON_CACHE=$cache/electron"
+            echo "electron_config_cache=$cache/electron"
+            echo "ELECTRON_BUILDER_CACHE=$cache/electron-builder"
+          } >>"$GITHUB_ENV"
 
       # Linux bundles are built on Ubuntu 24.04, the oldest supported
       # distribution, in the same image as `just desktop::bundle`. Snapshots
@@ -215,8 +203,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           docker run --rm --volume "$PWD:/oss" --workdir /oss/desktop \
+            --volume "$DESKTOP_CACHE:/cache" --env PNPM_STORE_DIR=/cache/pnpm-store \
             baum-desktop-build scripts/bundle.sh "$PLATFORM" "$VERSION" target/release-bundles
-          sudo chown -R "$(id -u):$(id -g)" desktop/target
+          sudo chown -R "$(id -u):$(id -g)" desktop "$DESKTOP_CACHE"
 
       - name: Build the bundles
         if: runner.os != 'Linux'

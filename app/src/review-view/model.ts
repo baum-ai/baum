@@ -652,6 +652,32 @@ export function shownSectionView(
   return asked && asked !== "overview" && counts[asked] > 0 ? asked : "overview";
 }
 
+/** The view beside the Overview when the section is wide enough for two
+ *  columns: the one asked for while it has something, else the first that
+ *  has; null when the section has nothing but its Overview. */
+export function sideSectionView(
+  asked: SectionView | undefined,
+  counts: SectionViews["counts"],
+): Exclude<SectionView, "overview"> | null {
+  if (asked && asked !== "overview" && counts[asked] > 0) return asked;
+  for (const { value } of SECTION_VIEWS)
+    if (value !== "overview" && counts[value] > 0) return value;
+  return null;
+}
+
+/** The view of a section that draws a file: Code (its generated files
+ *  included), Tests or Docs; null for a file the section doesn't touch. */
+export function viewOfPath(
+  views: SectionViews,
+  path: string,
+): Exclude<SectionView, "overview" | "session"> | null {
+  const has = (files: ViewFile[]) => files.some((file) => file.path === path);
+  if (has(views.code.files) || has(views.code.generated)) return "code";
+  if (has(views.tests.files)) return "tests";
+  if (has(views.docs.files)) return "docs";
+  return null;
+}
+
 /** The notes of a section's own steps and risks, by the hunk they cite. */
 export function sectionNotes(
   notes: Map<string, HunkNote[]>,

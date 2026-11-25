@@ -7,7 +7,8 @@
 # --install also replaces /Applications/baum.app with the new build. Run it
 # from desktop/ with the frontend and both darwin sidecars built;
 # `just desktop::dmg` builds them in Docker first. The build runs on the host
-# because the bundle needs Apple's lipo, codesign and hdiutil.
+# because electron-builder's macOS app and the bundle need Apple's lipo,
+# codesign and hdiutil; it needs Node.js and pnpm (corepack) there.
 #
 # Local builds are version 0.0.0, so the app never checks for updates.
 set -euo pipefail
@@ -28,16 +29,15 @@ if [ "$(uname -s)" != Darwin ]; then
 fi
 
 cd "$(dirname "$0")/.."
-export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 
-# The Tauri CLI the desktop-test image pins.
-tauri=$(sed -n 's/.*tauri-cli --version \([0-9.]*\).*/\1/p' Dockerfile)
-if [ "$(cargo tauri --version 2>/dev/null)" != "tauri-cli $tauri" ]; then
-  echo "macos-local: needs tauri-cli $tauri: cargo install --locked tauri-cli --version $tauri" >&2
-  exit 1
-fi
+for tool in node pnpm; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "macos-local: needs $tool (Node.js 24; pnpm through corepack enable)" >&2
+    exit 1
+  fi
+done
 
-if [ "$install" = true ] && pgrep -qx baum-desktop; then
+if [ "$install" = true ] && pgrep -qx baum; then
   echo "macos-local: quit baum first (tray: Quit and stop background reviews)" >&2
   exit 1
 fi

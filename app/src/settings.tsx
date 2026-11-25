@@ -75,7 +75,7 @@ import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
 import { pendingUpdate, UpdatesSection, type AppUpdates } from "./desktop/updates";
-import { invoke } from "./desktop/native";
+import { desktopShell, invoke } from "./desktop/native";
 import { withCode } from "./desktop/code-terms";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, MAC, onBody, pageModifier, useRowFocus, useShortcuts } from "./shortcuts";
@@ -3552,7 +3552,7 @@ export function RepositoryPage({
 
 /** Whether the daemon page runs in the desktop app. */
 function hasFolderPicker() {
-  return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  return Boolean(desktopShell());
 }
 
 function GeneralSection() {

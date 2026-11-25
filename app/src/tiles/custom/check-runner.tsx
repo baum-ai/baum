@@ -7,6 +7,8 @@ import {
   HELLO_TIMEOUT,
   initMessage,
   measureMessage,
+  PING_TIMEOUT,
+  pingMessage,
   READY_TIMEOUT,
   readMessage,
   type ReadyMetrics,
@@ -209,19 +211,33 @@ export function drawFrame(
     let inited = 0;
     let ready = false;
     let helloTimer = 0;
+    let pingTimer = 0;
     let readyTimer = 0;
     let lateTimer = 0;
+    /** The frame's document finished loading, which one whose script
+     *  never yields does not. */
+    let loaded = false;
+    iframe.addEventListener("load", () => {
+      loaded = true;
+    });
+    /** Waiting for a `pong` after the frame missed its `hello`. */
+    let pinged = false;
     /** Waiting for a resize after a measure. */
     let measuring: ((height: number) => void) | null = null;
     const finish = () => {
       if (done) return;
       done = true;
       window.clearTimeout(helloTimer);
+      window.clearTimeout(pingTimer);
       window.clearTimeout(readyTimer);
       window.clearTimeout(lateTimer);
       unlisten();
       iframe.remove();
       resolve({ problems, run });
+    };
+    const noHello = {
+      code: "no_hello",
+      message: `The frame did not start within ${HELLO_TIMEOUT / 1000} seconds.`,
     };
     const target = iframe.contentWindow;
     if (!target) {
@@ -283,6 +299,8 @@ export function drawFrame(
         case "hello":
           if (inited) return;
           window.clearTimeout(helloTimer);
+          window.clearTimeout(pingTimer);
+          pinged = false;
           registered = message.registered;
           inited = performance.now();
           send(
@@ -330,6 +348,12 @@ export function drawFrame(
         case "resize":
           measuring?.(message.height);
           return;
+        case "pong":
+          // The frame runs: it just never started.
+          if (!pinged) return;
+          problems.push(noHello);
+          finish();
+          return;
         case "error": {
           if (!KIT_CODES.has(message.code)) return;
           const problem: Outcome["problems"][number] = {
@@ -357,9 +381,28 @@ export function drawFrame(
     });
     // Outside the session namespace, as the tiles page loads it.
     iframe.src = `/tile-frames/${job.digest.slice("sha256:".length)}`;
+    // No hello in time: the frame is asked whether it still runs. Where the
+    // engine draws a frame in a process of its own (Chromium), a script
+    // that never yields leaves this page running, so the frame's silence is
+    // the only sign of the loop; it is reported as a hang, which the daemon
+    // treats as one (the check window is closed, ending the loop). A frame
+    // that answers, or whose document loaded (one without the kit), just
+    // never started.
     helloTimer = window.setTimeout(() => {
-      problems.push({ code: "no_hello", message: "The frame did not start within 5 seconds." });
-      finish();
+      pinged = true;
+      pingTimer = window.setTimeout(() => {
+        if (done) return;
+        problems.push(
+          loaded
+            ? noHello
+            : {
+                code: "hang",
+                message: `The frame did not start within ${HELLO_TIMEOUT / 1000} seconds and stopped answering: its script never yields (an endless loop?).`,
+              },
+        );
+        finish();
+      }, PING_TIMEOUT);
+      send(pingMessage());
     }, HELLO_TIMEOUT);
   });
 }
@@ -410,13 +453,17 @@ export async function runJob(
   const problems: CheckProblem[] = [];
   const runs: CheckRun[] = [];
   let next = 0;
+  // After a hang the rest is not drawn: the type is blocked whatever it
+  // does, and its other frames would only spin too.
+  let hung = false;
   const worker = async () => {
-    while (next < specs.length) {
+    while (next < specs.length && !hung) {
       const spec = specs[next++]!;
       const resolved = refs.get(spec.sample);
       const outcome = await draw(stage, spec, job, resolved?.[spec.face] ?? {});
       runs.push(outcome.run);
       onFrame();
+      if (outcome.problems.some((problem) => problem.code === "hang")) hung = true;
       for (const problem of outcome.problems) {
         // Without the version's document, the data's citations could not be
         // resolved: that is not the tile's fault.

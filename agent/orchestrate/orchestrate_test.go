@@ -125,7 +125,7 @@ func sectionReplyJSON(tiles string) string {
 	if m := regexp.MustCompile(`"id":"(tl_[a-z_]+)"`).FindStringSubmatch(tiles); m != nil {
 		placed = m[1]
 	}
-	return `{"body":[
+	return `{"keep":false,"body":[
   {"type":"prose","title":null,"kind":null,"text":"Failed jobs now retry with a growing wait. After the last attempt they move to a table of dead jobs.","items":null,"tile":null},
   {"type":"points","title":"What changes","kind":null,"text":null,"items":[
    {"text":"A failed handler schedules a **retry**.","more":null,"tone":"new","cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]},

@@ -17,7 +17,10 @@ import { Badge, Button, CloseButton, LiveDot, SegmentedControl } from "@baum/vie
 import { cn } from "@baum/viewer/components/classnames";
 import { agentName, homePath, LocalRequestError } from "./api";
 import {
+  archiveConversation,
   closeConversation,
+  uncleanDirectory,
+  type UncleanDirectory,
   confirmProposal,
   dismissProposal,
   listConversations,
@@ -178,6 +181,32 @@ export function usePageReport(context: PageContext, enabled: boolean) {
     );
     return () => clearTimeout(timer);
   }, [key, enabled, epoch]);
+}
+
+/** What a refused archive would lose, in words for the person to weigh. */
+export function uncleanText(unclean: UncleanDirectory): string {
+  const held: string[] = [];
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  if (unclean.changed > 0)
+    held.push(
+      unclean.worktree
+        ? count(unclean.changed, "uncommitted change", "uncommitted changes")
+        : count(unclean.changed, "file", "files"),
+    );
+  if (unclean.unpushed)
+    held.push(
+      `${count(unclean.unpushed, "commit", "commits")} on ${unclean.branch ?? "its branch"} that no remote has`,
+    );
+  if (unclean.detached) held.push(`${count(unclean.detached, "commit", "commits")} on no branch`);
+  if (unclean.unreadable) held.push(`work that could not be checked (${unclean.unreadable})`);
+  const where = unclean.worktree ? "worktree" : "directory";
+  let text = `Archiving removes this session's ${where}, which holds ${held.join(" and ")}.`;
+  const named = (unclean.paths ?? []).slice(0, 5);
+  if (named.length > 0) {
+    const rest = unclean.changed - named.length;
+    text += ` ${named.join(", ")}${rest > 0 ? ` and ${rest} more` : ""}.`;
+  }
+  return `${text} It cannot be brought back.`;
 }
 
 /** The daemon's conversations, newest first, and whether it runs the panel
@@ -459,6 +488,9 @@ function SessionPanel({
   const position = (chosen === "left" || chosen === "right") && !sideFits ? "bottom" : chosen;
   const side = position === "left" || position === "right";
   const id = panel.conversation;
+  // The session shown when a close or archive answers, which may be another.
+  const shownId = useRef(id);
+  shownId.current = id;
   const { conversation, error: readError, update } = useConversation(id);
   const { proposals, read: readProposals } = useProposals(id);
   const [mode, setMode] = useState<PanelMode | null>(null);
@@ -587,7 +619,13 @@ function SessionPanel({
   // The model the session runs, once its transcript names it.
   const [usedModel, setUsedModel] = useState("");
   useEffect(() => setUsedModel(""), [id]);
-  const [closing, setClosing] = useState(false);
+  // A close or archive that asks first: of a session whose agent works, or
+  // an archive that would lose the work in its directory.
+  const [asking, setAsking] = useState<
+    | { kind: "close" | "archive"; session: ConversationSummary }
+    | { kind: "discard"; session: ConversationSummary; unclean: UncleanDirectory }
+    | null
+  >(null);
   const latestPage = useRef(page);
   latestPage.current = page;
 
@@ -657,25 +695,61 @@ function SessionPanel({
           .filter(Boolean)
           .join(" · "),
         onSelect: () => sessionPanel.select(c.id),
+        actions: () => sessionActions(c, false),
       });
-    if (id && conversation && !closed)
-      items.push({
-        label: "Close this session",
-        danger: true,
-        note: running ? "Stops the turn running; its directory stays" : "Its directory stays",
-        // While the agent works, closing it stops the turn: asked first.
-        onSelect: () => (running ? setClosing(true) : close()),
-      });
+    if (id && conversation) items.push(...sessionActions(conversation, true));
     return items;
   };
-  const close = () => {
-    if (!id) return;
-    void closeConversation(id).then(update, (e: unknown) =>
-      toast({
-        title: "Could not close the session",
-        detail: e instanceof Error ? e.message : undefined,
-        error: true,
-      }),
+  /** Closing and archiving a session: from the picker's foot for the one
+   *  shown, and from a right click on any session in it. */
+  const sessionActions = (c: ConversationSummary, shown: boolean): MenuItem[] => {
+    const working = c.state === "running";
+    const items: MenuItem[] = [];
+    if (c.state !== "closed")
+      items.push({
+        label: shown ? "Close this session" : "Close session",
+        danger: true,
+        note: working ? "Stops the turn running; its directory stays" : "Its directory stays",
+        // While the agent works, closing it stops the turn: asked first.
+        onSelect: () => (working ? setAsking({ kind: "close", session: c }) : close(c)),
+      });
+    items.push({
+      label: shown ? "Archive this session" : "Archive session",
+      danger: true,
+      note: "Leaves the list; the worktree or directory baum made goes",
+      onSelect: () => (working ? setAsking({ kind: "archive", session: c }) : archive(c)),
+    });
+    return items;
+  };
+  const close = (c: ConversationSummary) => {
+    void closeConversation(c.id).then(
+      (closedOne) => {
+        if (closedOne.id === shownId.current) update(closedOne);
+      },
+      (e: unknown) =>
+        toast({
+          title: "Could not close the session",
+          detail: e instanceof Error ? e.message : undefined,
+          error: true,
+        }),
+    );
+  };
+  const archive = (c: ConversationSummary, discard = false) => {
+    void archiveConversation(c.id, discard).then(
+      () => {
+        if (c.id === shownId.current) sessionPanel.select(null);
+        toast({ title: "Archived the session", detail: c.title || "Untitled session" });
+      },
+      (e: unknown) => {
+        const unclean = uncleanDirectory(e);
+        if (unclean) setAsking({ kind: "discard", session: c, unclean });
+        else
+          toast({
+            title: "Could not archive the session",
+            detail: e instanceof Error ? e.message : undefined,
+            error: true,
+          });
+      },
     );
   };
   // The message the panel's keys are on, marked as the transcript page marks
@@ -873,20 +947,49 @@ function SessionPanel({
       }}
     >
       {menu.menu}
-      {closing ? (
+      {asking?.kind === "close" ? (
         <ConfirmDialog
           title="Close this session while the agent works?"
           action="Close session"
           danger
           pending={false}
-          close={() => setClosing(false)}
+          close={() => setAsking(null)}
           confirm={() => {
-            setClosing(false);
-            close();
+            setAsking(null);
+            close(asking.session);
           }}
         >
           Closing it stops the turn running now. Its directory and what the agent changed there
           stay.
+        </ConfirmDialog>
+      ) : asking?.kind === "archive" ? (
+        <ConfirmDialog
+          title="Archive this session while the agent works?"
+          action="Archive session"
+          danger
+          pending={false}
+          close={() => setAsking(null)}
+          confirm={() => {
+            setAsking(null);
+            archive(asking.session);
+          }}
+        >
+          Archiving it stops the turn running now. If the agent left work in the session's worktree
+          or directory, you are asked again before it goes.
+        </ConfirmDialog>
+      ) : asking?.kind === "discard" ? (
+        <ConfirmDialog
+          title="Archive and discard this session's work?"
+          action="Discard and archive"
+          danger
+          pending={false}
+          close={() => setAsking(null)}
+          confirm={() => {
+            setAsking(null);
+            archive(asking.session, true);
+          }}
+        >
+          {uncleanText(asking.unclean)}
         </ConfirmDialog>
       ) : null}
       {position !== "top" ? (
@@ -1483,21 +1586,36 @@ export function shown(value: unknown): string {
 }
 
 /** A prompt's change (`{text}`, null for the default): what the default
- *  stands for, said in words beside the diff. */
-function textChange(value: unknown): { text: string | null } | null {
+ *  stands for, said in words beside the diff. A prompt proposal's Before also
+ *  holds `inherited_text`, the text that runs without the scope's own. */
+function textChange(value: unknown): { text: string | null; inherited?: string } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const keys = Object.keys(value);
-  const text = (value as { text?: unknown }).text;
-  return keys.length === 1 && keys[0] === "text" && (text === null || typeof text === "string")
-    ? { text: text as string | null }
-    : null;
+  const keys = Object.keys(value).filter((key) => key !== "inherited_text");
+  const { text, inherited_text: inherited } = value as { text?: unknown; inherited_text?: unknown };
+  if (keys.length !== 1 || keys[0] !== "text" || !(text === null || typeof text === "string"))
+    return null;
+  return typeof inherited === "string"
+    ? { text: text as string | null, inherited }
+    : { text: text as string | null };
 }
 
-/** A colour theme proposal: the one proposal that is for no page in
- *  particular (the "app" sentinel), which the app previews as it is proposed. */
-const THEME_PAGE = "app";
+/** The proposals that are for no page in particular (the "app" sentinel),
+ *  which the person saves wherever they are: a colour theme or a choice of
+ *  one, which the app previews as it is proposed, and a prompt. */
+const ANYWHERE_PAGE = "app";
 const isThemeProposal = (proposal: Proposal) =>
-  proposal.kind === "diff" && proposal.page === THEME_PAGE && proposal.target === "theme";
+  proposal.kind === "diff" && proposal.page === ANYWHERE_PAGE && proposal.target === "theme";
+
+/** The prompt a proposal changes, from its target (`prompt/<id>` for a
+ *  global prompt, `<owner>/<name>:prompt/<id>` for a repository's), or null
+ *  when it changes none. */
+export function proposedPrompt(
+  proposal: Proposal,
+): { id: string; repository: string | null } | null {
+  if (proposal.kind !== "diff" || proposal.page !== ANYWHERE_PAGE) return null;
+  const match = /^(?:([^:]+):)?prompt\/(.+)$/.exec(proposal.target);
+  return match ? { id: match[2]!, repository: match[1] ?? null } : null;
+}
 
 type ThemeProposed = {
   /** The custom theme this edits, when it does. */
@@ -1528,7 +1646,7 @@ function proposedTheme(proposal: Proposal): ThemeProposed | null {
 
 /** A theme choice: the other proposal that is for no page in particular. */
 const isChoiceProposal = (proposal: Proposal) =>
-  proposal.kind === "diff" && proposal.page === THEME_PAGE && proposal.target === "theme_choice";
+  proposal.kind === "diff" && proposal.page === ANYWHERE_PAGE && proposal.target === "theme_choice";
 
 /** The choice a proposal's After holds, or null when it names neither a theme
  *  nor a mode. */
@@ -1688,21 +1806,41 @@ function ThemeView({ proposal }: { proposal: Proposal }) {
   );
 }
 
-/** What a change saves against what is saved now, as text. */
-function ChangeView({ before, after }: { before: unknown; after: unknown }) {
+/** What a change saves against what is saved now, as text. A prompt's is
+ *  shown against the text that runs now: the scope's own, else the text it
+ *  inherits (a repository's the global prompt, else baum's default). */
+function ChangeView({
+  before,
+  after,
+  repository,
+}: {
+  before: unknown;
+  after: unknown;
+  /** The repository whose prompt this is; none for a global one. */
+  repository?: string | null;
+}) {
   const from = textChange(before);
   const to = textChange(after);
   if (from || to) {
-    const note =
-      to?.text === null || to?.text === ""
-        ? "Resets the prompt to baum's default."
-        : !from || from.text === null
-          ? "Replaces baum's default prompt with this text."
-          : null;
+    const resets = to?.text === null || to?.text === "";
+    const note = resets
+      ? repository
+        ? `Resets ${repository}'s prompt to the text it inherits: the global prompt, else baum's default.`
+        : "Resets the prompt to baum's default."
+      : !from || from.text === null
+        ? repository
+          ? `Gives ${repository} its own prompt in place of the text it inherits.`
+          : "Replaces baum's default prompt with this text."
+        : null;
+    const inUse = from?.text ?? from?.inherited ?? "";
     return (
       <>
         {note ? <p className="session-panel-note">{note}</p> : null}
-        <Diff before={from?.text ?? ""} after={to?.text ?? ""} />
+        <Diff
+          before={inUse}
+          after={resets ? (from?.inherited ?? "") : (to?.text ?? "")}
+          context={3}
+        />
       </>
     );
   }
@@ -1775,7 +1913,9 @@ export function ProposalCard({
   // The theme a choice names may be gone by now: the daemon would refuse it.
   const choiceGone =
     !!choice?.theme_id && !preferences.themes.some((theme) => theme.id === choice.theme_id);
-  const elsewhere = !themed && !choiced && !samePage(proposal.context, page);
+  // A prompt is for no page either: it can be changed while reading a review.
+  const prompted = proposedPrompt(proposal);
+  const elsewhere = proposal.page !== ANYWHERE_PAGE && !samePage(proposal.context, page);
   const refused = (e: unknown) => {
     if (e instanceof LocalRequestError && e.code === "not_current_page")
       setError({
@@ -1866,7 +2006,16 @@ export function ProposalCard({
           {proposal.kind === "operation" ? "Asks to run" : "Proposes a change"}
         </span>
         <span className="session-panel-proposal-where">
-          {pageLabel(proposal.context)} · <code>{proposal.target}</code>
+          {prompted ? (
+            <>
+              {prompted.repository ? `${prompted.repository}'s prompt` : "Global prompt"} ·{" "}
+              <code>{prompted.id}</code>
+            </>
+          ) : (
+            <>
+              {pageLabel(proposal.context)} · <code>{proposal.target}</code>
+            </>
+          )}
         </span>
       </header>
       {summary ? (
@@ -1876,7 +2025,11 @@ export function ProposalCard({
       ) : choiced ? (
         <ChoiceView proposal={proposal} />
       ) : (
-        <ChangeView before={proposal.before} after={proposal.after} />
+        <ChangeView
+          before={proposal.before}
+          after={proposal.after}
+          repository={prompted?.repository}
+        />
       )}
       {themed && proposedColours ? (
         <div className="session-panel-value session-panel-theme-save">

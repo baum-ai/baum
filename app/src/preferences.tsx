@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { request } from "./api";
-import { invoke } from "./desktop/native";
+import { desktopShell, invoke } from "./desktop/native";
 import {
   activeTheme,
   allowedTokens,
@@ -78,7 +78,7 @@ const PreferencesContext = createContext({
 });
 
 function isDesktopApp() {
-  return Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  return Boolean(desktopShell());
 }
 
 function normalizeThemes(saved: unknown): Theme[] {

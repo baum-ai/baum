@@ -138,6 +138,12 @@ const KEY_NAMES: Record<string, string> = {
 export const PANEL_KEY = "Control+`";
 export const PANEL_KEY_LABEL = MAC ? "⌃`" : "Ctrl+`";
 
+/** The review's right-hand sidebar's key: Ctrl with `]`, which by itself
+ *  folds the code beside a section's Overview. As the viewer takes it, and
+ *  as drawn. */
+export const SIDE_PANE_KEY = "Control+]";
+export const SIDE_PANE_KEY_LABEL = MAC ? "⌃]" : "Ctrl+]";
+
 /** Whether a keydown is the session panel's key: Ctrl with the backtick, or
  *  with the key in its place on a layout where it types something else or
  *  is a dead key. */
@@ -991,6 +997,11 @@ function shortcutGroups(
         },
         {
           keys: ["]"],
+          label: "Collapse or expand the code beside a section's Overview",
+          short: "code",
+        },
+        {
+          keys: [SIDE_PANE_KEY_LABEL],
           label: "Toggle the right-hand sidebar; opening it gives it the keys",
           short: "sidebar",
         },

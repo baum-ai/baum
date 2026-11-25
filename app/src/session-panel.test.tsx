@@ -617,6 +617,59 @@ it("asks before closing a session while its agent works", async () => {
   await until(() => expect(calls.some((c) => c.path.endsWith("/close"))).toBe(true));
 });
 
+it("archives a session from a right click in the picker, asking before it loses work", async () => {
+  conversation = made({ title: "Done with it" });
+  sessionPanel.select("c1");
+  const discarding = (call: Call) =>
+    (call.body as { discard?: boolean } | undefined)?.discard === true;
+  answer = (call) => {
+    if (call.path !== "api/console/conversations/c1/archive") return undefined;
+    if (!discarding(call))
+      return Response.json(
+        {
+          code: "unclean_directory",
+          message: "Archiving removes this session's worktree.",
+          unclean: {
+            changed: 7,
+            paths: ["a.txt", "b.txt"],
+            branch: "baum/pr-7",
+            unpushed: 1,
+            worktree: true,
+          },
+        },
+        { status: 409 },
+      );
+    conversation = null;
+    return Response.json(made({ state: "closed", archived_at: new Date().toISOString() }));
+  };
+  await host(pr);
+  await act(async () => sessionPanel.show());
+  await until(() => expect(panel()!.textContent).toContain("Done with it"));
+  await act(async () => button("Sessions")!.click());
+  const choice = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((b) =>
+      b.textContent?.startsWith(label),
+    );
+  // The keyboard's menu key on the session opens what can be done with it.
+  await act(async () => {
+    choice("Done with it")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+  });
+  expect(choice("Close session")).toBeDefined();
+  expect(choice("New session")).toBeUndefined();
+  await act(async () => choice("Archive session")!.click());
+  await until(() => expect(document.querySelector("dialog[open]")).not.toBeNull());
+  expect(document.querySelector("dialog[open]")!.textContent).toContain(
+    "which holds 7 uncommitted changes and 1 commit on baum/pr-7 that no remote has. a.txt, b.txt and 5 more.",
+  );
+  await act(async () => button("Discard and archive")!.click());
+  await until(() =>
+    expect(calls.some((c) => c.path.endsWith("/archive") && discarding(c))).toBe(true),
+  );
+  await until(() => expect(panel()!.textContent).not.toContain("Done with it"));
+});
+
 const operation = (over: Partial<Proposal> = {}): Proposal => ({
   id: "p1",
   kind: "operation",
@@ -775,7 +828,7 @@ it("shows a prompt's change as its lines, saying when it replaces the default", 
   const prompt = (before: unknown, after: unknown): Proposal => ({
     id: "p3",
     kind: "diff",
-    page: "settings",
+    page: "app",
     target: "prompt/review",
     before,
     after,
@@ -804,6 +857,70 @@ it("shows a prompt's change as its lines, saying when it replaces the default", 
   expect(shown({ name: "API_URL", remove: true })).toBe("name: API_URL\nremove: true");
   expect(shown({ name: "Inbox", query: "a\nb" })).toBe("name: Inbox\nquery:\na\nb");
   expect(shown({ list: [1, 2] })).toBe('{\n  "list": [\n    1,\n    2\n  ]\n}');
+});
+
+it("saves a repository's prompt proposed while reading a review from any page", async () => {
+  const diff: Proposal = {
+    id: "p4",
+    kind: "diff",
+    page: "app",
+    target: "acme/demo:prompt/review",
+    before: { text: null, inherited_text: "Review the change.\nList the risks." },
+    after: { text: "Review the change.\nList the risks.\nCheck the migrations." },
+    revision: "v1",
+    context: { page: "pull_request", repository: "acme/demo", pull_request: 7 },
+  };
+  answer = (call) => (call.path.endsWith("/save") ? Response.json({}) : undefined);
+  const { changed } = await card(diff, { page: "inbox" });
+  expect(node.querySelector(".session-panel-proposal-where")!.textContent).toBe(
+    "acme/demo's prompt · review",
+  );
+  expect(node.textContent).toContain(
+    "Gives acme/demo its own prompt in place of the text it inherits.",
+  );
+  // Shown against the text that runs now, not as a whole new text.
+  const added = [...node.querySelectorAll('.prompt-diff span[data-kind="add"]')].map((l) =>
+    l.textContent?.trim(),
+  );
+  expect(added).toEqual(["+ Check the migrations."]);
+  expect(node.textContent).not.toContain("open it to save");
+  await act(async () => button("Save")!.click());
+  await until(() => expect(changed).toHaveBeenCalled());
+  expect(calls.some((c) => c.path.endsWith("/proposals/p4/save"))).toBe(true);
+  // A reset goes back to the inherited text.
+  await card(
+    {
+      ...diff,
+      target: "prompt/review",
+      before: { text: "Mine", inherited_text: "Built in" },
+      after: { text: null },
+    },
+    { page: "inbox" },
+  );
+  expect(node.querySelector(".session-panel-proposal-where")!.textContent).toBe(
+    "Global prompt · review",
+  );
+  expect(node.textContent).toContain("Resets the prompt to baum's default.");
+  expect(node.querySelector('.prompt-diff span[data-kind="add"]')!.textContent).toContain(
+    "Built in",
+  );
+  // A long prompt's unchanged lines fold around the change, until asked for.
+  const long = Array.from({ length: 40 }, (_, i) => `Line ${i + 1}`);
+  await card(
+    {
+      ...diff,
+      before: { text: null, inherited_text: long.join("\n") },
+      after: { text: [...long.slice(0, 20), "New line", ...long.slice(20)].join("\n") },
+    },
+    { page: "inbox" },
+  );
+  const spans = () => [...node.querySelectorAll(".prompt-diff span")].map((s) => s.textContent);
+  expect(spans().filter((s) => s?.startsWith("  Line"))).toHaveLength(6);
+  const folds = [...node.querySelectorAll<HTMLButtonElement>(".prompt-diff-fold")];
+  expect(folds.map((b) => b.textContent)).toEqual(["17 unchanged lines", "17 unchanged lines"]);
+  await act(async () => folds[0]!.click());
+  expect(node.querySelector(".prompt-diff-fold")).toBeNull();
+  expect(spans()).toHaveLength(41);
 });
 
 it("points a proposal made on another page to it before anything is pressed", async () => {
