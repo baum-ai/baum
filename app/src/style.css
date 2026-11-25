@@ -3245,7 +3245,7 @@ dialog.local-dialog-wide {
   }
   .settings-nav {
     flex-direction: row;
-    overflow-x: auto;
+    flex-wrap: wrap;
     border-right: 0;
     border-bottom: 1px solid var(--border-subtle);
   }
