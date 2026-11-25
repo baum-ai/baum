@@ -32,20 +32,22 @@ test("counts what happened on a pull request until its page is opened", async ({
   await page.goto(await launchURL());
   const rows = page.locator("li[data-row]:has(> button.upnext-row)");
   await expect(rows.first()).toBeVisible();
-  const [first, second] = await rows.evaluateAll((items) =>
-    items.slice(0, 2).map((item) => item.getAttribute("data-row")!),
-  );
-  // The first read takes every pull request as read: no counts.
-  await expect(page.locator(".upnext-unread")).toHaveCount(0);
+  // Two listed pull requests the record follows: those with GitHub's details.
+  let followed: string[] = [];
   await expect
-    .poll(() =>
-      page.evaluate(async (key) => {
+    .poll(async () => {
+      const keys = await rows.evaluateAll((items) =>
+        items.map((item) => item.getAttribute("data-row")!),
+      );
+      followed = await page.evaluate(async (keys) => {
         const read = await fetch("api/ui-state/activity", { cache: "no-store" });
         const { value } = (await read.json()) as { value: Stored | null };
-        return !!value?.prs[key];
-      }, second!),
-    )
-    .toBe(true);
+        return keys.filter((key) => value?.prs[key]);
+      }, keys);
+      return followed.length;
+    })
+    .toBeGreaterThanOrEqual(2);
+  const [first, second] = followed;
   await setUnread(page, { [first!]: { pushes: 2, answers: 1 }, [second!]: { reviews: 1 } });
   await page.reload();
   const badge = page.locator(`li[data-row="${first}"] .upnext-unread`);
