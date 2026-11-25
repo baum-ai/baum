@@ -49,6 +49,7 @@ import { errorMessage, log } from "./log.ts";
 import { refresh as refreshMenuEntry } from "./menu-entry.ts";
 import {
   BUNDLED_ORIGIN,
+  TRAY_ORIGIN,
   BUNDLED_SCREEN,
   bundledUrl,
   decide,
@@ -220,6 +221,7 @@ function showSetup(): void {
 function isAppOrigin(origin: string): boolean {
   return (
     origin === BUNDLED_ORIGIN ||
+    origin === TRAY_ORIGIN ||
     origin === attacher.daemon() ||
     (development !== null && origin === DEVELOPMENT_SETUP_ORIGIN)
   );

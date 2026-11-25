@@ -8,7 +8,7 @@ import type { IpcMain, IpcMainInvokeEvent, WebContents } from "electron";
 import { INVOKE_CHANNEL, type InvokeResult } from "../shared/contract.ts";
 import { type CommandContext, dispatch, isCommand, type Role } from "./commands.ts";
 import { errorMessage, log } from "./log.ts";
-import { bundledPageAllowed, isBundled, originOf } from "./navigation.ts";
+import { bundledPageAllowed, isBundled, isTrayPanel, originOf } from "./navigation.ts";
 
 /** The app's windows whose pages may call commands. The tile check window
  *  (4/7) is not one: its page may call none. */
@@ -47,7 +47,7 @@ export function resolveRole({
   }
   if (url.username !== "" || url.password !== "") return null;
   if (window === "tray-panel") {
-    return isBundled(url) && url.pathname === "/tray.html" ? "tray-panel" : null;
+    return isTrayPanel(raw) ? "tray-panel" : null;
   }
   if (isBundled(url)) {
     if (url.pathname === "/" || url.pathname === "/index.html") return "connecting-screen";

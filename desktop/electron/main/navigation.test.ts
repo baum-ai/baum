@@ -11,15 +11,21 @@ import {
   OpenLimit,
   originOf,
   schemeAndHost,
+  TRAY_PANEL_URL,
 } from "./navigation.ts";
 
 const daemon = "http://127.0.0.1:4100";
 
 describe("navigation", () => {
-  it("the tray panel loads only its bundled page", () => {
-    expect(isTrayPanel(bundledUrl("/tray.html"))).toBe(true);
+  it("the tray panel loads only its own page", () => {
+    expect(isTrayPanel(TRAY_PANEL_URL)).toBe(true);
     for (const other of [
       BUNDLED_SCREEN,
+      bundledUrl("/tray.html"),
+      "app://tray/index.html",
+      "app://tray/tray.html/",
+      "app://tray:1/tray.html",
+      "app://user@tray/tray.html",
       "http://127.0.0.1:4100/tray.html",
       "https://example.com/tray.html",
       "app://elsewhere/tray.html",
@@ -31,9 +37,23 @@ describe("navigation", () => {
   });
 
   it("gives the bundled pages their own origin", () => {
-    expect(originOf(new URL(bundledUrl("/tray.html")))).toBe("app://bundle");
+    expect(originOf(new URL(bundledUrl("/index.html")))).toBe("app://bundle");
+    expect(originOf(new URL(TRAY_PANEL_URL))).toBe("app://tray");
     expect(originOf(new URL("http://127.0.0.1:4100/x"))).toBe(daemon);
     expect(originOf(new URL("app://bundle:9/x"))).toBe("null");
+  });
+
+  it("keeps the tray panel on an origin no bundled screen shares, so zoom is per window", () => {
+    const panel = originOf(new URL(TRAY_PANEL_URL));
+    for (const path of ["/", "/index.html", "/setup.html"]) {
+      expect(originOf(new URL(bundledUrl(path))), path).not.toBe(panel);
+    }
+    expect(originOf(new URL(BUNDLED_SCREEN))).not.toBe(panel);
+  });
+
+  it("refuses the tray panel in the main window", () => {
+    expect(decide(TRAY_PANEL_URL, null, true)).toBe("deny");
+    expect(decide("app://tray/", null, true)).toBe("deny");
   });
 
   it("allows the bundled screen and the daemon", () => {

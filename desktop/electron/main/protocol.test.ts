@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { assetClosure, CONTENT_SECURITY_POLICY, contentType, resolveRequest } from "./protocol.ts";
+import {
+  type AssetSets,
+  assetSets,
+  CONTENT_SECURITY_POLICY,
+  contentType,
+  resolveRequest,
+} from "./protocol.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -28,22 +34,34 @@ function dist(): string {
   return dir;
 }
 
+function sets(bundle: string[], tray: string[] = []): AssetSets {
+  return { bundle: new Set(bundle), tray: new Set(tray) };
+}
+
 describe("the app scheme", () => {
+  it("serves the tray panel and its assets only from its own origin", () => {
+    const assets = sets(["connecting-A.js"], ["tray-C.js"]);
+    expect(resolveRequest("app://tray/tray.html", false, assets)).toBe("tray.html");
+    expect(resolveRequest("app://tray/tray.html?x#y", true, assets)).toBe("tray.html");
+    expect(resolveRequest("app://tray/assets/tray-C.js", false, assets)).toBe("assets/tray-C.js");
+  });
+
   it("serves the assets the bundled pages reference, through each other", () => {
-    expect([...assetClosure(dist())].sort()).toEqual([
+    const found = assetSets(dist());
+    expect([...found.bundle].sort()).toEqual([
       "connecting-A.js",
       "font-E.woff2",
       "setup-B.css",
       "shared-D.js",
-      "tray-C.js",
     ]);
+    expect([...found.tray]).toEqual(["tray-C.js"]);
   });
 
   it("serves exactly the pages, and the setup screen only while it shows", () => {
-    const assets = new Set(["connecting-A.js"]);
+    const assets = sets(["connecting-A.js"]);
     expect(resolveRequest("app://bundle/", false, assets)).toBe("index.html");
     expect(resolveRequest("app://bundle/index.html?x=1#y", false, assets)).toBe("index.html");
-    expect(resolveRequest("app://bundle/tray.html", false, assets)).toBe("tray.html");
+    expect(resolveRequest("app://bundle/tray.html", false, assets)).toBeNull();
     expect(resolveRequest("app://bundle/setup.html", true, assets)).toBe("setup.html");
     expect(resolveRequest("app://bundle/setup.html", false, assets)).toBeNull();
     expect(resolveRequest("app://bundle/assets/connecting-A.js", false, assets)).toBe(
@@ -52,7 +70,7 @@ describe("the app scheme", () => {
   });
 
   it("refuses other paths, spellings and hosts", () => {
-    const assets = new Set(["connecting-A.js", "app-F.js"]);
+    const assets = sets(["connecting-A.js", "app-F.js"], ["tray-C.js"]);
     for (const url of [
       "app://bundle/setup",
       "app://bundle/setup.html/",
@@ -69,6 +87,14 @@ describe("the app scheme", () => {
       "app://bundle:1/index.html",
       "app://user@bundle/index.html",
       "app://other/index.html",
+      "app://tray/index.html",
+      "app://tray/setup.html",
+      "app://tray/",
+      "app://tray/tray.html/",
+      "app://tray/assets/connecting-A.js",
+      "app://tray:1/tray.html",
+      "app://user@tray/tray.html",
+      "app://bundle/assets/tray-C.js",
       "http://bundle/index.html",
       "not a url",
     ]) {

@@ -1,15 +1,16 @@
-// The `app://bundle` scheme that serves the bundled screens from dist/ (the
-// Vite build's copy for the desktop): exactly the connecting screen (`/`,
-// `/index.html`), the setup screen (`/setup.html`) only while the app shows
-// it, the tray panel (`/tray.html`), and the asset files those pages
-// reference, directly or through each other. Every other path, other
-// spellings of a page (`/setup`, `/setup.html/`) and any percent-encoding
-// included, is not found. HTML responses carry the content security policy
+// The `app://` scheme that serves the bundled screens from dist/ (the Vite
+// build's copy for the desktop). `app://bundle` serves exactly the connecting
+// screen (`/`, `/index.html`), the setup screen (`/setup.html`) only while
+// the app shows it, and the asset files those pages reference, directly or
+// through each other. `app://tray` serves only the tray panel (`/tray.html`)
+// and its assets: its own origin keeps the window's zoom off the panel. Every
+// other path, host, spelling of a page (`/setup`, `/setup.html/`) and any
+// percent-encoding included, is not found. HTML responses carry the content security policy
 // the Tauri shell set, with no `connect-src`: commands go over IPC.
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import type { Protocol } from "electron";
-import { BUNDLED_HOST, BUNDLED_SCHEME } from "./navigation.ts";
+import { BUNDLED_HOST, BUNDLED_SCHEME, TRAY_HOST } from "./navigation.ts";
 
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -20,7 +21,14 @@ export const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-const PAGES = new Set(["/index.html", "/setup.html", "/tray.html"]);
+const BUNDLED_PAGES = ["/index.html", "/setup.html"];
+const TRAY_PAGES = ["/tray.html"];
+
+/** The assets each origin serves. */
+export interface AssetSets {
+  bundle: ReadonlySet<string>;
+  tray: ReadonlySet<string>;
+}
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -37,11 +45,11 @@ const TYPES: Record<string, string> = {
 
 const ASSET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-/** The files of `dist/assets` the bundled pages reference, directly or
- *  through each other: a file counts when a page or a counted script or
- *  style sheet names it. The daemon app's own chunks, which dist/ also
- *  holds, stay out unless a bundled page shares them. */
-export function assetClosure(dist: string): Set<string> {
+/** The files of `dist/assets` the pages (`/index.html`-style paths)
+ *  reference, directly or through each other: a file counts when a page or a
+ *  counted script or style sheet names it. The daemon app's own chunks,
+ *  which dist/ also holds, stay out unless a page shares them. */
+export function assetClosure(dist: string, pages: readonly string[]): Set<string> {
   let names: string[];
   try {
     names = readdirSync(join(dist, "assets")).filter((n) => ASSET_NAME.test(n));
@@ -49,7 +57,7 @@ export function assetClosure(dist: string): Set<string> {
     return new Set();
   }
   const included = new Set<string>();
-  const queue: string[] = [...PAGES].map((page) => join(dist, page));
+  const queue: string[] = pages.map((page) => join(dist, page));
   while (queue.length > 0) {
     let text: string;
     try {
@@ -66,13 +74,15 @@ export function assetClosure(dist: string): Set<string> {
   return included;
 }
 
+/** The assets of the bundled screens and of the tray panel, each closed
+ *  over what its pages reference. */
+export function assetSets(dist: string): AssetSets {
+  return { bundle: assetClosure(dist, BUNDLED_PAGES), tray: assetClosure(dist, TRAY_PAGES) };
+}
+
 /** The file under dist/ a request for `raw` gets, or null when it gets
  *  nothing. */
-export function resolveRequest(
-  raw: string,
-  setupOpen: boolean,
-  assets: ReadonlySet<string>,
-): string | null {
+export function resolveRequest(raw: string, setupOpen: boolean, assets: AssetSets): string | null {
   let url: URL;
   try {
     url = new URL(raw);
@@ -81,18 +91,28 @@ export function resolveRequest(
   }
   if (
     url.protocol !== `${BUNDLED_SCHEME}:` ||
-    url.hostname !== BUNDLED_HOST ||
     url.port !== "" ||
     url.username !== "" ||
     url.password !== ""
   ) {
     return null;
   }
-  const path = url.pathname === "/" ? "/index.html" : url.pathname;
+  let pages: readonly string[];
+  let allowed: ReadonlySet<string>;
+  if (url.hostname === BUNDLED_HOST) {
+    pages = BUNDLED_PAGES;
+    allowed = assets.bundle;
+  } else if (url.hostname === TRAY_HOST) {
+    pages = TRAY_PAGES;
+    allowed = assets.tray;
+  } else {
+    return null;
+  }
+  const path = url.pathname === "/" && pages === BUNDLED_PAGES ? "/index.html" : url.pathname;
   if (path === "/setup.html" && !setupOpen) return null;
-  if (PAGES.has(path)) return path.slice(1);
+  if (pages.includes(path)) return path.slice(1);
   const asset = /^\/assets\/([^/]+)$/.exec(path)?.[1];
-  if (asset && ASSET_NAME.test(asset) && assets.has(asset)) return `assets/${asset}`;
+  if (asset && ASSET_NAME.test(asset) && allowed.has(asset)) return `assets/${asset}`;
   return null;
 }
 
@@ -113,7 +133,7 @@ export function registerAppScheme(protocol: Protocol): void {
 
 /** After the app is ready: serves the bundled files from `dist`. */
 export function serveAppScheme(protocol: Protocol, dist: string, setupOpen: () => boolean): void {
-  const assets = assetClosure(dist);
+  const assets = assetSets(dist);
   protocol.handle(BUNDLED_SCHEME, (request) => {
     const file = resolveRequest(request.url, setupOpen(), assets);
     if (!file || request.method !== "GET") return new Response("Not found", { status: 404 });

@@ -6,7 +6,7 @@
 // app, and what the daemon is doing opens the jobs list while reviews run or
 // wait. Linux tray hosts report no clicks, so Linux has the menu only.
 //
-// The page is the bundled `tray.html`. Its role allows exactly the three
+// The page is `tray.html` on its own origin. Its role allows exactly the three
 // commands here, and only in this window: it reads the tray's last view, sets
 // its own height, and runs one of the panel's actions. When it loses focus, it
 // hides. This file holds the view model, the commands' logic and the
