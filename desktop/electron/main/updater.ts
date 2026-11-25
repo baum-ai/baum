@@ -49,8 +49,8 @@ export const SETTING = "BAUM_DESKTOP_UPDATES";
  *  RELEASE_PUBLIC_KEY is, to trust instead of the release key. */
 export const TEST_FEED = "BAUM_DESKTOP_UPDATE_FEED";
 export const TEST_PUBLIC_KEY = "BAUM_DESKTOP_UPDATE_PUBKEY";
-/** The release key's minisign public key file, base64 encoded:
- *  `plugins.updater.pubkey` in tauri.conf.json. */
+/** The release key's minisign public key file (updater-key.pub, which the
+ *  release's signing scripts read), base64 encoded. */
 export const RELEASE_PUBLIC_KEY =
   "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM0MkFDRjc3NEZDQzFENUYKUldSZkhjeFBkODhxeEh0eWRKWTdxbkEzVHJQM1k5NmVteGxJODdWT2JpRElRWXBhZlEzT0phZnYK";
 
@@ -181,8 +181,8 @@ export function isTestVersion(version: string): boolean {
 
 /** In a test build (isTestVersion), BAUM_DESKTOP_UPDATE_FEED and
  *  BAUM_DESKTOP_UPDATE_PUBKEY point the updater at a local feed signed by a
- *  throwaway key, so an update can be installed end to end
- *  (scripts/bridge-test.sh). Any other version ignores them: a released app
+ *  throwaway key, so an update can be installed end to end ("Updates" in
+ *  README.md). Any other version ignores them: a released app
  *  only ever reads its channel and trusts the release key. */
 export function testOverrides(
   version: string,

@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# Signs updater bundles with the release key, as the Tauri CLI would:
+# Signs updater bundles with the release key:
 #
 #   scripts/updater-sign.sh VERSION FILE...
 #
 # Each FILE gets FILE.sig: the minisign signature, base64 encoded, whose
 # trusted comment names the file and VERSION ("timestamp:…<tab>file:…<tab>
-# version:…"). The app's updater checks that version against the one the
-# manifest announces (requireSignedVersion). Each signature is then verified
-# against the public key in tauri.conf.json, so signing with the wrong key
+# version:…"). The app checks that version against the one it installs, and
+# installed Tauri copies against the one latest.json announces (see "Bridge
+# release" in README.md). Each signature is then verified against the
+# release key's public half (updater-key.pub), so signing with the wrong key
 # fails here rather than on users' machines.
 #
-# TAURI_SIGNING_PRIVATE_KEY is the content of the key file `tauri signer
-# generate` writes; TAURI_SIGNING_PRIVATE_KEY_PASSWORD its password. MINISIGN
-# names the minisign binary (default: minisign on PATH; the release must use
-# scripts/install-minisign.sh's and sets BAUM_RELEASE_SIGNING=1). UPDATER_PUBKEY overrides the configured
-# public key (tests). Runs no build tooling.
+# TAURI_SIGNING_PRIVATE_KEY is the minisign secret key file, base64 encoded
+# (the format `tauri signer generate` wrote, after which the secret is
+# named); TAURI_SIGNING_PRIVATE_KEY_PASSWORD its password. MINISIGN names
+# the minisign binary (default: minisign on PATH; the release must use
+# scripts/install-minisign.sh's and sets BAUM_RELEASE_SIGNING=1).
+# UPDATER_PUBKEY, a public key file base64 encoded, overrides
+# updater-key.pub (tests). Runs no build tooling.
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -44,7 +47,6 @@ if [ "${BAUM_RELEASE_SIGNING:-}" = 1 ]; then
 fi
 minisign=${MINISIGN:-minisign}
 here=$(cd "$(dirname "$0")/.." && pwd)
-pubkey=${UPDATER_PUBKEY:-$(sed -n 's/.*"pubkey": *"\([A-Za-z0-9+/=]*\)".*/\1/p' "$here/tauri.conf.json")}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -52,7 +54,11 @@ trap 'rm -rf "$work"' EXIT
   umask 077
   printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | base64 --decode >"$work/key"
 )
-printf '%s' "$pubkey" | base64 --decode >"$work/key.pub"
+if [ -n "${UPDATER_PUBKEY:-}" ]; then
+  printf '%s' "$UPDATER_PUBKEY" | base64 --decode >"$work/key.pub"
+else
+  cp "$here/updater-key.pub" "$work/key.pub"
+fi
 
 for file in "$@"; do
   name=$(basename "$file")

@@ -21,19 +21,21 @@
 #     redirects to the same file on the GitHub release
 #     (https://github.com/baum-ai/baum/releases/download/vVERSION/...);
 #   - that bundle is in DIR, and its signature was made by the release key in
-#     tauri.conf.json (minisign);
+#     updater-key.pub (minisign);
 #   - the signature's trusted comment names the version the manifest
 #     announces.
 # signed checks that each FILE has a FILE.sig made by the release key for
 # VERSION: the release runs it on every file electron-updater's latest*.yml
 # files list (scripts/update-yml.mjs), which the app verifies the same way.
 #
-# electron checks that every bundle DIR/latest.json lists is the Electron
-# app, so installed Tauri copies move onto it (the bridge release; see
-# "Bridge release" in README.md): the macOS archive holds a single baum.app
-# at its root, as the Tauri updater expects (it drops each entry's first path
-# component and puts the rest in place of the installed app), with Electron's
-# Contents/Resources/app.asar and the baum-desktop executable; the AppImage
+# electron checks that installed Tauri copies can read DIR/latest.json and
+# that every bundle it lists is the Electron app, so they move onto it (the
+# bridge release; see "Bridge release" in README.md): the version is a
+# semantic version and pub_date an RFC 3339 time, as tauri-plugin-updater
+# parses them; the macOS archive holds a single baum.app at its root, as the
+# Tauri updater expects (it drops each entry's first path component and puts
+# the rest in place of the installed app), with Electron's
+# Contents/Resources/app.asar and an executable baum-desktop; the AppImage
 # holds resources/app.asar. The Windows installer is not released and is
 # not checked.
 #
@@ -67,10 +69,13 @@ if [ "${BAUM_RELEASE_SIGNING:-}" = 1 ]; then
   fi
 fi
 minisign=${MINISIGN:-minisign}
-pubkey=${UPDATER_PUBKEY:-$(jq -ej '.plugins.updater.pubkey' "$here/tauri.conf.json")}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-printf '%s' "$pubkey" | base64 --decode >"$work/key.pub"
+if [ -n "${UPDATER_PUBKEY:-}" ]; then
+  printf '%s' "$UPDATER_PUBKEY" | base64 --decode >"$work/key.pub"
+else
+  cp "$here/updater-key.pub" "$work/key.pub"
+fi
 
 # Update downloads go through downloads.usebaum.com so they are counted; it
 # redirects /update/vVERSION/FILE to that file on the GitHub release.
@@ -189,6 +194,19 @@ write() {
 electron() {
   local dir=$1 status=0 platform url file name entry
   local platforms
+  # What tauri-plugin-updater's RemoteRelease parses, or the update is
+  # dropped: a semantic version (a leading v allowed) and an RFC 3339
+  # pub_date.
+  if ! jq -e '.version | strings | test("^v?[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$")' \
+    "$dir/latest.json" >/dev/null; then
+    echo "FAIL latest.json's version is not a semantic version" >&2
+    status=1
+  fi
+  if ! jq -e '.pub_date | strings | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")' \
+    "$dir/latest.json" >/dev/null; then
+    echo "FAIL latest.json's pub_date is not an RFC 3339 time" >&2
+    status=1
+  fi
   platforms=$(jq -ej '.platforms | keys | join(" ")' "$dir/latest.json")
   for platform in $platforms; do
     url=$(jq -ej --arg p "$platform" '.platforms[$p].url | strings' "$dir/latest.json")
@@ -215,6 +233,12 @@ electron() {
             continue 2
           fi
         done
+        # The Tauri updater keeps the modes the archive gives.
+        if ! tar -tvzf "$file" baum.app/Contents/MacOS/baum-desktop 2>/dev/null | grep -q '^-..x'; then
+          echo "FAIL $platform: $name's baum.app/Contents/MacOS/baum-desktop is not executable" >&2
+          status=1
+          continue
+        fi
         ;;
       *.AppImage)
         # The AppImage lists its own files (its runtime extracts them), so
