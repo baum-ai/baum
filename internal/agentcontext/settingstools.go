@@ -53,7 +53,8 @@ func repositoryPageTools() []string {
 		out = append(out, repositorySectionTools[section]...)
 		out = append(out, repositorySectionProposals[section]...)
 	}
-	return out
+	// The prompts' propose_* tools are every page's, the list's too.
+	return slices.DeleteFunc(out, func(name string) bool { return slices.Contains(commonToolNames, name) })
 }
 
 // sectionTools are the tools of the page's open section, if it has one: the
@@ -133,7 +134,7 @@ func (s *Server) settingsTools() []Tool {
 		Call:        callSettingsAppearance,
 	}, {
 		Name: "settings_reviews",
-		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored), and whether new reviews are generated as tiles (tile_reviews, an experimental setting, off by default). " +
+		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested, all, or inboxes for those in a saved inbox with auto_review on), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored), and whether new reviews are generated as tiles (tile_reviews, an experimental setting, off by default). " +
 			"Resolving an auto backend runs the harnesses' version checks on this computer, as opening the section in the app does; the answer is reused for a short while (45 seconds in the daemon) while the settings are unchanged.",
 		Scope:     ScopeGlobal,
 		Reads:     []string{"/api/automatic"},

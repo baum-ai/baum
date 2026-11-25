@@ -26,8 +26,9 @@ export function ReviewImages({
 }: {
   document: ReviewDocument;
   block: ImagesBlock;
-  /** The heading over the images. */
-  heading?: string;
+  /** The heading over the images; null for none, when the images stand
+   *  under a heading of their own (a tile's). */
+  heading?: string | null;
 }) {
   const attachmentUrl = useAttachmentUrl();
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
@@ -46,7 +47,7 @@ export function ReviewImages({
   // it back, so focus follows to whichever control replaces the focused one.
   const focusNext = useRef<string | null>(null);
   const idPrefix = useId();
-  const takeFocus = (target: string) => (element: HTMLButtonElement | null) => {
+  const takeFocus = (target: string) => (element: HTMLElement | null) => {
     if (element && focusNext.current === target) {
       focusNext.current = null;
       element.focus();
@@ -87,7 +88,11 @@ export function ReviewImages({
           {
             key: `${position}-${item.attachment}`,
             attachment,
-            text: item.caption || attachment.alt,
+            // GitHub gives an uploaded clip no alt text; its heading names it.
+            text:
+              item.caption ||
+              attachment.alt ||
+              (attachment.content_type.startsWith("video/") ? attachment.heading : undefined),
           },
         ];
       })
@@ -114,8 +119,8 @@ export function ReviewImages({
     sectionImageHeight(space.viewport.height),
   );
 
-  return (
-    <Part label={heading}>
+  const content = (
+    <>
       <div ref={setPane} className="space-y-4">
         {rows.map((row) => (
           <div
@@ -124,13 +129,15 @@ export function ReviewImages({
           >
             {row.map(({ index, width }) => {
               const item = shown[index] as Shown;
-              const label = item.text ?? `image ${item.attachment.position}`;
+              // The desktop app also places description videos; they play in place.
+              const video = item.attachment.content_type.startsWith("video/");
+              const label = item.text ?? `${video ? "video" : "image"} ${item.attachment.position}`;
               return (
                 <figure key={item.key} className="min-w-0 max-w-full space-y-1.5" style={{ width }}>
                   {failed.has(item.attachment.id) ? (
                     <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-default bg-surface-sunken p-3 text-center text-base text-tertiary">
                       <span id={`${idPrefix}-${item.key}`} role="status">
-                        Image unavailable
+                        {video ? "Video" : "Image"} unavailable
                       </span>
                       <Button
                         ref={takeFocus(`retry:${item.key}`)}
@@ -142,6 +149,24 @@ export function ReviewImages({
                         Retry
                       </Button>
                     </div>
+                  ) : video ? (
+                    <video
+                      ref={takeFocus(`view:${item.key}`)}
+                      src={source(item.attachment.id)}
+                      aria-label={label}
+                      width={item.attachment.width}
+                      height={item.attachment.height}
+                      controls
+                      muted
+                      preload="metadata"
+                      onError={(event) => {
+                        if (globalThis.document.activeElement === event.currentTarget) {
+                          focusNext.current = `retry:${item.key}`;
+                        }
+                        setFailed((current) => new Set(current).add(item.attachment.id));
+                      }}
+                      className="block h-auto w-full rounded-md border border-default bg-surface-sunken"
+                    />
                   ) : (
                     <button
                       type="button"
@@ -218,7 +243,12 @@ export function ReviewImages({
           if (key) triggers.current.get(key)?.focus();
         }}
       />
-    </Part>
+    </>
+  );
+  return heading === null ? (
+    <div className="min-w-0">{content}</div>
+  ) : (
+    <Part label={heading}>{content}</Part>
   );
 }
 

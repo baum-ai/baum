@@ -131,7 +131,8 @@ func OverviewSchema() []byte {
 			"points": array(object(obj{"text": text(500), "section": nullable(text(80))}), 0, 3),
 		}),
 		"risk_why":    str(600),
-		"screenshots": array(text(200), 0, 3),
+		"screenshots": array(text(200), 0, reviewv2.MaxScreenshots),
+		"videos":      array(text(200), 0, reviewv2.MaxVideos),
 		"diagram":     nullable(text(80)),
 		"intent": array(object(obj{
 			"session": text(200), "prompt": obj{"type": "integer", "minimum": 0}, "asked": text(400), "got": text(400),

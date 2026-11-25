@@ -90,6 +90,10 @@ export type PR = GitHubState & {
   /** GitHub says the branch is out of date with its base and not conflicting,
    *  which Update branch fixes; absent in data from an older daemon. */
   behind?: boolean;
+  /** When it was opened and last updated on GitHub (RFC 3339); absent in
+   *  data from an older daemon. */
+  created_at?: string;
+  updated_at?: string;
   /** GitHub still waits for a required approving review. False when none is
    *  required or the one required is given; null or absent when unknown. */
   review_required?: boolean | null;
@@ -350,7 +354,7 @@ export type AutomaticStatus = {
 export type Automatic = {
   enabled: boolean;
   /** Which pull requests get automatic reviews; absent from older daemons. */
-  pull_requests?: "all" | "both" | "authored" | "requested";
+  pull_requests?: "all" | "both" | "authored" | "requested" | "inboxes";
   /** What a push to a reviewed pull request does; absent from older daemons,
    *  which review every push. */
   updates?: "always" | "on_open" | "on_change";
@@ -982,13 +986,7 @@ export function navigate(href: string) {
   dispatchEvent(new PopStateEvent("popstate"));
 }
 /** Opens a page outside the app, as a link to it would. */
-export function openExternal(url: string) {
-  Object.assign(document.createElement("a"), {
-    href: url,
-    target: "_blank",
-    rel: "noreferrer",
-  }).click();
-}
+export { openExternal } from "./outside-links";
 /** A job's own page: everything kept about it and its transcript. */
 export function jobHref(job: Job) {
   return appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`);
@@ -1054,6 +1052,7 @@ async function failure(response: Response): Promise<LocalRequestError> {
   let body: {
     code?: string;
     message?: string;
+    error?: string;
     needs_clone?: boolean;
     blocked_reason?: string;
     isolation_required?: boolean;
@@ -1070,7 +1069,9 @@ async function failure(response: Response): Promise<LocalRequestError> {
       ? "Needs a local clone"
       : body.blocked_reason
         ? jobReasonText(body.blocked_reason)
-        : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
+        : (body.message ??
+          body.error ??
+          `Local request failed (${response.status}): ${text.slice(0, 240)}`),
     body.needs_clone
       ? "needs_clone"
       : body.isolation_required

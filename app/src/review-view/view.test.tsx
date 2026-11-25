@@ -12,7 +12,8 @@ import { REVIEW_1303, review1303 } from "./fixture-1303";
 import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
-import { drawnAs, ViewTileCard } from "./view-tile";
+import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
+import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
 declare global {
@@ -276,7 +277,7 @@ describe("the Overview", () => {
     const bare: ReviewV2 = {
       ...REVIEW_1303,
       summary: { ...REVIEW_1303.summary, verdict: null, risk_why: "" },
-      overview: { screenshots: [], diagram: null, intent: [] },
+      overview: { screenshots: [], videos: [], diagram: null, intent: [] },
       tiles: [],
     };
     const container = await page("", review1303(bare));
@@ -857,7 +858,54 @@ describe("the native tiles", () => {
       data: { text: "Phones can't reach a laptop behind NAT.", anchors: [] },
     });
     expect(container.querySelector("h3")?.textContent).toBe("Why a relay");
-    expect(container.textContent).toContain("Phones can't reach a laptop behind NAT.");
+    // Set apart from the section's own text, on its wash behind a rule.
+    expect(container.querySelector("[data-prose-callout]")?.textContent).toBe(
+      "Phones can't reach a laptop behind NAT.",
+    );
+  });
+
+  it("draws an added images tile from the images the index lists", async () => {
+    const id = "att_0123456789abcdef0123456789abcdef";
+    const review = {
+      ...CHROME,
+      index: {
+        ...CHROME.index,
+        attachments: [
+          ...(CHROME.index.attachments ?? []),
+          {
+            id,
+            position: 99,
+            content_type: "image/png",
+            width: 40,
+            height: 20,
+            alt: "The switch, on",
+          },
+        ],
+      },
+    } as ReviewDocument;
+    const tile: ViewTile = {
+      ...tileOf("dg_shape"),
+      id: "added_images_0a1b2c3d4e",
+      type: "images",
+      title: "Review automatically",
+      state: "ready",
+      added: true,
+      data: { items: [{ attachment: id, caption: "The switch, on" }] },
+    };
+    const container = await render(
+      <Host>
+        <AttachmentUrlProvider resolve={(each) => `api/attachments/${each}`}>
+          <ViewTileCard tile={tile} review={review} ctx={ctx} />
+        </AttachmentUrlProvider>
+      </Host>,
+    );
+    expect(container.querySelector("h3")?.textContent).toBe("Review automatically");
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("src")).toBe(`api/attachments/${id}`);
+    expect(container.querySelector("figcaption")?.textContent).toBe("The switch, on");
+    // The tile's own title heads it: the images add no heading of their own.
+    expect(container.querySelectorAll("h3")).toHaveLength(1);
+    expect(imageItems({ items: [{ attachment: 3 }] })).toBeNull();
   });
 });
 
@@ -1115,6 +1163,92 @@ describe("a section's body", () => {
     expect(cell.querySelector("del")?.textContent).toContain("10 minutes");
     expect(cell.querySelector("strong")?.textContent).toContain("5 minutes");
     expect(container.querySelectorAll("tbody td")[2]?.querySelector("del")).toBeNull();
+  });
+
+  it("marks a table's changed rows with a pill and can show only them", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: {
+        ...(table.data as object),
+        rows: [
+          ["run 1", { text: "5 minutes", was: "10 minutes" }, "ok"],
+          ["run 2", "1 minute", "ok"],
+          ["run 3", "2 minutes", "ok"],
+        ],
+      },
+    });
+    const rows = [...container.querySelectorAll<HTMLElement>("tbody tr")];
+    expect(rows[0]?.textContent).toContain("Changed");
+    expect(rows[1]?.textContent).not.toContain("Changed");
+    const only = container.querySelector<HTMLInputElement>('input[role="switch"]');
+    expect(only?.checked).toBe(false);
+    await click(only as HTMLElement);
+    expect(only?.checked).toBe(true);
+    expect(container.querySelectorAll("tbody tr.opacity-35")).toHaveLength(2);
+  });
+
+  it("unfolds a long table when it shows only changes, so a changed row below the fold shows", async () => {
+    const table = tileOf("dg_relay_runs");
+    const rows: unknown[][] = Array.from({ length: 12 }, (_, at) => [`run ${at}`, "relay", "ok"]);
+    rows[10] = ["run 10", { text: "moved", was: "relay" }, "ok"];
+    const container = await card({ ...table, data: { ...(table.data as object), rows } });
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(8);
+    await click(container.querySelector<HTMLElement>('input[role="switch"]')!);
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(12);
+    expect(container.querySelectorAll("tbody tr:not(.opacity-35)")).toHaveLength(1);
+  });
+
+  it("marks a changed row in a one-column table", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: { columns: ["Step"], rows: [[{ text: "Pair", was: "Scan" }], ["Offer"]], source: [] },
+    });
+    expect(container.querySelectorAll("tbody tr")[0]?.textContent).toContain("Changed");
+    const numbers = await card({
+      ...table,
+      data: { columns: ["Limit"], rows: [[{ text: "10", was: "5" }], ["20"]], source: [] },
+    });
+    expect(numbers.querySelectorAll("tbody tr")[0]?.textContent).toContain("Changed");
+  });
+
+  it("keeps a number column right-aligned when a cell holds a dash", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: {
+        ...(table.data as object),
+        rows: [
+          ["a", "250 milliseconds", "x"],
+          ["b", "—", "y"],
+          ["c", "1,000 req/s", "z"],
+        ],
+      },
+    });
+    const cells = [...container.querySelectorAll<HTMLElement>("tbody tr")[0]!.children];
+    expect(cells[1]?.className).toContain("text-right");
+  });
+
+  it("right-aligns a table's number columns and tints its repeated values", async () => {
+    const table = tileOf("dg_relay_runs");
+    const container = await card({
+      ...table,
+      data: {
+        ...(table.data as object),
+        rows: [
+          ["phone", "65,535 bytes", "Closed"],
+          ["daemon", "4 KiB", "Closed"],
+          ["hello", "10 seconds", "Rejected"],
+          ["budget", "$2.00", "Closed"],
+        ],
+      },
+    });
+    const cells = [...container.querySelectorAll<HTMLElement>("tbody tr")[0]!.children];
+    expect(cells[1]?.className).toContain("text-right");
+    expect(cells[1]?.className).toContain("tabular-nums");
+    const tints = [...container.querySelectorAll<HTMLElement>(".table-tint")];
+    expect(tints.map((each) => each.dataset.tint)).toEqual(["0", "0", "1", "0"]);
   });
 
   it("makes a flow's steps with a detail clickable and shows the clicked step's detail", async () => {

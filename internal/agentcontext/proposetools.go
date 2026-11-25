@@ -25,16 +25,17 @@ import (
 //   - settings: TargetAppearance and TargetPlanUsage+provider (General),
 //     TargetReviews and TargetDecisions (Reviews), TargetFixes (Fixes),
 //     TargetTimeLimits, TargetJobConcurrency, TargetCodexApprovals and
-//     TargetAgentEnv+NAME (This computer), TargetPrompt+id (Prompts, the
-//     global prompts).
+//     TargetAgentEnv+NAME (This computer).
 //   - any page (ProposalAnywhere, not a page): TargetTheme, a colour theme
 //     (new, or an edit of one of the person's) and TargetThemeChoice, a switch
 //     to an existing theme and/or the theme mode, which the app previews at
-//     once and the person saves from wherever they are. Every page lists
-//     propose_theme and propose_theme_choice.
+//     once and the person saves from wherever they are; and TargetPrompt+id,
+//     a global prompt, and RepositoryTarget(repository, TargetPrompt+id), a
+//     repository's, so a prompt can be changed from the review it wrote.
+//     Every page lists propose_theme, propose_theme_choice, propose_prompt
+//     and propose_prompt_reset.
 //   - repositories, showing a repository: RepositoryTarget(repository,
-//     TargetRepositorySettings) (Reviews), RepositoryTarget(repository,
-//     TargetPrompt+id) (Prompts).
+//     TargetRepositorySettings) (Reviews).
 //   - inbox: TargetNewInbox, or TargetInbox+id for a saved inbox.
 //   - group: TargetGroup+id, the group the page shows.
 //   - pull_request: PullRequestTarget(repository, number), the person's
@@ -96,15 +97,16 @@ func ParsePullRequestTarget(target string) (repository string, number int, ok bo
 var (
 	// proposePageTools are the propose_* tools of each page.
 	proposePageTools = map[string][]string{
-		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env", "propose_prompt", "propose_prompt_reset"},
-		PageRepositories: {"propose_repository_settings", "propose_prompt", "propose_prompt_reset"},
+		PageSettings:     {"propose_appearance", "propose_plan_usage", "propose_reviews", "propose_decision_capture", "propose_labs", "propose_fixes", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"},
+		PageRepositories: {"propose_repository_settings"},
 		PageInbox:        {"propose_inbox"},
 		PageGroup:        {"propose_group"},
 		PagePullRequest:  {"propose_review_comment"},
 	}
 	// settingsSectionProposals and repositorySectionProposals are the
 	// propose_* tools of each section, which current_page lists with the
-	// section's tools.
+	// section's tools. The prompts' propose_* tools are on every page
+	// (commonToolNames); the Prompts sections name them too.
 	settingsSectionProposals = map[string][]string{
 		"general":    {"propose_appearance", "propose_plan_usage"},
 		"reviews":    {"propose_reviews", "propose_decision_capture", "propose_labs"},
@@ -288,28 +290,30 @@ func present(args json.RawMessage) map[string]bool {
 	return out
 }
 
-// promptTarget is the target of a prompt on the open page: a global prompt on
-// Settings, the page's repository's on a repository's page. A repository
-// named must be the page's.
-func promptTarget(c CallContext, repository, id string) (page, target string, err error) {
-	if !c.HasPage {
-		return "", "", errors.New("no page is open: the person has not opened a page in the baum app for this conversation")
-	}
+// promptTarget is the target of a prompt, which any page proposes (under
+// ProposalAnywhere): the named repository's, else on a repository's page
+// that repository's, else the global one. A repository the open page shows
+// is named as the page names it.
+func promptTarget(c CallContext, repository, id string) (string, error) {
 	repository = strings.TrimSpace(repository)
-	switch {
-	case c.Page.Page == PageSettings:
-		if repository != "" {
-			return "", "", errors.New("a repository's prompts are on its page: the person has Settings open, whose prompts are the global ones")
-		}
-		return PageSettings, TargetPrompt + id, nil
-	case c.Page.Page == PageRepositories && c.Page.Repository != "":
-		if repository != "" && !strings.EqualFold(repository, c.Page.Repository) {
-			return "", "", fmt.Errorf("the person has %s's page open: a proposal is for that repository's prompts", c.Page.Repository)
-		}
-		return PageRepositories, RepositoryTarget(c.Page.Repository, TargetPrompt+id), nil
+	if repository == "" && c.HasPage && c.Page.Page == PageRepositories {
+		repository = c.Page.Repository
 	}
-	return "", "", ErrNotCurrentPage
+	if repository == "" {
+		return TargetPrompt + id, nil
+	}
+	if !validRepository(repository) {
+		return "", errors.New("name the repository as owner/name")
+	}
+	if c.HasPage && strings.EqualFold(repository, c.Page.Repository) {
+		repository = c.Page.Repository
+	}
+	return RepositoryTarget(repository, TargetPrompt+id), nil
 }
+
+// promptToolsNote is what both prompt tools say about where they work.
+const promptToolsNote = "Works on any page, such as a pull request's while the person reads its review: with repository, that repository's prompt (the repository's own text, used before the global one); without, the global prompt, except on a repository's page, where it is that repository's. " +
+	"On a pull request's page the person usually means its repository's prompt: pass that repository unless they ask to change the prompt for every repository. Read the prompt first with prompt or repository_prompts. Nothing changes until the person saves the proposal, which they see as a diff against the text in use."
 
 // proposeTools are the propose_* tools. Each is global (actions never see
 // it) and reads nothing.
@@ -360,7 +364,7 @@ func proposeTools() []Tool {
 		Description: "Proposes a change to the Settings page's Reviews section: whether automatic reviews are on, how they follow later pushes (updates: always reviews every push; on_open reviews once; on_change reviews once, then again only when the agent finds a push would change the review), for which pull requests (both: the person's own and those they were asked to review; authored; requested; all), and the harness reviews use (backend: auto, claude or codex), its model (empty for the harness's default) and effort. Only the fields given change. The person must have Settings open at Reviews. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"enabled":{"type":"boolean","description":"Automatic reviews on or off."},` +
-			`"pull_requests":{"type":"string","maxLength":32,"description":"both, authored, requested or all."},` +
+			`"pull_requests":{"type":"string","maxLength":32,"description":"both, authored, requested, all, or inboxes (the pull requests in a saved inbox whose auto_review is on)."},` +
 			`"updates":{"type":"string","maxLength":32,"description":"always, on_open or on_change."},` +
 			`"backend":{"type":"string","maxLength":32,"description":"auto, claude or codex."},` +
 			`"model":{"type":"string","maxLength":256},` +
@@ -510,12 +514,12 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name: "propose_prompt",
-		Description: "Proposes a new custom text for one prompt (see prompts for the ids): on the Settings page's Prompts section a global prompt, on a repository page's Prompts section that repository's. The text is validated as the prompt editor does; a text that leaves out a safety rule the prompt in use has is refused. " +
-			"The person must have that Prompts section open. Nothing changes until the person saves the proposal.",
+		Description: "Proposes a new custom text for one prompt (see prompts for the ids), global or a repository's. The text is validated as the prompt editor does; a text that leaves out a safety rule the prompt in use has is refused. " +
+			promptToolsNote,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","minLength":1,"maxLength":64},` +
 			`"text":{"type":"string","minLength":1,"maxLength":65536},` +
-			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name, only to check it is the open page's. Default: the open page's, or the global prompts on Settings."}},` +
+			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name whose prompt this changes. Omit for the global prompt (on a repository's page, for that repository's)."}},` +
 			`"required":["id","text"],"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -527,18 +531,19 @@ func proposeTools() []Tool {
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
 			}
-			page, target, err := promptTarget(c, a.Repository, a.ID)
+			target, err := promptTarget(c, a.Repository, a.ID)
 			if err != nil {
 				return "", err
 			}
-			return propose(ctx, c, page, target, PromptChange{Text: &a.Text})
+			return propose(ctx, c, ProposalAnywhere, target, PromptChange{Text: &a.Text})
 		},
 	}, {
-		Name:        "propose_prompt_reset",
-		Description: "Proposes resetting one customised prompt: on the Settings page's Prompts section back to the built-in text, on a repository page's back to the text it inherits (the global custom text, else the built-in). Refused when the prompt is not customised there, or when the text it goes back to leaves out a safety rule the prompt in use has. The person must have that Prompts section open. Nothing changes until the person saves the proposal.",
+		Name: "propose_prompt_reset",
+		Description: "Proposes resetting one customised prompt: a global prompt back to the built-in text, a repository's back to the text it inherits (the global custom text, else the built-in). Refused when the prompt is not customised there, or when the text it goes back to leaves out a safety rule the prompt in use has. " +
+			promptToolsNote,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","minLength":1,"maxLength":64},` +
-			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name, only to check it is the open page's."}},` +
+			`"repository":{"type":"string","maxLength":200,"description":"The repository as owner/name whose prompt this resets. Omit for the global prompt (on a repository's page, for that repository's)."}},` +
 			`"required":["id"],"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -549,11 +554,11 @@ func proposeTools() []Tool {
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
 			}
-			page, target, err := promptTarget(c, a.Repository, a.ID)
+			target, err := promptTarget(c, a.Repository, a.ID)
 			if err != nil {
 				return "", err
 			}
-			return propose(ctx, c, page, target, PromptChange{})
+			return propose(ctx, c, ProposalAnywhere, target, PromptChange{})
 		},
 	}, {
 		Name:        "propose_repository_settings",
@@ -594,14 +599,15 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name: "propose_inbox",
-		Description: "Proposes a new saved inbox, or with id a change to a saved one (see inboxes): its name, color, query (the Inbox filter syntax; test it with test_query) and whether the sidebar shows its count. Only the fields given change; a new inbox needs a name, and starts with no filter and a count. " +
+		Description: "Proposes a new saved inbox, or with id a change to a saved one (see inboxes): its name, color, query (the Inbox filter syntax; test it with test_query), whether the sidebar shows its count and whether its pull requests are reviewed automatically (auto_review, which applies while the Reviews setting's pull_requests is inboxes). Only the fields given change; a new inbox needs a name, and starts with no filter, a count and automatic reviews on. " +
 			"The person must have the Inbox open. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","pattern":"^[0-9a-f]{32}$","description":"The saved inbox to change; omit to propose a new one."},` +
 			`"name":{"type":"string","minLength":1,"maxLength":40},` +
 			`"color":{"type":"string","maxLength":16,"description":"blue, green, red, amber, purple or grey."},` +
 			`"query":{"type":"string","maxLength":500},` +
-			`"badge":{"type":"boolean"}},` +
+			`"badge":{"type":"boolean"},` +
+			`"auto_review":{"type":"boolean"}},` +
 			`"minProperties":1,"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -682,6 +688,8 @@ type InboxChange struct {
 	Color *string `json:"color,omitempty"`
 	Query *string `json:"query,omitempty"`
 	Badge *bool   `json:"badge,omitempty"`
+	// AutoReview is the inbox's inboxes.Inbox.AutoReview.
+	AutoReview *bool `json:"auto_review,omitempty"`
 }
 
 // GroupChange is the After of a review group proposal.

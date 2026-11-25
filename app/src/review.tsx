@@ -1159,7 +1159,7 @@ export function LocalReview({
                               ? [{ label: "Re-run checks", onSelect: () => setRerunning(true) }]
                               : []),
                             ...(canUpdateBranch(entry)
-                              ? [{ label: "Update branch", onSelect: () => setUpdating(true) }]
+                              ? [{ label: "Update branch…", onSelect: () => setUpdating(true) }]
                               : []),
                           ]}
                         />
@@ -1192,6 +1192,9 @@ export function LocalReview({
                             onClick={() => ask()}
                           >
                             Ask
+                            <kbd aria-hidden="true" className="key-hint">
+                              a
+                            </kbd>
                           </Button>
                           {canReview ? (
                             <ReviewButton
@@ -1201,8 +1204,15 @@ export function LocalReview({
                             />
                           ) : null}
                           {canMerge(entry) ? (
-                            <Button size="compact" onClick={() => setMerging(true)}>
+                            <Button
+                              size="compact"
+                              aria-keyshortcuts="m"
+                              onClick={() => setMerging(true)}
+                            >
                               Merge…
+                              <kbd aria-hidden="true" className="key-hint">
+                                m
+                              </kbd>
                             </Button>
                           ) : null}
                         </div>

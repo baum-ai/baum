@@ -254,7 +254,7 @@ export function describeAgent(agent: Agent) {
   return "";
 }
 
-export type PullRequests = "all" | "both" | "authored" | "requested";
+export type PullRequests = "all" | "both" | "authored" | "requested" | "inboxes";
 /** What a push to a reviewed pull request does. */
 export type Updates = "always" | "on_open" | "on_change";
 /** How automatic reviews are set in one choice: off, or what a push does. */

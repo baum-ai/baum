@@ -456,6 +456,11 @@ func completeTiles(d *Document, b *bundle.Bundle) {
 	}
 }
 
+// LiftNative moves a native tile's data caption and source, as tiles/view
+// writes them, to the tile's caption and citations, as Complete does: an
+// added native tile is stored the way a generated one is.
+func LiftNative(t *Tile) { liftNative(t) }
+
 // liftNative moves a native tile's data caption and source, as tiles/view
 // writes them, to the tile's caption and citations.
 func liftNative(t *Tile) {

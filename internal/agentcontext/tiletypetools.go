@@ -167,6 +167,9 @@ func (s *Server) tileTypeTools() []Tool {
 // built-in type's data. Without a library it is add_tile's read of a
 // built-in type alone.
 func (s *Server) readTileType(ctx context.Context, c CallContext, name string) (string, error) {
+	if t, ok := builtinType(name); ok {
+		return builtinTypeRead(t)
+	}
 	entry, builtin := library.Find(name)
 	if builtin {
 		name = entry.Definition.Name

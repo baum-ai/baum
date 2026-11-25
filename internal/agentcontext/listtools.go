@@ -57,7 +57,7 @@ func (s *Server) listTools() []Tool {
 		Call:  callInbox,
 	}, {
 		Name:        "inboxes",
-		Description: "The person's saved inboxes as the app lists them: each one's id, name, colour, what it holds, owners, risk, repositories, filter query, whether bots are left out, whether it badges the sidebar, and how many pull requests it holds now.",
+		Description: "The person's saved inboxes as the app lists them: each one's id, name, colour, what it holds, owners, risk, repositories, filter query, whether bots are left out, whether it badges the sidebar, whether its pull requests are reviewed automatically (auto_review, while the Reviews setting's pull_requests is inboxes), and how many pull requests it holds now.",
 		Scope:       ScopeGlobal,
 		Reads:       []string{"/api/inboxes", "/api/inbox"},
 		Call:        callInboxes,

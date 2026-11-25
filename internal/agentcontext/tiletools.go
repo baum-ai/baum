@@ -118,7 +118,7 @@ func (s *Server) tileMakingTools() []Tool {
 	return []Tool{{
 		Name: "tile_guide",
 		Description: "How to write a tile type: the guide (part guide, the default: the files, the rules, the two faces, the data schema dialect, citations, the kit API, samples and the render check), the starter type to copy (part starter: its files), or the names the kit offers (part manifest: its API, view, elements, classes and tokens). " +
-			"Read the guide and the starter before writing a tile with check_tile. Look first for a type that already does the job: add_tile lists baum's library types and tile_type reads one in full.",
+			"Read the guide and the starter before writing a tile with check_tile. " + preferBuiltIn + " add_tile lists the built-in and library types, and tile_type reads one in full.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"part":{"type":"string","enum":["guide","starter","manifest"]}},"additionalProperties":false}`),
 		Call: func(_ context.Context, c CallContext, args json.RawMessage) (string, error) {
 			if c.Consumer.Kind == Action {
@@ -134,7 +134,7 @@ func (s *Server) tileMakingTools() []Tool {
 		},
 	}, {
 		Name: "start_tile",
-		Description: "Starts making a tile for the review on the pull request page the person has open: the page shows a pending card on the section where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. Call it first, when the person asks for a tile no library type gives; then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
+		Description: "Starts making a tile for the review on the pull request page the person has open: the page shows a pending card on the section where the tile will stand (\"Being made in the session panel\"), which says how far you got as you check it. " + preferBuiltIn + " Call it first, when the person asks for a tile no built-in or library type gives (add_tile lists them); then tile_guide, write the type in your own scratch directory (never in the repository's tree), check it with check_tile and add it with add_custom_tile. " +
 			"If you stop before adding it, the card says \"Not finished\" for a few minutes, with Remove. The result is the card's id (draft_<n>)." + tileRule,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string","minLength":1,"maxLength":80,"description":"The tile's title, as the card shows it."},` + sectionArg + `},"required":["title"],"additionalProperties":false}`),
 		Edits:       true,
@@ -169,7 +169,9 @@ func (s *Server) tileMakingTools() []Tool {
 		Description: "Runs the render check on a tile type you wrote, as the guide's section \"The render check\" describes, and waits for its result (up to 30 seconds): the definition (type, data_schema, html), up to 3 samples of your own and data, the tile's data for this pull request. " +
 			"Without drawing, it checks the definition and schema, lints the HTML, checks the samples and the data against the schema, and checks that every citation in data resolves to this pull request's review as the page shows it, and that data cites at least one hunk, file, prompt or session event of it. Then the app draws the data, your samples and two samples made from your schema at each size, in light and dark. " +
 			"The result's verdict is pass, fail (each problem with its code, message, sample, face, size and a fixed hint), hang (an endless loop: change the code) or unavailable (no window of the app could draw it: tell the person to open the baum app). A problem with what you sent is a fail, never an error: fix it and check again; each check is a round the pending card counts. " +
-			"Samples are synthetic: data with its own hunks and items, written for a made-up repository (acme/widgets), never this pull request's code. data is this pull request's: cite hunks by the ids the diff tool gives. It is masked for secrets before anything is kept. add_custom_tile adds a tile whose check passed with data.",
+			"Samples are synthetic: data with its own hunks and items, written for a made-up repository (acme/widgets), never this pull request's code. data is this pull request's: cite hunks by the ids the diff tool gives. It is masked for secrets before anything is kept. " +
+			"To show an image, such as a screenshot, never write its bytes or a base64 data: URL: save it to a file and, where data_schema has a string for the image (no pattern, maxLength at least 100), put {\"image_file\": the file's absolute path} in data. The host reads the file (PNG, JPEG, GIF or WebP, at most 40 MiB; at most 6 images a tile), downscales and stores it with this pull request's added tiles, and the frame gets the string as a data:image URL; it does not count against the data's size. Samples cannot name files. " +
+			"add_custom_tile adds a tile whose check passed with data.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` + draft + `,` +
 			`"type":{"type":"object","description":"The type, as type.json and fill.md hold it.","properties":{` +
 			`"name":{"type":"string","pattern":"^[a-z][a-z0-9_]{0,63}$"},"title":{"type":"string","minLength":1,"maxLength":160},` +
@@ -180,7 +182,7 @@ func (s *Server) tileMakingTools() []Tool {
 			`"data_schema":{"type":"object","description":"The data schema, in the dialect of the guide's section 4."},` +
 			`"html":{"type":"string","minLength":1,"maxLength":262144,"description":"The component, tile.html: <style> and <script> only."},` +
 			`"samples":{"type":"array","maxItems":3,"items":{"type":"object","properties":{"name":{"type":"string","maxLength":64},"data":{},"hunks":{"type":"object"},"items":{"type":"object"}},"required":["data"],"additionalProperties":false}},` +
-			`"data":{"type":"object","description":"The tile's data for this pull request, matching data_schema."}},` +
+			`"data":{"type":"object","description":"The tile's data for this pull request, matching data_schema; an image as {\"image_file\": an absolute path} in a string's place."}},` +
 			`"required":["type","data_schema","html"],"additionalProperties":false}`),
 		Edits: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {

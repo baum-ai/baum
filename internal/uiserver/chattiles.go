@@ -111,8 +111,9 @@ func (s shownVersion) asked(section string) (string, error) {
 	return section, nil
 }
 
-// Check implements agentcontext.ChatTiles. The data is masked first, so
-// what is drawn is what an add stores. Before the check is queued, the
+// Check implements agentcontext.ChatTiles. The image files the data names
+// are stored (customImages) and the data is masked first, so what is drawn
+// is what an add stores. Before the check is queued, the
 // type's name is refused when it is one of baum's own types' (a tile is
 // named by its type). With data, the data's citations must resolve to the
 // version the page shows and cite at least one hunk, file, prompt or
@@ -143,7 +144,14 @@ func (t *ChatTiles) Check(ctx context.Context, owner, repository string, number 
 	var extra []tilechecks.Problem
 	version := 0
 	if len(check.Data) > 0 && string(check.Data) != "null" {
-		masked, err := maskData(ctx, check.Data)
+		// The image files the data names are stored first, so the data
+		// checked, drawn and kept holds references to them, never bytes.
+		data, err := t.API.customImages(ctx, pr, check.Data)
+		if err != nil {
+			return answer(tilechecks.Result{Verdict: tilechecks.VerdictFail, Errors: []tilechecks.Problem{chatProblem(tilechecks.CodeDataInvalid, tilechecks.KindData,
+				`an {"image_file": path} in the data: `+err.Error())}})
+		}
+		masked, err := maskData(ctx, data)
 		if err != nil {
 			return nil, err
 		}

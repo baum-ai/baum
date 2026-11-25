@@ -20,6 +20,7 @@ export const DEFAULT_INBOX = {
   query: "",
   no_bots: false,
   badge: true,
+  auto_review: true,
 };
 /** A handler that does not answer the inboxes gets a daemon's fresh start:
  *  one Default inbox. */

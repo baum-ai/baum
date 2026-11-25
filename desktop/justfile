@@ -20,16 +20,13 @@ test *args: frontend sidecar
 frontend_mode := env("BAUM_FRONTEND_MODE", "production")
 
 # Bundle the React application and native setup screen in the UI container.
-frontend:
-    {{ heavy }} --workdir /oss/app ui-test pnpm exec vite build --mode {{ frontend_mode }}
+frontend mode=frontend_mode:
+    {{ heavy }} --workdir /oss/app ui-test pnpm exec vite build --mode {{ mode }}
 
 # Build the viewer the bundled baum embeds, which frontend leaves out
 [private]
 viewer:
     {{ heavy }} --workdir /oss/viewer ui-test pnpm build:app
-
-# The Rust target triple of this machine, for the sidecar the host app runs
-host_target := arch() + if os() == "macos" { "-apple-darwin" } else { "-unknown-linux-gnu" }
 
 # Build the bundled baum binary into binaries/ (default: the container's platform)
 sidecar target="":
@@ -104,7 +101,7 @@ icons:
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 target/icon-source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 target/tray-$s.svg -o icons/tray/$s.png; done'
 
 # Run the native desktop on the Linux or macOS host, with Vite hot reload in Docker
-dev: frontend (sidecar host_target)
+dev: frontend
     sh {{ source_directory() }}/scripts/dev.sh
 
 # Run the app on this Wayland display, with the container's own home and daemon
@@ -116,9 +113,21 @@ run: frontend sidecar
         desktop-test cargo run --locked
 
 # Run the app with its own home, keyring and daemon beside the installed one,
-# one per name (scripts/isolated.sh; --copy-data copies this machine's data)
+# one per name (scripts/isolated.sh; --copy-data copies this machine's data,
+# --seed-data writes the seeded profiling dataset)
 isolated *args: frontend viewer sidecar
     sh {{ source_directory() }}/scripts/isolated.sh {{ args }}
+
+# Run a scripted journey against the headless app N times after a warm-up,
+# with the profiling build, and write summary.md and metrics.json under
+# target/profile (scripts/profile.sh; --copy-data and --workspace as isolated)
+profile *args: (profile-check args) (frontend "profile") viewer sidecar
+    sh {{ source_directory() }}/scripts/profile.sh {{ args }}
+
+# The profile's arguments, checked before anything is built
+[private]
+profile-check args:
+    sh {{ source_directory() }}/scripts/profile.sh --check {{ args }}
 
 # Save a PNG of a running --headless isolated app's screen
 isolated-screenshot name="default" out="isolated-screenshot.png":

@@ -56,8 +56,8 @@ function CodeDiffTable({
     <div className="relative min-w-0 overflow-x-auto">
       <table className="w-full table-fixed border-collapse font-mono text-xs leading-[1.55] sm:text-base">
         <colgroup>
-          <col className="w-10" />
-          <col className="w-10" />
+          <col className="w-14" />
+          <col className="w-14" />
           <col className="w-5 sm:w-6" />
           <col />
         </colgroup>
@@ -73,10 +73,10 @@ function CodeDiffTable({
                 key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
                 className={cn("align-top", lineStyle[line.kind])}
               >
-                <td className="w-10 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
+                <td className="w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
                   {line.oldLine ?? ""}
                 </td>
-                <td className="w-10 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
+                <td className="w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
                   {line.newLine ?? ""}
                 </td>
                 <td

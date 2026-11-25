@@ -1,6 +1,7 @@
 package uiserver
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -621,13 +622,31 @@ func (a LocalAPI) Handler() *LocalHandler {
 			return
 		}
 		image, err := s.Attachment(r.Context(), key, n, r.PathValue("id"))
+		if errors.Is(err, store.ErrNotFound) && a.Added != nil {
+			// An image of a tile the person added (an images tile) is the
+			// pull request's, on every version.
+			if added, aerr := a.Added.Image(r.Context(), addedtiles.Key(key.Repository, key.Number), r.PathValue("id")); aerr == nil {
+				image, err = store.Attachment{ID: r.PathValue("id"), ContentType: added.ContentType, Bytes: added.Bytes}, nil
+			}
+		}
 		if err != nil {
 			apiError(w, err)
 			return
 		}
+		var content io.ReadSeeker = bytes.NewReader(image.Bytes)
+		if image.Path != "" {
+			file, err := os.Open(image.Path)
+			if err != nil {
+				apiError(w, err)
+				return
+			}
+			defer file.Close()
+			content = file
+		}
 		w.Header().Set("Content-Type", image.ContentType)
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-		_, _ = w.Write(image.Bytes)
+		// ServeContent answers range requests, which video playback makes.
+		http.ServeContent(w, r, "", time.Time{}, content)
 	})
 
 	return &LocalHandler{Handler: mux, documents: cache}

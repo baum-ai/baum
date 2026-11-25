@@ -210,6 +210,7 @@ it("orders what waits on the person and sets apart what waits on others", () => 
     "baum's review is ready, risk 4 of 5. 1 agent session is still working on its branch, so reviewing now catches problems before more commits pile up.",
   );
   expect(review!.working).toEqual([working]);
+  expect(review!.waitingSessions).toEqual([]);
   expect(review!.minutes).toBe(12);
   // Its group already says a merge is ready.
   expect(merge!.why).toBe("");
@@ -567,7 +568,7 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
-// A right click on a row opens its menu, without picking the row.
+// A right click on a row picks it and opens its menu.
 const rightClick = (title: string) =>
   act(async () => {
     row(title).dispatchEvent(
@@ -592,9 +593,9 @@ it("offers a pull request's actions on a right click on its row", async () => {
     "Actions for acme/demo #3",
   );
   expect(choices()).toEqual(expect.arrayContaining(["Open", "Merge…", "Snooze…"]));
-  expect(choices()).not.toContain("Update the branch…");
-  // The panel stays on what it showed.
-  expect(shown()).toBe("Change 1");
+  expect(choices()).not.toContain("Update branch…");
+  // The panel follows the row, so the menu and the detail agree.
+  expect(shown()).toBe("Change 3");
   await choose("Merge…");
   expect(node.querySelector("dialog")).not.toBeNull();
 });
@@ -1741,6 +1742,60 @@ it.each(["1 hour", "Until it changes"])(
   },
 );
 
+it("snoozes a whole stack from its panel or its row's menu, with one Undo", async () => {
+  entries = [requested(1), mine(2, { checks: "failing" }), ready(3)];
+  const original = globalThis.fetch;
+  vi.stubGlobal("fetch", (...args: Parameters<typeof fetch>) =>
+    String(args[0]).endsWith("api/groups")
+      ? Response.json({
+          groups: [
+            {
+              id: "g1",
+              repository: "acme/demo",
+              name: "Payments stack",
+              members: [2, 3],
+              stack: true,
+              created_at: "",
+              updated_at: "",
+              version_count: 0,
+              latest: null,
+              risk_score: null,
+              reviewed: [],
+              outdated: false,
+            },
+          ],
+        })
+      : original(...args),
+  );
+  await render();
+  expect(list()).toEqual(["Change 1", "Payments stack"]);
+  await act(async () => row("Payments stack").click());
+  expect(shown()).toBe("Payments stack");
+  await act(async () => button("Snooze").click());
+  await act(async () => snoozeFor("Tomorrow morning").click());
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(
+    /^Snoozed Payments stack \(2 pull requests\) until tomorrow /,
+  );
+  expect(list()).toEqual(["Change 1"]);
+  expect(groups()).toContain("Snoozed · 2");
+  // One Undo brings back every member, on the stack.
+  await press("u");
+  expect(list()).toEqual(["Change 1", "Payments stack"]);
+  expect(shown()).toBe("Payments stack");
+  // From its row's menu, Snooze… picks the stack and opens the same choices.
+  await act(async () => row("Change 1").click());
+  await rightClick("Payments stack");
+  expect(choices()).toContain("Snooze…");
+  await choose("Snooze…");
+  expect(shown()).toBe("Payments stack");
+  await act(async () => snoozeFor("Until it changes").click());
+  expect(list()).toEqual(["Change 1"]);
+  // A reload keeps both snoozed.
+  await render();
+  expect(list()).toEqual(["Change 1"]);
+  expect(groups()).toContain("Snoozed · 2");
+});
+
 it("links the agent sessions working on the pull request to their cards on Sessions, opened", async () => {
   liveList = [
     {
@@ -1767,6 +1822,35 @@ it("links the agent sessions working on the pull request to their cards on Sessi
   expect(new URLSearchParams(location.search).get("session")).toBeNull();
   expect(node.querySelector('[data-row-id="claude-code:s1"]')).not.toBeNull();
   expect(node.querySelector(".local-feed-peek-row")).not.toBeNull();
+});
+
+it("links the agent sessions waiting for the person on the pull request apart from working ones, not a panel's", async () => {
+  const session = (session_id: string, state: "running" | "idle") => ({
+    agent: "claude-code",
+    session_id,
+    state,
+    started_at: "",
+    last_activity_at: "",
+    last_event: state === "running" ? ("tool" as const) : ("stop" as const),
+    repository: "acme/demo",
+    pr: 1,
+  });
+  liveList = [
+    session("s1", "running"),
+    session("s2", "idle"),
+    session("s3", "idle"),
+    // A session panel's finished turn waits on the panel, not on the person.
+    { ...session("s4", "idle"), origin: "panel" as const, conversation: "c4" },
+  ];
+  await render();
+  expect(shown()).toBe("Change 1");
+  const lines = [...panel().querySelectorAll(".upnext-agents")].map((p) => p.textContent);
+  expect(lines).toEqual([
+    "1 agent session working on its branch right now",
+    "2 agent sessions waiting for you on its branch: Claude Code · Claude Code",
+  ]);
+  const links = panel().querySelectorAll<HTMLAnchorElement>(".upnext-agents a");
+  expect(links[2]!.getAttribute("href")).toBe("/s/test-ns/?page=sessions&peek=claude-code%3As3");
 });
 
 // --- Everyone else's pull requests -------------------------------------------

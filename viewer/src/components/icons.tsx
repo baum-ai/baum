@@ -51,6 +51,15 @@ export function FilterIcon(props: IconProps) {
   );
 }
 
+/** Lines shortening beside a down arrow, for a sort. */
+export function SortIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.5 4h6.5M2.5 8h4.5M2.5 12h2.5M12 3v10M9.75 10.75 12 13l2.25-2.25" />
+    </Icon>
+  );
+}
+
 export function ChevronDownIcon(props: IconProps) {
   return (
     <Icon {...props}>

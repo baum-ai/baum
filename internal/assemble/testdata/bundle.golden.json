@@ -281,6 +281,7 @@
       "content_type": "image/png",
       "alt": "Diagram of xxx.xxxxxxxx@xxxxxxx.xxx",
       "heading": "Screenshot",
+      "context": "[this]\nTest token: xx_xX9XXX9xXxX9x9XXxXXXxxXx9XXxXXxX9X (ask xxx.xxxxxxxx@xxxxxxx.xxx)",
       "position": 1,
       "width": 1,
       "height": 1,
