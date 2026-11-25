@@ -829,9 +829,10 @@ is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
 returns to the page it was opened from (the inbox it was opened in, whose
 address the pull request or group keeps as `inbox=<id>`, or Pull requests with
 the filter kept; a link with no inbox goes to the first one); on a session's or job's transcript the same keys return to
-Sessions or Jobs. Analytics has no keys of its own beyond Tab: its controls
-are native buttons (its window, chart and breakdown toggles are pressed
-buttons in a group), and its charts' bars take the focus for their tooltips.
+Sessions or Jobs. Use Tab to reach the Analytics controls and chart bars, which
+show tooltips on focus. Its window, chart and breakdown toggles are groups of
+native buttons with pressed states. The Breakdown table takes focus when it overflows,
+and the left and right arrow keys scroll it horizontally.
 
 The PR page header keeps buttons at its end: **Earlier questions** when the
 pull request has some, **Ask**, **Approve** for an open
@@ -1717,7 +1718,9 @@ stacked by harness or by model (each session under its main model; the top
 four named, the rest as Other), with a legend that shows each harness's or
 model maker's logo and a table behind "Show as a table"; a breakdown
 by agent, model or repository (sessions, prompts, tool calls, failed share, active
-time, tokens, cost at API prices); pull requests, yours or the team's (one
+time, tokens, cost at API prices), with a visible scrollbar when its columns
+overflow. Tab to the overflowing table and use the arrow keys to reach its
+hidden columns. Other cards cover pull requests, yours or the team's (one
 switch), created and shipped as bars side by side, then the merge rate and the
 median time to merge as lines on their own axes (left and right) beneath, by day over 7 days and by week otherwise, read
 from the pull requests the Timeline's feature log keeps (a repository it does
