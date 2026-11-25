@@ -91,6 +91,21 @@ check-window-check:
         -v "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/cargo:/cache/cargo" \
         baum-desktop-navigation-check sh /oss/desktop/tests/check-window/run.sh
 
+electron := heavy + " desktop-electron"
+
+# The Electron shell (electron/): format check, typecheck and unit tests
+electron-check:
+    @mkdir -p "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron"
+    {{ electron }} pnpm check
+
+# The Electron shell's unit tests; pass vitest arguments after it
+electron-test *args:
+    @mkdir -p "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron"
+    {{ electron }} pnpm exec vitest run {{ args }}
+
+electron-fmt:
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-electron pnpm format
+
 # Check that scripts/updater-manifest.sh rejects tampered releases
 updater-test:
     {{ heavy }} desktop-test scripts/updater-manifest-test.sh
