@@ -17,7 +17,9 @@
 // nested repository or a conflict marker (see guard.go), and pushes with a
 // plain, never forced, git push using the user's own git credentials for the
 // clone's remote. Everything lives in a directory under baum's cache
-// directory, removed when the fix ends however it ends (gitlocal.Fix).
+// directory, in the clone's directory of fixes (fixdir.ForClone), removed when
+// the fix ends however it ends (gitlocal.Fix). The agent keeps its session,
+// so the commit can be linked to it (Outcome.Agent's SessionID).
 package fix
 
 import (
@@ -34,6 +36,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/internal/fixdir"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/privatefs"
@@ -170,16 +173,9 @@ type Outcome struct {
 	Threads []ThreadOutcome
 }
 
-// DefaultDirectory is where fixes check out: fixes under the user's cache
-// directory, outside every clone and outside the system temporary
-// directory, which a Codex fix may not write to.
-func DefaultDirectory() (string, error) {
-	root, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, "baum", "fixes"), nil
-}
+// DefaultDirectory is where fixes check out (fixdir.Default). Each fix's
+// directory is in its clone's (fixdir.ForClone).
+func DefaultDirectory() (string, error) { return fixdir.Default() }
 
 // staleAfter is how old a fix directory left by a crash is before the next
 // fix removes it; no fix runs that long.
@@ -217,12 +213,18 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		return out, fail(ReasonGit, fmt.Errorf("fix directory: %w", err))
 	}
 	sweep(root)
-	dir := filepath.Join(root, o.ID)
 	repo, err := openForRemote(ctx, o.Clone, o.Repository)
 	if err != nil {
 		return out, err
 	}
 	defer func() { _ = repo.Close() }()
+	// The agent's session stays findable by the clone after the checkout goes
+	// (fixdir.ForClone).
+	clone := fixdir.ForClone(root, repo.CommonDir())
+	if err := privatefs.MkdirAll(clone); err != nil {
+		return out, fail(ReasonGit, fmt.Errorf("fix directory: %w", err))
+	}
+	dir := filepath.Join(clone, o.ID)
 	progress("fetching")
 	// Every fix fetches the base branch: the agent sees it as origin/<base>,
 	// since CI on pull_request builds the merge with it.
@@ -276,8 +278,10 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		runCtx, cancel := context.WithTimeout(ctx, wall)
 		// The agent's steps go to the transcript, not the log.
 		started := time.Now()
+		// The agent keeps its session: baum's commit of its work is linked to
+		// it (Outcome.Agent's SessionID).
 		result, err := o.Agent.Fix(runCtx, agent.Request{Directory: checkout.Dir(), Scratch: scratch, GitDir: checkout.GitDir(), Network: o.Network, Logger: o.Logger,
-			Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript})
+			Prompt: text, MaxCalls: o.MaxCalls, MaxTokens: o.MaxTokens, Transcript: o.Transcript, PersistSession: true})
 		timedOut := runCtx.Err() != nil
 		cancel()
 		if o.Logger != nil {
@@ -533,17 +537,37 @@ func markers(dir string, paths []string) []string {
 	return left
 }
 
-// sweep removes fix directories an interrupted daemon left behind. The
-// clone's registration of such a checkout is pruned by the next fix in it.
+// sweep removes fix directories an interrupted daemon left behind: in each
+// clone's directory (fixdir.ForClone), and in root itself, where fixes
+// checked out before. A clone's directory stays, so a fix starting in it
+// meanwhile keeps it. The clone's registration of such a checkout is pruned
+// by the next fix in it.
 func sweep(root string) {
+	stale := func(entry os.DirEntry) bool {
+		info, err := entry.Info()
+		return err == nil && time.Since(info.ModTime()) > staleAfter
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return
 	}
 	for _, entry := range entries {
-		info, err := entry.Info()
-		if err == nil && time.Since(info.ModTime()) > staleAfter {
-			_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+		dir := filepath.Join(root, entry.Name())
+		// An earlier fix directory holds the agent's repository.
+		if _, err := os.Stat(filepath.Join(dir, "git")); err == nil {
+			if stale(entry) {
+				_ = os.RemoveAll(dir)
+			}
+			continue
+		}
+		fixes, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, fix := range fixes {
+			if stale(fix) {
+				_ = os.RemoveAll(filepath.Join(dir, fix.Name()))
+			}
 		}
 	}
 }

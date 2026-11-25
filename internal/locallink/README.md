@@ -28,6 +28,14 @@ session, hook event and observation time. A missing transcript keeps the link
 and metadata-only review context; it does not invent conversation or usage.
 Push observations are retained separately and never establish creation.
 
+baum's own fixes commit for their agent, so no hook sees the agent make the
+commit. A fix records the same observation itself once it pushed, naming its
+agent's session (event `fix:<id>`). The agent ran in a checkout of its own,
+gone once the fix ended, inside the clone's directory of fixes
+(`fixdir.ForClone`). Discovery reads that directory as well (`WithFixes`,
+`sessions.Options.CheckoutParents`), so the fix session is found with its
+transcript, and its touched paths resolve against its checkout.
+
 Git reflogs supply creation evidence too, for commits, amends, cherry-picks,
 reverts, applied patches and rebase picks (`pull --rebase` included). A reflog
 entry made while one session's shell tool call ran, in the same working tree,
@@ -131,8 +139,8 @@ commit-failure diagnostic. The command parser excludes quoted commands,
 heredoc text, background/negated commands and intervening checkout commands.
 
 A commit no session recorded creating has no links, even when sessions here
-edited its files: one made outside an agent, on another machine or by baum's
-fix flow, which commits for its agent. Checkpoint IDs provide the narrower
+edited its files: one made outside an agent, on another machine, or by a fix
+whose agent reported no session. Checkpoint IDs provide the narrower
 pool for later evidence inspection or adjudication without asserting those
 candidates as contributors.
 

@@ -2690,8 +2690,10 @@ omits `--no-session-persistence` (Claude Code) or `--ephemeral` (Codex);
 resume <id>`) and implies persisting. `Result.SessionID` is the id the CLI
 reported (Claude Code's `init` event, else its `result` event; Codex's
 `thread.started` `thread_id`). Only the `User` and `Local` profiles accept
-these options, and only for reviews and tasks, not fixes; the hosted profiles,
-Cursor and the Anthropic backend refuse them. No review or task sets them now
+these options; the hosted profiles, Cursor and the Anthropic backend refuse
+them. A fix keeps its session (`fix.Run`) but never resumes one: Claude Code's
+fix arguments have no `--resume`, and Codex's `exec resume` takes no
+`--sandbox`. No review or task sets them now
 (the session panel's turns resume through `agent.Converser`); baum never forks
 a session. Without them every argv is unchanged. Codex's `exec resume` takes
 no `--sandbox`, so the same read-only sandbox is passed as
@@ -5792,7 +5794,8 @@ again, refusing threads whose
 digest changed (`threads_changed`).
 
 `fix.Run` then works in a `gitlocal.Fix`, under the user cache directory's
-`baum/fixes/<id>`: `checkout` (the work tree), `git` (the agent's own
+`baum/fixes/<clone>/<id>`, where `<clone>` is a digest of the clone's common
+git directory (`fixdir.ForClone`): `checkout` (the work tree), `git` (the agent's own
 repository, made with `init --template= --separate-git-dir` in the clone's
 object format, the clone's objects as alternates, `commit.gpgSign` and
 `tag.gpgSign` false, the files written by baum's own `read-tree -u --reset`
@@ -5816,7 +5819,12 @@ makes its own commit (`Fix.Commit`: `read-tree` of the head into its index,
 `add --all`, after a merge `add --force` of the files the base added that the
 checkout has, `write-tree`, `commit-tree [-S] -p <head> [-p <base>]`), requires a
 new commit that descends from the head, and pushes it with a plain `git push`
-to the head branch. Phases are `reading checks`, `reading review comments`, `fetching`,
+to the head branch. The agent keeps its session, recorded in the checkout, so
+after the push the job records the commit as made by that session
+(`commitattribution`, event `fix:<id>`), as a Git hook records an agent's own
+commit; the local linkage finds the session in the clone's directory of fixes
+after the checkout is gone (`locallink.WithFixes`) and links it to the commit
+(`commit_ref`). Phases are `reading checks`, `reading review comments`, `fetching`,
 `merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
 records `commit`, `commit_url` and the agent's masked `summary`. A fix whose
 agent changed nothing completes without a commit, with reason `no_changes`

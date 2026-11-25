@@ -113,11 +113,11 @@ func TestSessionOptionsAreRefused(t *testing.T) {
 		fix     bool
 		want    string
 	}{
-		{"container persist", &Backend{Binary: script, Profile: Container}, agent.Request{PersistSession: true, Endpoint: endpoint}, false, "only a Local profile"},
-		{"container resume", &Backend{Binary: script, Profile: Container}, agent.Request{ResumeSession: testSession, Endpoint: endpoint}, false, "only a Local profile"},
+		{"container persist", &Backend{Binary: script, Profile: Container}, agent.Request{PersistSession: true, Endpoint: endpoint}, false, "only the Local profile"},
+		{"container resume", &Backend{Binary: script, Profile: Container}, agent.Request{ResumeSession: testSession, Endpoint: endpoint}, false, "only the Local profile"},
 		{"leading dash", &Backend{Binary: script}, agent.Request{ResumeSession: "--last"}, false, "must be a UUID"},
 		{"name, not UUID", &Backend{Binary: script}, agent.Request{ResumeSession: "my-thread"}, false, "must be a UUID"},
-		{"fix", &Backend{Binary: script}, agent.Request{PersistSession: true}, true, "only a Local profile"},
+		{"fix resume", &Backend{Binary: script}, agent.Request{ResumeSession: testSession}, true, "a fix cannot resume"},
 	} {
 		dir := t.TempDir()
 		c.request.Directory, c.request.Prompt, c.request.MaxCalls, c.request.MaxTokens = dir, "p", 2, 100
