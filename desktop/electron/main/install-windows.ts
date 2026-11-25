@@ -4,7 +4,7 @@
 // terminals pick it up) and removes it again on uninstall.
 import { capture } from "./elevation.ts";
 import type { Found, InstallRecord, LoginPath, Plan, Status, Target } from "./install.ts";
-import { parent, samePath, sameFile } from "./path-rules.ts";
+import { parent, samePath, sameFile, windowsSystemProgram } from "./path-rules.ts";
 
 const P = "win32" as const;
 
@@ -30,11 +30,17 @@ $key.SetValue('Path', $new, 'ExpandString')
 [Environment]::SetEnvironmentVariable('BAUM_PATH_REFRESH', '1', 'User')
 [Environment]::SetEnvironmentVariable('BAUM_PATH_REFRESH', $null, 'User')`;
 
+/** Windows PowerShell by its full path: a bare name is searched for in the
+ *  working directory first. */
+export function powershellPath(env: NodeJS.ProcessEnv): string {
+  return windowsSystemProgram(env, "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
 async function powershell(action: string, dir: string, env: NodeJS.ProcessEnv): Promise<string> {
   let output: Awaited<ReturnType<typeof capture>>;
   try {
     output = await capture(
-      "powershell.exe",
+      powershellPath(env),
       ["-NoProfile", "-NonInteractive", "-Command", SCRIPT],
       {
         ...env,

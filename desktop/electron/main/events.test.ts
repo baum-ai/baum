@@ -187,6 +187,25 @@ describe("events stream", () => {
     expect(error?.message).not.toContain(TOKEN);
   });
 
+  it("sends nothing once the daemon's process has gone", async () => {
+    const { endpoint, heads } = await serve((_req, res) => stream200(res, ""));
+    let running = false;
+    const gone = Endpoint.fromLaunch({
+      url: new URL(`http://${endpoint.authority}/#token=${TOKEN}`),
+      bearer: () => TOKEN,
+      running: () => running,
+    });
+    if (gone === null) throw new Error("loopback endpoint");
+    const error = await readEvents(gone, { last: NO_HISTORY }, never, () => {
+      throw new Error("no events");
+    });
+    expect(error?.message).toBe("the baum daemon has stopped");
+    await expect(appUrl(gone)).rejects.toThrow("the baum daemon has stopped");
+    expect(heads).toHaveLength(0);
+    running = true;
+    expect(gone.running()).toBe(true);
+  });
+
   it("reconnects after the last event seen", async () => {
     let n = 0;
     const { endpoint, heads } = await serve((_req, res) => {

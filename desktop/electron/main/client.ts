@@ -26,7 +26,14 @@ import { isIP } from "node:net";
 export interface Launch {
   readonly url: URL;
   bearer(): string;
+  /** Whether the daemon's process still runs (daemon.ts's `stillOurs`);
+   *  once it has gone, another process may hold its port, so nothing
+   *  carrying the credential is sent. Unchecked when absent. */
+  running?(): boolean;
 }
+
+/** Why a request to a daemon whose process has gone was not sent. */
+export const DAEMON_GONE = "the baum daemon has stopped";
 
 /** Large enough for a long job journal, small enough to bound memory. */
 const MAX_BODY = 16 << 20;
@@ -61,6 +68,9 @@ export function request(
 ): Promise<Response> {
   const addr = address(launch.url);
   if (addr === null) return Promise.reject(new Error("the daemon's address is unusable"));
+  if (launch.running?.() === false) {
+    return Promise.reject(new Error(`cannot reach the baum daemon: ${DAEMON_GONE}`));
+  }
   const headers: Record<string, string> = {
     Host: addr.authority,
     Authorization: `Bearer ${launch.bearer()}`,

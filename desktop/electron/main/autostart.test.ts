@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { powershellPath } from "./install-windows.ts";
 import {
   checkExecutable,
   createAutostart,
@@ -17,6 +18,7 @@ import {
   regApprovedDeleteArgs,
   regApprovedQueryArgs,
   regDeleteArgs,
+  regPath,
   regQueryArgs,
   removeEntry,
   rewriteEntry,
@@ -62,6 +64,25 @@ describe("autostart entries", () => {
   it("the launch agent escapes the path", () => {
     expect(launchAgent("/Apps/a&b <c>/baum")).toContain(
       "<string>/Apps/a&amp;b &lt;c&gt;/baum</string>",
+    );
+  });
+
+  it("runs the system's reg.exe by its full path, never a bare name", () => {
+    expect(regPath({ SystemRoot: String.raw`D:\Win` })).toBe(String.raw`D:\Win\System32\reg.exe`);
+    expect(regPath({ SYSTEMROOT: String.raw`D:\Win` })).toBe(String.raw`D:\Win\System32\reg.exe`);
+    for (const env of [
+      {},
+      { SystemRoot: "" },
+      { SystemRoot: "Win" },
+      { SystemRoot: "\\\\srv\\x" },
+    ]) {
+      expect(regPath(env)).toBe(String.raw`C:\Windows\System32\reg.exe`);
+    }
+    expect(powershellPath({ SystemRoot: String.raw`C:\Windows` })).toBe(
+      String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+    );
+    expect(powershellPath({})).toBe(
+      String.raw`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
     );
   });
 
