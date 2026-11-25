@@ -33,6 +33,23 @@ export default {
   ],
   // No native modules to rebuild.
   npmRebuild: false,
+  // Electron's fuses, flipped in the packaged executable before it is
+  // signed: it never runs as plain Node (ELECTRON_RUN_AS_NODE), ignores
+  // NODE_OPTIONS and --inspect, loads its code only from app.asar, which it
+  // validates where Electron can (macOS, Windows), and gives file:// pages no
+  // extra privileges (the app serves its screens as app://). Another program
+  // running as the user cannot turn the signed app into a Node runtime of
+  // its own. The unpackaged app the checks and profiles run is plain
+  // Electron, unchanged. bundle.sh reads the fuses back
+  // (scripts/check-fuses.mjs).
+  electronFuses: {
+    runAsNode: false,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    enableEmbeddedAsarIntegrityValidation: true,
+    onlyLoadAppFromAsar: true,
+    grantFileProtocolExtraPrivileges: false,
+  },
   // electron-updater reads the update files these describe; the app sets the
   // URL per channel at run time. Nothing is ever published from here
   // (bundle.sh passes --publish never); the files are written beside the

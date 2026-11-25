@@ -2035,7 +2035,10 @@ tools installed after the app or the agent started are found.
   rejected.
 - `scripts/bundle.sh`, on every bundle: the bundled `baum` is the one given,
   executable and outside the asar; Electron's ffmpeg is the only one; the
-  AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
+  executable's Electron fuses are those `electron-builder.mjs` sets
+  (`scripts/check-fuses.mjs`: no `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` or
+  `--inspect`, code only from an `app.asar` it validates on macOS and
+  Windows, no extra `file://` privileges); the AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
   and links `/usr/bin/baum`; the update file matches the bundles.
 - The release runs the same verification on the real bundles before
   anything is attached, and the app verifies each download again.
