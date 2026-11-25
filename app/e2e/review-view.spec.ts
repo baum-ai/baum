@@ -229,9 +229,9 @@ test("a wide section shows its Overview beside its other views, which stay in si
   await expect(views.getByRole("tab")).toHaveText(["Code 1", "Tests 1", "Session 0", "Docs 1"]);
   await expect(views.getByRole("tab", { name: "Code" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("[data-section-body]")).toBeVisible();
-  const diff = page.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" });
-  await expect(diff).toBeVisible();
   const side = page.locator("[data-section-side]");
+  const diff = side.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" });
+  await expect(diff).toBeVisible();
   const overview = await page.locator("[data-section-body]").boundingBox();
   const beside = await side.boundingBox();
   expect(beside!.x).toBeGreaterThan(overview!.x + overview!.width);
@@ -289,6 +289,7 @@ test("a wide section's excerpts open in its side column, which collapses and res
   await views.getByRole("tab", { name: "Tests" }).click();
   await overview
     .getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true })
+    .and(page.getByTitle(/^Diff hunk/))
     .click();
   await expect(page).toHaveURL(/section_view=code/);
   await expect(diff).toBeInViewport();
@@ -314,6 +315,7 @@ test("a wide section's excerpts open in its side column, which collapses and res
   await overview.getByRole("button", { name: /Deny by default/ }).click();
   await overview
     .getByRole("button", { name: "oss/internal/uiserver/remote.go", exact: true })
+    .and(page.getByTitle(/^Diff hunk/))
     .click();
   await expect(
     side.getByRole("article", { name: "oss/internal/uiserver/remote.go diff" }),
