@@ -13,10 +13,12 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "test:unit": "vitest run",
+    "test:shell": "xvfb-run -a -s \"-screen 0 1400x1000x24\" playwright test --config tests/shell/playwright.config.ts",
     "check": "pnpm format:check && pnpm typecheck && pnpm test:unit"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
+    "@playwright/test": "^1.62.0",
     "@types/node": "24.13.2",
     "electron": "45.5.0",
     "esbuild": "0.28.2",

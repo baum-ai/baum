@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["electron/**", "*.json", "*.ts", "!!build", "!!dist"]
+    "includes": ["electron/**", "tests/shell/**", "*.json", "*.ts", "!!build", "!!dist"]
   },
   "formatter": {
     "enabled": true,

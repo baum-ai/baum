@@ -61,36 +61,6 @@ dmg-layout:
 notices:
     {{ heavy }} desktop-test scripts/third-party-notices.sh
 
-# Check in WebKitGTK, under a virtual display in Docker, that no frame of a
-# page can make the app open the browser (tests/navigation). Not run in CI.
-navigation-check:
-    BAUM_OP_RUN=0 {{ dev_compose }} --profile test build desktop-test
-    docker build -q -t baum-desktop-navigation-check \
-        --build-arg DESKTOP_IMAGE="$(BAUM_OP_RUN=0 {{ dev_compose }} --profile test config --images desktop-test)" \
-        {{ source_directory() }}/tests/navigation
-    docker run --rm ${BAUM_DEV_CPUSET:+--cpuset-cpus="$BAUM_DEV_CPUSET"} \
-        --user "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_HOME=/cache/cargo \
-        --add-host attacker.example:127.0.0.1 \
-        -v "{{ source_directory() }}:/oss/desktop" \
-        -v "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/cargo:/cache/cargo" \
-        baum-desktop-navigation-check sh /oss/desktop/tests/navigation/run.sh
-
-# Check in WebKitGTK, under a virtual display in Docker, that the tile check
-# window runs in its own web process, that a tile spinning there leaves the
-# main window running, and that closing the window ends the spinning process
-# (tests/check-window). Not run in CI.
-check-window-check:
-    BAUM_OP_RUN=0 {{ dev_compose }} --profile test build desktop-test
-    docker build -q -t baum-desktop-navigation-check \
-        --build-arg DESKTOP_IMAGE="$(BAUM_OP_RUN=0 {{ dev_compose }} --profile test config --images desktop-test)" \
-        {{ source_directory() }}/tests/navigation
-    docker run --rm ${BAUM_DEV_CPUSET:+--cpuset-cpus="$BAUM_DEV_CPUSET"} \
-        --user "$(id -u):$(id -g)" -e HOME=/tmp -e CARGO_HOME=/cache/cargo \
-        --add-host attacker.example:127.0.0.1 \
-        -v "{{ source_directory() }}:/oss/desktop" \
-        -v "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/cargo:/cache/cargo" \
-        baum-desktop-navigation-check sh /oss/desktop/tests/check-window/run.sh
-
 electron := heavy + " desktop-electron"
 
 # The Electron shell (electron/): format check, typecheck and unit tests
@@ -102,6 +72,12 @@ electron-check:
 electron-test *args:
     @mkdir -p "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron"
     {{ electron }} pnpm exec vitest run {{ args }}
+
+# The Electron shell's harness (tests/shell): builds the shell and runs it
+# under Xvfb against a mock daemon. Needs dist/ (just desktop::frontend).
+electron-shell-test *args:
+    @mkdir -p "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron"
+    {{ electron }} sh -c 'pnpm build && pnpm test:shell "$@"' -- {{ args }}
 
 electron-fmt:
     BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-electron pnpm format

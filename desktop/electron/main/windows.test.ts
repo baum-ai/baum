@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseDeclaration } from "../shared/contract.ts";
-import { SHELL } from "./declaration.ts";
+import { CHECK_WINDOW_PAGE, SHELL } from "./declaration.ts";
 import { permissionAllowed, securePreferences } from "./windows.ts";
 
 describe("the app's windows", () => {
@@ -18,8 +18,9 @@ describe("the app's windows", () => {
     expect(securePreferences("/p", null).additionalArguments).toEqual([]);
   });
 
-  it("declare tile frames, links and no check window yet", () => {
-    expect(SHELL).toEqual({ tileFrames: true, checkWindow: false, openLinks: true });
+  it("declare tile frames, links and the check window", () => {
+    expect(SHELL).toEqual({ tileFrames: true, checkWindow: true, openLinks: true });
+    expect(CHECK_WINDOW_PAGE).toEqual({ tileFrames: true, checkWindow: true, openLinks: false });
   });
 
   it("grant notifications and clipboard writes to the app's origins only", () => {

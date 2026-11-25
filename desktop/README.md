@@ -768,214 +768,294 @@ does when the window loses focus.
 
 ## What pages may do
 
-- The window loads only the bundled screens and the attached daemon's origin.
-  Of the bundled files it shows exactly `/` and `/index.html`, and
-  `/setup.html` only while the app shows the setup screen; any other path,
-  including other spellings the asset server maps to a page (`/setup`,
-  `/setup.html/`, percent-encoded names), is refused. The bundled pages'
-  content security policy has `frame-ancestors 'none'`.
-  Every other navigation is refused and nothing happens: other hosts, other
-  loopback servers, other schemes (`about:`, `data:`, `blob:`, `file:`,
-  `mailto:` and the rest) and any URL with a user name or password. A
-  navigation never opens the default browser. On macOS and Linux the webview
-  asks the same handler (`navigation::decide`) about a navigation in any frame
-  of the page and passes only its URL, so an embedded frame could otherwise
-  open the browser at an address carrying data it read. On Windows wry asks
-  only about the page's own navigations (`NavigationStarting`), and the
-  page's `frame-src` alone governs its frames. Debug builds log a refused
-  navigation's scheme and host.
+This section describes the Electron shell (`electron/`). Where the Tauri
+shell (`src/`, shipped until the bridge release) differs, a note says so.
+
+- The window loads only the bundled screens and the attached daemon's origin
+  (`electron/main/navigation.ts`'s `decide`). Of the bundled files it shows
+  exactly `/` and `/index.html`, and `/setup.html` only while the app shows
+  the setup screen; any other path, including other spellings the asset
+  server maps to a page (`/setup`, `/setup.html/`, percent-encoded names), is
+  refused. The bundled pages' content security policy has
+  `frame-ancestors 'none'`. Every other navigation is refused and nothing
+  happens: other hosts, other loopback servers, other schemes (`about:`,
+  `data:`, `blob:`, `file:`, `mailto:` and the rest) and any URL with a user
+  name or password. A navigation never opens the default browser.
+- The guard (`electron/main/windows.ts`) checks every navigation twice.
+  Electron asks it about the page's own navigations and redirects
+  (`will-navigate`, `will-redirect`) and about every frame's
+  (`will-frame-navigate`): a frame navigating itself, a page setting a
+  frame's `src` and a new frame alike. A session filter (`webRequest`) then
+  refuses every frame load of a guarded window that the guard does not
+  allow, at the network, so a load the events miss is refused too. A `data:`
+  or `blob:` frame is refused. `about:blank` and `about:srcdoc` frames load
+  nothing from the network and are not asked about: they take the page's
+  origin and content security policy, which governs them. Unpackaged apps
+  log a refused navigation's or frame load's scheme and host.
 - Links to other sites open in the default browser as new-window requests
-  (`target="_blank"` links and `window.open`, `navigation::decide_new_window`):
-  `http` and `https` URLs of hosts other than loopback ones, without a user
-  name or password, go to the browser, and no window ever opens. A sandboxed
-  frame can ask only with `allow-popups`. WebKitGTK lets a page ask only while
-  the person interacts with it; WebView2 (whose pop-up blocker is off in an
-  embedded webview) and WKWebView (where wry leaves
-  `javaScriptCanOpenWindowsAutomatically` at its default) let a script ask at
-  any time, so the app opens the browser at most once a second
-  (`navigation::OpenLimit`) and drops the rest.
-- WKWebView asks the navigation handler about a `target="_blank"` click
-  before it asks for a new window, and wry passes the handler only the URL,
-  so the shell refuses the click as it would a frame's navigation and WebKit
-  never asks for the window. So the app opens links through the `open_link`
-  command instead (`src/links.rs`), which the daemon's pages and the setup
-  screen may call. It opens the same URLs as a new-window request, under the
-  same once-a-second limit, and Tauri's command bridge is in the page's main
-  frame only on macOS and Linux, so a frame cannot call it there. The shell
-  declares it as `openLinks: true` (below); the app
-  (`app/src/outside-links.ts`) then turns a person's click on any link to
-  another site, `target="_blank"` or not, into the command, and its own
-  `openExternal` calls it too. With an older shell, which does not declare
-  it, the app opens outside links as new-window requests and turns a click on
-  a same-window link into one, so no link is dead. Setup
-  opens GitHub's device page a few seconds after a sign-in starts, when it can
-  no longer ask for a window, through the `open` action of
-  `github_connection`, which opens that fixed address whatever the page
-  passes.
-- Before the page's own scripts run, the main window (and the check window,
-  below) defines `window.__BAUM_DESKTOP__`, a frozen object that cannot be
-  replaced (`src/declaration.rs`), with three fields. `openLinks` says
-  whether the page opens links to other sites with `open_link`; it is `true`
-  in the main window and `false` in the check window, which may call no
-  command. `checkWindow` says whether
-  the page can open the tile check window; it is `true` on Linux only (see
-  Tile check window). `tileFrames` says whether the page may embed
-  sandboxed frames of untrusted content served from the daemon's origin. It
-  is `true` on Linux and macOS, where the shell refuses every navigation of a
-  frame away from the app and Tauri injects its scripts, including the
-  command bridge, into the main frame only. On Linux
-  `just desktop::navigation-check` shows that a sandboxed frame at the
-  daemon's origin sees neither the declaration nor the bridge, and that none
-  of its attempts to call a command (`__TAURI_INTERNALS__`, `window.ipc`,
-  WebKit's `ipc` message handler with a guessed or no invoke key, `fetch` to
-  `ipc://localhost` and `http://ipc.localhost`) runs one. It is `false` on
-  Windows, where Tauri injects its scripts into every frame and WebView2 asks
-  the shell only about the page's own navigations, until the same check has
-  been made on a Windows machine; the constant's comment says what to check.
-  WKWebView injects the declaration into the main frame only, as WebKitGTK
-  does; that is known from the APIs Tauri uses on macOS, not yet run there.
-- Tauri treats the daemon's pages as remote. One capability names them,
-  `daemon-pages`, for `http://127.0.0.1:*` in the main window: it allows CLI and hook status, installation and removal, plus
-  `choose_repository`, the native folder picker the Repositories page's Browse
-  button opens, which changes nothing and returns only the chosen folder. The
-  page registers it through the daemon's own API. It also allows the zoom
-  commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
-  offered levels, `save_theme` (shape-checked, see First run), and the updater's
-  (`update_state`, `check_for_updates`, `install_update`, `cancel_update` and
-  `dismiss_update_notice`): a page can read the state, start a check, install only an update the app has already
-  downloaded and verified, and record that a notice was closed. It also
-  allows `save_tile_type`, which Settings › Tile library's Export calls: it
+  (`target="_blank"` links and `window.open`, `decideNewWindow`): `http` and
+  `https` URLs of hosts other than loopback ones, without a user name or
+  password, go to the browser, and no window ever opens. Electron does not
+  say which frame asked for a new window, so the guard cannot tell a page's
+  request from a frame's. A tile frame is sandboxed without `allow-popups`,
+  so Chromium refuses its requests before the shell is asked. Electron lets
+  a script ask at any time, so the app opens the browser at most once a
+  second (`OpenLimit`) and drops the rest. The check window and the tray
+  panel open nothing.
+- The app opens links through the `open_link` command
+  (`electron/main/links.ts`), which the daemon's pages and the setup screen
+  may call. It opens the same URLs as a new-window request, under the same
+  once-a-second limit. The shell declares it as `openLinks: true` (below);
+  the app (`app/src/outside-links.ts`) then turns a person's click on any
+  link to another site, `target="_blank"` or not, into the command, and its
+  own `openExternal` calls it too. With an older shell, which does not
+  declare it, the app opens outside links as new-window requests and turns a
+  click on a same-window link into one, so no link is dead. Setup opens
+  GitHub's device page a few seconds after a sign-in starts, when it can no
+  longer ask for a window, through the `open` action of `github_connection`,
+  which opens that fixed address whatever the page passes. The Tauri shell
+  added the command because WKWebView refuses a `target="_blank"` click as a
+  navigation before it asks for a window.
+- Before the page's own scripts run, the preload (`electron/preload/`)
+  defines `window.__BAUM_DESKTOP__` in the main frame of the main window and
+  of the check window (below), a frozen object that cannot be replaced, with
+  three fields. `openLinks` says whether the page opens links to other sites
+  with `open_link`; it is `true` in the main window and `false` in the check
+  window, which may call no command. `checkWindow` says whether the page can
+  open the tile check window; it is `true` on every platform (see Tile check
+  window). `tileFrames` says whether the page may embed sandboxed frames of
+  untrusted content served from the daemon's origin. It is `true` on every
+  platform: the shell refuses every navigation of a frame away from the app,
+  and Electron runs the preload, and so the command bridge and the
+  declaration, in the main frame only (`nodeIntegrationInSubFrames: false`).
+  The Tauri shell declares `tileFrames` on Linux and macOS and `checkWindow`
+  on Linux only (`src/declaration.rs`).
+- No page reaches Node.js or Electron: every window has context isolation,
+  a sandboxed renderer and preload, no Node.js integration and no
+  `<webview>`, and no web contents the app did not set up opens a window or
+  attaches a webview. Pages of the app's origins may ask for notifications
+  and clipboard writes; every other permission, and every request from
+  another origin, is refused.
+- Commands go over one IPC channel. The guard (`electron/main/bridge.ts`)
+  runs one only when it comes from the main frame of one of the app's own
+  command windows (the main window and the tray panel; never the check
+  window), at a page whose role, resolved from the window and the frame's
+  origin and path, the command table (`electron/main/commands.ts`) allows.
+  A refusal says only that the command is not allowed. The Tauri shell
+  grants the same commands through capability files (`capabilities/`).
+- The daemon's pages (`daemon-pages`, the attached daemon's origin in the
+  main window) may call CLI and hook status, installation and removal, plus
+  `choose_repository`, the native folder picker the Repositories page's
+  Browse button opens, which changes nothing and returns only the chosen
+  folder. The page registers it through the daemon's own API. They may also
+  call the zoom commands (`zoom_state`, `set_zoom` and `step_zoom`), which
+  accept only the offered levels, `save_theme` (shape-checked, see First
+  run), and the updater's (`update_state`, `check_for_updates`,
+  `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
+  read the state, start a check, install only an update the app has already
+  downloaded and verified, and record that a notice was closed. They may
+  call `save_tile_type`, which Settings › Tile library's Export calls: it
   opens the native save dialog for `<name>.baumtile.json` and writes the
   exported file only where the person chose, refusing a name that is not a
-  tile type's or a file over 3 MiB, and `open_check_window` and
-  `close_check_window` (see Tile check window), and `open_link` (see above).
-  They can call no other Tauri
-  command or
-  plugin.
-  `withGlobalTauri` is off.
-- The bundled screens have two capabilities, for the main window's bundled
-  origin only: `connecting-screen` allows the app's `connection` and
-  `reconnect` commands, and `setup-screen` the setup commands
-  (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
-  `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
-  `save_review_settings` and `finish_setup`) and `open_link`. Both also allow `step_zoom`
-  for the zoom shortcuts. Every change they make runs in the
-  Rust side and only when the user requests it in setup or Settings;
-  replacing a different baum also requires the confirmed path. Daemon pages
-  share `setup_state`, the four CLI and hook install/removal commands,
-  `update_hooks` and `choose_repository`. GitHub connection, repository registration, review
-  settings and finishing setup remain restricted to the bundled setup screen.
-- The opener plugin is used only from Rust, to open links in the browser. Its
-  click script (`open_js_links_on_click`) is off: it would call the plugin from
-  the page, which no page may do, and swallow the click. The
-  dialog and updater plugins are used only from Rust too (see Updates); the
-  app's own updater commands wrap the latter. No
-  page is granted any plugin's commands.
+  tile type's or a file over 3 MiB; `open_check_window` and
+  `close_check_window` (see Tile check window); and `open_link` (see above).
+  They can call no other command.
+- The bundled screens have two roles, for the main window's bundled origin
+  only: `connecting-screen` may call `connection` and `reconnect`, and
+  `setup-screen` the setup commands (`setup_state`, `install_command`,
+  `uninstall_command`, `install_hooks`, `uninstall_hooks`, `update_hooks`,
+  `choose_repository`, `add_repository`, `review_settings`,
+  `save_review_settings`, `github_connection`, `repositories` and
+  `finish_setup`) and `open_link`. Both may call `step_zoom` for the zoom
+  shortcuts. Every change they make runs in the main process and only when
+  the user requests it in setup or Settings; replacing a different baum also
+  requires the confirmed path. Daemon pages share `setup_state`, the four
+  CLI and hook install/removal commands, `update_hooks` and
+  `choose_repository`. GitHub connection, repository registration, review
+  settings and finishing setup remain restricted to the bundled setup
+  screen. The tray panel's page (`tray-panel`, macOS and Windows) may call
+  only its own commands.
+- The main process alone opens the browser (`shell.openExternal`) and shows
+  dialogs and notifications. In the Tauri shell the opener, dialog and
+  updater plugins are used only from Rust, the opener's click script is
+  off, and no page is granted any plugin's commands.
 
 The app itself makes no network requests other than loopback requests to the
 daemon and the update checks below. Outside its own configuration and data
 directories it writes only what the user installs through setup or Settings: the `baum` link
 (or the user `PATH` entry on Windows), and, through the bundled baum, the
-agent marketplace plugin installations. Notifications use the operating system's
-notification service (`notify-rust`) only from Rust.
+agent marketplace plugin installations. Notifications use the operating
+system's notification service from the main process only.
 
 ## Tile check window
 
 The daemon's page checks a custom tile by rendering it in a second window,
-`tile-check` (`src/check_window.rs`), so that a tile whose script never
-yields stalls that window and not the main one. The person never sees it:
-it is hidden, 1280×900, has no decorations, cannot take focus and stays out
-of the taskbar. WebKitGTK still runs a hidden window's page, but with timers
-slowed to about once a second and no animation frames.
+the tile check window (`electron/main/check-window.ts` and
+`check-window-electron.ts`), so that a tile whose script never yields stalls
+that window and not the main one. The person never sees it: it is hidden,
+1280×900, has no frame, cannot take focus and stays out of the taskbar. Its
+timers are not throttled, so its page runs as a visible one does
+(`document.visibilityState` is `visible` and animation frames run).
 
 - The main window's daemon page opens it with `open_check_window` (no
   arguments; it does nothing when the window is open) and closes it with
   `close_check_window` (no arguments), when a check hangs or after the window
   has been idle. Only the main window can call them; a close returns once the
   window is gone, so an open right after it builds a new one. The shell also
-  closes it when the main window starts loading another page and when the app
-  detaches from the daemon, including a window still being built then.
+  closes it when the main window starts loading another page it allows and
+  when the app starts attaching again or detaches; an open still waiting
+  behind a close then builds nothing.
 - It loads `/s/<namespace>/?page=tile-check` at the origin of the daemon page
-  the main window shows, under the main window's navigation rules
-  (`navigation::decide`, without the setup screen). It never opens the
-  browser: every request for a new window is refused.
-- Its capability, `tile-check`, names only this window and grants no
-  command: the page reports its results to the daemon over HTTP. It shares
-  the main window's cookies and storage.
-- WebKitGTK gives it a web process of its own. Destroying a window leaves a
-  spinning web process at full CPU, so on Linux `close_check_window` first
-  ends the window's web process (`webkit_web_view_terminate_web_process`,
-  through the `webkit2gtk` crate at the version wry uses) and then destroys
-  the window. Before that it asks the page to close
-  (`webkit_web_view_try_close`) and waits 200 ms: a page that still answers
+  the main window shows, under the main window's navigation rules (`decide`,
+  without the setup screen, and the same network check of frame loads). It
+  never opens the browser: every request for a new window is refused.
+- It is not one of the app's command windows, so the guard refuses every
+  command its page calls; the page reports its results to the daemon over
+  HTTP.
+- It runs in a session of its own, in memory (`check-window`), so Chromium
+  never runs its page or its tiles in a process the main window uses.
+  Chromium runs sandboxed frames apart from their page, in one process per
+  site that every window of a session shares, so in the main window's
+  session a tile spinning in the check window would stall the main window's
+  tiles and could not be ended alone. The session gets the default
+  session's guards (permissions, the network check of frame loads; no
+  window attaches a webview). Before each load the shell copies the cookies
+  the default session holds for the daemon's host into it, with their
+  attributes (the daemon's session cookie is HttpOnly, `SameSite=Strict` and
+  scoped to `/s/<namespace>/`), so the page is signed in as the main
+  window's is, and it empties the session when the window closes. The check
+  page reads nothing the main window keeps in `localStorage` or
+  `sessionStorage`: its runner gets its jobs and the app's appearance from
+  the daemon.
+- `close_check_window` first asks the page to close (as closing a window
+  does, so its `pagehide` runs) and waits 200 ms: a page that still answers
   unloads, and a check it was drawing is reported abandoned and ends as
   unavailable rather than as a hang that blocks its tile type (the main
-  window loading another page closes the window mid-check). A page that
-  never yields ignores the request and its process is ended after the wait.
-- It is offered (`checkWindow`) on Linux only. On macOS WKWebView likely gives
-  it a separate web content process, but has no public call to end one, so
-  until that is checked the app runs its checks in the main window there. On
-  Windows the page embeds no tile frames, so there is nothing to check.
+  window loading another page closes the window mid-check). It then ends the
+  window's renderer (`forcefullyCrashRenderer`) unless another window's page
+  runs there, destroys the window, and ends any other process only the
+  window's frames used, if it is still one of the app's renderers. A page
+  that never yields ignores the request and is ended after the wait.
+- It is offered (`checkWindow`) on every platform: the process model is
+  Chromium's everywhere. The Tauri shell offers it on Linux only, where
+  WebKitGTK gives it a web process of its own that the shell ends with
+  `webkit_web_view_terminate_web_process`; on macOS it runs the checks in the
+  main window, and on Windows the page embeds no tile frames.
 
-`just desktop::check-window-check` checks it on Linux: it builds a small Tauri
-app with `src/check_window.rs`, `src/navigation.rs`, `src/declaration.rs`, the
-`daemon-pages` capability (granting only the two commands) and the
-`tile-check` capability (`tests/check-window`), under a virtual display in
-Docker. A mock daemon's main page opens the window, whose page holds a
-sandboxed frame that spins. It fails unless the check window runs in a web
-process other than the main window's, the main window's 100 ms heartbeat
-never stops for a second while the frame spins, the spinning process's CPU
-use drops within a second of `close_check_window` and the process is gone a
-second later, a second open while the window is open loads nothing, a window
-opened again after closing works, an open right after a close builds a new
-window, and the check page can call neither
-command, sees the same declaration, and cannot navigate to another site. It
-takes a few minutes and is not part of CI.
+The shell harness (Checking navigation, below) checks it on Linux: a mock
+daemon's main page opens the window, whose page holds a sandboxed frame that
+spins. It fails unless the check window's page and its tile run in processes
+the main window's page and tiles do not use, the main window's 100 ms
+heartbeat never stops for a second while the frame spins, the spinning
+process's CPU use drops within a second of `close_check_window` and the
+process is gone a second later, a second open while the window is open loads
+nothing, a window opened again after closing works, an open right after a
+close builds a new window, the main window loading another page closes it,
+closing leaves no cookie in the check window's session, every check page
+request carries the daemon's HttpOnly session cookie, and the check page
+sees the main window's script cookies and the declaration with
+`openLinks: false`, can call no command (`open_check_window`,
+`close_check_window`, `zoom_state`, `open_link`), and cannot navigate to or
+open another site. It also fails unless the main window's own tile runs in
+a process apart from its page, and a tile spinning in the main window
+leaves the page's heartbeat running.
 
-Before turning `checkWindow` on for macOS, a person checks on a Mac, with a
-debug build and a page that calls the commands from the Web Inspector:
+Because Chromium runs a tile's frame apart from the check page, a tile that
+loops before it says hello leaves the check page running: the daemon's
+missing-heartbeat timer never fires, and the runner itself reports the
+hang (a frame with no hello in 5 s that does not answer the kit's `ping`
+within 2 s and never finished loading; see "Render check" in
+`oss/ARCHITECTURE.md`). `tests/shell/check-runner.spec.ts` checks that path
+end to end with the app's own check host and runner, bundled from
+`oss/app/src` with React and `api.ts` stubbed, and the kit's real bootstrap
+in the frame: the main page opens the check window on a `tile_check` event,
+the runner claims the job from the mock daemon and draws a frame that
+spins, and the spec fails unless the frame runs in a process apart from the
+check page, the check page's heartbeat keeps running while it spins, the
+report reaching the mock holds `hang` (not `no_hello` or `timeout`), the
+`hung` the mock then sends closes the check window, the spinning process's
+CPU use drops within 2 seconds of the report and the process is gone, and
+the main window's 100 ms heartbeat never stops for a second.
 
-1. After `open_check_window`, Activity Monitor shows a second web content
-   process for the app.
-2. In the check window's page (open its inspector from the Develop menu),
+On macOS and Windows a person checks, before a release that changes the
+check window, with an unpackaged app started with
+`--remote-debugging-port=9222` and the main window's page inspected from
+`chrome://inspect` in Chrome or Edge:
+
+1. `await baumDesktop.invoke("open_check_window")`: Activity Monitor (macOS)
+   or Task Manager's details (Windows) shows a new renderer process.
+2. In the check window's page (also listed in `chrome://inspect`),
    `setTimeout(() => { for (;;) {} }, 1000)`: the main window stays
    responsive and its timers keep running.
-3. `close_check_window`: the spinning process's CPU use drops within a second
-   and the process ends.
-4. A hidden (or out of sight) check window still runs timers, and one opened
-   again after closing works.
-
-On Windows the check window stays off with tile frames (`tileFrames`); the
-same steps apply before either is turned on there.
+3. `await baumDesktop.invoke("close_check_window")` in the main window: the
+   spinning process's CPU use drops within a second and the process ends.
+4. A window opened again after closing works.
 
 ### Checking navigation
 
-`just desktop::navigation-check` checks the Linux webview: it builds a small
-Tauri window with `src/navigation.rs`, `src/declaration.rs` and the
-`daemon-pages` capability (`tests/navigation`), loads a mock daemon's page
-with and without the daemon's Content-Security-Policy, and clicks with a real
-pointer under a virtual display in Docker. It fails if a sandboxed frame's
-navigation is not refused, if a frame reaches the new-window handler or runs
-an app command, if a frame sees `__BAUM_DESKTOP__`, if any request reaches
-another server, or if the page's own links, commands or declaration stop
-working. It takes a few minutes and is not part of CI.
+`just desktop::electron-shell-test` (in the `desktop-electron` container;
+`pnpm build && pnpm test:shell` in `oss/desktop` elsewhere, which needs
+Xvfb) runs the harness in `tests/shell`, and CI runs it on Linux for every
+change to the desktop app. It launches the built shell with Playwright under
+a virtual display, with a home of its own, attached through the real attach
+path to a mock daemon: a fake `baum` (`BAUM_DESKTOP_BAUM`) answers `baum
+daemon ensure --json` with the mock's status and leaves a private credential.
+Another site (`attacker.example`, which Chromium resolves to 127.0.0.1 there)
+and another loopback server record any request that reaches them, and
+`shell.openExternal` is recorded instead of opening a browser. The mock
+serves each page with the daemon's Content-Security-Policy or with none, as
+Vite's development server sends none, so nothing but the shell stops a
+frame. Clicks are real pointer input. An unpackaged app run with
+`BAUM_DESKTOP_LOG_COMMANDS=1` logs each command it runs and for which role,
+so the harness can tell the page's calls from a frame's. It fails if:
 
-macOS and Windows need a person. Run a debug build of the app (`just
-desktop::dev` on macOS; on Windows, `cargo tauri dev` in `oss/desktop` with
-the frontend served as `desktop::dev` does). Its page comes from the Vite
-server, which sends no Content-Security-Policy, so nothing but the shell
-stops a frame. Open the Web Inspector on the main window (Cmd+Option+I on
-macOS, Ctrl+Shift+I on Windows) and, in its console:
+- a sandboxed frame, with the frame route's policy or only
+  `sandbox allow-scripts`, sees `baumDesktop` or `__BAUM_DESKTOP__`, reaches
+  the page's (`parent.baumDesktop` must throw), finds `require`, `process`,
+  `ipcRenderer` or another shell's bridge, or makes a command run, by any
+  call or by posting the page a message shaped like one;
+- a frame navigating itself (location, meta refresh, a real click on a
+  same-window link), a `target="_blank"` or `target="_top"` click, a
+  `window.open` click or loop, a form submitted to the top or to itself, a
+  nested frame or the page setting a frame's `src` makes any request to
+  another site or local server, opens the browser, or moves the page; and,
+  without the daemon's policy, if the guard did not refuse the navigation
+  itself;
+- with `will-frame-navigate` taken away, the network check does not refuse a
+  frame navigating itself and a frame the page inserts;
+- the page's own `target="_blank"` link does not open the browser exactly
+  once, a same-window link to another site is not refused, or a link to the
+  daemon's own page does not navigate;
+- `open_link` does not open a link once, a second within the second is not
+  dropped, or a `file:`, `data:`, `javascript:`, loopback or userinfo URL is
+  not refused; `window.open` in a burst opens more than once, every 100 ms
+  for 2.5 s fewer than two or more than three times, or opens such a URL;
+- the main frame navigates to another site, another local server, `file:`,
+  `data:` or a URL with a user name, or a `javascript:` URL moves it;
+- a frame in the setup screen or the connecting screen sees the bridge or
+  the declaration while the screen's own calls run;
+- any check of the check window above fails.
+
+The tray panel exists on macOS and Windows only, so the harness does not
+check it; its window loads only `tray.html` and refuses every navigation and
+new window.
+
+Electron's preload, its navigation events and Chromium's sandbox behave the
+same on macOS and Windows, but a release that changes the shell is checked
+there by a person too, with an unpackaged app started with
+`--remote-debugging-port=9222` and its pages inspected from `chrome://inspect`
+in Chrome or Edge. Its page comes from the Vite server under
+`desktop::dev`, which sends no Content-Security-Policy, so nothing but the
+shell stops a frame. In the main window's console:
 
 1. `Object.assign(document.createElement("a"), { href: "https://example.com/?same-window" }).click()`:
    nothing happens and no browser opens (the click is a script's).
 2. Load a frame from the page's own origin, which the shell allows, and drive
    it:
-   `const f = document.createElement("iframe"); f.sandbox = "allow-scripts allow-same-origin"; f.src = "/connecting.html"; document.body.append(f)`.
+   `const f = document.createElement("iframe"); f.sandbox = "allow-scripts allow-same-origin"; f.src = location.href; document.body.append(f)`.
    Once it has loaded, `f.contentWindow.location.href = "https://example.com/?frame"`:
-   no browser opens. On Windows the frame may show the site, since the shell
-   is not asked about frames there; on macOS it stays.
-3. Reload the frame (`f.src = "/connecting.html"`), then
+   the frame stays and no browser opens.
+3. Reload the frame (`f.src = location.href`), then
    `f.contentDocument.head.insertAdjacentHTML("beforeend", "<meta http-equiv=refresh content='0;url=https://example.com/?refresh'>")`:
    no browser opens.
 4. Reload it, then
@@ -985,14 +1065,21 @@ macOS, Ctrl+Shift+I on Windows) and, in its console:
 5. Click links to other sites as a person does: "Open on GitHub" in a pull
    request's menu, a link in a review's Markdown, the docs in the `?` menu, the
    release notes link of an update notice. Each opens the default browser,
-   once, and a debug build logs no refused navigation for it.
+   once, and the app logs no refused navigation for it.
 6. `for (let i = 0; i < 5; i++) open("https://example.com/?loop" + i)`: the
    browser opens once at most.
 7. In setup's GitHub step (first run, with a fresh configuration directory),
    sign in: the browser opens GitHub's device page about five seconds later.
-8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the window
-   freezes (see SECURITY.md); the tray menu still answers, and quitting from
-   it and starting the app again recovers.
+8. Reload the frame, then `f.contentWindow.eval("for (;;) {}")`: the frame
+   is same-origin here, so it runs in the page's process and the window
+   freezes; the tray menu still answers, and quitting from it and starting
+   the app again recovers. A sandboxed tile frame (no `allow-same-origin`)
+   runs in a process of its own and leaves the window running (see
+   SECURITY.md).
+
+The Tauri shell was checked on Linux by WebKitGTK harnesses
+(`tests/navigation` and `tests/check-window`, now in git history only) and by
+hand on macOS and Windows with the same steps in the Web Inspector.
 
 ## Updates
 
@@ -1073,8 +1160,9 @@ the Electron shell:
 - Opens links to other sites in the browser, at most once a second.
 - Saves tile type files, keeps start at login and the AppImage's menu entry
   current, and quits with or without stopping background reviews.
+- Opens the tile check window, on every platform (see Tile check window).
 
-The check window and the updater are still being ported.
+The updater is still being ported.
 
 - `electron/main/` runs in Node.js in the main process.
 - `electron/preload/` runs sandboxed in each window's main frame. It exposes
@@ -1100,8 +1188,9 @@ The check window and the updater are still being ported.
 Checks and runs happen in the `desktop-electron` Docker service:
 
 ```sh
-just desktop::electron-check   # format check, typecheck and unit tests
-just desktop::electron-fmt     # format
+just desktop::electron-check       # format check, typecheck and unit tests
+just desktop::electron-shell-test  # the harness in tests/shell (see Checking navigation)
+just desktop::electron-fmt         # format
 ```
 
 To run the app under Xvfb against a real daemon, first build `dist/` and the

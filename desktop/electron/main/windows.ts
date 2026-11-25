@@ -73,10 +73,11 @@ export interface NavigationGuard {
 const guards = new Map<number, Pick<NavigationGuard, "decide" | "logRefusals">>();
 
 /** Refuses every frame load of a guarded window that its guard does not
- *  allow, at the network. Electron asks `will-frame-navigate` about a frame
- *  navigating itself, but not about a page setting a frame's `src`, so this
- *  catches those (and any load the events miss). Loads that never reach the
- *  network (`about:blank`, `data:`, `blob:`) stay with the page's
+ *  allow, at the network: the second check behind `will-frame-navigate`,
+ *  which Electron 45 asks about a frame navigating itself, a page setting a
+ *  frame's `src` and a new frame alike (tests/shell shows both refusing on
+ *  their own), so a load the events miss is still refused. Loads that never
+ *  reach the network (`about:blank`, `data:`, `blob:`) stay with the page's
  *  `frame-src`, as on Windows in the Tauri shell. */
 export function guardFrameRequests(session: Session): void {
   session.webRequest.onBeforeRequest((details, callback) => {
