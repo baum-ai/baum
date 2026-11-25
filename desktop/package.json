@@ -21,6 +21,7 @@
     "@playwright/test": "^1.62.0",
     "@types/node": "24.13.2",
     "electron": "45.5.0",
+    "electron-builder": "26.18.1",
     "esbuild": "0.28.2",
     "typescript": "~6.0.2",
     "vitest": "4.1.12"

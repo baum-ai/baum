@@ -3,8 +3,9 @@
 #   seed      copy the host's baum data, mounted at /seed/config and
 #             /seed/state, and review stores at /seed/reviews/<key>, into
 #             this home
-#   app CMD   prepare the home, start a D-Bus session with an unlocked
-#             keyring for the app's credential store, then run CMD
+#   app CMD   prepare the home, start Xvfb when headless and a D-Bus
+#             session with an unlocked keyring for the app's credential
+#             store, then run CMD
 set -eu
 
 # Account folders are the host's, which the instance does not have: settings
@@ -68,20 +69,26 @@ app() {
   export XDG_RUNTIME_DIR=/tmp/runtime
   mkdir -p "$HOME/.local/share/keyrings"
   mkdir -m 700 "$XDG_RUNTIME_DIR"
+  # Electron's single-instance lock names the container it was taken in; an
+  # app stopped with its container leaves one that would make this run's
+  # app quit at once. Only one app runs per instance.
+  rm -f "${XDG_CONFIG_HOME:-$HOME/.config}"/com.usebaum.desktop/Singleton*
   if [ "${BAUM_ISOLATED_HEADLESS:-}" = 1 ]; then
-    # No display of the host's: a headless compositor of its own, which
-    # renders in software. --debug allows weston-screenshooter.
-    weston --backend=headless --renderer=pixman --socket=wayland-0 --debug \
-      --width="${BAUM_ISOLATED_WIDTH:-1440}" --height="${BAUM_ISOLATED_HEIGHT:-900}" \
-      --log="$XDG_RUNTIME_DIR/weston.log" &
-    export WAYLAND_DISPLAY=wayland-0
+    # No display of the host's: a virtual X server of its own, which
+    # Chromium draws on in software.
+    Xvfb :99 -screen 0 "${BAUM_ISOLATED_WIDTH:-1440}x${BAUM_ISOLATED_HEIGHT:-900}x24" -nolisten tcp \
+      >"$XDG_RUNTIME_DIR/xvfb.log" 2>&1 &
+    export DISPLAY=:99
     tries=0
-    until [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; do
+    until [ -S /tmp/.X11-unix/X99 ]; do
       tries=$((tries + 1))
-      [ "$tries" -le 100 ] || { echo "isolated: weston did not start" >&2; cat "$XDG_RUNTIME_DIR/weston.log" >&2; exit 1; }
+      [ "$tries" -le 100 ] || { echo "isolated: Xvfb did not start" >&2; cat "$XDG_RUNTIME_DIR/xvfb.log" >&2; exit 1; }
       sleep 0.1
     done
   fi
+  # The service sets CI for its dependency install; the app and its daemon
+  # run as on a person's machine.
+  unset CI
   if [ "${BAUM_ISOLATED_OFFLINE:-}" = 1 ]; then
     # The seeded dataset's home: every request off this machine goes to a
     # proxy that is not there, so the app and its daemon reach no GitHub

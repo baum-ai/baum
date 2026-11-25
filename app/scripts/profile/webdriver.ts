@@ -1,6 +1,5 @@
-// A minimal W3C WebDriver client over plain HTTP, for WebKitWebDriver driving
-// the desktop app's WebKitGTK webview (just desktop::profile), or chromedriver
-// driving Chromium (--engine chromium, chromium.ts).
+// A minimal W3C WebDriver client over plain HTTP, for Electron's chromedriver
+// driving the desktop app (just desktop::profile, electron.ts).
 
 /** The JSON wire's key for an element reference. */
 const ELEMENT = "element-6066-11e4-a52e-4f735466cecc";
@@ -32,12 +31,6 @@ async function call(base: string, method: string, path: string, body?: unknown):
 }
 
 export type Session = Awaited<ReturnType<typeof createSession>>;
-
-/** Starts a session on the driver at `base` (http://127.0.0.1:port), which
- *  launches `binary` with `args`. */
-export function newSession(base: string, binary: string, args: string[] = []) {
-  return createSession(base, { "webkitgtk:browserOptions": { binary, args } });
-}
 
 /** Starts a session with `capabilities` (alwaysMatch). */
 export async function createSession(base: string, capabilities: Record<string, unknown>) {
@@ -77,7 +70,7 @@ export async function createSession(base: string, capabilities: Record<string, u
     async executeAsync<T>(script: string, args: unknown[] = []): Promise<T> {
       return (await send("POST", "/execute/async", { script, args })) as T;
     },
-    /** A Chrome DevTools Protocol command on the page (chromedriver only). */
+    /** A Chrome DevTools Protocol command on the page. */
     async cdp(cmd: string, params: Record<string, unknown> = {}) {
       return send("POST", "/goog/cdp/execute", { cmd, params });
     },
