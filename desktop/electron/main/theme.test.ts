@@ -2,6 +2,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import {
+  applyThemeBootstrap,
+  parseThemeBootstrap,
+  type ThemeBootstrap,
+} from "../shared/contract.ts";
 import { clearCommands, dispatch } from "./commands.ts";
 import { FILE } from "./settings.ts";
 import {
@@ -18,7 +23,6 @@ import {
   type Saved,
   ThemeStore,
   themeBootstrap,
-  themeBootstrapScript,
   withinTotal,
 } from "./theme.ts";
 
@@ -32,6 +36,17 @@ function palette(base: Base, tokens: [string, string][]): Palette {
 
 function saved(light: Palette): Saved {
   return { mode: "light", light, dark: null };
+}
+
+function styleOf() {
+  const properties: Record<string, string> = {};
+  return {
+    colorScheme: "",
+    properties,
+    setProperty(name: string, value: string) {
+      properties[name] = value;
+    },
+  };
 }
 
 describe("theme", () => {
@@ -146,23 +161,6 @@ describe("theme", () => {
     expect(JSON.parse(readFileSync(path, "utf8")).window).toEqual({ zoom: 1.5 });
   });
 
-  it("the script cannot be broken out of", () => {
-    // Shape checks keep such values out, but the script must not rely on it.
-    const hostile = "\"</script><script>alert(1)</script>';\u2028\u2029\\";
-    const next = saved(palette("light", [["--surface-page", hostile]]));
-    const script = themeBootstrapScript(themeBootstrap(next, false));
-    expect(script).not.toContain("</script");
-    expect(script).not.toContain("<script");
-    expect(script).not.toContain("\u2028");
-    expect(script).not.toContain("\u2029");
-    expect(script).toContain("\\u003c/script>");
-    expect(script).toContain('\\"\\u003c/script>');
-    // The embedded data parses back to exactly the theme.
-    const start = script.indexOf("var theme = ") + "var theme = ".length;
-    const end = script.indexOf(";\n", start);
-    expect(JSON.parse(script.slice(start, end))).toEqual(themeBootstrap(next, false));
-  });
-
   it("the bootstrap picks the slot and sets the base", () => {
     expect(themeBootstrap(defaultSaved(), false)).toEqual({ base: "light", tokens: {} });
     expect(themeBootstrap(defaultSaved(), true)).toEqual({ base: "dark", tokens: {} });
@@ -178,10 +176,28 @@ describe("theme", () => {
     expect(
       themeBootstrap({ mode: "dark", light: null, dark: palette("light", []) }, true).base,
     ).toBe("light");
-    const script = themeBootstrapScript(themeBootstrap(both, true));
-    expect(script).toContain("root.dataset.theme = theme.base");
-    expect(script).toContain("root.style.colorScheme = theme.base");
-    expect(script).toContain("setProperty");
+    const root = { dataset: {} as Record<string, string | undefined>, style: styleOf() };
+    applyThemeBootstrap(root, themeBootstrap(both, true));
+    expect(root.dataset.theme).toBe("dark");
+    expect(root.style.colorScheme).toBe("dark");
+    expect(root.style.properties).toEqual({ "--a": "d" });
+  });
+
+  it("the preload applies values as data, whatever they hold", () => {
+    // Shape checks keep such values out, but applying must not rely on it.
+    const hostile = "\"</script><script>alert(1)</script>';\u2028\u2029\\";
+    const next = saved(palette("light", [["--surface-page", hostile]]));
+    const answer = parseThemeBootstrap(JSON.parse(JSON.stringify(themeBootstrap(next, false))));
+    expect(answer).toEqual(themeBootstrap(next, false));
+    const root = { dataset: {} as Record<string, string | undefined>, style: styleOf() };
+    applyThemeBootstrap(root, answer as ThemeBootstrap);
+    expect(root.style.properties["--surface-page"]).toBe(hostile);
+    expect(parseThemeBootstrap(null)).toBeNull();
+    expect(parseThemeBootstrap({ base: "blue", tokens: {} })).toBeNull();
+    expect(parseThemeBootstrap({ base: "dark", tokens: { "--a": 1, "--b": "c" } })).toEqual({
+      base: "dark",
+      tokens: { "--b": "c" },
+    });
   });
 });
 

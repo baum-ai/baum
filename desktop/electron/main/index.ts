@@ -11,12 +11,14 @@
 import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { app, BrowserWindow, ipcMain, protocol, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, nativeTheme, protocol, session, shell } from "electron";
+import { THEME_CHANNEL } from "../shared/contract.ts";
 import { type AttachHooks, Attacher, HealthPause } from "./attach.ts";
 import { type BridgeState, DEVELOPMENT_SETUP_ORIGIN, installBridge } from "./bridge.ts";
 import { registerCommand } from "./commands.ts";
 import * as daemon from "./daemon.ts";
 import { SHELL } from "./declaration.ts";
+import { registerThemeCommands, ThemeStore, themeBootstrap } from "./theme.ts";
 import { developmentDir, frontend, isSetupPage, SETUP_PAGE } from "./development.ts";
 import { startsHidden, claimSingleInstance, hideOnClose } from "./lifecycle.ts";
 import { LinkOpener, registerLinkCommands } from "./links.ts";
@@ -161,6 +163,16 @@ function start(): void {
     development: development !== null,
   };
   installBridge(ipcMain, state);
+  const themes = new ThemeStore(join(config, DESKTOP_JSON));
+  registerThemeCommands(themes);
+  // The preload asks for the theme before the first paint of every page in
+  // the app's windows; any other web contents gets nothing.
+  ipcMain.on(THEME_CHANNEL, (event) => {
+    event.returnValue =
+      kindOf(event.sender) && event.senderFrame?.parent === null
+        ? themeBootstrap(themes.get(), nativeTheme.shouldUseDarkColors)
+        : null;
+  });
   // The connecting screen polls `connection`; its Retry and Restart buttons
   // call `reconnect`, the only place a failed daemon is started again.
   registerCommand("connection", () => attacher.connection());

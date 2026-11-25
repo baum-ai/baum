@@ -5,8 +5,9 @@
 // the app what the saved theme resolves to (`save_theme`), the app keeps it in
 // the `theme` section of `desktop.json`, and the native screens read it
 // (`theme_state`). The app checks only the shape of what it stores; the daemon
-// owns what a theme may contain. `themeBootstrap` is what the screens apply
-// before their first paint.
+// owns what a theme may contain. `themeBootstrap` is what the preload applies
+// to the app's windows before their first paint (`THEME_CHANNEL`).
+import type { ThemeBootstrap } from "../shared/contract.ts";
 import { registerCommand } from "./commands.ts";
 import { loadSection, updateSection } from "./settings.ts";
 
@@ -150,13 +151,6 @@ export class ThemeStore {
   }
 }
 
-/** What a screen applies before its first paint, as `applyTheme` in the app
- *  does: the `data-theme` and `color-scheme` base and the inline tokens. */
-export interface ThemeBootstrap {
-  base: Base;
-  tokens: Record<string, string>;
-}
-
 /** Chooses the slot (the system's colour scheme in system mode) and returns
  *  its base and tokens. Unlike `applyTheme`, which manages only the
  *  allowlisted tokens, it carries every stored token, so one outside the
@@ -168,25 +162,6 @@ export function themeBootstrap(saved: Saved, prefersDark: boolean): ThemeBootstr
     saved.mode === "light" || saved.mode === "dark" ? saved.mode : prefersDark ? "dark" : "light";
   const theme = saved[slot];
   return { base: theme ? theme.base : slot, tokens: theme ? { ...theme.tokens } : {} };
-}
-
-/** A script that applies a bootstrap to the document element. The data is JSON
- *  with `<`, U+2028 and U+2029 escaped, so no value can end a script element
- *  or a string. */
-export function themeBootstrapScript(bootstrap: ThemeBootstrap): string {
-  const data = JSON.stringify(bootstrap)
-    .replaceAll("<", "\\u003c")
-    .replaceAll(" ", "\\u2028")
-    .replaceAll(" ", "\\u2029");
-  return `(function () {
-  try {
-    var theme = ${data};
-    var root = document.documentElement;
-    root.dataset.theme = theme.base;
-    root.style.colorScheme = theme.base;
-    for (var name in theme.tokens) root.style.setProperty(name, theme.tokens[name]);
-  } catch (e) {}
-})();`;
 }
 
 /** `theme_state` for the native screens and `save_theme` for the daemon's pages. */
