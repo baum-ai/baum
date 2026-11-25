@@ -7,6 +7,12 @@ edition = "2024"
 rust-version = "1.90"
 publish = false
 
+[features]
+# scripts/bridge-test.sh only: the updater installs an update as soon as it
+# has downloaded it, so a Tauri AppImage updates itself to the Electron one
+# without anyone clicking. Never enable it in a release build.
+bridge-test = []
+
 [[bin]]
 name = "baum-desktop"
 path = "src/main.rs"

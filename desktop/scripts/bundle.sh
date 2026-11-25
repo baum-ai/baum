@@ -173,6 +173,13 @@ if [ "$dir_only" = true ]; then
   exit 0
 fi
 
+# electron-updater names its download cache from app-update.yml; without it
+# no update could be downloaded.
+if ! grep -q '^updaterCacheDirName: ' "$resources/app-update.yml" 2>/dev/null; then
+  echo "bundle: $resources/app-update.yml is missing or names no updater cache" >&2
+  exit 1
+fi
+
 # The single file a glob matches.
 one() {
   local matches=()

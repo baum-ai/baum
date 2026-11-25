@@ -144,7 +144,16 @@ jobs:
     steps:
       - name: Version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >>"$GITHUB_OUTPUT"
+        # A test version (1.2.3-test.1) is never released: the desktop app
+        # takes its update feed and key from the environment only in a test
+        # build (desktop/electron/main/updater.ts, testOverrides).
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          if [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+-test([.+]|$) ]]; then
+            echo "::error::$version is a test version of the desktop app, which is never released"
+            exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -527,6 +536,9 @@ jobs:
           fi
           # Fails unless every required bundle carries a signature.
           bash desktop/scripts/updater-manifest.sh write "$VERSION" release
+          # The Tauri copies still installed update to what latest.json
+          # lists: it must be the Electron app ("Bridge release").
+          bash desktop/scripts/updater-manifest.sh electron release
           # electron-updater's files: each must give the hashes of the files
           # beside it and announce this version, and every file they list
           # must carry the release key's signature for it.
@@ -536,6 +548,10 @@ jobs:
               exit 1
             fi
           done
+          # Each file they list is fetched from this release through
+          # downloads.usebaum.com, as latest.json's bundles are: the
+          # release candidates' channel holds only the update files.
+          node desktop/scripts/update-yml.mjs publish "$VERSION" release >/dev/null
           files=()
           while IFS= read -r file; do files+=("release/$file"); done \
             < <(node desktop/scripts/update-yml.mjs check "$VERSION" release)

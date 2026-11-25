@@ -30,6 +30,18 @@ export const lifecycleHooks: LifecycleHooks = {
 
 let quitting = false;
 
+/** From now on the windows close instead of hiding: the app is quitting, or
+ *  an update is about to close them (Electron's `before-quit-for-update`,
+ *  which on macOS comes before the windows close and `before-quit` after). */
+export function allowClose(): void {
+  quitting = true;
+}
+
+/** Whether the windows close instead of hiding (allowClose). */
+export function closing(): boolean {
+  return quitting;
+}
+
 /** Brings the main window back as it was. */
 export function showWindow(window: BrowserWindow | null): void {
   if (window && !window.isDestroyed()) {
@@ -42,14 +54,17 @@ export function showWindow(window: BrowserWindow | null): void {
 
 /** Takes the single-instance lock, or returns false when another instance
  *  holds it: this one then quits, and the other shows its window. */
-export function claimSingleInstance(app: App, main: () => BrowserWindow | null): boolean {
+export function claimSingleInstance(
+  app: App,
+  main: () => BrowserWindow | null,
+  updater?: { on(event: "before-quit-for-update", listener: () => void): unknown },
+): boolean {
   if (!app.requestSingleInstanceLock()) return false;
   app.on("second-instance", () => showWindow(main()));
   // Clicking the Dock icon with the window hidden reopens it.
   app.on("activate", () => showWindow(main()));
-  app.on("before-quit", () => {
-    quitting = true;
-  });
+  app.on("before-quit", allowClose);
+  updater?.on("before-quit-for-update", allowClose);
   // The window is hidden, never closed, while the app runs; quitting is
   // always explicit.
   app.on("window-all-closed", () => {});

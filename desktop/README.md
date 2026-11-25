@@ -1085,13 +1085,34 @@ hand on macOS and Windows with the same steps in the Web Inspector.
 
 A release build checks for a newer release about 30 seconds after it starts
 and then once a day (by the wall clock, so a computer that slept through the
-day checks when it wakes). A full release (1.2.3) reads `latest.json` from
-the latest GitHub release of baum-ai/baum, which is never a pre-release, so it
-updates only to full releases. A release candidate (1.2.3-rc.1) reads
-`latest.json` from the `desktop-rc-updates` pre-release instead, which every
-release, candidate or full, replaces (see Releases), so it updates to the
-next candidate or to a newer full release, whichever came last. Local and snapshot builds (version 0.0.0) and debug
-builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
+day checks when it wakes). electron-updater (`electron/main/updater-electron.ts`)
+reads the release's update file from a feed, a GitHub release's downloads:
+`latest-mac.yml`, `latest-linux.yml` or `latest-linux-arm64.yml`, which give
+the version and the size and SHA-512 of each file. A full release (1.2.3)
+reads the latest GitHub release of baum-ai/baum, which is never a
+pre-release, so it updates only to full releases. A release candidate
+(1.2.3-rc.1) reads the `desktop-rc-updates` pre-release instead, which every
+release, candidate or full, replaces (see Releases), so it updates to the next
+candidate or to a newer full release, whichever came last. The files an
+update file lists are fetched from their own release through
+`https://downloads.usebaum.com/update/vVERSION/FILE`, which counts the
+download. Local and snapshot builds (version 0.0.0) and unpackaged builds
+never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
+
+Every downloaded file must also carry a minisign signature from the release
+key, made for the version being installed, or it is deleted and never
+installed. The signature is `FILE.sig` on the same release (the base64 of a
+minisign signature file whose trusted comment says `version:VERSION`, as
+`scripts/updater-sign.sh` writes it); the app reads it from
+`https://github.com/baum-ai/baum/releases/download/vVERSION/FILE.sig` and
+checks it with the release key's public half, `RELEASE_PUBLIC_KEY` in
+`electron/main/updater.ts` (also `plugins.updater.pubkey` in
+`tauri.conf.json`). Electron's BoringSSL has no BLAKE2b, so
+`electron/main/minisign.ts` brings its own, tested against signatures the
+minisign tool made. The file is checked again just before it is installed.
+electron-updater's own checks come on top: the SHA-512 from the update file
+and, on macOS, Squirrel.Mac's check that the update is signed by the same
+Developer ID as the app.
 
 The updater never opens a dialog. Settings → **This computer** shows the
 app's version and the updater's state in its first card (`update_state`):
@@ -1110,31 +1131,58 @@ looking at This computer is remembered until the app quits
 daemon does not bring it back; a newer version does. The page reads the
 state every minute, and every second while the updater works.
 
-- The macOS app, the Linux AppImage and the Windows installer update
-  themselves. The app downloads the update in the background; the download
-  must carry a signature from the release key whose public half is
-  `plugins.updater.pubkey` in `tauri.conf.json`, made for the version the
-  manifest announces (`requireSignedVersion`), or it is discarded. A download
-  that receives nothing for two minutes is abandoned until the next check.
-  **Update and restart** (`install_update`) installs it: while the daemon
-  runs a generation job (`baum daemon status`, then `GET /api/jobs`, every
-  15 seconds; queued jobs survive a restart), the card says how many it
-  waits for and offers **Cancel** (`cancel_update`), then the app installs
-  the update and restarts. On Windows the app stops the daemon first, and
-  the installer (whose hook stops it too) closes the app, updates it for the
-  current user and starts it again; the updated app refreshes its copy of
-  `baum.exe` and starts the daemon. An updated AppImage refreshes its copy of
-  `baum` in the data directory on the next start, renaming the new file into
-  place, so a daemon still running the old copy keeps it until the updated
-  app's `baum daemon ensure` replaces that daemon.
-- A deb install, or any copy the updater cannot replace (an AppImage in a
-  directory the user cannot write, an app on a read-only volume), only says
-  that a new version exists and links to its release page. Updating it is
-  the user's job, as with any package. A version whose installation failed
-  is remembered (`desktop.json`'s `updates` section in the app's config
-  directory) and from then on only offered this way.
+What each copy does with an update:
+
+| Copy | electron-updater's updater | The app |
+| --- | --- | --- |
+| macOS app the user can replace | Squirrel.Mac (`latest-mac.yml`, the zip) | downloads and installs |
+| macOS app on its disk image, translocated, or in a folder the user cannot write | Squirrel.Mac | announces |
+| AppImage in a folder the user can write | AppImage (`latest-linux.yml`, the AppImage) | downloads and installs |
+| AppImage in a folder the user cannot write | AppImage | announces |
+| deb, or any other Linux copy that is not an AppImage | deb (checks only) | announces |
+| Windows install (not released) | NSIS (`latest.yml`) | downloads and installs |
+
+The app picks the updater itself: an AppImage is a copy whose AppImage
+runtime set `APPIMAGE`. electron-updater would otherwise go by a
+`package-type` file the deb leaves in the shared unpacked app, and would not
+check outside an AppImage unless forced into its development mode.
+
+- Where the app installs updates, it downloads the update in the background,
+  as a whole file. A download that receives nothing for two minutes is
+  abandoned until the next check. **Update and restart** (`install_update`)
+  installs it: while the daemon runs a generation job (`baum daemon status`,
+  then `GET /api/jobs`, every 15 seconds; queued jobs survive a restart), the
+  card says how many it waits for and offers **Cancel** (`cancel_update`),
+  then the app quits and the update is installed and started. Quitting for
+  an update closes the window and the tray panel rather than hiding them,
+  and releases the single-instance lock, since the updated AppImage starts
+  before the old one has quit; Squirrel.Mac and the Windows installer start
+  the updated app once it has. On Windows the app stops the daemon first,
+  and the installer (whose hook stops it too) updates the app for the
+  current user; the updated app refreshes its copy of `baum.exe` and starts
+  the daemon. An updated AppImage refreshes its copy of `baum` in the data
+  directory on the next start, renaming the new file into place, so a daemon
+  still running the old copy keeps it until the updated app's
+  `baum daemon ensure` replaces that daemon.
+- Where it only announces updates, Settings says that a new version exists
+  and links to its release page. Updating a deb is the user's job, as with
+  any package. A version whose installation failed, or whose download was
+  rejected (a signature that does not verify, or one made for another
+  version), is remembered in `desktop.json`'s `updates` section
+  (`failed_installs`, `rejected_downloads`) and from then on only announced.
 - Restarting the app does not stop the daemon. The first client to run the
   new `baum` replaces an older daemon, as after any upgrade.
+
+electron-updater keeps its downloads in the user's cache directory
+(`@baumdesktop-updater`, from `app-update.yml` in the app's resources, which
+names nothing else the app uses: it sets the feed itself).
+
+A test build, whose version is a `test` pre-release such as 1.2.3-test.1,
+reads `BAUM_DESKTOP_UPDATE_FEED` (a feed URL; the signature is read beside
+the file there) and `BAUM_DESKTOP_UPDATE_PUBKEY` (a public key in the
+release key's format) for end-to-end tests (`just desktop::bridge-test`).
+Every other version ignores them, and the release workflow refuses to
+release a test version, so an installed app only ever trusts the release key.
 
 ## Electron shell (in progress)
 
@@ -1161,8 +1209,7 @@ the Electron shell:
 - Saves tile type files, keeps start at login and the AppImage's menu entry
   current, and quits with or without stopping background reviews.
 - Opens the tile check window, on every platform (see Tile check window).
-
-The updater is still being ported.
+- Checks for updates and installs them (see Updates).
 
 - `electron/main/` runs in Node.js in the main process.
 - `electron/preload/` runs sandboxed in each window's main frame. It exposes
@@ -1746,10 +1793,13 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   only that platform's file names and fails if two artifacts carry the same
   name. It writes `latest.json` with `scripts/updater-manifest.sh` and checks
   every bundle in it against the release key, the version and its expected
-  download URL. It checks that `latest-mac.yml` and `latest-linux.yml` are
-  there, that every update file announces the version and gives the size and
-  SHA-512 of the files beside it (`update-yml.mjs check`), and that each file
-  they list carries the release key's signature for the version
+  download URL, and that each is the Electron app (`updater-manifest.sh
+  electron`; see Bridge release). It checks that `latest-mac.yml` and
+  `latest-linux.yml` are there, points the files they list at
+  `downloads.usebaum.com` (`update-yml.mjs publish`), and checks that every
+  update file announces the version and gives the size and SHA-512 of the
+  files beside it (`update-yml.mjs check`), and that each file they list
+  carries the release key's signature for the version
   (`updater-manifest.sh signed`). If the environment holds the updater key but a
   signature is missing, it fails; without the key it publishes neither
   `latest.json` nor the update files. It also writes `desktop-checksums.txt`.
@@ -1826,6 +1876,12 @@ summary and a local clone of baum-ai/baum:
    (Settings → Secrets and variables → Actions → Repository secrets), only the
    environment's.
 4. The draft release has its notes.
+5. Until `latest.json` is retired (see Bridge release): the run's summary
+   shows `latest.json`, and each platform's `url` names this version's
+   Electron files (`baum-desktop-darwin-universal….app.tar.gz`,
+   `baum-desktop-linux-amd64.AppImage`). The `desktop-manifest` job checked
+   that they hold the Electron app; installed Tauri copies install whatever
+   it lists.
 
 ### Snapshots
 
@@ -1849,7 +1905,7 @@ Those snapshot bundles are kept as workflow artifacts for 14 days.
 | `baum-desktop-linux-amd64.deb` (`.sig`) | Debian and Ubuntu package |
 | `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` (`.sig`) | Linux arm64, when that build succeeds |
 | `desktop-checksums.txt` | SHA-256 of the desktop files |
-| `latest.json` | the Tauri updater's manifest |
+| `latest.json` | the Tauri updater's manifest (see Bridge release) |
 | `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml` | electron-updater's update files: version, size and SHA-512 of each file |
 
 The download links at `downloads.usebaum.com`, used by the website and the
@@ -1862,12 +1918,66 @@ The desktop files also carry a GitHub build provenance attestation
 A macOS bundle that is not signed with a Developer ID is named
 `…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`), and its zip
 and `.app.tar.gz` likewise; Gatekeeper warns about those. The update files
-name their files without a URL: the app resolves them against its update
-channel (electron-builder's `publish` setting is a generic provider at the
-latest release's downloads, which the app overrides). `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
+are written with plain file names (electron-builder's `publish` setting is a
+generic provider at the latest release's downloads, which the app
+overrides, and `detectUpdateChannel` is off, so a release candidate's are
+`latest*.yml` too); `desktop-manifest` points each at
+`https://downloads.usebaum.com/update/vVERSION/<its file>`, since the
+release candidates' channel holds only the update files. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
 (both the universal app), `linux-x86_64` and, when built, `linux-aarch64`,
-each at
-`https://downloads.usebaum.com/update/vVERSION/<its file>`.
+each at the same URLs.
+
+### Bridge release
+
+The Tauri app's updater reads only `latest.json`, takes only bundles
+signed with the release key for the announced version
+(`requireSignedVersion`), and installs them in place: on macOS it replaces
+the whole `baum.app` with what the `.app.tar.gz` holds below its first path
+component, on Linux it rewrites the AppImage file. Windows was never
+released, so there is nothing to bridge there.
+
+So the first Electron release, and every release after it, publishes
+`latest.json` beside the `latest*.yml` files, listing the Electron app's
+`.app.tar.gz` (one `baum.app` at its root) and AppImages, signed with the
+same key. On both channels: full releases are read from the latest release,
+and release candidates from `desktop-rc-updates`, which every release
+updates with the rest of the update files. A Tauri copy that updates starts
+as the Electron app with the same identifier, so it finds the same
+`desktop.json` (setup is not shown again), the same stable copy of `baum`,
+menu entry and start at login (see "Electron shell"). Browser storage does
+not carry over: the Tauri app's pages kept only view preferences in
+WebKit's `localStorage` and `sessionStorage` (the folded inbox, the
+sidebar, the pull requests tab, the last inbox, closed build cards,
+dismissed fix suggestions, the review's file grouping, tile frame heights,
+the session panel's layout, the closed tour, and the viewer's conversation
+tab, width and folding), which go back to their defaults once. A deb is
+updated by installing the new deb, which has the same package name.
+
+`just desktop::bridge-test` checks the bridge end to end on Linux
+(`scripts/bridge-test.sh`): it signs the Electron AppImage and a stand-in
+macOS archive with a throwaway key, writes `latest.json` with
+`updater-manifest.sh` as the release does, has the Tauri crate's
+`bridge_manifest_is_accepted` test check it with tauri-plugin-updater's own
+manifest type and verification rules, then runs a Tauri AppImage built at
+1.2.2 (with the `bridge-test` feature, which installs a downloaded update at
+once, and its updater pointed at a local server) under Xvfb, in the
+`desktop-bridge` service (`bridge.Dockerfile`: the Electron image plus the
+OpenGL libraries a Tauri AppImage takes from the system), with its bundled
+`baum` and a real daemon. The AppImage must be replaced by the Electron one,
+which must start (from the Tauri app's restart, with its arguments) and
+open the daemon's page, not setup, at the zoom `desktop.json` saved, with
+the Tauri app's stable copy of `baum` and menu entry. It then runs the Electron update
+(1.2.3-test.1 to 1.2.4-test.1, through Settings' commands) and a damaged
+signature, which must be rejected and remembered. What it cannot check is
+the signed macOS app: try the first release candidate on a Mac with the
+Tauri app installed, from `/Applications`, before the full release.
+
+Keep publishing `latest.json` for at least three stable releases after the
+first Electron one, so copies that were not running for a while still find
+a way across. Then remove `scripts/updater-manifest.sh` (keeping the
+`signed` check of the update files), the `.app.tar.gz`, `latest.json` and
+their steps in the release workflow, the Tauri crate, and switch the
+downloads Worker's release lookup to `latest-linux.yml`.
 
 ### Signing
 

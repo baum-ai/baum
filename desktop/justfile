@@ -43,6 +43,18 @@ build: frontend sidecar electron-cache
 bundle version="0.0.0": frontend sidecar electron-cache
     {{ electron }} scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
 
+# The bridge release end to end (scripts/bridge-test.sh), under Xvfb: a Tauri
+# AppImage updates itself to the Electron one from a latest.json made as the
+# release makes it, then an Electron AppImage updates itself and refuses a
+# damaged signature. Builds three Linux bundles and a Tauri AppImage into
+# target/bridge, signed with a throwaway key.
+bridge-test: frontend sidecar electron-cache
+    {{ electron }} scripts/bundle.sh linux-amd64 1.2.3 target/bridge/electron
+    {{ electron }} scripts/bundle.sh linux-amd64 1.2.3-test.1 target/bridge/test-1.2.3
+    {{ electron }} scripts/bundle.sh linux-amd64 1.2.4-test.1 target/bridge/test-1.2.4
+    {{ heavy }} desktop-test scripts/bridge-test.sh prepare target/bridge
+    {{ heavy }} desktop-bridge scripts/bridge-test.sh run target/bridge
+
 # Build an ad hoc signed macOS DMG into target/local-dmg (--install also installs it)
 dmg *args: frontend viewer (sidecar "aarch64-apple-darwin") (sidecar "x86_64-apple-darwin")
     scripts/macos-local.sh {{ args }}

@@ -11,12 +11,13 @@
 // before the tray, whose menus hold their toggles; zoom and theme; the tray,
 // its menus and start at login; the applications menu entry; setup, which
 // decides the first page and keeps the stable copy of baum; the main window
-// and the tray panel; then attaching.
+// and the tray panel; then attaching, and the updater.
 import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   app,
+  autoUpdater as nativeUpdater,
   BrowserWindow,
   dialog,
   ipcMain,
@@ -34,7 +35,14 @@ import { registerCheckWindow } from "./check-window-electron.ts";
 import * as client from "./client.ts";
 import { registerCommand } from "./commands.ts";
 import * as daemon from "./daemon.ts";
-import { appUrlOf, clientLaunch, EventFeed, noticeRoute, trayDaemon } from "./daemon-api.ts";
+import {
+  appUrlOf,
+  clientLaunch,
+  EventFeed,
+  noticeRoute,
+  runningJobs,
+  trayDaemon,
+} from "./daemon-api.ts";
 import { SHELL } from "./declaration.ts";
 import { developmentDir, frontend, isSetupPage, setupPage } from "./development.ts";
 import { EventStreamReader } from "./events.ts";
@@ -71,6 +79,7 @@ import { registerThemeCommands, ThemeStore, themeBootstrap } from "./theme.ts";
 import { registerTileFileCommands } from "./tile-files.ts";
 import { closeAction, type TrayController } from "./tray.ts";
 import { startTray } from "./tray-electron.ts";
+import { startUpdater } from "./updater-electron.ts";
 import { hasWindowMenu, trayNotifications, windowMenuTemplate } from "./window-menu.ts";
 import {
   guardFrameRequests,
@@ -566,6 +575,21 @@ function start(): void {
   // A hidden start shows the window after all if no tray appears.
   void tray.watchHost(hidden);
   void attacher.connect();
+
+  // Updates: the first check is about 30 seconds from now. An install waits
+  // for the daemon's running jobs; on Windows the daemon is stopped first,
+  // since the installer replaces the app's copy of baum.exe, and started
+  // again if the installer cannot run.
+  startUpdater({
+    settingsPath: desktopJson,
+    runningJobs: async () => runningJobs(await daemon.cliPath(cli)),
+    stopDaemon: async () => {
+      await daemon.run(await daemon.cliPath(cli), ["daemon", "stop"], STOP_TIMEOUT);
+    },
+    restartDaemon: async () => {
+      await daemon.ensure(await daemon.cliPath(cli));
+    },
+  });
 }
 
 /** Development only: `BAUM_DESKTOP_SCREENSHOT=<file.png>` saves what the
@@ -586,7 +610,7 @@ function screenshots(window: BrowserWindow): void {
   });
 }
 
-if (!claimSingleInstance(app, () => main)) {
+if (!claimSingleInstance(app, () => main, nativeUpdater)) {
   // Another instance runs: it shows its window, and this one quits.
   app.quit();
 } else {

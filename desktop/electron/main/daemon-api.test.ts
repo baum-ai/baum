@@ -1,9 +1,19 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { inspect } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { appUrlOf, clientLaunch, EventFeed, noticeRoute, trayDaemon } from "./daemon-api.ts";
+import {
+  appUrlOf,
+  clientLaunch,
+  EventFeed,
+  noticeRoute,
+  runningJobs,
+  trayDaemon,
+} from "./daemon-api.ts";
 import { Launch } from "./daemon.ts";
 import type { DaemonEvent } from "./tray.ts";
 
@@ -179,5 +189,63 @@ describe("tray routes", () => {
       type: "session",
       key: "claude:1",
     });
+  });
+});
+
+describe("the jobs an update waits for", () => {
+  function scratch(): string {
+    const dir = mkdtempSync(join(tmpdir(), "baum-desktop-jobs-"));
+    closers.push(() => rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  }
+
+  function fakeCli(dir: string, script: string): string {
+    const path = join(dir, "baum");
+    writeFileSync(path, `#!/bin/sh\n${script}\n`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  it("asks the daemon `baum daemon status` reports", async () => {
+    const { port, seen } = await serve(() => [
+      200,
+      '{"jobs":[{"state":"running"},{"state":"running"},{"state":"queued"}]}',
+    ]);
+    const dir = scratch();
+    const credential = join(dir, "credential.json");
+    writeFileSync(credential, JSON.stringify({ url: `http://127.0.0.1:${port}/#token=${TOKEN}` }));
+    chmodSync(credential, 0o600);
+    const cli = fakeCli(
+      dir,
+      `[ "$*" = "daemon status --json" ] || exit 9\necho '{"state":"${dir}"}'`,
+    );
+    await expect(runningJobs(cli)).resolves.toBe(2);
+    expect(seen.map((s) => [s.url, s.auth])).toEqual([["/api/jobs", `Bearer ${TOKEN}`]]);
+  });
+
+  it("is 0, asking nothing, when the daemon's process has gone", async () => {
+    const { port, seen } = await serve(() => [200, '{"jobs":[]}']);
+    const dir = scratch();
+    const credential = join(dir, "credential.json");
+    writeFileSync(credential, JSON.stringify({ url: `http://127.0.0.1:${port}/#token=${TOKEN}` }));
+    chmodSync(credential, 0o600);
+    const exited = spawnSync("true").pid;
+    const cli = fakeCli(dir, `echo '{"pid":${exited},"state":"${dir}"}'`);
+    await expect(runningJobs(cli)).resolves.toBe(0);
+    expect(seen).toEqual([]);
+    const alive = fakeCli(dir, `echo '{"pid":${process.pid},"state":"${dir}"}'`);
+    await expect(runningJobs(alive)).resolves.toBe(0);
+    expect(seen).toHaveLength(1);
+  });
+
+  it("is 0 when no daemon runs", async () => {
+    const cli = fakeCli(scratch(), "echo 'the baum daemon is not running' >&2; exit 1");
+    await expect(runningJobs(cli)).resolves.toBe(0);
+  });
+
+  it("fails when a running daemon cannot be asked", async () => {
+    const dir = scratch();
+    const cli = fakeCli(dir, `echo '{"state":"${dir}"}'`);
+    await expect(runningJobs(cli)).rejects.toThrow("credential");
   });
 });
