@@ -591,8 +591,9 @@ test("a long session's transcript renders its earlier turns as the reader scroll
       return (first?.firstElementChild ?? first)?.getBoundingClientRect().top ?? Number.NaN;
     });
     // The button names the turns still to come, and goes with the last.
+    // Read at once: the button may go between a count and a read of it.
     await expect
-      .poll(async () => ((await earlier.count()) ? await earlier.textContent() : null))
+      .poll(() => earlier.evaluateAll((buttons) => buttons[0]?.textContent ?? null))
       .not.toBe(before);
     const kept = transcript.locator("ol > li[data-kept]");
     const now = await kept.evaluate(
