@@ -1464,7 +1464,8 @@ Cached discovery keeps the inbox readable when refresh fails;
 one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
-is old. Refresh asks
+is old, and one pull request's details failing to read
+(`metadata_unavailable`) does not count as its repository failing to refresh. Refresh asks
 GitHub through the local server, which gives up on a repository once GitHub
 has not answered for 45 s and answers it as not refreshed (stale, with
 the error, and with whatever it read before), which the app names in the
