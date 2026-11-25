@@ -690,6 +690,11 @@ const transcript: Scenario<TranscriptState> = {
       const main = document.querySelector(".local-main") ?? document.scrollingElement;
       return main.scrollHeight - main.clientHeight - main.scrollTop;`);
     const dom = await ctx.execute<number>(`return document.getElementsByTagName("*").length;`);
+    // Chromium's JavaScript heap once the transcript shows, where the
+    // engine reports it (WebKit does not).
+    const heap = await ctx.execute<number | null>(
+      `const m = performance.memory; return m ? Math.round(m.usedJSHeapSize / 1048576) : null;`,
+    );
     await ctx.mark("keys");
     const marked = () =>
       ctx.execute<number>(
@@ -722,6 +727,7 @@ const transcript: Scenario<TranscriptState> = {
       dom_count: dom,
       open_all: all,
       end_gap_px: Math.max(0, Math.round(gap)),
+      ...(heap === null ? {} : { js_heap_mb: heap }),
     };
     if (navigation.content !== undefined) metrics.open_content = navigation.content;
     if (navigation.settled !== undefined) metrics.open_settled = navigation.settled;

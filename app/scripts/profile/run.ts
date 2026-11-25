@@ -16,6 +16,7 @@ import {
   createWriteStream,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   writeFileSync,
@@ -512,6 +513,24 @@ function containerCpu(): number | undefined {
   return undefined;
 }
 
+/** MiB the app's web content processes hold resident (WebKit's
+ *  WebKitWebProcess, beside the runner in the container), or undefined
+ *  where there is none, as in Chromium. Read before each run: a page
+ *  process that grows from run to run carries something over. */
+function webProcessMemory(): number | undefined {
+  let kib = 0;
+  let found = false;
+  for (const pid of readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, "utf8");
+      if (!/^Name:\s+WebKitWebProces/m.test(status)) continue;
+      kib += Number(status.match(/^VmRSS:\s+(\d+)/m)?.[1] ?? 0);
+      found = true;
+    } catch {}
+  }
+  return found ? Math.round(kib / 1024) : undefined;
+}
+
 /** BAUM_PROFILE_SETTLE=0 turns settling off, to measure without it. */
 const settling = process.env.BAUM_PROFILE_SETTLE !== "0";
 /** A quarter second in which the container used under this share of one
@@ -600,6 +619,7 @@ async function main() {
         await restoreState();
         if (index > 0) await cpu?.start(page());
         const cpuBefore = containerCpu();
+        const memory = webProcessMemory();
         const started = performance.now();
         const metrics = await scenario!.run(context, state as never);
         const wall = performance.now() - started;
@@ -618,6 +638,7 @@ async function main() {
             load,
             settle: settled,
             ...(cpuBefore === undefined ? {} : { cpu: containerCpu()! - cpuBefore }),
+            ...(memory === undefined ? {} : { web_memory: memory }),
           },
         });
       })(),

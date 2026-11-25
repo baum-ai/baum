@@ -20,7 +20,8 @@ export type Run = {
   /** What the machine was doing: the 1-minute load average as the run
    *  began, the milliseconds it waited for its instance to go quiet first,
    *  and the CPU its container used during it. */
-  conditions?: { load: number; settle: number; cpu?: number };
+  /** web_memory: MiB the WebKit page process held before the run. */
+  conditions?: { load: number; settle: number; cpu?: number; web_memory?: number };
 };
 
 export type Chunk = {
