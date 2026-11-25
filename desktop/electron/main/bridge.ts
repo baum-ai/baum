@@ -82,6 +82,10 @@ export interface BridgeState {
   daemon(): string | null;
   setupOpen(): boolean;
   development: boolean;
+  /** Log every command that runs, with the caller's role (an unpackaged app
+   *  run with `BAUM_DESKTOP_LOG_COMMANDS`, for the shell harness). Refusals
+   *  are always logged. */
+  logCalls?: boolean;
 }
 
 /** The parts of an invoke event the guard reads. */
@@ -130,6 +134,7 @@ export async function answer(
     log(`refused the ${name} command from a page that may not call it`);
     return refused();
   }
+  if (state.logCalls) log(`running the ${name} command for the ${caller.role}`);
   try {
     return { ok: true, value: (await dispatch(name, args ?? {}, caller)) ?? null };
   } catch (e) {

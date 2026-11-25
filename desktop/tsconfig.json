@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["electron/**/*.ts", "vitest.config.ts"]
+  "include": ["electron/**/*.ts", "tests/shell/**/*.ts", "vitest.config.ts"]
 }

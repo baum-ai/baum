@@ -289,6 +289,7 @@ function start(): void {
     daemon: () => attacher.daemon(),
     setupOpen: () => setup.isOpen(),
     development: development !== null,
+    logCalls: !app.isPackaged && Boolean(process.env.BAUM_DESKTOP_LOG_COMMANDS),
   };
   installBridge(ipcMain, state);
   // The connecting screen polls `connection`; its Retry and Restart buttons
