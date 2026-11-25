@@ -22,6 +22,10 @@ export const HEIGHT_MAX = 20000;
 
 /** From mounting (setting the frame's address) to its `hello`. */
 export const HELLO_TIMEOUT = 5000;
+/** How long the render check waits for a `pong` from a frame that missed
+ *  its `hello`: one that does not answer is stuck in its script, a hang.
+ *  Over a second, as a hidden window runs timers about once a second. */
+export const PING_TIMEOUT = 2000;
 /** From `init` or `update` to the frame's `ready`. The kit gives a render
  *  3 seconds and then waits for its fonts, so this leaves it room. */
 export const READY_TIMEOUT = 5000;
@@ -74,7 +78,8 @@ export type FrameMessage =
   | { kind: "jump"; key: string }
   | { kind: "ask" }
   | { kind: "open" }
-  | { kind: "key"; key: ForwardedKey; shift: boolean };
+  | { kind: "key"; key: ForwardedKey; shift: boolean }
+  | { kind: "pong" };
 
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" &&
@@ -161,6 +166,7 @@ export function readMessage(data: unknown): FrameMessage | null {
     }
     case "ask":
     case "open":
+    case "pong":
       return { kind: data.kind };
     case "key": {
       if (typeof data.key !== "string" || !KEYS.has(data.key)) return null;
@@ -198,6 +204,13 @@ export function updateMessage(data: unknown, refs: Record<string, unknown>) {
  *  answers with a `resize`, changed or not. */
 export function measureMessage() {
   return { protocol: PROTOCOL, kind: "measure" } as const;
+}
+
+/** The render check's runner asks a frame that has not said hello whether
+ *  its script still yields: the kit answers `pong` from its message
+ *  listener, which a frame stuck in a loop never runs. */
+export function pingMessage() {
+  return { protocol: PROTOCOL, kind: "ping" } as const;
 }
 
 export function themeMessage(theme: "light" | "dark") {

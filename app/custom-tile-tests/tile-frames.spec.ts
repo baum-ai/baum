@@ -164,6 +164,7 @@ test("a probing frame reaches neither the page, the daemon nor the network", asy
     "sessionStorage",
     "indexedDB",
     "parent bridge",
+    "parent desktop bridge",
     "top navigation",
     "parent navigation",
   ])
@@ -197,6 +198,9 @@ test("a probing frame reaches neither the page, the daemon nor the network", asy
   // store refuses an opaque origin, and a peer connection is either absent or
   // the documented residual (SECURITY.md): its STUN server here hears nothing.
   expect(results["webkit handlers"]).toBe("");
+  // Neither shell's bridge nor its declaration is in the frame.
+  expect(results["desktop bridge"]).toBe("undefined");
+  expect(results["desktop declaration"]).toBe("undefined");
   expect(results.caches).toMatch(/^(failed|threw) /);
   expect(results.RTCPeerConnection).toMatch(/^(absent|threw \w+|\[object RTCPeerConnection\])$/);
 

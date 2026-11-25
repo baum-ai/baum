@@ -2,3 +2,6 @@
 /gen/
 # Built by scripts/sidecar.sh.
 /binaries/
+# Built by electron/build.mjs.
+/build/
+/node_modules/

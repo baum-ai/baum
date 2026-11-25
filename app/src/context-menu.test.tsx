@@ -204,6 +204,39 @@ it("stays open while a box beside its button scrolls, and closes when its button
   beside.remove();
 });
 
+it("replaces the menu with a choice's actions on the actions key or a right click", async () => {
+  const end = vi.fn();
+  const sessions: MenuItem[] = [
+    { label: "New session", onSelect: () => undefined },
+    {
+      label: "Old session",
+      onSelect: () => undefined,
+      actions: () => [{ label: "Archive session", danger: true, onSelect: end }],
+    },
+  ];
+  await render(sessions);
+  await act(async () => button().click());
+  await key("ArrowDown");
+  expect(focused()).toBe("Old session");
+  // The menu keeps its keys from the page, so it handles the actions key
+  // itself.
+  await key(".", document.activeElement!, true);
+  expect(choices().map((c) => c.querySelector(".context-menu-label")?.textContent)).toEqual([
+    "Archive session",
+  ]);
+  expect(menu()!.getAttribute("aria-label")).toBe("Actions for Old session");
+  expect(focused()).toBe("Archive session");
+  await act(async () => choices()[0]!.click());
+  expect(end).toHaveBeenCalledOnce();
+  expect(menu()).toBeNull();
+  expect(document.activeElement).toBe(button());
+
+  // A choice with no actions keeps the menu.
+  await act(async () => button().click());
+  await key(".", document.activeElement!, true);
+  expect(focused()).toBe("New session");
+});
+
 it("opens the same menu on a right click on the row", async () => {
   await render();
   await act(async () => {

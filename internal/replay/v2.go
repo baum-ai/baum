@@ -11,6 +11,7 @@ import (
 
 	"github.com/baum-ai/baum/agent/orchestrate"
 	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/reviewv2"
@@ -35,10 +36,25 @@ type V2Generator struct {
 	// Concurrency bounds a case's calls at once; zero is the orchestration's
 	// default.
 	Concurrency int
+	// Reuse keeps the orchestration's reuse of the previous version's
+	// unchanged sections; by default every section is written.
+	Reuse bool
+
+	mu sync.Mutex
+	// previous is the document handed to a chained case (Next), by case id,
+	// which Generate reads as the run's previous version.
+	previous map[string]v2Previous
+}
+
+type v2Previous struct {
+	document []byte
+	version  int
 }
 
 var _ interface {
 	Generator
+	Chainer
+	Deriver
 	Meter
 	ArtifactMeter
 	Definer
@@ -46,7 +62,7 @@ var _ interface {
 
 func init() {
 	RegisterGenerator("v2", func(c GeneratorConfig) (Generator, error) {
-		g := &V2Generator{}
+		g := &V2Generator{Reuse: c.Reuse}
 		for key, value := range c.Options {
 			if key != "concurrency" {
 				return nil, fmt.Errorf("the v2 generator takes the option concurrency, not %q", key)
@@ -79,7 +95,7 @@ func (g *V2Generator) Describe(ctx context.Context, backend string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"prompt_version": p.Version, "prompt_digest": p.Digest, "concurrency": g.Concurrency}, nil
+	return map[string]any{"prompt_version": p.Version, "prompt_digest": p.Digest, "reuse": g.Reuse, "concurrency": g.Concurrency}, nil
 }
 
 // V2RecordName is the schema of levels.json.
@@ -106,6 +122,10 @@ type V2Level struct {
 	Failed  int      `json:"failed"`
 	Reused  int      `json:"reused"`
 	Skipped int      `json:"skipped"`
+	// Kept and Revised count the sections that ran from their previous
+	// text, kept or revised; Ran counts them too.
+	Kept    int `json:"kept,omitempty"`
+	Revised int `json:"revised,omitempty"`
 }
 
 func (g *V2Generator) Generate(ctx context.Context, o generate.Options, c Case) (Generated, error) {
@@ -128,9 +148,7 @@ func (g *V2Generator) Generate(ctx context.Context, o generate.Options, c Case) 
 			artifacts[dir+fmt.Sprintf("findings-%d.txt", call.Pass)] = []byte(call.Findings)
 		}
 	}
-	o.Staged, o.NoReuse = true, true
-	o.Tiles = &generate.Tiles{}
-	o.V2 = &generate.V2{Prompts: prompt.V2Prompts{Overrides: g.PromptOverrides}, Record: record, NoReuse: true, Concurrency: g.Concurrency}
+	o = g.options(o, c, record)
 	result, err := generate.Run(ctx, o)
 	out := Generated{Outcome: result.Outcome}
 	if result.V2 != nil {
@@ -141,7 +159,7 @@ func (g *V2Generator) Generate(ctx context.Context, o generate.Options, c Case) 
 			list = pricing.Active()
 		}
 		for name, l := range result.V2.Levels {
-			level := V2Level{Calls: l.Calls, Tokens: l.Tokens, Repairs: l.ValidationRepairs, Seconds: l.Seconds, Ran: l.Ran, Failed: l.Failed, Reused: l.Reused, Skipped: l.Skipped}
+			level := V2Level{Calls: l.Calls, Tokens: l.Tokens, Repairs: l.ValidationRepairs, Seconds: l.Seconds, Ran: l.Ran, Failed: l.Failed, Reused: l.Reused, Skipped: l.Skipped, Kept: l.Kept, Revised: l.Revised}
 			if l.Calls > 0 {
 				level.CostUSD = list.BackendOutcomeCost(o.Backend.Name(), cmpOr(l.Model, result.Outcome.Model), l.Outcome)
 			}
@@ -166,6 +184,50 @@ func (g *V2Generator) Generate(ctx context.Context, o generate.Options, c Case) 
 	}
 	out.Details = map[string]any{"failed_sections": result.FailedSections, "context_failed": result.ContextFailed}
 	return out, nil
+}
+
+// options is the run's options for c: the v2 levels, every section written
+// unless Reuse, and the document Next handed c as its previous version.
+func (g *V2Generator) options(o generate.Options, c Case, record func(orchestrate.Call)) generate.Options {
+	o.Staged, o.NoReuse = true, !g.Reuse
+	o.Tiles = &generate.Tiles{}
+	o.V2 = &generate.V2{Prompts: prompt.V2Prompts{Overrides: g.PromptOverrides}, Record: record, NoReuse: !g.Reuse, Concurrency: g.Concurrency}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if p, ok := g.previous[c.ID]; ok {
+		o.V2.Previous, o.V2.PreviousVersion = p.document, p.version
+	}
+	return o
+}
+
+// Next implements Chainer: the previous revision's document becomes the run's
+// previous version (generate.V2.Previous and PreviousVersion, as Publish sets
+// them), which Generate reads by case id. The bundle carries no previous
+// version, as the app's does not for a v2 run, so the version written is the
+// document's own plus one.
+func (g *V2Generator) Next(c Case, document []byte) (bundle.Bundle, error) {
+	doc, err := reviewv2.Read(document)
+	if err != nil {
+		return bundle.Bundle{}, fmt.Errorf("case %s: the previous document is not a review: %w", c.ID, err)
+	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(doc.Review, &header); err != nil || header.Version < 1 {
+		return bundle.Bundle{}, fmt.Errorf("case %s: the previous document has no review version", c.ID)
+	}
+	b, err := c.FreshBundle()
+	if err != nil {
+		return bundle.Bundle{}, err
+	}
+	b.Previous = nil
+	g.mu.Lock()
+	if g.previous == nil {
+		g.previous = map[string]v2Previous{}
+	}
+	g.previous[c.ID] = v2Previous{document: document, version: header.Version}
+	g.mu.Unlock()
+	return b, nil
 }
 
 func cmpOr(a, b string) string {
@@ -209,18 +271,20 @@ func (g *V2Generator) Validate(document []byte, c Case) []string {
 
 // The v2 metrics.
 const (
-	MetricV2Sections       = "v2_sections"
-	MetricV2Logical        = "v2_logical_sections"
-	MetricV2SectionsFailed = "v2_sections_failed"
-	MetricV2Tiles          = "v2_tiles"
-	MetricV2TilesReady     = "v2_tiles_ready"
-	MetricV2TilesFailed    = "v2_tiles_failed"
-	MetricV2ContextMissing = "v2_context_missing"
-	MetricV2OverviewFailed = "v2_overview_failed"
-	MetricV2Blocks         = "v2_blocks"
-	MetricV2Points         = "v2_points"
-	MetricV2Risks          = "v2_risks"
-	MetricV2Repairs        = "v2_repairs"
+	MetricV2Sections        = "v2_sections"
+	MetricV2Logical         = "v2_logical_sections"
+	MetricV2SectionsFailed  = "v2_sections_failed"
+	MetricV2Tiles           = "v2_tiles"
+	MetricV2TilesReady      = "v2_tiles_ready"
+	MetricV2TilesFailed     = "v2_tiles_failed"
+	MetricV2ContextMissing  = "v2_context_missing"
+	MetricV2OverviewFailed  = "v2_overview_failed"
+	MetricV2Blocks          = "v2_blocks"
+	MetricV2Points          = "v2_points"
+	MetricV2Risks           = "v2_risks"
+	MetricV2Repairs         = "v2_repairs"
+	MetricV2SectionsKept    = "v2_sections_kept"
+	MetricV2SectionsRevised = "v2_sections_revised"
 )
 
 // DocumentMetrics measures a baum.review/2 document: its sections, tiles by
@@ -263,12 +327,6 @@ func (g *V2Generator) DocumentMetrics(document []byte) (map[string]float64, erro
 	return m, nil
 }
 
-// PairMetrics compares nothing yet: a chain of baum.review/2 documents is
-// not replayed.
-func (g *V2Generator) PairMetrics(previous, next []byte) (map[string]float64, error) {
-	return map[string]float64{}, nil
-}
-
 // ArtifactMetrics reads levels.json: calls, tokens, cost and seconds per
 // level.
 func (g *V2Generator) ArtifactMetrics(read func(string) ([]byte, error)) (map[string]float64, error) {
@@ -280,7 +338,8 @@ func (g *V2Generator) ArtifactMetrics(read func(string) ([]byte, error)) (map[st
 	if err := json.Unmarshal(raw, &record); err != nil || record.Schema != V2RecordName {
 		return nil, errors.New("levels.json is not a v2 record")
 	}
-	m := map[string]float64{MetricV2Repairs: float64(record.Repairs)}
+	m := map[string]float64{MetricV2Repairs: float64(record.Repairs), MetricV2SectionsKept: float64(record.Levels[orchestrate.LevelSections].Kept),
+		MetricV2SectionsRevised: float64(record.Levels[orchestrate.LevelSections].Revised)}
 	for _, name := range orchestrate.Levels {
 		l := record.Levels[name]
 		m["v2_"+name+"_calls"] = float64(l.Calls)
@@ -300,6 +359,8 @@ func (g *V2Generator) Definitions() map[string]string {
 		MetricV2Tiles: "tiles of the document", MetricV2TilesReady: "tiles ready", MetricV2TilesFailed: "tiles that failed",
 		MetricV2ContextMissing: "1 when the document has no context", MetricV2OverviewFailed: "1 when the overview fell back",
 		MetricV2Blocks: "body blocks over every section", MetricV2Points: "points over every section's points blocks", MetricV2Risks: "risks over every section", MetricV2Repairs: "validation repairs over every call",
+		MetricV2SectionsKept:    "sections whose agent kept the previous version's text (its hunks changed)",
+		MetricV2SectionsRevised: "sections whose agent revised the previous version's text (its hunks changed)",
 	}
 	for _, name := range orchestrate.Levels {
 		d["v2_"+name+"_calls"] = "model calls of the " + name + " level"
@@ -308,5 +369,6 @@ func (g *V2Generator) Definitions() map[string]string {
 		d["v2_"+name+"_failed"] = "calls of the " + name + " level that failed"
 		d["v2_"+name+"_cost_usd"] = "what the " + name + " level cost at API prices"
 	}
+	maps.Copy(d, v2PairDefinitions)
 	return d
 }

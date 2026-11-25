@@ -381,6 +381,15 @@ fn run<R: Runtime>(app: &AppHandle<R>) {
             install(app, &updates);
         } else {
             check(app, &updates);
+            // scripts/bridge-test.sh only: installs what the check
+            // downloaded at once, as `install_update` would. Never enabled
+            // in a release build.
+            #[cfg(feature = "bridge-test")]
+            if updates.request_install().is_ok() {
+                updates.edit(|inner| inner.request = None);
+                eprintln!("baum desktop: bridge test: installing the update");
+                install(app, &updates);
+            }
         }
         let last = SystemTime::now();
         request = None;
@@ -845,6 +854,70 @@ mod tests {
         let other = minisign_verify::PublicKey::from_base64(OTHER_PUBLIC_KEY).unwrap();
         other.verify(b"baum", &signature, true).unwrap();
         assert!(other.verify(b"baum!", &signature, true).is_err());
+    }
+
+    /// The bridge release (scripts/bridge-test.sh): an installed copy at
+    /// `BAUM_BRIDGE_CURRENT` accepts `BAUM_BRIDGE_DIR/latest.json`, signed
+    /// with the key in `BAUM_BRIDGE_PUBKEY` (base64, as `plugins.updater.pubkey`)
+    /// instead of the release key, for each of the platforms the release
+    /// ships. It follows tauri-plugin-updater's own steps: the manifest
+    /// parsed as its `RemoteRelease`, a newer version, the platform key its
+    /// `get_urls` picks for the bundle type, the minisign signature over the
+    /// file (`verify_signature`, with the legacy signatures it accepts), and
+    /// the signed version equal to the announced one (`requireSignedVersion`).
+    /// The bundle is the file the URL names, in `BAUM_BRIDGE_DIR`.
+    #[test]
+    #[ignore = "run by scripts/bridge-test.sh with a release directory"]
+    fn bridge_manifest_is_accepted() {
+        use base64::Engine;
+        use tauri_plugin_updater::RemoteRelease;
+        let engine = base64::engine::general_purpose::STANDARD;
+        let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
+        let dir = PathBuf::from(var("BAUM_BRIDGE_DIR"));
+        let decode = |text: &str| String::from_utf8(engine.decode(text).unwrap()).unwrap();
+        let key = minisign_verify::PublicKey::decode(&decode(&var("BAUM_BRIDGE_PUBKEY"))).unwrap();
+        let release: RemoteRelease =
+            serde_json::from_slice(&fs::read(dir.join("latest.json")).unwrap()).unwrap();
+        let current: RemoteRelease = serde_json::from_value(serde_json::json!({
+            "version": var("BAUM_BRIDGE_CURRENT"),
+            "platforms": {}
+        }))
+        .unwrap();
+        assert!(
+            release.version > current.version,
+            "{} is not newer than {}",
+            release.version,
+            current.version
+        );
+        let announced = release.version.to_string();
+        // updater_os()-arch-installer, then updater_os()-arch, per bundle.
+        for (bundle, targets) in [
+            ("AppImage", ["linux-x86_64-appimage", "linux-x86_64"]),
+            ("macOS app", ["darwin-aarch64-app", "darwin-aarch64"]),
+            ("macOS app", ["darwin-x86_64-app", "darwin-x86_64"]),
+        ] {
+            let (url, signature) = targets
+                .iter()
+                .find_map(|target| {
+                    Some((
+                        release.download_url(target).ok()?,
+                        release.signature(target).ok()?,
+                    ))
+                })
+                .unwrap_or_else(|| panic!("no {bundle} for {targets:?}"));
+            let name = url.path_segments().unwrap().next_back().unwrap();
+            let data = fs::read(dir.join(name)).unwrap();
+            let signature = minisign_verify::Signature::decode(&decode(signature)).unwrap();
+            key.verify(&data, &signature, true)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let signed = signature
+                .trusted_comment()
+                .split('\t')
+                .find_map(|field| field.strip_prefix("version:"))
+                .unwrap_or_else(|| panic!("{name} is not signed for a version"));
+            assert_eq!(signed, announced, "{name}");
+            println!("{targets:?}: {url} is signed for {signed}");
+        }
     }
 
     const OTHER_PUBLIC_KEY: &str = "RWTRmLxRd4UKBlQP1/n6WFgBJhCIKQrMRRY1gZi/l8EeH9Gd/co+PB2B";

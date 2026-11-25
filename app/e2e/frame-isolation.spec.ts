@@ -49,6 +49,15 @@ function probe(outside: string, name: string) {
     "parent bridge",
     () => (parent as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__,
   );
+  attempt(
+    "parent desktop bridge",
+    () => (parent as unknown as { baumDesktop: unknown }).baumDesktop,
+  );
+  attempt("desktop bridge", () => typeof (self as unknown as { baumDesktop: unknown }).baumDesktop);
+  attempt(
+    "desktop declaration",
+    () => typeof (self as unknown as { __BAUM_DESKTOP__: unknown }).__BAUM_DESKTOP__,
+  );
   // The tile is served under the app's namespace, so its own path leads to
   // the API; the frame's requests carry Origin: null.
   const api = `${location.pathname.match(/^\/s\/[^/]+\//)?.[0]}api/settings`;
@@ -177,9 +186,13 @@ test("a sandboxed frame reaches neither the page, the daemon nor the network", a
       "cookie",
       "localStorage",
       "parent bridge",
+      "parent desktop bridge",
     ]) {
       expect(result[access], `${name}: ${access}`).toMatch(/^threw /);
     }
+    // Neither shell's bridge nor its declaration is in the frame.
+    expect(result["desktop bridge"]).toBe("undefined");
+    expect(result["desktop declaration"]).toBe("undefined");
     // Nothing the daemon returns is readable, and a write never gets past
     // its preflight (the daemon refuses Origin: null as well).
     expect(result["read API"]).toBe("failed");

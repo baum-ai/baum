@@ -24,6 +24,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  delete (window as { baumDesktop?: unknown }).baumDesktop;
 });
 
 const summary = (over: Partial<TileTypeSummary> = {}): TileTypeSummary => ({
@@ -288,18 +289,21 @@ it("deletes a type with Undo in its toast", async () => {
   });
 });
 
-it("says custom tiles are unavailable in a desktop shell without frames, and still lists and edits", async () => {
-  (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-  const current = { detail: detail() };
-  const calls = serve(paneRoutes(current));
-  await draw("migration_steps");
-  const pane = node.querySelector("[data-tile-type-pane]")!;
-  expect(pane.textContent).toContain(NOT_IN_THIS_SHELL);
-  expect(pane.querySelector("iframe")).toBeNull();
-  expect(calls.some((c) => c.path.includes("/preview"))).toBe(false);
-  expect(button("Rename")).toBeDefined();
-  expect(button("Edit in chat")).toBeDefined();
-});
+it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+  "says custom tiles are unavailable in a desktop shell (%s) without frames, and still lists and edits",
+  async (bridge) => {
+    (window as unknown as Record<string, unknown>)[bridge] = {};
+    const current = { detail: detail() };
+    const calls = serve(paneRoutes(current));
+    await draw("migration_steps");
+    const pane = node.querySelector("[data-tile-type-pane]")!;
+    expect(pane.textContent).toContain(NOT_IN_THIS_SHELL);
+    expect(pane.querySelector("iframe")).toBeNull();
+    expect(calls.some((c) => c.path.includes("/preview"))).toBe(false);
+    expect(button("Rename")).toBeDefined();
+    expect(button("Edit in chat")).toBeDefined();
+  },
+);
 
 it("exports a type as a download in a browser", async () => {
   const current = { detail: detail() };

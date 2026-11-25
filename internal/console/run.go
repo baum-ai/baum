@@ -27,6 +27,8 @@ const (
 	// EventFinished: the turn ended, answered (idle) or not (failed, or idle
 	// when the person stopped it); Get has why.
 	EventFinished = "finished"
+	// EventArchived: a conversation was archived and left the list.
+	EventArchived = "archived"
 )
 
 // Event is a change to a conversation, as the daemon's "console" event
