@@ -82,7 +82,7 @@ func TestOverviewKeepsClipsInVideos(t *testing.T) {
 	b := testBundle()
 	b.Attachments = []bundle.Attachment{{ID: "att_img", ContentType: "image/png"}, {ID: "att_clip", ContentType: "video/mp4"}}
 	reply := strings.Replace(overviewReplyJSON, `"screenshots":["nope"],"videos":[]`, `"screenshots":["att_img","att_clip"],"videos":["att_clip","att_img","nope"]`, 1)
-	out, problem := checkOverview([]byte(reply), newFacts(b, nil), nil, nil, false)
+	out, problem := checkOverview([]byte(reply), newFacts(b, nil), []reviewv2.Section{{ID: "sec_api"}}, nil, false)
 	if problem != "" {
 		t.Fatal(problem)
 	}

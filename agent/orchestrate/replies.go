@@ -44,6 +44,7 @@ type plannedTile struct {
 }
 
 type sectionReply struct {
+	Keep    bool         `json:"keep"`
 	Body    []blockReply `json:"body"`
 	Risks   []riskReply  `json:"risks"`
 	Tiles   []tileBrief  `json:"tiles"`
@@ -287,29 +288,75 @@ type sectionResult struct {
 	Briefs  map[string]tileBrief
 	Propose *reviewv2.Tile
 	Dropped map[string]string
+	// Kept is a reply that kept the previous version's body and risks.
+	Kept bool
+	// Rechecked is a reply sent back for previous claims it repeats over
+	// changed code (unrevisedClaims).
+	Rechecked bool
 }
 
 // checkSection checks a section agent's reply. taken are the IDs of the
 // tiles the document already has, which a proposed tile's ID may not repeat
-// (it is made unique).
+// (it is made unique). rev is the section's previous text and its hunks'
+// statuses when the agent was given them to revise, else nil; fixed are the
+// IDs of risks fixed in an earlier version, which a risk may not take.
 //
 // A tile block must name a tile of this section that is kept: planned and
 // not dropped by this reply, or the tile it proposes. One that names
 // anything else is dropped, and a tile the body places twice is placed
 // where it first is.
-func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient bool) (sectionResult, string) {
+//
+// A reply that keeps (keep, with no body or risks) takes the previous body
+// and risks as they are, its tiles and proposal checked as any reply's. It
+// is sent back when there is no previous text, when the change is not only
+// added code (reviewv2.Revised.Additive: what the text describes may have
+// changed even where it cites nothing), or when the text cites a hunk the
+// section no longer has; the agent then writes the section.
+//
+// A revision that repeats word for word a previous point or risk resting on
+// a gone hunk, now citing a new one, is sent back once to re-check it
+// (unrevisedClaims) when recheck is set and the pass is not lenient; the
+// caller clears recheck once a reply was (sectionResult.Rechecked), so the
+// same text on a later pass is taken as checked.
+func checkSection(reply []byte, section reviewv2.Section, rev *reviewv2.Revised, fixed []string, planned []reviewv2.Tile, taken map[string]bool, f *facts, r *Registry, lenient, recheck bool) (sectionResult, string) {
 	var s sectionReply
 	if problem := decode(reply, &s); problem != "" {
 		return sectionResult{}, problem
 	}
 	c := &checker{lenient: lenient}
 	out := sectionResult{Briefs: map[string]tileBrief{}, Dropped: map[string]string{}, Body: []reviewv2.Block{}, Risks: []reviewv2.Risk{}}
+	if s.Keep {
+		switch {
+		case rev == nil:
+			c.add("/keep", "there is no previous version of this section to keep; set keep to false and write the body and risks")
+		case len(s.Body) > 0 || len(s.Risks) > 0:
+			c.add("/keep", "keep takes the previous body and risks as they were; leave body and risks empty, or set keep to false and write them all")
+		case !rev.Additive():
+			c.add("/keep", "the code this text describes changed (hunks of the previous version are moved or gone, none is unchanged, or risks came with joined code); set keep to false and write the section, copying word for word what still holds")
+		default:
+			out.Kept = true
+		}
+		if !out.Kept {
+			return out, c.String()
+		}
+	}
 	slug := strings.TrimPrefix(section.ID, "sec_")
 	ids := map[string]bool{}
 	for i, risk := range s.Risks {
 		at := fmt.Sprintf("/risks/%d", i)
-		if !riskID.MatchString(risk.ID) || ids[risk.ID] {
+		// The last pass renames a risk that takes a fixed ID rather than
+		// lose the section over it.
+		if slices.Contains(fixed, risk.ID) && lenient {
+			id := risk.ID
+			for n := 2; slices.Contains(fixed, risk.ID) || ids[risk.ID] || slices.ContainsFunc(s.Risks, func(r riskReply) bool { return r.ID == risk.ID }); n++ {
+				risk.ID = fmt.Sprintf("%s_%d", id, n)
+			}
+		}
+		switch {
+		case !riskID.MatchString(risk.ID) || ids[risk.ID]:
 			c.add(at+"/id", "must be rsk_ and a slug no other risk of the section has")
+		case slices.Contains(fixed, risk.ID):
+			c.add(at+"/id", "%s is a risk fixed in an earlier version; give this risk a new ID", risk.ID)
 		}
 		ids[risk.ID] = true
 		if !slices.Contains(reviewv2.RiskTiers, risk.Tier) {
@@ -383,6 +430,23 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 		}
 	}
 	placed := map[string]bool{}
+	if out.Kept {
+		var outside []string
+		out.Body, out.Risks = keptText(rev.Previous, section.Hunks, placeable, f, &outside)
+		if len(outside) > 0 {
+			c.add("/keep", "the previous text cites hunks this section no longer has (%s); set keep to false and write the section, keeping what still holds word for word and citing the current hunks", strings.Join(outside, ", "))
+		}
+		// The previous text passed these checks when it was written: only
+		// what is wrong with its structure now sends the keep back.
+		kept := &checker{lenient: true}
+		kept.merge(reviewv2.CheckSection(reviewv2.Section{ID: section.ID, Kind: section.Kind, Body: out.Body, Risks: out.Risks}, f.refs))
+		c.findings = append(c.findings, kept.findings...)
+		if len(c.findings) > 0 {
+			return out, c.String()
+		}
+		out.Body, _ = reviewv2.CheckBody(out.Body, f.refs)
+		return out, ""
+	}
 	for i, block := range s.Body {
 		at := fmt.Sprintf("/body/%d", i)
 		b := reviewv2.Block{Type: block.Type}
@@ -423,6 +487,12 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 		}
 		out.Body = append(out.Body, b)
 	}
+	if rev != nil && recheck && !lenient {
+		if paths, claims := unrevisedClaims(s, *rev); len(claims) > 0 {
+			out.Rechecked = true
+			c.add(strings.Join(paths, ", "), "%s; read the new hunk and confirm each claim still holds: rewrite what changed in meaning even if no number or name changed (a deadline that became an idle timeout, a bound that no longer bounds), and send the text again as it is only if all of it still holds", strings.Join(claims, "; "))
+		}
+	}
 	c.merge(reviewv2.CheckSection(reviewv2.Section{ID: section.ID, Kind: section.Kind, Body: out.Body, Risks: out.Risks}, f.refs))
 	if len(c.findings) > 0 {
 		return out, c.String()
@@ -431,6 +501,103 @@ func checkSection(reply []byte, section reviewv2.Section, planned []reviewv2.Til
 	// MaxPoints.
 	out.Body, _ = reviewv2.CheckBody(out.Body, f.refs)
 	return out, ""
+}
+
+// unrevisedClaims are the points and risks of a revision's reply (their
+// paths, and each described) whose text is a previous point's or risk's
+// word for word (whitespace aside) that cited a gone hunk, whatever they
+// cite now: the code they described changed, but the claims may no longer
+// hold. Prose and note blocks, which cite nothing, are only marked in the
+// input.
+func unrevisedClaims(s sectionReply, rev reviewv2.Revised) (paths, claims []string) {
+	stale := map[string][]string{}
+	note := func(text string, cites []reviewv2.Anchor) {
+		if code, gone, _ := claimCode(reviewv2.CitedHunks(cites), rev); code == codeChanged && len(gone) > 0 {
+			key := sameText(text)
+			for _, h := range gone {
+				if !slices.Contains(stale[key], h) {
+					stale[key] = append(stale[key], h)
+				}
+			}
+		}
+	}
+	for _, b := range rev.Previous.Body {
+		for _, p := range b.Items {
+			note(p.Text, p.Cites)
+		}
+	}
+	for _, risk := range rev.Previous.Risks {
+		note(risk.Text, risk.Cites)
+	}
+	if len(stale) == 0 {
+		return nil, nil
+	}
+	check := func(path, text string, cites []json.RawMessage) {
+		gone, ok := stale[sameText(text)]
+		if !ok {
+			return
+		}
+		now := "it cites no hunk now"
+		if cited := hunkCites(cites); len(cited) > 0 {
+			now = "now " + strings.Join(cited, ", ")
+		}
+		paths = append(paths, path)
+		claims = append(claims, fmt.Sprintf("%q is the previous text unchanged, but the code it described changed (%s gone, %s)", clean(text), strings.Join(gone, ", "), now))
+	}
+	for i, b := range s.Body {
+		for j, p := range b.Items {
+			check(fmt.Sprintf("/body/%d/items/%d/text", i, j), p.Text, p.Cites)
+		}
+	}
+	for i, risk := range s.Risks {
+		check(fmt.Sprintf("/risks/%d/text", i), risk.Text, risk.Cites)
+	}
+	return paths, claims
+}
+
+// sameText is a text as unrevisedClaims compares it: clean, whitespace
+// folded.
+func sameText(s string) string {
+	return strings.Join(strings.Fields(clean(s)), " ")
+}
+
+// keptText is a kept section's previous body and risks as this version
+// holds them: cites to what the pull request still has (cited hunks that
+// are not among hunks, the section's now, are added to outside), and tile
+// blocks only for placeable tiles.
+func keptText(previous reviewv2.Section, hunks []string, placeable map[string]string, f *facts, outside *[]string) ([]reviewv2.Block, []reviewv2.Risk) {
+	resolve := func(in []json.RawMessage) []json.RawMessage {
+		for _, id := range hunkCites(in) {
+			if !slices.Contains(hunks, id) && !slices.Contains(*outside, id) {
+				*outside = append(*outside, id)
+			}
+		}
+		kept, _ := f.cites(in)
+		return kept
+	}
+	body := []reviewv2.Block{}
+	placed := map[string]bool{}
+	for _, b := range previous.Body {
+		if b.Type == reviewv2.BlockTile {
+			id, ok := placeable[b.Tile]
+			if !ok || placed[id] {
+				continue
+			}
+			placed[id] = true
+			b.Tile = id
+		}
+		b.Items = slices.Clone(b.Items)
+		for i := range b.Items {
+			b.Items[i].Cites = resolve(b.Items[i].Cites)
+		}
+		body = append(body, b)
+	}
+	risks := []reviewv2.Risk{}
+	for _, r := range previous.Risks {
+		r.Cites = resolve(r.Cites)
+		risks = append(risks, r)
+	}
+	return body, risks
 }
 
 func deref(s *string) string {
@@ -559,8 +726,14 @@ func checkOverview(reply []byte, f *facts, docSections []reviewv2.Section, tiles
 	verdict.Text = c.text("/verdict/text", o.Verdict.Text, reviewv2.MaxVerdictText, true)
 	for i, p := range o.Verdict.Points {
 		point := reviewv2.VerdictPoint{Text: c.text(fmt.Sprintf("/verdict/points/%d/text", i), p.Text, reviewv2.MaxPointText, true)}
-		if p.Section != nil && sections[*p.Section] {
+		switch {
+		case p.Section == nil:
+		case sections[*p.Section]:
 			point.Section = *p.Section
+		case !lenient:
+			// A point kept from the previous version may name a section
+			// the map no longer has; the last pass drops the name instead.
+			c.add(fmt.Sprintf("/verdict/points/%d/section", i), "%q is not a section; name the section that covers it now, or drop the point", *p.Section)
 		}
 		verdict.Points = append(verdict.Points, point)
 	}
