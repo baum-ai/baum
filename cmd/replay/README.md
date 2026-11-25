@@ -124,12 +124,18 @@ content and are never committed.
 
 `--generator v2` writes each case as a baum.review/2 document, as the desktop
 does with tile reviews on once the levels land (`generate.Options.V2`,
-`agent/orchestrate`): the map, then the section agents and the context agent
-at once, each tile once its section is written, and the overview. Every
-section is written; nothing is reused. `--generator-option concurrency=N`
-bounds a case's calls at once (default 4). Prompt overrides take the ids
-`review-v2-shared`, `review-map`, `review-section`, `review-context-v2`,
-`review-tile` and `review-overview`.
+`agent/orchestrate`): the map, then the section agents and the context agent at
+once, each tile once its section is written, and the overview. Every section is
+written; nothing is reused unless you pass `--reuse`, which lets the
+orchestration reuse a previous version's unchanged sections as the app does (it
+needs a previous version, so it matters for chains). For v2 it also turns on
+revising changed sections from their previous text, keeping unchanged tiles and
+revising the previous overview. Without `--reuse`, a v2 chain's previous
+document only feeds risk history and section state, and every section and the
+overview are written fresh. `--generator-option concurrency=N` bounds a case's
+calls at once (default 4). Prompt overrides take the ids `review-v2-shared`,
+`review-map`, `review-section`, `review-context-v2`, `review-tile` and
+`review-overview`.
 
 ```sh
 oss/bin/replay --dataset <dir> --generator v2 --case <id> --name v2-first --max-cost-usd 20
@@ -147,15 +153,62 @@ The case's `document.json` is the completed document. Beside it:
 | --- | --- |
 | `calls/<level>/<id>/prompt.md`, `input.txt` | A call's instructions (with the tools and workspace sections) and the data after them. The levels are `map`, `sections`, `context`, `tiles` and `overview`; the id is the section's or tile's. |
 | `calls/<level>/<id>/reply.json`, `reply-2.json`, `findings-N.txt` | Each pass's reply, masked, and what the host found in it when it sent it back. A library tile's reply is its fill's data. |
-| `levels.json` | A `replay.v2/1` record: calls, tokens, repairs, seconds and `cost_usd` per level, the calls that ran, failed, were reused or skipped, and the document's generation record. |
+| `levels.json` | A `replay.v2/1` record: calls, tokens, repairs, seconds and `cost_usd` per level, the calls that ran, failed, were reused or skipped, the sections among those that ran that kept or revised their previous version's text (`kept`, `revised`), and the document's generation record. |
 
 Validation checks the schema and that every hunk is in a section.
 `replay metrics` reports, from the document, `v2_sections`,
 `v2_logical_sections`, `v2_sections_failed`, `v2_tiles`, `v2_tiles_ready`,
 `v2_tiles_failed`, `v2_tiles_type_<type>`, `v2_blocks`, `v2_points`, `v2_risks`,
 `v2_context_missing` and `v2_overview_failed`; from `levels.json`
-`v2_repairs` and per level `v2_<level>_calls`, `_tokens`, `_seconds`,
-`_failed` and `_cost_usd`. Chains are not replayed.
+`v2_repairs`, `v2_sections_kept` and `v2_sections_revised` (sections whose
+hunks changed and whose agent kept or revised the previous version's text),
+and per level `v2_<level>_calls`, `_tokens`, `_seconds`, `_failed` and
+`_cost_usd`.
+
+With `--chain`, each revision after the first reads the baum.review/2 document
+the one before it generated as its previous version (`generate.V2.Previous`,
+with that document's own `review.version`), as `generate.Publish` hands it to a
+run in the app. The bundle of a later revision carries no previous version of
+its own for v2. The first revision has no previous document, though its
+bundle's frozen previous version, if any, still feeds risk history and section
+state when the document is completed. Each pair of consecutive documents
+reports how stable the review stayed:
+
+- **Section fate.** `v2_sections_previous`, then each earlier section is counted
+  once: `v2_sections_reused` (same id, same hunks, identical body),
+  `v2_sections_rewritten` (same id, anything else), `v2_sections_matched` (no same
+  id, but a later section matches by code: most shared hunks, then shared file
+  paths, as for the review generator) or `v2_sections_dropped`.
+  `v2_sections_new` counts later sections that no earlier section paired with.
+- **Body text.** For every same-id and matched pair, `v2_body_similarity_sum` adds
+  the word-level Jaccard index of the two bodies' text (block titles, text, each
+  point's text and `more`; two empty bodies count 1), and `v2_body_pairs` counts
+  the pairs, so the mean is the sum over the pairs.
+- **Facts.** `v2_facts_previous` counts the facts of the earlier bodies of those
+  pairs (bold spans, code spans and numbers such as `24`, `5,000` and `3.5`, each
+  once per body) and `v2_facts_kept` those that the later body still has verbatim.
+  A number must match whole, not as part of another number, and a span must not
+  sit inside a longer word (`4` is not kept by `14`, `id` not by `provide`). A
+  bold span and the numbers inside it are separate facts, so both count.
+- **Changed pairs.** Reused sections are the same by construction and pull the
+  figures above toward 1. `v2_changed_body_similarity_sum`, `v2_changed_body_pairs`,
+  `v2_changed_facts_previous` and `v2_changed_facts_kept` are the same four
+  figures over the rewritten and matched pairs only; they are the headline
+  numbers for how stable a rewrite kept the review.
+- **Pairing.** A later section pairs with at most one earlier section: same ids
+  first, then the earlier sections without one match among the later sections
+  still unpaired. An earlier section that finds none is dropped; a later section
+  nothing paired with is new.
+- **Summary and overview.** `v2_summary_similarity` is the word-level Jaccard index
+  of the two summaries' title, text, `risk_why` and verdict text and points, and
+  `v2_overview_similarity` the same over the intents' `asked` and `got`. Each is
+  left out when both texts are empty.
+
+`v2_body_similarity_pooled`, `v2_fact_retention_pooled`, `v2_section_reuse_pooled`,
+`v2_section_dropped_pooled` and, over changed pairs, `v2_changed_body_similarity_pooled`
+and `v2_changed_fact_retention_pooled` are ratios over the sums of a group (kept over
+earlier facts, reused or dropped over earlier sections), not the mean of each
+pair's.
 
 ## Detectors
 
@@ -226,23 +279,28 @@ replay --dataset <dir> --split calibration --chain --with-previous --limit 4 --m
   tie or differ by machine. A revision with no number that follows one that has a
   number, or that was captured before the one ordered ahead of it, is listed in
   `chain.json` and the dry run as a guess.
-- **Handoff.** The first revision keeps its bundle, frozen previous version
-  included. For each later one the generator turns the previous revision's
-  document into the previous version as the app does (`review.PreviousVersionOf`,
-  with the document's own `review.version`, which the pipeline set above the
-  version it was given), and moves its hunk anchors to where the hunks sit in this
-  revision's diff (`review.FitPreviousHunkAnchors`). The runner then does what
-  assembly does to a bundle it has built: masks it (`bundle.Redact`, which covers
-  the carried content), fits it to the evidence byte budget (`bundle.Fit`, whose
-  budget counts the previous version, so a larger one trims other evidence and
-  adds notes to `truncated`, or fails the revision with the app's
-  `evidence byte budget exceeded` as an `input` failure), and stamps the digest.
-  The outcome records `bundle_bytes` (the encoded size the model read),
-  `bundle_fitted` (fitting cut something) and `bundle_notes`; `chain.json` records
-  them per revision with the version number carried. Everything else in the
-  bundle is the capture's. With `--reuse`, details are reused as in the app,
-  including when the images are unchanged, because the carried version knows
-  which images it was offered.
+- **Handoff.** For the review (v1) generator, the first revision keeps its
+  bundle, frozen previous version included. For each later one the generator
+  turns the previous revision's document into the previous version as the app
+  does (`review.PreviousVersionOf`, with the document's own `review.version`,
+  which the pipeline set above the version it was given), and moves its hunk
+  anchors to where the hunks sit in this revision's diff
+  (`review.FitPreviousHunkAnchors`). The runner then does what assembly does to
+  a bundle it has built: masks it (`bundle.Redact`, which covers the carried
+  content), fits it to the evidence byte budget (`bundle.Fit`, whose budget
+  counts the previous version, so a larger one trims other evidence and adds
+  notes to `truncated`, or fails the revision with the app's `evidence byte
+  budget exceeded` as an `input` failure), and stamps the digest. The outcome
+  records `bundle_bytes` (the encoded size the model read), `bundle_fitted`
+  (fitting cut something) and `bundle_notes`; `chain.json` records them per
+  revision with the version number carried. Everything else in the bundle is the
+  capture's. With `--reuse`, details are reused as in the app, including when
+  the images are unchanged, because the carried version knows which images it
+  was offered. For v2, `V2Generator.Next` clears the bundle's previous version
+  and hands the previous revision's document over as the generation's previous
+  version, as the app does. The first revision has no previous document, though
+  its bundle's frozen previous version still feeds risk history and section
+  state through completion (`reviewv2.Complete`).
 - **Failure.** A revision that fails ends its pull request's chain: the later
   ones are skipped (reason `chain`) and `chain.json` says why. Other pull requests
   go on. The cost guard is checked before each revision. `--resume` keeps the
@@ -250,7 +308,7 @@ replay --dataset <dir> --split calibration --chain --with-previous --limit 4 --m
   the stored document of the last kept; a rerun clears the chain's links and the
   pair records of the revisions it runs again.
 - **Generators.** A generator that can chain implements `Chainer` (the review
-  generator does). The runner and driver do not know the document's format.
+  and v2 generators do). The runner and driver do not know the document's format.
 
 ## Metrics
 
@@ -399,7 +457,9 @@ prompt change is measured on all of them. `--reuse` keeps the pipeline's
 behaviour, with one difference: a saved bundle does not record which images the
 previous version was offered, so the pipeline treats any image the bundle offers
 as new. With `--reuse` details are therefore reused only for a case whose bundle
-offers no image; the app also reuses them when the images are unchanged.
+offers no image; the app also reuses them when the images are unchanged. For
+v2, `--reuse` instead turns on revising and keeping from the previous document
+(see "baum.review/2 in levels").
 
 ## Adding another kind of output
 

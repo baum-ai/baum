@@ -412,6 +412,40 @@ func TestChainNeedsAGeneratorThatCanChain(t *testing.T) {
 	}
 }
 
+// headerEcho is a chaining generator whose Next carries no previous version in
+// the bundle, as the v2 generator's does; its documents have a review header.
+type headerEcho struct{ echo }
+
+func (headerEcho) Generate(_ context.Context, _ generate.Options, c replay.Case) (replay.Generated, error) {
+	return replay.Generated{Document: []byte(`{"kind":"echo","review":{"version":4}}`), Outcome: agent.Outcome{Calls: 1}}, nil
+}
+
+func (headerEcho) Next(c replay.Case, _ []byte) (bundle.Bundle, error) {
+	b, err := c.FreshBundle()
+	b.Previous = nil
+	return b, err
+}
+
+func TestChainRecordsThePreviousVersionFromTheDocumentHeader(t *testing.T) {
+	d, _, _ := chainDataset(t)
+	ds, _ := replay.OpenDataset(d.dir)
+	outDir := t.TempDir()
+	summary, printed, err := execute(t, replay.Plan{Dataset: ds, OutDir: outDir, Chain: true,
+		Settings:  replay.Settings{Backends: fakeBackends(&generatetest.Backend{}), Generator: headerEcho{echo{valid: true}}},
+		Selection: replay.Selection{IDs: []string{"r-a", "r-b"}}})
+	if err != nil || summary.Totals.OK != 2 {
+		t.Fatalf("%v %+v\n%s", err, summary.Totals, printed)
+	}
+	var record replay.ChainRecord
+	raw, err := os.ReadFile(filepath.Join(outDir, "run", "chains", "acme~demo-7", "chain.json"))
+	if err != nil || json.Unmarshal(raw, &record) != nil {
+		t.Fatal(err)
+	}
+	if len(record.Revisions) != 2 || record.Revisions[0].PreviousVersion != 0 || record.Revisions[1].PreviousVersion != 4 || record.Revisions[1].PreviousFrom != "r-a" {
+		t.Errorf("%+v", record.Revisions)
+	}
+}
+
 // A dry run of a chain lists its revisions in order.
 func TestChainDryRun(t *testing.T) {
 	d, _, _ := chainDataset(t)

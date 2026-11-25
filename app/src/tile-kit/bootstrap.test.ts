@@ -417,6 +417,13 @@ describe("under the render check", () => {
     expect(heights).toEqual([300, 300, 340]);
   });
 
+  it("answers ping with pong, before any init", async () => {
+    const f = open(TILE);
+    await f.next("hello");
+    f.send({ protocol: "baum.tile/1", kind: "ping" });
+    expect(await f.next("pong")).toMatchObject({ protocol: "baum.tile/1", kind: "pong" });
+  });
+
   it("ignores measure outside a check", async () => {
     const f = open(TILE);
     f.init({ face: "detail", data: { text: "x" } });

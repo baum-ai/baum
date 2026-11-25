@@ -122,7 +122,7 @@ export function fromV1(document: ReviewDocument): ReviewV2 {
       ...(document.summary.risk_score ? { risk_score: document.summary.risk_score } : {}),
       review_minutes: document.summary.review_minutes ?? null,
     },
-    overview: { screenshots: [], diagram: null, intent: [] },
+    overview: { screenshots: [], videos: [], diagram: null, intent: [] },
     context: v2Context && Object.values(v2Context).some(Boolean) ? v2Context : null,
     sections: document.sections.map(sectionOf),
     tiles: [],

@@ -3,9 +3,9 @@
 # instance (isolated.sh --headless): a warm-up, then N runs, and writes
 # summary.md and metrics.json under target/profile/<scenario>-<time>/.
 # `just desktop::profile` builds the profiling frontend, viewer and sidecar
-# first. The runner is ../app/scripts/profile/run.ts. With --engine chromium
-# the same scenarios run in Chromium against the instance's daemon, which
-# also records a CPU profile per run.
+# first. The runner is ../app/scripts/profile/run.ts, which launches the
+# Electron app through Electron's chromedriver and records a CPU profile per
+# run.
 # With --baseline REF it also builds REF's app (cached by commit) and runs
 # both, interleaved, in two instances on the same seeded dataset, and writes
 # a comparison under target/profile/<scenario>-vs-<commit>-<time>/.
@@ -15,7 +15,7 @@ usage() {
   cat <<'EOF'
 usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout SECONDS]
                   [--seed-data[=SEED] | --copy-data] [--workspace DIR]...
-                  [--baseline REF [--metric NAME]] [--engine webkit|chromium]
+                  [--baseline REF [--metric NAME]]
 
   scenario         cold-start, jk, review, filter, switch-inboxes,
                    session-panel or pages
@@ -40,10 +40,6 @@ usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout S
                    says which metrics changed beyond noise
   --metric NAME    the metric the comparison judges first (default: the
                    scenario's headline)
-  --engine E       webkit (default): the desktop app's WebKitGTK window;
-                   chromium: Playwright's Chromium on the same daemon's
-                   pages, with a CPU profile per run and its hot functions
-                   and stacks in the summary (not with --baseline)
 EOF
 }
 
@@ -57,7 +53,6 @@ timeout=600
 runs_given=
 baseline=
 metric=
-engine=webkit
 pass=
 nl='
 '
@@ -73,8 +68,6 @@ while [ "$#" -gt 0 ]; do
     --name=*) name=${1#--name=} ;;
     --run-timeout) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; timeout=$2; shift ;;
     --run-timeout=*) timeout=${1#--run-timeout=} ;;
-    --engine) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; engine=$2; shift ;;
-    --engine=*) engine=${1#--engine=} ;;
     --check) check=1 ;;
     --copy-data|--seed-data|--seed-data=*) pass="$pass$nl$1" ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pass="$pass$nl--workspace$nl$2"; shift ;;
@@ -97,20 +90,9 @@ if ! printf '%s\n' "$known" | grep -qx -- "$scenario"; then
 fi
 case $runs in ''|0|*[!0-9]*) echo "profile: --runs takes a number from 1: $runs" >&2; exit 2 ;; esac
 case $timeout in ''|0|*[!0-9]*) echo "profile: --run-timeout takes a number of seconds: $timeout" >&2; exit 2 ;; esac
-case $engine in webkit|chromium) ;; *) echo "profile: --engine is webkit or chromium: $engine" >&2; exit 2 ;; esac
-# The image's Chromium comes with Chrome for Testing's chromedriver, which
-# exists for x86-64 Linux only (isolated.Dockerfile).
-if [ "$engine" = chromium ] && [ "$(docker info --format '{{.Architecture}}' 2>/dev/null || uname -m)" != x86_64 ]; then
-  echo "profile: --engine chromium needs an x86-64 Docker engine: Chrome for Testing has no chromedriver for this one" >&2
-  exit 2
-fi
 case $name in ''|*[!a-z0-9-]*) echo "profile: the name may only hold lowercase letters, digits and dashes: $name" >&2; exit 2 ;; esac
 if [ -n "$metric" ] && [ -z "$baseline" ]; then
   echo "profile: --metric names what a comparison judges first; it needs --baseline" >&2
-  exit 2
-fi
-if [ -n "$baseline" ] && [ "$engine" != webkit ]; then
-  echo "profile: a comparison runs the desktop app on both sides; --engine chromium does not apply" >&2
   exit 2
 fi
 case $metric in *[!a-z0-9_]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
@@ -143,6 +125,13 @@ if [ -n "$baseline" ]; then
     echo "profile: the baseline $baseline ($short) predates the profiling build: its app has no" >&2
     echo "  window.__baumPerf.progress(), which the runner waits on, so it cannot be measured." >&2
     echo "  Compare against a commit that has oss/app/scripts/profile (the profiling runner) or later." >&2
+    exit 2
+  fi
+  # The baseline is built and run as this checkout's Electron app is: one
+  # from before it (the Tauri app) cannot be.
+  if ! git -C "$desktop" cat-file -e "$sha:oss/desktop/electron/build.mjs" 2>/dev/null; then
+    echo "profile: the baseline $baseline ($short) predates the Electron app, which a comparison" >&2
+    echo "  builds and runs on both sides; compare against a commit that has oss/desktop/electron." >&2
     exit 2
   fi
   # Both sides run on the dataset this checkout's generator writes, in its
@@ -190,8 +179,8 @@ if [ -n "$baseline" ]; then
   fi
 
   # The baseline's build: its profiling frontend, viewer, sidecar and the
-  # app's debug build, made by its own recipes in a worktree all comparisons
-  # share, and kept by commit.
+  # app's main process bundled, made by its own recipes in a worktree all
+  # comparisons share, and kept by commit.
   builds=$cache/profile-baselines
   build=$builds/$sha
   mkdir -p "$builds"
@@ -218,12 +207,19 @@ if [ -n "$baseline" ]; then
       just desktop::frontend profile
       just desktop::viewer
       just desktop::sidecar
-      BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 ./dev-compose.sh run --build --rm --no-deps desktop-test cargo build --locked --quiet
+      mkdir -p "$cache/electron" "$cache/electron-builder"
+      BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 ./dev-compose.sh run --build --rm --no-deps desktop-electron pnpm build
     )
     rm -rf "$build.tmp"
-    mkdir -p "$build.tmp"
-    cp "$worktree/oss/desktop/target/debug/baum-desktop" "$build.tmp/baum-desktop"
-    cp "$worktree/oss/desktop/binaries/baum-$(uname -m)-unknown-linux-gnu" "$build.tmp/baum"
+    mkdir -p "$build.tmp/app/binaries"
+    # The unpackaged app as the runner launches it: its package.json, main
+    # process, screens and sidecar. Its node_modules (Electron) are the
+    # container's, this checkout's, linked in at the path they are mounted.
+    cp "$worktree/oss/desktop/package.json" "$build.tmp/app/package.json"
+    cp -R "$worktree/oss/desktop/build" "$build.tmp/app/build"
+    cp -R "$worktree/oss/desktop/dist" "$build.tmp/app/dist"
+    cp "$worktree/oss/desktop/binaries/baum-$(uname -m)-unknown-linux-gnu" "$build.tmp/app/binaries/"
+    ln -s /oss/desktop/node_modules "$build.tmp/app/node_modules"
     cp -R "$worktree/oss/internal/localapp/dist" "$build.tmp/dist"
     printf '%s %s\n' "$sha" "$baseline" >"$build.tmp/complete"
     rm -rf "$build"
@@ -290,10 +286,10 @@ if [ -n "$baseline" ]; then
   # Each side runs in its own instance, the head's app built from this
   # checkout, the base's mounted from its build. Command lines for the
   # container's shell, so their quotes are meant.
-  head_run="cargo build --locked --quiet && BAUM_DESKTOP_BAUM=/oss/desktop/target/debug/baum $run --side head \
---app /oss/desktop/target/debug/baum-desktop --dist /oss/internal/localapp/dist \
+  head_run="pnpm build && $run --side head \
+--app /oss/desktop --dist /oss/internal/localapp/dist \
 --env 'commit=$commit' --env 'instance=$name-head'${metric:+ --headline $metric}"
-  base_run="BAUM_DESKTOP_BAUM=/baseline/baum $run --side base --app /baseline/baum-desktop --dist /baseline/dist \
+  base_run="$run --side base --app /baseline/app --dist /baseline/dist \
 --env 'commit=$short' --env 'ref=$baseline' --env 'instance=$name-base'${metric:+ --headline $metric}"
   side() {
     # $1 the side, $2 its command; a side that stops before its runner
@@ -392,18 +388,14 @@ esac
 
 out=target/profile/$scenario-$stamp
 
-# In the container: the app's debug build (as isolated runs it), then the
-# runner, which launches it through WebKitWebDriver. A command line for the
-# container's shell, so its quotes are meant.
+# In the container: the app's main process bundled (as isolated runs it),
+# then the runner, which launches the unpackaged app from /oss/desktop
+# through Electron's chromedriver. A command line for the container's shell,
+# so its quotes are meant.
 # shellcheck disable=SC2089,SC2090
-BAUM_ISOLATED_RUN="cargo build --locked --quiet && BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
---app /oss/desktop/target/debug/baum-desktop --out /oss/desktop/$out --runs $runs \
+BAUM_ISOLATED_RUN="pnpm build && BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
+--app /oss/desktop --out /oss/desktop/$out --runs $runs \
 --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
-# Chromium needs no app: the sidecar the app bundles starts the daemon.
-# shellcheck disable=SC2089,SC2090
-[ "$engine" = chromium ] && BAUM_ISOLATED_RUN="BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
---engine chromium --baum /oss/desktop/binaries/baum-\$(uname -m)-unknown-linux-gnu --out /oss/desktop/$out \
---runs $runs --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
 # shellcheck disable=SC2090
 export BAUM_ISOLATED_RUN
 

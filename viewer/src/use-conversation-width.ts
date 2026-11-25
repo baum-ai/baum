@@ -10,8 +10,16 @@ export const CONVERSATION_DEFAULT = 400;
 const REVIEW_MIN = 520;
 
 /** A pane beside the review pane that the reader can resize: its range, the
- *  width it starts at, and where the reader's choice is remembered. */
-export type PaneLimits = { min: number; max: number; fallback: number; storageKey: string };
+ *  width it starts at, and where the reader's choice is remembered. `keep` is
+ *  what the pane it trades against always keeps (the review pane's floor
+ *  unless given). */
+export type PaneLimits = {
+  min: number;
+  max: number;
+  fallback: number;
+  storageKey: string;
+  keep?: number;
+};
 
 export const CONVERSATION_LIMITS: PaneLimits = {
   min: CONVERSATION_MIN,
@@ -37,7 +45,10 @@ export function clampWidth(
   limits: PaneLimits,
   available = Number.POSITIVE_INFINITY,
 ): number {
-  const ceiling = Math.max(limits.min, Math.min(limits.max, available - REVIEW_MIN));
+  const ceiling = Math.max(
+    limits.min,
+    Math.min(limits.max, available - (limits.keep ?? REVIEW_MIN)),
+  );
   return Math.min(Math.max(Math.round(width), limits.min), ceiling);
 }
 

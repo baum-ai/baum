@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import pluralize from "pluralize";
 import { chipLinkClass } from "@baum/viewer/components/chip-classes";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
@@ -13,6 +13,7 @@ import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { tabPanelProps } from "@baum/viewer/components/tabs";
 import { Badge, Button, CardHeader, LiveDot } from "@baum/viewer/components/ui";
 import {
+  anchorFile,
   contextRefUrl,
   isContextDirectory,
   type ReviewContextRef,
@@ -30,6 +31,7 @@ import {
   sectionViews,
   selectionOf,
   shownSectionView,
+  sideSectionView,
   tilesOn,
   viewTile,
   type ListedSection,
@@ -38,7 +40,9 @@ import {
   type V2Section,
   type ViewTile,
 } from "./model";
+import { type Reveal, SectionSplit } from "./section-split";
 import { SectionViewBody, SectionViewTabs } from "./section-views";
+import { useSideReveal } from "./side-reveal";
 import { BLOCK_LABEL } from "./native-tiles";
 import { ViewTileCard } from "./view-tile";
 import { openExternal } from "../outside-links";
@@ -144,10 +148,37 @@ function SectionBody({
   onRetryDetails?: (id: string) => void | Promise<unknown>;
 }) {
   const views = useMemo(() => sectionViews(review, section), [review, section]);
-  const shown = shownSectionView(asked, views.counts);
+  const root = useRef<HTMLDivElement>(null);
+  const wide = useWideSection(root);
+  const side = wide ? sideSectionView(asked, views.counts) : null;
+  const shown = side ?? shownSectionView(asked, views.counts);
   const tablist = `${idPrefix}section-views`;
+  const select = (next: SectionView) =>
+    context.select(selectionOf({ tab: "sections", section: section.id, view: next }));
+  const overview = (
+    <SectionOverview
+      document={document}
+      review={review}
+      section={section}
+      ctx={ctx}
+      idPrefix={idPrefix}
+      drafts={drafts}
+      onRetryDetails={onRetryDetails}
+    />
+  );
+  const viewBody = (value: Exclude<SectionView, "overview">, reveal?: Reveal | null) => (
+    <SectionViewBody
+      document={document}
+      review={review}
+      section={section.id}
+      shown={value}
+      views={views}
+      context={context}
+      reveal={reveal}
+    />
+  );
   return (
-    <div className="space-y-5">
+    <div ref={root} className="space-y-5">
       <div>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           {section.derived.review_score !== undefined ? (
@@ -164,40 +195,61 @@ function SectionBody({
         </div>
         <CardHeader size="pane" title={<InlineMarkdown>{section.title}</InlineMarkdown>} />
       </div>
-      <SectionViewTabs
-        tablist={tablist}
-        value={shown}
-        counts={views.counts}
-        onChange={(next) =>
-          context.select(selectionOf({ tab: "sections", section: section.id, view: next }))
-        }
-      />
-      {SECTION_VIEWS.map(({ value }) => (
-        <div key={value} {...tabPanelProps(tablist, value, value === shown)} className="min-w-0">
-          {value !== shown ? null : value === "overview" ? (
-            <SectionOverview
-              document={document}
-              review={review}
-              section={section}
-              ctx={ctx}
-              idPrefix={idPrefix}
-              drafts={drafts}
-              onRetryDetails={onRetryDetails}
-            />
-          ) : (
-            <SectionViewBody
-              document={document}
-              review={review}
-              section={section.id}
-              shown={value}
-              views={views}
-              context={context}
-            />
-          )}
-        </div>
-      ))}
+      {side ? (
+        <SectionSplit
+          overview={overview}
+          views={views}
+          side={side}
+          tablist={tablist}
+          select={select}
+          body={viewBody}
+        />
+      ) : (
+        <>
+          <SectionViewTabs
+            tablist={tablist}
+            value={shown}
+            counts={views.counts}
+            onChange={select}
+          />
+          {SECTION_VIEWS.map(({ value }) => (
+            <div
+              key={value}
+              {...tabPanelProps(tablist, value, value === shown)}
+              className="min-w-0"
+            >
+              {value !== shown ? null : value === "overview" ? overview : viewBody(value)}
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
+}
+
+/** The section's width (in rem) from which its Overview and its other views
+ *  stand side by side, each column about as wide as a diff reads well. */
+const SPLIT_REM = 64;
+
+/** Whether the section is wide enough for its two columns, measured on the
+ *  section itself so the rail, the session panel and the window all count. */
+function useWideSection(root: RefObject<HTMLElement | null>) {
+  const [wide, setWide] = useState(false);
+  // Before the first paint, so a wide section never shows stacked first.
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const rem =
+        Number.parseFloat(getComputedStyle(element.ownerDocument.documentElement).fontSize) || 16;
+      setWide(element.clientWidth >= SPLIT_REM * rem);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [root]);
+  return wide;
 }
 
 /** A section's Overview: its frame (the gist, then its risks last) around the
@@ -360,7 +412,11 @@ function BodyBlock({
 }
 
 /** One line of a points block. With a detail or cited files it is a button:
- *  it opens (the caret turns) to show the detail and the files it rests on. */
+ *  it opens (the caret turns) to show the detail and the files it rests on.
+ *  Each line is a block of its own, so the keys (j and k) go through them one
+ *  by one rather than over the whole list, and Enter or Space opens the one
+ *  they are on. Opening it beside a wide section's side column also shows
+ *  there the first file it cites that the section draws. */
 function PointRow({
   id,
   point,
@@ -373,14 +429,36 @@ function PointRow({
   const [open, setOpen] = useState(false);
   const openable = Boolean(point.more) || point.cites.length > 0;
   const panel = `${id}-more`;
+  const reveal = useSideReveal();
+  const toggle = () => {
+    setOpen(!open);
+    if (open || !reveal) return;
+    for (const anchor of point.cites) {
+      const file = anchorFile(document, anchor);
+      if (file && reveal(file.path, file.line)) return;
+    }
+  };
   return (
-    <li id={id} data-point="" className="scroll-mt-4 border-b border-subtle target:bg-surface-wash">
+    <li
+      id={id}
+      data-point=""
+      data-review-block=""
+      className="scroll-mt-4 border-b border-subtle outline-none target:bg-surface-wash data-[review-block-active]:bg-surface-wash"
+      onKeyDown={(event) => {
+        // Only on the row itself, where the keys leave the focus: the
+        // button and the chips inside handle their own.
+        if (!openable || event.target !== event.currentTarget) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        toggle();
+      }}
+    >
       {openable ? (
         <button
           type="button"
           aria-expanded={open}
           aria-controls={panel}
-          onClick={() => setOpen((shown) => !shown)}
+          onClick={toggle}
           className={cn(
             "grid w-full cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-baseline gap-3 rounded-sm px-1 py-2.5 text-left text-base text-primary hover:bg-surface-hover",
             FOCUS_RING,

@@ -16,10 +16,11 @@
 # the architecture), the Go standard library, the npm packages compiled into
 # the embedded bundles (third_party/js.txt, written by
 # viewer/scripts/third-party-notices.mjs), the fonts embedded with them
-# (Instrument Sans and Manrope) and, for the desktop app, the Rust
-# crates (third_party/rust.txt, written by desktop/scripts/third-party-notices.sh).
-# THIRD_PARTY_NOTICES.txt is for the command-line archives; the desktop app
-# ships desktop/THIRD_PARTY_NOTICES.txt, which adds the Rust crates.
+# (Instrument Sans and Manrope) and, for the desktop app, Electron and the npm
+# packages the app ships (third_party/electron.txt, written by
+# desktop/scripts/third-party-notices.sh). THIRD_PARTY_NOTICES.txt is for the
+# command-line archives; the desktop app ships desktop/THIRD_PARTY_NOTICES.txt,
+# which adds Electron's part.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -100,7 +101,7 @@ Contents
   3. Instrument Sans and Manrope fonts (embedded in the viewer and local application)
 HEADER
     if [ "${2:-}" = desktop ]; then
-      echo "  4. Rust crates (compiled into the desktop app)"
+      echo "  4. Electron and npm packages (the desktop app)"
     fi
     echo
     echo "$rule"
@@ -131,10 +132,10 @@ HEADER
     if [ "${2:-}" = desktop ]; then
       echo
       echo "$rule"
-      echo "4. Rust crates"
+      echo "4. Electron and npm packages"
       echo "$rule"
       echo
-      cat third_party/rust.txt
+      cat third_party/electron.txt
     fi
   } >"$1"
 }

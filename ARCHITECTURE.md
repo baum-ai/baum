@@ -642,7 +642,11 @@ has two parts.
   `overview`, `change`, `risks`, `evidence`, `intent`, `decisions`,
   `context`, `media`, `everything_else`, `prose`, `table`, `diagram` and
   `code` (`tiles.Builtins` gives each a title, a use-when line and whether a
-  document has at most one). A single tile's ID is its
+  document has at most one). These are the v1 composition types; the types
+  the review page draws and chat's `add_tile` takes are `flow`, `columns`,
+  `sequence`, `table`, `code` and `images`. A custom type may have none of
+  these names, nor a library type's, nor `custom` (`tilelibrary.ReservedNames`, which the tile
+  guide lists, kept equal by a test). A single tile's ID is its
   type, and a change tile's ID is its change's, which is its section's, so
   comments, chat tools, recommendation and risk score references, agent
   findings and details retries that name a section name its tile. A
@@ -1481,7 +1485,10 @@ message, line?, column?, blocked?}` (`script_error`, `unhandled_rejection`,
 An `init` with `check` (sent only by the render check's runner) settles on
 the frame's fonts and a message turn instead of two animation frames, since
 a hidden window runs none, and the runner may then send `measure`, which a
-detail answers with a `resize` of its height, changed or not.
+detail answers with a `resize` of its height, changed or not. The runner
+may also send `ping` to a frame that has not said `hello`; the bootstrap
+answers `pong` from its message listener, which a frame whose script never
+yields cannot run.
 The optional `tokens` (`{"--token": "colour"}`) are a custom colour theme's
 overrides: the bootstrap sets each on the frame's root element and a later
 `theme` message replaces them (tokens it omits are removed, so omitting
@@ -1603,8 +1610,10 @@ written (`pending`) is drawn as built-in ones are, without a frame.
   to 20,000px and passes `HeightGuard`, which freezes it after ten growths
   by one amount within a second or six changes of direction within two
   seconds; at most one height is applied an animation frame. A detail
-  reserves its last height (240px the first time) so reopening it does not
-  move the page; the frame stays invisible until `ready`.
+  reserves its last height on that pull request, kept in the browser's
+  local storage for the latest 200 tiles (240px the first time), so
+  reopening it, or the review, does not move the page; the frame stays
+  invisible until `ready`, and its box shows faint skeleton lines meanwhile.
 - **The keyboard.** A frame holds the keyboard only when the reader gave
   it: a glance never (it is under its card's link with `tabindex=-1`); a
   detail when a Tab lands on its element (its `focus` event within 300ms of
@@ -1726,7 +1735,9 @@ definition was not valid; an expired or unknown ID is refused as unknown.
   /api/tile-checks/{id}/alive` every 2 s and as frames finish (`Alive`). A
   claimed job with neither a report nor a sign of life for 10 s, or still
   running 10 s plus 3 s per frame of its matrix after it was claimed, is
-  `hang`: the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
+  `hang`, and so is a job whose report holds a `hang` problem (a frame the
+  runner found unresponsive while its own page ran on, below; a runner
+  could get the same by going quiet): the daemon marks the digest hung (`tileframes.Registry.MarkHung`,
   until it restarts), publishes `hung`, and announces each check still
   waiting as `queued` again, so a page that closed a hung runner brings one
   back. A candidate whose digest is already hung answers `hang` at once. A
@@ -1758,8 +1769,16 @@ and protocol, in a `position: fixed` container inside the viewport at
 `opacity: 0`, at most 8 at a time: the data (when given), each sample,
 `minimal` and `maximal`, as glances at each declared size in the guide's
 boxes (third 310×164, half 488×180, full 1022×116) and details at 720 and
-360px, and the data also in the dark theme. It reports `no_hello` (5 s),
-`timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
+360px, and the data also in the dark theme. A frame with no `hello` after
+5 s is sent a `ping`: one that answers `pong` within 2 s, or whose document
+loaded (no kit in it), is `no_hello`; one that does neither is stuck in a
+script that never yields and is `hang`, after which the runner starts no
+more frames and reports. Where the engine draws sandboxed frames in a
+process of their own (Chromium, so the Electron shell's check window and
+Chrome) that loop leaves the runner's page running, its heartbeat
+included, so only this probe catches it; where frames share the page's
+process (WebKit) the whole page stalls and the daemon's hang timer does. It
+also reports `timeout` (5 s after `init`, or the kit's own at 3 s), the kit's errors,
 `render_failed`, `empty`, `overflow_glance`, `overflow_x`,
 `unresolved_citation` and `slow` from the ready metrics, and `layout_loop`
 when a detail set to the height it asks for keeps growing by the same
@@ -1772,15 +1791,15 @@ itself rather than through `TileFrame`, which mounts on an
 IntersectionObserver and follows heights by animation frame.
 
 Where it runs: when the desktop shell declares
-`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one,
-currently Linux), the main page calls
+`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one:
+the Electron shell, and the Tauri shell on Linux), the main page calls
 the shell's `open_check_window` on a queued check, which loads
-`?page=tile-check` in a hidden window with its own web process, and
+`?page=tile-check` in a hidden window with its own renderer process, and
 `close_check_window` on `hung` (ending that process and the loop with it) or
 after 2 minutes without a check; the shell's commands are sent one after
 another, so the `queued` the daemon announces again for waiting checks after
 a hang reopens the window. Anywhere else frames are allowed (a
-browser, the macOS shell) the main page draws queued checks inside itself,
+browser, the Tauri shell on macOS) the main page draws queued checks inside itself,
 where a hang freezes the page until the daemon gives up on the job. A shell
 that allows no frames draws nothing, and checks are `unavailable`.
 
@@ -2059,7 +2078,7 @@ them.
 
 `baum.review/2` is the desktop app's review document, shaped like its page:
 the overview (summary text, verdict, why the risk is what it is,
-screenshots, the main diagram, intent), the sections (outline, level and its
+screenshots, videos, the main diagram, intent), the sections (outline, level and its
 reasons, body, risks), where the change fits (`context`) and the
 tiles, each owned by `overview`, `context` or a section. Its Go types are
 `reviewv2.Document` (`oss/reviewv2/document.go`); every field says which
@@ -2123,22 +2142,22 @@ sentences and 320 characters, the area required), `CheckTile` (title within
 `view.CheckNative`, a code tile's hunk and lines on its new side) and
 `CheckOverview` (summary text, verdict line within 120 and at most three
 points within 200, `risk_why` within two sentences and 260 characters,
-screenshots and intent that the pull request has, a main diagram that is a
-tile). Every model text is refused the word "evidence" and hunk IDs, and
+screenshots and intent that the pull request has, videos that are its
+video clips, a main diagram that is a tile). Every model text is refused the word "evidence" and hunk IDs, and
 every citation must resolve (`Refs`: the bundle's hunks with their lines,
-files, linked sessions' prompts and events, attachments, checks and
-threads; `RefsOf` a bundle, `RefsOfIndex` a document's index).
+files, linked sessions' prompts and events, attachments and which of
+them are clips, checks and threads; `RefsOf` a bundle, `RefsOfIndex` a document's index).
 `CheckDocument` runs the schema and every level.
 
 **Completion.** `reviewv2.Complete` turns what the levels wrote into the
-stored document without a model: the header, index and stats from the
-bundle and the risk score (rubric `risk-v1`: the highest section level,
-mechanical sections 1, floors of 4 and 5 for active high and critical risks,
-a lower bound when a section's details failed) and each section's derived
-facts (state against the previous version's section of the same ID by hunk
-hashes, line counts, reviewers, review score) through
-`review.HostParts`, which runs `baum.review/1`'s completion code; the
-reading time (`ReviewMinutes`: the prose's words at 400 a minute,
+stored document without a model: the header, index and stats from the bundle
+and the risk score (rubric `risk-v1`: the highest section level, mechanical
+sections 1, floors of 4 and 5 for active high and critical risks, a lower
+bound when a section's details failed) and each section's derived facts
+(state against the previous version's section of the same ID, or the one a
+renamed section continues, by hunk hashes, line counts, reviewers, review
+score) through `review.HostParts`, which runs `baum.review/1`'s completion
+code; the reading time (`ReviewMinutes`: the prose's words at 400 a minute,
 `review.MinutesForWords`); the risks' history as `baum.review/1`'s (a risk
 keeps the version it was introduced in, a previous risk a section no longer
 names is mitigated in this version unless the section's details are pending
@@ -2147,20 +2166,59 @@ lines) from the diff; and every tile's state. A previous version of either
 schema is read through `reviewv2.Read`. A completed document always has a
 `generation` record; a converted one never does.
 
-**Conversion.** `reviewv2.FromV1` converts a stored `baum.review/1`
-version and its view composition: the header, stats, index, risk score and
-reading time are kept, the recommendation becomes the verdict without
-points, context parts become the context (their references the files),
-each current section keeps its risks, its assessment becomes its level and
-reasons, its summary and behaviour steps its body (`BodyOf`, with a tile block
-for each tile it owns) and the first sentence of its summary its gist; the composition's overview parts and tiles become the
-overview and the tiles, owned where the review page placed them.
+**Conversion.** `reviewv2.FromV1` converts a stored `baum.review/1` version
+and its view composition: the header, stats, index, risk score and reading
+time are kept, the recommendation becomes the verdict without points,
+context parts become the context (their references the files), each current
+section keeps its risks, its assessment becomes its level and reasons, its
+summary and behaviour steps its body (`BodyOf`, with a tile block for each
+tile it owns) and the first sentence of its summary its gist; the
+composition's overview parts and tiles become the overview and the tiles,
+owned where the review page placed them.
 
-**Reuse.** `reviewv2.ReusableSections` gives the previous version's
-sections a new map keeps with the same hunks, their body and
-active risks and their ready tiles, so the orchestration writes them
-without a call. `reviewv2.Substrate` is the tile document a
-`baum.review/2` document's library and added tiles are checked against.
+**Reuse.** `reviewv2.ReusableSections` gives the previous version's sections
+a new map keeps with the same hunks, their body and active risks and their
+ready tiles, so the orchestration writes them without a call.
+`reviewv2.RevisableSections` gives the logical sections a new map keeps
+under the same ID over other hunks, with a complete body, of a previous
+`baum.review/2` version (a converted `baum.review/1` one gives none): their
+previous body and active risks, their ready tiles, and each hunk unchanged,
+new, joined (in another previous section), moved (to another section now) or
+gone (with its path and range in the previous index). A section the new map
+gives an ID the previous version did not have is revised the same way from
+the previous logical section with a complete text whose code it clearly has
+and whose ID the new map no longer has (`RenamedSections`): they share a
+hunk, or a hunk new to this diff overlaps the lines of one of the previous
+section's hunks gone from it on the same path (an edit), or the one file of
+both is the same, one of the previous section's hunks on it is gone and a
+hunk of the new section on it is new; a shared path alone is not enough. The
+overlap is a heuristic: each version numbers lines in its own new file, so
+code added above a hunk shifts it. The pairs with the most shared hunks,
+then overlapping hunks, then shared paths are taken first, in map order on
+ties, and a section on either side is in at most one pair. A renamed section
+over exactly its previous section's hunks is reused (`ReusableSections`, its
+tiles now its own), not revised. A previous section without a complete text
+is never continued: its code is joined. A revised section's agent revises
+that text (see "Tiles in the pipeline"). `reviewv2.JoinedSections` gives,
+for every logical section of the new map, a new ID's too, the hunks it takes
+over from other previous sections and the active risks handed over with
+them; `FixedRiskIDs` the IDs of risks mitigated and nowhere active. A risk
+is handed over with its code (`HandedOver`): it cites a hunk the receiving
+section has and every hunk it cites has left its old section; when its hunks
+split, only the section that has the first of them gets it. `Complete`
+follows the same rule: a previous risk that that section names under its ID,
+citing a hunk it cited, is dropped from its old section (even where that
+section still names it) and keeps its introduced version. Risk IDs are
+unique only within a section: when the receiving section had a mitigated
+risk of that ID (which its agent is not shown), the handed-over risk takes
+the next `<id>_N` no previous risk had, so each keeps its own history. A
+renamed section
+is its previous section for both: that section's code is not joined, and its
+risks are reconciled under the new ID (named ones keep their history, the
+rest are mitigated there). Any other risk of the same ID elsewhere is a new
+risk, and the old one is mitigated where it was. `reviewv2.Substrate` is the
+tile document a `baum.review/2` document's library and added tiles are
+checked against.
 
 **Storage and serving.** A version's document is either schema; the store's
 summaries read the same paths of both, and a `baum.review/2` version carries
@@ -2533,10 +2591,10 @@ group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
 
 A tile review takes its instructions through `ReviewV2Prompts`; the module's
-`prompt.V2Prompts` (`review-v2-public-v1`) embeds the shared text and one
-text per level (`review-map-v1.md`, `review-section-v1.md`,
+`prompt.V2Prompts` (`review-v2-public-v2`) embeds the shared text and one
+text per level (`review-map-v1.md`, `review-section-v2.md`,
 `review-context-v2.md`, `review-tile-v1.md` with a part per native type, and
-`review-overview-v1.md`). A library tile's fill opens with
+`review-overview-v2.md`). A library tile's fill opens with
 `review-tiles-fill-public-v1.md` (`prompt.TilesPrompts`, version
 `review-tiles-public-v1`), which is built in and not replaceable.
 
@@ -2835,13 +2893,75 @@ the levels of `agent/orchestrate` instead of the staged review:
    `generate.Tiles`). Only a map that fails after its repair fails the run.
 2. **Sections and context.** One section agent per logical section and the
    context agent run at once. A section whose hunks are unchanged since the
-   previous `baum.review/2` version keeps its text and tiles without a call.
-3. **Tiles.** Each planned tile is drawn by a call of its own as soon as
-   its owner is written. Native types share the tile prompt; a dedicated type
-   goes through the library's fill (`agent.Generator.FillTile`); a code tile
-   is filled by the host. The types the person added or pinned
-   (`generate.Tiles.Always`) get a tile whatever the map plans.
-4. **The overview**, by resuming the map's session.
+   previous version, under its ID or renamed, keeps its text and tiles
+   without a call; a kept tile whose type is no longer offered with the
+   definition it was filled with stays under its ID and brief, pending, and
+   is filled again. A section under another ID over exactly the previous
+   section's hunks is reused, not revised (`reviewv2.ReusableSections`). A
+   logical section the previous version wrote under the same ID over other
+   hunks, or under another ID over code that is edited or only partly the
+   same (`reviewv2.RenamedSections`; the input then names the section it
+   continues), is revised: its input adds, as model-written data, the
+   previous body and active risks, each point, risk and prose or note block
+   marked with whether the code it rests on changed (`code`: `changed` when
+   a hunk it cites is gone, with the gone hunks; a block without cites rests
+   on the section's code as a whole), the IDs of risks fixed earlier, each
+   hunk's status (unchanged, new, joined from another previous section,
+   moved to another section, or gone, with where it was) and the risks
+   handed over with joined hunks. Any other section that takes over code
+   from a previous section, a new ID's included, gets a shorter block: the
+   joined hunks, the risks handed over with them and the fixed IDs. A reply
+   risk that takes a fixed ID is sent back, or renamed (`_2`, `_3`, …) on
+   the last pass. The agent keeps what still holds word for word and changes
+   only what the new code changes, or answers `keep`, and the host takes the
+   previous body and risks (their IDs, so the risks' history carries). A
+   keep is accepted only when the change adds code and nothing else (some
+   hunk unchanged, none moved or gone, no risk handed over with joined code)
+   and the previous text cites only the section's hunks now; otherwise it is
+   sent back and the agent writes the section. A written revision that
+   repeats a previous point or risk word for word (whitespace aside) whose
+   cited hunks included a gone one, whatever it cites now, is sent back once
+   with one finding listing them: its words may still match while its
+   meaning changed (a deadline that became an idle timeout). Prose and note
+   blocks cite nothing, so they are only marked in the input, not checked.
+   The check runs on strict passes until it has sent the section back once;
+   the same text on a later pass, or on the lenient last pass, is taken as
+   checked. Its tile blocks place only the section's tiles now. The
+   section's call record says `ran`, with the reason that it revised or kept
+   the previous text, and the level counts kept and revised sections
+   (replay's `v2_sections_kept`, `v2_sections_revised`). `Run.NoReuse` turns
+   off reuse and revision alike.
+3. **Tiles.** Each planned tile is drawn by a call of its own as soon as its
+   owner is written. In a revised or kept section, a tile the map plans
+   again is kept from the previous version without a call (`reused`) when
+   the previous section drew it ready under the same ID and type, every hunk
+   it cited is still in the pull request, its brief and the hunks the brief
+   cites, after the section agent's answer, are the same, and its type's
+   definition is the one it was filled with (a library or saved type's
+   digest; a native type is drawn by the page's own code and counts as
+   unchanged). A native tile is drawn beside its section's text, so it is
+   kept only when the section kept its text; a rewritten section's is drawn
+   again. A code tile, a tile that cites no hunk and a tile the person added
+   are never kept: they are drawn again (`keepTiles`, `unchangedTile`,
+   `readyTiles`). Otherwise a tile is drawn again, and a tile the section
+   drops is neither kept nor drawn. Native types share the tile prompt; a
+   dedicated type goes through the library's fill
+   (`agent.Generator.FillTile`); a code tile is filled by the host. The
+   types the person added or pinned (`generate.Tiles.Always`) get a tile
+   whatever the map plans.
+4. **The overview**, by resuming the map's session (or in a fresh call
+   with the map in its input). After a `baum.review/2` version, and unless
+   `Run.NoReuse`, its input adds that version's overview as model-written
+   data: the title and change kind then, the summary, the verdict (its
+   decision, text and points), why the risk is what it is and the intent
+   lines. The agent keeps what still holds word for word and changes what
+   the sections now say differently, naming changed behaviour in the
+   code's own terms; the verdict follows the current
+   sections and risks, and never keeps a point about a mitigated risk or a
+   section that no longer exists. A point that names a section the
+   document does not have is sent back; the last pass drops the name. The
+   shared ground rules count the previous version's map, section text and
+   overview as model-written data.
 
 A section, the context, a tile or the overview that fails never fails the
 run. The run's call and token budgets and its time limit are split between
@@ -4094,7 +4214,14 @@ A desktop generation job uses `internal/generate` to:
    clips the description uploads are captured the same way, under their own
    limits (`bundle.MaxVideos`, 3, of at most `bundle.MaxVideoBytes`, 100 MiB,
    each; over them a clip is `over_limit` or `too_large`); the agent does not
-   open them and places one by its alt text and heading. After session
+   open them and places one by its alt text, heading and context. Each
+   attachment's `context` is the description text around it within its
+   heading's section, outside code fences and comments: up to 160 bytes of
+   the lines before and after its own and 80 on each side of it on its line,
+   cut only at whitespace, with the
+   attachment itself as `[this]` and other media as `[media]`. `bundle.Redact`
+   builds it from the redacted body, so a cut never parts a secret from the
+   text that marks it as one, and it is capped like the alt text. After session
    linkage and count caps, native Claude Code and Codex transcripts also supply
    retained inline pasted and tool-result images through `sessions/sessionimages`.
    Only readable linked roots and reachable subagents contribute; Entire
@@ -7171,10 +7298,11 @@ it), why a pull request's conversation got an empty directory instead
 the pages it was opened and sent from (at most 20, no repeat in a row), its
 title (the first message's first line, at most 80 characters), created and
 updated times, state (`idle`, `running`, `failed` or `closed`), why the last
-turn failed or stopped, and the cost of its priced turns (`cost_partial` when
+turn failed or stopped, the cost of its priced turns (`cost_partial` when
 a turn that started a session could not be priced, so the cost is a lower
-bound). Columns added later are added as the other relational stores add
-theirs (`created_branch` and `directory_note` already are). When
+bound) and when it was archived (`archived`, 0 while it is not). Columns added
+later are added as the other relational stores add theirs (`created_branch`,
+`directory_note` and `archived` already are). When
 the service opens, a conversation a stopped daemon left `running` becomes
 `failed` with the reason that baum stopped while the agent answered.
 
@@ -7218,6 +7346,37 @@ links were resolved when the conversation was indexed). A conversation in a
 pull request worktree, the person's or one baum added, is claimed by session
 id only: the worktree is a checkout the person works in too, and stays after
 the conversation closes, so their own sessions there stay theirs.
+
+`Archive` closes a conversation (as `Close` does), removes what baum made for
+it and marks it archived, so the list leaves it out; it can still be read by
+id. The agent's own session, in its agent's session store, is never touched.
+What goes: the conversation's empty directory, `sessions/<id>`; or a worktree
+baum added under `worktrees/<id>/` (whichever conversation added it), removed
+with `git worktree remove --force --force` in the registered clone that lists
+it (or, when git fails or no registered clone lists it, by removing the
+directory and then that worktree's own bookkeeping entry, never with
+`git worktree prune`, which would drop the person's worktrees on a drive not
+mounted now), together with its branch when the conversation that added it
+also created that branch (`git branch -D`). A worktree that was already the
+person's, a branch baum did not create and a worktree another conversation
+that is not archived works in (paths compared resolved) all stay; the last
+of those conversations to be archived removes it. Removing would lose work
+when the empty directory holds files, the worktree has changed, staged or
+untracked paths (`git status`, ignored files left out, never read from a
+repository above the worktree: `GIT_CEILING_DIRECTORIES`), its HEAD has
+commits no branch, tag, remote-tracking ref or `refs/baum/` ref has (made on
+a detached HEAD), the branch to be deleted has commits that no
+remote-tracking ref and no `refs/baum/` ref has, or any of that cannot be
+read: then `Archive` refuses (`UncleanError`, saying what and naming up to 20
+paths) and removes nothing, until it is asked again with `discard`. A
+conversation that is not running is checked before it is closed, so a
+refusal leaves it open for its agent to commit or push the work; it is closed
+once the archive goes ahead, and checked again then, in case a turn wrote
+more. A running one is closed first (the app asks), since its agent may still
+be writing. Archives and placements on one repository take turns, and
+`Create` holds the repository's turn until its conversation is saved, so a
+placement never picks a worktree being removed and an archive always sees a
+conversation placed in its worktree.
 
 Each conversation holds one `chat` MCP token, minted by the MCP server's
 `Registry` when it is created or, after a restart, on its next turn, bound
@@ -7263,7 +7422,7 @@ server; what its commands and hooks inherit follows the person's own
 
 Progress is published as `console` events, `{"conversation","kind","state"}`
 with the kind `created`, `state`, `session` (the agent named its session),
-`text` (at most once a second per conversation while the answer grows, since
+`archived`, `text` (at most once a second per conversation while the answer grows, since
 the event stream replays only its last 128 events), `finished` (with
 `cost_usd` when the turn could be priced) or `proposals` (the conversation's
 open proposals changed, from `Proposals.OnChange`: one was proposed, saved,
@@ -7301,7 +7460,8 @@ every other route; an empty body is accepted where a route takes none.
 Errors are `{"code","message"}`: 400 `invalid_request` or `invalid_page` (a
 page the MCP server would refuse), 404 `conversation_not_found` or
 `proposal_not_found`, 409 `busy`, `closed`, `not_current_page`, `stale`,
-`not_offered` or `conversation_closed`, 400 `wrong_kind` (confirming a change
+`not_offered`, `conversation_closed` or `unclean_directory` (with `unclean`:
+`changed`, `paths`, `branch`, `unpushed`, `unreadable`, `worktree`), 400 `wrong_kind` (confirming a change
 or saving an operation), 422 `refused` (the page's own refusal of a saved
 value or the operation route's), 503 `shutting_down`. A body over the bound
 (the message's 64 KiB and 64 KiB more) is 400 `invalid_request`, as the other
@@ -7312,13 +7472,14 @@ routes answer as the local API does for a capability it lacks: a read with
 
 | Route | Does |
 | --- | --- |
-| `GET /api/console/conversations` | `{"conversations":[...]}`, newest first: `id`, `title`, `agent`, `model`, `mode`, `state`, `directory`, `directory_note`, `repository`, `pull_request`, `updated_at` and `session` (`agent:id`, once known) |
+| `GET /api/console/conversations` | `{"conversations":[...]}`, newest first, archived ones left out: `id`, `title`, `agent`, `model`, `mode`, `state`, `directory`, `directory_note`, `repository`, `pull_request`, `updated_at` and `session` (`agent:id`, once known) |
 | `POST /api/console/conversations` | opens one from `{"agent","model","mode","page"}`, each optional (the panel's setting); 201 with the conversation |
 | `GET /api/console/conversations/{id}` | every field of the conversation, its pages included, `session_key`, and `progress` (the running or last turn since the daemon started: `text`, `message`, `tool`, `session`, `state`, `cost_usd`) or null |
 | `GET /api/console/conversations/{id}/transcript` | the transcript of the session the conversation's agent reported, answered as `GET /api/live-sessions/{agent}/{id}/transcript` is (`?version=` included), read with `Transcripts.Read`: found by that session id in the agent's own session store, whether or not the tracker still lists it; nothing in the request names the file. Before the agent reported a session, or when its file is gone, `available: false` with why |
 | `POST /api/console/conversations/{id}/messages` | sends `{"text","page"}` (the page optional) as a turn; 202 with the conversation, running |
 | `POST /api/console/conversations/{id}/cancel` | stops the running turn (none running is no error) and answers the conversation |
 | `POST /api/console/conversations/{id}/close` | closes it: stops its turn, revokes its token, drops its proposals |
+| `POST /api/console/conversations/{id}/archive` | closes it and removes what baum made for it (`Archive`); `{"discard":true}` removes it even when that loses work, which is otherwise 409 `unclean_directory`; answers the conversation with `archived_at` |
 | `PUT /api/console/page` | the page context the person has open (`SetPage`), for every open conversation's token |
 | `GET /api/console/conversations/{id}/proposals` | `{"proposals":[...]}`: each `agentcontext.Proposal` as the MCP server keeps it: `id`, `kind` (`diff` or `operation`), `page`, `target`, a change's `before`, `after` and `revision`, an operation's `operation` (`name`, `request`, `summary` with `action`, `details` and their `quoted`, `multiline` and `by_agent` markers, `model`, `effort`, `paid`, `irreversible`, and the summary's `revision`), and `context`; a colour theme proposal's `after` also carries `contrast_warnings` (the pairs under `themes.MinContrast`, added by the listing alone: the stored proposal is unchanged) |
 | `POST .../proposals/{proposal}/save` | saves a change with `{"value"}`, what the person typed (an agent environment variable's value), never the agent |
@@ -7468,7 +7629,7 @@ random bytes, an opaque consumer id and a revoke function, and refuses any
 consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
 repository and a pull request number. Nothing about tokens is persisted or
 logged. A chat may read any page and propose changes to the page it has
-open (and, from any page, a colour theme or a switch of theme); an action only reads, within its repository: its tools default to its
+open (and, from any page, a colour theme, a switch of theme or a prompt); an action only reads, within its repository: its tools default to its
 pull request and may read the repository's other pull requests. `SetPage(id, PageContext)` records a chat's
 page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
 `jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
@@ -7734,7 +7895,7 @@ bound, like the documents.
 | Tool | Reads |
 | --- | --- |
 | `facts` | `/api/facts` at the head the index shows (the facts, which exist before any review) |
-| `review_outline` | `/api/tiles` (the version as a `baum.review/2` document) or the group's document (`baum.review/1`, converted with `reviewv2.Read`): the overview (title, text, change kind, verdict, `risk_why`, risk score, reading time, screenshots, main diagram, intent) and each section's id, title, kind, gist, scope, level, hunks, files, the ids of the tiles it owns and its `details` state (`pending`, `failed` or absent), never a section's body or risks |
+| `review_outline` | `/api/tiles` (the version as a `baum.review/2` document) or the group's document (`baum.review/1`, converted with `reviewv2.Read`): the overview (title, text, change kind, verdict, `risk_why`, risk score, reading time, screenshots, videos, main diagram, intent) and each section's id, title, kind, gist, scope, level, hunks, files, the ids of the tiles it owns and its `details` state (`pending`, `failed` or absent), never a section's body or risks |
 | `review_section` | one section by `id`: its outline, level reasons, body (prose, points with their detail and citations, notes, and the tiles it places by id) and risks with their citations, and its tiles (id, type, title, caption, state, never their data), or for a `failed` or `pending` section its outline and that state in words |
 | `review_context` | the document's `context`, or that it is absent, or failed (from the job's `context_failed`) |
 | `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft?tiles=1` (drafts are never stored; a `baum.review/2` document): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
@@ -7899,11 +8060,14 @@ saves it (`Apply`), each given the page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
 one and a page with no proposer, with one exception: `ProposalAnywhere`
 (`"app"`, a sentinel and not a page) is for the two colour theme targets, `theme`
-and `theme_choice`, which are not about the page the person has open. For them
+and `theme_choice`, and the prompts, `prompt/<id>` and `<owner/name>:prompt/<id>`,
+which are not about the page the person has open (a prompt is changed while
+reading the review it wrote). For them
 `Propose` and `Save` skip the same-page check (some page must still be open),
 the proposer is `Options.Proposers["app"]` (the sentinel is never registered as
-a page), `Propose` refuses any target but those two under it and either of them
-under any real page, and the proposer resolves those two alone; it reads the target's value and revision
+a page), `Propose` refuses any other target under it and any of them
+under any real page, and the proposer resolves those alone. A new theme
+proposal replaces the open theme proposals; a prompt proposal replaces none; it reads the target's value and revision
 itself, ignoring the agent's revision, refuses with the bare
 `ErrNotRecorded` a `Before` the agent sent that no longer matches, and
 records the proposal; nothing changes. A tool gets only a `Receipt` (id,
@@ -7965,9 +8129,9 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | `settings` (`computer`) | `propose_job_concurrency` | `job_concurrency` | `PUT /api/settings/job-concurrency`, then the queue's concurrency |
 | `settings` (`computer`) | `propose_codex_approvals` | `codex_approvals` | `PUT /api/agent-requests/settings` (`agentrequests.Store.SetSettingsIf`) |
 | `settings` (`computer`) | `propose_agent_env` | `agent_env/<NAME>` | `PUT /api/settings/agent-env` of the environment in force with the name added (the value from `SaveInput`) or removed |
-| `settings` (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `prompt/<id>` | `PUT /api/settings/prompts/{id}` |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_prompt`, `propose_prompt_reset`, common tools listed on every page (and named in the Prompts sections' tools) | `prompt/<id>`, the global prompt, when no `repository` is given (on a repository's page, that repository's) | `PUT /api/settings/prompts/{id}`. Its "before" is `{text, inherited_text}`: the scope's own text (null when not customised) and the text without it (the valid global text for a repository, else the built-in), which the app diffs the proposal against |
+| any (`app`, the `ProposalAnywhere` sentinel) | `propose_prompt`, `propose_prompt_reset` with `repository` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}`; refused for a repository baum does not watch |
 | `repositories` with a repository (`reviews`) | `propose_repository_settings` | `<owner/name>:settings` | `PUT /api/repositories/{owner}/{name}/settings`, the field left out kept |
-| `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
 | `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
 | `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
 | `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | Save appends the comment through `uistate.Store.Replace`, as `PUT /api/ui-state/review?key=` saves the pending review; other comments, note and sent reviews are kept. The panel reloads that record after Save. Nothing is sent to GitHub. |

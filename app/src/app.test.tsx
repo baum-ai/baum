@@ -762,7 +762,7 @@ it("shows failed background refresh without hiding cached reviews", async () => 
           Response.json([
             {
               repository: "acme/demo",
-              error: "metadata_unavailable",
+              error: "discovery_unavailable",
               next_refresh: "2026-10-15T12:01:00Z",
             },
           ]),
@@ -804,6 +804,36 @@ it("folds every repository GitHub could not refresh into one notice with one act
   expect(notices[0]!.textContent).toContain("could not refresh 2 repositories from GitHub");
   expect(notices[0]!.querySelector("a")!.textContent).toBe("Open settings");
   expect(notices[0]!.querySelector("a")!.getAttribute("href")).toContain("page=settings");
+});
+
+it("leaves one pull request's failed read out of the refresh notice", async () => {
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/background"
+      ? Promise.resolve(
+          Response.json([
+            {
+              repository: "acme/demo",
+              error: "metadata_unavailable",
+              next_refresh: "2026-10-15T12:01:00Z",
+            },
+          ]),
+        )
+      : String(args[0]) === "/s/test-ns/api/github-auth"
+        ? Promise.resolve(
+            Response.json({
+              state: "connected",
+              host: "github.com",
+              saved: true,
+              login: "octocat",
+              override: false,
+            }),
+          )
+        : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).not.toContain("could not refresh");
 });
 
 const diagnosticsReport = {
@@ -2566,54 +2596,57 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
 });
 
-it("marks signed-out agents in desktop Settings and says how to sign in", async () => {
-  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
-  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
-  stubAutomatic();
-  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
-  const view = {
-    first_run: false,
-    command: {
-      installed: true,
-      target: "/app/baum",
-      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
-    },
-    hooks: {
-      agents: [
-        { ...agent, agent: "codex", name: "Codex", signed_in: false },
-        { ...agent, agent: "claude-code", name: "Claude Code", signed_in: true },
-      ],
-    },
-  };
-  const invoke = vi.fn(async (command: string) =>
-    command === "setup_state" ? view : { ok: true, lines: [] },
-  );
-  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
-  try {
-    await act(async () => root.render(<App />));
-    const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
-    const select = node.querySelector<HTMLSelectElement>("#review-agent")!;
-    expect([...select.options].map((o) => o.textContent)).toEqual([
-      "Claude Code",
-      "Codex (not signed in)",
-    ]);
-    expect(reviews().querySelector(".settings-caution")).toBeNull();
-    await choose(select, "codex");
-    expect(reviews().textContent).toContain(
-      "Codex isn't signed in, so reviews will fail. Run codex login in a terminal.",
+it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
+  "marks signed-out agents in desktop Settings (%s) and says how to sign in",
+  async (global) => {
+    history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+    stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+    stubAutomatic();
+    const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+    const view = {
+      first_run: false,
+      command: {
+        installed: true,
+        target: "/app/baum",
+        plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+      },
+      hooks: {
+        agents: [
+          { ...agent, agent: "codex", name: "Codex", signed_in: false },
+          { ...agent, agent: "claude-code", name: "Claude Code", signed_in: true },
+        ],
+      },
+    };
+    const invoke = vi.fn(async (command: string) =>
+      command === "setup_state" ? view : { ok: true, lines: [] },
     );
-    // A fix agent of its own gets the same warning.
-    await act(async () =>
-      node.querySelector<HTMLButtonElement>('button[data-section="fixes"]')!.click(),
-    );
-    const fixes = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
-    expect(fixes().querySelector(".settings-caution")).toBeNull();
-    await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
-    expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
-  } finally {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
-  }
-});
+    Object.defineProperty(window, global, { configurable: true, value: { invoke } });
+    try {
+      await act(async () => root.render(<App />));
+      const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+      const select = node.querySelector<HTMLSelectElement>("#review-agent")!;
+      expect([...select.options].map((o) => o.textContent)).toEqual([
+        "Claude Code",
+        "Codex (not signed in)",
+      ]);
+      expect(reviews().querySelector(".settings-caution")).toBeNull();
+      await choose(select, "codex");
+      expect(reviews().textContent).toContain(
+        "Codex isn't signed in, so reviews will fail. Run codex login in a terminal.",
+      );
+      // A fix agent of its own gets the same warning.
+      await act(async () =>
+        node.querySelector<HTMLButtonElement>('button[data-section="fixes"]')!.click(),
+      );
+      const fixes = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
+      expect(fixes().querySelector(".settings-caution")).toBeNull();
+      await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
+      expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
+    } finally {
+      Reflect.deleteProperty(window, global);
+    }
+  },
+);
 
 it("manages CLI and hooks inline in desktop Settings", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");

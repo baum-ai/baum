@@ -289,7 +289,7 @@ func TestReusableSections(t *testing.T) {
 	next.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000003"}
 	next.Sections[0].Hunks = []string{"h_a00000000001"}
 	next.Sections[2].Title = "Lock file"
-	reused := ReusableSections(first, next.Sections)
+	reused := ReusableSections(first, next.Sections, current(t))
 	if len(reused) != 1 {
 		t.Fatalf("reused = %v", reused)
 	}
@@ -297,10 +297,98 @@ func TestReusableSections(t *testing.T) {
 	if !ok || r.Section.Title != "Lock file" || len(r.Section.Body) == 0 || r.Section.Derived != nil {
 		t.Fatalf("reused = %+v", r)
 	}
-	all := ReusableSections(first, authored(t).Sections)
+	all := ReusableSections(first, authored(t).Sections, current(t))
 	policy := all["sec_retry_policy"]
 	if len(policy.Tiles) != 1 || policy.Tiles[0].ID != "tl_wait_code" || len(policy.Section.Risks) != 1 || policy.Section.Risks[0].State != "" {
 		t.Fatalf("policy = %+v", policy)
+	}
+}
+
+// A section under the same ID over other hunks is revised from its previous
+// text: each hunk unchanged, new or gone (with where it was); an unchanged
+// one, a mechanical one and a new ID are not.
+func TestRevisableSections(t *testing.T) {
+	first := encode(t, completeFixture(t, authored(t), 1, nil))
+	next := authored(t)
+	next.Sections[0].Hunks = []string{"h_a00000000001", "h_b00000000009"}
+	next.Sections[2].Hunks = []string{"h_b00000000008"}
+	next.Sections = append(next.Sections, Section{ID: "sec_new", Kind: KindLogical, Hunks: []string{"h_b00000000007"}})
+	revised := RevisableSections(first, next.Sections, current(t))
+	if len(revised) != 1 {
+		t.Fatalf("revised = %v", revised)
+	}
+	r := revised["sec_retry_policy"]
+	if !slices.Equal(r.Unchanged, []string{"h_a00000000001"}) || !slices.Equal(r.New, []string{"h_b00000000009"}) {
+		t.Errorf("hunks: %+v", r)
+	}
+	if len(r.Gone) != 1 || r.Gone[0] != (GoneHunk{ID: "h_a00000000003", Path: "internal/delivery/retry_test.go", Start: 1, Count: 5}) {
+		t.Errorf("gone: %+v", r.Gone)
+	}
+	if len(r.Previous.Body) != 4 || len(r.Previous.Risks) != 1 || r.Previous.Risks[0].ID != "rsk_unbounded_retries" || r.Previous.Risks[0].State != "" || r.Previous.Risks[0].IntroducedVersion != nil {
+		t.Errorf("previous text: %+v", r.Previous)
+	}
+	if got := RevisableSections(first, authored(t).Sections, current(t)); len(got) != 0 {
+		t.Errorf("unchanged sections were revised: %v", got)
+	}
+	if r.Additive() {
+		t.Error("a change with a gone hunk is additive")
+	}
+
+	// A hunk that moves between sections is moved in the one and joined, with
+	// its old section's risks on it, in the other; a change that hands a risk
+	// over is not additive.
+	moved := authored(t)
+	moved.Sections[0].Hunks = []string{"h_a00000000003"}
+	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
+	revised = RevisableSections(first, moved.Sections, current(t))
+	policy, delivery := revised["sec_retry_policy"], revised["sec_delivery_errors"]
+	if !slices.Equal(policy.Moved, []MovedHunk{{ID: "h_a00000000001", To: "sec_delivery_errors"}}) || len(policy.Gone) != 0 || policy.Additive() {
+		t.Errorf("policy: %+v", policy)
+	}
+	if !slices.Equal(delivery.Joined, []JoinedHunk{{ID: "h_a00000000001", From: "sec_retry_policy"}}) || len(delivery.New) != 0 || delivery.Additive() ||
+		len(delivery.JoinedRisks) != 1 || delivery.JoinedRisks[0].From != "sec_retry_policy" || delivery.JoinedRisks[0].Risk.ID != "rsk_unbounded_retries" {
+		t.Errorf("delivery: %+v", delivery)
+	}
+
+	// A baum.review/1 previous version is never revised from.
+	v1 := readFile(t, "v1.review.json")
+	prior, err := Read(v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range prior.Sections {
+		prior.Sections[i].Hunks = append(prior.Sections[i].Hunks, "h_b00000000009")
+	}
+	if got := RevisableSections(v1, prior.Sections, current(t)); len(got) != 0 {
+		t.Errorf("a baum.review/1 version was revised from: %v", got)
+	}
+}
+
+// A risk the new version names in another section than the previous one's
+// is carried there with the version it was introduced in, and not mitigated
+// in its old section.
+func TestRiskMovesBetweenSections(t *testing.T) {
+	first := encode(t, completeFixture(t, authored(t), 1, nil))
+	next := authored(t)
+	next.Sections[0].Hunks = []string{"h_a00000000003"}
+	next.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
+	next.Sections[1].Risks = next.Sections[0].Risks
+	next.Sections[0].Risks = []Risk{}
+	out := completeFixture(t, next, 2, first)
+	seen := 0
+	for _, s := range out.Sections {
+		for _, r := range s.Risks {
+			if r.ID != "rsk_unbounded_retries" {
+				continue
+			}
+			seen++
+			if s.ID != "sec_delivery_errors" || r.State != "active" || r.IntroducedVersion == nil || *r.IntroducedVersion != 1 {
+				t.Errorf("%s: %+v (introduced %v)", s.ID, r, r.IntroducedVersion)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Errorf("the moved risk is in %d sections", seen)
 	}
 }
 
@@ -370,6 +458,10 @@ func TestChecks(t *testing.T) {
 			d.Sections[0].Body[1].Items[0].Cites = []Anchor{HunkAnchor("h_a00000000002", []int{1, 2})}
 			return CheckSection(d.Sections[0], refs)
 		}, "outside the hunk's lines 39 to 44"},
+		{"image as a video", func(d Document) []string {
+			d.Overview.Videos = d.Overview.Screenshots
+			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
+		}, "is not a video clip"},
 		{"unknown prompt", func(d Document) []string {
 			d.Overview.Intent[0].Prompt = 9
 			return CheckOverview(d.Summary, d.Overview, d.Sections, d.Tiles, refs)
@@ -494,5 +586,147 @@ func TestFromV1CarriesNoLibraryTiles(t *testing.T) {
 		if len(tile.Definition) != 0 || tile.Type == tiles.TypeCustom {
 			t.Errorf("tile %s carries a definition", tile.ID)
 		}
+	}
+}
+
+// riskIn is every copy of a risk in a document, by section.
+func riskIn(d Document, id string) map[string]Risk {
+	out := map[string]Risk{}
+	for _, s := range d.Sections {
+		for _, r := range s.Risks {
+			if r.ID == id {
+				out[s.ID] = r
+			}
+		}
+	}
+	return out
+}
+
+// A risk is handed over only with its code: one of the same ID that another
+// section raises on other code is a new risk, and the old one is mitigated
+// where it was; a risk on code that partly stays is not handed over.
+func TestRisksFollowTheirCode(t *testing.T) {
+	first := encode(t, completeFixture(t, authored(t), 1, nil))
+
+	// Collision: the policy section fixes its risk on h1; the delivery
+	// section raises one of the same ID on h2.
+	collide := authored(t)
+	collide.Sections[1].Risks = []Risk{{ID: "rsk_unbounded_retries", Tier: "low", Category: "correctness", Text: "A slow remote holds a worker.", Cites: []Anchor{HunkAnchor("h_a00000000002", nil)}}}
+	collide.Sections[0].Risks = []Risk{}
+	copies := riskIn(completeFixture(t, collide, 2, first), "rsk_unbounded_retries")
+	if old, fresh := copies["sec_retry_policy"], copies["sec_delivery_errors"]; old.State != "mitigated" || fresh.State != "active" || fresh.IntroducedVersion == nil || *fresh.IntroducedVersion != 2 {
+		t.Errorf("collision: %+v", copies)
+	}
+
+	// Split: the risk cites h1, which stays, and h3, which moves.
+	split := authored(t)
+	split.Sections[0].Risks[0].Cites = []Anchor{HunkAnchor("h_a00000000001", nil), HunkAnchor("h_a00000000003", nil)}
+	splitFirst := encode(t, completeFixture(t, split, 1, nil))
+	moved := authored(t)
+	moved.Sections[0].Risks[0].Cites = split.Sections[0].Risks[0].Cites
+	moved.Sections[0].Hunks = []string{"h_a00000000001"}
+	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000003"}
+	if j := JoinedSections(splitFirst, moved.Sections, current(t))["sec_delivery_errors"]; len(j.Hunks) != 1 || len(j.Risks) != 0 {
+		t.Errorf("split joined: %+v", j)
+	}
+	if r := RevisableSections(splitFirst, moved.Sections, current(t))["sec_delivery_errors"]; len(r.JoinedRisks) != 0 {
+		t.Errorf("split revised: %+v", r.JoinedRisks)
+	}
+	copies = riskIn(completeFixture(t, moved, 2, splitFirst), "rsk_unbounded_retries")
+	if len(copies) != 1 || copies["sec_retry_policy"].State != "active" {
+		t.Errorf("split: %+v", copies)
+	}
+}
+
+// A risk whose code splits between sections goes to the one that has its
+// first cited hunk; another section's copy of its ID is a new risk. A
+// handed-off risk the old section still names is dropped there.
+func TestRiskHeir(t *testing.T) {
+	split := authored(t)
+	split.Sections[0].Risks[0].Cites = []Anchor{HunkAnchor("h_a00000000001", nil), HunkAnchor("h_a00000000003", nil)}
+	first := encode(t, completeFixture(t, split, 1, nil))
+	risk := split.Sections[0].Risks[0]
+	onB, onC := risk, risk
+	onB.Cites, onC.Cites = []Anchor{HunkAnchor("h_a00000000001", nil)}, []Anchor{HunkAnchor("h_a00000000003", nil)}
+	next := authored(t)
+	next.Sections = []Section{
+		{ID: "sec_b", Kind: KindLogical, Hunks: []string{"h_a00000000001"}, Body: []Block{{Type: BlockProse, Text: "B."}}, Risks: []Risk{onB}},
+		{ID: "sec_c", Kind: KindLogical, Hunks: []string{"h_a00000000003"}, Body: []Block{{Type: BlockProse, Text: "C."}}, Risks: []Risk{onC}},
+		next.Sections[1], next.Sections[2],
+	}
+	// sec_b, first of the two over its code, continues the policy section
+	// (RenamedSections): the risk is its previous text's, not handed over.
+	joined := JoinedSections(first, next.Sections, current(t))
+	if _, ok := joined["sec_b"]; ok || len(joined["sec_c"].Hunks) != 1 || len(joined["sec_c"].Risks) != 0 {
+		t.Errorf("joined: %+v", joined)
+	}
+	if r := RevisableSections(first, next.Sections, current(t))["sec_b"]; r.Previous.ID != "sec_retry_policy" || len(r.Previous.Risks) != 1 || len(r.JoinedRisks) != 0 ||
+		!slices.Equal(r.Moved, []MovedHunk{{ID: "h_a00000000003", To: "sec_c"}}) {
+		t.Errorf("sec_b: %+v", r)
+	}
+	copies := riskIn(completeFixture(t, next, 2, first), risk.ID)
+	b, c := copies["sec_b"], copies["sec_c"]
+	if len(copies) != 2 || b.IntroducedVersion == nil || *b.IntroducedVersion != 1 || c.IntroducedVersion == nil || *c.IntroducedVersion != 2 {
+		t.Errorf("split heirs: %+v", copies)
+	}
+
+	// The policy section's hunk moves to the delivery section, which raises
+	// the risk; the policy section still names it.
+	moved := authored(t)
+	moved.Sections[0].Hunks = []string{"h_a00000000003"}
+	moved.Sections[1].Hunks = []string{"h_a00000000002", "h_a00000000001"}
+	moved.Sections[1].Risks = moved.Sections[0].Risks
+	copies = riskIn(completeFixture(t, moved, 2, encode(t, completeFixture(t, authored(t), 1, nil))), risk.ID)
+	if len(copies) != 1 || copies["sec_delivery_errors"].State != "active" {
+		t.Errorf("handed off and still named: %+v", copies)
+	}
+}
+
+// A risk handed over to a section that had a mitigated risk of the same ID
+// takes a new ID: the mitigated one keeps its history, and the handed-over
+// one the version it was introduced in.
+func TestHandedOverRiskAvoidsAHistoricalID(t *testing.T) {
+	// Version 1: the delivery section raises rsk_timeout on h2.
+	v1 := authored(t)
+	v1.Sections[1].Risks = []Risk{{ID: "rsk_timeout", Tier: "low", Category: "correctness", Text: "A slow remote holds a worker.", Cites: []Anchor{HunkAnchor("h_a00000000002", nil)}}}
+	first := encode(t, completeFixture(t, v1, 1, nil))
+	// Version 2: it no longer does (mitigated); the policy section raises an
+	// unrelated rsk_timeout on h1.
+	v2 := authored(t)
+	v2.Sections[0].Risks = []Risk{{ID: "rsk_timeout", Tier: "medium", Category: "correctness", Text: "Retries never time out.", Cites: []Anchor{HunkAnchor("h_a00000000001", nil)}}}
+	second := completeFixture(t, v2, 2, first)
+	if r := riskIn(second, "rsk_timeout"); r["sec_delivery_errors"].State != "mitigated" || r["sec_retry_policy"].State != "active" {
+		t.Fatalf("version 2: %+v", r)
+	}
+	// Version 3: h1 and the policy section's risk move to the delivery section.
+	v3 := authored(t)
+	v3.Sections[0].Hunks, v3.Sections[0].Risks = []string{"h_a00000000003"}, []Risk{}
+	v3.Sections[1].Hunks, v3.Sections[1].Risks = []string{"h_a00000000002", "h_a00000000001"}, v2.Sections[0].Risks
+	out := completeFixture(t, v3, 3, encode(t, second))
+
+	old, moved := riskIn(out, "rsk_timeout"), riskIn(out, "rsk_timeout_2")
+	if len(old) != 1 || len(moved) != 1 {
+		t.Fatalf("rsk_timeout in %+v, rsk_timeout_2 in %+v", old, moved)
+	}
+	if r := old["sec_delivery_errors"]; r.State != "mitigated" || r.IntroducedVersion == nil || *r.IntroducedVersion != 1 || r.MitigatedVersion == nil || *r.MitigatedVersion != 2 || r.Text != "A slow remote holds a worker." {
+		t.Errorf("historical risk: %+v", r)
+	}
+	if r := moved["sec_delivery_errors"]; r.State != "active" || r.IntroducedVersion == nil || *r.IntroducedVersion != 2 || r.Text != "Retries never time out." {
+		t.Errorf("handed-over risk: %+v", r)
+	}
+	// The authored document keeps the ID it was written with.
+	if v3.Sections[1].Risks[0].ID != "rsk_timeout" {
+		t.Errorf("Complete changed the authored document: %+v", v3.Sections[1].Risks)
+	}
+}
+
+// The fixed risk IDs are those mitigated and nowhere active.
+func TestFixedRiskIDs(t *testing.T) {
+	one := 1
+	d := authored(t)
+	d.Sections[0].Risks = append(d.Sections[0].Risks, Risk{ID: "rsk_fixed", State: "mitigated", MitigatedVersion: &one}, Risk{ID: "rsk_both", State: "mitigated"})
+	d.Sections[1].Risks = append(d.Sections[1].Risks, Risk{ID: "rsk_both", State: "active"})
+	if got := FixedRiskIDs(encode(t, d)); !slices.Equal(got, []string{"rsk_fixed"}) {
+		t.Errorf("fixed = %v", got)
 	}
 }

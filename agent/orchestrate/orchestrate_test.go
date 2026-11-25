@@ -125,7 +125,7 @@ func sectionReplyJSON(tiles string) string {
 	if m := regexp.MustCompile(`"id":"(tl_[a-z_]+)"`).FindStringSubmatch(tiles); m != nil {
 		placed = m[1]
 	}
-	return `{"body":[
+	return `{"keep":false,"body":[
   {"type":"prose","title":null,"text":"Failed jobs now retry with a growing wait. After the last attempt they move to a table of dead jobs.","items":null,"tile":null},
   {"type":"points","title":"What changes","text":null,"items":[
    {"text":"A failed handler schedules a **retry**.","more":null,"cites":[{"type":"hunk","id":"` + hunkA + `","lines":null}]},
@@ -147,7 +147,7 @@ const contextReplyJSON = `{"area":{"text":"The job queue runs background work.",
 
 const overviewReplyJSON = `{"summary":"Failed jobs now retry and land in a dead-letter table. A new endpoint requeues them.",
  "verdict":{"decision":"look_first","text":"Check who may requeue before merging.","points":[{"text":"The endpoint trusts a header any caller sets.","section":"sec_api"}]},
- "risk_why":"Every job goes through the new retry path.","screenshots":["nope"],"diagram":"tl_path","intent":[]}`
+ "risk_why":"Every job goes through the new retry path.","screenshots":["nope"],"videos":[],"diagram":"tl_path","intent":[]}`
 
 func fullFake() *fake {
 	f := newFake()

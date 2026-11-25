@@ -1,5 +1,5 @@
 import { appURL, LocalRequestError, request } from "./api";
-import { invoke } from "./desktop/native";
+import { desktopShell, invoke } from "./desktop/native";
 import type { TileSize } from "./tiles/types";
 
 /** A saved tile type as Settings › Tile library lists it (`GET
@@ -124,8 +124,7 @@ export const tileLibrary = {
 /** Saves an exported file: through the desktop app's save dialog (null when
  *  the person cancelled it), or as a download in a browser. */
 export async function saveTileTypeFile(name: string, contents: string): Promise<string | null> {
-  if ((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
-    return invoke<string | null>("save_tile_type", { name, contents });
+  if (desktopShell()) return invoke<string | null>("save_tile_type", { name, contents });
   const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
   const link = document.createElement("a");
   link.href = url;

@@ -1,17 +1,15 @@
-// Runs one scenario (scenarios.ts) against the desktop app through
-// WebKitWebDriver: a warm-up, then N runs, reading window.__baumPerf after
-// each, and writes metrics.json and summary.md. `just desktop::profile`
-// (oss/desktop/scripts/profile.sh) runs it inside the headless isolated
-// container; see the desktop README's Profiling section. With --engine
-// chromium, Chromium opens the daemon's pages instead and each run records a
-// CPU profile (chromium.ts).
+// Runs one scenario (scenarios.ts) against the Electron desktop app through
+// Electron's chromedriver: a warm-up, then N runs, reading window.__baumPerf
+// and recording a CPU profile (electron.ts) in each, and writes metrics.json
+// and summary.md. `just desktop::profile` (oss/desktop/scripts/profile.sh)
+// runs it inside the headless isolated container; see the desktop README's
+// Profiling section.
 // With --side, it is one side of a comparison (profile.sh --baseline): two
 // runners, one per side in containers of their own, take turns through
 // files in --out (compare.ts's schedule), and head's writes the comparison.
-// usage: node run.ts <scenario> --app BINARY --out DIR [--runs N] [--dist DIR]
+// usage: node run.ts <scenario> --app DIR --out DIR [--runs N] [--dist DIR]
 //        [--side base|head] [--headline METRIC]
-//        node run.ts <scenario> --engine chromium --baum BINARY --out DIR ...
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   createWriteStream,
   existsSync,
@@ -25,7 +23,6 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Navigation, Snapshot } from "../../src/perf-collector.ts";
 import { readChunks } from "./bundle.ts";
-import { CHROMEDRIVER, CHROMEDRIVER_ARGS, CpuRecorder, launchChromium } from "./chromium.ts";
 import {
   comparisonJson,
   daemonFailure,
@@ -33,9 +30,16 @@ import {
   summariseComparison,
   type Side,
 } from "./compare.ts";
+import {
+  CHROMEDRIVER,
+  CHROMEDRIVER_ARGS,
+  CpuRecorder,
+  electron,
+  launchElectron,
+} from "./electron.ts";
 import { scenarios, Skip, type Context } from "./scenarios.ts";
 import { standardMetrics, summarise, type Profile, type Run } from "./summary.ts";
-import { newSession, waitForDriver, WebDriverError, type Session } from "./webdriver.ts";
+import { waitForDriver, WebDriverError, type Session } from "./webdriver.ts";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -49,21 +53,13 @@ const { values, positionals } = parseArgs({
     env: { type: "string", multiple: true, default: [] },
     side: { type: "string" },
     headline: { type: "string" },
-    engine: { type: "string", default: "webkit" },
-    baum: { type: "string" },
   },
 });
-const chromium = values.engine === "chromium";
 const name = positionals[0] ?? "";
 const scenario = scenarios.find((s) => s.name === name);
-if (
-  !scenario ||
-  !values.out ||
-  !(chromium ? values.baum : values.app) ||
-  !["webkit", "chromium"].includes(values.engine!)
-) {
+if (!scenario || !values.out || !values.app) {
   console.error(
-    `usage: run.ts <scenario> (--app BINARY | --engine chromium --baum BINARY) --out DIR [--runs N]\nscenarios: ${scenarios.map((s) => s.name).join(", ")}`,
+    `usage: run.ts <scenario> --app DIR --out DIR [--runs N]\nscenarios: ${scenarios.map((s) => s.name).join(", ")}`,
   );
   process.exit(2);
 }
@@ -111,21 +107,15 @@ const desktopConfig = join(homedir(), ".config/com.usebaum.desktop/desktop.json"
   }
 }
 
-// WebKitGTK lets the app's first web context be automated only with this set.
-process.env.TAURI_WEBVIEW_AUTOMATION = "true";
 const driverLog = createWriteStream(join(out, "driver.log"));
-const cpu = chromium ? new CpuRecorder(out, values.dist) : undefined;
-if (chromium && !existsSync(CHROMEDRIVER)) {
-  console.error(
-    `profile: ${CHROMEDRIVER} is not in this image: Chrome for Testing has chromedriver for x86-64 Linux only`,
-  );
+const cpu = new CpuRecorder(out, values.dist);
+if (!existsSync(CHROMEDRIVER)) {
+  console.error(`profile: ${CHROMEDRIVER} is not in this image; run through just desktop::profile`);
   process.exit(2);
 }
-const driver = spawn(
-  chromium ? CHROMEDRIVER : "WebKitWebDriver",
-  [`--port=${values.port}`, ...(chromium ? CHROMEDRIVER_ARGS : [])],
-  { stdio: ["ignore", "pipe", "pipe"] },
-);
+const driver = spawn(CHROMEDRIVER, [`--port=${values.port}`, ...CHROMEDRIVER_ARGS], {
+  stdio: ["ignore", "pipe", "pipe"],
+});
 driver.on("error", (error) => {
   console.error(`profile: the WebDriver server did not start: ${error.message}`);
   process.exit(1);
@@ -210,9 +200,7 @@ async function launch() {
   const started = performance.now();
   // The wall clock the page's performance.timeOrigin shares.
   const startedAt = Date.now();
-  session = chromium
-    ? await launchChromium(driverBase, values.baum!, cpu!)
-    : await newSession(driverBase, values.app!);
+  session = await launchElectron(driverBase, values.app!, dirname(desktopConfig), cpu);
   await session.setTimeouts({ script: 600_000 });
   const end = Date.now() + 120_000;
   for (;;) {
@@ -376,18 +364,9 @@ function environment(snapshot: Snapshot) {
     read("/sys/fs/cgroup/cpuset/cpuset.effective_cpus") ||
     "unknown";
   entries["host CPUs"] = String(cpus().length);
-  if (cpu) {
-    entries.engine = "Chromium";
-    entries.Chromium = cpu.version || snapshot.userAgent;
-  } else {
-    // The user agent's WebKit version is frozen; the package's is not.
-    let webkit = "";
-    try {
-      webkit = execFileSync("pkg-config", ["--modversion", "webkit2gtk-4.1"], { encoding: "utf8" });
-    } catch {}
-    entries.WebKitGTK =
-      webkit.trim() || (snapshot.userAgent.match(/AppleWebKit\/[\d.]+/)?.[0] ?? snapshot.userAgent);
-  }
+  entries.Electron = electron(values.app!).version;
+  entries.Chromium =
+    cpu.version || (snapshot.userAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? snapshot.userAgent);
   const marker = read(join(homedir(), ".local/state/baum/seeddata.json"));
   if (marker) {
     const seeded = JSON.parse(marker) as { seed?: number; digest?: string };
@@ -398,7 +377,7 @@ function environment(snapshot: Snapshot) {
   return entries;
 }
 
-/** `work`, or a clear failure when it hangs, as a stuck WebKitWebDriver does. */
+/** `work`, or a clear failure when it hangs, as a stuck driver or app does. */
 function limited<T>(work: Promise<T>, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -406,7 +385,7 @@ function limited<T>(work: Promise<T>, what: string): Promise<T> {
       () =>
         reject(
           new Error(
-            `${what} did not finish within ${runTimeout / 1000} s; WebKitWebDriver or the app ` +
+            `${what} did not finish within ${runTimeout / 1000} s; chromedriver or the app ` +
               "may be hung (see driver.log)",
           ),
         ),
@@ -559,13 +538,13 @@ function write(partial?: string) {
   };
   if (side) profile.side = side;
   writeFileSync(join(out, "metrics.json"), `${JSON.stringify(profile, null, 2)}\n`);
-  writeFileSync(join(out, "summary.md"), summarise(profile) + (cpu?.section() ?? ""));
+  writeFileSync(join(out, "summary.md"), summarise(profile) + cpu.section());
 }
 
 const done = () => `${Math.max(0, collected.length - 1)} of ${runs} runs`;
 
 async function main() {
-  await limited(waitForDriver(driverBase), "WebKitWebDriver's start");
+  await limited(waitForDriver(driverBase), "chromedriver's start");
   log(`launching the app for ${scenario!.name}`);
   await limited(launch(), "the app's launch");
   const state = await limited(
@@ -598,13 +577,13 @@ async function main() {
         const settled = await settle(15_000);
         const load = loadavg()[0]!;
         await restoreState();
-        if (index > 0) await cpu?.start(page());
+        if (index > 0) await cpu.start(page());
         const cpuBefore = containerCpu();
         const started = performance.now();
         const metrics = await scenario!.run(context, state as never);
         const wall = performance.now() - started;
         const snapshot = await execute<Snapshot>("return window.__baumPerf.snapshot();");
-        await cpu?.stop(index, snapshot, execute);
+        await cpu.stop(index, snapshot, execute);
         // After the snapshot, so it is not measured.
         await scenario!.teardown?.(context, state as never);
         environmentFrom ??= snapshot;

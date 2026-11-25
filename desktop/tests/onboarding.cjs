@@ -58,7 +58,7 @@ const assert = require('node:assert/strict');
     }
     return { ok: true, lines: ['Done'] };
   });
-  await page.addInitScript(() => { window.__TAURI_INTERNALS__ = { invoke: (...args) => window.nativeInvoke(...args) }; });
+  await page.addInitScript(() => { window.baumDesktop = { invoke: (...args) => window.nativeInvoke(...args) }; });
   await page.route('http://setup.test/**', async route => {
     const file = new URL(route.request().url()).pathname.slice(1) || 'setup.html';
     const contentType = file.endsWith('.js') ? 'text/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : file.endsWith('.woff2') ? 'font/woff2' : 'text/html';

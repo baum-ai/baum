@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
@@ -445,6 +446,20 @@ func proposalCases() []proposalCase {
 		route:  fixed("PUT", "/api/repositories/owner/repo/prompts/fix-conflicts", `{"text":null}`),
 		change: fixed("PUT", "/api/settings/prompts/fix-conflicts", `{"text":"The global text the repository inherits, edited."}`),
 	}, {
+		name: "repository prompt from its pull request", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}
+		},
+		tool: "propose_prompt", args: map[string]any{"id": "fix-checks", "text": "Repository checks text.", "repository": "owner/repo"},
+		route:  fixed("PUT", "/api/repositories/owner/repo/prompts/fix-checks", `{"text":"Repository checks text."}`),
+		change: fixed("PUT", "/api/repositories/owner/repo/prompts/fix-checks", `{"text":"Edited by hand."}`),
+	}, {
+		name: "global prompt from a pull request", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7}
+		},
+		tool: "propose_prompt", args: map[string]any{"id": "fix-checks", "text": "Fix the failing checks."},
+		route:  fixed("PUT", "/api/settings/prompts/fix-checks", `{"text":"Fix the failing checks."}`),
+		change: fixed("PUT", "/api/settings/prompts/fix-checks", `{"text":"The person's own text."}`),
+	}, {
 		name: "repository settings", page: repositoryAt(""), tool: "propose_repository_settings", args: map[string]any{"automatic": false},
 		// The page sends the whole settings object.
 		route:  fixed("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"decisions":null}`),
@@ -725,16 +740,14 @@ func TestProposalsBelongToTheOpenPage(t *testing.T) {
 	refused("a Reviews change on General", err)
 	_, err = f.propose("propose_inbox", map[string]any{"name": "X"})
 	refused("an inbox on Settings", err)
-	_, err = f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "owner/repo"})
-	refused("a repository's prompt on Settings", err)
+	_, err = f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "nobody/unknown"})
+	refused("a prompt of a repository baum does not watch", err)
 
 	f.page(agentcontext.PageContext{Page: agentcontext.PageRepositories, Repository: "owner/repo", Section: "prompts"})
-	_, err = f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "other/repo"})
-	refused("another repository's prompt", err)
 	_, err = f.propose("propose_repository_settings", map[string]any{"automatic": false})
 	refused("a Reviews change on Prompts", err)
-	_, err = f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageRepositories, Target: agentcontext.RepositoryTarget("other/repo", agentcontext.TargetPrompt+"fix-checks"), After: json.RawMessage(`{"text":"x"}`)})
-	refused("another repository's target", err)
+	_, err = f.mcp.Proposals.Propose(ctx, f.id, agentcontext.Proposal{Page: agentcontext.PageRepositories, Target: agentcontext.RepositoryTarget("owner/repo", agentcontext.TargetPrompt+"fix-checks"), After: json.RawMessage(`{"text":"x"}`)})
+	refused("a prompt proposed as the page's", err)
 	f.page(agentcontext.PageContext{Page: agentcontext.PageRepositories})
 	_, err = f.propose("propose_repository_settings", map[string]any{"automatic": false})
 	refused("a repository change on the Repositories list", err)
@@ -786,6 +799,60 @@ func TestProposalsBelongToTheOpenPage(t *testing.T) {
 		if err := f.save(p, agentcontext.SaveInput{}); err != nil || f.state() == before {
 			t.Errorf("%s: not saved back on its page: %v", tc.name, err)
 		}
+	}
+
+	// A prompt is any page's: one proposed while reading a review is saved
+	// from wherever the person is.
+	f.page(agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7})
+	p, err := f.propose("propose_prompt", map[string]any{"id": "fix-checks", "text": "Read the failing check's log first.", "repository": "owner/repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Page != agentcontext.ProposalAnywhere || p.Target != agentcontext.RepositoryTarget("owner/repo", agentcontext.TargetPrompt+"fix-checks") {
+		t.Errorf("recorded on %q as %q", p.Page, p.Target)
+	}
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	if err := f.save(p, agentcontext.SaveInput{}); err != nil {
+		t.Fatalf("not saved from another page: %v", err)
+	}
+	if got := f.must("GET", "/api/repositories/owner/repo/prompts", ""); !strings.Contains(got, "Read the failing check's log first.") {
+		t.Errorf("the repository's prompt was not saved: %s", got)
+	}
+}
+
+// A prompt proposal's Before is the scope's own text and the text it
+// inherits, so the person sees the change against the text that runs now.
+func TestPromptProposalsShowTheTextInUse(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PagePullRequest, Repository: "owner/repo", PullRequest: 7})
+	before := func(tool string, args map[string]any) map[string]*string {
+		t.Helper()
+		p, err := f.propose(tool, args)
+		if err != nil {
+			t.Fatalf("%s: %v", tool, err)
+		}
+		var out map[string]*string
+		if err := json.Unmarshal(p.Before, &out); err != nil {
+			t.Fatalf("%s: %v %s", tool, err, p.Before)
+		}
+		return out
+	}
+	entry, _ := prompt.Lookup("fix-checks")
+	// Not customised anywhere: no own text, the built-in inherited.
+	got := before("propose_prompt", map[string]any{"id": "fix-checks", "text": "x", "repository": "owner/repo"})
+	if got["text"] != nil || got["inherited_text"] == nil || *got["inherited_text"] != entry.Default {
+		t.Errorf("an uncustomised repository prompt: %v", got)
+	}
+	// The repository inherits the global custom text, and has its own.
+	got = before("propose_prompt_reset", map[string]any{"id": "fix-conflicts", "repository": "owner/repo"})
+	if got["text"] == nil || *got["text"] != "The repository's conflicts prompt." || got["inherited_text"] == nil || *got["inherited_text"] != promptSentinel {
+		t.Errorf("a customised repository prompt: %v", got)
+	}
+	// The global prompt inherits the built-in.
+	conflicts, _ := prompt.Lookup("fix-conflicts")
+	got = before("propose_prompt_reset", map[string]any{"id": "fix-conflicts"})
+	if got["text"] == nil || *got["text"] != promptSentinel || got["inherited_text"] == nil || *got["inherited_text"] != conflicts.Default {
+		t.Errorf("a customised global prompt: %v", got)
 	}
 }
 
@@ -937,7 +1004,7 @@ func TestProposalAnswersCarryNoCurrentValue(t *testing.T) {
 		t.Errorf("the person does not see the current text: %s", p.Before)
 	}
 	// A guessed Before is refused without saying what the value is.
-	_, err := f.mcp.Proposals.Propose(context.Background(), f.id, agentcontext.Proposal{Page: agentcontext.PageSettings, Target: agentcontext.TargetPrompt + "fix-conflicts",
+	_, err := f.mcp.Proposals.Propose(context.Background(), f.id, agentcontext.Proposal{Page: agentcontext.ProposalAnywhere, Target: agentcontext.TargetPrompt + "fix-conflicts",
 		Before: json.RawMessage(`{"text":"a guess"}`), After: json.RawMessage(`{"text":null}`)})
 	if !errors.Is(err, agentcontext.ErrNotRecorded) || strings.Contains(err.Error(), "SENTINEL") {
 		t.Errorf("a guess: %v", err)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,10 +45,13 @@ type CompleteInput struct {
 // The risks' history is baum.review/1's (reconcileAuthoredHistory): a risk
 // keeps the version it was introduced in; a previous risk the section no
 // longer names is kept, mitigated in this version, unless the section's
-// details are pending or failed, when it is kept as it was. A previous
-// section the map no longer has is not carried. Each section's derived
+// details are pending or failed, when it is kept as it was. A section of a
+// new ID over a previous baum.review/2 section's code (RenamedSections)
+// continues that section's risks as a section of its ID would; any other
+// previous section the map no longer has is not carried. Each section's derived
 // state compares its hunks with the previous version's section of the same
-// ID (new, unchanged or changed), and its review score is baum.review/1's.
+// ID, or the one it continues (new, unchanged or changed), and its review
+// score is baum.review/1's.
 // A tile without a state is ready when it has data and pending otherwise; a
 // code tile whose hunk the diff does not have is unavailable.
 func Complete(authored Document, in CompleteInput) (Document, error) {
@@ -64,6 +68,12 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
+	// A section renamed over a previous section's code continues its risks.
+	var renamed map[string]string
+	if IsV2(in.Previous) {
+		renamed = RenamedSections(in.Previous, d.Sections, RefsOf(&b))
+	}
+	handedOff, handedIn := handOvers(prior, d.Sections, renamed)
 	for i := range d.Sections {
 		s := &d.Sections[i]
 		if s.Hunks == nil {
@@ -72,8 +82,12 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 		if s.LevelReasons == nil {
 			s.LevelReasons = []LevelReason{}
 		}
-		old, found := prior.sections[s.ID]
-		s.Risks = reconcileRisks(old.Risks, s.Risks, found, prior.version, in.Version, s.Details != "" || len(s.Hunks) == 0)
+		from := s.ID
+		if old, ok := renamed[s.ID]; ok {
+			from = old
+		}
+		old, found := prior.sections[from]
+		s.Risks = reconcileRisks(old.Risks, s.Risks, found, prior.version, in.Version, s.Details != "" || len(s.Hunks) == 0, handedOff[from], handedIn[s.ID])
 	}
 	completeTiles(&d, &b)
 	EnsureBodies(&d)
@@ -101,6 +115,13 @@ func Complete(authored Document, in CompleteInput) (Document, error) {
 	}
 	for id, s := range prior.sections {
 		host.PreviousHunks[id] = s.Hunks
+	}
+	// A renamed section's state compares its hunks with the section it
+	// continues.
+	for next, old := range renamed {
+		if s, ok := prior.sections[old]; ok {
+			host.PreviousHunks[next] = s.Hunks
+		}
 	}
 	var sections []review.HostSection
 	for _, s := range d.Sections {
@@ -247,12 +268,102 @@ func previousOf(document []byte, fromBundle *bundle.PreviousVersion) (previous, 
 	return out, nil
 }
 
+// handOvers are the previous active risks that follow their code to another
+// section, by the section they leave (handedOff, risk IDs) and the one they
+// join (handedIn, the previous risk by ID): a section of the new version
+// names the risk's ID citing a hunk the previous risk cited, and every hunk
+// it cited has left its old section (HandedOver); when its hunks split, only
+// the section that has the first of them (heir) inherits it. Any other risk
+// of the same ID in another section is a different risk. A previous section
+// a section of a new ID continues (renamed, by the new ID) is that
+// section's: its risks stay in it, and leave it as they leave a section of
+// the same ID.
+//
+// Risk IDs are unique only within a section, so the section a risk joins may
+// have had a mitigated risk of the same ID, which its agent is not shown.
+// The joining risk then takes the next ID no previous risk had (<id>_N, in
+// sections, which it changes) so that each keeps its own history.
+func handOvers(prior previous, sections []Section, renamed map[string]string) (map[string]map[string]bool, map[string]map[string]Risk) {
+	off, in := map[string]map[string]bool{}, map[string]map[string]Risk{}
+	hunks, owner := map[string][]string{}, map[string]string{}
+	priorIDs := map[string]bool{}
+	for _, s := range prior.sections {
+		for _, r := range s.Risks {
+			priorIDs[r.ID] = true
+		}
+	}
+	for _, s := range sections {
+		hunks[s.ID] = s.Hunks
+		for _, h := range s.Hunks {
+			if _, taken := owner[h]; !taken {
+				owner[h] = s.ID
+			}
+		}
+	}
+	successor := map[string]string{}
+	for next, old := range renamed {
+		successor[old] = next
+	}
+	ids := make([]string, 0, len(prior.sections))
+	for id := range prior.sections {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, from := range ids {
+		next := from
+		if s, ok := successor[from]; ok {
+			next = s
+		}
+		for _, old := range prior.sections[from].Risks {
+			if old.State == "mitigated" || off[from][old.ID] {
+				continue
+			}
+			cited := CitedHunks(old.Cites)
+			to := heir(cited, owner)
+			for k := range sections {
+				s := &sections[k]
+				if s.ID != to || s.ID == next || in[s.ID][old.ID].ID != "" {
+					continue
+				}
+				i := slices.IndexFunc(s.Risks, func(r Risk) bool { return r.ID == old.ID })
+				if i < 0 || !HandedOver(cited, hunks[next], func(h string) bool { return slices.Contains(CitedHunks(s.Risks[i].Cites), h) }) {
+					continue
+				}
+				pred := s.ID
+				if p, ok := renamed[s.ID]; ok {
+					pred = p
+				}
+				id := old.ID
+				if slices.ContainsFunc(prior.sections[pred].Risks, func(r Risk) bool { return r.ID == old.ID && r.State == "mitigated" }) {
+					for n := 2; priorIDs[id] || slices.ContainsFunc(s.Risks, func(r Risk) bool { return r.ID == id }); n++ {
+						id = fmt.Sprintf("%s_%d", old.ID, n)
+					}
+					s.Risks[i].ID = id
+				}
+				if off[from] == nil {
+					off[from] = map[string]bool{}
+				}
+				if in[s.ID] == nil {
+					in[s.ID] = map[string]Risk{}
+				}
+				off[from][old.ID], in[s.ID][id] = true, old
+				break
+			}
+		}
+	}
+	return off, in
+}
+
 // reconcileRisks gives a section's risks their history: the previous
 // section's risks first, each active again when the section names it,
 // mitigated in this version when it no longer does (or kept as it was when
 // retained: the section's details are not written, or it has no hunks), then
-// the section's new risks, introduced in this version.
-func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int, retained bool) []Risk {
+// the section's new risks, introduced in this version. A previous risk
+// handed off to another section with its code (handOvers) is left to it,
+// and dropped here even when the section still names it; a
+// new risk handed in from another previous section keeps the version it was
+// introduced in.
+func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int, retained bool, handedOff map[string]bool, handedIn map[string]Risk) []Risk {
 	byID := map[string]Risk{}
 	for _, r := range current {
 		byID[r.ID] = r
@@ -268,6 +379,11 @@ func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int
 				introduced = max(version-1, 1)
 			}
 			next, named := byID[old.ID]
+			if handedOff[old.ID] {
+				// Its code left: a copy the section still names is dropped.
+				delete(byID, old.ID)
+				continue
+			}
 			delete(byID, old.ID)
 			if named && !retained {
 				next.State, next.IntroducedVersion, next.MitigatedVersion = "active", &introduced, nil
@@ -297,7 +413,17 @@ func reconcileRisks(prior, current []Risk, found bool, priorVersion, version int
 		if _, fresh := byID[r.ID]; !fresh {
 			continue
 		}
-		r.State, r.IntroducedVersion, r.MitigatedVersion = "active", &version, nil
+		introduced := version
+		if old, ok := handedIn[r.ID]; ok {
+			introduced = priorVersion
+			if old.IntroducedVersion != nil {
+				introduced = *old.IntroducedVersion
+			}
+			if introduced < 1 {
+				introduced = max(version-1, 1)
+			}
+		}
+		r.State, r.IntroducedVersion, r.MitigatedVersion = "active", &introduced, nil
 		out = append(out, r)
 	}
 	return out

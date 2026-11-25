@@ -25,9 +25,9 @@ usage: isolated.sh [name] [--copy-data | --seed-data[=SEED]] [--workspace DIR]..
                    the app knows from the copied data are there; repeatable.
                    Their review stores get writable copies of the instance's,
                    which --copy-data fills from the repositories' own
-  --headless       run on a headless compositor inside the container instead
-                   of this Wayland display, so no window shows: for agents
-                   and profiling. Rendering is in software
+  --headless       run on a virtual X server (Xvfb) inside the container
+                   instead of this Wayland display, so no window shows: for
+                   agents and profiling. Rendering is in software
 
 BAUM_RELAY_URL, when set, is passed to the instance's daemon.
 BAUM_ISOLATED_RUN, when set, is the shell command the container runs in the
@@ -141,8 +141,10 @@ fi
 
 if [ "$headless" = 1 ]; then
   set -- -e BAUM_ISOLATED_HEADLESS=1 -e BAUM_ISOLATED_WIDTH -e BAUM_ISOLATED_HEIGHT
+  ozone=x11
 else
   set -- -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0" -e WAYLAND_DISPLAY=/tmp/wayland-0
+  ozone=wayland
 fi
 [ -f "$HOME/.gitconfig" ] && set -- "$@" -v "$HOME/.gitconfig:/seed/gitconfig:ro"
 [ -n "${BAUM_RELAY_URL:-}" ] && set -- "$@" -e BAUM_RELAY_URL
@@ -162,6 +164,10 @@ for volume in ${BAUM_ISOLATED_VOLUMES:-}; do
 done
 IFS=$old_ifs
 echo "isolated: $name, home $home"
+# The unpackaged app from this checkout, its main process bundled first.
+# --no-sandbox only here: a container has no user namespaces for Chromium's
+# sandbox (the desktop-electron service sets ELECTRON_DISABLE_SANDBOX for
+# the same reason); the app's renderers keep their sandboxed preload.
 compose --name "$container" "$@" \
-  -e GDK_BACKEND=wayland -e WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-  desktop-isolated sh scripts/isolated-home.sh app sh -c "${BAUM_ISOLATED_RUN:-cargo run --locked}"
+  desktop-isolated sh scripts/isolated-home.sh app sh -c \
+  "${BAUM_ISOLATED_RUN:-pnpm build && exec pnpm exec electron . --no-sandbox --ozone-platform=$ozone}"

@@ -123,7 +123,7 @@ const coldStart: Scenario = {
     "Quits and launches the app, then waits for the Inbox's content. launch_to_content runs from " +
     "the launch to the Inbox's first content frame; the other times are from the document's " +
     "navigation start unless they say otherwise. The daemon keeps running between launches, " +
-    "as it does for a user, and WebKit's cache in the instance's home stays warm.",
+    "as it does for a user, and Chromium's cache in the instance's home stays warm.",
   async prepare(ctx) {
     await ctx.open("");
   },
