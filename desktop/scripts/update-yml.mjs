@@ -6,14 +6,24 @@
 //   node scripts/update-yml.mjs write VERSION DIR NAME FILE...
 //   node scripts/update-yml.mjs rewrite VERSION DIR [NAME...]
 //   node scripts/update-yml.mjs check VERSION DIR [NAME...]
+//   node scripts/update-yml.mjs publish VERSION DIR [NAME...]
 //
 // write creates DIR/NAME listing each FILE (a file name in DIR), the first
 // as the main one. rewrite recomputes the hashes and sizes of an existing
 // file (electron-builder's, after signing changed a bundle) from DIR. check
 // fails unless every listed file is in DIR with that hash and size and the
 // file announces VERSION; it prints each listed file name once. Without
-// NAMEs, rewrite and check take every latest*.yml in DIR. The files hold
-// only names, never URLs: the app resolves them against its update channel.
+// NAMEs, rewrite, check and publish take every latest*.yml in DIR.
+//
+// The files list plain names until the release publishes them: publish
+// turns each name into https://downloads.usebaum.com/update/vVERSION/NAME,
+// which counts the download and redirects to that file on the GitHub
+// release (tools/desktop-downloads in the monorepo). The app reads the
+// update files from its channel's feed (the latest release, or the
+// desktop-rc-updates pre-release, which holds only the update files), and
+// electron-updater resolves a plain name against that feed, so a published
+// file must name the release itself. check accepts a plain name or exactly
+// that URL, and nothing else.
 //
 // Uses only Node.js; the format is the subset of YAML electron-builder
 // writes (scalars, and the list of mappings under files).
@@ -23,6 +33,23 @@ import { basename, join } from "node:path";
 
 const NAME = /^latest(-mac|-linux|-linux-arm64)?\.yml$/;
 const FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/** Where published update files point (publish). */
+const DOWNLOADS = "https://downloads.usebaum.com/update";
+
+function published(version, name) {
+  return `${DOWNLOADS}/v${version}/${name}`;
+}
+
+/** The file name a listed URL stands for: a plain name, or the published
+ *  URL of a file of VERSION. */
+function fileName(version, url) {
+  const prefix = `${DOWNLOADS}/v${version}/`;
+  const name = typeof url === "string" && url.startsWith(prefix) ? url.slice(prefix.length) : url;
+  if (typeof name !== "string" || !FILE.test(name)) {
+    throw new Error(`'${url}' is not a plain file name or ${prefix} and one`);
+  }
+  return name;
+}
 
 function fail(message) {
   console.error(`update-yml: ${message}`);
@@ -113,24 +140,23 @@ async function sha512(path) {
   return hash.digest("base64");
 }
 
-function listed(dir, url) {
-  if (typeof url !== "string" || !FILE.test(url)) {
-    throw new Error(`'${url}' is not a plain file name`);
-  }
-  const path = join(dir, url);
+function listed(dir, name) {
+  const path = join(dir, name);
   let stat;
   try {
     stat = statSync(path);
   } catch {
-    throw new Error(`${url} is not in ${dir}`);
+    throw new Error(`${name} is not in ${dir}`);
   }
-  if (!stat.isFile()) throw new Error(`${url} is not a file`);
+  if (!stat.isFile()) throw new Error(`${name} is not a file`);
   return { path, size: stat.size };
 }
 
-async function describe(dir, url) {
-  const { path, size } = listed(dir, url);
-  return { url, sha512: await sha512(path), size };
+/** The file a listed URL stands for in DIR, described. */
+async function describe(version, dir, url) {
+  const name = fileName(version, url);
+  const { path, size } = listed(dir, name);
+  return { url, name, sha512: await sha512(path), size };
 }
 
 function names(dir, given) {
@@ -157,7 +183,10 @@ async function write(version, dir, name, files) {
   names(dir, [name]);
   const described = [];
   for (const file of files) {
-    described.push(await describe(dir, file).catch((error) => fail(`${name}: ${error.message}`)));
+    const { url, sha512, size } = await describe(version, dir, file).catch((error) =>
+      fail(`${name}: ${error.message}`),
+    );
+    described.push({ url, sha512, size });
   }
   const main = described[0];
   const doc = {
@@ -175,7 +204,9 @@ async function rewrite(version, dir, given) {
   for (const name of names(dir, given)) {
     const doc = read(dir, name);
     for (const file of doc.files) {
-      const fresh = await describe(dir, file.url).catch((error) => fail(`${name}: ${error.message}`));
+      const fresh = await describe(version, dir, file.url).catch((error) =>
+        fail(`${name}: ${error.message}`),
+      );
       file.sha512 = fresh.sha512;
       file.size = fresh.size;
     }
@@ -201,16 +232,16 @@ async function check(version, dir, given) {
     for (const file of doc.files) {
       let fresh;
       try {
-        fresh = await describe(dir, file.url);
+        fresh = await describe(version, dir, file.url);
       } catch (error) {
         problem(error.message);
         continue;
       }
       if (String(file.size) !== String(fresh.size)) {
-        problem(`${file.url} is ${fresh.size} bytes, not ${file.size}`);
+        problem(`${fresh.name} is ${fresh.size} bytes, not ${file.size}`);
       }
-      if (file.sha512 !== fresh.sha512) problem(`${file.url} does not have the listed SHA-512`);
-      seen.add(file.url);
+      if (file.sha512 !== fresh.sha512) problem(`${fresh.name} does not have the listed SHA-512`);
+      seen.add(fresh.name);
     }
     const main = doc.files.find((file) => file.url === doc.path);
     if (!main) problem(`path ${doc.path} is not among its files`);
@@ -218,13 +249,31 @@ async function check(version, dir, given) {
     if (!failed) console.error(`ok   ${name} describes ${doc.files.map((f) => f.url).join(", ")}`);
   }
   if (failed) process.exit(1);
-  for (const url of seen) console.log(url);
+  for (const name of seen) console.log(name);
+}
+
+async function publish(version, dir, given) {
+  for (const name of names(dir, given)) {
+    const doc = read(dir, name);
+    let path;
+    try {
+      path = published(version, fileName(version, doc.path));
+      for (const file of doc.files) file.url = published(version, fileName(version, file.url));
+    } catch (error) {
+      fail(`${name}: ${error.message}`);
+    }
+    doc.path = path;
+    writeFileSync(join(dir, name), format(doc));
+  }
+  await check(version, dir, given);
 }
 
 const [command, version, dir, ...rest] = process.argv.slice(2);
 const semver = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$/;
 if (!version || !dir || !semver.test(version)) {
-  fail("usage: update-yml.mjs write VERSION DIR NAME FILE... | rewrite VERSION DIR [NAME...] | check VERSION DIR [NAME...]");
+  fail(
+    "usage: update-yml.mjs write VERSION DIR NAME FILE... | rewrite VERSION DIR [NAME...] | check VERSION DIR [NAME...] | publish VERSION DIR [NAME...]",
+  );
 }
 switch (command) {
   case "write":
@@ -235,6 +284,9 @@ switch (command) {
     break;
   case "check":
     await check(version, dir, rest);
+    break;
+  case "publish":
+    await publish(version, dir, rest);
     break;
   default:
     fail(`unknown command '${command}'`);

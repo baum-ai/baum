@@ -65,6 +65,33 @@ fail "a name outside the directory" "is not a plain file name" yml check 1.2.3 "
 sed 's|^path: .*|path: baum-desktop-linux-arm64.AppImage|' "$work/linux.yml" >"$dir/latest-linux.yml"
 fail "a main file that is not listed" "is not among its files" yml check 1.2.3 "$dir"
 cp "$work/linux.yml" "$dir/latest-linux.yml"
+
+# Published, the files name the release through downloads.usebaum.com, and
+# still describe the same files.
+pass yml publish 1.2.3 "$dir"
+pass yml publish 1.2.3 "$dir" latest-linux.yml
+base=https://downloads.usebaum.com/update/v1.2.3
+if ! grep -qxF "  - url: '$base/baum-desktop-linux-amd64.AppImage'" "$dir/latest-linux.yml" ||
+  ! grep -qxF "path: '$base/baum-desktop-linux-amd64.AppImage'" "$dir/latest-linux.yml" ||
+  ! grep -qxF "  - url: '$base/baum-desktop-darwin-universal.zip'" "$dir/latest-mac.yml"; then
+  echo "FAIL publish did not point the files at $base:" >&2
+  cat "$dir/latest-linux.yml" "$dir/latest-mac.yml" >&2
+  status=1
+fi
+listed=$(yml check 1.2.3 "$dir" 2>/dev/null | sort | tr '\n' ' ')
+if [ "$listed" != "baum-desktop-darwin-universal.zip baum-desktop-linux-amd64.AppImage baum-desktop-linux-amd64.deb " ]; then
+  echo "FAIL check lists '$listed' for the published files" >&2
+  status=1
+fi
+cp "$dir/latest-linux.yml" "$work/published.yml"
+sed "s|$base/baum-desktop-linux-amd64.deb|https://example.com/update/v1.2.3/baum-desktop-linux-amd64.deb|" \
+  "$work/published.yml" >"$dir/latest-linux.yml"
+fail "another host" "is not a plain file name" yml check 1.2.3 "$dir"
+sed "s|$base/baum-desktop-linux-amd64.deb|https://downloads.usebaum.com/update/v1.2.2/baum-desktop-linux-amd64.deb|" \
+  "$work/published.yml" >"$dir/latest-linux.yml"
+fail "another release" "is not a plain file name" yml check 1.2.3 "$dir"
+cp "$work/published.yml" "$dir/latest-linux.yml"
+
 rm "$dir/baum-desktop-linux-amd64.deb"
 fail "a missing file" "baum-desktop-linux-amd64.deb is not in" yml check 1.2.3 "$dir"
 
