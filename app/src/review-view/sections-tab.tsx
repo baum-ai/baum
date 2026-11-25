@@ -619,9 +619,9 @@ function PointRow({
   );
 }
 
-/** The tiles placed on a section, and the pending cards of those being made
- *  for it in the session panel. */
-function SectionTiles({
+/** The tiles placed on a section (or the Overview), and the pending cards of
+ *  those being made for it in the session panel. */
+export function SectionTiles({
   tiles,
   drafts,
   document,

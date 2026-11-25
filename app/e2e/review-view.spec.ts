@@ -433,6 +433,33 @@ test("tiles being made stand on their sections as pending cards", async ({ page 
   await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
 });
 
+test("the Overview shows the tiles added to it and the cards of those being made", async ({
+  page,
+}) => {
+  const added = {
+    id: "added_images_0a1b2c3d4e",
+    type: "prose",
+    owner: "overview",
+    title: "Screens after the change",
+    state: "ready" as const,
+    cites: [],
+    data: { text: "The Tests view lists each test by name.", anchors: [] },
+    added: true,
+    from: 1,
+  };
+  const document = { ...REVIEW_1303, tiles: [...REVIEW_1303.tiles, added] };
+  const drafts = [{ tile: "draft_1", title: "Retry timeline", phase: "writing" }];
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, PR7, { document, drafts });
+  const tile = page.locator(`[role="figure"][data-tile="${added.id}"]`);
+  await expect(tile.getByRole("heading", { name: "Screens after the change" })).toBeVisible();
+  await expect(page.locator('[data-tile-draft="draft_1"]')).toContainText("Retry timeline");
+  // Neither stands on a section of How it works.
+  await open(page, `${PR7}&pane=section&section=context`, { document, drafts });
+  await expect(page.locator('[data-tile-draft="draft_1"]')).toHaveCount(0);
+  await expect(page.locator(`[data-tile="${added.id}"]`)).toHaveCount(0);
+});
+
 /** A session at work on #7 and two decisions it made, as the daemon lists
  *  them, so the side pane has Sessions, Commits and Decisions. */
 async function withSessionWork(page: Page) {

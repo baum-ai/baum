@@ -1056,10 +1056,11 @@ longer added, and each committed write publishes the `added_tiles` event
 saved; try again" and publishes nothing.
 
 A tile added from the session panel goes on the section the tool names, else
-the one the person is reading (the page context's `section`), else, for a
-tile with data, the current section whose hunks its data cites most, else
-`context` (`reviewv2.OwnerFor`); a library tile added without data keeps no
-section and is placed when served. On a version, `view.Build` puts an added
+where the person is reading (the page context's `section`, or `overview` on
+the Overview tab), else, for a tile with data, the current section whose
+hunks its data cites most, else `overview`, the Overview tab
+(`reviewv2.OwnerFor`); a library tile added without data keeps no section
+and is placed when served. On a version, `view.Build` puts an added
 tile on its section when the version has that current section (or it is
 `context`), else on the section whose hunks it covers most, else on
 `context`.
@@ -6000,7 +6001,8 @@ the review alone.
 
 The page passes the viewer `places` (`useViewPlaces`): three tabs, the
 Overview (the summary, a verdict when the view has one, the risk, the main
-screenshots, the main diagram and what the linked sessions asked for), How
+screenshots, the main diagram, the tiles the person added there and what the
+linked sessions asked for), How
 it works (Where this fits, then each section with the tiles placed on it,
 its behaviour steps, risks and folded code) and Code (every changed file,
 with the behaviour steps and open risks that cite each hunk), drawn inside
@@ -8207,26 +8209,29 @@ page but a pull request's. `Tool.Edits` marks the three that write
 conversation's page follows the person (the console sets it on every
 conversation), so the console also records, with each message it sends
 (`Registry.SetTurnPage`), the page that message was sent from, or the page
-open then when it names none; a tool that writes refuses ("This
-conversation was started about another page; ask from the pull request you
-want to change") unless the page open now is that same pull request, so
-"add the API changes tile" from the open pull request always works and a
-long turn begun on one cannot change another.
+open then when it names none. The tools that write, and `tile_type`, act
+on that page's pull request (`tileTarget`), not the page open now: a long
+turn keeps working on the pull request it was asked about while the person
+reads another page, and never changes the one they opened meanwhile. While
+the page open now is that same pull request, its focus is the one read. A
+turn sent from a page that is not a pull request's is refused. The add
+result names the pull request (`pull_request`), so the agent says where the
+tile went.
 
 | Tool | Arguments | Answers |
 | --- | --- | --- |
 | `tile_type` | `{type}` | a built-in type's `type`, `title`, `use_when`, `fill_schema` (what `add_tile` takes) and `fill_instructions`, with `built_in: true`; or a library type's `type`, `title`, `use_when`, `glance`, `sizes`, `fill_instructions` (its `fill.md`) and `fill_schema` (`Entry.FillSchema`), so the agent writes the data itself, beside the type in full from the tile library (its definition with HTML, samples and versions); read-only, page-bound like the others |
-| `add_tile` | `{type, section?, title?, data?}` | adds a built-in type (`flow`, `columns`, `sequence`, `table`, `code`, `images`; data required, see "Built-in added tiles") or a library type to the pull request; a library type with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background; `{tile, state: "ready" \| "filling", section, note}`. An unknown type names the library's types; a ninth added tile is refused |
+| `add_tile` | `{type, section?, title?, data?}` | adds a built-in type (`flow`, `columns`, `sequence`, `table`, `code`, `images`; data required, see "Built-in added tiles") or a library type to the pull request; a library type with `data` checked (`library.CheckAddedFill` against the latest version's hunks; its problems name places, never values, and nothing changes), masked and stored as the version's fill, or without data filled in the background; `{tile, state: "ready" \| "filling", section, pull_request, note}`. An unknown type names the library's types; a ninth added tile is refused |
 | `start_tile` | `{title, section?}` | puts a pending card on the section where the tile will stand; its ID, `draft_<n>` |
 | `add_custom_tile` | `{check, draft?, section?}` | adds the tile a passed `check_tile` check made, on the section named, else the pending card's; the tile and its section |
 
-`section` is a current section ID of the review the page shows, or
-`context` for Where this fits; `start_tile` and `add_custom_tile` refuse
-another, and `add_tile` places the tile by its data's hunks instead (on
-`context` when it has none). Without it, the tools take the section
-the person is reading, from the page context's focus (`tab: "sections"`
-with its `section`), else the current section whose hunks the tile's data
-cites most, else `context`; a library tile added without data keeps no
+`section` is a current section ID of the review the page shows, `overview`
+for the Overview tab, or `context` for Where this fits; `start_tile` and
+`add_custom_tile` refuse another, and `add_tile` places the tile by its
+data's hunks instead (on `overview` when it has none). Without it, the
+tools take where the person is reading, from the page context's focus
+(`tab: "sections"` with its `section`, or `tab: "overview"`), else the
+current section whose hunks the tile's data cites most, else `overview`; a library tile added without data keeps no
 section and is placed by its fill's citations when served. The shared
 `testdata/page-contexts.json` carries the focus shapes, which the Go and the
 app's tests read.
