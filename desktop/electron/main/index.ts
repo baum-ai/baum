@@ -75,7 +75,7 @@ import { registerAppScheme, serveAppScheme } from "./protocol.ts";
 import { Quitter, STOP_TIMEOUT } from "./quit.ts";
 import type { AppProcess } from "./run-baum.ts";
 import { FILE as DESKTOP_JSON } from "./settings.ts";
-import { registerThemeCommands, ThemeStore, themeBootstrap } from "./theme.ts";
+import { registerThemeCommands, ThemeStore, themeBootstrap, windowBackground } from "./theme.ts";
 import { registerTileFileCommands } from "./tile-files.ts";
 import { closeAction, type TrayController } from "./tray.ts";
 import { startTray } from "./tray-electron.ts";
@@ -357,7 +357,15 @@ function start(): void {
       if (window instanceof BrowserWindow) applyZoom(window.webContents, level);
     },
   });
-  const themes = new ThemeStore(desktopJson);
+  // The main window's background follows the theme its screens paint, so a
+  // dark theme opens and navigates without a white flash.
+  const background = () =>
+    windowBackground(themeBootstrap(themes.get(), nativeTheme.shouldUseDarkColors));
+  const repaintBackground = () => {
+    if (main && !main.isDestroyed()) main.setBackgroundColor(background());
+  };
+  const themes = new ThemeStore(desktopJson, repaintBackground);
+  nativeTheme.on("updated", repaintBackground);
   registerThemeCommands(themes);
   ipcMain.on(THEME_CHANNEL, (event) => {
     event.returnValue =
@@ -502,6 +510,7 @@ function start(): void {
     minWidth: 720,
     minHeight: 480,
     show: !hidden,
+    backgroundColor: background(),
     webPreferences: securePreferences(join(__dirname, "preload.cjs"), SHELL),
   });
   const window = main;

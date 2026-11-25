@@ -102,7 +102,13 @@ when the window is created, so each page load on the main window also pushes the
 current theme with a best-effort `eval` as the load starts (logged if it fails),
 and the page applies the live one right after. The tray panel keeps the theme
 saved at startup until its page applies the current one. Without a saved theme the
-screens follow the system's light or dark.
+screens follow the system's light or dark. In the Electron shell the main
+window's background colour is the screens' page surface under the active theme
+(`windowBackground` in `electron/main/theme.ts`), updated when the theme or the
+system's appearance changes, so a dark theme opens without a white flash. The
+daemon's launch page, which shows for a moment between the connecting screen
+and the application, paints the application's canvas colour and shows its
+status only when the launch is slow or fails.
 Vite writes the daemon assets to `../internal/localapp/dist` and assembles the
 native assets in `dist/`, where the connecting screen is `index.html`. Tauri embeds
 `dist/` so setup stays on its local origin with the existing native permissions;
