@@ -137,7 +137,8 @@ describe("running a job", () => {
   });
 });
 
-describe.each(["__TAURI_INTERNALS__", "baumDesktop"])("where checks draw under %s", (bridge) => {
+describe("where checks draw in the Electron shell", () => {
+  const bridge = "baumDesktop";
   type Bridge = Record<string, unknown>;
   afterEach(() => {
     vi.useRealTimers();

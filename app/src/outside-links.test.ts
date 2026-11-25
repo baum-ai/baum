@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openExternal, openOutsideLinksInBrowser } from "./outside-links";
 
-describe.each(["__TAURI_INTERNALS__", "baumDesktop"])("under %s", (bridge) => {
+describe("under baumDesktop", () => {
   const people = new WeakSet<Event>();
   let opened: { href: string; target: string; rel: string }[];
   let remove: () => void;
@@ -12,7 +12,7 @@ describe.each(["__TAURI_INTERNALS__", "baumDesktop"])("under %s", (bridge) => {
     HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
       opened.push({ href: this.href, target: this.target, rel: this.rel });
     };
-    vi.stubGlobal(bridge, {});
+    vi.stubGlobal("baumDesktop", {});
     remove = openOutsideLinksInBrowser(window, (event) => people.has(event));
   });
   afterEach(() => {
@@ -91,7 +91,7 @@ describe.each(["__TAURI_INTERNALS__", "baumDesktop"])("under %s", (bridge) => {
     let invoked: [string, Record<string, unknown> | undefined][];
     beforeEach(() => {
       invoked = [];
-      vi.stubGlobal(bridge, {
+      vi.stubGlobal("baumDesktop", {
         invoke: (command: string, args?: Record<string, unknown>) => {
           invoked.push([command, args]);
           return Promise.resolve();

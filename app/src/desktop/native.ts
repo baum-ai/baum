@@ -3,20 +3,17 @@ export type DesktopShell = {
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
 };
 
-/** A window as a desktop shell leaves it: the Electron shell's preload
- *  exposes `baumDesktop`, the Tauri shell `__TAURI_INTERNALS__`, and both
- *  declare `__BAUM_DESKTOP__`. */
+/** A window as the Electron shell leaves it: its preload exposes
+ *  `baumDesktop` and declares `__BAUM_DESKTOP__`. */
 export type DesktopWindow = Window & {
   baumDesktop?: DesktopShell;
-  __TAURI_INTERNALS__?: DesktopShell;
   __BAUM_DESKTOP__?: unknown;
 };
 
-/** The shell's command bridge (Electron's, else Tauri's), or undefined in a
- *  browser. */
+/** The Electron shell's command bridge, or undefined in a browser. */
 export function desktopShell(win: Window = window): DesktopShell | undefined {
   const w = win as DesktopWindow;
-  return w.baumDesktop ?? w.__TAURI_INTERNALS__;
+  return w.baumDesktop;
 }
 
 export function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

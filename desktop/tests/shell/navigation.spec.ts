@@ -116,10 +116,6 @@ const IPC_PROBE = () => `<script>(() => {
   t("process", () => typeof window.process);
   t("ipcRenderer", () => typeof window.ipcRenderer);
   t("electron", () => typeof window.electron);
-  t("__TAURI_INTERNALS__", () => typeof window.__TAURI_INTERNALS__);
-  t("ipc", () => typeof window.ipc);
-  t("chrome.webview", () => typeof window.chrome?.webview);
-  t("webkit handlers", () => typeof window.webkit?.messageHandlers);
   const call = { channel: "baum:invoke", name: "open_link", args: { url: ${JSON.stringify(att("message"))} } };
   parent.postMessage(call, "*");
   top.postMessage(call, "*");
@@ -151,10 +147,6 @@ for (const [name, frameCsp] of [
       "process",
       "ipcRenderer",
       "electron",
-      "__TAURI_INTERNALS__",
-      "ipc",
-      "chrome.webview",
-      "webkit handlers",
     ]) {
       expect(report[key], key).toBe("undefined");
     }

@@ -46,10 +46,6 @@ function probe(outside: string, name: string) {
   attempt("cookie", () => document.cookie);
   attempt("localStorage", () => localStorage.length);
   attempt(
-    "parent bridge",
-    () => (parent as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__,
-  );
-  attempt(
     "parent desktop bridge",
     () => (parent as unknown as { baumDesktop: unknown }).baumDesktop,
   );
@@ -185,12 +181,11 @@ test("a sandboxed frame reaches neither the page, the daemon nor the network", a
       "top location",
       "cookie",
       "localStorage",
-      "parent bridge",
       "parent desktop bridge",
     ]) {
       expect(result[access], `${name}: ${access}`).toMatch(/^threw /);
     }
-    // Neither shell's bridge nor its declaration is in the frame.
+    // The Electron shell's bridge and its declaration are not in the frame.
     expect(result["desktop bridge"]).toBe("undefined");
     expect(result["desktop declaration"]).toBe("undefined");
     // Nothing the daemon returns is readable, and a write never gets past

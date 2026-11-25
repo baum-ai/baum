@@ -19,52 +19,48 @@ afterEach(() => {
   node.remove();
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   Reflect.deleteProperty(window, "baumDesktop");
 });
 
 const focus = () => act(async () => void window.dispatchEvent(new Event("focus")));
 
-it.each(["__TAURI_INTERNALS__", "baumDesktop"])(
-  "rechecks the command line on focus at most every five minutes (%s)",
-  async (global) => {
-    const view = {
-      command: { installed: false, target: "/app/baum", plan: null },
-      hooks: { agents: [] },
-    };
-    const invoke = vi.fn(async () => view);
-    Object.defineProperty(window, global, { configurable: true, value: { invoke } });
-    let check!: ReturnType<typeof useCommandLineCheck>;
-    let renders = 0;
-    function Probe() {
-      check = useCommandLineCheck();
-      renders++;
-      return null;
-    }
-    await act(async () => root.render(<Probe />));
-    expect(invoke).toHaveBeenCalledTimes(1);
-    expect(check.missing).toBe(true);
-    const rendered = renders;
+it("rechecks the command line on focus at most every five minutes", async () => {
+  const view = {
+    command: { installed: false, target: "/app/baum", plan: null },
+    hooks: { agents: [] },
+  };
+  const invoke = vi.fn(async () => view);
+  Object.defineProperty(window, "baumDesktop", { configurable: true, value: { invoke } });
+  let check!: ReturnType<typeof useCommandLineCheck>;
+  let renders = 0;
+  function Probe() {
+    check = useCommandLineCheck();
+    renders++;
+    return null;
+  }
+  await act(async () => root.render(<Probe />));
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(check.missing).toBe(true);
+  const rendered = renders;
 
-    await vi.advanceTimersByTimeAsync(COMMAND_LINE_FOCUS_INTERVAL_MS - 1000);
-    await focus();
-    await focus();
-    expect(invoke).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(COMMAND_LINE_FOCUS_INTERVAL_MS - 1000);
+  await focus();
+  await focus();
+  expect(invoke).toHaveBeenCalledTimes(1);
 
-    // An explicit recheck is never throttled.
-    await act(async () => void (await check.recheck()));
-    expect(invoke).toHaveBeenCalledTimes(2);
+  // An explicit recheck is never throttled.
+  await act(async () => void (await check.recheck()));
+  expect(invoke).toHaveBeenCalledTimes(2);
 
-    await vi.advanceTimersByTimeAsync(COMMAND_LINE_FOCUS_INTERVAL_MS - 1000);
-    await focus();
-    expect(invoke).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1000);
-    await focus();
-    expect(invoke).toHaveBeenCalledTimes(3);
-    // The answer never changed, so nothing re-rendered.
-    expect(renders).toBe(rendered);
-  },
-);
+  await vi.advanceTimersByTimeAsync(COMMAND_LINE_FOCUS_INTERVAL_MS - 1000);
+  await focus();
+  expect(invoke).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1000);
+  await focus();
+  expect(invoke).toHaveBeenCalledTimes(3);
+  // The answer never changed, so nothing re-rendered.
+  expect(renders).toBe(rendered);
+});
 
 it("does not re-render preferences consumers when a focus reload returns the same data", async () => {
   let saved = { theme: "dark", key_hints: true, page_modifier: "" };
