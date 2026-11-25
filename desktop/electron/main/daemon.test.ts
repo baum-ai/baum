@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   bundledCliPath,
   cliPath,
+  daemonRunning,
   DISK_IMAGE,
   ensure,
   Failure,
@@ -272,7 +273,7 @@ echo '{"app":"http://127.0.0.1:4100","state":"${dir}"}'`,
 });
 
 describe("the health check", () => {
-  async function serve(status: number, body: string) {
+  async function serve(status: number, body: string, pid = 0) {
     const requests: IncomingMessage[] = [];
     const server = createServer((request, response) => {
       requests.push(request);
@@ -282,7 +283,7 @@ describe("the health check", () => {
     const port = (server.address() as AddressInfo).port;
     const launch = new Launch(`http://127.0.0.1:${port}/#token=${TOKEN}`, TOKEN, {
       version: "",
-      pid: 0,
+      pid,
       app: null,
       state: "/s",
     });
@@ -310,5 +311,43 @@ describe("the health check", () => {
     const gone = await serve(200, "");
     gone.close();
     expect(await health(gone.launch, 200)).toBe("down");
+  });
+
+  const errno = (code: string) => () => {
+    throw Object.assign(new Error(code), { code });
+  };
+
+  it("sends nothing once the daemon's process has gone", async () => {
+    // Another user's process may have taken the freed port.
+    const impostor = await serve(200, '{"status":"ok"}', 4242);
+    expect(await health(impostor.launch, 2000, errno("ESRCH"))).toBe("down");
+    expect(impostor.requests).toHaveLength(0);
+    impostor.close();
+  });
+
+  it("sends nothing once the daemon's pid belongs to another user", async () => {
+    const impostor = await serve(200, '{"status":"ok"}', 4242);
+    expect(await health(impostor.launch, 2000, errno("EPERM"))).toBe("down");
+    expect(impostor.requests).toHaveLength(0);
+    impostor.close();
+  });
+
+  it("checks a daemon whose process still runs", async () => {
+    const signals: [number, number][] = [];
+    const daemon = await serve(200, '{"status":"ok"}', 4242);
+    expect(await health(daemon.launch, 2000, (pid, signal) => signals.push([pid, signal]))).toBe(
+      "ok",
+    );
+    expect(signals).toEqual([[4242, 0]]);
+    expect(daemon.requests).toHaveLength(1);
+    daemon.close();
+  });
+
+  it("tells whether a process runs as this user", () => {
+    expect(daemonRunning(process.pid)).toBe(true);
+    expect(daemonRunning(4242, errno("ESRCH"))).toBe(false);
+    expect(daemonRunning(4242, errno("EPERM"))).toBe(false);
+    // A status without a pid cannot be checked.
+    expect(daemonRunning(0, errno("ESRCH"))).toBe(true);
   });
 });

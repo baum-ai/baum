@@ -406,10 +406,45 @@ export function launchUrl(raw: string): { url: URL; token: string } {
 
 export type Health = "ok" | "replaced" | "down";
 
+/** Sends a signal to a process; `process.kill` outside tests. */
+export type Kill = (pid: number, signal: number) => void;
+
+const killProcess: Kill = (pid, signal) => {
+  process.kill(pid, signal);
+};
+
+/** Whether the daemon process `pid` still runs as this user, so that its
+ *  loopback port still belongs to it. Once the daemon exits, another user's
+ *  process can bind the freed port and would receive the credential with
+ *  any request the app sends there. The daemon runs as this user, so a pid
+ *  this user may not signal (EPERM) was reused by someone else's process.
+ *  A status without a pid (0) cannot be checked and counts as running. */
+export function daemonRunning(pid: number, kill: Kill = killProcess): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the credential may still be sent to `launch`'s origin: its
+ *  daemon still runs. Check before every request that carries it. */
+export function stillOurs(launch: Launch, kill: Kill = killProcess): boolean {
+  return daemonRunning(launch.status.pid, kill);
+}
+
 /** Asks the daemon's app transport for its health. A 401 means a newer
  *  daemon replaced the one the window attached to, and rewrote the
- *  credential. */
-export function health(launch: Launch, timeout = HEALTH_TIMEOUT): Promise<Health> {
+ *  credential. A daemon whose process has gone counts as down without a
+ *  request, so the credential never reaches whatever took its port. */
+export function health(
+  launch: Launch,
+  timeout = HEALTH_TIMEOUT,
+  kill: Kill = killProcess,
+): Promise<Health> {
+  if (!stillOurs(launch, kill)) return Promise.resolve("down");
   const url = new URL(launch.url());
   return new Promise((resolve) => {
     let done = false;

@@ -105,6 +105,19 @@ describe("daemon client", () => {
     );
   });
 
+  it("sends nothing once the daemon's process has gone", async () => {
+    const { port, received } = await serveOnce(200, "{}");
+    const gone = { ...testLaunch(port), running: () => false };
+    await expect(get(gone, "/api/jobs", 2000)).rejects.toThrow("the baum daemon has stopped");
+    const answered = await Promise.race([
+      received.then(() => "received"),
+      new Promise((resolve) => setTimeout(() => resolve("nothing"), 200)),
+    ]);
+    expect(answered).toBe("nothing");
+    const running = { ...testLaunch(port), running: () => true };
+    expect((await get(running, "/api/jobs", 2000)).toString()).toBe("{}");
+  });
+
   it("rejects a response without a status", async () => {
     const garbage = await serveRaw("garbage");
     await expect(request(testLaunch(garbage), "GET", "/", null, 2000)).rejects.toThrow();

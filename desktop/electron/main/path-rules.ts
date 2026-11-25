@@ -2,6 +2,7 @@
 // components are (so `/a//b/` is `/a/b`), `starts_with` matches whole
 // components, and `..` is never resolved. Unix paths split on `/`; Windows ones on `/` and `\`.
 import { realpathSync } from "node:fs";
+import { win32 } from "node:path";
 
 export type Platform = NodeJS.Platform;
 
@@ -121,4 +122,15 @@ export function sameFile(a: string, b: string, platform: Platform): boolean {
   }
   const ascii = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
   return platform === "win32" ? ascii(x) === ascii(y) : x === y;
+}
+
+/** The full path of a program in Windows' `System32` (`reg.exe`, and
+ *  `WindowsPowerShell\v1.0\powershell.exe`). A bare name would be searched
+ *  for in the working directory first, where anyone who can write a file
+ *  there could put their own. `SystemRoot` is used only when it is an
+ *  absolute drive path. */
+export function windowsSystemProgram(env: NodeJS.ProcessEnv, ...parts: string[]): string {
+  const root = env.SystemRoot ?? env.SYSTEMROOT;
+  const base = root && /^[A-Za-z]:[\\/]/.test(root) ? root : "C:\\Windows";
+  return win32.join(base, "System32", ...parts);
 }

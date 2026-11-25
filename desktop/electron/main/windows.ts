@@ -117,27 +117,58 @@ export function guardNavigation(
 }
 
 /** The permissions a page of the app may have: notifications and writing
- *  to the clipboard, and only on the app's own origins. */
+ *  to the clipboard, and only in a main frame on the app's own origins. A
+ *  frame inside a page (a tile, an embedded site) never gets one, even when
+ *  it shares the page's origin. */
 const ALLOWED_PERMISSIONS = new Set(["notifications", "clipboard-sanitized-write"]);
+
+/** Which frame asks for a permission, as Electron describes it. */
+export interface PermissionFrame {
+  isMainFrame: boolean;
+  /** Origins Electron also reports for the frame (the check handler's
+   *  requesting and security origins); each must be one of the app's. */
+  origins?: (string | undefined)[];
+  /** Set only for a cross-origin frame inside another page. */
+  embeddingOrigin?: string;
+}
 
 export function permissionAllowed(
   permission: string,
   url: string | undefined,
   isAppOrigin: (origin: string) => boolean,
+  frame: PermissionFrame,
 ): boolean {
   if (!ALLOWED_PERMISSIONS.has(permission) || !url) return false;
-  try {
-    return isAppOrigin(originOf(new URL(url)));
-  } catch {
-    return false;
+  if (!frame.isMainFrame || frame.embeddingOrigin) return false;
+  // An opaque origin ("null": a sandboxed frame, a data: URL) is never the
+  // app's. Electron may report an origin with a trailing slash.
+  const appOrigin = (raw: string) => {
+    try {
+      const origin = originOf(new URL(raw));
+      return origin !== "null" && isAppOrigin(origin);
+    } catch {
+      return false;
+    }
+  };
+  for (const origin of frame.origins ?? []) {
+    if (origin !== undefined && !appOrigin(origin)) return false;
   }
+  return appOrigin(url);
 }
 
 export function guardPermissions(session: Session, isAppOrigin: (origin: string) => boolean): void {
   session.setPermissionRequestHandler((_contents, permission, callback, details) => {
-    callback(permissionAllowed(permission, details.requestingUrl, isAppOrigin));
+    callback(
+      permissionAllowed(permission, details.requestingUrl, isAppOrigin, {
+        isMainFrame: details.isMainFrame,
+      }),
+    );
   });
   session.setPermissionCheckHandler((_contents, permission, origin, details) =>
-    permissionAllowed(permission, details.requestingUrl ?? origin, isAppOrigin),
+    permissionAllowed(permission, details.requestingUrl ?? origin, isAppOrigin, {
+      isMainFrame: details.isMainFrame,
+      origins: [origin, details.securityOrigin],
+      embeddingOrigin: details.embeddingOrigin,
+    }),
   );
 }
