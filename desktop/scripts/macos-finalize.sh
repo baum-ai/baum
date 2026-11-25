@@ -276,6 +276,12 @@ node "$(dirname "$0")/update-yml.mjs" write "$version" "$out" latest-mac.yml "$n
 # What the Tauri updater installs: the app at the root of a gzipped tar, as
 # the Tauri bundler makes it, without macOS metadata files.
 COPYFILE_DISABLE=1 tar --no-mac-metadata -czf "$out/$name.app.tar.gz" -C "$work" baum.app
+# That updater drops each entry's first path component and puts the rest in
+# place of the installed app, so every entry must be under one baum.app.
+if tar -tzf "$out/$name.app.tar.gz" | grep -v -e '^baum\.app/' -e '^baum\.app$' | grep -q .; then
+  echo "macos-finalize: $name.app.tar.gz holds entries outside a top-level baum.app" >&2
+  exit 1
+fi
 
 developer_id=no
 if [ -n "$identity" ]; then developer_id=yes; fi

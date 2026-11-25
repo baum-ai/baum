@@ -536,6 +536,9 @@ jobs:
           fi
           # Fails unless every required bundle carries a signature.
           bash desktop/scripts/updater-manifest.sh write "$VERSION" release
+          # The Tauri copies still installed update to what latest.json
+          # lists: it must be the Electron app ("Bridge release").
+          bash desktop/scripts/updater-manifest.sh electron release
           # electron-updater's files: each must give the hashes of the files
           # beside it and announce this version, and every file they list
           # must carry the release key's signature for it.
