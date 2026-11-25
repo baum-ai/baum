@@ -87,6 +87,7 @@ import { canMerge, MergeDialog } from "./merge";
 import {
   openActiveBlock,
   reviewKeyStep,
+  SIDE_PANE_KEY,
   toggleActiveBlock,
   useGitHubKey,
   useShortcuts,
@@ -1069,6 +1070,7 @@ export function LocalReview({
                     : null
                 }
                 foldSidePane={questionsOpen && tight}
+                sidePaneKey={SIDE_PANE_KEY}
                 header={{
                   pullRequest: {
                     number: pr.number,
