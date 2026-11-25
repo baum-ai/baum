@@ -1459,7 +1459,8 @@ raw-text elements in any namespace, comments, tag or attribute names, or a
 in a detail, text in a glance, dashed when unresolved), `baum.diff` a cited
 hunk (one line in a glance; numbered lines from the excerpt the page sent,
 coloured by the page's tokens, in a detail), `baum.md` a small Markdown subset
-in which raw HTML stays text and links are words, and `baum.empty` and
+in which raw HTML stays text and links are words, `baum.compare` a before and
+an after with the words that differ marked, and `baum.empty` and
 `baum.fail` the standard states. `baum.refs.get`, `baum.jump`, `baum.ask` and
 `baum.openDetail` complete it. The kit builds its DOM with `createElement` and
 text; the only markup it parses is the static parts of an author's
