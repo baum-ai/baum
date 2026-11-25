@@ -18,10 +18,10 @@ function copyDirectory(source: string, destination: string) {
   }
 }
 
-// The same build supplies the daemon app and Tauri's own screens: setup, the
-// tray panel, and the connecting screen the window opens on, which becomes
-// Tauri's index.html. The connecting screen and the tray panel are taken out
-// of the daemon's copy.
+// The same build supplies the daemon app and the desktop app's own screens
+// (../desktop/dist): setup, the tray panel, and the connecting screen the
+// window opens on, which becomes index.html there. The connecting screen and
+// the tray panel are taken out of the daemon's copy.
 function desktopBundle(): Plugin {
   let output = "";
   return {
