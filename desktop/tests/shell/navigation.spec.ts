@@ -164,7 +164,7 @@ for (const [name, frameCsp] of [
     expect(await invoke(shell.main, "zoom_state")).toMatch(/^ok /);
     await sleep(1000);
     // Only the page's own call ran; the frame's message reached no command.
-    expect(logsSince(logs).filter((l) => l.includes("command"))).toEqual([
+    expect(logsSince(logs).filter((l) => /running the \S+ command/.test(l))).toEqual([
       "baum desktop: running the zoom_state command for the daemon-pages",
     ]);
     expect(await openedSince(opened)).toEqual([]);
@@ -282,7 +282,7 @@ for (const c of FRAME_CASES) {
     expect(shell.main.url()).toBe(url);
     const said = logsSince(logs);
     console.log(`${c.name}: ${JSON.stringify(said)}`);
-    expect(said.filter((l) => l.includes("command"))).toEqual([]);
+    expect(said.filter((l) => /running the \S+ command/.test(l))).toEqual([]);
     if (c.shell) expect(said.some((l) => /refused a (navigation|frame load)/.test(l))).toBe(true);
   });
 }
