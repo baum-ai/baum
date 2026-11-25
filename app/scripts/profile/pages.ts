@@ -493,7 +493,7 @@ const pagesScenario: Scenario<State> = {
         );
     };
     // Which goes first alternates, so neither always has the other's warmth
-    // (WebKit's cache, the daemon's).
+    // (Chromium's cache, the daemon's).
     if (state.turn++ % 2 === 0) {
       await direct();
       await tour();

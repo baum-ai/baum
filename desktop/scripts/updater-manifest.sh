@@ -3,6 +3,7 @@
 #
 #   scripts/updater-manifest.sh write VERSION DIR
 #   scripts/updater-manifest.sh verify DIR
+#   scripts/updater-manifest.sh signed VERSION FILE...
 #
 # write reads the signed updater bundles in DIR (each FILE with its FILE.sig
 # from scripts/updater-sign.sh), writes DIR/latest.json and verifies it. The
@@ -22,6 +23,10 @@
 #     tauri.conf.json (minisign);
 #   - the signature's trusted comment names the version the manifest
 #     announces.
+# signed checks that each FILE has a FILE.sig made by the release key for
+# VERSION: the release runs it on every file electron-updater's latest*.yml
+# files list (scripts/update-yml.mjs), which the app verifies the same way.
+#
 # So a tampered bundle, a swapped signature, a signature from another key, a
 # bundle served for the wrong platform or an announced version the bundles
 # were not signed for is never published.
@@ -31,7 +36,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: scripts/updater-manifest.sh write VERSION DIR | verify DIR" >&2
+  echo "usage: scripts/updater-manifest.sh write VERSION DIR | verify DIR | signed VERSION FILE..." >&2
   exit 2
 }
 
@@ -179,6 +184,21 @@ case "${1:-}" in
   verify)
     [ "$#" -eq 2 ] || usage
     verify "$2"
+    ;;
+  signed)
+    [ "$#" -ge 3 ] || usage
+    version=$2
+    shift 2
+    status=0
+    for file in "$@"; do
+      if [ ! -s "$file.sig" ]; then
+        echo "FAIL $(basename "$file") has no updater signature" >&2
+        status=1
+        continue
+      fi
+      check "$file" "$(cat "$file.sig")" "$version" || status=1
+    done
+    exit "$status"
     ;;
   *) usage ;;
 esac

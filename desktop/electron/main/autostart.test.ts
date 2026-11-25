@@ -51,10 +51,10 @@ describe("autostart entries", () => {
   });
 
   it("the launch agent runs the app hidden at login", () => {
-    const plist = launchAgent("/Applications/baum.app/Contents/MacOS/baum-desktop");
+    const plist = launchAgent("/Applications/baum.app/Contents/MacOS/baum");
     expect(plist).toContain("<key>Label</key>\n\t<string>com.usebaum.desktop</string>");
     expect(plist).toContain(
-      "<array>\n\t\t<string>/Applications/baum.app/Contents/MacOS/baum-desktop</string>\n\t\t<string>--hidden</string>\n\t</array>",
+      "<array>\n\t\t<string>/Applications/baum.app/Contents/MacOS/baum</string>\n\t\t<string>--hidden</string>\n\t</array>",
     );
     expect(plist).toContain("<key>RunAtLoad</key>\n\t<true/>");
     expect(plist.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
@@ -174,9 +174,7 @@ describe("autostart entries", () => {
     expect(checkExecutable("/opt/baum/baum-desktop (deleted)")).toBe("/opt/baum/baum-desktop");
     expect(checkExecutable("/usr/bin/baum-desktop")).toBe("/usr/bin/baum-desktop");
     expect(() =>
-      checkExecutable(
-        "/private/var/folders/x/AppTranslocation/ABC/d/baum.app/Contents/MacOS/baum-desktop",
-      ),
+      checkExecutable("/private/var/folders/x/AppTranslocation/ABC/d/baum.app/Contents/MacOS/baum"),
     ).toThrow(/Applications/);
     expect(installed("/usr/bin/baum-desktop", false)).toBe(true);
     expect(installed("/usr/bin/baum-desktop", true)).toBe(false);
@@ -272,7 +270,7 @@ describe("start at login", () => {
       platform: "darwin",
       env: {},
       home,
-      exe: "/Volumes/baum/baum.app/Contents/MacOS/baum-desktop",
+      exe: "/Volumes/baum/baum.app/Contents/MacOS/baum",
       isPackaged: true,
       misplaced: true,
     });
@@ -285,7 +283,7 @@ describe("start at login", () => {
       platform: "darwin",
       env: {},
       home,
-      exe: "/Applications/baum.app/Contents/MacOS/baum-desktop",
+      exe: "/Applications/baum.app/Contents/MacOS/baum",
       isPackaged: true,
     });
     expect(autostart.enabled()).toBe(false);

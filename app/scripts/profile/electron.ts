@@ -1,12 +1,11 @@
-// The Chromium engine of `just desktop::profile --engine chromium`: instead of
-// the desktop app, Playwright's Chromium (Chrome for Testing, in the
-// desktop-isolated image) opens the daemon's pages through chromedriver,
-// which speaks the same WebDriver as WebKitWebDriver, so run.ts drives the
-// same scenarios. Each measured run records a CPU profile through
-// chromedriver's Chrome DevTools Protocol endpoint; cpu.ts reads them.
-import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+// The app `just desktop::profile` drives: the unpackaged Electron app from
+// this checkout, which Electron's own chromedriver (of the app's Electron
+// version, in the desktop-isolated image) launches and drives over W3C
+// WebDriver, so run.ts's scenarios work the real window from the connecting
+// screen on to the daemon's pages. Each measured run records a CPU profile
+// through chromedriver's Chrome DevTools Protocol endpoint; cpu.ts reads them.
+import { statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { Snapshot } from "../../src/perf-collector.ts";
 import {
@@ -20,12 +19,11 @@ import {
 } from "./cpu.ts";
 import { createSession, type Session } from "./webdriver.ts";
 
-/** Where isolated.Dockerfile puts them. */
-export const CHROMEDRIVER = "/opt/chromium/chromedriver";
-/** chromedriver's arguments: only severe messages, so no command (the
- *  launch URL holds the daemon's capability) reaches driver.log. */
+/** Where isolated.Dockerfile puts it. */
+export const CHROMEDRIVER = "/opt/electron-chromedriver/chromedriver";
+/** chromedriver's arguments: only severe messages, so no command (a launch
+ *  URL holds the daemon's capability) reaches driver.log. */
 export const CHROMEDRIVER_ARGS = ["--log-level=SEVERE"];
-const CHROME = "/opt/chromium/chrome";
 
 /** Microseconds between samples. 250 µs gives a 16 ms frame some 60
  *  samples and a 100 ms interaction 400, enough to tell its stacks apart,
@@ -33,61 +31,46 @@ const CHROME = "/opt/chromium/chrome";
  *  journeys and makes a review run's profile tens of megabytes. */
 export const SAMPLING_INTERVAL = 250;
 
-/** The launch URL the app's window would load: `baum daemon ensure` starts
- *  the instance's daemon if none runs (as the app does) and names its state
- *  directory, whose credential.json holds the URL (the desktop README's
- *  "Attaching to the daemon"). */
-export function launchUrl(baum: string): string {
-  const out = execFileSync(baum, ["daemon", "ensure", "--json"], {
-    encoding: "utf8",
-    timeout: 45_000,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const line = out.trim().split("\n").at(-1) ?? "";
-  const status = JSON.parse(line) as { state?: string };
-  if (!status.state) throw new Error(`baum daemon ensure named no state directory: ${line}`);
-  const { url } = JSON.parse(readFileSync(join(status.state, "credential.json"), "utf8")) as {
-    url?: string;
+/** The Electron binary and version the app at `app` (its package
+ *  directory, oss/desktop) installs. */
+export function electron(app: string): { binary: string; version: string } {
+  const require = createRequire(join(app, "package.json"));
+  return {
+    binary: require("electron") as string,
+    version: (require("electron/package.json") as { version: string }).version,
   };
-  // The app's rule: the daemon's loopback origin, the capability in the
-  // fragment. The URL itself is never logged.
-  if (!url || !/^http:\/\/127\.0\.0\.1:\d+\/(#|$)/.test(url))
-    throw new Error(`${status.state}/credential.json holds no http://127.0.0.1:<port>/ launch URL`);
-  return url;
 }
 
-/** A browser session on the daemon's launch URL. A run's profile, when
- *  one is recording, starts before the page loads. */
-export async function launchChromium(
+/** Launches the app at `app` with the configuration directory `config`
+ *  (Electron's userData, where desktop.json is). A run's profile, when one
+ *  is recording, starts as soon as the window can be driven, on the
+ *  connecting screen. */
+export async function launchElectron(
   driver: string,
-  baum: string,
+  app: string,
+  config: string,
   cpu: CpuRecorder,
 ): Promise<Session> {
-  const profile = join(homedir(), ".cache/baum-profile/chromium");
-  // A browser that did not quit (a killed run) leaves its lock, which makes
-  // the next one refuse the profile; only one runs per instance.
-  rmSync(join(profile, "SingletonLock"), { force: true });
   const session = await createSession(driver, {
-    browserName: "chrome",
     "goog:chromeOptions": {
-      binary: CHROME,
+      binary: electron(app).binary,
       args: [
-        "--headless=new",
-        // The container has no user namespaces for Chrome's sandbox; it
-        // only ever opens the daemon's own pages.
+        // Electron runs the app in this directory; chromedriver's own last
+        // argument (a blank page's URL) then goes unread.
+        `--app=${app}`,
+        // The container has no user namespaces for Chromium's sandbox; the
+        // app only opens its own screens and the daemon's pages.
         "--no-sandbox",
-        "--disable-dev-shm-usage",
-        // The headless instance's screen (BAUM_ISOLATED_WIDTH × HEIGHT).
-        `--window-size=${process.env.BAUM_ISOLATED_WIDTH ?? 1440},${process.env.BAUM_ISOLATED_HEIGHT ?? 900}`,
+        // chromedriver reads the DevTools port from the user data directory
+        // it names here. The app sets its own (userData and sessionData)
+        // before Chromium starts, and Electron writes the port file to
+        // sessionData, so this names that: chromium/ under `config`.
+        `--user-data-dir=${join(config, "chromium")}`,
         "--enable-precise-memory-info",
-        // Its cache stays in the instance's home between launches, as
-        // WebKit's does.
-        `--user-data-dir=${profile}`,
       ],
     },
   });
   await cpu.relaunched(session);
-  await session.navigate(launchUrl(baum));
   return session;
 }
 
@@ -111,7 +94,7 @@ export class CpuRecorder {
   async start(session: Session, launched = false) {
     if (!this.version) {
       const version = (await session.cdp("Browser.getVersion")) as { product?: string };
-      this.version = version.product?.replace(/^HeadlessChrome\//, "") ?? "?";
+      this.version = version.product?.replace(/^(Headless)?Chrome\//, "") ?? "?";
     }
     await session.cdp("Profiler.enable");
     await session.cdp("Profiler.setSamplingInterval", { interval: SAMPLING_INTERVAL });

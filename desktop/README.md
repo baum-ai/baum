@@ -1185,7 +1185,11 @@ The updater is still being ported.
 - In the app, `desktopShell()` (`../app/src/desktop/native.ts`) finds either
   shell's bridge.
 
-Checks and runs happen in the `desktop-electron` Docker service:
+Releases and snapshots ship this shell (see Releases); `just desktop::bundle`
+builds its Linux bundles.
+
+Checks, runs and Linux bundles happen in the `desktop-electron` Docker
+service, whose image (`Dockerfile`) is the release's Linux build image:
 
 ```sh
 just desktop::electron-check       # format check, typecheck and unit tests
@@ -1213,23 +1217,28 @@ opening a browser. Stop the daemon afterwards with `baum daemon stop`.
 
 `just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
 Desktop check, test, build, bundle, run and dev recipes build that frontend first.
-Rust builds and checks run in the `desktop-test` Docker service (Rust, the
-WebKitGTK and GTK development packages, and the Tauri CLI). The bundled
-binary is built in `oss-test`. From the repository root:
+The Electron app's builds, bundles and runs (`run`, `isolated`, `profile`, and
+the build half of `dev`) happen in the `desktop-electron` Docker service
+(`Dockerfile`) or the `desktop-isolated` service built on it. The Tauri
+shell's Rust builds and checks (`check`, `test`) run in the `desktop-test`
+service (`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development
+packages, and the Tauri CLI) until that shell is removed. The bundled binary
+is built in `oss-test`. From the repository root:
 
 ```sh
 just desktop::check         # cargo fmt --check, clippy -D warnings, tests, updater-test
 just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
-just desktop::build         # Linux bundle (deb by default) in target/release/bundle
-just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
-just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
+just desktop::build         # unpacked Linux app (electron-builder --dir) in target/electron-builder
+just desktop::bundle        # the release's Linux deb, AppImage and latest-linux.yml in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG and zip in target/local-dmg (--install also installs it)
+just desktop::notices       # regenerate ../third_party/electron.txt (Electron's and npm packages' licences)
 just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::isolated      # run an app with its own home, keyring and daemon (see below)
 just desktop::profile       # time a scripted journey in the headless app (see Profiling)
-just desktop::dev           # native host app, with Vite hot reload in Docker
+just desktop::dev           # the app on the host, with its build and Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
 
@@ -1247,10 +1256,19 @@ BAUM_RELAY_URL=https://… just desktop::isolated mobile
 An instance's home stays between runs under
 `${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/desktop-homes/<name>`; delete the
 folder to start again. Its container is `baum-desktop-<name>`, and only one
-can run per name. The `desktop-isolated` image adds gnome-keyring on a D-Bus
-session, so sign-in can store credentials, plus git, ssh and sqlite3. The
-first run installs Claude Code into the home and copies `~/.gitconfig` with
-commit signing turned off, since the signing key is not there.
+can run per name. The container bundles the app's main process (`pnpm
+build`) and runs the unpackaged app from this checkout with `electron .`,
+on this display through Chromium's Wayland backend
+(`--ozone-platform=wayland`, the Wayland socket mounted). Electron runs with
+`--no-sandbox` there, and only there: a container has no user namespaces for
+Chromium's sandbox, and the app's renderers keep their sandboxed preload
+either way. The `desktop-isolated` image (`isolated.Dockerfile`) is the
+`desktop-electron` image plus gnome-keyring on a D-Bus session, so sign-in
+can store credentials, git, ssh, sqlite3, ImageMagick for screenshots and
+Electron's chromedriver for profiling. The first run installs Claude Code
+into the home and copies `~/.gitconfig` with commit signing turned off, since
+the signing key is not there. Each start removes the home's stale
+single-instance lock, which names the container that took it.
 
 `--copy-data`, when the instance has no data yet, copies this machine's
 repositories, reviews and settings with consistent SQLite snapshots. It
@@ -1296,14 +1314,16 @@ just desktop::isolated perf2 --seed-data=7 --headless
 ```
 
 `--headless` runs the instance without a display of yours: the container
-starts its own headless Weston (`BAUM_ISOLATED_WIDTH` × `BAUM_ISOLATED_HEIGHT`,
-1440 × 900 by default) and the app draws there, so agents can run the real
-WebKitGTK app with no window on your screen and no Wayland session at all.
-`just desktop::isolated-screenshot <name> [out.png]` saves what it shows.
-Weston's headless backend renders with Pixman, in software, and has no input
-seat (GDK logs `gdk_seat_get_keyboard` assertions, which are harmless here),
-so JavaScript, layout and React costs are realistic and painting and
-compositing costs are not.
+starts its own Xvfb (display `:99`, `BAUM_ISOLATED_WIDTH` ×
+`BAUM_ISOLATED_HEIGHT`, 1440 × 900 by default) and the app draws there
+through Chromium's X11 backend, so agents can run the real app with no
+window on your screen and no Wayland session at all.
+`just desktop::isolated-screenshot <name> [out.png]` saves what Xvfb's
+screen shows (ImageMagick's `import -window root`). Xvfb has no GPU, so
+Chromium rasterises and composites in software: JavaScript, layout and React
+costs are realistic and painting and compositing costs are not. Chromium
+logs that it cannot reach the system D-Bus, which the container does not
+have; that is harmless.
 
 `BAUM_FRONTEND_MODE=profile` before any recipe that builds the frontend
 (`isolated`, `run`, `build`) builds the profiling build
@@ -1321,15 +1341,21 @@ renders and reacts, for people and agents tuning it. It builds the profiling
 frontend, the viewer and the sidecar (which stay the profiling build until
 another recipe builds them), starts a `--headless` isolated instance
 (`profile` unless `--name` says otherwise) and, inside its container, runs
-`../app/scripts/profile/run.ts` with Node. The runner starts
-`WebKitWebDriver` (Ubuntu's `webkit2gtk-driver`, pinned to the version of
-the app's WebKitGTK), which launches the app's debug build with
-`TAURI_WEBVIEW_AUTOMATION=true`, so WebDriver drives the real main webview
-from the connecting screen on to the daemon's page. Key presses are WebKit's
-own synthesized events, which reach the page without an input seat, and the
-collector records them as interactions. The runner marks the instance set up
-(`desktop.json`), so it opens on the Inbox rather than first-run setup, and
-closes the first-run tour if it shows.
+`../app/scripts/profile/run.ts` with Node, after bundling the app's main
+process (`pnpm build`). The runner starts Electron's own chromedriver (the
+one Electron publishes with each release, at the Electron version
+`package.json` pins, which `../app/scripts/profile/electron.test.ts` checks
+against `isolated.Dockerfile`), which launches the unpackaged app from this
+checkout with `electron --app=/oss/desktop`, so WebDriver drives the real
+main window from the connecting screen on to the daemon's page: the same
+Chromium users run, on every platform. chromedriver finds the app's DevTools
+port through the user data directory it is given, which is the app's
+Chromium folder (`chromium/` beside `desktop.json`), since the app sets its
+own before Chromium starts. Key presses are Chromium's own input events, and
+the collector records them as interactions. The runner marks the instance
+set up (`desktop.json`), so it opens on the Inbox rather than first-run
+setup, and closes the first-run tour if it shows. Every measured run also
+records a CPU profile (below).
 
 ```sh
 just desktop::profile jk --runs 10                  # seeded dataset, seed 1
@@ -1348,12 +1374,12 @@ get what they had; a seeded home is never mixed with copied data
 `isolated`, the copy made once per instance: this machine's data shows how
 the app behaves on it, but differs between machines and changes over time.
 The summary's environment line says which data a profile ran on (the seed
-and the dataset's digest), the WebKitGTK package version and the CPUs.
+and the dataset's digest), the Electron and Chromium versions and the CPUs.
 `--runs N` (5 by default) sets the measured runs,
 after one warm-up whose numbers are kept apart. The recipe checks the
 scenario and the options before it builds anything. `--run-timeout S`
 (600 by default) fails a run, the launch or the preparation that takes
-longer, as a hung WebKitWebDriver would, with a message saying so. The container runs on
+longer, as a hung chromedriver or app would, with a message saying so. The container runs on
 `BAUM_DEV_CPUSET`, like every development container, and the summary names
 the CPUs it had. The scenarios:
 
@@ -1426,7 +1452,7 @@ window's storage (the last inbox shown, the sidebar, the session panel),
 and puts them back before every run, from the settings page, which holds
 neither; typed filters (which the daemon keeps) go back to none, and the
 filter scenario also clears its own after each run. What it cannot put
-back: the daemon's and WebKit's caches, which the warm-up fills, a new day
+back: the daemon's and Chromium's caches, which the warm-up fills, a new day
 starting (the Inbox's record of the day starts empty then), and anything a
 journey asks the daemon to do, which none of these does. Profiling clears
 an instance's typed filters.
@@ -1436,9 +1462,9 @@ so its JavaScript heap and React state start clean, then resets the
 collector: relaunching would add some ten seconds a run and change nothing a
 page reload does not. Cold start must launch, so each run quits the app and
 starts it again; the daemon keeps running between launches, as it does for a
-user, and WebKit's cache in the instance's home stays warm. The runner waits
+user, and Chromium's cache in the instance's home stays warm. The runner waits
 for each key press's frame, then 50 ms, before the next. Waiting, it polls
-the page and talks to WebKitWebDriver, which adds a roughly constant
+the page and talks to chromedriver, which adds a roughly constant
 overhead to interaction durations: fine for comparing before and after a
 change, not for absolute numbers. Modifier keys pressed for the key after
 them (Shift for Shift+J) are left out of the interactions.
@@ -1460,60 +1486,51 @@ command prints at the end:
   last, so a failure keeps the runs before it.
 - `metrics.json`: the same, with every run's metrics and the collector's raw
   snapshot (`__baumPerf.snapshot()`, [local app](../app/README.md)).
-- `driver.log`, WebKitWebDriver's output, and `failure.png`, the window
+- `run-N.cpuprofile`, each measured run's CPU profile (below).
+- `driver.log`, chromedriver's output, and `failure.png`, the window
   when a run failed.
 
-The numbers come with the headless instance's limits. Weston renders with
-Pixman, in software, so script, style, layout and React times are
-realistic and paint and compositing times are not; frame gaps include
-software painting. The app's Rust shell is a debug build, as `isolated`
-runs it; the measured pages come from the daemon and run in the system's
-WebKitGTK, so that only slows the shell's own commands. Data copied with
+The numbers come with the headless instance's limits. Under Xvfb Chromium
+rasterises and composites in software, so script, style, layout and React
+times are realistic and paint and compositing times are not; frame gaps
+include software painting. The app is unpackaged, as `isolated` runs it,
+but it is the same Electron and Chromium a release ships, so the measured
+pages run in the engine users have on every platform. Data copied with
 `--copy-data` holds no GitHub sign-in, so the daemon finds no open pull
 requests and the inboxes and Pull requests stay empty: `jk` skips, and
 `filter` types into an empty list. The seeded dataset has them. Its
 sessions are recorded as ended, so in `session-panel` nothing streams: it
 measures the panel open on an ended conversation, and the summary says so.
 
-#### CPU profiles in Chromium
+#### CPU profiles
 
-The WebKit runs say what is slow (interactions, frames, renders) but not
-why. `--engine chromium` runs the same scenarios in Chromium and records a
-CPU profile of every measured run, which says which functions the time went
-to:
+The runs say what is slow (interactions, frames, renders); the CPU profile
+of every measured run says which functions the time went to, in the same
+app:
 
 ```sh
-just desktop::profile review --engine chromium --runs 3
-just desktop::profile jk --engine chromium --runs 3
+just desktop::profile review --runs 3
+just desktop::profile jk --runs 3
 ```
 
-The instance starts as usual, with its daemon, its data and the profiling
-frontend in the sidecar, but no app: the runner starts the daemon with the
-bundled `baum daemon ensure`, as the app does, and Playwright's Chromium
-(Chrome for Testing, headless, in the `desktop-isolated` image) opens the
-launch URL from its `credential.json` (the capability in it is never
-logged: chromedriver logs only severe messages, and the runner scrubs
-`#token=` from `driver.log`; see
-[Attaching to the daemon](#attaching-to-the-daemon)). chromedriver of the
-same version drives it with the same WebDriver commands as WebKitWebDriver,
-so the scenarios are the same code. The image takes both at the Playwright
-version `../app`'s lockfile pins (`chromium.test.ts` checks), from Chrome for
-Testing, which has chromedriver for x86-64 Linux only, so on another Docker
-engine `--engine chromium` stops before building anything. Each measured run
-(not the warm-up) samples the page's main thread every 250 µs through
-chromedriver's DevTools Protocol endpoint (`Profiler.start` and `stop`):
-enough samples to tell a 16 ms frame's stacks apart at a few percent of
-overhead, where 100 µs costs more on long journeys and makes long profiles
-large.
+Each measured run (not the warm-up) samples the window's renderer main
+thread every 250 µs through chromedriver's DevTools Protocol endpoint
+(`Profiler.start` and `stop`): enough samples to tell a 16 ms frame's stacks
+apart at a few percent of overhead, where 100 µs costs more on long journeys
+and makes long profiles large. The overhead is in every run, so before and
+after numbers compare. chromedriver logs only severe messages, so no
+command reaches `driver.log`, and the runner also scrubs `#token=` from it:
+the daemon's launch URL holds its capability (see
+[Attaching to the daemon](#attaching-to-the-daemon)).
 
 The summary then ends with a CPU section:
 
 - the time a run spent in JavaScript, outside it (`(program)`: style,
   layout, paint and the browser's own work), in garbage collection and idle,
   from the collector's reset to its snapshot, the window the rest of the
-  summary measures (cold start relaunches the browser each run and counts
-  from the page's start, sampling from before it loads, which adds the
-  profiler's start to its launch times);
+  summary measures (cold start relaunches the app each run and counts from
+  the page's start, sampling from as soon as chromedriver can drive the
+  window, which adds the profiler's start to its launch times);
 - the 20 functions with the most self time per run, with their total time
   (callees included, a recursive function counted once). Each is named by
   the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
@@ -1555,16 +1572,11 @@ it in Chrome DevTools (Performance, Load profile) or
 are minified, so their names there are the minified ones unless DevTools
 can load the source maps.
 
-Chromium's numbers are not WebKit's. V8 and JavaScriptCore compile and
-collect garbage differently, Blink's style and layout differ from WebKit's,
-and headless Chromium paints with its own software renderer, so a frame or
-an interaction may be much faster or slower in one than the other, and a
-problem only one engine has (a slow path in its layout or its regular
-expressions) shows only there. Use Chromium's profile to find which code is
-hot, and WebKit's runs to judge how slow the app is for its users. The rest
-of the summary (metrics, interactions, components) is measured the same way
-in both. The driver's own polling shows in the profile as anonymous
-functions with no source, a little in every interaction.
+JavaScript profiles do not see style and layout work beyond the
+`(program)` row and the `browser` functions that force it; Chrome DevTools'
+Performance panel on a `run-N.cpuprofile` does not either. The driver's own
+polling shows in the profile as anonymous functions with no source, a
+little in every interaction.
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
@@ -1584,18 +1596,40 @@ icon (`icons/icon.icns`) as its volume icon. The window layout is
 regenerate both in Docker with `just desktop::dmg-layout` after changing
 `scripts/dmg-layout.py`.
 
-`run` starts the container's own daemon in the container's home directory,
-not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
-bundled one.
+`run` bundles the main process (`pnpm build`) and runs `electron .` in the
+`desktop-electron` service, on this Wayland session's display
+(`--ozone-platform=wayland`, with the socket mounted). It starts the
+container's own daemon in the container's home directory, not yours. Set
+`BAUM_DESKTOP_BAUM` to run a different `baum` binary than the bundled one.
 
 For UI work and host integration, use `just desktop::dev` on macOS, or on Linux
 in a Wayland or X11 session. Vite, dependencies and generated frontend code stay in
 Docker; the CLI sidecar is built in `oss-test` for the host's target (Go
-cross-compiles it without cgo). The native Rust app is compiled
-and run on the host, with separate output in `target/host-dev`. This is an
-intentional host execution exception: a container cannot resolve the host user's
-login environment, installed agent CLIs, repository paths, credential agents or
-native desktop services faithfully by mounting a display socket. The launcher
+cross-compiles it without cgo), and the app's main process and preload are
+bundled in `desktop-electron` (`pnpm build`, into `build/`). Only the
+Electron binary runs on the host, on the unpackaged app in `oss/desktop`.
+This is an intentional host execution exception: a container cannot resolve
+the host user's login environment, installed agent CLIs, repository paths,
+credential agents or native desktop services faithfully by mounting a
+display socket.
+
+The host needs no Node.js and installs no npm packages. Electron's binary is
+platform-specific and `node_modules` lives in a Docker volume holding the
+Linux one, so the same `desktop-electron` run also downloads the Electron
+release for the host's platform and architecture
+(`scripts/host-electron.mjs`): the version the lockfile pins, through the
+`@electron/get` the electron package installs itself with, checked against
+the checksums that package ships, into the shared Electron download cache
+(`${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/electron`). The host then unpacks
+it once per version into `electron-host/v<version>-<platform>-<arch>/` beside
+it (`unzip` on Linux, which the host needs; `ditto` on macOS) and runs it.
+A host `pnpm install` would run every package's install scripts on the host
+and could not share the Docker volume's `node_modules`; `npx electron` would
+need Node.js on the host and resolve the version apart from the lockfile.
+On Linux the downloaded Electron sandboxes its renderers with user
+namespaces; where they are restricted (Ubuntu 24.04's AppArmor default), it
+exits at start, and `ELECTRON_DISABLE_SANDBOX=1 just desktop::dev` runs it
+without that sandbox, for development only. The launcher
 uses your real home directory and the shared host daemon, so installation and
 repository actions affect your actual machine. It respects `BAUM_DESKTOP_BAUM`
 when set; otherwise it checks the sidecar first: `binaries/baum-<target>.stamp`
@@ -1613,12 +1647,9 @@ named `baum`, as the install-record validation requires; the platform-suffixed
 sidecar filename is only the build artifact. Existing daemons can finish using
 the previous executable after the copy is replaced.
 
-The host needs Rust (at least the version in `Cargo.toml`), a C toolchain,
-pkg-config and the Tauri GTK/WebKit development libraries. On Debian/Ubuntu,
-install `build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev
-libayatana-appindicator3-dev librsvg2-dev libssl-dev libxdo-dev`. On macOS,
-Rust and the Xcode command line tools are enough. Docker continues to own checks
-and release builds.
+The host needs Docker, and on Linux `unzip` and the libraries Electron
+loads (GTK 3, NSS, libnotify and a few X libraries, which a desktop session
+has). Docker continues to own checks and release builds.
 
 On Linux, Vite runs with host networking (`desktop-dev-frontend`) and shares the
 host's loopback with the app and the daemon. Docker Desktop on macOS has no
@@ -1628,24 +1659,26 @@ keeping the daemon's own `Host` header, which it requires. Windows is not
 supported.
 
 Saving React components or CSS in `oss/app` or `oss/viewer` refreshes the window,
-including the setup screen. Native Rust and connecting screen changes require
-restarting the command. Ctrl-C removes the Vite container and its private shared directory;
+including the setup screen. Changes to the shell (`electron/`) and the
+connecting screen require restarting the command. Ctrl-C removes the Vite container and its private shared directory;
 the host daemon continues running, just as when the normal desktop app closes.
 A second Vite, such as another worktree's, can serve the same daemon beside
 it with `BAUM_DESKTOP_DEV_PORT` set to another port; open it in a browser with
 the launch URL from the daemon's `credential.json`.
 
-Only debug builds with `BAUM_DESKTOP_DEV_DIR` set use the development frontend
-on port 1420. The private directory shares only the daemon origin with Vite,
+Only an unpackaged app with `BAUM_DESKTOP_DEV_DIR` set
+(`electron/main/development.ts`) uses the development frontend on port 1420. The private directory shares only the daemon origin with Vite,
 never its launch capability. Vite uses Docker host networking and binds only
 `127.0.0.1`, allowing the host window and the container proxy to reach the host
 daemon without exposing a development port beyond loopback. It proxies the normal
 login exchange and namespaced API, including event streams, rewriting the expected
 development Origin for CSRF validation. The setup screen also loads from Vite,
-at `http://localhost:1420/setup.html`. Tauri grants commands by origin, not
-path, so setup uses `localhost` while the daemon's pages use `127.0.0.1`; a
-capability added at runtime grants only the `localhost` origin the setup
-commands, and the window may navigate only to the setup page there. Release builds ignore the override.
+at `http://localhost:1420/setup.html`. The bridge grants setup commands by
+origin, so setup uses `localhost` while the daemon's pages use `127.0.0.1`:
+under development only, it grants the setup commands to that page on the
+`localhost` origin while setup shows (`electron/main/bridge.ts`), and the
+window may navigate only to the setup page there. A packaged app ignores the
+override.
 
 Tauri expects the bundled binary at `binaries/baum-<target triple>`, which
 `scripts/sidecar.sh` builds (run it from the module root; it takes the triple
@@ -1665,7 +1698,7 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
             ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
-                 └─ desktop-manifest     latest.json, desktop-checksums.txt; read-only
+                 └─ desktop-manifest     latest.json, latest*.yml checks, desktop-checksums.txt; read-only
                       └─ desktop-publish attach files, latest.json last, publish the draft,
                                          then the release candidates' latest.json
 ```
@@ -1682,38 +1715,52 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   parent is allowed, so a release candidate can be promoted). goreleaser creates the release as a draft with empty
   notes (a re-run reuses that draft), and keeps its `baum` binaries as the
   artifact `cli-binaries`.
-- `desktop` compiles the app around those binaries with `scripts/bundle.sh`,
-  on Linux in this directory's Docker image. This is where third-party code
-  runs: hundreds of crates' build scripts and macros, and the bundler's
-  downloads (linuxdeploy, NSIS). It has no secrets, and `bundle.sh` refuses to
-  run if a signing variable is set. It produces the deb and AppImage and the
-  unsigned macOS app (as a tar). The Windows installer is not released for
+- `desktop` builds the Electron app around those binaries with
+  `scripts/bundle.sh` and electron-builder (`electron-builder.mjs`), on Linux
+  in this directory's Docker image. This is where third-party code runs: the
+  npm packages' install scripts, esbuild, electron-builder and its downloads
+  (Electron, the AppImage runtime, fpm, NSIS, each checked against a
+  checksum electron-builder pins). It has no secrets, and `bundle.sh` refuses
+  to run if a signing variable or a token is set; electron-builder never
+  publishes (`--publish never`). It produces the deb, the AppImage and
+  `latest-linux.yml` (`latest-linux-arm64.yml` on arm64) and the unsigned
+  universal macOS app (as a tar). The Windows installer is not released for
   now: the release calls `desktop.yml` with `windows: false`, so only Check's
   snapshots build it (see "Windows" below).
 - The two sign jobs use the `release` environment, the only place the
   signing secrets live. Each waits for a reviewer's approval (both
   together), and the environment accepts only `v*` tags. They compile
   nothing: they run Apple's tools (`codesign`, `notarytool`, `stapler`,
-  `hdiutil`) through `scripts/macos-finalize.sh`, and minisign 0.12 (the official binary,
+  `hdiutil`) through `scripts/macos-finalize.sh`, minisign 0.12 (the official binary,
   pinned by SHA-256 in `scripts/install-minisign.sh`) through
-  `scripts/updater-sign.sh`, which signs each updater bundle for the release
-  version. OS signing comes first, so the updater signature covers the final
-  file. Each job downloads only its own platform's artifact, by name, and
-  takes only that platform's file names from it; `updater-sign.sh` and
+  `scripts/updater-sign.sh`, which signs each updater file for the release
+  version, and `scripts/update-yml.mjs` (Node.js, no dependencies) with the
+  runner's own Node.js. OS signing comes first, so the updater signature and
+  the hashes in `latest-mac.yml`, which `macos-finalize.sh` writes after
+  stapling, cover the final file. Every file a `latest*.yml` lists (the macOS
+  zip, the AppImages and the debs) and the macOS `.app.tar.gz` get a `.sig`.
+  Each job downloads only its own platform's artifact, by name, and takes
+  only that platform's file names from it; `updater-sign.sh` and
   `updater-manifest.sh` refuse any minisign but the pinned one there.
 - `desktop-manifest` downloads each sign job's artifact by name, accepts
   only that platform's file names and fails if two artifacts carry the same
   name. It writes `latest.json` with `scripts/updater-manifest.sh` and checks
   every bundle in it against the release key, the version and its expected
-  download URL. If the environment holds the updater key but a
-  signature is missing, it fails. It also writes `desktop-checksums.txt`.
+  download URL. It checks that `latest-mac.yml` and `latest-linux.yml` are
+  there, that every update file announces the version and gives the size and
+  SHA-512 of the files beside it (`update-yml.mjs check`), and that each file
+  they list carries the release key's signature for the version
+  (`updater-manifest.sh signed`). If the environment holds the updater key but a
+  signature is missing, it fails; without the key it publishes neither
+  `latest.json` nor the update files. It also writes `desktop-checksums.txt`.
 - `desktop-publish`, the only job besides `release` with a token that can
   write, attests the files' build provenance, uploads exactly the expected
-  files (`latest.json` last), and only then publishes the draft. It then
-  copies `latest.json` to the `desktop-rc-updates` pre-release, which it
+  files (`latest.json` and the `latest*.yml` update files last), and only then
+  publishes the draft. It then copies `latest.json` and the update files to
+  the `desktop-rc-updates` pre-release, which it
   creates on the first release, unless that already holds a newer version (a
   re-run of an older release). That pre-release is not a release: it only
-  holds the manifest release candidates read, and being a pre-release, it is
+  holds the manifests release candidates read, and being a pre-release, it is
   never the latest release.
 
 Before tagging a stable release, write the version's section (`## v1.2.3`) in
@@ -1761,7 +1808,8 @@ summary and a local clone of baum-ai/baum:
 
    ```sh
    git fetch --tags origin
-   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile .goreleaser.yaml
+   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile \
+     desktop/package.json desktop/pnpm-lock.yaml desktop/electron-builder.* .goreleaser.yaml
    ```
 
    and that the release commit itself adds only the built apps:
@@ -1785,22 +1833,24 @@ A pull request or push to `main` that changes `desktop/`, `app/`,
 `internal/localapp/`, the viewer build scripts or these workflows also runs
 `desktop.yml` from `check.yml` with version 0.0.0, packaging the macOS app ad
 hoc with `macos-finalize.sh`, so the bundling and packaging scripts are
-exercised before a tag. Like the release, it skips the Windows installer.
-Snapshots reuse a cached Linux build image and Rust build output; release
-builds use neither. Those snapshot bundles are kept as workflow artifacts for
-14 days.
+exercised before a tag. Unlike the release, it also builds the Windows
+installer. Snapshots reuse a cached Linux build image, pnpm store and
+Electron and electron-builder downloads; release builds use none of them.
+Those snapshot bundles are kept as workflow artifacts for 14 days.
 
 ### Files on a release
 
 | File | What it is |
 | --- | --- |
 | `baum-desktop-darwin-universal.dmg` | macOS disk image, Apple silicon and Intel, macOS 12 or newer |
-| `baum-desktop-darwin-universal.app.tar.gz` (`.sig`) | macOS app the updater installs |
+| `baum-desktop-darwin-universal.zip` (`.sig`) | macOS app electron-updater installs |
+| `baum-desktop-darwin-universal.app.tar.gz` (`.sig`) | the same macOS app in the archive the Tauri updater installs |
 | `baum-desktop-linux-amd64.AppImage` (`.sig`) | Linux x86_64 AppImage; also what the updater installs |
-| `baum-desktop-linux-amd64.deb` | Debian and Ubuntu package (no self-update) |
-| `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` | Linux arm64, when that build succeeds |
+| `baum-desktop-linux-amd64.deb` (`.sig`) | Debian and Ubuntu package |
+| `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` (`.sig`) | Linux arm64, when that build succeeds |
 | `desktop-checksums.txt` | SHA-256 of the desktop files |
-| `latest.json` | the updater manifest |
+| `latest.json` | the Tauri updater's manifest |
+| `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml` | electron-updater's update files: version, size and SHA-512 of each file |
 
 The download links at `downloads.usebaum.com`, used by the website and the
 repository README, take the version from the updater manifests and find these
@@ -1810,8 +1860,11 @@ The desktop files also carry a GitHub build provenance attestation
 (`gh attestation verify FILE --repo baum-ai/baum`).
 
 A macOS bundle that is not signed with a Developer ID is named
-`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); Gatekeeper
-warns about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
+`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`), and its zip
+and `.app.tar.gz` likewise; Gatekeeper warns about those. The update files
+name their files without a URL: the app resolves them against its update
+channel (electron-builder's `publish` setting is a generic provider at the
+latest release's downloads, which the app overrides). `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
 (both the universal app), `linux-x86_64` and, when built, `linux-aarch64`,
 each at
 `https://downloads.usebaum.com/update/vVERSION/<its file>`.
@@ -1825,8 +1878,8 @@ never as repository secrets.
 
 | Secrets | What they enable |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures and `latest.json`. Without them the bundles are published without a manifest, and installed apps are not offered the release. |
-| `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app and the bundled `baum` |
+| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures, `latest.json` and the `latest*.yml` update files. Without them the bundles are published without either, and installed apps are not offered the release. |
+| `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app, Electron's frameworks and helpers, and the bundled `baum` |
 | `APPLE_API_ISSUER`, `APPLE_API_KEY` (key ID), `APPLE_API_PRIVATE_KEY` (the `.p8` contents) — or `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), `APPLE_TEAM_ID` | notarisation and stapling of the app and the disk image; needs the signing secrets |
 
 The updater key's public half is `plugins.updater.pubkey` in
@@ -1837,51 +1890,60 @@ signed with the old private key, before signing with the new one.
 
 ### macOS
 
-One universal app (`--target universal-apple-darwin`, built with
-`--no-sign`) bundles a universal `baum` that `lipo` makes from goreleaser's
-darwin/arm64 and darwin/amd64 binaries. With the Apple secrets, `sign-macos`
-imports the certificate into a temporary keychain, and `macos-finalize.sh`
-signs the bundled `baum` and then the app with the hardened runtime and no
-entitlements (no App Sandbox), checks that both executables carry the
-Developer ID and hardened runtime, notarises and staples the app, builds the
-disk image with `hdiutil`, signs, notarises and staples it, and checks both
-with `stapler validate` and `spctl`. Before extracting the unsigned app, it
-rejects any archive entry that is not a regular file or directory inside
-`baum.app/`. Two passwords still reach a command line, on the ephemeral
+One universal app (electron-builder `--mac dir --universal`, unsigned:
+`mac.identity` is null) bundles a universal `baum` that `lipo` makes from
+goreleaser's darwin/arm64 and darwin/amd64 binaries, in
+`Contents/Resources/bin/baum`. electron-builder builds an x64 and an arm64
+app and merges them with `@electron/universal`, which keeps the
+already-universal `baum` as it is (`x64ArchFiles`). With the Apple secrets,
+`sign-macos` imports the certificate into a temporary keychain, and
+`macos-finalize.sh` signs inside out, deepest first as `@electron/osx-sign`
+does: every Mach-O file (Electron's framework binaries and dylibs, the
+helpers' executables, crashpad, Squirrel's ShipIt, the bundled `baum`), every
+nested `.app` and `.framework`, then the app, all with the hardened runtime
+and `macos/entitlements.plist`. That file allows only what V8's JIT needs
+(`com.apple.security.cs.allow-jit` and
+`com.apple.security.cs.allow-unsigned-executable-memory`); there is no App
+Sandbox. It checks that each carries the Developer ID and hardened runtime,
+notarises and staples the app, builds the disk image with `hdiutil`, signs,
+notarises and staples it, and checks both with `stapler validate` and
+`spctl`. It then zips the stapled app with `ditto` (what electron-updater's
+Squirrel.Mac installs), writes `latest-mac.yml` for that zip, and makes the
+`.app.tar.gz`. Before extracting the unsigned app, it rejects any archive
+entry that is not a regular file, directory or symbolic link inside
+`baum.app/`, and after extracting, any link that is absolute or climbs with
+`..` (Electron's frameworks need their relative links). Two passwords still
+reach a command line, on the ephemeral
 runner only: `security import` takes the certificate's password only as an
 argument (`-P`), and notarising with an Apple ID passes the app-specific
 password to `notarytool`; the App Store Connect API key avoids the second.
-The keychain's own password is random per run. Without them the app is signed ad hoc,
-so it runs on Apple silicon once the user allows it in System Settings. The
-updater archive is the finished app in a gzipped tar, as Tauri's bundler
-makes it.
+The keychain's own password is random per run. Without them every part is
+signed ad hoc, without the hardened runtime (whose library validation would
+refuse Electron's ad hoc signed framework), so the app runs on Apple silicon
+once the user allows it in System Settings. Video plays through Electron's
+own ffmpeg (`libffmpeg.dylib` in Electron's framework), the only ffmpeg
+`bundle.sh` allows in the app.
 
 ### Linux
 
-The Linux bundles are built in this directory's Docker image, on Ubuntu
-24.04 (the base image pinned by digest), the oldest supported distribution.
-They require Ubuntu 24.04 or newer, or a compatible distribution with glibc
-2.39 or newer and the corresponding system libraries. Ubuntu 22.04 and
-Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
-the 4.1 API (`libwebkit2gtk-4.1-0`), 2.40 or newer: the first release that
-sends the Fetch Metadata request headers (`Sec-Fetch-*`), without which no
-custom tile's frame loads. It declares its package dependencies and
-installs `baum-desktop` and `baum` in `/usr/bin`. Video in reviews plays
-through the system's GStreamer: WebKitGTK depends on the base and good
-plugins (WebM: VP8, VP9, Opus), and the deb also depends on
-`gstreamer1.0-libav` for MP4 (H.264, AAC).
+The Linux bundles are built with electron-builder in this directory's
+Docker image, on Ubuntu 24.04 (the base image pinned by digest), the oldest
+supported distribution. They require Ubuntu 24.04 or newer, or a compatible
+distribution with glibc 2.39 or newer. Ubuntu 22.04 and Debian 12 are no
+longer supported. Both carry Electron (Chromium) and the bundled `baum` in
+`resources/bin`, outside the asar archive. The deb installs the app in
+`/opt/baum`, links `/usr/bin/baum-desktop` to it and `/usr/bin/baum` to the
+bundled `baum`, and depends only on the system libraries Electron needs
+(GTK 3, NSS, libnotify, libsecret and a few X libraries): no WebKitGTK and no
+GStreamer, which `bundle.sh` checks. On systems that restrict unprivileged
+user namespaces it installs electron-builder's AppArmor profile for
+Chromium's sandbox.
 
-The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
-glibc, HarfBuzz and the other libraries linuxdeploy leaves out. It also
-carries the image's GStreamer with its base and good plugins
-(`bundleMediaFramework` in `tauri.conf.json`) and uses those instead of the
-system's, so WebM videos play without any GStreamer on the system. It
-carries no H.264 or AAC decoder (libav), so MP4 videos show as unavailable
-there. The image
-requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
-This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
-for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
-so keep it in a directory you can write (for example `~/Applications`).
+Video in reviews plays through Electron's own ffmpeg (`libffmpeg.so` beside
+the executable) in both bundles, not the system's. `bundle.sh` checks
+that it is the only ffmpeg (libav) library in the bundle. The AppImage
+updates itself in place, so keep it in a directory you can write (for
+example `~/Applications`).
 
 A downloaded AppImage is not executable. With an integration tool that
 handles AppImages (AppImageLauncher 3.x, Gear Lever), double-clicking it
@@ -1893,12 +1955,7 @@ the static AppImage runtime ("Can't open squashfs image: Bad address"), so
 the AppImage does not start there; 3.x fixed that. Other AppImages built on
 this runtime, such as Cursor's, have the same limitation.
 
-On NVIDIA GPUs under Wayland, WebKitGTK only uses its fast GPU renderer
-from 2.54. The AppImage carries Ubuntu 24.04's WebKitGTK (2.52), so it renders
-slowly there, as does the deb on systems whose WebKitGTK is older than 2.54.
-The move to Ubuntu 24.04 fixes the loader leak but does not fix this limitation.
-User-facing limitations like these are listed in
-[KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+User-facing limitations are listed in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
 The app adds itself to the applications menu (`src/menu_entry.rs`): every
 start of an installed AppImage writes
@@ -1913,7 +1970,7 @@ and Gear Lever's do), the app removes its own entry instead, so baum is
 listed once. There is no Flatpak or Snap. x86_64 is
 the supported architecture; arm64 is built on GitHub's arm64 runners and
 published when that build succeeds. Linux bundles are not OS-signed; the
-AppImage carries the updater signature.
+AppImage and the deb carry updater signatures.
 
 ### Windows
 
@@ -1929,20 +1986,22 @@ restores. Its signing secrets are `WINDOWS_CERTIFICATE` (base64 `.pfx`) and
 `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT` and
 `AZURE_TRUSTED_SIGNING_PROFILE`.
 
-An NSIS installer for the current user (no administrator rights), which
-installs the WebView2 runtime with Microsoft's bootstrapper when it is
-missing. With signing secrets, `windows-sign.ps1` signs the installer with
+electron-builder's one-click NSIS installer for the current user
+(`perMachine: false`, no administrator rights), which installs into
+`%LOCALAPPDATA%\Programs\baum` and writes `latest.yml`. With signing
+secrets, `windows-sign.ps1` signs the installer with
 `signtool`: a certificate is imported into the current user's store for the
 signature and removed afterwards, so its password never appears on a command
 line; Azure Artifact Signing uses Microsoft's `signtool` plug-in from a
 NuGet package pinned by SHA-256. The app and the bundled `baum.exe` inside
 the installer, and the uninstaller, stay unsigned: signing them would mean
-running the Tauri bundler, which downloads and runs NSIS, in a job holding
+running electron-builder, which downloads and runs NSIS, in a job holding
 the secrets. Signing the installer is what SmartScreen checks on download.
 
-The installer's hooks (`windows/installer-hooks.nsh`) run `baum daemon stop`
-before installing or uninstalling, with the installed `baum.exe` and the
-app's copy in its local data directory, whichever exist; the command reaches
+The installer's custom macros (`windows/installer.nsh`, electron-builder's
+`customInit` and `customUnInit`) run `baum daemon stop` before installing or
+uninstalling, with the installed `resources\bin\baum.exe` and the app's copy
+in its local data directory, whichever exist; the command reaches
 the running daemon whichever binary it runs from. An in-app update stops it
 too, after waiting for running jobs, and the updated app starts it again.
 This is untested on Windows so far.
@@ -1953,7 +2012,7 @@ tools installed after the app or the agent started are found.
 
 ### What is checked where
 
-- `cargo test`: the updater configuration (key, manifest URL,
+- `cargo test` (the Tauri shell, `just desktop::check`; not run in CI any more): the updater configuration (key, manifest URL,
   `requireSignedVersion`, Windows passive install), that release candidates
   read the `desktop-rc-updates` manifest and full releases the configured one, that the key rejects
   another key's signature, and the record of failed installs.
@@ -1966,7 +2025,21 @@ tools installed after the app or the agent started are found.
   from another key, another platform's bundle, a foreign host, another tag,
   plain `http`, an unknown platform, an announced version the bundles were
   not signed for, an older release's bundle, a missing platform and an
-  unsigned bundle are all rejected.
+  unsigned bundle are all rejected, and so are an update file without a
+  signature, signed for another version, carrying another file's signature or
+  tampered with (`updater-manifest.sh signed`).
+- `scripts/update-yml-test.sh` (Check, the release's `desktop-test`, the
+  monorepo's Desktop job): the update files `update-yml.mjs` writes and
+  rewrites describe their files, and a changed or missing file, a name
+  outside the directory, another version or an unlisted main file is
+  rejected.
+- `scripts/bundle.sh`, on every bundle: the bundled `baum` is the one given,
+  executable and outside the asar; Electron's ffmpeg is the only one; the
+  executable's Electron fuses are those `electron-builder.mjs` sets
+  (`scripts/check-fuses.mjs`: no `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` or
+  `--inspect`, code only from an `app.asar` it validates on macOS and
+  Windows, no extra `file://` privileges); the AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
+  and links `/usr/bin/baum`; the update file matches the bundles.
 - The release runs the same verification on the real bundles before
   anything is attached, and the app verifies each download again.
 
