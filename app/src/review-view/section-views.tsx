@@ -89,8 +89,9 @@ export function SectionViewBody({
   shown: Exclude<SectionView, "overview">;
   views: SectionViews;
   context: ReviewPlaceContext;
-  /** A file an excerpt asked to see: its fold opens if it is generated. */
-  reveal?: string;
+  /** A file an excerpt asked to see: its fold opens if it is generated,
+   *  again on each new request. */
+  reveal?: { path: string } | null;
 }) {
   const notes = useMemo(() => sectionNotes(notesByHunk(review), section), [review, section]);
   const files = (list: ViewFile[]) => (
@@ -241,11 +242,11 @@ function GeneratedFiles({
   notes: Map<string, HunkNote[]>;
   context: ReviewPlaceContext;
   open: boolean;
-  reveal?: string;
+  reveal?: { path: string } | null;
 }) {
   const [open, setOpen] = useState(openFirst);
   useEffect(() => {
-    if (reveal && files.some((file) => file.path === reveal)) setOpen(true);
+    if (reveal && files.some((file) => file.path === reveal.path)) setOpen(true);
   }, [reveal, files]);
   return (
     <div className="space-y-3">

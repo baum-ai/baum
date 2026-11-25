@@ -174,7 +174,7 @@ function SectionBody({
       shown={value}
       views={views}
       context={context}
-      reveal={reveal?.path}
+      reveal={reveal}
     />
   );
   return (
