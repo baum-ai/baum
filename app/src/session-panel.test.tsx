@@ -657,7 +657,8 @@ it("archives a session from a right click in the picker, asking before it loses 
     );
   });
   expect(choice("Close session")).toBeDefined();
-  expect(choice("New session")).toBeUndefined();
+  // The list of sessions stays open under its actions.
+  expect(choice("New session")).toBeDefined();
   await act(async () => choice("Archive session")!.click());
   await until(() => expect(document.querySelector("dialog[open]")).not.toBeNull());
   expect(document.querySelector("dialog[open]")!.textContent).toContain(
