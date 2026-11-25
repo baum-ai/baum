@@ -1103,6 +1103,7 @@ if(message.kind==="init")onInit(message);
 else if(message.kind==="update")onUpdate(message);
 else if(message.kind==="theme")onTheme(message);
 else if(message.kind==="measure"&&state.check&&readySent)post("resize",{height:contentHeight()});
+else if(message.kind==="ping")post("pong",{});
 });
 const TIMEOUT=Symbol("timeout");
 function frames(count){
