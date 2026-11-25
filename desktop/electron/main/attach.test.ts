@@ -192,6 +192,23 @@ describe("the health watch", () => {
     await vi.waitFor(() => expect(attacher.daemon()).toBe("http://127.0.0.1:4300"));
   });
 
+  it("attaches to a new daemon that got the old one's port back", async () => {
+    // The old daemon's process has gone, so its checks fail without a
+    // request; the new daemon wrote a new credential for the same port.
+    const ensure = vi.fn(async () => launchOn(4100));
+    const { attacher, tick, setCredential } = harness({ ensure });
+    await attacher.connect();
+    for (let i = 0; i < 3; i++) await tick(["down"]);
+    expect(attacher.connection().phase).toBe("failed");
+    const token = "ZYXWVUTSRQPONMLKJIHGFEDCBA9876543210-_abcde";
+    setCredential(
+      new Launch(`http://127.0.0.1:4100/#token=${token}`, token, launchOn(4100).status),
+    );
+    await tick(["ok"]);
+    await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(2));
+    expect(attacher.connection().phase).toBe("connected");
+  });
+
   it("a newer attempt ends the old watch", async () => {
     const { attacher, tick, events } = harness();
     await attacher.connect();
