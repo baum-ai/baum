@@ -310,6 +310,51 @@ it("follows the end of the transcript only while the reader is there", async () 
   expect(toEnd()).toHaveLength(0);
 });
 
+it("keeps a reader at the end as the page grows after a version is shown", async () => {
+  const grown: (() => void)[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        grown.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const page = document.documentElement;
+  let height = 2000;
+  Object.defineProperty(page, "scrollHeight", { configurable: true, get: () => height });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+  const scrolled = (y: number) => {
+    Object.defineProperty(window, "scrollY", { configurable: true, value: y });
+    window.dispatchEvent(new Event("scroll"));
+  };
+  const scrollTo = vi.mocked(window.scrollTo);
+  const toEnd = () => scrollTo.mock.calls.filter(([o]) => (o as ScrollToOptions).top === height);
+  await show(session());
+  scrolled(1200);
+  // A reply measured and folded after the version.
+  height = 2300;
+  act(() => grown.forEach((callback) => callback()));
+  expect(toEnd()).toHaveLength(1);
+  // What the reader opens grows the page where they read.
+  scrolled(1500);
+  window.dispatchEvent(new Event("pointerdown"));
+  height = 2600;
+  act(() => grown.forEach((callback) => callback()));
+  expect(toEnd()).toHaveLength(0);
+  // A new version follows again; scrolled up, growing leaves the reader.
+  height = 2900;
+  answer = { version: "v2", prompts: ["Add a retry budget", "Now test it"] };
+  await wait(POLL_RUNNING);
+  expect(toEnd()).toHaveLength(1);
+  scrolled(300);
+  height = 3200;
+  act(() => grown.forEach((callback) => callback()));
+  expect(toEnd()).toHaveLength(0);
+});
+
 it("says why a transcript is not served, and when the session is gone", async () => {
   answer = {
     body: {
