@@ -255,6 +255,10 @@ it("opens a choice's actions over its menu on the actions key or a right click",
     choices()[0]!.focus();
   });
   expect(menus().map(labels)).toEqual([["New session", "Old session"]]);
+  // The click that follows the press only dismissed them: it picks nothing.
+  await act(async () => choices()[0]!.click());
+  expect(menus().map(labels)).toEqual([["New session", "Old session"]]);
+  expect(end).not.toHaveBeenCalled();
 
   // Picking an action closes both and gives the keys to the list's button.
   await right();

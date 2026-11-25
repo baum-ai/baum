@@ -377,7 +377,23 @@ function ContextMenu({
       // A click in the list under a choice's actions closes only them; one in
       // the actions leaves their list open.
       if (target instanceof Element && target.closest(`[data-menu-group="${group}"]`)) {
-        if (onList) close();
+        if (onList) {
+          close();
+          // The click that follows only dismissed the actions: it must not
+          // also pick the choice under it.
+          const swallow = (click: Event) => {
+            click.preventDefault();
+            click.stopImmediatePropagation();
+          };
+          document.addEventListener("click", swallow, { capture: true, once: true });
+          // A press that ends in no click (a drag off it) leaves the next
+          // click alone.
+          document.addEventListener(
+            "pointerdown",
+            () => document.removeEventListener("click", swallow, true),
+            { capture: true, once: true },
+          );
+        }
         return;
       }
       const button = anchor ?? over;
