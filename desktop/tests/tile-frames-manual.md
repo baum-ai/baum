@@ -1,12 +1,16 @@
 # Custom tile frames in the desktop app: manual check
 
 The browser suites check custom tile frames in Chromium and WebKit
-(`just local_app::e2e`, `just local_app::e2e-webkit`). They cannot run the
-desktop shells' own webviews (WKWebView on macOS, WebKitGTK on Linux,
-WebView2 on Windows), their navigation handlers or their command bridge.
-Run this checklist on each platform before a release that changes the
-shell, its webview, the frame route or the tile host, and before a shell
-starts declaring `window.__BAUM_DESKTOP__ = { tileFrames: true }`.
+(`just local_app::e2e`, `just local_app::e2e-webkit`). They cannot run a
+desktop shell's navigation guard or its command bridge. The Electron shell's
+harness (`tests/shell`, in CI; see "Checking navigation" in the README) runs
+the shell itself on Linux. Run this checklist on macOS and Windows (and on
+Linux when the harness cannot show something) before a release that changes
+the shell, its Electron version, the frame route or the tile host, and
+before a shell starts declaring `window.__BAUM_DESKTOP__ = { tileFrames: true }`.
+The Tauri shell (shipped until the bridge release) runs WKWebView on macOS,
+WebKitGTK on Linux and WebView2 on Windows; check it with the Web Inspector
+where this list says DevTools.
 
 ## Set up
 
@@ -19,13 +23,16 @@ starts declaring `window.__BAUM_DESKTOP__ = { tileFrames: true }`.
    from `oss/app`.
 3. Point a desktop build at the fixture's credential in `<dir>` and open
    acme/demo #7 as tiles (`?repository=acme%2Fdemo&pr=7&view=tiles&more=1`).
+   For the Electron shell, build it (`pnpm build` in `oss/desktop`) and start
+   it unpackaged with `--remote-debugging-port=9222`; open DevTools for its
+   pages and frames from `chrome://inspect` in Chrome or Edge.
 4. Run a listener on 127.0.0.1:4170 (any HTTP server that logs requests).
    The escape probes aim at it; it must log nothing.
 
 ## Checklist
 
-Write the platform, the shell's version and the webview's version, then
-tick each line.
+Write the platform, the shell's version and its Electron (or webview)
+version, then tick each line.
 
 - [ ] A shell without the declaration (or with `tileFrames` not `true`)
       mounts no frame: every custom tile says "Custom tiles aren't available
@@ -41,12 +48,18 @@ tick each line.
 - [ ] Escape probe's detail lists `origin` as `null`, and every read of the
       page, cookies, storage and the bridge as `threw`.
 - [ ] **A frame cannot call an app command.** In the probe's detail,
-      `parent bridge` threw and `webkit handlers` is empty. With the web
-      inspector, in the probe's frame, run
-      `window.__TAURI_INTERNALS__`, `window.ipc`, `window.chrome?.webview`
-      and `window.webkit?.messageHandlers`: each is undefined or empty, and
-      `window.chrome?.webview?.postMessage("x")` (WebView2) does nothing the
-      shell logs.
+      `parent bridge` and `parent desktop bridge` threw, `desktop bridge`
+      and `desktop declaration` are `undefined` and `webkit handlers` is
+      empty. With DevTools, in the probe's frame (pick it in the console's
+      context menu), run `window.baumDesktop`, `window.__BAUM_DESKTOP__`,
+      `window.require`, `window.process`, `window.__TAURI_INTERNALS__`,
+      `window.ipc`, `window.chrome?.webview` and
+      `window.webkit?.messageHandlers`: each is undefined or empty, and
+      `parent.postMessage({ name: "open_link", args: { url: "https://example.com/" } }, "*")`
+      opens nothing and the app logs no command (an unpackaged Electron
+      shell started with `BAUM_DESKTOP_LOG_COMMANDS=1` logs each command it
+      runs). In the Tauri shell on Windows,
+      `window.chrome?.webview?.postMessage("x")` does nothing the shell logs.
 - [ ] **A frame navigating itself opens nothing.** Open "Escape probe: leave
       outside" and "Escape probe: leave daemon": no browser window or tab
       opens, the listener logs nothing, the app's page stays where it was,
@@ -61,7 +74,7 @@ tick each line.
 - [ ] Tab reaches Widget health's detail frame, its citation chips open the
       cited code, and Escape inside it goes back to the summary.
 - [ ] "Escape probe: busy" freezes the window for about a second and a half
-      on engines that run the frame on the page's thread, then the app
+      (both shells run a tile frame in its page's process), then the app
       answers again (the documented limit: a busy loop is not interrupted).
 - [ ] The listener on 127.0.0.1:4170 logged nothing during the whole check.
 - [ ] Residual, recorded rather than ticked: with `resolvectl monitor`

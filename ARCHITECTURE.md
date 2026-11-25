@@ -1778,15 +1778,15 @@ itself rather than through `TileFrame`, which mounts on an
 IntersectionObserver and follows heights by animation frame.
 
 Where it runs: when the desktop shell declares
-`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one,
-currently Linux), the main page calls
+`window.__BAUM_DESKTOP__.checkWindow === true` (a shell that provides one:
+the Electron shell, and the Tauri shell on Linux), the main page calls
 the shell's `open_check_window` on a queued check, which loads
-`?page=tile-check` in a hidden window with its own web process, and
+`?page=tile-check` in a hidden window with its own renderer process, and
 `close_check_window` on `hung` (ending that process and the loop with it) or
 after 2 minutes without a check; the shell's commands are sent one after
 another, so the `queued` the daemon announces again for waiting checks after
 a hang reopens the window. Anywhere else frames are allowed (a
-browser, the macOS shell) the main page draws queued checks inside itself,
+browser, the Tauri shell on macOS) the main page draws queued checks inside itself,
 where a hang freezes the page until the daemon gives up on the job. A shell
 that allows no frames draws nothing, and checks are `unavailable`.
 
