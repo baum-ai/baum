@@ -61,11 +61,12 @@ function serve(c: Case): string {
 }
 
 /** Shows a case's page; resolves once its frame (if any) has loaded. */
-async function show(c: Case): Promise<{ url: string; logs: number }> {
+async function show(c: Case): Promise<{ url: string; logs: number; opened: number }> {
   const url = serve(c);
   attacker.requests.length = 0;
   loopback.requests.length = 0;
   const logs = shell.logs.length;
+  const opened = (await shell.opened()).length;
   const before = daemon.requests.length;
   await shell.main.goto(url);
   if (c.frame) {
@@ -75,8 +76,11 @@ async function show(c: Case): Promise<{ url: string; logs: number }> {
   }
   await sleep(500);
   if (c.click) await shell.main.mouse.click(400, 300);
-  return { url, logs };
+  return { url, logs, opened };
 }
+
+/** What the app opened in the browser since `from`. */
+const openedSince = async (from: number) => (await shell.opened()).slice(from);
 
 /** What the shell logged since `from`. */
 const logsSince = (from: number) => shell.logs.slice(from);
@@ -127,7 +131,7 @@ for (const [name, frameCsp] of [
   ["ipc-frame-sandbox-only", "sandbox allow-scripts"],
 ] as const) {
   test(`${name}: a sandboxed frame can call no command and sees no declaration`, async () => {
-    const { logs } = await show({ name, policy: true, frame: IPC_PROBE, frameCsp });
+    const { logs, opened } = await show({ name, policy: true, frame: IPC_PROBE, frameCsp });
     const report = await waitFor("the frame's report", 10_000, () =>
       shell.main.evaluate(
         () =>
@@ -177,7 +181,7 @@ for (const [name, frameCsp] of [
     expect(logsSince(logs).filter((l) => l.includes("command"))).toEqual([
       "baum desktop: running the zoom_state command for the daemon-pages",
     ]);
-    expect(await shell.opened()).toEqual([]);
+    expect(await openedSince(opened)).toEqual([]);
     expect(attacker.requests).toEqual([]);
   });
 }
@@ -284,11 +288,11 @@ const FRAME_CASES: (Case & { shell?: boolean })[] = [
 
 for (const c of FRAME_CASES) {
   test(`${c.name}: the frame cannot leave or open the browser`, async () => {
-    const { url, logs } = await show(c);
+    const { url, logs, opened } = await show(c);
     await sleep(1500);
     expect(attacker.requests, "requests that reached another site").toEqual([]);
     expect(loopback.requests, "requests that reached another local server").toEqual([]);
-    expect(await shell.opened(), "links opened in the browser").toEqual([]);
+    expect(await openedSince(opened), "links opened in the browser").toEqual([]);
     expect(shell.main.url()).toBe(url);
     const said = logsSince(logs);
     console.log(`${c.name}: ${JSON.stringify(said)}`);
@@ -298,7 +302,7 @@ for (const c of FRAME_CASES) {
 }
 
 test("page-link-click: a same-window link to another site is refused", async () => {
-  const { url, logs } = await show({
+  const { url, logs, opened } = await show({
     name: "page-link-click",
     policy: true,
     click: true,
@@ -307,7 +311,7 @@ test("page-link-click: a same-window link to another site is refused", async () 
   await sleep(1000);
   expect(shell.main.url()).toBe(url);
   expect(attacker.requests).toEqual([]);
-  expect(await shell.opened()).toEqual([]);
+  expect(await openedSince(opened)).toEqual([]);
   expect(logsSince(logs)).toContain(
     "baum desktop: refused a navigation to http://attacker.example",
   );
@@ -407,7 +411,7 @@ test("window.open in a loop opens the browser at most once a second", async () =
 });
 
 test("the main frame cannot navigate to another site or scheme", async () => {
-  const { url } = await show({ name: "main-frame", policy: false, main: () => "<p>main" });
+  const { url, opened } = await show({ name: "main-frame", policy: false, main: () => "<p>main" });
   for (const target of [
     att("main"),
     `http://127.0.0.1:${loopback.port}/`,
@@ -430,7 +434,7 @@ test("the main frame cannot navigate to another site or scheme", async () => {
   expect(shell.main.url()).toBe(url);
   expect(attacker.requests).toEqual([]);
   expect(loopback.requests).toEqual([]);
-  expect(await shell.opened()).not.toContain(att("main"));
+  expect(await openedSince(opened)).toEqual([]);
 });
 
 test("the network check alone refuses a frame load", async () => {
@@ -460,12 +464,13 @@ test("the network check alone refuses a frame load", async () => {
   try {
     attacker.requests.length = 0;
     const logs = shell.logs.length;
+    const opened = (await shell.opened()).length;
     await shell.main.reload();
     await sleep(2000);
     const said = logsSince(logs);
     console.log(`network-check: ${JSON.stringify(said)}`);
     expect(attacker.requests).toEqual([]);
-    expect(await shell.opened()).toEqual([]);
+    expect((await shell.opened()).slice(opened)).toEqual([]);
     expect(said.filter((l) => l.includes("refused a frame load")).length).toBeGreaterThanOrEqual(2);
   } finally {
     await shell.app.evaluate(({ webContents }, url) => {
