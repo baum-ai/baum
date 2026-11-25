@@ -137,10 +137,10 @@ if ! cmp -s "$sidecar" "$resources/bin/baum$exe"; then
   exit 1
 fi
 
-# Video plays through Electron's own ffmpeg (Chromium's build: open codecs
-# and, on every platform, H.264 and AAC decoding through the system or the
-# library Electron ships). The only ffmpeg library in the bundle must be
-# that one, where Electron puts it; nothing else may carry ffmpeg (libav).
+# Video plays through Electron's own ffmpeg library, the build of it
+# Chromium ships with Electron's codecs. The only ffmpeg library in the
+# bundle must be that one, where Electron puts it; nothing else may carry
+# ffmpeg (libav).
 case "$platform" in
   linux-*) allowed="$app/libffmpeg.so" ;;
   darwin-universal) allowed="$app/baum.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib" ;;

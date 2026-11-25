@@ -1077,7 +1077,11 @@ still being ported.
 - In the app, `desktopShell()` (`../app/src/desktop/native.ts`) finds either
   shell's bridge.
 
-Checks and runs happen in the `desktop-electron` Docker service:
+Releases and snapshots ship this shell (see Releases); `just desktop::bundle`
+builds its Linux bundles.
+
+Checks, runs and Linux bundles happen in the `desktop-electron` Docker
+service, whose image (`Dockerfile`) is the release's Linux build image:
 
 ```sh
 just desktop::electron-check   # format check, typecheck and unit tests
@@ -1103,17 +1107,21 @@ with `baum daemon stop`.
 
 `just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
 Desktop check, test, build, bundle, run and dev recipes build that frontend first.
-Rust builds and checks run in the `desktop-test` Docker service (Rust, the
-WebKitGTK and GTK development packages, and the Tauri CLI). The bundled
-binary is built in `oss-test`. From the repository root:
+The Electron app's builds and bundles run in the `desktop-electron` Docker
+service (`Dockerfile`). The Tauri shell's Rust builds and checks (`check`,
+`test`, `run`, `isolated`, `profile`, `dev`) run in the `desktop-test` service
+(`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development packages, and the
+Tauri CLI) until that shell is removed. The bundled binary is built in
+`oss-test`. From the repository root:
 
 ```sh
 just desktop::check         # cargo fmt --check, clippy -D warnings, tests, updater-test
 just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
-just desktop::build         # Linux bundle (deb by default) in target/release/bundle
-just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
-just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
+just desktop::build         # unpacked Linux app (electron-builder --dir) in target/electron-builder
+just desktop::bundle        # the release's Linux deb, AppImage and latest-linux.yml in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG and zip in target/local-dmg (--install also installs it)
+just desktop::notices       # regenerate ../third_party/electron.txt (Electron's and npm packages' licences)
 just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
@@ -1555,7 +1563,7 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
             ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
-                 └─ desktop-manifest     latest.json, desktop-checksums.txt; read-only
+                 └─ desktop-manifest     latest.json, latest*.yml checks, desktop-checksums.txt; read-only
                       └─ desktop-publish attach files, latest.json last, publish the draft,
                                          then the release candidates' latest.json
 ```
@@ -1572,38 +1580,52 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   parent is allowed, so a release candidate can be promoted). goreleaser creates the release as a draft with empty
   notes (a re-run reuses that draft), and keeps its `baum` binaries as the
   artifact `cli-binaries`.
-- `desktop` compiles the app around those binaries with `scripts/bundle.sh`,
-  on Linux in this directory's Docker image. This is where third-party code
-  runs: hundreds of crates' build scripts and macros, and the bundler's
-  downloads (linuxdeploy, NSIS). It has no secrets, and `bundle.sh` refuses to
-  run if a signing variable is set. It produces the deb and AppImage and the
-  unsigned macOS app (as a tar). The Windows installer is not released for
+- `desktop` builds the Electron app around those binaries with
+  `scripts/bundle.sh` and electron-builder (`electron-builder.mjs`), on Linux
+  in this directory's Docker image. This is where third-party code runs: the
+  npm packages' install scripts, esbuild, electron-builder and its downloads
+  (Electron, the AppImage runtime, fpm, NSIS, each checked against a
+  checksum electron-builder pins). It has no secrets, and `bundle.sh` refuses
+  to run if a signing variable or a token is set; electron-builder never
+  publishes (`--publish never`). It produces the deb, the AppImage and
+  `latest-linux.yml` (`latest-linux-arm64.yml` on arm64) and the unsigned
+  universal macOS app (as a tar). The Windows installer is not released for
   now: the release calls `desktop.yml` with `windows: false`, so only Check's
   snapshots build it (see "Windows" below).
 - The two sign jobs use the `release` environment, the only place the
   signing secrets live. Each waits for a reviewer's approval (both
   together), and the environment accepts only `v*` tags. They compile
   nothing: they run Apple's tools (`codesign`, `notarytool`, `stapler`,
-  `hdiutil`) through `scripts/macos-finalize.sh`, and minisign 0.12 (the official binary,
+  `hdiutil`) through `scripts/macos-finalize.sh`, minisign 0.12 (the official binary,
   pinned by SHA-256 in `scripts/install-minisign.sh`) through
-  `scripts/updater-sign.sh`, which signs each updater bundle for the release
-  version. OS signing comes first, so the updater signature covers the final
-  file. Each job downloads only its own platform's artifact, by name, and
-  takes only that platform's file names from it; `updater-sign.sh` and
+  `scripts/updater-sign.sh`, which signs each updater file for the release
+  version, and `scripts/update-yml.mjs` (Node.js, no dependencies) with the
+  runner's own Node.js. OS signing comes first, so the updater signature and
+  the hashes in `latest-mac.yml`, which `macos-finalize.sh` writes after
+  stapling, cover the final file. Every file a `latest*.yml` lists (the macOS
+  zip, the AppImages and the debs) and the macOS `.app.tar.gz` get a `.sig`.
+  Each job downloads only its own platform's artifact, by name, and takes
+  only that platform's file names from it; `updater-sign.sh` and
   `updater-manifest.sh` refuse any minisign but the pinned one there.
 - `desktop-manifest` downloads each sign job's artifact by name, accepts
   only that platform's file names and fails if two artifacts carry the same
   name. It writes `latest.json` with `scripts/updater-manifest.sh` and checks
   every bundle in it against the release key, the version and its expected
-  download URL. If the environment holds the updater key but a
-  signature is missing, it fails. It also writes `desktop-checksums.txt`.
+  download URL. It checks that `latest-mac.yml` and `latest-linux.yml` are
+  there, that every update file announces the version and gives the size and
+  SHA-512 of the files beside it (`update-yml.mjs check`), and that each file
+  they list carries the release key's signature for the version
+  (`updater-manifest.sh signed`). If the environment holds the updater key but a
+  signature is missing, it fails; without the key it publishes neither
+  `latest.json` nor the update files. It also writes `desktop-checksums.txt`.
 - `desktop-publish`, the only job besides `release` with a token that can
   write, attests the files' build provenance, uploads exactly the expected
-  files (`latest.json` last), and only then publishes the draft. It then
-  copies `latest.json` to the `desktop-rc-updates` pre-release, which it
+  files (`latest.json` and the `latest*.yml` update files last), and only then
+  publishes the draft. It then copies `latest.json` and the update files to
+  the `desktop-rc-updates` pre-release, which it
   creates on the first release, unless that already holds a newer version (a
   re-run of an older release). That pre-release is not a release: it only
-  holds the manifest release candidates read, and being a pre-release, it is
+  holds the manifests release candidates read, and being a pre-release, it is
   never the latest release.
 
 Before tagging a stable release, write the version's section (`## v1.2.3`) in
@@ -1651,7 +1673,8 @@ summary and a local clone of baum-ai/baum:
 
    ```sh
    git fetch --tags origin
-   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile .goreleaser.yaml
+   git diff PREVIOUS_TAG RUN_SHA -- .github desktop/scripts desktop/Dockerfile \
+     desktop/package.json desktop/pnpm-lock.yaml desktop/electron-builder.* .goreleaser.yaml
    ```
 
    and that the release commit itself adds only the built apps:
@@ -1675,22 +1698,24 @@ A pull request or push to `main` that changes `desktop/`, `app/`,
 `internal/localapp/`, the viewer build scripts or these workflows also runs
 `desktop.yml` from `check.yml` with version 0.0.0, packaging the macOS app ad
 hoc with `macos-finalize.sh`, so the bundling and packaging scripts are
-exercised before a tag. Like the release, it skips the Windows installer.
-Snapshots reuse a cached Linux build image and Rust build output; release
-builds use neither. Those snapshot bundles are kept as workflow artifacts for
-14 days.
+exercised before a tag. Unlike the release, it also builds the Windows
+installer. Snapshots reuse a cached Linux build image, pnpm store and
+Electron and electron-builder downloads; release builds use none of them.
+Those snapshot bundles are kept as workflow artifacts for 14 days.
 
 ### Files on a release
 
 | File | What it is |
 | --- | --- |
 | `baum-desktop-darwin-universal.dmg` | macOS disk image, Apple silicon and Intel, macOS 12 or newer |
-| `baum-desktop-darwin-universal.app.tar.gz` (`.sig`) | macOS app the updater installs |
+| `baum-desktop-darwin-universal.zip` (`.sig`) | macOS app electron-updater installs |
+| `baum-desktop-darwin-universal.app.tar.gz` (`.sig`) | the same macOS app in the archive the Tauri updater installs |
 | `baum-desktop-linux-amd64.AppImage` (`.sig`) | Linux x86_64 AppImage; also what the updater installs |
-| `baum-desktop-linux-amd64.deb` | Debian and Ubuntu package (no self-update) |
-| `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` | Linux arm64, when that build succeeds |
+| `baum-desktop-linux-amd64.deb` (`.sig`) | Debian and Ubuntu package |
+| `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` (`.sig`) | Linux arm64, when that build succeeds |
 | `desktop-checksums.txt` | SHA-256 of the desktop files |
-| `latest.json` | the updater manifest |
+| `latest.json` | the Tauri updater's manifest |
+| `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml` | electron-updater's update files: version, size and SHA-512 of each file |
 
 The download links at `downloads.usebaum.com`, used by the website and the
 repository README, take the version from the updater manifests and find these
@@ -1700,8 +1725,11 @@ The desktop files also carry a GitHub build provenance attestation
 (`gh attestation verify FILE --repo baum-ai/baum`).
 
 A macOS bundle that is not signed with a Developer ID is named
-`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); Gatekeeper
-warns about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
+`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`), and its zip
+and `.app.tar.gz` likewise; Gatekeeper warns about those. The update files
+name their files without a URL: the app resolves them against its update
+channel (electron-builder's `publish` setting is a generic provider at the
+latest release's downloads, which the app overrides). `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
 (both the universal app), `linux-x86_64` and, when built, `linux-aarch64`,
 each at
 `https://downloads.usebaum.com/update/vVERSION/<its file>`.
@@ -1715,8 +1743,8 @@ never as repository secrets.
 
 | Secrets | What they enable |
 | --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures and `latest.json`. Without them the bundles are published without a manifest, and installed apps are not offered the release. |
-| `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app and the bundled `baum` |
+| `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures, `latest.json` and the `latest*.yml` update files. Without them the bundles are published without either, and installed apps are not offered the release. |
+| `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app, Electron's frameworks and helpers, and the bundled `baum` |
 | `APPLE_API_ISSUER`, `APPLE_API_KEY` (key ID), `APPLE_API_PRIVATE_KEY` (the `.p8` contents) — or `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), `APPLE_TEAM_ID` | notarisation and stapling of the app and the disk image; needs the signing secrets |
 
 The updater key's public half is `plugins.updater.pubkey` in
@@ -1727,51 +1755,60 @@ signed with the old private key, before signing with the new one.
 
 ### macOS
 
-One universal app (`--target universal-apple-darwin`, built with
-`--no-sign`) bundles a universal `baum` that `lipo` makes from goreleaser's
-darwin/arm64 and darwin/amd64 binaries. With the Apple secrets, `sign-macos`
-imports the certificate into a temporary keychain, and `macos-finalize.sh`
-signs the bundled `baum` and then the app with the hardened runtime and no
-entitlements (no App Sandbox), checks that both executables carry the
-Developer ID and hardened runtime, notarises and staples the app, builds the
-disk image with `hdiutil`, signs, notarises and staples it, and checks both
-with `stapler validate` and `spctl`. Before extracting the unsigned app, it
-rejects any archive entry that is not a regular file or directory inside
-`baum.app/`. Two passwords still reach a command line, on the ephemeral
+One universal app (electron-builder `--mac dir --universal`, unsigned:
+`mac.identity` is null) bundles a universal `baum` that `lipo` makes from
+goreleaser's darwin/arm64 and darwin/amd64 binaries, in
+`Contents/Resources/bin/baum`. electron-builder builds an x64 and an arm64
+app and merges them with `@electron/universal`, which keeps the
+already-universal `baum` as it is (`x64ArchFiles`). With the Apple secrets,
+`sign-macos` imports the certificate into a temporary keychain, and
+`macos-finalize.sh` signs inside out, deepest first as `@electron/osx-sign`
+does: every Mach-O file (Electron's framework binaries and dylibs, the
+helpers' executables, crashpad, Squirrel's ShipIt, the bundled `baum`), every
+nested `.app` and `.framework`, then the app, all with the hardened runtime
+and `macos/entitlements.plist`. That file allows only what V8's JIT needs
+(`com.apple.security.cs.allow-jit` and
+`com.apple.security.cs.allow-unsigned-executable-memory`); there is no App
+Sandbox. It checks that each carries the Developer ID and hardened runtime,
+notarises and staples the app, builds the disk image with `hdiutil`, signs,
+notarises and staples it, and checks both with `stapler validate` and
+`spctl`. It then zips the stapled app with `ditto` (what electron-updater's
+Squirrel.Mac installs), writes `latest-mac.yml` for that zip, and makes the
+`.app.tar.gz`. Before extracting the unsigned app, it rejects any archive
+entry that is not a regular file, directory or symbolic link inside
+`baum.app/`, and after extracting, any link that is absolute or climbs with
+`..` (Electron's frameworks need their relative links). Two passwords still
+reach a command line, on the ephemeral
 runner only: `security import` takes the certificate's password only as an
 argument (`-P`), and notarising with an Apple ID passes the app-specific
 password to `notarytool`; the App Store Connect API key avoids the second.
-The keychain's own password is random per run. Without them the app is signed ad hoc,
-so it runs on Apple silicon once the user allows it in System Settings. The
-updater archive is the finished app in a gzipped tar, as Tauri's bundler
-makes it.
+The keychain's own password is random per run. Without them every part is
+signed ad hoc, without the hardened runtime (whose library validation would
+refuse Electron's ad hoc signed framework), so the app runs on Apple silicon
+once the user allows it in System Settings. Video plays through Electron's
+own ffmpeg (`libffmpeg.dylib` in Electron's framework), the only ffmpeg
+`bundle.sh` allows in the app.
 
 ### Linux
 
-The Linux bundles are built in this directory's Docker image, on Ubuntu
-24.04 (the base image pinned by digest), the oldest supported distribution.
-They require Ubuntu 24.04 or newer, or a compatible distribution with glibc
-2.39 or newer and the corresponding system libraries. Ubuntu 22.04 and
-Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
-the 4.1 API (`libwebkit2gtk-4.1-0`), 2.40 or newer: the first release that
-sends the Fetch Metadata request headers (`Sec-Fetch-*`), without which no
-custom tile's frame loads. It declares its package dependencies and
-installs `baum-desktop` and `baum` in `/usr/bin`. Video in reviews plays
-through the system's GStreamer: WebKitGTK depends on the base and good
-plugins (WebM: VP8, VP9, Opus), and the deb also depends on
-`gstreamer1.0-libav` for MP4 (H.264, AAC).
+The Linux bundles are built with electron-builder in this directory's
+Docker image, on Ubuntu 24.04 (the base image pinned by digest), the oldest
+supported distribution. They require Ubuntu 24.04 or newer, or a compatible
+distribution with glibc 2.39 or newer. Ubuntu 22.04 and Debian 12 are no
+longer supported. Both carry Electron (Chromium) and the bundled `baum` in
+`resources/bin`, outside the asar archive. The deb installs the app in
+`/opt/baum`, links `/usr/bin/baum-desktop` to it and `/usr/bin/baum` to the
+bundled `baum`, and depends only on the system libraries Electron needs
+(GTK 3, NSS, libnotify, libsecret and a few X libraries): no WebKitGTK and no
+GStreamer, which `bundle.sh` checks. On systems that restrict unprivileged
+user namespaces it installs electron-builder's AppArmor profile for
+Chromium's sandbox.
 
-The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
-glibc, HarfBuzz and the other libraries linuxdeploy leaves out. It also
-carries the image's GStreamer with its base and good plugins
-(`bundleMediaFramework` in `tauri.conf.json`) and uses those instead of the
-system's, so WebM videos play without any GStreamer on the system. It
-carries no H.264 or AAC decoder (libav), so MP4 videos show as unavailable
-there. The image
-requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
-This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
-for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
-so keep it in a directory you can write (for example `~/Applications`).
+Video in reviews plays through Electron's own ffmpeg (`libffmpeg.so` beside
+the executable) in both bundles, not the system's. `bundle.sh` checks
+that it is the only ffmpeg (libav) library in the bundle. The AppImage
+updates itself in place, so keep it in a directory you can write (for
+example `~/Applications`).
 
 A downloaded AppImage is not executable. With an integration tool that
 handles AppImages (AppImageLauncher 3.x, Gear Lever), double-clicking it
@@ -1783,12 +1820,7 @@ the static AppImage runtime ("Can't open squashfs image: Bad address"), so
 the AppImage does not start there; 3.x fixed that. Other AppImages built on
 this runtime, such as Cursor's, have the same limitation.
 
-On NVIDIA GPUs under Wayland, WebKitGTK only uses its fast GPU renderer
-from 2.54. The AppImage carries Ubuntu 24.04's WebKitGTK (2.52), so it renders
-slowly there, as does the deb on systems whose WebKitGTK is older than 2.54.
-The move to Ubuntu 24.04 fixes the loader leak but does not fix this limitation.
-User-facing limitations like these are listed in
-[KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+User-facing limitations are listed in [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
 The app adds itself to the applications menu (`src/menu_entry.rs`): every
 start of an installed AppImage writes
@@ -1803,7 +1835,7 @@ and Gear Lever's do), the app removes its own entry instead, so baum is
 listed once. There is no Flatpak or Snap. x86_64 is
 the supported architecture; arm64 is built on GitHub's arm64 runners and
 published when that build succeeds. Linux bundles are not OS-signed; the
-AppImage carries the updater signature.
+AppImage and the deb carry updater signatures.
 
 ### Windows
 
@@ -1819,20 +1851,22 @@ restores. Its signing secrets are `WINDOWS_CERTIFICATE` (base64 `.pfx`) and
 `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT` and
 `AZURE_TRUSTED_SIGNING_PROFILE`.
 
-An NSIS installer for the current user (no administrator rights), which
-installs the WebView2 runtime with Microsoft's bootstrapper when it is
-missing. With signing secrets, `windows-sign.ps1` signs the installer with
+electron-builder's one-click NSIS installer for the current user
+(`perMachine: false`, no administrator rights), which installs into
+`%LOCALAPPDATA%\Programs\baum` and writes `latest.yml`. With signing
+secrets, `windows-sign.ps1` signs the installer with
 `signtool`: a certificate is imported into the current user's store for the
 signature and removed afterwards, so its password never appears on a command
 line; Azure Artifact Signing uses Microsoft's `signtool` plug-in from a
 NuGet package pinned by SHA-256. The app and the bundled `baum.exe` inside
 the installer, and the uninstaller, stay unsigned: signing them would mean
-running the Tauri bundler, which downloads and runs NSIS, in a job holding
+running electron-builder, which downloads and runs NSIS, in a job holding
 the secrets. Signing the installer is what SmartScreen checks on download.
 
-The installer's hooks (`windows/installer-hooks.nsh`) run `baum daemon stop`
-before installing or uninstalling, with the installed `baum.exe` and the
-app's copy in its local data directory, whichever exist; the command reaches
+The installer's custom macros (`windows/installer.nsh`, electron-builder's
+`customInit` and `customUnInit`) run `baum daemon stop` before installing or
+uninstalling, with the installed `resources\bin\baum.exe` and the app's copy
+in its local data directory, whichever exist; the command reaches
 the running daemon whichever binary it runs from. An in-app update stops it
 too, after waiting for running jobs, and the updated app starts it again.
 This is untested on Windows so far.
@@ -1843,7 +1877,7 @@ tools installed after the app or the agent started are found.
 
 ### What is checked where
 
-- `cargo test`: the updater configuration (key, manifest URL,
+- `cargo test` (the Tauri shell, `just desktop::check`; not run in CI any more): the updater configuration (key, manifest URL,
   `requireSignedVersion`, Windows passive install), that release candidates
   read the `desktop-rc-updates` manifest and full releases the configured one, that the key rejects
   another key's signature, and the record of failed installs.
@@ -1856,7 +1890,18 @@ tools installed after the app or the agent started are found.
   from another key, another platform's bundle, a foreign host, another tag,
   plain `http`, an unknown platform, an announced version the bundles were
   not signed for, an older release's bundle, a missing platform and an
-  unsigned bundle are all rejected.
+  unsigned bundle are all rejected, and so are an update file without a
+  signature, signed for another version, carrying another file's signature or
+  tampered with (`updater-manifest.sh signed`).
+- `scripts/update-yml-test.sh` (Check, the release's `desktop-test`, the
+  monorepo's Desktop job): the update files `update-yml.mjs` writes and
+  rewrites describe their files, and a changed or missing file, a name
+  outside the directory, another version or an unlisted main file is
+  rejected.
+- `scripts/bundle.sh`, on every bundle: the bundled `baum` is the one given,
+  executable and outside the asar; Electron's ffmpeg is the only one; the
+  AppImage has its magic bytes; the deb depends on no WebKitGTK or GStreamer
+  and links `/usr/bin/baum`; the update file matches the bundles.
 - The release runs the same verification on the real bundles before
   anything is attached, and the app verifies each download again.
 
