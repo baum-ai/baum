@@ -42,6 +42,12 @@ type FindOptions struct {
 	CursorStorePaths []string
 	// PreviousPaths are directories the repository previously lived at.
 	PreviousPaths []string
+	// CheckoutParents are directories holding checkouts of the repository,
+	// each in a directory of its own and each gone once its work ended, whose
+	// sessions started at the top of their checkout: baum's fixes
+	// (fixdir.ForClone). A session recorded in one belongs to the repository,
+	// in the checkout its working directory names.
+	CheckoutParents []string
 	// Worktrees are the clone's working trees, the main one first, as
 	// gitlocal.Worktrees lists them. A session recorded in any of them belongs
 	// to the repository, whichever of them dir is in. Empty means only the
@@ -66,7 +72,8 @@ type FindOptions struct {
 // FindSessions returns the local Claude Code, Codex, and Cursor sessions relevant to
 // the git repository containing dir, ordered by modification time: those whose
 // recorded working directory is the checkout containing dir, one of
-// opts.Worktrees or opts.PreviousPaths, or a directory inside one of them. The
+// opts.Worktrees, opts.PreviousPaths or opts.CheckoutParents, or a directory
+// inside one of them. The
 // report names every session file discovery had to drop.
 func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 	var report ScanReport
@@ -94,6 +101,15 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 			return nil, report, fmt.Errorf("previous path %q: %w", prev, err)
 		}
 		add(abs)
+	}
+	var parents []string
+	for _, parent := range opts.CheckoutParents {
+		abs, err := filepath.Abs(parent)
+		if err != nil {
+			return nil, report, fmt.Errorf("checkout parent %q: %w", parent, err)
+		}
+		add(abs)
+		parents = append(parents, abs)
 	}
 	claudeDirs, err := claudeProjectsDirs(opts.ClaudeProjectsDir, nil)
 	if err != nil {
@@ -143,6 +159,9 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 	kept := sessions[:0]
 	for _, session := range sessions {
 		repoRoot, worktreeRoot := sessionRoots(session.WorkingDir, roots, worktrees)
+		if parent := deepestContaining(parents, session.WorkingDir); parent != "" && filepath.Clean(session.WorkingDir) != parent {
+			repoRoot, worktreeRoot = parent, filepath.Clean(session.WorkingDir)
+		}
 		if opts.ExcludeNestedClones && inNestedClone(session.WorkingDir, worktreeRoot) {
 			continue
 		}

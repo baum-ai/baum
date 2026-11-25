@@ -94,6 +94,23 @@ func settingsOf(t *testing.T, args []string) fixSettings {
 // directories, credential files unreadable, the network open or closed as
 // the request says, and no token in the environment. It keeps the final
 // message as its summary rather than a structured document.
+// A fix that keeps its session lets Claude Code record it, so baum's commit
+// of the fix can be linked to it.
+func TestFixKeepsItsSessionWhenAsked(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, persist := range []bool{false, true} {
+		dir := t.TempDir()
+		backend := &Backend{Binary: fixScript(t, false)}
+		if _, err := backend.Fix(context.Background(), agent.Request{Directory: dir, Scratch: t.TempDir(), Prompt: "fix", MaxCalls: 4, PersistSession: persist}); err != nil {
+			t.Fatal(err)
+		}
+		args, _ := runArgs(t, dir, 0)
+		if slices.Contains(args, "--no-session-persistence") == persist {
+			t.Errorf("persist %v: arguments %q", persist, args)
+		}
+	}
+}
+
 func TestFixRunsCommandsInTheSandbox(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -17,27 +17,34 @@ import (
 // named no commit. The first commit is at 10:30.
 func (f Fixture) AddEditor(t *testing.T, id, hour string, files ...string) {
 	t.Helper()
-	f.addEditor(t, id, hour, "", files)
+	f.addEditor(t, id, f.Repo, hour, "", files)
 }
 
 // AddEditorCommitting is AddEditor for a session that then ran git commit,
 // whose output names commitOID, so it created that commit.
 func (f Fixture) AddEditorCommitting(t *testing.T, id, hour, commitOID string, files ...string) {
 	t.Helper()
-	f.addEditor(t, id, hour, commitOID, files)
+	f.addEditor(t, id, f.Repo, hour, commitOID, files)
 }
 
-func (f Fixture) addEditor(t *testing.T, id, hour, commitOID string, files []string) {
+// AddEditorIn is AddEditor for a session that ran in dir, another checkout,
+// and edited files relative to it.
+func (f Fixture) AddEditorIn(t *testing.T, id, dir, hour string, files ...string) {
+	t.Helper()
+	f.addEditor(t, id, dir, hour, "", files)
+}
+
+func (f Fixture) addEditor(t *testing.T, id, dir, hour, commitOID string, files []string) {
 	t.Helper()
 	const usage = `{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"service_tier":"standard"}`
 	common := func(kind, uuid, parent, at string) string {
 		return fmt.Sprintf(`"cwd":%q,"gitBranch":"feature","isSidechain":false,"sessionId":%q,"type":%q,"uuid":%q,"parentUuid":%s,"timestamp":%q`,
-			f.Repo, id, kind, uuid, parent, at)
+			dir, id, kind, uuid, parent, at)
 	}
 	var uses, results []string
 	for i, file := range files {
 		uses = append(uses, fmt.Sprintf(`{"type":"tool_use","id":"toolu_%d","name":"Edit","input":{"file_path":%q,"old_string":"","new_string":"x"}}`,
-			i, filepath.Join(f.Repo, file)))
+			i, filepath.Join(dir, file)))
 		results = append(results, fmt.Sprintf(`{"tool_use_id":"toolu_%d","type":"tool_result","content":"edited"}`, i))
 	}
 	if commitOID != "" {
@@ -50,7 +57,7 @@ func (f Fixture) addEditor(t *testing.T, id, hour, commitOID string, files []str
 			`,"content":[` + strings.Join(uses, ",") + `]}}`,
 		`{` + common("user", "u-2", `"a-1"`, "2026-07-01T"+hour+":16:00.000Z") + `,"promptId":"p-1","message":{"role":"user","content":[` + strings.Join(results, ",") + `]}}`,
 	}
-	write(t, filepath.Join(f.Store.ClaudeProjectsDir, claudecode.EncodeProjectDir(f.Repo), id+".jsonl"), strings.Join(lines, "\n")+"\n")
+	write(t, filepath.Join(f.Store.ClaudeProjectsDir, claudecode.EncodeProjectDir(dir), id+".jsonl"), strings.Join(lines, "\n")+"\n")
 }
 
 const (
