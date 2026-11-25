@@ -419,8 +419,8 @@ its sections. It works with four tools:
 
 1. `start_tile {title, section?}` puts a pending card on the section where
    the tile will stand ("Being made in the session panel"): `section` is a
-   section's ID, or `context` for Where this fits; without it, the section
-   the person is reading. The card counts the check rounds; if the agent
+   section's ID, `overview` for the Overview tab, or `context` for Where
+   this fits; without it, where the person is reading, else the Overview. The card counts the check rounds; if the agent
    stops before adding the tile it says "Not finished" for a few minutes,
    with Remove.
 2. `tile_guide` gives this guide (`part: "guide"`), the starter's files

@@ -44,7 +44,9 @@ func TestAppPageContextsAreValid(t *testing.T) {
 		// tools put a tile.
 		// On a tile link it is the tile, which the host resolves to the
 		// section that shows it.
+		// On the Overview it is the overview.
 		var focus struct {
+			Tab     string `json:"tab"`
 			Section string `json:"section"`
 			Tile    string `json:"tile"`
 		}
@@ -52,6 +54,9 @@ func TestAppPageContextsAreValid(t *testing.T) {
 		want := focus.Section
 		if want == "" {
 			want = focus.Tile
+		}
+		if want == "" && focus.Tab == "overview" {
+			want = "overview"
 		}
 		if got := focusSection(CallContext{Page: p, HasPage: true}); got != want {
 			t.Errorf("%q: the focused section is %q, want %q", c.Query, got, want)

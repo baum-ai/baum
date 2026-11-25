@@ -2289,9 +2289,10 @@ within fixed rules:
 - Scope is one page. The tools are global, so an action never sees them; they
   refuse any page but the pull request's, and a section they name must be one
   of the review that page shows. A conversation's page follows the person
-  around the app, so an add is also refused unless the page open now is the
-  pull request the current message was sent from: a long turn begun about one
-  pull request cannot change another's page. Added tiles stay on this
+  around the app, so an add acts on the pull request the current message was
+  sent from, never on the page open now: a long turn begun about one pull
+  request keeps working on it while the person reads another page, and
+  cannot change that other page. Added tiles stay on this
   computer, in `app.sqlite`, for that pull request; the event that tells the
   page carries only the pull request's key.
 - Bounded: at most 8 added tiles a pull request, the 200 most recently

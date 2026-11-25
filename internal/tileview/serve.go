@@ -40,8 +40,8 @@ type Served struct {
 //     against it (reviewv2.Substrate, tiles.ExtraTiles), served unavailable
 //     with its problems when it fails, and owned by the section it was added
 //     on when the document has that section, else by the section whose hunks
-//     it cites most, else by context; a type the document already has is not
-//     served twice; a section without a body (written before bodies) is
+//     it cites most, else by the overview; a type the document already has
+//     is not served twice; a section without a body (written before bodies) is
 //     served with the one it reads as (reviewv2.EnsureBodies);
 //   - a baum.review/1 document is converted (reviewv2.FromV1), its tiles
 //     those of the review page's view of it (BuildWith: the composition's
@@ -166,7 +166,7 @@ func addedTiles(d reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {
 // sequence, table, code and images) as tiles of the document: each checked
 // against it (reviewv2.CheckTile), served unavailable with its problems
 // when it fails, and owned by the section it was added on when the document
-// has it, else by the section whose hunks it cites most, else by context.
+// has it, else by the section whose hunks it cites most, else by the overview.
 // The images of an images tile join the document's index of attachments,
 // so the page draws them as it draws the description's.
 func nativeTiles(d *reviewv2.Document, added []AddedTile) (out []reviewv2.Tile) {

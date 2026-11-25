@@ -175,8 +175,12 @@ func (s *Server) readTileType(ctx context.Context, c CallContext, name string) (
 		name = entry.Definition.Name
 	}
 	out := map[string]json.RawMessage{}
+	// A turn sent from a pull request's page reads types for add_tile there,
+	// even once the person has opened another page (tileTarget).
+	_, _, pullErr := tilePage(c)
+	onPull := s.added != nil && pullErr == nil
 	if s.tileTypes != nil {
-		if _, err := s.tileTypePage(c); err != nil {
+		if _, err := s.tileTypePage(c); err != nil && !onPull {
 			return "", err
 		}
 		view, err := s.tileTypes.Read(ctx, name)
@@ -188,12 +192,12 @@ func (s *Server) readTileType(ctx context.Context, c CallContext, name string) (
 		}
 	} else if s.added == nil {
 		return "", errNoAddedTiles
-	} else if _, _, err := tilePage(c); err != nil {
-		return "", err
+	} else if pullErr != nil {
+		return "", pullErr
 	} else if !builtin {
 		return "", unknownType(name)
 	}
-	if builtin && s.added != nil && c.HasPage && c.Page.Page == PagePullRequest {
+	if builtin && onPull {
 		schema, err := entry.FillSchema()
 		if err != nil {
 			return "", err

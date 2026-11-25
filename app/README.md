@@ -2995,7 +2995,8 @@ builds the rail's model (the sections and the file list) from it.
   the verdict inside its card when it has points (each linking to its
   section), the description's clips of the change (`overview.videos`, under
   Video), what it looks like (`overview.screenshots`), the main diagram
-  (`overview.diagram`) under its title, and what was asked (`overview.intent`,
+  (`overview.diagram`) under its title, the tiles the person added to the
+  Overview (owner `overview`, with their pending cards), and what was asked (`overview.intent`,
   else each linked session's first prompt), each linking to the prompt in its
   session.
 - **How it works** lists "Where this fits" first in the rail (the review's
@@ -3122,7 +3123,9 @@ Tiles are what the model and the person customise on the overview tabs
 the document's native diagrams and tables, exhibits (code, prose, table and
 diagram source, `src/tiles/builtins/generic.tsx`), library tiles and tiles
 made in chat. Each stands on a section of How it works (or on Where this
-fits), or is the Overview's main diagram, and is as wide as its section.
+fits), or on the Overview (its main diagram, and the tiles the person added
+there, which is where an added tile citing no section's code goes), and is
+as wide as its section.
 A prose exhibit's text stands on a faint wash behind a left rule, in a card
 or bare in a section's body, so it reads as an exhibit set apart from the
 section's own text (a note block has the rule but no wash); its lists keep
@@ -3213,8 +3216,9 @@ their bullets and numbers.
   phase, round?, reason?}]`, the latest version only, read with the document
   by `parseReviewV2`) are the pending cards, which `src/tiles/pending-card.tsx`
   draws after the tiles of their section (`context` is Where this fits, which
-  is then listed; a card naming a section the page does not list stands on
-  the first listed): the title, the live dot and a line saying how far it got
+  is then listed; a card naming no section, or `overview`, stands on the
+  Overview; a card naming a section the page does not list stands on the
+  first listed): the title, the live dot and a line saying how far it got
   ("Being made in the session panel · Writing the component", "… · Checking
   (round 2)", the host's reason after a check that could not run, "Not
   finished" once the turn ended without the tile), with Remove (`DELETE

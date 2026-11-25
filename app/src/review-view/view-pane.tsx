@@ -75,6 +75,7 @@ export function ViewPane({
             list={list}
             ctx={ctx}
             idPrefix={prefix}
+            historical={historical}
             go={go}
           />
         ) : place.tab === "sections" ? (
