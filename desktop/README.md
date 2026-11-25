@@ -1107,11 +1107,12 @@ with `baum daemon stop`.
 
 `just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
 Desktop check, test, build, bundle, run and dev recipes build that frontend first.
-The Electron app's builds and bundles run in the `desktop-electron` Docker
-service (`Dockerfile`). The Tauri shell's Rust builds and checks (`check`,
-`test`, `run`, `isolated`, `profile`, `dev`) run in the `desktop-test` service
-(`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development packages, and the
-Tauri CLI) until that shell is removed. The bundled binary is built in
+The Electron app's builds, bundles and isolated runs (`isolated`, `profile`)
+happen in the `desktop-electron` Docker service (`Dockerfile`) or the
+`desktop-isolated` service built on it. The Tauri shell's Rust builds and
+checks (`check`, `test`, `run`, `dev`) run in the `desktop-test` service
+(`tauri.Dockerfile`: Rust, the WebKitGTK and GTK development packages, and
+the Tauri CLI) until that shell is removed. The bundled binary is built in
 `oss-test`. From the repository root:
 
 ```sh
@@ -1145,10 +1146,19 @@ BAUM_RELAY_URL=https://… just desktop::isolated mobile
 An instance's home stays between runs under
 `${BAUM_DEV_CACHE_DIR:-~/.cache/baum-dev}/desktop-homes/<name>`; delete the
 folder to start again. Its container is `baum-desktop-<name>`, and only one
-can run per name. The `desktop-isolated` image adds gnome-keyring on a D-Bus
-session, so sign-in can store credentials, plus git, ssh and sqlite3. The
-first run installs Claude Code into the home and copies `~/.gitconfig` with
-commit signing turned off, since the signing key is not there.
+can run per name. The container bundles the app's main process (`pnpm
+build`) and runs the unpackaged app from this checkout with `electron .`,
+on this display through Chromium's Wayland backend
+(`--ozone-platform=wayland`, the Wayland socket mounted). Electron runs with
+`--no-sandbox` there, and only there: a container has no user namespaces for
+Chromium's sandbox, and the app's renderers keep their sandboxed preload
+either way. The `desktop-isolated` image (`isolated.Dockerfile`) is the
+`desktop-electron` image plus gnome-keyring on a D-Bus session, so sign-in
+can store credentials, git, ssh, sqlite3, ImageMagick for screenshots and
+Electron's chromedriver for profiling. The first run installs Claude Code
+into the home and copies `~/.gitconfig` with commit signing turned off, since
+the signing key is not there. Each start removes the home's stale
+single-instance lock, which names the container that took it.
 
 `--copy-data`, when the instance has no data yet, copies this machine's
 repositories, reviews and settings with consistent SQLite snapshots. It
@@ -1194,14 +1204,16 @@ just desktop::isolated perf2 --seed-data=7 --headless
 ```
 
 `--headless` runs the instance without a display of yours: the container
-starts its own headless Weston (`BAUM_ISOLATED_WIDTH` × `BAUM_ISOLATED_HEIGHT`,
-1440 × 900 by default) and the app draws there, so agents can run the real
-WebKitGTK app with no window on your screen and no Wayland session at all.
-`just desktop::isolated-screenshot <name> [out.png]` saves what it shows.
-Weston's headless backend renders with Pixman, in software, and has no input
-seat (GDK logs `gdk_seat_get_keyboard` assertions, which are harmless here),
-so JavaScript, layout and React costs are realistic and painting and
-compositing costs are not.
+starts its own Xvfb (display `:99`, `BAUM_ISOLATED_WIDTH` ×
+`BAUM_ISOLATED_HEIGHT`, 1440 × 900 by default) and the app draws there
+through Chromium's X11 backend, so agents can run the real app with no
+window on your screen and no Wayland session at all.
+`just desktop::isolated-screenshot <name> [out.png]` saves what Xvfb's
+screen shows (ImageMagick's `import -window root`). Xvfb has no GPU, so
+Chromium rasterises and composites in software: JavaScript, layout and React
+costs are realistic and painting and compositing costs are not. Chromium
+logs that it cannot reach the system D-Bus, which the container does not
+have; that is harmless.
 
 `BAUM_FRONTEND_MODE=profile` before any recipe that builds the frontend
 (`isolated`, `run`, `build`) builds the profiling build
@@ -1219,15 +1231,21 @@ renders and reacts, for people and agents tuning it. It builds the profiling
 frontend, the viewer and the sidecar (which stay the profiling build until
 another recipe builds them), starts a `--headless` isolated instance
 (`profile` unless `--name` says otherwise) and, inside its container, runs
-`../app/scripts/profile/run.ts` with Node. The runner starts
-`WebKitWebDriver` (Ubuntu's `webkit2gtk-driver`, pinned to the version of
-the app's WebKitGTK), which launches the app's debug build with
-`TAURI_WEBVIEW_AUTOMATION=true`, so WebDriver drives the real main webview
-from the connecting screen on to the daemon's page. Key presses are WebKit's
-own synthesized events, which reach the page without an input seat, and the
-collector records them as interactions. The runner marks the instance set up
-(`desktop.json`), so it opens on the Inbox rather than first-run setup, and
-closes the first-run tour if it shows.
+`../app/scripts/profile/run.ts` with Node, after bundling the app's main
+process (`pnpm build`). The runner starts Electron's own chromedriver (the
+one Electron publishes with each release, at the Electron version
+`package.json` pins, which `../app/scripts/profile/electron.test.ts` checks
+against `isolated.Dockerfile`), which launches the unpackaged app from this
+checkout with `electron --app=/oss/desktop`, so WebDriver drives the real
+main window from the connecting screen on to the daemon's page: the same
+Chromium users run, on every platform. chromedriver finds the app's DevTools
+port through the user data directory it is given, which is the app's
+Chromium folder (`chromium/` beside `desktop.json`), since the app sets its
+own before Chromium starts. Key presses are Chromium's own input events, and
+the collector records them as interactions. The runner marks the instance
+set up (`desktop.json`), so it opens on the Inbox rather than first-run
+setup, and closes the first-run tour if it shows. Every measured run also
+records a CPU profile (below).
 
 ```sh
 just desktop::profile jk --runs 10                  # seeded dataset, seed 1
@@ -1246,12 +1264,12 @@ get what they had; a seeded home is never mixed with copied data
 `isolated`, the copy made once per instance: this machine's data shows how
 the app behaves on it, but differs between machines and changes over time.
 The summary's environment line says which data a profile ran on (the seed
-and the dataset's digest), the WebKitGTK package version and the CPUs.
+and the dataset's digest), the Electron and Chromium versions and the CPUs.
 `--runs N` (5 by default) sets the measured runs,
 after one warm-up whose numbers are kept apart. The recipe checks the
 scenario and the options before it builds anything. `--run-timeout S`
 (600 by default) fails a run, the launch or the preparation that takes
-longer, as a hung WebKitWebDriver would, with a message saying so. The container runs on
+longer, as a hung chromedriver or app would, with a message saying so. The container runs on
 `BAUM_DEV_CPUSET`, like every development container, and the summary names
 the CPUs it had. The scenarios:
 
@@ -1324,7 +1342,7 @@ window's storage (the last inbox shown, the sidebar, the session panel),
 and puts them back before every run, from the settings page, which holds
 neither; typed filters (which the daemon keeps) go back to none, and the
 filter scenario also clears its own after each run. What it cannot put
-back: the daemon's and WebKit's caches, which the warm-up fills, a new day
+back: the daemon's and Chromium's caches, which the warm-up fills, a new day
 starting (the Inbox's record of the day starts empty then), and anything a
 journey asks the daemon to do, which none of these does. Profiling clears
 an instance's typed filters.
@@ -1334,9 +1352,9 @@ so its JavaScript heap and React state start clean, then resets the
 collector: relaunching would add some ten seconds a run and change nothing a
 page reload does not. Cold start must launch, so each run quits the app and
 starts it again; the daemon keeps running between launches, as it does for a
-user, and WebKit's cache in the instance's home stays warm. The runner waits
+user, and Chromium's cache in the instance's home stays warm. The runner waits
 for each key press's frame, then 50 ms, before the next. Waiting, it polls
-the page and talks to WebKitWebDriver, which adds a roughly constant
+the page and talks to chromedriver, which adds a roughly constant
 overhead to interaction durations: fine for comparing before and after a
 change, not for absolute numbers. Modifier keys pressed for the key after
 them (Shift for Shift+J) are left out of the interactions.
@@ -1358,60 +1376,51 @@ command prints at the end:
   last, so a failure keeps the runs before it.
 - `metrics.json`: the same, with every run's metrics and the collector's raw
   snapshot (`__baumPerf.snapshot()`, [local app](../app/README.md)).
-- `driver.log`, WebKitWebDriver's output, and `failure.png`, the window
+- `run-N.cpuprofile`, each measured run's CPU profile (below).
+- `driver.log`, chromedriver's output, and `failure.png`, the window
   when a run failed.
 
-The numbers come with the headless instance's limits. Weston renders with
-Pixman, in software, so script, style, layout and React times are
-realistic and paint and compositing times are not; frame gaps include
-software painting. The app's Rust shell is a debug build, as `isolated`
-runs it; the measured pages come from the daemon and run in the system's
-WebKitGTK, so that only slows the shell's own commands. Data copied with
+The numbers come with the headless instance's limits. Under Xvfb Chromium
+rasterises and composites in software, so script, style, layout and React
+times are realistic and paint and compositing times are not; frame gaps
+include software painting. The app is unpackaged, as `isolated` runs it,
+but it is the same Electron and Chromium a release ships, so the measured
+pages run in the engine users have on every platform. Data copied with
 `--copy-data` holds no GitHub sign-in, so the daemon finds no open pull
 requests and the inboxes and Pull requests stay empty: `jk` skips, and
 `filter` types into an empty list. The seeded dataset has them. Its
 sessions are recorded as ended, so in `session-panel` nothing streams: it
 measures the panel open on an ended conversation, and the summary says so.
 
-#### CPU profiles in Chromium
+#### CPU profiles
 
-The WebKit runs say what is slow (interactions, frames, renders) but not
-why. `--engine chromium` runs the same scenarios in Chromium and records a
-CPU profile of every measured run, which says which functions the time went
-to:
+The runs say what is slow (interactions, frames, renders); the CPU profile
+of every measured run says which functions the time went to, in the same
+app:
 
 ```sh
-just desktop::profile review --engine chromium --runs 3
-just desktop::profile jk --engine chromium --runs 3
+just desktop::profile review --runs 3
+just desktop::profile jk --runs 3
 ```
 
-The instance starts as usual, with its daemon, its data and the profiling
-frontend in the sidecar, but no app: the runner starts the daemon with the
-bundled `baum daemon ensure`, as the app does, and Playwright's Chromium
-(Chrome for Testing, headless, in the `desktop-isolated` image) opens the
-launch URL from its `credential.json` (the capability in it is never
-logged: chromedriver logs only severe messages, and the runner scrubs
-`#token=` from `driver.log`; see
-[Attaching to the daemon](#attaching-to-the-daemon)). chromedriver of the
-same version drives it with the same WebDriver commands as WebKitWebDriver,
-so the scenarios are the same code. The image takes both at the Playwright
-version `../app`'s lockfile pins (`chromium.test.ts` checks), from Chrome for
-Testing, which has chromedriver for x86-64 Linux only, so on another Docker
-engine `--engine chromium` stops before building anything. Each measured run
-(not the warm-up) samples the page's main thread every 250 µs through
-chromedriver's DevTools Protocol endpoint (`Profiler.start` and `stop`):
-enough samples to tell a 16 ms frame's stacks apart at a few percent of
-overhead, where 100 µs costs more on long journeys and makes long profiles
-large.
+Each measured run (not the warm-up) samples the window's renderer main
+thread every 250 µs through chromedriver's DevTools Protocol endpoint
+(`Profiler.start` and `stop`): enough samples to tell a 16 ms frame's stacks
+apart at a few percent of overhead, where 100 µs costs more on long journeys
+and makes long profiles large. The overhead is in every run, so before and
+after numbers compare. chromedriver logs only severe messages, so no
+command reaches `driver.log`, and the runner also scrubs `#token=` from it:
+the daemon's launch URL holds its capability (see
+[Attaching to the daemon](#attaching-to-the-daemon)).
 
 The summary then ends with a CPU section:
 
 - the time a run spent in JavaScript, outside it (`(program)`: style,
   layout, paint and the browser's own work), in garbage collection and idle,
   from the collector's reset to its snapshot, the window the rest of the
-  summary measures (cold start relaunches the browser each run and counts
-  from the page's start, sampling from before it loads, which adds the
-  profiler's start to its launch times);
+  summary measures (cold start relaunches the app each run and counts from
+  the page's start, sampling from as soon as chromedriver can drive the
+  window, which adds the profiler's start to its launch times);
 - the 20 functions with the most self time per run, with their total time
   (callees included, a recursive function counted once). Each is named by
   the profiling build's source maps (`oss/internal/localapp/dist/assets/*.map`),
@@ -1453,16 +1462,11 @@ it in Chrome DevTools (Performance, Load profile) or
 are minified, so their names there are the minified ones unless DevTools
 can load the source maps.
 
-Chromium's numbers are not WebKit's. V8 and JavaScriptCore compile and
-collect garbage differently, Blink's style and layout differ from WebKit's,
-and headless Chromium paints with its own software renderer, so a frame or
-an interaction may be much faster or slower in one than the other, and a
-problem only one engine has (a slow path in its layout or its regular
-expressions) shows only there. Use Chromium's profile to find which code is
-hot, and WebKit's runs to judge how slow the app is for its users. The rest
-of the summary (metrics, interactions, components) is measured the same way
-in both. The driver's own polling shows in the profile as anonymous
-functions with no source, a little in every interaction.
+JavaScript profiles do not see style and layout work beyond the
+`(program)` row and the `browser` functions that force it; Chrome DevTools'
+Performance panel on a `run-N.cpuprofile` does not either. The driver's own
+polling shows in the profile as anonymous functions with no source, a
+little in every interaction.
 
 `dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
 `scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
