@@ -21,7 +21,6 @@ const extensions = new Set([
   ".cjs",
   ".html",
   ".svg",
-  ".rs",
 ]);
 const literal = /#[\da-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
 const property =
@@ -51,8 +50,7 @@ function sourceFiles() {
     ...files(join(app, "src")),
     ...files(join(oss, "viewer/src")),
     ...files(join(oss, "desktop/icons")),
-    ...files(join(oss, "desktop/src")),
-    join(oss, "desktop/tauri.conf.json"),
+    ...files(join(oss, "desktop/electron")),
     ...readdirSync(app)
       .filter((name) => name.endsWith(".html"))
       .map((name) => join(app, name)),

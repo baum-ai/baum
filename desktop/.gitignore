@@ -1,5 +1,5 @@
+# Built by scripts/bundle.sh and electron-builder.
 /target/
-/gen/
 # Built by scripts/sidecar.sh.
 /binaries/
 # Built by electron/build.mjs.

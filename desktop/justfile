@@ -1,19 +1,23 @@
 dev_compose := source_directory() / ".." / ".." / "dev-compose.sh"
 heavy := "BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 " + dev_compose + " run --build --rm --no-deps"
-cargo := heavy + " desktop-test cargo"
+electron := heavy + " desktop-electron"
 
-# Format check, lints, unit tests and the updater manifest checks
-check: frontend sidecar
-    {{ cargo }} fmt --check
-    {{ cargo }} clippy --locked --all-targets -- -D warnings
-    {{ cargo }} test --locked
-    {{ heavy }} desktop-test scripts/updater-manifest-test.sh
+# Format check, typecheck, unit tests and the updater signing, manifest and
+# update file checks
+check: electron-cache
+    {{ electron }} sh -ec 'pnpm check && bash scripts/updater-manifest-test.sh && bash scripts/update-yml-test.sh'
 
-fmt:
-    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test cargo fmt
+# The unit tests; pass vitest arguments after it
+test *args: electron-cache
+    {{ electron }} pnpm exec vitest run {{ args }}
 
-test *args: frontend sidecar
-    {{ cargo }} test --locked {{ args }}
+# The shell's harness (tests/shell): builds the shell and runs it under Xvfb
+# against a mock daemon. Needs dist/ (just desktop::frontend).
+shell-test *args: electron-cache
+    {{ electron }} sh -c 'pnpm build && pnpm test:shell "$@"' -- {{ args }}
+
+fmt: electron-cache
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-electron pnpm format
 
 # Vite's build mode for the frontend: BAUM_FRONTEND_MODE=profile builds the
 # profiling build (oss/app/README.md), which the sidecar then embeds.
@@ -43,18 +47,6 @@ build: frontend sidecar electron-cache
 bundle version="0.0.0": frontend sidecar electron-cache
     {{ electron }} scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
 
-# The bridge release end to end (scripts/bridge-test.sh), under Xvfb: a Tauri
-# AppImage updates itself to the Electron one from a latest.json made as the
-# release makes it, then an Electron AppImage updates itself and refuses a
-# damaged signature. Builds three Linux bundles and a Tauri AppImage into
-# target/bridge, signed with a throwaway key.
-bridge-test: frontend sidecar electron-cache
-    {{ electron }} scripts/bundle.sh linux-amd64 1.2.3 target/bridge/electron
-    {{ electron }} scripts/bundle.sh linux-amd64 1.2.3-test.1 target/bridge/test-1.2.3
-    {{ electron }} scripts/bundle.sh linux-amd64 1.2.4-test.1 target/bridge/test-1.2.4
-    {{ heavy }} desktop-test scripts/bridge-test.sh prepare target/bridge
-    {{ heavy }} desktop-bridge scripts/bridge-test.sh run target/bridge
-
 # Build an ad hoc signed macOS DMG into target/local-dmg (--install also installs it)
 dmg *args: frontend viewer (sidecar "aarch64-apple-darwin") (sidecar "x86_64-apple-darwin")
     scripts/macos-local.sh {{ args }}
@@ -79,33 +71,21 @@ dmg-layout:
 notices: electron-cache
     {{ electron }} scripts/third-party-notices.sh
 
-electron := heavy + " desktop-electron"
-
-# The Electron shell (electron/): format check, typecheck and unit tests
-electron-check: electron-cache
-    {{ electron }} pnpm check
-
-# The Electron shell's unit tests; pass vitest arguments after it
-electron-test *args: electron-cache
-    {{ electron }} pnpm exec vitest run {{ args }}
-
-# The Electron shell's harness (tests/shell): builds the shell and runs it
-# under Xvfb against a mock daemon. Needs dist/ (just desktop::frontend).
-electron-shell-test *args:
-    @mkdir -p "${BAUM_DEV_CACHE_DIR:-$HOME/.cache/baum-dev}/electron"
-    {{ electron }} sh -c 'pnpm build && pnpm test:shell "$@"' -- {{ args }}
-
-electron-fmt:
-    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-electron pnpm format
-
 # Check that scripts/updater-manifest.sh rejects tampered releases
-updater-test:
-    {{ heavy }} desktop-test scripts/updater-manifest-test.sh
+updater-test: electron-cache
+    {{ electron }} bash scripts/updater-manifest-test.sh
 
-# Regenerate icons/ from icons/source.svg, and the tray icons from icons/tray/*.svg
+# Regenerate icons/ from icons/source.svg, and the tray icons from
+# icons/tray/*.svg: palette tokens resolved and drawn by the ui-test image's
+# Chromium, then the PNG, ICNS and ICO files written with Pillow
 icons:
-    {{ heavy }} --workdir /oss/app ui-test node ../desktop/scripts/prepare-icons.mjs
-    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 target/icon-source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 target/tray-$s.svg -o icons/tray/$s.png; done'
+    {{ heavy }} --workdir /oss/app ui-test sh -ec 'node ../desktop/scripts/prepare-icons.mjs && node ../desktop/scripts/rasterize-icons.mjs'
+    docker run --rm ${BAUM_DEV_CPUSET:+--cpuset-cpus="$BAUM_DEV_CPUSET"} \
+        --user "$(id -u):$(id -g)" -e HOME=/tmp -v "{{ source_directory() }}:/desktop" -w /desktop \
+        python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30 \
+        sh -ec 'pip install --quiet --disable-pip-version-check --target /tmp/py {{ icon_packages }} && PYTHONPATH=/tmp/py python scripts/icons.py'
+
+icon_packages := "pillow==13.0.0"
 
 # Run the Electron app on the Linux or macOS host, with its build and Vite hot
 # reload in Docker

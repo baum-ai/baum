@@ -7,9 +7,6 @@
 # tests (scripts/updater-manifest-test.sh). Ubuntu 24.04 is the oldest
 # distribution the app supports, and the release workflow builds the Linux
 # bundles in this image. Image index digests pin every architecture's image.
-#
-# The Tauri shell (src/) builds in tauri.Dockerfile, the desktop-test service,
-# until it is removed.
 FROM node:24.22.1-bookworm@sha256:d862bb5d082c5ae0210ac07e8c0344cb8cf7bef6d78e9b8c50c179da923108ea AS node
 
 FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
