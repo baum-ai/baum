@@ -17,6 +17,9 @@
     "test:shell": "xvfb-run -a -s \"-screen 0 1400x1000x24\" playwright test --config tests/shell/playwright.config.ts",
     "check": "pnpm format:check && pnpm typecheck && pnpm test:unit"
   },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
     "@playwright/test": "^1.62.0",
