@@ -12,6 +12,7 @@ import {
   CLOCK_TICK,
   copyInstalls,
   due,
+  isTestVersion,
   enabled,
   FIRST_CHECK_DELAY,
   feedUrl,
@@ -24,9 +25,13 @@ import {
   STABLE_FEED,
   STALL_TIMEOUT,
   signatureUrl,
+  TEST_FEED,
+  TEST_PUBLIC_KEY,
+  testOverrides,
   Updater,
   type UpdaterBackend,
   type UpdaterDeps,
+  updaterKind,
 } from "./updater.ts";
 
 function scratch(): string {
@@ -170,12 +175,43 @@ describe("configuration", () => {
     expect(CANDIDATE_FEED).toBe(
       "https://github.com/baum-ai/baum/releases/download/desktop-rc-updates/",
     );
-    expect(signatureUrl("1.2.3", "/cache/pending/baum-desktop-linux-amd64.AppImage")).toBe(
-      "https://github.com/baum-ai/baum/releases/latest/download/baum-desktop-linux-amd64.AppImage.sig",
+  });
+
+  // The signature comes from the update's own release whatever the channel:
+  // the release-candidate channel holds only the update files.
+  it("reads a signature from the release being installed", () => {
+    expect(signatureUrl("1.2.4", "/cache/pending/baum-desktop-linux-amd64.AppImage")).toBe(
+      "https://github.com/baum-ai/baum/releases/download/v1.2.4/baum-desktop-linux-amd64.AppImage.sig",
     );
-    expect(signatureUrl("1.2.3-rc.1", "/cache/baum desktop.zip")).toBe(
-      `${CANDIDATE_FEED}baum%20desktop.zip.sig`,
+    expect(signatureUrl("1.2.4-rc.1", "/cache/baum desktop.zip")).toBe(
+      "https://github.com/baum-ai/baum/releases/download/v1.2.4-rc.1/baum%20desktop.zip.sig",
     );
+    expect(signatureUrl("1.2.4", "/cache/x.AppImage", "http://127.0.0.1:8000/feed/")).toBe(
+      "http://127.0.0.1:8000/feed/x.AppImage.sig",
+    );
+  });
+
+  // A released app never honours the test variables: its version is never a
+  // test version (release.yml refuses to release one).
+  it("honours a test feed and key only in a test build", () => {
+    const key = Buffer.from("untrusted comment: minisign public key: 1\nRWQ=\n").toString("base64");
+    const env = { [TEST_FEED]: "http://127.0.0.1:8000/feed", [TEST_PUBLIC_KEY]: key };
+    for (const version of ["1.2.3-test.1", "1.2.3-test", "1.2.3-test.2.a+linux"]) {
+      expect(isTestVersion(version), version).toBe(true);
+      expect(testOverrides(version, env), version).toEqual({
+        feed: "http://127.0.0.1:8000/feed/",
+        publicKey: "untrusted comment: minisign public key: 1\nRWQ=\n",
+      });
+    }
+    for (const version of ["1.2.3", "1.2.3-rc.1", "1.2.3-rc.1-test.1", "1.2.3-testing", "0.0.0"]) {
+      expect(isTestVersion(version), version).toBe(false);
+      expect(testOverrides(version, env), version).toBeNull();
+    }
+    expect(testOverrides("1.2.3-test.1", {})).toBeNull();
+    expect(testOverrides("1.2.3-test.1", { [TEST_FEED]: "http://h/f/" })).toEqual({
+      feed: "http://h/f/",
+      publicKey: undefined,
+    });
   });
 
   it("checks once a day by the wall clock", () => {
@@ -250,6 +286,116 @@ describe("configuration", () => {
       true,
     );
     expect(copyInstalls({ platform: "freebsd", execPath: "/baum", env: {}, writable })).toBe(false);
+  });
+});
+
+// What each kind of copy does with an update: which electron-updater
+// updater checks, and whether the app downloads and installs it or only
+// announces it.
+describe("package types", () => {
+  const writable = () => true;
+  const readOnly = () => false;
+  const mount = "/tmp/.mount_baumXYZ";
+  const cases: {
+    name: string;
+    platform: NodeJS.Platform;
+    execPath: string;
+    env?: Record<string, string>;
+    writable?: (dir: string) => boolean;
+    packaged?: boolean;
+    kind: string | null;
+    checks: boolean;
+    installs: boolean;
+  }[] = [
+    {
+      name: "AppImage in a writable directory",
+      platform: "linux",
+      execPath: `${mount}/baum-desktop`,
+      env: { APPIMAGE: "/home/alice/Apps/baum-desktop-linux-amd64.AppImage", APPDIR: mount },
+      kind: "appimage",
+      checks: true,
+      installs: true,
+    },
+    {
+      name: "AppImage in a directory the user cannot write",
+      platform: "linux",
+      execPath: `${mount}/baum-desktop`,
+      env: { APPIMAGE: "/opt/baum-desktop-linux-amd64.AppImage", APPDIR: mount },
+      writable: readOnly,
+      kind: "appimage",
+      checks: true,
+      installs: false,
+    },
+    {
+      name: "deb",
+      platform: "linux",
+      execPath: "/opt/baum/baum-desktop",
+      kind: "deb",
+      checks: true,
+      installs: false,
+    },
+    {
+      name: "unpackaged (development)",
+      platform: "linux",
+      execPath: "/oss/desktop/node_modules/electron/dist/electron",
+      packaged: false,
+      kind: "deb",
+      checks: false,
+      installs: false,
+    },
+    {
+      name: "macOS app in Applications",
+      platform: "darwin",
+      execPath: "/Applications/baum.app/Contents/MacOS/baum-desktop",
+      kind: "mac",
+      checks: true,
+      installs: true,
+    },
+    {
+      name: "translocated macOS app",
+      platform: "darwin",
+      execPath:
+        "/private/var/folders/x/T/AppTranslocation/ABC/d/baum.app/Contents/MacOS/baum-desktop",
+      kind: "mac",
+      checks: true,
+      installs: false,
+    },
+    {
+      name: "macOS app on its read-only disk image",
+      platform: "darwin",
+      execPath: "/Volumes/baum/baum.app/Contents/MacOS/baum-desktop",
+      writable: readOnly,
+      kind: "mac",
+      checks: true,
+      installs: false,
+    },
+    {
+      name: "Windows install",
+      platform: "win32",
+      execPath: "C:\\Users\\alice\\AppData\\Local\\Programs\\baum\\baum-desktop.exe",
+      kind: "nsis",
+      checks: true,
+      installs: true,
+    },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      const env = c.env ?? {};
+      expect(updaterKind(c.platform, env)).toBe(c.kind);
+      expect(enabled("1.2.3", c.packaged ?? true, undefined)).toBe(c.checks);
+      expect(
+        copyInstalls({
+          platform: c.platform,
+          execPath: c.execPath,
+          env,
+          writable: c.writable ?? writable,
+        }),
+      ).toBe(c.installs);
+    });
+  }
+
+  it("leaves other platforms alone", () => {
+    expect(updaterKind("freebsd", {})).toBeNull();
   });
 });
 
@@ -401,7 +547,9 @@ describe("downloads", () => {
     const { updater, backend, fetched, jobs, calls } = harness();
     updater.start();
     await advance(FIRST_CHECK_DELAY, () => !busy(updater));
-    expect(fetched).toEqual([`${STABLE_FEED}baum-desktop-linux-amd64.AppImage.sig`]);
+    expect(fetched).toEqual([
+      "https://github.com/baum-ai/baum/releases/download/v1.2.4/baum-desktop-linux-amd64.AppImage.sig",
+    ]);
     expect(updater.view()).toMatchObject({ phase: "ready", available: "1.2.4", installs: true });
     // A second check finds the same version ready.
     updater.requestCheck();

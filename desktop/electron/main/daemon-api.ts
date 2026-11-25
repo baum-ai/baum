@@ -10,9 +10,11 @@
 //   tray as if they were its own stream.
 // - The notifications ask for `appUrl()` (`appUrlOf`) and take the window
 //   routes in their own spelling (`noticeRoute`).
+// - The updater asks how many jobs run (`runningJobs`).
 import { inspect } from "node:util";
 import * as client from "./client.ts";
-import type { Launch } from "./daemon.ts";
+import { type Launch, parseStatus, readCredential, run } from "./daemon.ts";
+import { parseJobs } from "./status.ts";
 import { appUrl, Endpoint, type SseEvent } from "./events.ts";
 import type { Route as NoticeRoute } from "./notifications/index.ts";
 import type { Daemon, DaemonEvent, Route as TrayRoute, StreamHandlers } from "./tray.ts";
@@ -152,4 +154,22 @@ export function noticeRoute(route: TrayRoute): NoticeRoute {
     case "session":
       return { type: "session", key: route.key };
   }
+}
+
+/** How long `baum daemon status` may take before an update. */
+export const STATUS_TIMEOUT = 10_000;
+
+/** How many generation jobs the user's daemon runs, which an update waits
+ *  for (daemon.rs's `running_jobs`): `baum daemon status --json` names the
+ *  daemon's state directory, whose credential reaches `GET /api/jobs`. 0
+ *  when no daemon runs; rejects when one runs but cannot be asked. */
+export async function runningJobs(cli: string, timeout = STATUS_TIMEOUT): Promise<number> {
+  let stdout: string[];
+  try {
+    stdout = (await run(cli, ["daemon", "status", "--json"], timeout)).stdout;
+  } catch {
+    return 0;
+  }
+  const launch = clientLaunch(readCredential(parseStatus(stdout).state));
+  return parseJobs((await client.jobs(launch)).toString("utf8")).running;
 }

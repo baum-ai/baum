@@ -60,6 +60,12 @@ export default {
     // On Linux and Windows Electron's licences come beside the executable;
     // on macOS electron-builder takes only Electron.app.
     extraResources: [
+      // electron-updater names its download cache from
+      // Resources/app-update.yml, which electron-builder writes only for its
+      // dmg and zip targets; macos-finalize.sh makes those after signing.
+      // The app sets the feed itself (updater.ts). The Linux bundles get the
+      // same file from electron-builder.
+      { from: "macos/app-update.yml", to: "app-update.yml" },
       { from: "node_modules/electron/dist/LICENSE", to: "LICENSE.electron.txt" },
       { from: "node_modules/electron/dist/LICENSES.chromium.html", to: "LICENSES.chromium.html" },
     ],

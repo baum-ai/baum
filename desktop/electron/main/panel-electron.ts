@@ -3,7 +3,7 @@
 // Windows) and hidden again when it loses focus. The rules (view model,
 // commands, placement) are in panel.ts.
 import { join } from "node:path";
-import { app, BrowserWindow, type Rectangle, screen } from "electron";
+import { BrowserWindow, type Rectangle, screen } from "electron";
 import {
   DEFAULT_HEIGHT,
   panelPosition,
@@ -12,6 +12,7 @@ import {
   registerPanelCommands,
   WIDTH,
 } from "./panel.ts";
+import { closing } from "./lifecycle.ts";
 import type { TrayController } from "./tray.ts";
 import { TRAY_PANEL_URL } from "./navigation.ts";
 import { securePreferences } from "./windows.ts";
@@ -62,10 +63,6 @@ export function createPanel(options: PanelOptions = {}): PanelWindow {
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
   const guard = new ReopenGuard();
-  let quitting = false;
-  app.on("before-quit", () => {
-    quitting = true;
-  });
   const hide = () => {
     if (window.isDestroyed()) return;
     window.hide();
@@ -75,7 +72,7 @@ export function createPanel(options: PanelOptions = {}): PanelWindow {
   // until the app quits.
   window.on("blur", hide);
   window.on("close", (event) => {
-    if (quitting) return;
+    if (closing()) return;
     event.preventDefault();
     hide();
   });

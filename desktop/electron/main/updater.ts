@@ -6,7 +6,8 @@
 // candidate or full release. electron-updater (updater-electron.ts) finds
 // and downloads updates; every file it downloads must also carry a minisign
 // signature from the release key (RELEASE_PUBLIC_KEY), made for the version
-// being installed, or it is rejected before it is installed.
+// being installed, or it is rejected before it is installed. The signature
+// (`FILE.sig`) is read from the update's own release, never from the feed.
 //
 // The updater never interrupts: Settings shows its state (`update_state`),
 // and the sidebar counts an available update on Settings. Where the app can
@@ -43,6 +44,11 @@ export const STABLE_FEED = `${RELEASES}/latest/download/`;
 export const CANDIDATE_FEED = `${RELEASES}/download/desktop-rc-updates/`;
 /** Set to `0` to turn update checks off. */
 export const SETTING = "BAUM_DESKTOP_UPDATES";
+/** Test builds only (testOverrides): the feed to read instead of the
+ *  channel's, and the minisign public key file, base64 encoded as
+ *  RELEASE_PUBLIC_KEY is, to trust instead of the release key. */
+export const TEST_FEED = "BAUM_DESKTOP_UPDATE_FEED";
+export const TEST_PUBLIC_KEY = "BAUM_DESKTOP_UPDATE_PUBKEY";
 /** The release key's minisign public key file, base64 encoded:
  *  `plugins.updater.pubkey` in tauri.conf.json. */
 export const RELEASE_PUBLIC_KEY =
@@ -126,8 +132,12 @@ export interface UpdaterDeps {
    *  ensure` if it fails. Elsewhere leave them out. */
   stopDaemon?: () => Promise<void>;
   restartDaemon?: () => Promise<void>;
-  /** Tests only: the release key's public key file. */
+  /** Tests and test builds only: the public key file to trust instead of the
+   *  release key's. */
   publicKey?: string;
+  /** Test builds only: the feed the update and its signature come from
+   *  (testOverrides). */
+  testFeed?: string;
   log?: (message: string) => void;
 }
 
@@ -151,8 +161,40 @@ export function feedUrl(version: string): string {
   return release.includes("-") ? CANDIDATE_FEED : STABLE_FEED;
 }
 
-export function signatureUrl(version: string, file: string): string {
-  return `${feedUrl(version)}${encodeURIComponent(basename(file))}.sig`;
+/** Where the signature of an update file is: beside the file on the
+ *  release of the version being installed (whatever the channel), or beside
+ *  it in a test build's feed. */
+export function signatureUrl(version: string, file: string, testFeed?: string): string {
+  const name = `${encodeURIComponent(basename(file))}.sig`;
+  if (testFeed !== undefined) return `${testFeed}${name}`;
+  return `${RELEASES}/download/v${encodeURIComponent(version.replace(/^v+/, ""))}/${name}`;
+}
+
+/** A test build's version: a pre-release `test`, as in 1.2.3-test.1. The
+ *  release workflow refuses to release such a version (release.yml), so no
+ *  installed copy honours the test variables. */
+const TEST_VERSION = /^\d+\.\d+\.\d+-test(\.[0-9A-Za-z-]+)*(\+[0-9A-Za-z.-]+)?$/;
+
+export function isTestVersion(version: string): boolean {
+  return TEST_VERSION.test(version);
+}
+
+/** In a test build (isTestVersion), BAUM_DESKTOP_UPDATE_FEED and
+ *  BAUM_DESKTOP_UPDATE_PUBKEY point the updater at a local feed signed by a
+ *  throwaway key, so an update can be installed end to end
+ *  (scripts/bridge-test.sh). Any other version ignores them: a released app
+ *  only ever reads its channel and trusts the release key. */
+export function testOverrides(
+  version: string,
+  env: Record<string, string | undefined>,
+): { feed: string; publicKey: string | undefined } | null {
+  const feed = env[TEST_FEED];
+  if (!isTestVersion(version) || !feed) return null;
+  const key = env[TEST_PUBLIC_KEY];
+  return {
+    feed: feed.endsWith("/") ? feed : `${feed}/`,
+    publicKey: key ? Buffer.from(key, "base64").toString("utf8") : undefined,
+  };
 }
 
 export function releasePage(version: string): string {
@@ -171,6 +213,32 @@ export interface Copy {
 function inside(parent: string, path: string): boolean {
   const rel = relative(parent, path);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/** Which of electron-updater's updaters reads the feed for this copy. The
+ *  Linux copy is an AppImage when the AppImage runtime set APPIMAGE; any
+ *  other Linux copy (the deb) uses the deb updater, which checks in a
+ *  packaged app without further configuration, and only ever checks: it
+ *  never installs (copyInstalls). electron-updater's own choice reads a
+ *  `package-type` file the deb target may also leave in the AppImage, and
+ *  its AppImage updater checks nothing outside an AppImage unless forced
+ *  into development mode, so the app chooses itself. */
+export type UpdaterKind = "mac" | "nsis" | "appimage" | "deb";
+
+export function updaterKind(
+  platform: NodeJS.Platform,
+  env: Record<string, string | undefined>,
+): UpdaterKind | null {
+  switch (platform) {
+    case "darwin":
+      return "mac";
+    case "win32":
+      return "nsis";
+    case "linux":
+      return env.APPIMAGE ? "appimage" : "deb";
+    default:
+      return null;
+  }
 }
 
 /** Whether the updater can replace this copy: the Windows install; an
@@ -453,9 +521,10 @@ export class Updater {
         throw new Error(`downloaded ${downloaded.version} instead`);
       }
       onData();
-      const response = await this.deps.fetch(signatureUrl(this.deps.version, downloaded.file), {
-        signal: abort.signal,
-      });
+      const response = await this.deps.fetch(
+        signatureUrl(version, downloaded.file, this.deps.testFeed),
+        { signal: abort.signal },
+      );
       if (!response.ok) throw new Error(`its signature: HTTP ${response.status}`);
       const text = await response.text();
       if (text.length > MAX_SIGNATURE) throw new MinisignError("the signature is too large");
