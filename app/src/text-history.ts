@@ -1,8 +1,7 @@
 /** Undo and redo for every text field, kept by the app rather than the
- *  browser. The desktop app's web view (WebKitGTK in a Tauri window) never
- *  undoes on Ctrl+Z, in any field, so the app keeps each field's history and
- *  answers the keys itself everywhere, browsers included, so a field behaves
- *  the same wherever the app runs:
+ *  browser: the app keeps each field's history and answers the keys itself,
+ *  in the desktop app and in browsers, so a field behaves the same wherever
+ *  the app runs:
  *
  *  - ⌘Z / Ctrl+Z undoes, ⇧⌘Z / Ctrl+Shift+Z and Ctrl+Y (not on a Mac) redo,
  *    as does an undo or redo the platform asks for (`historyUndo`).

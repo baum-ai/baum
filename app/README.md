@@ -2257,10 +2257,10 @@ stays; everywhere else that offers no menu of its own, a right click does nothin
 the tray and the connecting screen).
 
 Undo and redo in text fields are the app's own (`installTextHistory` in
-`src/text-history.ts`, installed by the app and setup windows): the desktop
-app's WebKitGTK web view never undoes on Ctrl+Z, so every text `input` and
-`textarea` keeps a history the app answers ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Shift+Z
-and Ctrl+Y (not on a Mac) from, in a browser too. Typing is one step until a
+`src/text-history.ts`, installed by the app and setup windows), so a field
+behaves the same wherever the app runs: every text `input` and `textarea`
+keeps a history the app answers ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Shift+Z and Ctrl+Y
+(not on a Mac) from, in the desktop app and in a browser. Typing is one step until a
 pause of a second, a caret move or a switch between typing and deleting; a
 paste, a cut or a line break is a step of its own. A step restores the text and
 selection and sends an `input` event, so a React field's `onChange` follows; a

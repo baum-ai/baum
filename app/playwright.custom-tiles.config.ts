@@ -6,10 +6,6 @@ import application from "./playwright.config";
 // custom tiles (oss/internal/tileview/tileviewtest), whose frames load from
 // the daemon's real frame route. The main suite starts the fixture without
 // them, so its tile page and screenshots are unchanged.
-//
-// BAUM_E2E_WEBKIT=1 also runs the frame isolation suite in WebKit, which
-// approximates the macOS desktop app's engine (`just local_app::e2e-webkit`;
-// the ui-test image carries WebKit, per-PR CI does not install it).
 const fixture = application.webServer as Exclude<
   typeof application.webServer,
   unknown[] | undefined
@@ -21,16 +17,5 @@ export default defineConfig({
   // (CUSTOM_TILE_SHOTS=1) live in test-results/custom-tiles, beside it.
   outputDir: "test-results/custom-tiles-run",
   webServer: { ...fixture, command: `BAUM_APP_CUSTOM_TILES=1 ${fixture.command}` },
-  projects: [
-    { name: "chromium", use: { browserName: "chromium" } },
-    ...(process.env.BAUM_E2E_WEBKIT === "1"
-      ? [
-          {
-            name: "webkit",
-            use: { browserName: "webkit" as const },
-            testMatch: "tile-frames.spec.ts",
-          },
-        ]
-      : []),
-  ],
+  projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });

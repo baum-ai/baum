@@ -301,7 +301,7 @@
   pointer-events: none;
 }
 /* Sized to its content, not to the narrow column it hangs from, which
-   WebKit would squeeze it to. */
+   shrink-to-fit would squeeze it to. */
 .analytics-tip {
   position: absolute;
   top: 0.25rem;

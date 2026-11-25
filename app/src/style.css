@@ -28,7 +28,7 @@ body {
      browser's blue. */
   accent-color: var(--action-primary);
 }
-/* Search fields drop WebKit's blue clear glyph; Escape still clears them. */
+/* Search fields drop the browser's clear glyph; Escape still clears them. */
 input[type="search"]::-webkit-search-cancel-button {
   appearance: none;
 }
@@ -5633,8 +5633,9 @@ dialog.shortcuts-sheet[open] {
   font-size: var(--text-base);
 }
 /* Sized by its rows (an auto basis), shrinking to the dialog's max-height.
-   With a 0% basis (`flex: 1`), WebKitGTK sizes the dialog from the basis and
-   the list collapses to nothing under the search field. */
+   With a 0% basis (`flex: 1`), the dialog, whose height is its content's,
+   takes the list's height from the basis and the list collapses to nothing
+   under the search field. */
 .shortcuts-body {
   flex: 1 1 auto;
   min-height: 0;
