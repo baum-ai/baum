@@ -72,6 +72,7 @@ function CodeDiffTable({
               <tr
                 key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
                 data-new-line={line.newLine}
+                data-old-line={line.oldLine}
                 className={cn("align-top", lineStyle[line.kind])}
               >
                 <td className="w-14 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
@@ -130,6 +131,7 @@ export function CodeDiff({
   className,
   afterHunk,
   headerNote,
+  intro,
 }: {
   files: readonly CodeDiffFile[];
   bare?: boolean;
@@ -138,6 +140,9 @@ export function CodeDiff({
   /** Drawn in a file's header, on a line under its path: a host's word on
    *  the file, such as where it is explained. */
   headerNote?: (file: CodeDiffFile) => ReactNode;
+  /** Drawn between a file's header and its code, and kept when the code is
+   *  folded: a host's summary of the file, such as the tests it changes. */
+  intro?: (file: CodeDiffFile) => ReactNode;
   /** False for a diff that is on the page but not yet shown, so nothing is
    *  tokenised until the reader can see it. */
   highlight?: boolean;
@@ -170,6 +175,7 @@ export function CodeDiff({
           const key = file.path;
           const expanded = !folded.has(key);
           const body = `${id}-${index}`;
+          const summary = intro?.(file);
           const toggle = () =>
             setFolded((current) => {
               const next = new Set(current);
@@ -186,7 +192,7 @@ export function CodeDiff({
               <header
                 className={cn(
                   "flex min-w-0 flex-wrap items-center justify-between gap-2 bg-surface-wash px-3 py-2",
-                  expanded && "border-b border-default",
+                  (expanded || Boolean(summary)) && "border-b border-default",
                 )}
               >
                 {/* The path stays a link to the file, so folding is its own
@@ -228,6 +234,11 @@ export function CodeDiff({
                   <div className="min-w-0 basis-full pl-6">{headerNote(file)}</div>
                 ) : null}
               </header>
+              {summary ? (
+                <div className={cn("min-w-0", expanded && "border-b border-default")}>
+                  {summary}
+                </div>
+              ) : null}
               {/* Stays on the page for aria-controls; a folded file draws and
                   highlights nothing. */}
               <div id={body} hidden={!expanded}>

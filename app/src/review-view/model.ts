@@ -2,18 +2,11 @@ import type {
   Anchor,
   HunkRole,
   IndexedHunk,
+  IndexedHunkLine,
   ReviewDocument,
-  RiskTier,
 } from "@baum/viewer/review-document";
 import type { Selection } from "@baum/viewer/review-selection";
-import {
-  firstSentence,
-  leadProse,
-  pointId,
-  type ReviewV2,
-  type V2Section,
-  type ViewTile,
-} from "./document";
+import { firstSentence, leadProse, type ReviewV2, type V2Section, type ViewTile } from "./document";
 import { isRecord, isString } from "../tiles/types";
 import { fromV1 } from "./from-v1";
 
@@ -151,11 +144,6 @@ export type ListedSection = {
   /** No longer in the pull request's code. */
   obsolete?: boolean;
 };
-
-/** Inline markdown as plain text: the marks of bold and code dropped. */
-function plainText(text: string): string {
-  return text.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1");
-}
 
 /** How it works lists "Where this fits" first (when the review has a context,
  *  or tiles or pending cards stand on it), then the review's sections in its
@@ -456,54 +444,6 @@ export function groupFiles(
   });
 }
 
-/** A behaviour step or risk pinned to a hunk it cites, with the section that
- *  explains it. */
-export type HunkNote = {
-  kind: "step" | "risk";
-  id: string;
-  section: string;
-  sectionTitle: string;
-  text: string;
-  tier?: RiskTier;
-};
-
-const citedHunks = (anchors: Anchor[] | undefined) =>
-  new Set((anchors ?? []).flatMap((anchor) => (anchor.type === "hunk" ? [anchor.id] : [])));
-
-/** The notes of each hunk: every behaviour step and every open risk of a
- *  current section whose anchors cite it, steps first, in the review's order. */
-export function notesByHunk(document: ReviewV2): Map<string, HunkNote[]> {
-  const notes = new Map<string, HunkNote[]>();
-  const pin = (hunks: Set<string>, note: HunkNote) => {
-    for (const hunk of hunks) notes.set(hunk, [...(notes.get(hunk) ?? []), note]);
-  };
-  const sections = document.sections.filter((section) => section.derived.state !== "stale");
-  for (const section of sections)
-    for (const [at, block] of section.body.entries())
-      if (block.type === "points")
-        for (const [position, point] of block.items.entries())
-          pin(citedHunks(point.cites), {
-            kind: "step",
-            id: pointId(section.id, at, position, point),
-            section: section.id,
-            sectionTitle: section.title,
-            text: firstSentence(plainText(point.text)),
-          });
-  for (const section of sections)
-    for (const risk of section.risks) {
-      if (risk.state === "mitigated") continue;
-      pin(citedHunks(risk.cites), {
-        kind: "risk",
-        id: risk.id,
-        section: section.id,
-        sectionTitle: section.title,
-        text: firstSentence(risk.text),
-        tier: risk.tier,
-      });
-    }
-  return notes;
-}
-
 // ---------- the overview ----------
 
 /** Why the risk score is what it is: the review's `risk_why`, else the
@@ -678,19 +618,6 @@ export function viewOfPath(
   return null;
 }
 
-/** The notes of a section's own steps and risks, by the hunk they cite. */
-export function sectionNotes(
-  notes: Map<string, HunkNote[]>,
-  section: string,
-): Map<string, HunkNote[]> {
-  const own = new Map<string, HunkNote[]>();
-  for (const [hunk, pinned] of notes) {
-    const mine = pinned.filter((note) => note.section === section);
-    if (mine.length > 0) own.set(hunk, mine);
-  }
-  return own;
-}
-
 // ---------- the tests a section's hunks add or change ----------
 
 type Language = "go" | "js";
@@ -706,13 +633,22 @@ function languageOf(path: string): Language | "other" | null {
   return null;
 }
 
-type Declaration = { test: boolean; name: string | null; indent: number; closed?: boolean };
+/** What a line opens: a test, a helper (a function or a Go block, by name),
+ *  or a group of tests (`describe`), whose own lines are setup. */
+type Declaration = {
+  kind: "test" | "helper" | "group";
+  name: string | null;
+  indent: number;
+  closed?: boolean;
+};
 
-const GO_FUNC = /^func\s+(\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[[(]/;
-const GO_BLOCK = /^(type|var|const|import)\b/;
+const GO_FUNC = /^func\s+(?:\(\s*(?:\w+\s+)?\*?(\w+)(?:\[[^\]]*\])?\s*\)\s*)?([A-Za-z_]\w*)\s*[[(]/;
+const GO_BLOCK = /^(type|var|const|import)\b\s*(\(|[A-Za-z_]\w*)?/;
 const JS_TEST =
   /^(\s*)(?:it|test)(\.(?:only|skip|concurrent|todo|fails|each|for)\b[^(]*)?\(\s*(?:(["'`])((?:\\.|(?!\3).)*)\3)?/;
 const JS_GROUP = /^\s*(?:describe|suite|test\.describe)(?:\.\w+)*\s*\(/;
+const JS_FUNC =
+  /^(?:export\s+)?(?:(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)|(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>)/;
 
 /** A test or another declaration a line opens, if any. */
 function declaration(language: Language, text: string): Declaration | null {
@@ -720,81 +656,258 @@ function declaration(language: Language, text: string): Declaration | null {
   if (language === "go") {
     const func = GO_FUNC.exec(text);
     if (func) {
-      const name = func[2]!;
-      const test = !func[1] && /^(Test|Benchmark|Fuzz|Example)/.test(name);
-      return { test, name, indent: 0 };
+      const [, receiver, name] = func;
+      if (!receiver && /^(Test|Benchmark|Fuzz|Example)/.test(name!))
+        return { kind: "test", name: name!, indent: 0 };
+      return { kind: "helper", name: receiver ? `${receiver}.${name}` : name!, indent: 0 };
     }
-    return GO_BLOCK.test(text) ? { test: false, name: null, indent: 0 } : null;
+    const block = GO_BLOCK.exec(text);
+    if (!block) return null;
+    const [, word, what] = block;
+    const name =
+      word === "import" ? "imports" : what && what !== "(" ? `${word} ${what}` : `${word} block`;
+    // `type T int` or `var x = 1` ends on its line.
+    return { kind: "helper", name, indent: 0, closed: !/[{(]\s*$/.test(text) };
   }
-  if (JS_GROUP.test(text)) return { test: false, name: null, indent };
+  if (JS_GROUP.test(text)) return { kind: "group", name: null, indent };
+  const func = indent === 0 ? JS_FUNC.exec(text) : null;
+  if (func)
+    return { kind: "helper", name: func[1] ?? func[2]!, indent, closed: !/[{(]\s*$/.test(text) };
   const call = JS_TEST.exec(text);
   if (!call) return null;
   const [, , modifier = "", quote, name = ""] = call;
   // A name built at run time (`each`, a template) can't be read.
-  if (/^\.(each|for)\b/.test(modifier)) return { test: true, name: null, indent };
+  if (/^\.(each|for)\b/.test(modifier)) return { kind: "test", name: null, indent };
   // `test.skip(condition, reason)` and the like name no test.
-  if (!quote) return modifier ? null : { test: true, name: null, indent };
+  if (!quote) return modifier ? null : { kind: "test", name: null, indent };
   const readable = !(quote === "`" && name.includes("${"));
   // A test written on one line ends on it.
   const closed = /\)\s*;?\s*$/.test(text) && !/[{(]\s*$/.test(text);
-  return { test: true, name: readable ? name : null, indent, closed };
+  return { kind: "test", name: readable ? name : null, indent, closed };
 }
 
-/** The tests the hunks add or change, in their order, read from their
- *  lines: Go's `func TestX(` (and benchmarks, fuzz tests and examples),
- *  JavaScript's and TypeScript's `it("…"` and `test("…"`. Null when a hunk
- *  can't be read with confidence: its code is not in the review, it is in
- *  another language, a test's name is built at run time, or a change sits
- *  inside a block whose start is above the hunk. An empty list means the
- *  hunks change no test. */
-export function testNames(hunks: IndexedHunk[]): string[] | null {
-  const names: string[] = [];
-  const add = (name: string) => {
-    if (!names.includes(name)) names.push(name);
+export type TestChange = "added" | "changed" | "renamed" | "removed";
+
+/** One test, helper or run of other lines that a file's hunks change. */
+export type TestOutlineItem = {
+  /** A test; a helper (a function, type, variable or the imports), by name;
+   *  or the lines that are neither (a `describe`'s setup, top-level code). */
+  kind: "test" | "helper" | "other";
+  name: string;
+  /** A renamed test's or helper's old name. */
+  was?: string;
+  change: TestChange;
+  additions: number;
+  deletions: number;
+  /** The line of the diff to open it at: its declaration, else its first
+   *  changed line, on the side that has it. */
+  at?: { side: "new" | "old"; line: number };
+};
+
+export type TestOutlineFile = {
+  path: string;
+  change: IndexedHunk["change"];
+  additions: number;
+  deletions: number;
+  /** The file's tests in the diff's order, then its helpers and other lines;
+   *  null when they can't be read with confidence: another language, a
+   *  test's name built at run time, a change inside a block whose start is
+   *  above the hunk, or code that isn't in the review. */
+  items: TestOutlineItem[] | null;
+};
+
+type Draft = TestOutlineItem & { order: number; declared?: IndexedHunkLine["kind"] };
+
+export const OTHER_LINES = "Other lines";
+
+const COMMENT = /^\s*(\/\/|\/\*|\*)/;
+
+const atOf = (line: IndexedHunkLine): TestOutlineItem["at"] =>
+  line.kind === "remove"
+    ? { side: "old", line: line.old_line }
+    : { side: "new", line: line.new_line };
+
+/** The words of a name, for telling a rename from a different test. */
+function words(name: string): Set<string> {
+  return new Set(
+    name
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/([A-Z])([A-Z][a-z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean),
+  );
+}
+
+/** How alike two names are: the words they share over all their words. */
+function likeness(a: string, b: string): number {
+  const left = words(a);
+  const right = words(b);
+  let shared = 0;
+  for (const word of left) if (right.has(word)) shared += 1;
+  return shared / (left.size + right.size - shared || 1);
+}
+
+/** A file's items, read from its hunks' lines, or null (see `items`). */
+function outlineItems(path: string, hunks: IndexedHunk[]): TestOutlineItem[] | null {
+  const language = languageOf(path);
+  if (language === null) return [];
+  if (language === "other") return null;
+  const drafts = new Map<string, Draft>();
+  const itemOf = (kind: TestOutlineItem["kind"], name: string): Draft => {
+    const key = `${kind}:${name}`;
+    let draft = drafts.get(key);
+    if (!draft) {
+      draft = { kind, name, change: "changed", additions: 0, deletions: 0, order: drafts.size };
+      drafts.set(key, draft);
+    }
+    return draft;
   };
+  const ownerOf = (open: Declaration): Draft =>
+    open.kind === "group" || open.name === null
+      ? itemOf("other", OTHER_LINES)
+      : itemOf(open.kind === "test" ? "test" : "helper", open.name);
+  const count = (draft: Draft, line: IndexedHunkLine) => {
+    if (line.kind === "add") draft.additions += 1;
+    else if (line.kind === "remove") draft.deletions += 1;
+    else return;
+    draft.at ??= atOf(line);
+  };
+  // A test removed with another added straight after it, as Git lines up a
+  // test rewritten under a new name: it is renamed, and a later hunk whose
+  // header names the old test holds the new one's lines.
+  const replaced = new Map<string, Declaration>();
   for (const hunk of hunks) {
-    const language = languageOf(hunk.path);
-    if (language === null) continue;
-    if (language === "other" || !hunk.diff) return null;
+    if (!hunk.diff) return null;
     // Where the hunk starts: inside the declaration its header names, when
     // the header names a test (or, in Go, any declaration), else unknown.
     const context = hunk.diff.header.replace(/^@@[^@]*@@\s?/, "");
-    const named = context ? declaration(language, context) : null;
+    let named = context ? declaration(language, context) : null;
+    if (named?.name && replaced.has(named.name)) named = replaced.get(named.name)!;
+    let removed: string | null = null;
     let current: Declaration | "top" | "unknown" =
-      named && (named.test || language === "go") && named.indent === 0 ? named : "unknown";
+      named && (named.kind === "test" || language === "go") && named.indent === 0
+        ? named
+        : "unknown";
+    // Changed comments at the margin belong to the declaration under them.
+    let pending: IndexedHunkLine[] = [];
+    const settle = (draft: Draft) => {
+      for (const line of pending) count(draft, line);
+      pending = [];
+    };
     for (const line of hunk.diff.lines) {
       const text = line.text;
       const changed = line.kind !== "context";
-      if (!text.trim()) continue;
+      if (!text.trim()) {
+        if (changed && typeof current === "object") count(ownerOf(current), line);
+        continue;
+      }
+      // A Go file's package clause says nothing about its tests.
+      if (language === "go" && /^package\s/.test(text)) continue;
       const opened = declaration(language, text);
       if (opened) {
-        if (opened.test) {
-          if (opened.name === null) return null;
-          if (line.kind === "add") add(opened.name);
+        if (opened.kind === "test" && opened.name === null) return null;
+        if (opened.kind === "test" && line.kind === "add" && removed) replaced.set(removed, opened);
+        removed = opened.kind === "test" && line.kind === "remove" ? opened.name : null;
+        if (opened.kind !== "group" || changed) {
+          const draft = ownerOf(opened);
+          settle(draft);
+          if (opened.kind !== "group") {
+            draft.declared = draft.declared && draft.declared !== line.kind ? "context" : line.kind;
+            draft.at = atOf(line);
+          }
+          count(draft, line);
         }
         current = opened.closed ? "top" : opened;
         continue;
       }
       const indent = text.length - text.trimStart().length;
       const closes = /^\s*[})]/.test(text);
+      if (!COMMENT.test(text)) removed = null;
       if (typeof current === "object") {
         // Go's bodies are indented: a line at the margin that closes nothing
         // (a comment above the next function) is outside the one before.
         if (language === "go" && indent === 0 && !closes) {
           current = "top";
+          if (changed) pending.push(line);
           continue;
         }
-        if (changed && current.test && current.name) add(current.name);
+        if (changed) count(ownerOf(current), line);
         if (closes && indent <= current.indent) current = "top";
         continue;
       }
       // Outside any declaration the hunk shows: a line at the margin is top
       // level; an indented change may be inside a test opened above.
-      if (indent === 0) current = "top";
-      else if (changed && (current === "unknown" || language === "go")) return null;
+      if (indent === 0) {
+        current = "top";
+        if (!changed) continue;
+        if (COMMENT.test(text)) pending.push(line);
+        else {
+          const other = itemOf("other", OTHER_LINES);
+          settle(other);
+          count(other, line);
+        }
+      } else if (changed && (current === "unknown" || language === "go")) return null;
     }
+    if (pending.length > 0) settle(itemOf("other", OTHER_LINES));
   }
-  return names;
+  const items = [...drafts.values()].filter((draft) => draft.additions + draft.deletions > 0);
+  for (const item of items)
+    item.change =
+      item.declared === "add" ? "added" : item.declared === "remove" ? "removed" : "changed";
+  // A test or helper removed is renamed when Git lined another up in its
+  // place, or one was added under a like name.
+  const renamed = new Set<Draft>();
+  for (const gone of items) {
+    if (gone.change !== "removed" || gone.kind === "other") continue;
+    const successor = replaced.get(gone.name);
+    let best =
+      items.find(
+        (added) =>
+          added.change === "added" &&
+          added.kind === "test" &&
+          added.name === successor?.name &&
+          !renamed.has(added),
+      ) ?? null;
+    let score = 0.6;
+    for (const added of best ? [] : items) {
+      if (added.change !== "added" || added.kind !== gone.kind || renamed.has(added)) continue;
+      const like = likeness(gone.name, added.name);
+      if (like >= score) [best, score] = [added, like];
+    }
+    if (!best) continue;
+    renamed.add(gone);
+    renamed.add(best);
+    Object.assign(best, {
+      change: "renamed",
+      was: gone.name,
+      additions: best.additions + gone.additions,
+      deletions: best.deletions + gone.deletions,
+      order: Math.min(best.order, gone.order),
+    });
+  }
+  const rank = { test: 0, helper: 1, other: 2 };
+  return items
+    .filter((item) => !(renamed.has(item) && item.change === "removed"))
+    .toSorted((a, b) => rank[a.kind] - rank[b.kind] || a.order - b.order)
+    .map(({ order: _order, declared: _declared, ...item }) => item);
+}
+
+/** The section's test files as an outline of their diff: each file with the
+ *  tests, helpers and other lines it changes, read from the hunks' lines
+ *  (Go's `func TestX(` and its benchmarks, fuzz tests and examples,
+ *  JavaScript's and TypeScript's `it("…"` and `test("…"`). */
+export function testOutline(files: { path: string; hunks: IndexedHunk[] }[]): TestOutlineFile[] {
+  return files.map((file) => {
+    const changes = new Set(file.hunks.map((hunk) => hunk.change));
+    return {
+      path: file.path,
+      change: changes.size === 1 ? file.hunks[0]!.change : "modified",
+      additions: file.hunks.reduce((total, hunk) => total + hunk.additions, 0),
+      deletions: file.hunks.reduce((total, hunk) => total + hunk.deletions, 0),
+      items: outlineItems(file.path, file.hunks),
+    };
+  });
 }
 
 // ---------- the session turns a section cites ----------

@@ -93,7 +93,6 @@ export function ViewPane({
         ) : (
           <CodeTab
             document={snapshot}
-            review={review}
             files={files}
             file={file}
             list={list}

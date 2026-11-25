@@ -3011,12 +3011,24 @@ builds the rail's model (the sections and the file list) from it.
   steps have `more` shows a step's detail below while the mouse is over it
   and makes them buttons that keep it open; "Writing
   details…" or "Details unavailable" with Retry from its `details`), **Code** (its code, config and
-  migration hunks, file by file, drawn as Files changed draws them with the
-  section's own steps and risks pinned to the hunks they cite, and its
+  migration hunks, file by file, drawn as Files changed draws them, and its
   generated or vendored files folded at the end), **Tests** (its test hunks,
-  under the names of the tests they add or change where those can be read
-  from the lines, once the hunks the review left out are loaded: Go's
-  `func TestX(`, JavaScript's `it("…"` and `test("…"`, else no list), **Session** (the prompts and session events its
+  under a line counting the tests by change, each file's diff headed, above
+  its code and still shown when the code is folded, once the hunks the review
+  left out are loaded, by New file or Deleted file and the tests it adds,
+  renames, changes or removes by name, read from the lines (Go's
+  `func TestX(` and its benchmarks, fuzz tests and examples, JavaScript's
+  `it("…"` and `test("…"`), then under Helpers and setup the functions,
+  types, variables and imports it changes by name and its Other lines. A test
+  removed with another added in its place, or beside one with a like name, is
+  renamed. A file whose tests can't be read with confidence (another
+  language, a name built at run time, a change inside a block that opens
+  above its hunk) says so. A row marks its change unless the file's New or
+  Deleted already says it, gives line counts only for a changed or renamed
+  test, and sets a sentence name as prose and an identifier as code; a list
+  longer than eight shows its first five until asked for the rest. A row
+  brings the line its test or helper starts at into view, unfolding the code
+  if needed, and flashes it), **Session** (the prompts and session events its
   summary, steps, risks and tiles cite, quoted with when and who, each linking
   to its turn of the transcript) and **Docs** (its docs hunks). Code, Tests and
   Docs count files, Session quotes. The view is `section_view=<view>` beside
@@ -3053,10 +3065,11 @@ builds the rail's model (the sections and the file list) from it.
   sections' order; a file explained by several sections is listed under each
   (and marked in each), and the files no section explains come last under "Not
   in a section". A row shows the file's name (and its folder, where the heading
-  does not), its added and removed lines and its notes. The mode is kept in the
+  does not) and its added and removed lines. The mode is kept in the
   browser (`localStorage` `baum.review.fileGrouping`; when storage is refused it
-  holds for the page). The open file shows its hunks with the steps and open
-  risks that cite each pinned under it, each linking to its section. A code
+  holds for the page). The open file shows its hunks under a header that
+  names the sections explaining it, each a link; nothing is pinned under a
+  hunk, since a section's steps and risks are read in its Overview. A code
   chip anywhere on the page opens its file here.
 - **Tiles** always show their title. Flows, columns, sequences and tables are
   drawn by the page (`native-tiles.tsx`) in palette tones, with the tile's

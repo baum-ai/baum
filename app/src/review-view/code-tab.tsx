@@ -5,7 +5,7 @@ import { CodeDiff, type CodeDiffFile, type CodeDiffHunk } from "@baum/viewer/com
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { CARD_LABEL } from "@baum/viewer/components/editorial";
 import { ChevronDownIcon } from "@baum/viewer/components/icons";
-import { JumpLink, TierBadge } from "@baum/viewer/components/review-parts";
+import { JumpLink } from "@baum/viewer/components/review-parts";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { NavRow } from "./nav-row";
 import { Button, SegmentedControl } from "@baum/viewer/components/ui";
@@ -14,15 +14,12 @@ import { hunkUrl, type IndexedHunk, type ReviewDocument } from "@baum/viewer/rev
 import { LoadingStatus } from "../nine-dots";
 import { useFileGrouping } from "./file-grouping";
 import { scrollerOf } from "@baum/viewer/components/scroller";
-import type { ReviewV2 } from "./document";
 import {
   FILE_GROUPINGS,
   groupFiles,
-  notesByHunk,
   selectionOf,
   type FileGroupRow,
   type FileGrouping,
-  type HunkNote,
   type ListedSection,
   type ViewFile,
 } from "./model";
@@ -31,12 +28,10 @@ const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 const folder = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 
 /** Files changed: every changed file, grouped by type, folder or feature, in a
- *  list beside the one open, whose diff carries the notes on each hunk (the
- *  behaviour steps and risks that cite it), each linking to the section that
- *  explains it. Generated files stay folded. */
+ *  list beside the one open, whose diff's header says which sections explain
+ *  it. Generated files stay folded. */
 export function CodeTab({
   document,
-  review,
   files,
   file,
   list,
@@ -44,14 +39,12 @@ export function CodeTab({
   context,
 }: {
   document: ReviewDocument;
-  review: ReviewV2;
   files: ViewFile[];
   file: ViewFile | undefined;
   list: ListedSection[];
   idPrefix: string;
   context: ReviewPlaceContext;
 }) {
-  const notes = useMemo(() => notesByHunk(review), [review]);
   const [grouping, setGrouping] = useFileGrouping();
   const [generatedOpen, setGeneratedOpen] = useState(file?.group === "Generated");
   // A generated file opened by the keys shows its row.
@@ -118,7 +111,6 @@ export function CodeTab({
                     <li key={member.path} className="min-w-0" title={member.path}>
                       <FileRow
                         file={member}
-                        notes={notes}
                         showFolder={grouping !== "folder"}
                         active={member.path === file?.path}
                         controls={`${idPrefix}review-view-file`}
@@ -137,7 +129,6 @@ export function CodeTab({
           key={file.path}
           document={document}
           file={file}
-          notes={notes}
           list={list}
           idPrefix={idPrefix}
           context={context}
@@ -171,37 +162,28 @@ function GroupHeading({ group, grouping }: { group: FileGroupRow; grouping: File
  *  and what changed in it. */
 function FileRow({
   file,
-  notes,
   showFolder,
   active,
   controls,
   onSelect,
 }: {
   file: ViewFile;
-  notes: Map<string, HunkNote[]>;
   showFolder: boolean;
   active: boolean;
   controls: string;
   onSelect: () => void;
 }) {
-  const count = file.hunks.reduce((total, hunk) => total + (notes.get(hunk.id)?.length ?? 0), 0);
   const added = file.hunks.reduce((total, hunk) => total + hunk.additions, 0);
   const removed = file.hunks.reduce((total, hunk) => total + hunk.deletions, 0);
-  const counts = added + removed > 0;
   return (
     <NavRow
       title={basename(file.path)}
       line={showFolder ? folder(file.path) || "/" : undefined}
       aside={
-        counts || count > 0 ? (
-          <span className="flex flex-col items-end tabular-nums">
-            {counts ? (
-              <span>
-                <span className="text-status-positive">+{added}</span>{" "}
-                <span className="text-status-critical">−{removed}</span>
-              </span>
-            ) : null}
-            {count > 0 ? <span>{pluralize("note", count, true)}</span> : null}
+        added + removed > 0 ? (
+          <span className="tabular-nums">
+            <span className="text-status-positive">+{added}</span>{" "}
+            <span className="text-status-critical">−{removed}</span>
           </span>
         ) : undefined
       }
@@ -246,14 +228,12 @@ export function GeneratedToggle({
 function FileView({
   document,
   file,
-  notes,
   list,
   idPrefix,
   context,
 }: {
   document: ReviewDocument;
   file: ViewFile;
-  notes: Map<string, HunkNote[]>;
   list: ListedSection[];
   idPrefix: string;
   context: ReviewPlaceContext;
@@ -297,7 +277,6 @@ function FileView({
         <FileDiff
           document={document}
           file={file}
-          notes={notes}
           context={context}
           header={{ heading, note: where }}
         />
@@ -328,26 +307,24 @@ const asDiffHunk = (diff: NonNullable<IndexedHunk["diff"]>): CodeDiffHunk => ({
   })),
 });
 
-/** The file's hunks as the review indexed them, with their notes. A hunk
- *  whose code the review left out is read from the compared version's patch
- *  (not while two versions are compared). A note links to the section that
- *  explains it, or says `noteLink` where the reader already is. */
+/** The file's hunks as the review indexed them. A hunk whose code the review
+ *  left out is read from the compared version's patch (not while two
+ *  versions are compared). */
 export function FileDiff({
   document,
   file,
-  notes,
   context,
-  noteLink = (note) => `${note.sectionTitle} →`,
   header,
+  intro,
 }: {
   document: ReviewDocument;
   file: ViewFile;
-  notes: Map<string, HunkNote[]>;
   context: ReviewPlaceContext;
-  noteLink?: (note: HunkNote) => string;
   /** The file's own heading, for when no diff is drawn, and a note for the
    *  diff's header under its path. */
   header?: { heading: ReactNode; note: ReactNode };
+  /** Drawn under the diff's header, above its code. */
+  intro?: ReactNode;
 }) {
   const missing = file.hunks.filter((hunk) => !hunk.diff);
   const source = context.hunkPatches;
@@ -395,12 +372,6 @@ export function FileDiff({
           hunks: drawn.map((item) => item.diff),
         }
       : null;
-  const go = (note: HunkNote) =>
-    context.select(
-      note.kind === "risk"
-        ? { kind: "risk", section: note.section, id: note.id }
-        : { kind: "section", id: note.section },
-    );
   return (
     <div className="space-y-3">
       {diff ? null : header?.heading}
@@ -410,10 +381,7 @@ export function FileDiff({
           files={[diff]}
           className="mt-0"
           headerNote={header?.note ? () => header.note : undefined}
-          afterHunk={(_file, index) => {
-            const pinned = notes.get(drawn[index]?.hunk.id ?? "");
-            return pinned?.length ? <HunkNotes notes={pinned} go={go} link={noteLink} /> : null;
-          }}
+          intro={intro ? () => intro : undefined}
         />
       ) : null}
       {lost.length > 0 ? (
@@ -427,37 +395,5 @@ export function FileDiff({
         </p>
       ) : null}
     </div>
-  );
-}
-
-function HunkNotes({
-  notes,
-  go,
-  link,
-}: {
-  notes: HunkNote[];
-  go: (note: HunkNote) => void;
-  link: (note: HunkNote) => string;
-}) {
-  return (
-    <ul aria-label="Notes" className="space-y-1">
-      {notes.map((note) => (
-        <li
-          key={`${note.kind}:${note.section}:${note.id}`}
-          data-note={note.kind}
-          className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-base leading-snug"
-        >
-          {note.kind === "risk" && note.tier ? (
-            <TierBadge tier={note.tier} />
-          ) : (
-            <span className="text-xs font-medium tracking-[0.08em] text-tertiary uppercase">
-              Step
-            </span>
-          )}
-          <InlineMarkdown className="min-w-0 text-primary">{note.text}</InlineMarkdown>
-          <JumpLink onClick={() => go(note)}>{link(note)}</JumpLink>
-        </li>
-      ))}
-    </ul>
   );
 }

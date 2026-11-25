@@ -406,7 +406,7 @@ describe("a section's views", () => {
     expect(viewTab(empty, "Overview").getAttribute("aria-selected")).toBe("true");
   });
 
-  it("draws the section's code with its own notes, generated files folded at the end", async () => {
+  it("draws the section's code with nothing under its hunks, generated files folded at the end", async () => {
     const container = await page("pane=section&section=sec_allowlist&section_view=code");
     const code = viewPanel(container);
     expect(
@@ -414,11 +414,8 @@ describe("a section's views", () => {
         each.getAttribute("aria-label"),
       ),
     ).toEqual(["oss/internal/uiserver/remote.go diff"]);
-    const notes = [...code.querySelectorAll<HTMLElement>('ul[aria-label="Notes"] li')];
-    expect(notes.map((note) => note.dataset.note)).toEqual(["step", "risk", "step"]);
-    // A note leads back to the section's Overview, at the risk it names.
-    await click(button(notes[1]!, "In Overview"));
-    expect([search.get("pane"), search.get("risk_id")]).toEqual(["risk", "rsk_always_allow"]);
+    // The section's steps and risks are in its Overview, not repeated under the code.
+    expect(code.textContent).not.toContain("Always allow");
     act(() => root?.unmount());
     const deps = await page("pane=section&section=sec_deps&section_view=code");
     const generated = viewPanel(deps);
@@ -427,7 +424,7 @@ describe("a section's views", () => {
     expect(generated.querySelector('[aria-label="oss/go.sum diff"]')).not.toBeNull();
   });
 
-  it("names the tests the section's test hunks add, above their diffs", async () => {
+  it("heads each test file's diff with its tests and helpers, a row opening its line", async () => {
     const document = review1303();
     const hunk = document.index.hunks.find((each) => each.id === "h_remote_test")!;
     hunk.diff!.lines = [
@@ -435,14 +432,51 @@ describe("a section's views", () => {
       { kind: "add", text: "func TestRemoteRoutesCoverLocalAPI(t *testing.T) {", new_line: 21 },
       { kind: "add", text: "}", new_line: 22 },
     ];
+    const path = "oss/internal/uiserver/remote_test.go";
     const container = await page("pane=section&section=sec_allowlist&section_view=tests", document);
-    const names = viewPanel(container).querySelector('[aria-label="Tests added or changed"]');
-    expect(names?.textContent).toContain("TestRemoteRoutesCoverLocalAPI");
-    // The fixture's own hunk adds no test, so it lists none.
-    act(() => root?.unmount());
-    const plain = await page("pane=section&section=sec_allowlist&section_view=tests");
-    expect(viewPanel(plain).querySelector('[aria-label="Tests added or changed"]')).toBeNull();
-    expect(viewPanel(plain).querySelector('[aria-label$=" diff"]')).not.toBeNull();
+    const panel = viewPanel(container);
+    expect(panel.querySelector('[aria-label="Test changes"]')?.textContent).toBe("Tests: 1 added");
+    const file = panel.querySelector<HTMLElement>(`[aria-label="${path} diff"]`)!;
+    // The list sits in the file's own diff, above its code.
+    const tests = file.querySelector<HTMLElement>(`[aria-label="Tests in ${path}"]`)!;
+    expect(tests.textContent).toContain("TestRemoteRoutesCoverLocalAPI");
+    expect(tests.compareDocumentPosition(file.querySelector("table")!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    // What the file changes beside its tests is listed under them.
+    expect(file.querySelector(`[aria-label="Helpers in ${path}"]`)?.textContent).toContain(
+      "imports",
+    );
+    const original = Element.prototype.scrollIntoView;
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      await click(button(tests, "TestRemoteRoutesCoverLocalAPI"));
+      const row = scroll.mock.contexts[0] as HTMLElement;
+      expect(row.closest(`[aria-label="${path} diff"]`)).not.toBeNull();
+      expect(row.dataset.newLine).toBe("21");
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("folds a file's long list of tests to its first few", async () => {
+    const document = review1303();
+    const hunk = document.index.hunks.find((each) => each.id === "h_remote_test")!;
+    hunk.diff!.lines = [
+      ...hunk.diff!.lines,
+      ...Array.from({ length: 10 }, (_, at) => [
+        { kind: "add" as const, text: `func TestCase${at}(t *testing.T) {`, new_line: 21 + at * 2 },
+        { kind: "add" as const, text: "}", new_line: 22 + at * 2 },
+      ]).flat(),
+    ];
+    const path = "oss/internal/uiserver/remote_test.go";
+    const container = await page("pane=section&section=sec_allowlist&section_view=tests", document);
+    const rows = () =>
+      viewPanel(container).querySelectorAll(`[aria-label="Tests in ${path}"] li`).length;
+    expect(rows()).toBe(5);
+    await click(button(viewPanel(container), "Show 5 more tests"));
+    expect(rows()).toBe(10);
   });
 
   it("quotes the prompts and events the section cites, linking to their turns", async () => {
@@ -579,7 +613,7 @@ describe("Code", () => {
     );
   });
 
-  it("pins notes to the hunks they cite, each linking to its section", async () => {
+  it("names where a file is explained in its header, with nothing under its hunks", async () => {
     const container = await page(
       "pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go",
     );
@@ -587,11 +621,10 @@ describe("Code", () => {
     // The diff's header names the file once, with where it is explained.
     expect(file.querySelector("h2")).toBeNull();
     expect(file.querySelector("article header")?.textContent).toContain("Explained in");
-    const notes = [...file.querySelectorAll<HTMLElement>('ul[aria-label="Notes"] li')];
-    expect(notes.map((note) => note.dataset.note)).toEqual(["step", "risk", "step"]);
-    expect(notes[0]?.textContent).toContain("Deny by default");
-    await click(button(notes[1]!, "What a phone can do"));
-    expect([search.get("pane"), search.get("risk_id")]).toEqual(["risk", "rsk_always_allow"]);
+    expect(file.textContent).not.toContain("Deny by default");
+    expect(file.textContent).not.toContain("Always allow");
+    await click(button(file, "What a phone can do"));
+    expect([search.get("pane"), search.get("section")]).toEqual(["section", "sec_allowlist"]);
   });
 
   it("says when a hunk's code isn't in the review", async () => {
