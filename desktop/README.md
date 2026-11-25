@@ -1444,6 +1444,7 @@ the CPUs it had. The scenarios:
 | `filter` | `/` on the Inbox, type `retry` a key at a time, Enter to search titles; reports the Inbox's rows before and after | the Inbox's filter |
 | `switch-inboxes` | Shift+J through up to six inboxes and Shift+K back, each settled; each must switch | two inboxes |
 | `session-panel` | Open the session panel with Control+\` on the latest console conversation (a running one if any) and keep it open 60 s | the console |
+| `transcript` | From the Sessions page, open the largest session's transcript as the app's links do, until its messages show; then 20 presses of k back up it, each must mark the message before | a session with a transcript |
 | `pages` | Every page and its main sub-views, rendered two ways and ranked slowest first (below) | |
 
 `pages` is the scenario for making every page render fast: it ranks the
@@ -1671,6 +1672,7 @@ a comparison again before keeping a change it calls faster.
 | `filter` | `keystroke_median` |
 | `switch-inboxes` | `switch_content_median` |
 | `session-panel` | `open_duration` |
+| `transcript` | `open_content` |
 | `pages` | none yet: a comparison needs `--metric` |
 
 A comparison goes to `target/profile/<scenario>-vs-<commit>-<time>/`:
@@ -1698,6 +1700,18 @@ app:
 ```sh
 just desktop::profile review --runs 3
 just desktop::profile jk --runs 3
+```
+
+The `pages` scenario visits every page, so its CPU profile is theirs together.
+`--page LABEL` (repeatable) visits only the pages named, directly and by
+navigation from the Inbox, for a profile, or a comparison, of one page. A label
+is the summary's page column in any case, with dashes for spaces, as are the
+page metrics `--metric` names (`just` passes its arguments split on spaces):
+
+```sh
+just desktop::profile pages --page edit-inbox --runs 3
+just desktop::profile pages --page edit-inbox --baseline origin/main \
+  --metric page:edit-inbox:direct:content
 ```
 
 Each measured run (not the warm-up) samples the window's renderer main

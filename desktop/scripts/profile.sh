@@ -15,10 +15,11 @@ usage() {
   cat <<'EOF'
 usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout SECONDS]
                   [--seed-data[=SEED] | --copy-data] [--workspace DIR]...
+                  [--page LABEL]...
                   [--baseline REF [--metric NAME]]
 
   scenario         cold-start, jk, review, filter, switch-inboxes,
-                   session-panel or pages
+                   session-panel, transcript or pages
   --check          only check the arguments (just desktop::profile does,
                    before it builds anything)
   --runs N         measured runs after the warm-up (default 5; with
@@ -40,6 +41,10 @@ usage: profile.sh [--check] <scenario> [--runs N] [--name NAME] [--run-timeout S
                    says which metrics changed beyond noise
   --metric NAME    the metric the comparison judges first (default: the
                    scenario's headline)
+  --page LABEL     pages only: visit only the page(s) named, as the
+                   summary's page column names them, any case, dashes for
+                   spaces (edit-inbox), so a run, and its CPU profile, is
+                   theirs
 EOF
 }
 
@@ -52,6 +57,7 @@ check=0
 timeout=600
 runs_given=
 baseline=
+pages=
 metric=
 pass=
 nl='
@@ -68,6 +74,7 @@ while [ "$#" -gt 0 ]; do
     --name=*) name=${1#--name=} ;;
     --run-timeout) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; timeout=$2; shift ;;
     --run-timeout=*) timeout=${1#--run-timeout=} ;;
+    --page) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pages="${pages:+$pages,}$2"; shift ;;
     --check) check=1 ;;
     --copy-data|--seed-data|--seed-data=*) pass="$pass$nl$1" ;;
     --workspace) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; pass="$pass$nl--workspace$nl$2"; shift ;;
@@ -79,6 +86,10 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 [ -n "$scenario" ] || { usage >&2; exit 2; }
+if [ -n "$pages" ]; then
+  [ "$scenario" = pages ] || { echo "profile: --page is for the pages scenario" >&2; exit 2; }
+  case $pages in *"'"*) echo "profile: a page label has no quotes" >&2; exit 2 ;; esac
+fi
 # The scenarios the runner knows, from their definitions (scenarios.ts, and
 # the modules it registers scenarios from).
 definitions="$desktop/../app/scripts/profile/scenarios.ts $desktop/../app/scripts/profile/pages.ts"
@@ -95,7 +106,7 @@ if [ -n "$metric" ] && [ -z "$baseline" ]; then
   echo "profile: --metric names what a comparison judges first; it needs --baseline" >&2
   exit 2
 fi
-case $metric in *[!a-z0-9_]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
+case $metric in *[!a-z0-9_:-]*) echo "profile: no metric $metric" >&2; exit 2 ;; esac
 if [ -n "$baseline" ]; then
   # A comparison judges the scenario's headline first (`headline:` after
   # its name), unless --metric names another.
@@ -282,7 +293,7 @@ if [ -n "$baseline" ]; then
   }
   trap stop INT TERM HUP
 
-  run="BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario --out /oss/desktop/$out --runs $runs --run-timeout $timeout"
+  run="BAUM_PROFILE_SETTLE=$settle BAUM_PROFILE_PAGES='$pages' node /oss/app/scripts/profile/run.ts $scenario --out /oss/desktop/$out --runs $runs --run-timeout $timeout"
   # Each side runs in its own instance, the head's app built from this
   # checkout, the base's mounted from its build. Command lines for the
   # container's shell, so their quotes are meant.
@@ -393,7 +404,7 @@ out=target/profile/$scenario-$stamp
 # through Electron's chromedriver. A command line for the container's shell,
 # so its quotes are meant.
 # shellcheck disable=SC2089,SC2090
-BAUM_ISOLATED_RUN="pnpm build && BAUM_PROFILE_SETTLE=$settle node /oss/app/scripts/profile/run.ts $scenario \
+BAUM_ISOLATED_RUN="pnpm build && BAUM_PROFILE_SETTLE=$settle BAUM_PROFILE_PAGES='$pages' node /oss/app/scripts/profile/run.ts $scenario \
 --app /oss/desktop --out /oss/desktop/$out --runs $runs \
 --dist /oss/internal/localapp/dist --run-timeout $timeout --env 'commit=$commit' --env 'instance=$name'"
 # shellcheck disable=SC2090

@@ -2409,7 +2409,8 @@ with it as thumbnails that open full size; the agent named once per turn; its
 messages on the way to its reply folded under "N progress updates"; its reply
 in full, set as long text (headings, quieter code, spaced lists and tables). j
 and k move a message at a time (prompts and replies, passing over the progress
-updates), Space shows all of the marked one or less again, and Enter opens it
+updates; pressed again before the page has scrolled to the marked one, they
+go on from it, as Space and Enter act on it), Space shows all of the marked one or less again, and Enter opens it
 on its own, nearly the window's size, where j and k scroll it and Escape closes
 it. It reads
 `GET api/live-sessions/{agent}/{id}/transcript` (see "Live sessions" in
@@ -2420,7 +2421,9 @@ events. Each read names the version shown, so an unchanged transcript costs a
 few bytes and draws nothing again; a new version keeps the turns the reader
 opened (the card's source carries the version as its `revision`, so an opened
 turn's activity is read again) and, when the reader is at the end of the page,
-keeps them there; every session opens at its end, on its latest turn. A transcript the daemon
+keeps them there, and so does what grows on its own after it is shown (a reply
+measured and folded) until the reader clicks or
+types; every session opens at its end, on its latest turn. A transcript the daemon
 does not serve says why (the agent named no transcript, it is outside the
 agent's session folder, the file is gone), and a failed read keeps what is
 shown. The back chevron, `u` or Esc returns to the list. A reply bar stays at
