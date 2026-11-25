@@ -196,6 +196,79 @@ const columnsRealistic: Sample = {
   expect: "valid",
 };
 
+const columnsCompared: Sample = {
+  id: "dg_columns_compared",
+  type: "columns",
+  title: "Clips beside still images",
+  placement: SECTION,
+  data: {
+    caption:
+      "A clip is labelled and retried like an image, but it plays in place and has no full-size view.",
+    source: [],
+    columns: [
+      { label: "Still image", tone: "muted" },
+      { label: "Description clip", tone: "new" },
+    ],
+    rows: [
+      [
+        { title: "Shown at its size", note: "Sized by its width and height." },
+        {
+          title: "Plays in place with controls",
+          note: "Muted, no autoplay, sized by its width and height.",
+        },
+      ],
+      [
+        {
+          title: "Label from its caption or alt text",
+          note: "Falls back to a numbered image label.",
+        },
+        {
+          title: "Label from its caption or alt text",
+          note: "Falls back to a numbered image label.",
+        },
+      ],
+      [
+        { title: "Opens full size on click", note: "A dialog shows the image larger." },
+        { title: "No full-size dialog", note: "The clip plays in its own box on the page." },
+      ],
+      [
+        { title: "Failure says Image unavailable", note: "Retry reloads the image." },
+        { title: "Failure says Video unavailable", note: "Retry reloads the clip." },
+      ],
+      [
+        { title: "Retry takes focus after a failure", note: "Focus moves to the retry button." },
+        { title: "Retry takes focus after a failure", note: "Focus moves to the retry button." },
+      ],
+      [
+        null,
+        { title: "Other clips keep showing", note: "One failed clip leaves the rest playing." },
+      ],
+      [{ title: "Copies the image link", note: "From the context menu." }, null],
+    ],
+  },
+  expect: "valid",
+};
+
+const columnsComparedMaximal: Sample = {
+  id: "dg_columns_compared_max",
+  type: "columns",
+  title: exactly(80, LONG),
+  placement: SECTION,
+  data: {
+    caption: exactly(200, LONG),
+    source: [],
+    columns: range(3).map((column) => ({ label: exactly(40, WORDS), tone: tone(column + 1) })),
+    rows: range(8).map((row) =>
+      range(3).map((column) =>
+        row === 7 && column === 1
+          ? null
+          : { title: exactly(80, row % 2 ? LONG : WORDS), note: exactly(80, WORDS) },
+      ),
+    ),
+  },
+  expect: "valid",
+};
+
 const columnsInvalid: Sample = {
   id: "dg_columns_invalid",
   type: "columns",
@@ -371,6 +444,8 @@ export const SAMPLES: Sample[] = [
   columnsMinimal,
   columnsMaximal,
   columnsRealistic,
+  columnsCompared,
+  columnsComparedMaximal,
   columnsInvalid,
   sequenceMinimal,
   sequenceMaximal,

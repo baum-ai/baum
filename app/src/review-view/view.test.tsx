@@ -13,6 +13,7 @@ import { setFileGrouping } from "./file-grouping";
 import { reviewOf, type ViewTile } from "./model";
 import { useViewPlaces } from "./places";
 import { drawnAs, imageItems, ViewTileCard } from "./view-tile";
+import { ColumnsDiagram, comparedText, wordDiff } from "./native-tiles";
 import { AttachmentUrlProvider } from "@baum/viewer/host";
 import { reviewDocumentFor } from "../../../viewer/test/review-document";
 
@@ -753,6 +754,160 @@ describe("the native tiles", () => {
       "A phone can't",
     ]);
     expect(columns[1]?.querySelectorAll("li")).toHaveLength(3);
+    expect(columns[1]?.querySelector("h4")?.textContent).toBe("A phone can't3 items");
+  });
+
+  it("marks the items columns share and points from how it was to how it is", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [
+            {
+              label: "Before",
+              tone: "muted",
+              items: [{ title: "Retry" }, { title: "Opens a dialog" }],
+            },
+            {
+              label: "After",
+              tone: "good",
+              items: [{ title: " retry" }, { title: "Plays in place" }],
+            },
+          ],
+        }}
+      />,
+    );
+    const same = [...container.querySelectorAll("li[data-same]")].map((li) => li.textContent);
+    expect(same).toEqual(["Retry", " retry"]);
+    expect(container.textContent).toContain("also in another column");
+    expect(container.textContent).toContain("→");
+  });
+
+  it("lines compared rows up, marks the words that differ and folds the rest on request", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [
+            { label: "Still image", tone: "muted" },
+            { label: "Clip", tone: "new" },
+          ],
+          rows: [
+            [
+              { title: "Failure says Image unavailable" },
+              { title: "Failure says Video unavailable" },
+            ],
+            [{ title: "Retry takes focus" }, { title: "Retry takes focus" }],
+            [null, { title: "Plays in place" }],
+            [{ title: "Opens full size" }, null],
+          ],
+        }}
+      />,
+    );
+    const rows = () => [...container.querySelectorAll<HTMLElement>("ol > li")];
+    expect(rows()).toHaveLength(4);
+    expect(rows().map((row) => row.dataset.same === "true")).toEqual([false, true, false, false]);
+    const marks = [...rows()[0]!.querySelectorAll<HTMLElement>("[data-mark]")].map((mark) => [
+      mark.dataset.mark,
+      mark.textContent,
+    ]);
+    expect(marks).toEqual([
+      ["removed", "Image"],
+      ["added", "Video"],
+    ]);
+    expect(
+      [...container.querySelectorAll("[data-change]")].map((cell) => cell.textContent?.slice(0, 7)),
+    ).toEqual(["Changed", "NewPlay", "Removed"]);
+    const toggle = container.querySelector<HTMLElement>('[role="switch"], input[type="checkbox"]')!;
+    await act(async () => toggle.click());
+    expect(rows()).toHaveLength(3);
+    expect(container.textContent).not.toContain("Retry takes focus");
+  });
+
+  it("marks words only between texts mostly alike", () => {
+    const marked = (was: string, now: string) =>
+      wordDiff(was, now)
+        .now.filter((piece) => piece.mark)
+        .map((piece) => piece.tokens.join(""));
+    expect(marked("Long table folded", "Long table unfolded")).toEqual(["unfolded"]);
+    expect(marked("Retry reloads the image", "Retry reloads the clip now")).toEqual(["clip now"]);
+    expect(marked("A dialog shows the image larger", "The clip plays in its own box")).toEqual([]);
+  });
+
+  it("draws compared text plain, with code, keeping identifiers and operators", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [{ label: "Off" }, { label: "On" }],
+          rows: [
+            [{ title: "Reads *cached rows* fast" }, { title: "Reads *cached data* `fast`" }],
+            [{ title: "limit 5 > max" }, { title: "limit 10 > max" }],
+          ],
+        }}
+      />,
+    );
+    const cells = (row: number) =>
+      [
+        ...container
+          .querySelectorAll("ol > li")
+          [row]!.querySelectorAll("[data-change], [class*='rounded-md']"),
+      ].map((cell) => cell.querySelector(".font-medium")?.textContent);
+    expect(cells(0)).toEqual(["Reads cached rows fast", "Reads cached data fast"]);
+    expect(container.querySelector("ins code")?.textContent).toBe("fast");
+    expect(cells(1)).toEqual(["limit 5 > max", "limit 10 > max"]);
+    expect(container.querySelector("em")).toBeNull();
+  });
+
+  it("takes italics out of compared text but not identifiers or globs", () => {
+    expect(comparedText("a *cached* _hot_ row")).toBe("a cached hot row");
+    expect(comparedText("__init__ snake_case *.go `*x*`")).toBe("__init__ snake_case *.go `*x*`");
+    expect(comparedText("*a*, *b*. (_c_)")).toBe("a, b. (c)");
+    for (const kept of [
+      "src/*/foo/*.ts",
+      "*.go,*.ts",
+      "(*.go|*.ts)",
+      "https://x.com/_next_/static",
+      "a*b*c",
+      "_x_y",
+      "2 * 3 * 4",
+    ])
+      expect(comparedText(kept)).toBe(kept);
+  });
+
+  it("leaves the Changed pill out when every compared row differs", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [{ label: "Off" }, { label: "On", tone: "new" }],
+          rows: [
+            [{ title: "Long table folded" }, { title: "Long table unfolded" }],
+            [null, { title: "Rows fade" }],
+          ],
+        }}
+      />,
+    );
+    expect(
+      [...container.querySelectorAll("[data-change]")].map((cell) => cell.textContent),
+    ).toEqual(["NewRows fade"]);
+    expect(container.querySelector('[role="switch"]')).toBeNull();
+  });
+
+  it("draws no arrow or shared mark between unrelated lists", async () => {
+    const container = await render(
+      <ColumnsDiagram
+        data={{
+          source: [],
+          columns: [
+            { label: "Accepted", tone: "good", items: [{ title: "MP4" }] },
+            { label: "Refused", tone: "bad", items: [{ title: "GIF" }] },
+          ],
+        }}
+      />,
+    );
+    expect(container.querySelector("li[data-same]")).toBeNull();
+    expect(container.textContent).not.toContain("→");
   });
 
   it("draws a sequence as arrows between actors and as a list for a narrow pane", async () => {

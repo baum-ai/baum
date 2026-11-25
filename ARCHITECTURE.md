@@ -3173,7 +3173,8 @@ order), `diagrams` (native tiles, at most 8), and `library` and `authored`,
 the tiles its analysis added (see "Extra tiles" under "Tile documents"). A native tile
 is `{id: "dg_…", type, title, data}`; its type is `flow` (1–4 lanes of 1–6
 steps, each with a title, note, tone and the connector before it), `columns`
-(2–3 labelled lists of 1–8 items), `sequence` (2–4 actors and 1–10 messages
+(2–3 labelled lists of 1–8 items, or up to 8 `rows` that compare the
+columns item by item, one item or null per column), `sequence` (2–4 actors and 1–10 messages
 between them by index, each with a tone, whether it replies to an earlier
 one, and whether the pull request added or changed it, with its earlier
 text) or `table` (2–5 columns, 1–12 rows of their length),

@@ -306,7 +306,7 @@
     },
     "v2TileData_columns": {
       "type": "object",
-      "description": "Two or three labelled lists side by side.",
+      "description": "Two or three labelled lists side by side, or, with rows, two or three states of one thing compared item by item.",
       "additionalProperties": false,
       "required": ["columns"],
       "properties": {
@@ -317,7 +317,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["label", "items"],
+            "required": ["label"],
             "properties": {
               "label": { "type": "string", "minLength": 1, "maxLength": 40 },
               "tone": { "$ref": "#/$defs/v2Tone" },
@@ -335,6 +335,31 @@
                   }
                 }
               }
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "description": "One item per column, null where that column has none. With rows, the columns have no items.",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["title"],
+                  "properties": {
+                    "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+                    "note": { "type": "string", "maxLength": 80 }
+                  }
+                },
+                { "type": "null" }
+              ]
             }
           }
         }

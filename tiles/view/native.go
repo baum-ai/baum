@@ -73,19 +73,22 @@ type FlowStep struct {
 	Join string `json:"join,omitempty"`
 }
 
-// ColumnsData is two or three labelled lists side by side (before and
-// after, can and can't).
+// ColumnsData is two or three labelled lists side by side (can and
+// can't), or, with Rows, two or three states of one thing compared item by
+// item (before and after): each row holds one item per column, nil where
+// that column has none, and the columns then have no items of their own.
 type ColumnsData struct {
-	Caption string   `json:"caption,omitempty"`
-	Source  []Anchor `json:"source"`
-	Columns []Column `json:"columns"`
+	Caption string          `json:"caption,omitempty"`
+	Source  []Anchor        `json:"source"`
+	Columns []Column        `json:"columns"`
+	Rows    [][]*ColumnItem `json:"rows,omitempty"`
 }
 
-// Column is one list of a columns tile.
+// Column is one list of a columns tile, or one side of its rows.
 type Column struct {
 	Label string       `json:"label"`
 	Tone  string       `json:"tone,omitempty"`
-	Items []ColumnItem `json:"items"`
+	Items []ColumnItem `json:"items,omitempty"`
 }
 
 // ColumnItem is one entry of a column.
@@ -337,16 +340,56 @@ func (n *nativeCheck) columns(raw json.RawMessage) any {
 	d.Caption = n.text(d.Caption, MaxCaption, false, "its caption")
 	d.Source = n.anchors(d.Source)
 	n.count(len(d.Columns), MinColumns, MaxColumns, "columns")
+	item := func(it *ColumnItem) {
+		it.Title = n.text(it.Title, MaxItemTitle, true, "an item's title")
+		it.Note = n.text(it.Note, MaxNote, false, "an item's note")
+	}
+	compared := len(d.Rows) > 0
 	for i := range d.Columns {
 		c := &d.Columns[i]
 		c.Label = n.text(c.Label, MaxColumnLabel, true, "a column's label")
 		c.Tone = oneOf(c.Tone, Tones)
+		if compared {
+			// Rows hold the items; a column's own list would be drawn nowhere.
+			if len(c.Items) > 0 {
+				n.report.fix(FixNativeItem, "a compared column has items of its own")
+			}
+			c.Items = nil
+			continue
+		}
 		n.count(len(c.Items), 1, MaxColumnItems, "items in a column")
 		for j := range c.Items {
-			c.Items[j].Title = n.text(c.Items[j].Title, MaxItemTitle, true, "an item's title")
-			c.Items[j].Note = n.text(c.Items[j].Note, MaxNote, false, "an item's note")
+			item(&c.Items[j])
 		}
 	}
+	if !compared {
+		return d
+	}
+	// A row is as wide as the columns: a short one is padded with gaps, a
+	// long one cut, and a row of gaps only dropped.
+	rows := [][]*ColumnItem{}
+	for _, row := range d.Rows {
+		if len(row) != len(d.Columns) {
+			n.report.fix(FixNativeItem, "a compared row is not as long as the columns")
+		}
+		row = append(row, make([]*ColumnItem, max(0, len(d.Columns)-len(row)))...)[:len(d.Columns)]
+		kept := false
+		for _, it := range row {
+			if it != nil {
+				item(it)
+				kept = true
+			}
+		}
+		if kept {
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) > MaxColumnItems {
+		n.report.fix(FixNativeItem, "a columns tile has more rows than it may")
+		rows = rows[:MaxColumnItems]
+	}
+	d.Rows = rows
+	n.count(len(d.Rows), 1, MaxColumnItems, "rows")
 	return d
 }
 
