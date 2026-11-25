@@ -59,6 +59,7 @@ const PLACES = [
   ["context", "&pane=section&section=context"],
   ["encryption", "&pane=section&section=sec_encryption"],
   ["section-code", "&pane=section&section=sec_allowlist&section_view=code"],
+  ["section-tests", "&pane=section&section=sec_allowlist&section_view=tests"],
   ["section-session", "&pane=section&section=sec_relay&section_view=session"],
   ["code", "&pane=tile&tile=code&tile_item=oss%2Finternal%2Fuiserver%2Fremote.go"],
 ] as const;
