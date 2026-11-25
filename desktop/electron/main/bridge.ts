@@ -11,7 +11,7 @@ import { errorMessage, log } from "./log.ts";
 import { bundledPageAllowed, isBundled, originOf } from "./navigation.ts";
 
 /** The app's windows whose pages may call commands. The tile check window
- *  (4/7) is not one: its page may call none. */
+ *  (check-window.ts) is not one: its page may call none. */
 export type WindowKind = "main" | "tray-panel";
 
 /** Vite's copy of the setup screen under development (development.ts). */

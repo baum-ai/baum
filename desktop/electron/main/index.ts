@@ -30,6 +30,8 @@ import { THEME_CHANNEL } from "../shared/contract.ts";
 import { type AttachHooks, Attacher, HealthPause } from "./attach.ts";
 import { createAutostart } from "./autostart.ts";
 import { type BridgeState, DEVELOPMENT_SETUP_ORIGIN, installBridge } from "./bridge.ts";
+import { DISABLED_FEATURES } from "./check-window.ts";
+import { registerCheckWindow } from "./check-window-electron.ts";
 import * as client from "./client.ts";
 import { registerCommand } from "./commands.ts";
 import * as daemon from "./daemon.ts";
@@ -95,6 +97,9 @@ app.setPath("sessionData", sessionDataDir(config));
 // Before the first notification, or Windows toasts carry no app identity.
 if (process.platform === "win32") app.setAppUserModelId(IDENTIFIER);
 registerAppScheme(protocol);
+// Tile frames run in their page's renderer process, so the tile check
+// window's tiles run apart from the main window's (check-window.ts).
+app.commandLine.appendSwitch("disable-features", DISABLED_FEATURES);
 
 const development = developmentDir(process.env, app.isPackaged);
 // Start at login runs the app with this flag: the app attaches to the
@@ -131,7 +136,7 @@ const cli: daemon.Cli = {
 const healthPause = new HealthPause();
 
 /** What the rest of the app does as the attachment changes; set in `start`.
- *  4/7: the check window closes on `connecting` and `detached`. */
+ *  The check window closes on `connecting` and `detached`. */
 const attachHooks: AttachHooks = {};
 
 /** First-run setup and "Command Line and Hooks…": the first page, the setup
@@ -293,6 +298,18 @@ function start(): void {
     void attacher.connect();
     return null;
   });
+  // The tile check window: its page shows a daemon the app may be leaving,
+  // so it closes whenever the app starts attaching again or detaches, and
+  // whenever the main window starts loading another page.
+  const checkWindow = registerCheckWindow({
+    preload: join(__dirname, "preload.cjs"),
+    main: () => main,
+    daemon: () => attacher.daemon(),
+    logRefusals: !app.isPackaged,
+  });
+  const closeCheckWindow = () => {
+    checkWindow.closeSoon().catch((e) => log(`cannot close the check window: ${errorMessage(e)}`));
+  };
   registerTileFileCommands({
     chooseSavePath: async ({ title, defaultName, filters }) => {
       const options: Electron.SaveDialogOptions = { title, defaultPath: defaultName, filters };
@@ -428,6 +445,7 @@ function start(): void {
     },
   });
   attachHooks.connecting = () => {
+    closeCheckWindow();
     attached = null;
     events.detach();
     tray.connecting();
@@ -440,6 +458,7 @@ function start(): void {
   };
   attachHooks.pageAttached = (_launch, page) => notifications.attach(page);
   attachHooks.detached = () => {
+    closeCheckWindow();
     attached = null;
     events.detach();
     tray.detached();
@@ -477,11 +496,12 @@ function start(): void {
   });
   const window = main;
   registerAppWindow(window, "main");
+  const decideMain = (to: string) =>
+    setup.isOpen() && isSetupPage(to, development)
+      ? "allow"
+      : decide(to, attacher.daemon(), setup.isOpen());
   guardNavigation(window.webContents, {
-    decide: (to) =>
-      setup.isOpen() && isSetupPage(to, development)
-        ? "allow"
-        : decide(to, attacher.daemon(), setup.isOpen()),
+    decide: decideMain,
     newWindows: true,
     logRefusals: !app.isPackaged,
   });
@@ -510,6 +530,13 @@ function start(): void {
   window.on("hide", focused);
   window.on("minimize", focused);
   window.on("restore", focused);
+  // The page that opened the check window is going (a navigation the guard
+  // refuses leaves it).
+  window.webContents.on("did-start-navigation", (event) => {
+    if (event.isMainFrame && !event.isSameDocument && decideMain(event.url) === "allow") {
+      closeCheckWindow();
+    }
+  });
   window.webContents.on("did-navigate", focused);
   window.webContents.on("did-navigate-in-page", focused);
   screenshots(window);
