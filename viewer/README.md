@@ -972,13 +972,15 @@ origins while sharing one stored image.
 
 Description images and prompt images open in one viewer
 (`components/image-viewer`). It opens as large as the screen allows, enlarging
-an image past its own pixels, and keeps the image's proportions. Its corner
-drags to scale the image; until then it refits when the window changes size.
-A click on the backdrop, the close control or Escape closes it. Its
-full-screen control fills the screen through the browser's Fullscreen API
-(on the dialog's content, since a dialog itself cannot go full screen), or
-covers the window where the host does not grant it. Escape leaves full screen
-before it closes the viewer.
+an image past its own pixels, and keeps the image's proportions. Any edge or
+corner of the image drags to scale it, up to that fit; the corners carry a
+visible bracket so people find it. The dialog stays centred as it resizes.
+Until a drag, and again after "Fit to screen", it refits when the window
+changes size. The size dragged
+to is remembered in `localStorage` as a share of that fit, and later images,
+of any shape, open at the same share. Its "Fit to screen" control returns to
+the full fit and forgets the share. A click on the backdrop, the close control
+or Escape closes it.
 
 An indexed attachment whose `content_type` is `video/…` (local desktop reviews
 only) draws as a muted `<video>` with native controls that loads only its
