@@ -1049,6 +1049,56 @@ state every minute, and every second while the updater works.
 - Restarting the app does not stop the daemon. The first client to run the
   new `baum` replaces an older daemon, as after any upgrade.
 
+## Electron shell (in progress)
+
+An Electron shell in `electron/` is replacing the Tauri one. The Tauri shell
+(`src/`) stays the shipped app until the migration's bridge release. So far
+the Electron shell:
+
+- Opens the main window on the setup screen or the connecting screen.
+- Attaches to the daemon as described in "Attaching to the daemon", and
+  loads the daemon's pages.
+- Hides the window when it is closed, and keeps a single instance.
+- Applies the rules in "What pages may do".
+
+The tray, notifications, setup commands and the other native features are
+still being ported.
+
+- `electron/main/` runs in Node.js in the main process.
+- `electron/preload/` runs sandboxed in each window's main frame. It exposes
+  `window.baumDesktop.invoke` and the `__BAUM_DESKTOP__` declaration.
+- Every command goes over one IPC channel. `electron/main/bridge.ts` runs a
+  command only from the main frame of the app's own windows, and only if
+  `electron/main/commands.ts` allows it for the page's role.
+- The bundled screens are served from `dist/` as `app://bundle`.
+- The app keeps Tauri's identifier (`com.usebaum.desktop`), so it uses the
+  same `desktop.json`. Chromium's files go in `chromium/` under the same
+  folder.
+- In the app, `desktopShell()` (`../app/src/desktop/native.ts`) finds either
+  shell's bridge.
+
+Checks and runs happen in the `desktop-electron` Docker service:
+
+```sh
+just desktop::electron-check   # format check, typecheck and unit tests
+just desktop::electron-fmt     # format
+```
+
+To run the app under Xvfb against a real daemon, first build `dist/` and the
+bundled `baum` (`just desktop::frontend`, `just desktop::sidecar`). Then, from
+the repository root:
+
+```sh
+BAUM_OP_RUN=0 ./dev-compose.sh run --rm --no-deps desktop-electron sh -c \
+  'pnpm build && HOME=$(mktemp -d) BAUM_DESKTOP_BAUM=/oss/desktop/binaries/baum-x86_64-unknown-linux-gnu \
+   BAUM_DESKTOP_SCREENSHOT=/oss/desktop/build/shot.png \
+   xvfb-run -a node_modules/.bin/electron . --no-sandbox --enable-logging'
+```
+
+`BAUM_DESKTOP_SCREENSHOT` applies only to an unpackaged app. It saves what the
+window shows a few seconds after each page load. Stop the daemon afterwards
+with `baum daemon stop`.
+
 ## Development
 
 `just desktop::frontend` runs the shared local-app Vite build in `ui-test`.
